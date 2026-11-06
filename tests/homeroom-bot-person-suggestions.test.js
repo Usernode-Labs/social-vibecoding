@@ -37,6 +37,12 @@ test('a note about Homeroom itself, or one saying the request is done, offers no
   assert.deepEqual(live.personSuggestions({ done: true, firstStep: 'Just the triage part' }), []);
 });
 
+// #6413: the requester or a decider asked to close it, so Go ahead is not
+// offered: the close vote is under the note instead.
+test('a withdrawn note offers none', () => {
+  assert.deepEqual(live.personSuggestions({ withdrawn: true, firstStep: 'Just the triage part' }), []);
+});
+
 // 6 Nov 2026 (#6395): a go-ahead cannot settle these, so it is not offered.
 test('when a go-ahead cannot settle it, the smaller step leads and Go ahead is gone', () => {
   const actions = live.personSuggestions({ firstStep: 'Remove the dead bot token line', goAheadDecides: false });
@@ -72,8 +78,16 @@ test('the triage reads go_ahead as false, true, or absent; only a plain person v
   assert.equal(bot.parseVerdict('{"verdict":"person","reason":"x","done":true,"go_ahead":false}').goAheadDecides, null);
 });
 
-test('the triage keeps a person verdict\'s first step, and only that verdict\'s', () => {
-  const person = bot.parseVerdict('{"verdict":"person","reason":"too big","first_step":"Just the triage part"}');
+// #6413: a withdrawn read never carries a Go ahead or a smaller first step.
+test('parseVerdict gives a withdrawn read no go-ahead and no first step', () => {
+  const parsed = bot.parseVerdict('{"verdict":"person","reason":"evan said \\"you can just close this one\\"","withdrawn":true,"go_ahead":true,"first_step":"Just the triage part"}');
+  assert.equal(parsed.withdrawn, true);
+  assert.equal(parsed.goAheadDecides, null);
+  assert.equal(parsed.firstStep, null);
+  assert.equal(parsed.reason, 'evan said "you can just close this one"');
+});
+
+test('the triage keeps a person verdict\'s first step, and only that verdict\'s', () => {  const person = bot.parseVerdict('{"verdict":"person","reason":"too big","first_step":"Just the triage part"}');
   assert.equal(person.firstStep, 'Just the triage part');
   const ready = bot.parseVerdict('{"verdict":"ready","build_note":"do it","first_step":"Just the triage part"}');
   assert.equal(ready.firstStep, null, 'only a person verdict carries it');
@@ -196,6 +210,48 @@ test('a note about Homeroom itself, or one saying it is done, posts with no sugg
     assert.equal(says.length, 1);
     assert.equal(says[0].metadata, undefined, 'no buttons on this note');
   }
+});
+
+// #6413: a withdrawn request gets the close offer, not a Go ahead, and its
+// note carries no suggest metadata.
+test('the person branch posts a withdrawn note with no suggestions', async () => {
+  const says = [];
+  const realPost = live.post;
+  const realSeen = live.advanceSeen;
+  const realTargets = live.mentionTargets;
+  live.post = async (args) => { says.push(args); return {}; };
+  live.advanceSeen = async () => ({});
+  live.mentionTargets = async () => [];
+  try {
+    await bot.actOnVerdict({
+      pool: {
+        async query(sql) {
+          if (/FROM homeroom_bot_requesters/.test(sql)) {
+            return { rows: [{ user_id: 9, username: 'evan', first_version: false, has_platform_access: true }] };
+          }
+          return { rows: [] };
+        },
+      },
+      config: {}, bot: { id: 2 }, app: { id: 1, slug: 'x', name: 'X' },
+      repo: { owner: 'o', repo: 'r' }, issueNumber: 7, issue: {},
+      parsed: {
+        verdict: 'person', reason: 'evan said "you can just close this one".',
+        platform: false, done: false, withdrawn: true, goAheadDecides: null, firstStep: null,
+      },
+      decider: { requesterDecides: true },
+      capSuppressed: null, runId: 3, seed: '', seedReadAt: 'now', postedAt: [], turnBudgetMs: 1000, model: 'm',
+      deps: { github: {}, ws: {} },
+    });
+  } finally {
+    live.post = realPost;
+    live.advanceSeen = realSeen;
+    live.mentionTargets = realTargets;
+  }
+  assert.equal(says.length, 1);
+  assert.match(says[0].homeroomText, /^Asked to close: evan said "you can just close this one"\. /);
+  assert.doesNotMatch(says[0].homeroomText, /Go ahead/);
+  // No thread offer (the stubbed store has none) and no suggest set.
+  assert.equal(says[0].metadata, undefined);
 });
 
 // 6 Nov 2026 (#6395): the go-ahead the note could not act on gets one plain

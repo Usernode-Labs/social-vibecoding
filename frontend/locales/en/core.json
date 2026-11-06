@@ -123,14 +123,6 @@
     "text": "All communities",
     "description": "Row under the person's communities in the desktop sidebar, before their communities have loaded or when the sidebar already lists every one of them: opens the list of every community they are in."
   },
-  "rail.conversations": {
-    "text": "Conversations",
-    "description": "Accessible name of the conversations nested under Messages in the desktop sidebar (a window 1024px or wider) while Messages is open: the five most recent, then All messages."
-  },
-  "rail.allMessages": {
-    "text": "All messages",
-    "description": "Last row under Messages in the desktop sidebar (a window 1024px or wider), under the five most recent conversations: opens the full list of conversations, with its search."
-  },
   "rail.hideSidebar": {
     "text": "Hide sidebar",
     "description": "Accessible name of the header button that folds the desktop navigation rail away, while the rail is showing."
@@ -822,6 +814,18 @@
   "work.line.checksFailingCount_other": {
     "text": "{{count}} tests failing",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: how many of its change's tests failed. {{count}} is a number."
+  },
+  "work.line.checksRunning_one": {
+    "text": "About {{count}} min left",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Checking: about how long its tests have left, from the same estimate its Testing card shows. {{count}} is a number of minutes, at least 1."
+  },
+  "work.line.checksRunning_other": {
+    "text": "About {{count}} min left",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Checking: about how long its tests have left, from the same estimate its Testing card shows. {{count}} is a number of minutes, at least 1."
+  },
+  "work.line.syncWait": {
+    "text": "Waiting to sync with main",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Checking: the change conflicts with main, so its tests wait until it is synced, and nobody is asked to vote on it yet."
   },
   "work.line.firstVersion": {
     "text": "First version: it goes live without a vote",

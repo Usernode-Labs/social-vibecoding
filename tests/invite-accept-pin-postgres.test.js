@@ -80,9 +80,12 @@ test('accepting an invite pins the project, against the full PostgreSQL schema',
   const club = (await pool.query('SELECT * FROM apps WHERE id = $1', [made[0].id])).rows[0];
   await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`,
     [club.id, owner.id]);
-  // A proposal waiting for a vote, written by the owner.
+  // A proposal waiting for a vote, written by the owner. #6402: the digest
+  // finds one only once its checks passed; this file is about the invite's
+  // pin, not the gate.
   await pool.query(
-    `INSERT INTO chat_sessions (app_id, user_id, status, pr_number) VALUES ($1, $2, 'promoted', 1)`,
+    `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, check_state)
+     VALUES ($1, $2, 'promoted', 1, 'passing')`,
     [club.id, owner.id]
   );
 

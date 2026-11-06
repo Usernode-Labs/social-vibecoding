@@ -206,7 +206,7 @@ function decidersPhrase(names) {
   return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
 }
 
-function personText({ reason, platform = false, project = null, done = false, goAheadDecides = null, firstStep = null }) {
+function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null }) {
   // #4239: about Homeroom itself. The requester is offered the move in their
   // DM; the project's creator and admins, who see only this note, are told
   // they can move it too (homeroom-bot-move.js moveGate).
@@ -220,6 +220,12 @@ function personText({ reason, platform = false, project = null, done = false, go
   if (done) {
     return `Homeroom bot found this already works: ${reasonSentence(reason)}\n\n`
       + 'Anyone in the project can propose to close it, or reply here if something is missing.';
+  }
+  // #6413: its requester or a decider asked to close it, so it waits for the
+  // same vote, not for a Go ahead.
+  if (withdrawn) {
+    return `Homeroom bot was asked to close this: ${reasonSentence(reason)}\n\n`
+      + 'Anyone in the project can propose to close it, or reply here to keep it going.';
   }
   // 6 Nov 2026 (#6395): a go-ahead cannot settle this one (credentials,
   // auth, billing, permissions, operator work outside the app, a database
@@ -272,6 +278,15 @@ function personHomeroomText({ reason, platform = false, project = null, requeste
   return firstPerson(`I think a person needs to decide this one: ${reasonSentence(reason)} ${who} can say Go ahead in a chat with me, or reply here.`);
 }
 
+/**
+ * #6413: the note for a request its requester (or a decider) asked to close.
+ * It offers the close vote the finished-request note does, not a Go ahead.
+ * Pure.
+ */
+function withdrawnHomeroomText({ reason }) {
+  return `Asked to close: ${reasonSentence(reason)} Tap Propose to close below to start a vote. It stays open until the group votes for it, or reply here to keep it going.`;
+}
+
 // The note's fixed replies, beside its own sentence: words the bot offers for
 // a person to send as their own, server text rather than shell catalog text.
 const GO_AHEAD_LABEL = 'Go ahead';
@@ -280,14 +295,15 @@ const NOT_NOW_LABEL = 'Not now';
 
 /**
  * Pure: the replies offered under a person note, as prompt actions, or []
- * when the note is about Homeroom itself or says the request is done (Go
- * ahead applies to neither). `firstStep` is the smaller step the bot would
- * build, when it named one; the fixed label stands in when it did not.
+ * when the note is about Homeroom itself, says the request is done, or says
+ * it was asked to close (Go ahead applies to none). `firstStep` is the
+ * smaller step the bot would build, when it named one; the fixed label stands
+ * in when it did not.
  * 6 Nov 2026 (#6395): when `goAheadDecides` is false a go-ahead cannot settle
  * the request, so Go ahead is not offered and the smaller step is primary.
  */
-function personSuggestions({ firstStep = null, platform = false, done = false, goAheadDecides = null } = {}) {
-  if (platform || done) return [];
+function personSuggestions({ firstStep = null, platform = false, done = false, withdrawn = false, goAheadDecides = null } = {}) {
+  if (platform || done || withdrawn) return [];
   const cannot = goAheadDecides === false;
   const mayor = require('./homeroom-bot-mayor');
   const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
@@ -5783,6 +5799,7 @@ module.exports = {
   questionText,
   personText,
   personHomeroomText,
+  withdrawnHomeroomText,
   personSuggestions,
   goAheadCannotText,
   GO_AHEAD_LABEL,

@@ -88,8 +88,8 @@ test('a request that is already there is `done`: on a person or empty verdict, n
   const prompt = fs.readFileSync(path.join(__dirname, '..', 'src/prompts/homeroom-bot-triage.md'), 'utf8');
   assert.match(prompt, /- `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its members are offered a vote to close it\. When the requester, or somebody who decides on the project, says in the discussion that it works and can be closed \("you can propose closing this"\), and the code agrees, that is `done`\./);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
-  assert.match(src, /await say\('empty', parsed\.done \? live\.personText\(parsed\) : live\.emptyText\(parsed\), \{/);
-  assert.match(src, /dm: \{ reason: parsed\.reason, \.\.\.\(parsed\.done \? \{ done: true \} : \{\}\), \.\.\.quiet \},/);
+  assert.match(src, /await say\('empty', closeWanted \? live\.personText\(parsed\) : live\.emptyText\(parsed\), \{/);
+  assert.match(src, /dm: \{\n\s+reason: parsed\.reason, \.\.\.\(parsed\.done \? \{ done: true \} : \{\}\),\n\s+\.\.\.\(withdrawnNote \? \{ withdrawn: true, quiet: true \} : \{\}\), \.\.\.quiet,/);
 });
 
 test('a request that names who builds it is `builder`: a person verdict only, a bare name, and its news rings nobody', () => {

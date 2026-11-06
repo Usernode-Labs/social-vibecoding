@@ -10471,11 +10471,11 @@ async function seedStagingShotsScreens(pool) {
     await pool.query(
       `INSERT INTO chat_sessions
          (id, app_id, user_id, branch_name, pr_number, pr_title, status,
-          promoted_at, reviewed_head_sha,
+          promoted_at, reviewed_head_sha, check_state,
           shots_state, shots_run_id, shots_detail, shots_updated_at)
        SELECT $1::int, 900001, u.id, 'staging-demo/three-screens', $1::int,
               '[Mock] Staging demo: three screens to compare', 'promoted',
-              NOW() - interval '1 hour', $2::varchar,
+              NOW() - interval '1 hour', $2::varchar, 'passing',
               'verified', $3::varchar, $4::jsonb, NOW()
          FROM users u
         WHERE u.username = 'staging-demo-user'

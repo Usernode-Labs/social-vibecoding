@@ -159,6 +159,18 @@ test('every word the module asks for is in the catalog', () => {
   assert.doesNotMatch(src, /bot\.track\.state\.(?!waitingNamed)/);
 });
 
+// #6402: a checking change says about how long is left, or that it waits to
+// sync with main; a run with no estimate says nothing on the second line.
+test('a checking change words its wait, and its minutes survive normalization', () => {
+  const { lineWords, normalizeWorkState } = loadTsx('frontend/src/lib/work-state.ts');
+  const checking = (line) => normalizeWorkState({ stage: 'checking', line });
+  assert.deepEqual(lineWords(checking({ code: 'checks_running', minutes: 2 })),
+    { id: 'core:work.line.checksRunning', values: { count: 2 } });
+  assert.equal(lineWords(checking({ code: 'checks_running' })), null, 'no estimate, no line');
+  assert.deepEqual(lineWords(checking({ code: 'sync_wait' })), { id: 'core:work.line.syncWait' });
+  assert.deepEqual(checking({ code: 'checks_running', minutes: 3 }).line, { code: 'checks_running', minutes: 3 });
+});
+
 // ── 2. The bar and the card ───────────────────────────────────────────────
 
 test('the bar lights the step it is on; a loop back to building names its try under Build', () => {
