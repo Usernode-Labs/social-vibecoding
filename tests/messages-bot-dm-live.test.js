@@ -259,8 +259,10 @@ test('the answer so far stays on the card while the bot reads or thinks, and lea
     doing: { kind: 'request', number: 436 },
     draft: 'A couple of the names you gave',
   }, 'held while it reads the request');
+  // #6405: a step with no name of its own no longer drops the card back to
+  // "Thinking"; the last step it named stays up until it names the next one.
   typing();
-  assert.deepEqual(h.store.typingUsers(42)[0].doing, null, 'wordless: thinking');
+  assert.deepEqual(h.store.typingUsers(42)[0].doing, { kind: 'request', number: 436 }, 'the last step named stays up');
   assert.equal(h.store.typingUsers(42)[0].draft, 'A couple of the names you gave', 'not hidden while it thinks');
   typing({ kind: 'writing', text: 'So I checked: the list is right' });
   assert.equal(h.store.typingUsers(42)[0].draft, 'So I checked: the list is right', 'the newer answer replaces it');
@@ -316,8 +318,10 @@ test('the bot types as the bot, with what it is doing; a person\'s typing never 
   typing(BOT.id, true, { doing: { kind: 'request', number: 12, extra: 'x' } });
   assert.deepEqual(h.store.typingUsers(42), [{ name: 'Homeroom bot', unnamed: false, bot: true, doing: { kind: 'request', number: 12 } }],
     'what it is doing, in place');
+  // #6405: a doing the screen cannot read names no step, so the last one it
+  // named stays up. Its words are still never drawn.
   typing(BOT.id, true, { doing: { kind: 'Reading request #12' } });
-  assert.equal(h.store.typingUsers(42)[0].doing, null, 'a kind word, never words to draw');
+  assert.deepEqual(h.store.typingUsers(42)[0].doing, { kind: 'request', number: 12 }, 'a kind word, never words to draw');
   typing(BOT.id, true, { doing: { kind: 'drawing' } });
   typing(ADA.id, true, { doing: { kind: 'drawing' } });
   assert.deepEqual(h.store.typingUsers(42), [

@@ -3005,9 +3005,9 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages and its conversations, then Recents (the pinned group, then the rest), then you (One Home, #6361; the Communities node stays in the markup, drawn on neither bar, for the routes that name it)",
+      "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages, then Recents (the pinned group, then the rest), then you (One Home, #6361; the Communities node stays in the markup, drawn on neither bar, for the routes that name it)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-tab-messages + #platform-rail-conversations + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-tab-messages + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -3036,9 +3036,9 @@
       "expectText": "[Mock] Did the notifications change land yet?"
     },
     {
-      "name": "The Messages strip leads with a search box, not a second copy of the screen's name (#2718 review); on a desktop the list is the page, All messages, lit under Messages in the sidebar (v3)",
+      "name": "The Messages strip leads with a search box, not a second copy of the screen's name (#2718 review); on a desktop with nothing open the list is the page, All messages",
       "path": "/?demo=1#messages",
-      "expectSelector": "body:has(#platform-rail-conversations a[data-rail-all-messages][aria-current=\"page\"]) #messages-screen:not(.hidden) .messages-layout.dc-lift-strip.messages-list-page .messages-list-pane:not(:has(.messages-list-toolbar)) .messages-search input"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.dc-lift-strip.messages-list-page .messages-list-pane:not(:has(.messages-list-toolbar)) .messages-search input"
     },
     {
       "name": "...and a styled empty pane where the conversation goes",
@@ -4946,9 +4946,9 @@
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
     },
     {
-      "name": "Homeroom bot: your own change whose checks failed is Needs you's, with Fix it, not Waiting for checks",
+      "name": "Homeroom bot: your own change whose checks failed is Needs you's, with Fix it, not Waiting for checks, and a search button beside the plus (#6398)",
       "path": "/?demo=1#homeroom-bot",
-      "expectSelector": "#ai-screen [data-ai-sheet=\"open\"] [data-ai-line=\"fix_yours\"]",
+      "expectSelector": "#ai-screen:has([data-ai-hero] button[data-ai-search-toggle] svg) [data-ai-sheet=\"open\"] [data-ai-line=\"fix_yours\"]",
       "expectText": "Fix it"
     },
     {

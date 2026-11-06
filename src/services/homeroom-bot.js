@@ -1696,6 +1696,12 @@ function readVerdict(text) {
         plan = { bullets: [], questions: [first, second] };
       }
     }
+    // #6413: its requester, or somebody who decides on the project, said in
+    // the discussion to close, drop or withdraw it. It gets the same close
+    // offer a done request does, and no Go ahead. A person or empty verdict
+    // carries it; one about Homeroom itself does not.
+    const withdrawn = (verdict === 'person' || verdict === 'empty')
+      && obj.withdrawn === true && obj.platform !== true;
     return {
       verdict,
       determined: typeof obj.determined === 'boolean' ? obj.determined : null,
@@ -1733,6 +1739,9 @@ function readVerdict(text) {
       // "person decides" with nothing to decide. A person or empty verdict
       // carries it; one about Homeroom itself is offered the move instead.
       done: (verdict === 'person' || verdict === 'empty') && obj.done === true && obj.platform !== true,
+      // #6413: asked to close or withdraw by its requester or a decider. Done
+      // wins when both say so (actOnVerdict).
+      withdrawn,
       // 16 Oct 2026: a request that says a named person will build it (on
       // Homeroom's own board, a dozen in a morning read "assigned to @snait,
       // not for the bot"). Only a person verdict carries it, and its news
@@ -1741,14 +1750,15 @@ function readVerdict(text) {
       // 3 Nov 2026: the smaller first step a person verdict would build, as
       // a reply in the requester's own words (at most 60 characters). The
       // note offers it as a button to tap beside Go ahead.
-      firstStep: verdict === 'person' ? firstStepOf(obj.first_step) : null,
+      firstStep: verdict === 'person' && !withdrawn ? firstStepOf(obj.first_step) : null,
       // 6 Nov 2026 (#6395): whether a go-ahead from the person the note names
       // can settle this, or it still fails `ready` for somebody else to act
       // on (credentials, auth, billing, permissions, operator work outside
       // the app, a non-append-only database change, or too big for one
       // build). Only a person verdict that is neither about Homeroom itself
-      // nor already done carries it; a missing key is today's behaviour.
-      goAheadDecides: verdict === 'person' && obj.platform !== true && obj.done !== true
+      // nor already done nor withdrawn carries it; a missing key is today's
+      // behaviour.
+      goAheadDecides: verdict === 'person' && !withdrawn && obj.platform !== true && obj.done !== true
         ? obj.go_ahead !== false : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
@@ -4820,6 +4830,11 @@ async function runTriage(pool, config, {
         // request's first look has no note before it, and speaks.
         askedLook: item.reason === ASKED_REASON,
         comments,
+        // #6399: a read a person asked for again, once the reason its last
+        // one handed back had gone (homeroom-bot-dm.js askBotToBuild
+        // `readAgain`), always says what it found: the page offered it
+        // because that note is out of date, so it may not be held back.
+        askedAgain: item.reason === READ_AGAIN_REASON && Number(item.requested_by) > 0,
         model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
         quietHold: item.reason === APP_AGAIN_REASON || item.reason === BACKLOG_REASON,
         proposalCeiling: botProposalCeiling(settings),
@@ -6468,18 +6483,35 @@ async function runChecksFix(pool, config, {
     grantedBy = used?.granted_by || null;
   }
 
-  // #6234: one line on the change as its fix starts, so the request's page
-  // hears the bot is on it (its Testing card reads the queue row; the
-  // thread hears it here). Once across the look's attempts (`note` is
-  // look.once), so a look resumed after a restart does not say it twice,
-  // and not on the second try after running out of time: checks_retry said
-  // so. The end line (checks_revise, checks_retry, the hand-off) follows.
+  // #6234/#6409: one line on the change as its fix really starts, so the
+  // request's page hears the bot is on it (its Testing card reads the queue
+  // row; the thread hears it here). It goes out from the turn's own start
+  // callback (runFollowUpTurn's onStart), which runs only once the change's
+  // session is held and its worker is up: a try that finds the change busy
+  // posts nothing and only backs off, so a retried try no longer repeats the
+  // promise (#6409). A claim row per failing head and attempt keeps a retry
+  // or a restart from saying it twice. Its wording says which try this is: a
+  // first start promises; a try after running out of time, or on a new head
+  // the bot's own fix landed that still fails, says it did not pass and that
+  // it is trying once more. The end line (checks_revise, checks_retry, the
+  // hand-off) follows.
   // Not for a round only its shots asked for (onlyShots): its checks pass,
   // nothing said a person had to fix it, and a seed that adds nothing ends
   // in silence, which would leave a start line with no end.
-  if (!onlyShots && !await look.once('retriedAtStart', () => checksRetried(pool, session.id, head))) {
-    await note('checks_fixing', { runId: null, text: followup.checksFixingText({ failing, broken, skipped }) });
+  let startLine = null;
+  let startAttempt = null;
+  if (!onlyShots) {
+    const retried = await look.once('retriedAtStart', () => checksRetried(pool, session.id, head));
+    const fixLanded = await look.once('fixLandedAtStart', () => botFixLanded(pool, session.id, head));
+    startAttempt = retried || fixLanded ? 'again' : 'start';
+    startLine = startAttempt === 'again'
+      ? followup.checksFixingAgainText()
+      : followup.checksFixingText({ failing, broken, skipped });
   }
+  const onStart = !startLine || !deps.ws ? null : async () => {
+    if (!await claimChecksStart(pool, { app, session, head, attempt: startAttempt })) return;
+    await note('checks_fixing', { runId: null, text: startLine });
+  };
 
   let turn = null;
   const seed = sessions.buildHeadlessSeed(issueNumber, issue, comments, botLogin, issueThread?.messages || []);
@@ -6512,6 +6544,7 @@ async function runChecksFix(pool, config, {
     // `mode` is runFollowUp's: a build turn, since revisions remain.
     pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps: { github, ...deps },
     reasoningEffort,
+    onStart,
     steps: look.steps, owner: look.owner, key: 'checks',
     // A fix round's own message, which the reconcile reads back to know
     // the move changed how the change works, not what it does
@@ -6657,6 +6690,57 @@ async function checksRetried(pool, sessionId, head) {
     return rows.length > 0;
   } catch {
     // A read that fails hands over, as before: never a loop of retries.
+    return true;
+  }
+}
+
+/**
+ * #6409: whether the bot's own fix already landed and this new head still
+ * fails. A revise run records the head it looked at (checksHeadSha); one
+ * recorded for another head than this one means the bot pushed a fix since,
+ * so a start line here is a NEW attempt, not the first promise.
+ */
+async function botFixLanded(pool, sessionId, head) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM homeroom_bot_runs
+        WHERE proposal_session_id = $1 AND verdict = 'revise'
+          AND checks_head_sha IS NOT NULL
+          AND lower(checks_head_sha) <> lower($2)
+        LIMIT 1`,
+      [Number(sessionId), String(head || '')],
+    );
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * #6409: claim this failing head's start line before saying it. The events
+ * row is the durable mark, so a retry or a restart on the same head and
+ * attempt says nothing; true means the claim is this attempt's and the line
+ * goes out. A claim for an earlier head does not count: that line was about
+ * the old version. A query that fails returns true, so the line is said once
+ * per look as before, never left unsaid.
+ */
+async function claimChecksStart(pool, { app, session, head, attempt }) {
+  const sha = String(head || '').toLowerCase();
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO events (app_id, session_id, event_type, metadata)
+        SELECT $1, $2, 'homeroom_bot_checks_fix_started', jsonb_build_object('head', $3::text, 'attempt', $4::text)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM events
+           WHERE session_id = $2
+             AND event_type = 'homeroom_bot_checks_fix_started'
+             AND metadata->>'head' = $3
+             AND metadata->>'attempt' = $4)
+        RETURNING id`,
+      [app.id, Number(session.id), sha, attempt],
+    );
+    return rows.length > 0;
+  } catch {
     return true;
   }
 }
@@ -7460,7 +7544,8 @@ async function heldLimit(pool, { capSuppressed, app, issueNumber, proposalCeilin
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
-  proposalCeiling = EVERYONE_PROPOSAL_CEILING, firstVersion = false, relook = false, askedLook = false, comments = [],
+  proposalCeiling = EVERYONE_PROPOSAL_CEILING, firstVersion = false, relook = false, askedLook = false,
+  askedAgain = false, comments = [],
   decider = null, backlog = false, goAhead = null, deps,
 }) {
   const { github, ws } = deps;
@@ -7490,7 +7575,7 @@ async function actOnVerdict({
   // there is the voice's to answer (homeroom-bot-voice.js), not a reason to
   // say the note again.
   const voiceAnswers = (relook || askedLook) && voiceModule(deps).voiceOn(await readSettings(pool).catch(() => null), { type: 'issue' });
-  const gated = (relook || askedLook) && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict);
+  const gated = (relook || askedLook) && !askedAgain && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict);
   // #6146: after "a person needs to decide", which tells them to reply in the
   // discussion, a plain message there from its requester or a decider it
   // names is their answer (answerersOf), not people talking among themselves.
@@ -7600,15 +7685,20 @@ async function actOnVerdict({
       : (Number.isSafeInteger(Number(asker?.userId)) && Number(asker?.userId) > 0 ? [Number(asker.userId)] : []);
     const suggestActions = live.personSuggestions({
       firstStep: parsed.firstStep, platform: parsed.platform, done: parsed.done,
-      goAheadDecides: parsed.goAheadDecides,
+      withdrawn: parsed.withdrawn, goAheadDecides: parsed.goAheadDecides,
     });
+    // #6413: done wins when the read says both, so a withdrawn note is only
+    // the one without a "done".
+    const withdrawnNote = parsed.withdrawn && !parsed.done;
     // 6 Nov 2026 (#6395): a go-ahead the read says cannot settle it gets one
     // plain answer instead of this note again. The note would offer the same
     // Go ahead that was just refused.
     const goAheadCannot = parsed.goAheadDecides === false && !!goAhead?.by;
     const noteText = goAheadCannot
       ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep })
-      : live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
+      : withdrawnNote
+        ? live.withdrawnHomeroomText(parsed)
+        : live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
     // #6391: the note also gives the other members a set of their own.
     const suggestOthers = ["I'd like this too", "What's left to do?"]
       .map((label, i) => ({ id: `others-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
@@ -7630,7 +7720,8 @@ async function actOnVerdict({
         }).catch(() => null)
         : null;
       // #6321: a note about Homeroom itself is never `done`, so never both.
-      const threadOffer = copyOffer || (parsed.done ? await doneCloseOffer() : null);
+      // #6413: a withdrawn request gets the same close offer.
+      const threadOffer = copyOffer || (parsed.done || withdrawnNote ? await doneCloseOffer() : null);
       const noteMeta = threadOffer?.metadata
         ? { kind: 'voice', ...threadOffer.metadata }
         : (suggestActions.length && suggestFor.length
@@ -7646,6 +7737,7 @@ async function actOnVerdict({
           reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
           ...(parsed.done ? { done: true } : {}),
           ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
+          ...(withdrawnNote ? { withdrawn: true, quiet: true } : {}),
         },
       });
       await settleThreadOffer(threadOffer, posted);
@@ -7653,21 +7745,29 @@ async function actOnVerdict({
   } else if (parsed.verdict === 'empty') {
     // #6321: nothing to build because it is already there says that, not
     // "couldn't find anything to build", with the same buttons as a person
-    // note that says it. Its kind stays 'empty'.
+    // note that says it. Its kind stays 'empty'. #6413: a withdrawn request
+    // gets the same close offer.
+    const withdrawnNote = parsed.withdrawn && !parsed.done;
+    const closeWanted = parsed.done || withdrawnNote;
     const noteText = parsed.done
       ? live.personHomeroomText(parsed)
-      : require('./homeroom-bot-words').firstPerson(live.emptyText(parsed));
+      : withdrawnNote
+        ? live.withdrawnHomeroomText(parsed)
+        : require('./homeroom-bot-words').firstPerson(live.emptyText(parsed));
     if (await unchangedNote('empty', noteText, parsed.done ? 'person' : null)) {
       acted = 'unchanged';
       log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
         app: app.slug, issueNumber, verdict: parsed.verdict,
       });
     } else {
-      const closeOffer = parsed.done ? await doneCloseOffer() : null;
-      const posted = await say('empty', parsed.done ? live.personText(parsed) : live.emptyText(parsed), {
-        ...(parsed.done ? { homeroomText: noteText } : {}),
+      const closeOffer = closeWanted ? await doneCloseOffer() : null;
+      const posted = await say('empty', closeWanted ? live.personText(parsed) : live.emptyText(parsed), {
+        ...(closeWanted ? { homeroomText: noteText } : {}),
         ...(closeOffer?.metadata ? { metadata: { homeroomBot: { kind: 'voice', ...closeOffer.metadata } } } : {}),
-        dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}), ...quiet },
+        dm: {
+          reason: parsed.reason, ...(parsed.done ? { done: true } : {}),
+          ...(withdrawnNote ? { withdrawn: true, quiet: true } : {}), ...quiet,
+        },
       });
       await settleThreadOffer(closeOffer, posted);
     }
@@ -11333,6 +11433,10 @@ module.exports = {
   // #6234: whether a fix of a head ran out of time once, for the change
   // page's "trying once more" (homeroom-bot-progress.js changeBotFix).
   checksRetried,
+  // #6409: the start line's durable claim per failing head, and whether the
+  // bot's own fix already landed on an earlier one.
+  botFixLanded,
+  claimChecksStart,
   queueWait,
   queueSnapshot,
   recordReviewState,

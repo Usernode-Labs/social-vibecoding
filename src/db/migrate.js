@@ -101,6 +101,9 @@ async function migrate(config) {
   // you says "Already works" with Propose to close and the request's page
   // says why. Staging has no model, so the bot's note is stored.
   await seedStagingBotAlreadyWorks(pool);
+  // #6399's shots: a request handed back over a plan the bot could not read,
+  // which a later release made readable, so its card offers a read again.
+  await seedStagingBotOutdatedReason(pool);
   // #6271's shots: a private thread with the bot, already marked done this
   // week, so Live this week has a closed thread to show. Staging has no
   // model, so the bot's reply is stored rather than asked for.
@@ -2060,6 +2063,48 @@ async function seedStagingBotAlreadyWorks(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot already-works seeding failed', { message: err.message });
+  }
+}
+
+// #6399's shots: #6351's state, a request the bot handed back on 5 Nov 2026
+// because it could not read a plan a person posted. Homeroom can read one
+// since 6 Nov 13:05 UTC, so the page says the reason may be out of date and
+// offers to read it again. A fresh staging copy has no such record, so this
+// seeds one for the shots' member fixture (usernode-capture), obviously
+// fake, with the run's clock fixed before that release. Nothing here is a
+// signal the bot reads to decide anything, and a staging copy never acts on
+// its queue. Idempotent by request number; strictly a no-op outside staging.
+async function seedStagingBotOutdatedReason(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!apps.rows.length || !people.rows.length) return;
+    const appId = apps.rows[0].id;
+    const userId = people.rows[0].id;
+    const number = 9112;
+    const title = 'Staging demo: a request handed back over a plan the bot could not read';
+    const reason = "A design decision: the new look exists only in a person's version 3 plan, which cannot be read here.";
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, '2026-11-05T10:00:00Z', '2026-11-05T10:00:00Z'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, userId],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+      [appId, number, userId, title],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, created_at)
+       SELECT $1, $2, 'live', 'person', $3, '2026-11-05T11:19:00Z'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                           WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = 'person')`,
+      [appId, number, reason],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot out-of-date reason seeding failed', { message: err.message });
   }
 }
 
@@ -10340,11 +10385,11 @@ async function seedStagingShotsScreens(pool) {
     await pool.query(
       `INSERT INTO chat_sessions
          (id, app_id, user_id, branch_name, pr_number, pr_title, status,
-          promoted_at, reviewed_head_sha,
+          promoted_at, reviewed_head_sha, check_state,
           shots_state, shots_run_id, shots_detail, shots_updated_at)
        SELECT $1::int, 900001, u.id, 'staging-demo/three-screens', $1::int,
               '[Mock] Staging demo: three screens to compare', 'promoted',
-              NOW() - interval '1 hour', $2::varchar,
+              NOW() - interval '1 hour', $2::varchar, 'passing',
               'verified', $3::varchar, $4::jsonb, NOW()
          FROM users u
         WHERE u.username = 'staging-demo-user'
@@ -17870,6 +17915,8 @@ module.exports = {
   seedStagingBotAllowanceWarning,
   // #6306: the already-works request (run, note and bell row) the shots need.
   seedStagingBotAlreadyWorks,
+  // #6399: the handed-back request whose reason a later release lifted.
+  seedStagingBotOutdatedReason,
   seedStagingDesignThread,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,

@@ -59,9 +59,11 @@ test('ballots, rivals and close votes against the full PostgreSQL schema', { tim
     await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`, [app.id, u.id]);
   }
   await pool.query(`INSERT INTO requests (app_id, number, title, created_by) VALUES ($1, 7, 'Night mode', $2)`, [app.id, ada.id]);
+  // #6402: a change is owed a vote only once its checks passed, so every
+  // change here is a ready one; this file is about ballots, not the gate.
   const change = async (by, pr, linked, fromIssue = null) => (await pool.query(
-    `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, created_from_issue_number, pr_number, pr_title)
-     VALUES ($1, $2, 'promoted', $3::int[], $4, $5, $6) RETURNING id, thread_id`,
+    `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, created_from_issue_number, pr_number, pr_title, check_state)
+     VALUES ($1, $2, 'promoted', $3::int[], $4, $5, $6, 'passing') RETURNING id, thread_id`,
     [app.id, by.id, linked, fromIssue, pr, `Change ${pr}`])).rows[0];
   const a = await change(bob, 20, [7]);
   const b = await change(cat, 21, [7]);

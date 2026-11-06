@@ -66,6 +66,8 @@ export interface HomeroomBotMeta {
   card?: HomeroomBotCard;
   /** Homeroom bot parity, P1: what the reply looked at (./bot-looked.tsx). */
   looked?: HomeroomBotLooked;
+  /** Task 2020: a chat answer laid out as an HTML fragment, drawn in place of its words (./bot-html.tsx). */
+  html?: string;
   /** #6071: a design thread's version this message says (kind 'design_version'). */
   designVersion?: number;
   /** #6071: the screen a design thread is of (kind 'opened_design', and 1 Nov 2026 a version's and a drawn thread's line). */

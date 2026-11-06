@@ -71,6 +71,8 @@ function notes() {
     followup.checksRetryText(),
     // #6234: the fix's start line (checksFixingText), in each of its shapes.
     followup.checksFixingText({ failing: [{ name: 'Saving a list keeps it' }] }),
+    // #6409: a genuinely new attempt on a failing version.
+    followup.checksFixingAgainText(),
     followup.checksFixingText({ failing: [{ name: 'a' }, { name: 'b' }] }),
     followup.checksFixingText({ failing: [{ name: 'Saving a list keeps it' }], broken: [{ claim: 'Save works' }] }),
     followup.checksFixingText({ broken: [{ claim: 'Save works' }] }),

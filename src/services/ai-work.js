@@ -55,6 +55,7 @@ const log = require('./logger');
 const repoRef = require('./repo-ref');
 const workState = require('./work-state');
 const { updateComingSql, updateAskSql } = require('./homeroom-bot-progress');
+const { planRecordSql } = require('./request-specs');
 
 const THREADS_MAX = 80;
 const PRIVATE_MAX = 30;
@@ -170,7 +171,7 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
       FROM chat_sessions cs
      WHERE cs.thread_id = t.id AND cs.is_headless = FALSE
        -- A posted plan is no change (threads.js ITEMS_SQL says the same).
-       AND NOT (cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)
+       AND NOT ${planRecordSql('cs')}
        AND cs.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
        AND (cs.status NOT IN ('active', 'paused') OR cs.shared_at IS NOT NULL OR cs.user_id = $1)
      ORDER BY CASE cs.status WHEN 'merged' THEN 0 WHEN 'merging' THEN 1 WHEN 'promoted' THEN 2 ELSE 3 END,
@@ -389,6 +390,12 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   // stage stays the change's own; that it is theirs to fix is the viewer's.
   if (status === 'promoted' && theirs && row.needs_fix === true && !updating && state.stage !== 'building') {
     return { group: 'needs', work: stored, at: iso(row.last_activity_at || row.promoted_at) || at, fixYours: true };
+  }
+  // #6402: a change still being checked asks nobody for a vote yet. Someone
+  // who would have been asked, but is not its author or a follower, sees it
+  // under Waiting while it checks rather than losing it from every list.
+  if (state.stage === 'checking' && status === 'promoted' && wouldVote && !own && !updating) {
+    return { group: 'waiting', work: stored, at };
   }
   // One they only voted or wrote in is listed while no change of it is in
   // flight, as Waiting: it asks nothing of them, and nobody is building it.

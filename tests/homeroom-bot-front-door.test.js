@@ -306,4 +306,42 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
     }
     assert.equal(await dm.typicalMinutes(pool), 6);
   });
+
+  // #6399: #6351's hand-back reason named a limit Homeroom lifted on 6 Nov
+  // 2026 (it could not read a plan a person posted). Its card offers a read
+  // again, which queues one read paid by that person; any other reason is
+  // refused, because the page that offered it was out of date.
+  await t.test('#6399: a hand-back reason a release lifted offers one read again, and only that reason does', async () => {
+    const live = { id: plantPal.id, slug: plantPal.slug, name: plantPal.name };
+    const stale = 'A design decision: the new look exists only in evan\'s version 3 plan, which cannot be read here.';
+    const filed = async (n, at) => {
+      await pool.query(
+        `INSERT INTO issues (app_id, github_issue_number, title, status, created_at)
+         VALUES ($1, $2, 'Design: the bot page', 'open', '2026-11-05T10:00:00Z')`,
+        [plantPal.id, n],
+      );
+      await pool.query(
+        `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, created_at)
+         VALUES ($1, $2, 'live', 'person', $3, $4)`,
+        [plantPal.id, n, stale, at],
+      );
+    };
+    await filed(40, '2026-11-05T11:19:00Z');
+    const again = await dm.askBotToBuild(pool, { app: live, user: maya, issueNumber: 40, readAgain: true });
+    assert.equal(again.ok, true);
+    const { rows } = await pool.query(
+      'SELECT reason, requested_by, payer_user_id FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 40', [plantPal.id],
+    );
+    assert.deepEqual(rows, [{ reason: 'read_again', requested_by: maya.id, payer_user_id: maya.id }],
+      'one read, first in line, paid by the person who asked');
+
+    // The same words given after the fix: the reason is current, not out of date.
+    await filed(41, '2026-11-06T14:00:00Z');
+    const refused = await dm.askBotToBuild(pool, { app: live, user: maya, issueNumber: 41, readAgain: true });
+    assert.deepEqual([refused.ok, refused.status, refused.code], [false, 409, 'not_outdated']);
+    const { rows: nothing } = await pool.query(
+      'SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 41', [plantPal.id],
+    );
+    assert.equal(nothing.length, 0, 'nothing is queued for a reason that is not out of date');
+  });
 });

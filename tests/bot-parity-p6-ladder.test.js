@@ -248,6 +248,8 @@ function harness({ ladder = null, carry = null, result = NOT_CHANGE } = {}) {
       }
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: 0 }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
+      // #6409: the fix's start line claims its failing head before saying it.
+      if (/INSERT INTO events \(app_id, session_id, event_type, metadata\)/.test(s)) return { rows: [{ id: 4242 }] };
       if (/FROM platform_settings/.test(s)) return { rows: [{ key: 'homeroom_bot_mode', value: 'shadow' }] };
       return { rows: [] };
     },

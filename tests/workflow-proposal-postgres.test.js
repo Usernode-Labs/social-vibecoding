@@ -253,8 +253,12 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     assert.deepEqual(lines.map((l) => l.msg_type), ['vote']);
     assert.match(lines[0].content, /promoted PR #\d+: Make it better for voting/);
     const { rows: notes } = await pool.query('SELECT user_id, kind FROM notifications WHERE session_id = $1 ORDER BY id', [s.id]);
-    assert.deepEqual(notes.map((n) => [n.user_id, n.kind]), [[voter.id, 'pr_proposed'], [s.owner.id, 'connector_submitted']],
-      'the vote requests and the owner\'s "your agent put it up", in the move\'s transaction (bug 12)');
+    // #6402: the vote request no longer goes out at promotion. It waits for
+    // the checks to settle passing, which the preview machine's `settled`
+    // write triggers (tests/needs-feed-checks-ready-postgres.test.js pins
+    // that); only the owner's "your agent put it up" is in this move.
+    assert.deepEqual(notes.map((n) => [n.user_id, n.kind]), [[s.owner.id, 'connector_submitted']],
+      'the owner\'s "your agent put it up", in the move\'s transaction (bug 12); the vote requests wait for the checks');
     assert.equal((await pool.query(`SELECT 1 FROM events WHERE session_id = $1 AND event_type = 'pr_promoted'`, [s.id])).rowCount, 1);
     const [kick] = await sentTo(s, 'preview');
     assert.equal(kick.type, 'RevisionSubmitted');

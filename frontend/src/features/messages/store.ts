@@ -71,10 +71,18 @@ export interface BotDoing {
   project?: string;
   /** Homeroom bot parity, P1: the answer so far, while it is written (kind 'writing'). */
   text?: string;
+  /**
+   * #6405: where `text` starts in the whole answer, when the server sent only
+   * its newest part (kind 'writing'). Absent when `text` is all of it.
+   */
+  from?: number;
 }
 
 /** The longest answer-so-far a working card shows (the server sends its newest 1800 characters). */
 export const MAX_BOT_DRAFT_CHARS = 2000;
+
+/** #6405: the most of an answer the card holds, the server's own reply limit (homeroom-bot-mayor.js MAX_REPLY_CHARS). */
+export const MAX_BOT_HELD_DRAFT_CHARS = 8000;
 
 /** The `doing` of a typing event, or null: only a kind word, a request number, a short name, and the answer being written. */
 export function botDoingOf(raw: unknown): BotDoing | null {
@@ -85,11 +93,14 @@ export function botDoingOf(raw: unknown): BotDoing | null {
   const number = Number(value.number);
   const project = typeof value.project === 'string' ? value.project.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
   const text = kind === 'writing' && typeof value.text === 'string' ? value.text.trim().slice(-MAX_BOT_DRAFT_CHARS) : '';
+  // #6405: where a cut answer's newest words start in the whole answer.
+  const from = kind === 'writing' && Number.isSafeInteger(value.from) && Number(value.from) > 0 ? Number(value.from) : null;
   return {
     kind,
     ...(Number.isSafeInteger(number) && number > 0 ? { number } : {}),
     ...(project ? { project } : {}),
     ...(text ? { text } : {}),
+    ...(text && from !== null ? { from } : {}),
   };
 }
 
@@ -102,11 +113,38 @@ export function botDoingOf(raw: unknown): BotDoing | null {
  * between its words and "Thinking"/"Reading request #…". The draft leaves
  * with the entry when typing stops, which is also when the bot's message
  * takes the card's place.
+ *
+ * #6405: the answer only ever grows. A tail the server cut from part-way
+ * through is stitched under the words already held (`from`), so the card
+ * keeps the answer's first word instead of sliding its opening with every
+ * update; and a shorter rewrite (the correction pass's "Ref", at first)
+ * leaves the fuller answer up until it overtakes it. A step with no words of
+ * its own keeps the last one named, rather than dropping back to "Thinking".
  */
 export function botTypist(prior: Typist | undefined, shown: string, doing: BotDoing | null): Typist {
+  const priorDraft = prior?.draft || '';
+  let draft = priorDraft;
   const written = doing?.kind === 'writing' && doing.text ? doing.text : '';
-  const draft = written || prior?.draft || '';
-  return { name: shown, unnamed: false, bot: true, doing, ...(draft ? { draft } : {}) };
+  if (written) {
+    const from = typeof doing?.from === 'number' ? doing.from : null;
+    if (from !== null && priorDraft.length >= from) {
+      // A cut tail continues the answer held.
+      draft = priorDraft.slice(0, from) + written.replace(/^…\s*/, '');
+    } else if (from !== null && priorDraft.length >= MAX_BOT_HELD_DRAFT_CHARS) {
+      // Past what the card holds: keep all of it, rather than drop to a tail.
+      draft = priorDraft;
+    } else {
+      // A whole answer, or one whose tail starts past what this reader has.
+      draft = written;
+    }
+    // Never shrink: a rewrite shorter than the words held, and the start of
+    // them, leaves the held words in place.
+    if (priorDraft && draft.length < priorDraft.length && priorDraft.startsWith(draft)) draft = priorDraft;
+    draft = draft.slice(0, MAX_BOT_HELD_DRAFT_CHARS);
+  }
+  // The furthest step named this turn, kept through a wordless one.
+  const held = doing ?? prior?.doing ?? null;
+  return { name: shown, unnamed: false, bot: true, doing: held, ...(draft ? { draft } : {}) };
 }
 
 interface InternalState extends MessagesSnapshot {
@@ -1375,8 +1413,7 @@ export function isMobile(): boolean {
 
 /**
  * One pane at a time: a phone. (#4229's strip too narrow for both is gone:
- * on a desktop the list is in the sidebar, never beside the conversation,
- * ./index.tsx `messages-list-in-rail`.)
+ * from 768px the list sits beside the conversation, ./index.tsx.)
  */
 function listAside(): boolean {
   return isMobile();

@@ -333,6 +333,13 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   assert.deepEqual(voice.OFFER_WORDS.copy_request, { yes: 'Put it on Homeroom\'s board', no: 'Keep it here only' });
 });
 
+test('#6413: a close or withdraw ask in a request gets the close vote, and an ask it cannot do is answered', () => {
+  const tools = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false });
+  const prompt = voice.systemPrompt({ app: { slug: 'todo', name: 'Todo' }, place: { type: 'issue', ref: 1 }, tools });
+  assert.match(prompt, /When the person who asked for this request, or somebody who decides on the project, asks to close or withdraw it, offer the close vote with their words as why, and never start_request\./);
+  assert.match(prompt, /When somebody asks for something none of your tools can do, say so plainly and say what you can do instead, rather than reading the request again\./);
+});
+
 test('#6270: a stand-in word is not an answer, and a short real one is', () => {
   for (const text of ['placeholder', 'TODO', '[TBD]', '...', 'text', 'Reply', '  ???  ', '']) {
     assert.equal(voice.isStandIn(text), true, JSON.stringify(text));

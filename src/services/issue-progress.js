@@ -1,5 +1,7 @@
 'use strict';
 
+const { planRecordSql } = require('./request-specs');
+
 // WHICH ISSUES SOMEBODY IS ACTUALLY WORKING ON, and the two rules that
 // decide it. Both halves are described on `issue_claims` in schema.sql:
 //
@@ -92,7 +94,7 @@ async function inProgressIssueNumbers(pool, appId) {
        FROM chat_sessions cs
       WHERE cs.app_id = $1 AND cs.is_headless = FALSE
         AND cardinality(cs.linked_issues) > 0
-        AND NOT (cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)
+        AND NOT ${planRecordSql('cs')}
         AND (cs.status IN ('active','promoted','merging')
              OR (cs.status = 'paused'
                  AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,

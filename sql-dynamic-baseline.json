@@ -432,13 +432,6 @@
     {
       "source": "src/routes/issues.js",
       "kind": "structural-template",
-      "fingerprint": "35bd8a9e60cab37de9c1",
-      "count": 1,
-      "preview": "`SELECT UNNEST(cs.linked_issues) AS n, cs.id, cs.user_id, cs.status, cs.shared_at, cs.last_activity_at, cs.created_at, u.username, ${workedOnSql()} AS worked_on"
-    },
-    {
-      "source": "src/routes/issues.js",
-      "kind": "structural-template",
       "fingerprint": "5ffb4acc0d1788916b3d",
       "count": 1,
       "preview": "`SELECT (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt, MAX(created_at) AS last_at FROM (SELECT msg_type, created_at FROM chat_messages WHERE app_id"
@@ -449,6 +442,20 @@
       "fingerprint": "890834a46a89a5e0099b",
       "count": 1,
       "preview": "`SELECT thread_ref AS n, (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt, MAX(created_at) AS last_at FROM (SELECT thread_ref, msg_type, created_at FR"
+    },
+    {
+      "source": "src/routes/issues.js",
+      "kind": "structural-template",
+      "fingerprint": "c0bc113c71f01ab97e4d",
+      "count": 1,
+      "preview": "`SELECT UNNEST(cs.linked_issues) AS n, cs.id, cs.user_id, cs.status, cs.shared_at, cs.last_activity_at, cs.created_at, u.username, ${workedOnSql()} AS worked_on"
+    },
+    {
+      "source": "src/routes/issues.js",
+      "kind": "structural-template",
+      "fingerprint": "ec077e0c08a5b8a73b7c",
+      "count": 1,
+      "preview": "`SELECT DISTINCT ON (created_from_issue_number) created_from_issue_number AS n, id FROM chat_sessions WHERE app_id = $1 AND user_id = $2 AND created_from_issue_"
     },
     {
       "source": "src/routes/kudos.js",
@@ -572,6 +579,13 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
+      "fingerprint": "b8a81527854525d2e351",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
       "fingerprint": "ba8110c429c6037d85c2",
       "count": 1,
       "preview": "`SELECT s.version, s.built_at FROM chat_session_specs s WHERE s.session_id = $1 AND ($2::int = $3::int OR ${specVersionSharedVisibilitySql('s', '$3')}) ORDER BY"
@@ -589,13 +603,6 @@
       "fingerprint": "e16f1722cca1c2b80269",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
-      "fingerprint": "fabaee96d9bc2d5b41ea",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_"
     },
     {
       "source": "src/routes/status.js",
@@ -1513,6 +1520,20 @@
       "fingerprint": "b14e827de5d3100c2176",
       "count": 1,
       "preview": "`SELECT ${ACCESS_COLUMNS}, repo_url FROM apps`"
+    },
+    {
+      "source": "src/services/issue-progress.js",
+      "kind": "structural-template",
+      "fingerprint": "c872ccc65f4e3789ee00",
+      "count": 1,
+      "preview": "`SELECT DISTINCT UNNEST(cs.linked_issues) AS n FROM chat_sessions cs WHERE cs.app_id = $1 AND cs.is_headless = FALSE AND cardinality(cs.linked_issues) > 0 AND N"
+    },
+    {
+      "source": "src/services/issue-proposal-ref.js",
+      "kind": "structural-template",
+      "fingerprint": "0b14fc3a04841591f8ea",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.status, cs.user_id, cs.shared_at, cs.pr_number, cs.pr_url, cs.linked_issues, cs.created_from_issue_number, cs.last_activity_at, cs.created_at,"
     },
     {
       "source": "src/services/leaderboard-users.js",
@@ -2469,7 +2490,7 @@
     {
       "source": "src/workflow/rules/proposal-notifications.ts",
       "kind": "structural-template",
-      "fingerprint": "43955023a1d61bb8b386",
+      "fingerprint": "38c52b169fafc0016712",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind) SELECT u, $2, $3, $4, 'pr_proposed' FROM UNNEST($1::int[]) AS u WHERE NOT EXISTS "
     },
