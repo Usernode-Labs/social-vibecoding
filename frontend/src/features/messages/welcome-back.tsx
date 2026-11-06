@@ -111,7 +111,7 @@ export function busiestProject(
   names: Record<string, string> = {},
 ): string | null {
   const known = new Map<string, string>(Object.entries(names));
-  const remember = (row: { app: { slug: string; name: string } | null } | null | undefined) => {
+  const remember = (row: { app?: { slug: string; name: string } | null } | null | undefined) => {
     if (row?.app) known.set(row.app.slug, row.app.name);
   };
   for (const row of [...(work?.live || []), ...(work?.needs || []), ...(work?.next || []), ...(work?.waiting || []), ...(work?.private || [])]) remember(row);

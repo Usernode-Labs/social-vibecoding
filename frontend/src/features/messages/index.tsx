@@ -1,6 +1,6 @@
 import { openReport } from '../dialogs/report';
 import {
-  Fragment, memo, useDeferredValue, useCallback, useEffect, useMemo, useRef, useState,
+  Fragment, createContext, memo, useDeferredValue, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -1788,14 +1788,23 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
 
 
 /**
+ * #6426: whether this embedded thread is Main Chat, where the "Welcome
+ * back" card shows. EmbeddedConversation provides it and ConversationThread
+ * reads it here, so the thread's signature and its one-copy gate stay as
+ * #3494 left them.
+ */
+const MainChatContext = createContext(false);
+
+/**
  * The open conversation. `embedded` is the copy a community's page mounts
  * (#3494, EmbeddedConversation below): the same thread, drawn without this
  * screen's header because the page's own header and tabs already name it.
  * Exactly one copy draws the thread at a time — the store's route says
  * which — so the ids its rows carry are never on the page twice.
  */
-function ConversationThread({ embedded = false, mainChat = false }: { embedded?: boolean; mainChat?: boolean } = {}) {
+function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const t = useMessages('messages');
+  const mainChat = useContext(MainChatContext);
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
@@ -3124,11 +3133,13 @@ export function EmbeddedConversation({ conversationId, active, at = null, mainCh
   // #6071 follow-up: a blank thread from Homeroom bot's "+", in the thread's place.
   const blank = useNewThread(conversationId) && here && !snap.route.threadRootId;
   return (
-    <div className={`messages-layout messages-layout-embedded${here && (snap.route.threadRootId || blank) ? ' messages-has-reply-thread' : ''}${blank ? ' messages-has-blank-thread' : ''}`} data-main-chat={mainChat ? '' : undefined}>
-      {here ? <ConversationThread embedded mainChat={mainChat} /> : <ChannelLoading />}
-      {here && snap.route.threadRootId ? <ReplyThreadPanel inMain={mainChat} onBack={onBack} /> : null}
-      {blank ? <NewThreadPanel conversationId={conversationId} /> : null}
-    </div>
+    <MainChatContext.Provider value={mainChat}>
+      <div className={`messages-layout messages-layout-embedded${here && (snap.route.threadRootId || blank) ? ' messages-has-reply-thread' : ''}${blank ? ' messages-has-blank-thread' : ''}`} data-main-chat={mainChat ? '' : undefined}>
+        {here ? <ConversationThread embedded /> : <ChannelLoading />}
+        {here && snap.route.threadRootId ? <ReplyThreadPanel inMain={mainChat} onBack={onBack} /> : null}
+        {blank ? <NewThreadPanel conversationId={conversationId} /> : null}
+      </div>
+    </MainChatContext.Provider>
   );
 }
 

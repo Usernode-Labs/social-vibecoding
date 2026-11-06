@@ -1688,7 +1688,8 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
      side (and the 720px reading column on a wide Main), so the card takes
      the same inset. */
   margin: 0 12px 8px;
-  padding: 12px 44px 12px 14px;
+  padding-block: 12px;
+  padding-inline: 14px 44px;
   border-radius: 22px;
   background: var(--messages-surface);
   box-shadow: var(--messages-disc-shadow), inset 0 0 0 1px var(--app-sheet-line);
@@ -1710,9 +1711,13 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   overflow-x: auto;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-  /* A soft right edge says the row goes on. */
+  /* A soft edge says the row goes on, at the inline end of the text. */
   -webkit-mask-image: linear-gradient(to right, #000 85%, transparent);
   mask-image: linear-gradient(to right, #000 85%, transparent);
+}
+[dir='rtl'] .messages-welcome-chips {
+  -webkit-mask-image: linear-gradient(to left, #000 85%, transparent);
+  mask-image: linear-gradient(to left, #000 85%, transparent);
 }
 .messages-welcome-chips::-webkit-scrollbar { display: none; }
 .messages-welcome-chips button {
@@ -1738,7 +1743,7 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-welcome-dismiss {
   position: absolute;
   top: 6px;
-  right: 6px;
+  inset-inline-end: 6px;
   display: flex;
   width: 32px;
   height: 32px;
@@ -1752,8 +1757,8 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-welcome-dismiss:hover { background: var(--messages-surface-2); }
 @media (max-width: 767px) {
   /* On a phone the chips run off the card's edge, behind the 44px ×. */
-  .messages-welcome-chips { margin-right: -44px; }
-  .messages-welcome-dismiss { top: 0; right: 0; width: 44px; height: 44px; }
+  .messages-welcome-chips { margin-inline-end: -44px; }
+  .messages-welcome-dismiss { top: 0; inset-inline-end: 0; width: 44px; height: 44px; }
 }
 /* Main Chat's 720px reading column (see `.chat-composer-bar` below): the
    card keeps the box's inset at every width. */
