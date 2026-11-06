@@ -2042,7 +2042,9 @@ const ACTION_COMPLETIONS = {
   // Only pr_proposed: revision_recheck asks for a re-vote and stale_pr is the
   // author's warning, and looking at a card resolves neither. Triggered by
   // POST /api/notifications/read { session_id } from the dev board.
-  proposal_opened: { kinds: ['pr_proposed'], scope: 'session_id' },
+  // #6441: and its "ready to try", which opening the change's page or its
+  // before-and-after answers the same way.
+  proposal_opened: { kinds: ['pr_proposed', 'build_ready'], scope: 'session_id' },
 };
 
 // The scope columns the registry is allowed to target. A defensive

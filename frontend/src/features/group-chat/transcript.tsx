@@ -849,6 +849,10 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       grouped={grouped}
       gutter={grouped ? <span className="gc-msg-gutter-time" title={msg.timeTitle}>{timeOfDay(msg.at) || msg.time}</span> : undefined}
       data-msg-id={msg.id ?? ''}
+      // #6441: a dotted message on screen has been seen. The transcript's
+      // observer (TranscriptRows) reads these rows back by this attribute and
+      // clears the dot without waiting for a click.
+      data-gc-unread={msg.unread ? '' : undefined}
       data-username={msg.username}
       data-username-missing={msg.usernameMissing ? '' : undefined}
       // #2236: only when set, so an ordinary row's attribute set is exactly
@@ -1563,6 +1567,46 @@ export function TranscriptRows({ view, source }: {
   const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message' && !m.openApp)
     ? view.lead.quiet
     : null;
+  // #6441: SEEING IT READS IT. A message with an unread dot that is (mostly)
+  // on screen while the tab is in front has been seen, so its dot clears and
+  // the bell drops by one without a click. One observer per transcript,
+  // over the rows already drawn with `data-gc-unread`; it is re-armed when
+  // the message list changes, which is how a reply that arrives while the
+  // thread is open is read too. A row scrolled out of view, or a background
+  // tab, reads nothing: the visibility check is repeated when the tab comes
+  // back, in case the observer's own callback did not fire again.
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof IntersectionObserver !== 'function') return undefined;
+    const nodes = Array.from(document.querySelectorAll('[data-gc-unread]'));
+    if (!nodes.length) return undefined;
+    const seen = new Set<number>();
+    const showing = new Set<Element>();
+    const read = (el: Element) => {
+      showing.delete(el);
+      observer.unobserve(el);
+      const id = Number(el.getAttribute('data-msg-id'));
+      if (!Number.isSafeInteger(id) || id <= 0 || seen.has(id)) return;
+      seen.add(id);
+      controller()?._clearMessageDot?.(id);
+    };
+    const flush = () => {
+      if (document.visibilityState === 'hidden') return;
+      for (const el of [...showing]) read(el);
+    };
+    const observer = new IntersectionObserver((records) => {
+      for (const record of records) {
+        if (record.isIntersecting && record.intersectionRatio >= 0.6) showing.add(record.target);
+        else showing.delete(record.target);
+      }
+      flush();
+    }, { threshold: 0.6 });
+    for (const node of nodes) observer.observe(node);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', flush);
+      observer.disconnect();
+    };
+  }, [view.messages]);
   // The general chat's "New" line: above the first message after where
   // reading stood when the channel opened (`lead.unread`), or above the
   // first row drawn after it when that message is not drawn itself. The

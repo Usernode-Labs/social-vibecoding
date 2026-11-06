@@ -111,6 +111,9 @@ async function migrate(config) {
   // #6426's shots: Main Chat shows "Welcome back" after a day away, so the
   // capture member's chat with the bot has a visit old enough to show it.
   await seedStagingMainChatLastVisit(pool);
+  // #6441's shots: three requests gone live within an hour, so the bell's
+  // Unread shows them folded into one row that lists each.
+  await seedStagingFoldedLiveNotifications(pool);
   // #6261's shots: a design thread with a version in the capture member's
   // chat, for the comment picture's design frames.
   await seedStagingDesignThread(pool);
@@ -2120,6 +2123,59 @@ async function seedStagingBotOutdatedReason(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot out-of-date reason seeding failed', { message: err.message });
+  }
+}
+
+// #6441's shots: three of the capture member's requests gone live within an
+// hour of each other, so the bell's Unread shows the folded "3 of your
+// requests went live" row with each one listed under it. A fresh staging
+// copy has no such news, and staging runs no bot to make it, so the rows the
+// bot would have rung are seeded, worded by the service that words the real
+// ones. Obviously fake, for the shots' member fixture only (usernode-capture),
+// and nothing here is a signal the code reads to decide anything. Idempotent
+// by the rows' own "Staging demo:" detail; strictly a no-op outside staging.
+async function seedStagingFoldedLiveNotifications(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query(
+      'SELECT id, name, slug FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1',
+    );
+    const people = await pool.query(
+      `SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')`,
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    const app = apps.rows[0];
+    if (!app || !member || !bot) return;
+    const { botNotificationDetail } = require('../services/homeroom-bot-notify-copy');
+    const rows = [
+      { number: 9201, minutesAgo: 3, title: 'Staging demo: a swap calendar for the group' },
+      { number: 9202, minutesAgo: 5, title: 'Staging demo: sort the seed box by season' },
+      { number: 9203, minutesAgo: 8, title: 'Staging demo: a reminder before the next swap' },
+    ];
+    for (const row of rows) {
+      const detail = botNotificationDetail({
+        moment: 'live',
+        said: 'live',
+        appName: app.name || app.slug,
+        appSlug: app.slug,
+        issueNumber: row.number,
+        requestTitle: row.title,
+      });
+      await pool.query(
+        `INSERT INTO notifications
+           (user_id, app_id, source_user_id, kind, detail, read_at, created_at)
+         SELECT $1::int, $2::int, $3::int, 'build_live', $4::varchar, NULL,
+                NOW() - make_interval(mins => $5::int)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM notifications n
+             WHERE n.user_id = $1 AND n.kind = 'build_live' AND n.detail = $4::varchar
+          )`,
+        [member.id, app.id, bot.id, detail, row.minutesAgo],
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging folded "went live" seeding failed', { message: err.message });
   }
 }
 
@@ -18366,6 +18422,8 @@ module.exports = {
   seedStagingBotAlreadyWorks,
   // #6399: the handed-back request whose reason a later release lifted.
   seedStagingBotOutdatedReason,
+  // #6441: the folded "went live" rows the bell's Unread shows.
+  seedStagingFoldedLiveNotifications,
   seedStagingDesignThread,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,

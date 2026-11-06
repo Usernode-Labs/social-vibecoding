@@ -143,6 +143,10 @@ function useChangeViews(items: ThreadItem[]): Array<ChangeView | null> {
   useEffect(() => {
     if (!items.length) return undefined;
     const abort = new AbortController();
+    // #6441: a change's page is the request's page now, so a change drawn
+    // here has been seen: its "ready to try" leaves the bell. The call is a
+    // no-op while nothing is unread.
+    for (const item of items) window.Notifications?.markProposalSeen?.(item.id);
     for (const item of items) {
       readChangeDetail({ id: item.id, status: item.status }, false, abort.signal)
         .then((row) => { if (!abort.signal.aborted && row) setRows((was) => ({ ...was, [item.id]: row })); })
