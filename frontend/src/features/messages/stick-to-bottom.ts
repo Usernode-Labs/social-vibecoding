@@ -159,9 +159,12 @@ export function attachStickToBottom(
       if (pinned.current && !isNearBottom(el, 1)) follow();
       return;
     }
-    // Our own follow, delivered after the content grew: still pinned.
-    if (pinned.current && followedAt !== null && el.scrollTop >= followedAt) return;
     pinned.current = atPresent.current && isNearBottom(el);
+    // Our own follow, delivered after the content grew past where it put the
+    // reader: not the reader leaving the bottom, so it stays pinned. This
+    // runs after the assignment above so the reader's own scroll, which is
+    // always above that point, keeps un-pinning exactly as it did.
+    if (!pinned.current && atPresent.current && followedAt !== null && el.scrollTop >= followedAt) pinned.current = true;
   };
   el.addEventListener('scroll', onScroll, { passive: true });
   const Sizes = env.ResizeObserver;
