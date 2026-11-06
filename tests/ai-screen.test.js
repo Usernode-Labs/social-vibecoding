@@ -1705,7 +1705,14 @@ test('a preview beside the thread: both edges drag, each the width of the column
   // Each handle sits on its own line, the pane's hairline it drags (#6397).
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) #ai-screen\[data-ai-preview="three"\] #ai-main-divider \{\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(css, /#ai-preview-divider \{\s+--divider-at: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
-  assert.doesNotMatch(css, /--divider-at:[^;]*\+ 8px/, 'no edge sits in the gutter any more');
+  // #6447: below 1024px the two sheets are close enough that the list's 16px
+  // gutter is the gap you see, so the handle is centred in it. That media
+  // block is the one edge that adds 8px; every other edge stays on its pane's
+  // hairline.
+  const mobileGutter = /@media \(max-width: 1023\.98px\) \{\s*body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\s*\}\s*\}/;
+  assert.match(css, mobileGutter, 'below 1024px the handle sits halfway across the gap');
+  assert.doesNotMatch(css.replace(mobileGutter, ''), /--divider-at:[^;]*\+ 8px/,
+    'no other edge sits in the gutter any more');
   // The preview's own divider, not drawn where the preview is the whole screen.
   assert.match(src, /\{layout === 'full' \? null : \(\s+<SidePanelDivider\s+panelRef=\{previewRef\}\s+shown=\{columnOpen\}\s+id="ai-preview-divider"\s+controls="ai-preview-pane"\s+widthKey=\{AI_PREVIEW_WIDTH_KEY\}\s+probe=\{previewProbe\}/);
   assert.match(src, /const threeUp = detailHere && layout === 'three';/);

@@ -25548,6 +25548,19 @@ html.dark .messages-inbox-change-tile {
 body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
   --divider-at: calc(var(--ai-main-w) + var(--ai-edge, 0px));
 }
+/* IN THE MIDDLE OF THE GAP (#6447). Below 1024px the two sheets are close,
+   so the list's 16px gutter is the gap you see between them, and the handle
+   on the pane's edge read as stuck to the column. Half of that gutter (8px)
+   toward the list puts the line, its bar and the touch grip halfway across
+   the empty space. A desktop keeps the pane's own edge above: its gap is
+   wide and a line in it would float. Same specificity as that rule, so
+   source order decides, and this block stays before the three and halves
+   rules below so those still win. */
+@media (max-width: 1023.98px) {
+  body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
+    --divider-at: calc(var(--ai-main-w) + var(--ai-edge, 0px) + 8px);
+  }
+}
 /* #6394: with a plan open beside the page the panel holds, the panel's edge
    is the thread's edge of three columns, on the line where the panel begins.
    In halves the list has stepped aside and the preview's own handle is the
