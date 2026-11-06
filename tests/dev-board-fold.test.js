@@ -1741,7 +1741,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // that project's chip. The checks of the removed Workshop lists and Me ›
   // Your work were retargeted in place; the address is a route of its own,
   // so it has no check to fold into.
-  checkCap.assertPinned(DAPP.tests.length, 749);
+  //
+  // 749 → 750: +1 (One Home follow-up, #6361) the places nested under a
+  // community's row in the desktop sidebar come back, and their check with
+  // them (the hub still lists them too).
+  checkCap.assertPinned(DAPP.tests.length, 750);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
