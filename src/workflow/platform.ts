@@ -802,6 +802,14 @@ export async function botNotOwed(db: Db, p: { appId: number; issueNumber: number
   }, { requestKey: p.key, source: BOT_SOURCE('refresh'), appId: Number(p.appId) });
 }
 
+// #6377: the payer's week has room again (a weekly limit raised or cleared, a
+// charge refunded): what was held for its building time may look again now.
+export async function botAllowanceFreed(db: Db, p: { appId: number; issueNumber: number; key: string }): Promise<void> {
+  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'AllowanceFreed', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber) } as any,
+  }, { requestKey: p.key, source: BOT_SOURCE('allowance'), appId: Number(p.appId) });
+}
+
 // A person wrote on a request's thread (in the statement's transaction).
 export async function botActivity(db: Db, p: { appId: number; issueNumber: number; messageId?: number | null }): Promise<void> {
   await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {

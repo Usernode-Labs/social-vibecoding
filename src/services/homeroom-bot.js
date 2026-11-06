@@ -1198,6 +1198,73 @@ async function appCapsAfter(pool, patch) {
   return { ok: true, appCaps: mergeAppCaps(parseAppCaps(row?.value), byId) };
 }
 
+/**
+ * #6377: a week of building time got room again (a weekly limit raised or
+ * set to 0, a person given more of their own, a charge refunded): every
+ * request held for its payer's week whose payer is now under their cap is
+ * told through the bot-request machine, so it is read on the lane's next
+ * pass instead of next Monday. A request still over stays held, its words
+ * unchanged. The queue row is that machine's projection, so the hold is
+ * cleared by its event, never written here. Best-effort at its callers: what
+ * it throws never fails the save that freed the room.
+ */
+async function releaseAllowanceHolds(pool, { deps = {} } = {}) {
+  const settings = await readSettings(pool);
+  const dm = deps.dm || require('./homeroom-bot-dm');
+  const platformSvc = deps.platform || platform();
+  const { rows } = await pool.query(
+    `SELECT w.app_id,
+            (w.data->>'issueNumber')::int AS issue_number,
+            w.data->'owed'->>'heldUntil' AS owed_held_until,
+            w.data->'build'->>'heldUntil' AS build_held_until,
+            w.data->'owed'->>'payer' AS owed_payer,
+            (w.data->'build'->>'runId')::int AS build_run_id,
+            (w.data->'owed') IS NOT NULL AS has_owed
+       FROM wf_instances w
+      WHERE w.machine = $1
+        AND ((w.data->'owed'->>'heldUntil' IS NOT NULL AND (w.data->'owed'->>'heldUntil')::timestamptz > NOW())
+          OR (w.data->'build'->>'heldUntil' IS NOT NULL AND (w.data->'build'->>'heldUntil')::timestamptz > NOW()))
+      ORDER BY COALESCE((w.data->'owed'->>'priority')::int, 99) ASC,
+               (w.data->'owed'->>'enqueuedAt') ASC NULLS LAST,
+               w.app_id, issue_number`,
+    [loopRules.BOT_REQUEST],
+  );
+  // One allowance check per person, however many requests they hold.
+  const over = new Map();
+  let released = 0;
+  for (const r of rows) {
+    const appId = Number(r.app_id);
+    const issueNumber = Number(r.issue_number);
+    // Whose week it is: the debt's payer, else the held build's run's
+    // payer, else the request's requester.
+    let payer = r.owed_payer != null ? Number(r.owed_payer) : null;
+    if (!payer && r.build_held_until && r.build_run_id) {
+      const { rows: [run] = [] } = await pool.query(
+        'SELECT payer_user_id FROM homeroom_bot_runs WHERE id = $1', [Number(r.build_run_id)]);
+      payer = run?.payer_user_id != null ? Number(run.payer_user_id) : null;
+    }
+    if (!payer) {
+      const requester = await dm.requesterOf(pool, appId, issueNumber).catch(() => null);
+      payer = requester?.userId ?? null;
+    }
+    const key = payer == null ? 'none' : String(payer);
+    if (!over.has(key)) {
+      // A check that fails keeps the hold: the safe side is Monday, not a
+      // release the week may not allow.
+      over.set(key, await dm.overWeeklyAllowance(pool, settings, payer).catch(() => true));
+    }
+    if (over.get(key)) continue;
+    await platformSvc.botAllowanceFreed(pool, {
+      appId, issueNumber, key: `allowance:${appId}:${issueNumber}:${crypto.randomUUID()}`,
+    });
+    // A freed build with no debt has no queue row to rewrite, so its own
+    // transition marks nothing: mark the request for the screens here.
+    if (!r.has_owed) await pool.query('SELECT work_state_mark($1, $2, NULL)', [appId, issueNumber]);
+    released += 1;
+  }
+  return released;
+}
+
 async function writeSettings(pool, patch, actorId, config = {}) {
   const valid = validateSettingsPatch(patch);
   if (!valid.ok) return valid;
@@ -1260,6 +1327,13 @@ async function writeSettings(pool, patch, actorId, config = {}) {
   if (valid.updates.some(([key]) => [KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_READS_PER_APP, KEY_PAUSED_APPS, KEY_APP_CAPS].includes(key))
       || (modeAfter && modeAfter !== 'off' && modeAfter !== modeBefore)) {
     await platform().botRefresh(null).catch((err) => log.warn('homeroom-bot', 'Could not tell the bot\'s lane its settings changed', { err: err.message }));
+  }
+  // #6377: a week given room again (a weekly limit raised or set to 0)
+  // releases now what that week held back. Best-effort: a release that fails
+  // never fails the save that freed the room.
+  if (valid.updates.some(([key]) => key === KEY_USER_WEEKLY_CENTS || key === KEY_ADMIN_WEEKLY_CENTS)) {
+    await releaseAllowanceHolds(pool).catch((err) =>
+      log.warn('homeroom-bot', 'Could not release requests held for a week that got room', { err: err.message }));
   }
   return { ok: true };
 }
@@ -10904,6 +10978,7 @@ module.exports = {
   pauseIdleSession,
   readSettings,
   writeSettings,
+  releaseAllowanceHolds,
   validateSettingsPatch,
   validateAppCapsPatch,
   parseSettings,
