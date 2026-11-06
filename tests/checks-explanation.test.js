@@ -102,6 +102,13 @@ test('tests main is already failing are read as not this change\'s', () => {
   assert.equal(explainer.isMainFailure(onMain, [{ file: 'tests/other.test.js', test: onMain.test }]), false);
   assert.equal(explainer.isMainFailure(onMain, [{ file: null, test: onMain.test }]), true);
   assert.equal(explainer.isMainFailure(onMain, [{ file: onMain.file, test: 'another test' }]), false);
+  // #6388: main's own line is in the input only when this run actually fails
+  // one of main's tests, never merely because main is red elsewhere.
+  assert.equal(explainer.marksMain([PASSED, UNIT], [onMain]), true);
+  assert.equal(explainer.marksMain([PASSED, DECLARED], [onMain]), false, 'declared checks never run on main');
+  assert.equal(explainer.marksMain([PASSED, UNIT], []), false);
+  const elsewhere = explainer.explanationInput([PASSED, DECLARED], { mainFailures: [onMain], mainSha: 'a'.repeat(40) });
+  assert.ok(!elsewhere.includes('already failing on main'), 'main red elsewhere is not this run\'s line');
 });
 
 test('a sentence about main\'s failure is written again when main\'s red moves', async () => {
@@ -115,6 +122,7 @@ test('a sentence about main\'s failure is written again when main\'s red moves',
     assert.equal(await explainer.explain(pool, SESSION, { now: NOW, main: main('a'.repeat(40)) }), 'Every message needs a Spanish version.');
     assert.equal(calls.length, 1);
     assert.match(calls[0].input, /already failing on main/);
+    assert.equal(calls[0].mainMarked, true, 'the model is told main is marked; the prompt keeps its rule');
     // The same run and the same red: the stored sentence is read, not asked again.
     await explainer.explain(pool, SESSION, { now: NOW, main: main('a'.repeat(40)) });
     assert.equal(calls.length, 1);
@@ -126,6 +134,7 @@ test('a sentence about main\'s failure is written again when main\'s red moves',
     await explainer.explain(pool, SESSION, { now: NOW, main: partial });
     assert.equal(calls.length, 3);
     assert.ok(!calls[2].input.includes('already failing on main'));
+    assert.equal(calls[2].mainMarked, false, 'and the prompt is told not to say main fails it too');
   });
 });
 
@@ -304,6 +313,14 @@ test('the model call: a helper call that says what is wrong in plain words, one 
     assert.match(system, /No file names, line numbers, test or function names/);
     assert.match(system, /Do not say how to fix it/);
     assert.match(system, /Write in Español \(es\)\./);
+    // #6388: with nothing marked as main's, the prompt forbids the claim;
+    // only an input that marks one keeps the "say main fails it too" rule.
+    assert.match(system, /Nothing here is marked as failing on main: never say main fails it too\./);
+    assert.doesNotMatch(system, /Some failures are marked as also failing on main/);
+    await llm.generateChecksExplanation({ input: 'the failing checks', mainMarked: true });
+    const marked = openrouter.calls[1].messages[0].content;
+    assert.match(marked, /Some failures are marked as also failing on main/);
+    assert.doesNotMatch(marked, /Nothing here is marked as failing on main/);
     assert.equal(sent.messages[1].content, 'the failing checks');
     await assert.rejects(llm.generateChecksExplanation({ input: '  ' }), /Nothing to explain/);
   } finally {

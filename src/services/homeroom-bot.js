@@ -6052,11 +6052,20 @@ async function checksFixDue(pool, { sessionId, head = null }) {
 }
 
 // A look that leaves a fix still due on its change (a reply that did not
-// move it, a fix that ran out of time): owed again once it ends.
+// move it, a fix that ran out of time): owed again once it ends. A failure
+// that looks like the platform's is not owed, but its requester hears it
+// needs a look (#6388), as queueChecksFix already tells them.
 async function oweChecksFix(pool, look, { sessionId }) {
   const out = await checksFixDue(pool, { sessionId }).catch(() => ({ due: null }));
-  if (out.due && !followup.checksLookLikeInfra(out.due)) look.owe({ reason: CHECKS_REASON, priority: 1 });
-  return !!out.due;
+  if (!out.due) return false;
+  if (followup.checksLookLikeInfra(out.due)) {
+    // Non-strict: a look that cannot be sent must not fail this turn; the
+    // message's own key per approval epoch stops a repeat.
+    if (out.due.failing.length) await require('./homeroom-bot-dm').noteNeedsLook(pool, { sessionId, why: 'checks' });
+  } else {
+    look.owe({ reason: CHECKS_REASON, priority: 1 });
+  }
+  return true;
 }
 
 /**

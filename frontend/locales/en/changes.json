@@ -9073,7 +9073,27 @@
   },
   "page.testing.note.authorFixes": {
     "text": "Its author needs to fix this before it can go live.",
-    "description": "Line under the Testing card of a change's page whose checks failed, shown to everybody but the change's author: the author has to fix what failed before the change can be merged. \"It\" is the change."
+    "description": "Line under the Testing card of a change's page whose checks failed, shown only when the change has no author name to show instead: the author has to fix what failed before the change can be merged. \"It\" is the change."
+  },
+  "page.testing.note.authorFixesNamed": {
+    "text": "{{name}} made this change and needs to fix this before it can go live.",
+    "description": "Line under the Testing card of a change's page whose checks failed, shown to everybody but the change's author: the person named made the change and has to fix what failed before it can be merged. {{name}} is that person's username."
+  },
+  "page.testing.note.botNotFixing": {
+    "text": "Homeroom bot built this change and isn’t fixing it. Any member of this project can take it from here.",
+    "description": "Line under the Testing card of a change's page whose checks failed, when Homeroom bot built the change but nothing of its work on it is recorded: the bot is not fixing what failed, and any member of the project may take it over. \"It\" is the change."
+  },
+  "page.testing.note.botPlatform": {
+    "text": "This looks like a problem with Homeroom’s preview, not with this change, so Homeroom bot is not changing it.",
+    "description": "Line under the Testing card of a change's page whose checks failed because Homeroom's preview of the app did not answer: the failure looks like the platform's and Homeroom bot is not changing the change for it. \"It\" is the change."
+  },
+  "page.testing.note.botPlatformRerun": {
+    "text": "Re-run checks tries them again.",
+    "description": "Sentence after the \"This looks like a problem with Homeroom's preview\" line on the Testing card of a change's page, shown to someone who can press Re-run checks. \"Them\" is the checks."
+  },
+  "page.testing.note.botPlatformAsk": {
+    "text": "An admin can run its checks again.",
+    "description": "Sentence after the \"This looks like a problem with Homeroom's preview\" line on the Testing card of a change's page, shown to someone who cannot press Re-run checks. \"Its\" is the change's."
   },
   "page.testing.note.botFixing_one": {
     "text": "Homeroom bot is fixing this, started {{count}} min ago.",

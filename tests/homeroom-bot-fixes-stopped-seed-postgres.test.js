@@ -120,4 +120,31 @@ test('the staging stopped-fix fixture reaches the state the shots need', { timeo
     [change.id],
   );
   assert.equal(m, 1, 'one stop message');
+
+  // #6388's sibling fixture: a bot change whose one failing check reports the
+  // preview answering 503. The card reads it as the platform's, not the
+  // bot's (and never as "Its author needs to fix this").
+  await migrate.seedStagingBotFixesPlatform(pool);
+  const { rows: [platform] } = await pool.query(
+    `SELECT id, app_id, status, check_state FROM chat_sessions
+      WHERE branch_name = 'staging-fixture/bot-fixes-platform'`,
+  );
+  assert.ok(platform, 'the platform fixture change exists');
+  assert.equal(Number(platform.id), 999_999_998, 'a reserved id no real session can reach');
+  assert.equal(Number(platform.app_id), app.id);
+  assert.deepEqual([platform.status, platform.check_state], ['promoted', 'failing']);
+  assert.deepEqual(await progress.changeBotFix(pool, platform.id), { state: 'platform', since: null, reason: null });
+  await migrate.seedStagingBotFixesPlatform(pool);
+  const { rows: [{ pn }] } = await pool.query(
+    "SELECT COUNT(*)::int AS pn FROM chat_sessions WHERE branch_name = 'staging-fixture/bot-fixes-platform'",
+  );
+  assert.equal(pn, 1, 'idempotent');
+  // And a person's failing change, for the card that names who must fix it.
+  const { rows: [person] } = await pool.query(
+    `SELECT cs.id, cs.app_id, u.username FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+      WHERE branch_name = 'staging-fixture/person-checks-failing'`,
+  );
+  assert.ok(person, 'the person fixture change exists');
+  assert.equal(Number(person.id), 999_999_997);
+  assert.equal(person.username, 'usernode-capture');
 });

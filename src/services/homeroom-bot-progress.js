@@ -956,6 +956,11 @@ function typicalMinutes(stage, limit = null) {
  *                                        time once, homeroom-bot.js
  *                                        checksRetried; else null)
  *   { state: 'queued', since }           that row waits its turn
+ *   { state: 'platform' }                #6388: the failing checks on this
+ *                                        head all look like the platform's
+ *                                        (a preview that did not answer), so
+ *                                        the bot leaves them to Homeroom's
+ *                                        preview and its re-run
  *   { state: 'handed_off' }              its newest run on this head gave it
  *                                        to a person (verdict person or
  *                                        failed)
@@ -972,7 +977,8 @@ async function changeBotFix(pool, sessionId, { viewer = null } = {}) {
   if (!Number.isInteger(id) || id <= 0) return null;
   try {
     const { rows } = await pool.query(
-      `SELECT cs.app_id, cs.status, cs.check_state, cs.reviewed_head_sha, cs.linked_issues, u.username
+      `SELECT cs.app_id, cs.status, cs.check_state, cs.checks_commit_sha, cs.reviewed_head_sha,
+              cs.linked_issues, cs.test_results, u.username
          FROM chat_sessions cs
          JOIN users u ON u.id = cs.user_id
         WHERE cs.id = $1`,
@@ -998,6 +1004,16 @@ async function changeBotFix(pool, sessionId, { viewer = null } = {}) {
     }
     const head = String(cs.reviewed_head_sha || '').toLowerCase();
     if (!head) return null;
+    // #6388: the checks that failed on the head up for a vote look like the
+    // platform's own trouble (a preview that never answered), which the bot
+    // already chose not to revise for (homeroom-bot.js oweChecksFix). The
+    // card says so instead of falling through to "Its author needs to fix
+    // this", which its requester read as being about them.
+    if (String(cs.checks_commit_sha || '').toLowerCase() === head) {
+      const followup = require('./homeroom-bot-followup');
+      const { failing, total } = followup.failingChecks(cs.test_results);
+      if (followup.checksLookLikeInfra({ failing, total })) return { state: 'platform', since: null, reason: null };
+    }
     const runs = await pool.query(
       `SELECT id, limit_stop FROM homeroom_bot_runs
         WHERE proposal_session_id = $1 AND LOWER(checks_head_sha) = $2 AND verdict IN ('person', 'failed')

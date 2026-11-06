@@ -126,6 +126,10 @@ async function migrate(config) {
   // its own limit of three fixes, so the Testing card and the Homeroom bot
   // page have the stopped state to show (and Let it try again).
   await seedStagingBotFixesStopped(pool);
+  // #6388's shots: a bot change whose one failing check reports the preview
+  // answering 503, so the Testing card says the preview looks at fault (and
+  // never "Its author needs to fix this").
+  await seedStagingBotFixesPlatform(pool);
   // #6282's shots: an update queued on that same change, so the AI tab has
   // "Update queued" to show instead of a Vote, and its Votes card the note.
   await seedStagingBotUpdateComing(pool);
@@ -2245,6 +2249,123 @@ async function seedStagingBotUpdateComing(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot update-coming seeding failed', { message: err.message });
+  }
+}
+
+/**
+ * #6388's shots: a change Homeroom bot built for the capture member, whose
+ * one failing check reports the preview answering HTTP 503, so the Testing
+ * card says the preview looks at fault rather than "Its author needs to fix
+ * this". A fresh staging copy cannot reach it on its own because nothing
+ * there runs checks. Obviously fake, idempotent, and strictly a no-op
+ * outside staging. Its id is apart from the stopped fixture's and in a range
+ * no real session can reach.
+ */
+async function seedStagingBotFixesPlatform(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const SESSION_ID = 999_999_998;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!apps.rows.length || !people.rows.length) return;
+    const appId = apps.rows[0].id;
+    const memberId = people.rows[0].id;
+    const number = 900096;
+    const title = 'Staging demo: a change the bot left to Homeroom\'s preview';
+    const branch = 'staging-fixture/bot-fixes-platform';
+    // Not a 40-character hex sha on purpose: the preview machine adopts every
+    // promoted change with a real head and builds it, and this fixture has no
+    // branch to build. Nothing here runs checks either.
+    const head = 'staging-fixture-head';
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const botRow = await pool.query(
+      "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1",
+    );
+    if (!botRow.rows.length) return;
+    const botId = botRow.rows[0].id;
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1::int, $2::int, $3::text, 'Staging demo: obviously fake. Its checks failed because the preview did not answer.', $4::int,
+              NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1::int AND number = $2::int)`,
+      [appId, number, title, memberId],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, created_at)
+       SELECT $1::int, $2::int, $3::int, $4::text, NOW() - INTERVAL '3 days'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters WHERE app_id = $1::int AND issue_number = $2::int)`,
+      [appId, number, memberId, title],
+    );
+    const session = await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, session_title, pr_title, status, linked_issues, promoted_at,
+          check_state, check_phase, reviewed_head_sha, checks_commit_sha, test_results,
+          pr_summary_md, created_at, last_activity_at)
+       SELECT $8::int, $1::int, $2::int, $3::text, $4::text, $4::text, 'promoted', ARRAY[$5::int]::int[], NOW() - INTERVAL '2 hours',
+              'failing', 'done', $6::text, $6::text, $7::jsonb,
+              'Staging demo: a change Homeroom bot built, whose checks the preview failed.',
+              NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE id = $8::int)
+        RETURNING id`,
+      [appId, botId, branch, title, number, head,
+        JSON.stringify([{
+          name: 'Pages render with their stylesheets (platform check)',
+          path: '/app/staging-demo-admins',
+          status: 'fail',
+          failureReason: 'HTTP 503 Service Unavailable for /b/594ec2a2/usernode-native/v1/native.css and /b/594ec2a2/css/app.css',
+        }]),
+        SESSION_ID],
+    );
+    if (!session.rows.length) {
+      const taken = await pool.query('SELECT branch_name FROM chat_sessions WHERE id = $1', [SESSION_ID]);
+      if (taken.rows[0]?.branch_name !== branch) {
+        log.warn('db', 'Staging Homeroom bot platform-fix fixture id is taken', { sessionId: SESSION_ID });
+      }
+    }
+    // #6388's second card: a person's failing change, so the Testing card
+    // names the person who has to fix it. Its author is the capture member;
+    // the shots read it as another member (or an admin).
+    const personNumber = 900097;
+    const personTitle = 'Staging demo: a person\'s change whose checks failed';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1::int, $2::int, $3::text, 'Staging demo: obviously fake. A person''s change failed its checks.', $4::int,
+              NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1::int AND number = $2::int)`,
+      [appId, personNumber, personTitle, memberId],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, created_at)
+       SELECT $1::int, $2::int, $3::int, $4::text, NOW() - INTERVAL '3 days'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters WHERE app_id = $1::int AND issue_number = $2::int)`,
+      [appId, personNumber, memberId, personTitle],
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, session_title, pr_title, status, linked_issues, promoted_at,
+          check_state, check_phase, reviewed_head_sha, checks_commit_sha, test_results,
+          pr_summary_md, created_at, last_activity_at)
+       SELECT $8::int, $1::int, $2::int, $3::text, $4::text, $4::text, 'promoted', ARRAY[$5::int]::int[], NOW() - INTERVAL '2 hours',
+              'failing', 'done', $6::text, $6::text, $7::jsonb,
+              'Staging demo: a change a person made, whose checks failed.',
+              NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE id = $8::int)
+        RETURNING id`,
+      [appId, memberId, 'staging-fixture/person-checks-failing', personTitle, personNumber, head,
+        JSON.stringify([{
+          name: 'Signed-in people see the vote button',
+          path: '/vote',
+          status: 'fail',
+          failureReason: 'Expected selector #vote-btn',
+        }]),
+        999_999_997],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot platform-fix seeding failed', { message: err.message });
   }
 }
 
@@ -17545,6 +17666,7 @@ module.exports = {
   // #6284: the stopped-fix change the Testing card and Homeroom bot page
   // shots need, as its own test seam (the fixtures are staging-only).
   seedStagingBotFixesStopped,
+  seedStagingBotFixesPlatform,
   seedStagingBotProjectNotification,
   seedStagingBotAllowanceWarning,
   // #6306: the already-works request (run, note and bell row) the shots need.
