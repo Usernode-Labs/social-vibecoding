@@ -7,7 +7,8 @@
 // the answer appearing as it is written, and a line saying what it looked
 // at. Pinned here, without a database:
 //
-//   1. The room: sixteen rounds, 4000 output tokens (8000 on a retry), 90
+//   1. The room: sixteen rounds, 8000 output tokens (16000 on a retry; task
+//      2020's laid-out copy rides beside the words), 90
 //      seconds a request, an 8000-character reply, and a prompt that allows
 //      a long, structured answer when they ask for one. The model is chosen
 //      as before.
@@ -39,15 +40,15 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 test('a turn has room: sixteen rounds, long answers, a longer clock, on the same model', () => {
   assert.equal(mayor.MAX_ROUNDS, 16);
-  assert.equal(mayor.MAX_OUTPUT_TOKENS, 4000);
-  assert.equal(mayor.RETRY_OUTPUT_TOKENS, 8000);
+  assert.equal(mayor.MAX_OUTPUT_TOKENS, 8000);
+  assert.equal(mayor.RETRY_OUTPUT_TOKENS, 16000);
   assert.equal(mayor.REQUEST_TIMEOUT_MS, 90_000);
   assert.equal(mayor.MAX_REPLY_CHARS, 8000);
   assert.ok(mayor.RETRY_WITHIN_MS >= 4 * mayor.REQUEST_TIMEOUT_MS / 2, 'a later round is asked again too');
   assert.ok(realDm.TYPING_MAX_MS >= 8 * 60 * 1000, 'the working card lasts as long as a long turn');
   // The transport takes the retry's room.
   const base = { model: 'deepseek/deepseek-v4.1-flash-1017', reasoning: 'low', messages: [], tools: [] };
-  assert.equal(openrouter.buildRequest({ ...base, maxOutputTokens: mayor.RETRY_OUTPUT_TOKENS }).max_tokens, 8000);
+  assert.equal(openrouter.buildRequest({ ...base, maxOutputTokens: mayor.RETRY_OUTPUT_TOKENS }).max_tokens, 16000);
   // The model is chosen as it was: the platform default, else the cheap one.
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /model: require\('\.\/default-model'\)\.fromSettings\(settings, config\) \|\| DEFAULT_MODEL,/);
@@ -173,7 +174,7 @@ test('a turn that looks things up for sixteen rounds never sends more than 100 m
   assert.ok(last.tools.some((tl) => tl.function.name === 'reply'), 'it can still answer');
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].content, 'It saves each set as you finish it.');
-  assert.ok(seen.every((req) => req.maxOutputTokens === mayor.MAX_OUTPUT_TOKENS), '4000 tokens a round');
+  assert.ok(seen.every((req) => req.maxOutputTokens === mayor.MAX_OUTPUT_TOKENS), '8000 tokens a round');
 });
 
 // ── 3. The transport streams when asked ──────────────────────────────────

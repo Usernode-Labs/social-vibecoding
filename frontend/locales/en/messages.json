@@ -2991,6 +2991,10 @@
     "text": "AI",
     "description": "Small badge beside a message author's name when the author is an AI assistant rather than a person."
   },
+  "row.botHtml.frameTitle": {
+    "text": "Homeroom bot's answer, laid out",
+    "description": "Accessible name of the frame that shows the Homeroom bot's longer answer formatted with headings, lists or tables, in place of its plain words."
+  },
   "row.edited": {
     "text": "edited",
     "description": "Small note beside a message's time when the message was changed after it was sent. Lower case."
