@@ -24,6 +24,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const Module = require('module');
 
 function makeRecordingRouter(routes) {
@@ -426,4 +428,20 @@ test('a passed vote whose window has elapsed is being applied', async () => {
   const { payload } = await callGov(routes, { id: 4242 });
   // The stubbed gate: 2 yes of 2 required, window ended 12 Jan.
   assert.equal(payload.proposal.outcome, 'applying');
+});
+
+// #6439: a vote to close a request is read on the request's page, where its
+// thread draws it. The old `dev/governance/<id>` address forwards there (in
+// place of the old view, with its close card in view); every other decision
+// keeps its page. `_closeVoteHomeOf` answers only for a close_issue, so a
+// rename or a settings change still draws the governance view.
+test('#6439 the governance view forwards a close vote, and keeps every other decision', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8');
+  assert.match(src, /async _closeVoteHomeOf\(id\)/, 'the by-id row decides the home');
+  assert.match(src, /if \(!p \|\| p\.kind !== 'close_issue'\) return null;/, 'only a close vote has one');
+  assert.match(src, /if \(ref\.kind === 'gov' && ref\.id\) \{[\s\S]*?_closeVoteHomeOf\(ref\.id\)[\s\S]*?openTopic\('issue', closeHome, \{ replaceRoute: true \}\)/,
+    'the full page forwards without leaving a Back step');
+  assert.match(src, /showClose\?\.\(ref\.id\)/, 'at its close card');
+  assert.match(src, /} else if \(kind === 'gov'\) \{[\s\S]*?_closeVoteHomeOf\(id\)[\s\S]*?openTopicInPanel\('issue', home\)/,
+    'the side panel forwards the same way');
 });

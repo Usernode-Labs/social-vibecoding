@@ -5310,6 +5310,11 @@ const AppView = {
         return;
       }
     }
+    // 6 Nov 2026 (#6439): a vote to close a request has its home on the
+    // request's page. An old `dev/governance/<id>` address (or a
+    // notification that still carries one) forwards there in place of this
+    // page (no Back entry), with its close card in view. Every other
+    // decision draws the governance view below.
     // #6440: a vote about ONE request or thread (a reopen, a merge or split
     // somebody objected to) is drawn on that page, not on one of its own.
     // Every producer of `dev/governance/<id>` keeps its address; this is
@@ -5318,6 +5323,13 @@ const AppView = {
       const asked = { kind: 'gov', id: ref.id };
       AppView._devTopic = asked;
       AppView._reactDevBoard()?.mountTopicSubView(content);
+      const closeHome = await AppView._closeVoteHomeOf(ref.id);
+      if (AppView._devTopic !== asked) return;
+      if (closeHome) {
+        window.UsernodeReact?.devBoard?.showClose?.(ref.id);
+        AppView.openTopic('issue', closeHome, { replaceRoute: true });
+        return;
+      }
       // Only a reopen or a merge/split vote can belong to a page of its own.
       // A row the lists already hold says which it is (its `kind`), so the
       // others are drawn straight from it with no by-id read.
@@ -5667,6 +5679,53 @@ const AppView = {
     const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), AppView.CHANGE_HOME_WAIT_MS); });
     try {
       return await Promise.race([AppView._changeHomes.get(key), late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  // 6 Nov 2026 (#6439): a vote to close a request is decided on the
+  // request's page, where its thread already draws it. This reads the one
+  // thing that decides whether a governance address has that home: the row's
+  // kind, and the request a close vote targets. Only a close_issue answers
+  // with a number; every other decision keeps its own page.
+  //
+  // A row the lists or the on-demand cache already hold answers at once,
+  // with no read: it is the same row this page would draw, and asking the
+  // server for a copy of it is the needless by-id fetch the topic page
+  // already avoids (#4524).
+  _closeVoteHomes: new Map(),
+  async _closeVoteHomeOf(id) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    const n = Number(id);
+    if (!slug || !Number.isInteger(n) || n <= 0) return null;
+    const held = AppView._findItem('gov', n);
+    if (held) {
+      if (held.kind !== 'close_issue' && held.row_type !== 'close_issue') return null;
+      const asked = Number(held.payload && held.payload.issueNumber);
+      // A close vote names the request it closes; one that somehow does not
+      // is read below rather than guessed at.
+      if (Number.isInteger(asked) && asked > 0) return asked;
+    }
+    const key = `${slug}:${n}`;
+    if (!AppView._closeVoteHomes.has(key)) {
+      const read = fetch(`/api/apps/${encodeURIComponent(slug)}/governance/${n}${AppView._demoQS()}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const p = data && data.proposal;
+          if (!p || p.kind !== 'close_issue') return null;
+          const issue = Number(p.payload && p.payload.issueNumber);
+          return Number.isInteger(issue) && issue > 0 ? issue : null;
+        })
+        .catch(() => null);
+      AppView._closeVoteHomes.set(key, read);
+      // A read that answers "its own page" is asked again next time.
+      read.then((home) => { if (home == null) AppView._closeVoteHomes.delete(key); });
+    }
+    let timer = null;
+    const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), AppView.CHANGE_HOME_WAIT_MS); });
+    try {
+      return await Promise.race([AppView._closeVoteHomes.get(key), late]);
     } finally {
       clearTimeout(timer);
     }
@@ -9831,6 +9890,18 @@ const AppView = {
       if (AppView._devTopicAsked !== asked) return;
       AppView._devTopicAsked = null;
       if (home) return AppView._openChangeOnRequest(home, id, { panel: true });
+    } else if (kind === 'gov') {
+      // #6439: a vote to close a request opens as the request's page, at it,
+      // with its close card in view; every other decision keeps this panel.
+      const asked = { kind, id };
+      AppView._devTopicAsked = asked;
+      const home = await AppView._closeVoteHomeOf(id);
+      if (AppView._devTopicAsked !== asked) return;
+      AppView._devTopicAsked = null;
+      if (home) {
+        window.UsernodeReact?.devBoard?.showClose?.(Number(id));
+        return AppView.openTopicInPanel('issue', home);
+      }
     } else {
       AppView._devTopicAsked = null;
     }
@@ -21370,6 +21441,8 @@ const AppView = {
       || (isCloseIssue && issue.payload ? issue.payload.issueNumber : null);
     const attrs = { 'data-gov-row': String(issue.id) };
     if (refIssueN) attrs['data-ref-issue'] = String(refIssueN);
+    // #6439: a close vote's card opens the request's page, where its vote is.
+    if (isCloseIssue && refIssueN) attrs['data-close-request'] = String(refIssueN);
     if (!noNav) attrs.title = PlatformI18n.t('changes:governance.card.openTitle');
     return {
       key: `gov:${issue.id}`,
@@ -24223,6 +24296,8 @@ const AppView = {
       title: PlatformI18n.t('changes:governance.done.openTitle'),
     };
     if (issueN) attrs['data-ref-issue'] = String(issueN);
+    // #6439: an applied close vote opens the request's page, not its own.
+    if (issueN) attrs['data-close-request'] = String(issueN);
     return {
       key: `close-issue:${row.id}`,
       cls: `gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}`,

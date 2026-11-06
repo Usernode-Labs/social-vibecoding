@@ -337,6 +337,18 @@ const view = (status) => ({
   via: 'via Claude Code', status, votes: {}, testing: {}, shots: null, thanks: false,
 });
 
+test('the change bar publishes the page\'s pill and its ⋯ key for the column beside the bot page (#6431)', () => {
+  const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  // The bar itself does not change: the column's heading draws the pill and
+  // the rows beside the bot page, and this is what tells it which.
+  assert.match(src, /usePanelHead\(\{ kind: 'change', pill: v\.status \|\| null, menuKey: menuKey \|\| null \}\);/);
+  // A change's number was a button in its own bar, and that bar goes beside
+  // the bot page; the column's heading still links "Change #N" to its page.
+  const store = read('frontend/src/features/side-panel/head-store.ts');
+  assert.match(store, /if \(!isEmbeddedPanel\(\)\) return undefined;/,
+    'and nothing is published where the page keeps its own bar');
+});
+
 test('the header shows the status pill beside "Change #N", in the card\'s capsule form', () => {
   const head = 'frontend/src/features/dev-board/topic/change-head.tsx';
   const failed = renderComponent(head, 'ChangeBar', {

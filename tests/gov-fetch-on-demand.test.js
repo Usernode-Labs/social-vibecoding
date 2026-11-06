@@ -124,6 +124,20 @@ const closeRow = (over) => ({
   ...over,
 });
 
+// A governance row that is NOT a vote to close a request. Since #6439 a
+// close vote's address opens the request's page instead of this one, so the
+// fetch-on-demand path below is covered with a decision that keeps its own
+// page: a rename (the same shape, a different kind).
+const renameRow = (over) => closeRow({
+  row_type: 'rename',
+  kind: 'rename',
+  status: 'open',
+  title: 'Rename "demo" to "Demo"',
+  description: 'The app is called Demo now.',
+  payload: { newName: 'Demo' },
+  ...over,
+});
+
 test('_fetchGovProposalById caches the row and makes it resolvable', async () => {
   const row = closeRow();
   const { AppView } = makeAppView({
@@ -207,7 +221,7 @@ test('_fetchGovProposalById returns null and leaves the cache untouched on a 404
 
 test('_renderTopicSubView fetches a gov row on demand and mounts the thread', async () => {
   const thread = makeEl('dev-topic-thread');
-  const row = closeRow();
+  const row = renameRow();
   const { AppView, switchTabCalls, toasts } = makeAppView({
     thread,
     fetchImpl: async (url) => {
@@ -215,8 +229,8 @@ test('_renderTopicSubView fetches a gov row on demand and mounts the thread', as
       return { ok: true, json: async () => ({}) };
     },
   });
-  // Caches start empty — exactly what _loadDevData leaves behind for an
-  // applied close proposal that isn't on the Completed stream's first page.
+  // Caches start empty — exactly what _loadDevData leaves behind for a
+  // proposal that isn't in the lists it loads.
   AppView._loadDevData = async () => {
     AppView._govProposals = []; AppView._merged = []; return true;
   };
@@ -234,9 +248,47 @@ test('_renderTopicSubView fetches a gov row on demand and mounts the thread', as
   assert.deepEqual(toasts, [], 'nothing to explain — it worked');
 });
 
+// #6439: the same row, when it IS a vote to close a request, no longer has a
+// page of its own. The on-demand read is what tells the two apart: it opens
+// the request's page at its close card, in place (no Back step), instead of
+// drawing the governance view.
+test('_renderTopicSubView forwards a vote to close to its request page', async () => {
+  const thread = makeEl('dev-topic-thread');
+  const row = closeRow();
+  const { AppView, sandbox, switchTabCalls, toasts } = makeAppView({
+    thread,
+    fetchImpl: async (url) => {
+      if (/\/governance\/9100062/.test(url)) return { ok: true, json: async () => ({ proposal: row }) };
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  const shown = [];
+  sandbox.UsernodeReact = {
+    devBoard: { mountTopicSubView() {}, showClose(id) { shown.push(id); } },
+  };
+  AppView._loadDevData = async () => {
+    AppView._govProposals = []; AppView._merged = []; return true;
+  };
+  AppView._mountTopicThread = () => {};
+  AppView._renderTopicHead = () => {};
+  const opened = [];
+  AppView.openTopic = (kind, id, opts) => {
+    opened.push({ kind, id, replaceRoute: !!(opts && opts.replaceRoute) });
+  };
+
+  const content = makeEl('content');
+  await AppView._renderTopicSubView(content, { kind: 'gov', id: 9100062 });
+
+  assert.deepEqual(opened, [{ kind: 'issue', id: 900003, replaceRoute: true }],
+    "the request's page, in place of the old one");
+  assert.deepEqual(shown, [9100062], 'its close card is the one in view');
+  assert.deepEqual(switchTabCalls, [], 'not bounced to the board');
+  assert.deepEqual(toasts, [], 'nothing to explain');
+});
+
 test('_renderTopicSubView still works when the gov row IS cached (no regression)', async () => {
   const thread = makeEl('dev-topic-thread');
-  const row = closeRow({ id: 9100060 });
+  const row = renameRow({ id: 9100060 });
   let fetched = 0;
   const { AppView, switchTabCalls } = makeAppView({
     thread,
@@ -248,7 +300,7 @@ test('_renderTopicSubView still works when the gov row IS cached (no regression)
   // The row IS cached: preloaded the way a settled board load leaves it
   // (#4524 — the page paints from these at once, so no by-id fetch runs).
   AppView._devDataSlug = 'demo';
-  AppView._merged = [row];
+  AppView._govProposals = [row];
   AppView._loadDevData = async () => true;
   let mounted = 0;
   AppView._mountTopicThread = () => { mounted++; };

@@ -248,3 +248,16 @@ test('Notify me and Mute: a same-origin write, for a thread the viewer may see',
   assert.doesNotMatch(follow.slice(0, follow.indexOf('\n  });')), /member/, 'following is not taking part');
   assert.match(read('server.js'), /require\('\.\/src\/routes\/threads'\)\.threadsRoutes\(config\)/);
 });
+
+// #6439: an ended vote to close keeps its card on the request's page, so the
+// thread read now carries how it ended, off the governance machine's audit
+// in the payload: applied (closed), superseded (the request closed another
+// way), withdrawn or refused (kept open).
+test('#6439 a close vote\'s outcome is read off the governance audit', () => {
+  for (const key of ['appliedAt', 'appliedBy', 'withdrawnAt', 'supersededBy']) {
+    assert.match(SERVICE_SRC, new RegExp(`i\\.payload->>'${key}' AS `), `reads ${key}`);
+  }
+  assert.match(SERVICE_SRC, /item\.outcome = row\.applied_at && !appliedBy\.startsWith\('refused:'\)/);
+  assert.match(SERVICE_SRC, /row\.superseded_by\s*\?\s*'elsewhere'/);
+  assert.match(SERVICE_SRC, /: 'kept';/);
+});

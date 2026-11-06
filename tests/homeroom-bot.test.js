@@ -1762,12 +1762,15 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // says what to build is read from it rather than handed back as unreadable.
   // 6 Nov 2026 (#6395): `go_ahead` (about 780 more), so a read can say that a
   // go-ahead cannot settle a request and what part of it can still be built.
+  // 6 Nov 2026 (#6430): the reason's guidance (about 520 more), so it says a
+  // person has to build it, never names the reader in the third person and
+  // never says somebody has to approve it.
   // 6 Nov 2026 (#6211): the board's overlap rule (about 1,250 more), so a read
   // of a new request can name the open one it duplicates, is part of, or
   // overlaps, and offer its requester the choice. The board itself is only
   // added when the project has other open requests, so this read (no board)
   // carries the rule alone.
-  assert.ok(prompt.length < 27900, `a triage prompt stays small: ${prompt.length} chars`);
+  assert.ok(prompt.length < 28400, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false\}$/);
 });

@@ -4185,11 +4185,7 @@
   },
   "replies.close": {
     "text": "Close thread",
-    "description": "Accessible name and tooltip of the X button on the thread side pane: closes the thread and returns to the conversation."
-  },
-  "replies.backToMain": {
-    "text": "Back to Main Chat",
-    "description": "Accessible name and tooltip of the back arrow at the start of a private thread opened in Main Chat's place on the Homeroom bot tab (from 768px): closes the thread and shows Main Chat again. \"Main Chat\" is that chat's name; keep it the same as its title."
+    "description": "Accessible name and tooltip of the X button on the thread side pane: closes the thread and returns to the conversation. On the Homeroom bot tab it closes the private thread opened beside the lists, which leaves the lists alone, or Main Chat when it was open just before."
   },
   "replies.resize": {
     "text": "Resize the thread",
@@ -5110,6 +5106,10 @@
   "ai.main.sub": {
     "text": "Only you can see this chat",
     "description": "The AI tab on a wide window: the line under the title \"Main\" over the person's private chat with Homeroom bot, docked beside their list of work, after a lock glyph. Says that nobody else can read it."
+  },
+  "ai.main.close": {
+    "text": "Close Main Chat",
+    "description": "Accessible name and tooltip of the X button at the end of Main Chat's header on the AI tab (a wide window): closes it and leaves the person's list of work alone, taking no room beside it."
   },
   "ai.main.new_one": {
     "text": "{{count}} new",

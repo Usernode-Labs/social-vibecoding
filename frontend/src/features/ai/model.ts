@@ -144,6 +144,11 @@ export interface NeedItem {
   ballot?: { number?: number | null; title?: string | null } | null;
   /** A change for a request: the request it closes (absent from an older server). */
   request?: { number?: number | null; title?: string | null } | null;
+  /**
+   * A group decision's facts (routes/workshop-overview.js decisionFacts): what
+   * kind it is, and for a vote to close a request, the request's number.
+   */
+  decision?: { kind?: string | null; issueNumber?: number | null } | null;
   /** Who proposed it, by username: Homeroom bot's own changes hold its slots. */
   author?: string | null;
   /**
@@ -487,7 +492,15 @@ export function needHref(item: NeedItem): string | null {
   const slug = item.app?.slug;
   if (!slug) return null;
   const app = encodeURIComponent(slug);
-  if (item.kind === 'governance') return `#app/${app}/dev/governance/${Number(item.id)}`;
+  if (item.kind === 'governance') {
+    // 6 Nov 2026 (#6439): a vote to close a request is decided on the
+    // request's page, where it already draws, not on the old governance
+    // page. Every other decision keeps its own page.
+    const closing = item.decision && item.decision.kind === 'close_issue'
+      ? Number(item.decision.issueNumber) : 0;
+    if (closing > 0) return `#app/${app}/dev/issues/${closing}`;
+    return `#app/${app}/dev/governance/${Number(item.id)}`;
+  }
   const closes = item.kind === 'proposal' ? Number(item.request?.number) : 0;
   if (closes > 0) return `#app/${app}/dev/issues/${closes}`;
   const number = needNumber(item);

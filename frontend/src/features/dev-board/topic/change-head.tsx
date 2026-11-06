@@ -63,6 +63,7 @@ import { RequestWords, SpecCard, sentences } from './request-head';
 import { ThreadItems, pageSlug } from './thread-items';
 import type { ClosesRequest } from './thread-model';
 import { changeMenuKey } from './thread-menu';
+import { usePanelHead } from '../../side-panel/head-store';
 import { TopicBack } from './topic-back';
 import { WorkWithBotButton } from './work-with-bot';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
@@ -81,6 +82,10 @@ function host(id: string): Element | null {
 export function ChangeBar({ v, menuKey, detailsId = null }: { v: ChangeThreadView; menuKey: string; detailsId?: number | null }): ReactNode {
   const t = useMessages('project');
   const title = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
+  // #6431: beside the Homeroom bot page this bar is not drawn at all (app.css),
+  // and the column's heading carries its pill and its rows instead. Publishing
+  // them is all this does there; nowhere else does it publish anything.
+  usePanelHead({ kind: 'change', pill: v.status || null, menuKey: menuKey || null });
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
