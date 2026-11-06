@@ -496,3 +496,18 @@ test('not editing, the trailing tile is the Create tile as before', () => {
   // The initial store renders neither the tile nor an editing mark.
   assert.doesNotMatch(renderGrid({}), /home-create-tile|data-editing/);
 });
+
+test('#6372: the − and + corner discs sit above the tile\'s own hit area', () => {
+  // TILE carries un-touch-target, whose ::after (native.css) covers the tile
+  // and paints after its children; a disc without its own stacking level
+  // lies under it, and a press reaches the tile's no-op instead of the disc.
+  const src = read('frontend/src/features/home/pinned-communities.tsx');
+  assert.match(src, /const TILE = '[^']*\bun-touch-target\b/);
+  assert.match(read('public/usernode-native/v1/native.css'), /\.un-touch-target::after \{[^}]*position: absolute;/);
+  const corner = src.match(/const CORNER = '([^']*)'/);
+  assert.ok(corner, 'CORNER is one literal');
+  assert.match(corner[1], /\babsolute\b/);
+  assert.match(corner[1], /\bz-\[1\]/, 'the disc is lifted above the ::after');
+  assert.match(src, /className=\{`\$\{CORNER\} -start-1\.5 \$\{CORNER_UNPIN\}`\}/);
+  assert.match(src, /className=\{`\$\{CORNER\} -end-1\.5 \$\{CORNER_PIN\}`\}/);
+});
