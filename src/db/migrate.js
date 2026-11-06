@@ -142,6 +142,7 @@ async function migrate(config) {
   // #6282's shots: an update queued on that same change, so the AI tab has
   // "Update queued" to show instead of a Vote, and its Votes card the note.
   await seedStagingBotUpdateComing(pool);
+  await seedStagingNewerPlan(pool);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
   // the three it starts from, each written once; then, once, an untouched
   // seeded current version moved on to its next (two review rounds in 20
@@ -2493,6 +2494,91 @@ async function seedStagingBotUpdateComing(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot update-coming seeding failed', { message: err.message });
+  }
+}
+
+/**
+ * #6406's shots: a request whose promoted Change #178 was built from plan v1
+ * while a newer v2 was posted, with the bot's two lines in its discussion.
+ * A fresh staging copy cannot reach that state on its own because nothing
+ * there runs a build. Obviously fake, idempotent, and strictly a no-op
+ * outside staging. Its ids are in a range no real session can reach.
+ */
+async function seedStagingNewerPlan(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const PLAN_SESSION_ID = 999_999_996;
+  const CHANGE_SESSION_ID = 999_999_995;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!apps.rows.length || !people.rows.length) return;
+    const appId = apps.rows[0].id;
+    const userId = people.rows[0].id;
+    const number = 900098;
+    const title = 'Staging demo: a request whose change follows an older plan';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1::int, $2::int, $3::text, 'Staging demo: obviously fake. A newer plan was posted while the bot built an older one.', $4::int,
+              NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1::int AND number = $2::int)`,
+      [appId, number, title, userId],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, created_at)
+       SELECT $1::int, $2::int, $3::int, $4::text, NOW() - INTERVAL '2 days'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters WHERE app_id = $1::int AND issue_number = $2::int)`,
+      [appId, number, userId, title],
+    );
+    // A plan's numbered versions live on a `request_spec` session.
+    await pool.query(
+      `INSERT INTO chat_sessions (id, app_id, user_id, session_title, source, status, created_from_issue_number, linked_issues, created_at, last_activity_at)
+       SELECT $1::int, $2::int, $3::int, $4::text, 'request_spec', 'active', $5::int, ARRAY[$5::int]::int[], NOW() - INTERVAL '3 hours', NOW() - INTERVAL '2 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE id = $1::int)`,
+      [PLAN_SESSION_ID, appId, userId, title, number],
+    );
+    await pool.query(
+      `INSERT INTO chat_session_specs (session_id, version, content, shared_to_group_at, created_at)
+       SELECT $1::int, $2::int, $3::text, NOW() - ($2::int * INTERVAL '1 minute'), NOW() - ($2::int * INTERVAL '1 minute')
+        WHERE NOT EXISTS (SELECT 1 FROM chat_session_specs WHERE session_id = $1::int AND version = $2::int)`,
+      [PLAN_SESSION_ID, 1, 'Staging demo: the sample screen gets a banner at its top.'],
+    );
+    await pool.query(
+      `INSERT INTO chat_session_specs (session_id, version, content, shared_to_group_at, created_at)
+       SELECT $1::int, $2::int, $3::text, NOW() - INTERVAL '1 minute', NOW() - INTERVAL '1 minute'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_session_specs WHERE session_id = $1::int AND version = $2::int)`,
+      [PLAN_SESSION_ID, 2, 'Staging demo: the sample screen gets a banner at its top, and a sample footer.'],
+    );
+    // The promoted change, built from v1 of that plan.
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, session_title, pr_title, pr_number, status, linked_issues, promoted_at,
+          built_from_session_id, built_from_version, created_at, last_activity_at)
+       SELECT $6::int, $1::int, $2::int, 'staging-fixture/newer-plan', $3::text, $3::text, 178, 'promoted', ARRAY[$4::int]::int[],
+              NOW() - INTERVAL '1 hour', $5::int, 1, NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE id = $6::int)`,
+      [appId, userId, title, number, PLAN_SESSION_ID, CHANGE_SESSION_ID],
+    );
+    const bot = await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE
+       RETURNING id`,
+    );
+    const botId = bot.rows[0].id;
+    const lines = [
+      '@usernode-capture, you posted v2 while I was building v1. I\'ll finish it, then update the change to follow v2.',
+      'Change #178 is built from v1, and @usernode-capture posted v2 while I was building. I\'ve queued its update to v2: its votes clear when the update lands.',
+    ];
+    for (const content of lines) {
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
+         SELECT $1::int, $2::int, $3::text, 'message', '{}'::jsonb, 'issue', $4::int, NOW() - INTERVAL '1 hour'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages WHERE app_id = $1::int AND user_id = $2::int AND content = $3::text AND thread_type = 'issue' AND thread_ref = $4::int)`,
+        [appId, botId, content, number],
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging newer-plan seeding failed', { message: err.message });
   }
 }
 
