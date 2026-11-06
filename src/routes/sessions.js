@@ -23,6 +23,7 @@ const buildContract = require('../services/build-contract');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
+const { planRecordSql } = require('../services/request-specs');
 const classicSessions = require('../services/classic-sessions');
 const codeMissing = require('../services/code-missing');
 const { claimIssueForUser } = require('../services/issue-claims');
@@ -2506,6 +2507,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // never counted against the viewer's session caps — see the totals
       // reducer below. The dev tab's own fetch sends no flag and sees none.
       const includeMerged = req.query.include_merged === '1';
+      // #6410: a plan a person posted is a planning record with no branch
+      // (request-specs.js), not a conversation with an agent. No agent runs
+      // in it, so it is not an agent chat and holds no slot; the plan is on
+      // its request's page. Once a build gives it a branch it is real work
+      // and lists as usual. The WHERE carries the shared definition below,
+      // the same rule the other session reads use.
       // last_activity_at = the newest message in the session's thread,
       // falling back to the session's own creation time. The dev tab's
       // card list sorts session rows by this ("most recent activity"),
@@ -2569,6 +2576,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
            AND cs.is_headless = FALSE
            AND ($2::boolean OR cs.source IS DISTINCT FROM 'imported')
            AND ($3::boolean OR cs.source IS DISTINCT FROM 'settings')
+           AND NOT ${planRecordSql('cs')}
          ORDER BY last_activity_at DESC`,
         [req.user.id, includeImported, includeSettings, includeMerged]
       );

@@ -887,12 +887,14 @@ function checksRetryText({ broken = false, failing = true, skipped = false } = {
 /**
  * #6234: the one line on the change as the bot starts fixing its failing
  * checks (homeroom-bot.js runChecksFix), so the request's page says it is
- * being fixed instead of "Its author needs to fix this". What it is fixing,
- * from what failed, in the people's words: the failing check's name when
- * there is one that reads as words (plainName), else how many; what its
- * shots showed not working; the sample data they lacked. The end line
- * (checksRevisedText, checksRetryText or checksPersonText) follows it.
- * Pure.
+ * being fixed instead of "Its author needs to fix this". #6409: it is the
+ * FIRST start's line, posted from the fix turn's onStart once the change's
+ * session is really held, never before a try that may find the change busy.
+ * What it is fixing, from what failed, in the people's words: the failing
+ * check's name when there is one that reads as words (plainName), else how
+ * many; what its shots showed not working; the sample data they lacked. The
+ * end line (checksRevisedText, checksRetryText or checksPersonText) follows
+ * it. Pure.
  */
 function checksFixingText({ failing = [], broken = [], skipped = [] } = {}) {
   const list = (v) => (Array.isArray(v) ? v : (v ? [{}] : []));
@@ -914,6 +916,17 @@ function checksFixingText({ failing = [], broken = [], skipped = [] } = {}) {
   if (tried.length) what.push('what didn\'t work when Homeroom tried it');
   if (!what.length) what.push('the failing checks on this change');
   return `Homeroom bot is fixing ${what.join(' and ')}. ${end}`;
+}
+
+/**
+ * #6409: a genuinely new attempt at a failing version, instead of promising
+ * a first fix again. Said when the bot's own fix landed and the next version
+ * still fails, and when a fix that ran out of time is tried once more
+ * (homeroom-bot.js runChecksFix; checksRetryText's end line comes first).
+ * Pure.
+ */
+function checksFixingAgainText() {
+  return 'The fix didn\'t pass; trying once more.';
 }
 
 /**
@@ -1208,6 +1221,7 @@ module.exports = {
   checksFixPrompt,
   checksRevisedText,
   checksFixingText,
+  checksFixingAgainText,
   CHECKS_TAKE_OVER,
   checksPersonText,
   whySentence,
