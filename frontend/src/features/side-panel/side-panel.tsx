@@ -74,7 +74,7 @@ import { pageLinkFor } from '../ai/door';
 import { copyToClipboard } from '../message-actions/clipboard';
 import { useDismiss } from '../message-actions/use-dismiss';
 import { SidePanel as controller } from './controller';
-import { panelPage, titleFor } from './routes';
+import { panelPage, titleFor, workshopItemOf } from './routes';
 import {
   AI_MAIN_WIDTH_KEY,
   KEY_STEP,
@@ -315,9 +315,11 @@ function PanelHeading({ route, place, reported, label }: {
 
 /**
  * The ⋯ beside the column's heading (3 Nov 2026), drawn as Main's own header
- * menu (../messages/index.tsx): one item, Copy link, which copies the item's
- * own page address — the one to share, not the tab's. Only a page that has
- * one shows it, so the prerender (no route yet) draws nothing.
+ * menu (../messages/index.tsx): Copy link, which copies the item's own page
+ * address — the one to share, not the tab's — and (#6380) Open in workshop,
+ * present only for a request, change or decision of a project. Only a page
+ * that has a link shows the menu at all, so the prerender (no route yet)
+ * draws nothing.
  */
 function PanelMore({ route }: { route: string | null }): ReactNode {
   const t = useMessages('agent');
@@ -365,6 +367,24 @@ function PanelMore({ route }: { route: string | null }): ReactNode {
           >
             {t('agent:sidePanel.menu.copyLink')}
           </button>
+          {/* #6380: the same request, change or decision, open in the panel
+              beside its project's Workshop. Only a project's own work has a
+              place there; a private thread or a page in no project keeps the
+              menu as it was. */}
+          {route && workshopItemOf(route) ? (
+            <button
+              type="button"
+              role="menuitem"
+              data-side-panel-open-workshop=""
+              onClick={() => {
+                btnRef.current?.focus({ preventScroll: true });
+                setOpen(false);
+                controller.openInWorkshop();
+              }}
+            >
+              {t('agent:sidePanel.menu.openInWorkshop')}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
