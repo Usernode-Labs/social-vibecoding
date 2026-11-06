@@ -9,8 +9,9 @@
 // timeout may already have sent the mail.
 //
 // BREVO_API_KEY is shared with Brevo SMS, so having it says nothing about
-// mail. That is why ../select.js only uses this transport when
-// PLATFORM_MAIL_PROVIDER names it, and never under auto.
+// mail. That is why ../select.js only uses this transport when it is named,
+// by an admin in Admin → Email delivery or by PLATFORM_MAIL_PROVIDER, and
+// never under auto.
 'use strict';
 
 const log = require('../../logger');

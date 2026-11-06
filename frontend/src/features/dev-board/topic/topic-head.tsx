@@ -1238,7 +1238,7 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
   return (
     <li className={`dev-step dev-step-${r.state}`} data-note={r.key} {...gateAttrs} {...(row && row.attrs ? row.attrs : {})}>
       <span className={`dev-step-mark dev-step-mark-${r.state}`} aria-hidden="true">
-        {r.state === 'active' ? <Spinner /> : (STEP_MARK[r.state] || '·')}
+        {r.state === 'active' ? <Spinner /> : (r.skipped ? '–' : (STEP_MARK[r.state] || '·'))}
       </span>
       <span className="dev-step-label">{r.label}</span>
       {r.actor ? <span className="dev-step-actor">{r.actor}</span> : null}
@@ -1457,7 +1457,7 @@ function GateStepView({ r }: { r: StepRow }): ReactNode {
       {...(r.attrs || {})}
     >
       <span className={`dev-step-mark dev-step-mark-${r.state}`} aria-hidden="true">
-        {r.state === 'active' ? <Spinner /> : (STEP_MARK[r.state] || '·')}
+        {r.state === 'active' ? <Spinner /> : (r.skipped ? '–' : (STEP_MARK[r.state] || '·'))}
       </span>
       {run ? (
         <button

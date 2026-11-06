@@ -83,19 +83,26 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
   data: ThreadPayload | null;
   setData: (update: (was: ThreadPayload | null) => ThreadPayload | null) => void;
   reread: () => void;
+  /** True until the first read of this path settles, whether it answers or fails. */
+  loading: boolean;
 } {
   const [data, setData] = useState<ThreadPayload | null>(null);
   // Read again after a move changed the thread (./thread-moves.tsx).
   const [revision, setRevision] = useState(0);
+  // #6387: the path whose read settled, so "still loading" and "nothing to
+  // show" stop looking the same: a failed read clears it too.
+  const [settledPath, setSettledPath] = useState<string | null>(null);
   // #6139: a gap (a dropped socket, a sleeping tab) reads it again, past any saved copy.
   const freshNext = useRef(false);
   const readPath = useRef<string | null>(null);
   // #6231: the changes this page last read, so a move announced by the
   // change's own id (`thread_changed`) still reaches this thread.
   const changeIds = useRef<Set<number>>(new Set());
+  const path = skip ? null : number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}${asChange ? '?as=change' : ''}`
+    : threadId ? `/api/threads/${threadId}` : null;
+  // A re-read of the same path keeps `data`, so it never shows as loading.
+  const loading = !!path && !data && settledPath !== path;
   useEffect(() => {
-    const path = skip ? null : number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}${asChange ? '?as=change' : ''}`
-      : threadId ? `/api/threads/${threadId}` : null;
     // Reading the same thread again keeps what the page shows, also if that
     // read fails; another thread starts empty.
     const again = !!path && readPath.current === path;
@@ -110,6 +117,7 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         if (!live) return;
+        setSettledPath(path);
         if (json && Array.isArray(json.items)) {
           ids.clear();
           for (const item of json.items) {
@@ -118,15 +126,19 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
           setData(json);
         } else if (!again) setData(null);
       })
-      .catch(() => { if (live && !again) setData(null); });
+      .catch(() => {
+        if (!live) return;
+        setSettledPath(path);
+        if (!again) setData(null);
+      });
     const pathname = path.split('?')[0];
     const unwatch = watch(() => {
       freshNext.current = true;
       setRevision((n) => n + 1);
     }, { reads: threadReads(pathname, slug, ids) });
     return () => { live = false; unwatch(); };
-  }, [slug, number, threadId, revision, skip, asChange]);
-  return { data, setData, reread: () => setRevision((n) => n + 1) };
+  }, [path, revision, slug]);
+  return { data, setData, reread: () => setRevision((n) => n + 1), loading };
 }
 
 export function ThreadItems({ slug, number = null, asChange = false, threadId = null, here, payload, items, onChanged, menuKey }: {

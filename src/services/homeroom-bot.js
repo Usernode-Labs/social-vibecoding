@@ -7604,6 +7604,9 @@ async function actOnVerdict({
     const noteText = goAheadCannot
       ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep })
       : live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
+    // #6391: the note also gives the other members a set of their own.
+    const suggestOthers = ["I'd like this too", "What's left to do?"]
+      .map((label, i) => ({ id: `others-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
     if (await unchangedNote('person', noteText, parsed.done ? 'empty' : null)) {
       acted = 'unchanged';
       log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
@@ -7626,7 +7629,10 @@ async function actOnVerdict({
       const noteMeta = threadOffer?.metadata
         ? { kind: 'voice', ...threadOffer.metadata }
         : (suggestActions.length && suggestFor.length
-          ? { kind: 'note', suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions }
+          ? {
+            kind: 'note', suggest: { status: 'open', forUserIds: suggestFor },
+            actions: suggestActions, othersActions: suggestOthers,
+          }
           : null);
       const posted = await say('person', live.personText({ ...parsed, project }), {
         homeroomText: noteText,

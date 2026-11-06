@@ -59,7 +59,7 @@ import {
 } from './request-model';
 import { requestShots, togglePinShot } from './request-shots';
 import { ThreadItems, pageSlug, useThreadPayload } from './thread-items';
-import { ThreadChanges } from './thread-changes';
+import { ThreadChanges, ChangeSectionSkeleton } from './thread-changes';
 import { requestPill, threadLayout, type ThreadHere } from './thread-model';
 import { rereadOnChangeNews } from './change-detail-refresh';
 import { TopicBack } from './topic-back';
@@ -189,6 +189,33 @@ export function RequestWords({ html, translate, note }: {
   // a comment someone hid.
   const inner = useInnerHtml(words);
   const shotsInner = useInnerHtml(shots);
+  // #6387: a picture or video keeps a fixed box (app.css) until it has its
+  // own shape, so the cards under it do not jump as it loads. The nodes come
+  // from `dangerouslySetInnerHTML`, which React does not reconcile, so the
+  // attribute it writes is safe.
+  const shotBox = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const box = shotBox.current;
+    if (!box) return undefined;
+    const cleanups: Array<() => void> = [];
+    const settle = (el: Element, ready: () => boolean, events: string[]) => {
+      if (ready()) { el.setAttribute('data-shot-ready', ''); return; }
+      const done = () => {
+        el.setAttribute('data-shot-ready', '');
+        off();
+      };
+      const off = () => { for (const name of events) el.removeEventListener(name, done); };
+      for (const name of events) el.addEventListener(name, done);
+      cleanups.push(off);
+    };
+    for (const img of Array.from(box.querySelectorAll<HTMLImageElement>('img.dc-inline-img'))) {
+      settle(img, () => img.complete && img.naturalWidth > 0, ['load', 'error']);
+    }
+    for (const video of Array.from(box.querySelectorAll<HTMLVideoElement>('video.dc-inline-video'))) {
+      settle(video, () => video.readyState >= 1, ['loadedmetadata', 'error']);
+    }
+    return () => { for (const off of cleanups) off(); };
+  }, [shots]);
   // `open` is what the clamp says; `shown` is what the button says, which
   // turns with the press rather than when the text has finished moving.
   const [open, setOpen] = useState(false);
@@ -261,7 +288,7 @@ export function RequestWords({ html, translate, note }: {
       {words ? <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} /> : null}
       {translate ? <div className="mt-1 flex flex-wrap items-center gap-4">{more}{translate}</div> : more}
       {note}
-      {shots ? <div className="dev-request-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null}
+      {shots ? <div ref={shotBox} className="dev-request-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null}
     </div>
   );
 }
@@ -497,10 +524,17 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const here = useMemo<ThreadHere>(() => ({ type: 'request', id: r.number }), [r.number]);
   const threadRead = useThreadPayload(slug, r.number);
   const layout = useMemo(() => threadLayout(threadRead.data, here), [threadRead.data, here]);
+  // #6387: the row says a change addresses this request, so while its thread
+  // is still being read the page holds the change section's place instead of
+  // drawing a status card that may contradict it ("needs 1 more yes" while a
+  // check has failed) and swapping it out a moment later.
+  const holding = !r.status.closed && !!r.status.changeExpected && threadRead.loading;
   // Once a change is built for it (or a vote to close it is open), the
   // change's own cards say where it stands, so the steps and the bot's track
-  // give way to them; a closed request still says how it ended.
-  const working = layout.changes.length > 0 || !!layout.close;
+  // give way to them; a closed request still says how it ended. A change
+  // section held open while the thread loads counts the same way: its own
+  // outline already says where things stand.
+  const working = layout.changes.length > 0 || !!layout.close || holding;
   const pill = requestPill(layout, r.status.closed ? 'closed' : track ? track.work.stage : null, (id) => translate(id));
   // A plan a change in the thread was built from goes with that change.
   const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
@@ -596,6 +630,8 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               thread, under a rule; then the rest of it as a list. */}
           {threadRead.data ? (
             <ThreadChanges slug={slug} data={threadRead.data} number={r.number} changes={layout.changes} close={layout.close} plans={plans} onChanged={threadRead.reread} />
+          ) : holding ? (
+            <ChangeSectionSkeleton />
           ) : null}
           <ThreadItems slug={slug} number={r.number} here={here} payload={threadRead.data} items={layout.listed} onChanged={threadRead.reread} menuKey={menuKey} />
         </div>

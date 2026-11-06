@@ -126,6 +126,9 @@ test('the person branch stores the note\'s suggestions for the deciders it names
   assert.equal(meta.kind, 'note');
   assert.deepEqual(meta.suggest, { status: 'open', forUserIds: [11, 12] });
   assert.deepEqual(meta.actions.map((a) => a.label), ['Go ahead', 'Just the triage part', 'Not now']);
+  // #6391: the other members get a set of their own, with no Go ahead in it.
+  assert.deepEqual(meta.othersActions.map((a) => a.label), ["I'd like this too", "What's left to do?"]);
+  assert.ok(meta.othersActions.every((a) => a.type === 'prompt' && a.id !== 'go_ahead'));
 });
 
 test('with nobody deciding alone, the note stores them for the requester', async () => {

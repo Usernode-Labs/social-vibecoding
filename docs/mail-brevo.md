@@ -2,14 +2,15 @@
 
 Platform mail can go out through Brevo's transactional email API instead of
 Gmail. This page is the operator's side of that switch. Nothing moves until
-`PLATFORM_MAIL_PROVIDER` says `brevo`: `BREVO_API_KEY` also sends SMS, so having
-it never changes who sends mail. A staging preview always logs instead of
-sending, whatever is set.
+Brevo is named, by a full admin in **Admin → Email delivery** or by
+`PLATFORM_MAIL_PROVIDER`: `BREVO_API_KEY` also sends SMS, so having it never
+changes who sends mail. A staging preview always logs instead of sending,
+whatever is set.
 
 | File | What it does |
 | --- | --- |
 | `src/services/mail/transports/brevo.js` | The `POST /v3/smtp/email` call, one attempt, 8 seconds |
-| `src/services/mail/select.js` | Picks it when it is named, and tells the admin card what it lacks |
+| `src/services/mail/select.js` | Picks it when it is named, keeps the admin's saved choice, and tells the admin card what it lacks |
 | `src/services/mail/events.js` | `ingestBrevo`: what a webhook event records |
 | `src/routes/mail-webhooks.js` | `POST /api/mail/webhooks/brevo` |
 
@@ -27,11 +28,32 @@ sending, whatever is set.
    a password reset to see what actually arrives.
 3. Send a test from **Admin → Email delivery** once it is switched, to a mailbox you control.
 
+## Switching in the admin console
+
+**Admin → Email delivery** has a card, "Email is sent by", listing Gmail, the
+generic HTTP API and Brevo, each marked Ready or with the names of the settings
+it lacks. A full admin picks one and saves; a view-only admin can read the card.
+
+- The choice is kept in `platform_settings` under `mail_provider` and wins over
+  `PLATFORM_MAIL_PROVIDER`.
+- It needs no redeploy. Every send reads it through a ten-second cache, so each
+  running process follows it within seconds.
+- A provider that is not ready cannot be chosen (the server answers 409 with
+  what is missing). For Brevo that means `BREVO_API_KEY` is set.
+- If a saved provider later loses its key, mail is reported as broken. It does
+  not fall back to another provider.
+- A staging preview saves the choice and goes on logging.
+- Each change is recorded as a `mail_provider_changed` event with the admin and
+  the two provider names.
+
+The webhook token below still comes from the deploy's configuration: without
+it Brevo sends, and the reports leave out delivered, bounced and complained.
+
 ## Configuration
 
 | Key | Private | Meaning |
 | --- | --- | --- |
-| `PLATFORM_MAIL_PROVIDER` | no | `brevo` selects this transport. If it is named and `BREVO_API_KEY` is empty, mail is reported as broken rather than falling back. |
+| `PLATFORM_MAIL_PROVIDER` | no | `brevo` selects this transport until an admin saves a provider in the console, which wins. If it is named and `BREVO_API_KEY` is empty, mail is reported as broken rather than falling back. |
 | `BREVO_API_KEY` | yes | Sent as the `api-key` header. Shared with Brevo SMS. |
 | `BREVO_MAIL_WEBHOOK_TOKEN` | yes | Bearer token Brevo's webhook sends. Unset, the webhook answers 404 and the admin reports leave out delivery counts. |
 

@@ -477,6 +477,8 @@ export interface StepRow {
   fix?: FixChecksView | null;
   /** Extra hooks on the row (the superseded-base marker on Checks). */
   attrs?: Record<string, string>;
+  /** Done because an admin's force merge skips it, not because it was cleared. */
+  skipped?: boolean;
 }
 
 /**
@@ -590,6 +592,11 @@ export interface RequestStatusView {
   action: { label: string; title?: string; disabled?: boolean; act?: { fn: string; args?: unknown[] }; href?: string } | null;
   /** A closed request: the words that say so, and no stepper. */
   closed: string | null;
+  /**
+   * #6387: the row says a change addresses this request, so the page holds
+   * the change section's place while the thread is still being read.
+   */
+  changeExpected?: boolean;
   /**
    * The sentence already says what Homeroom bot is doing with its plan (or
    * its change), so no "Plan v1 is ready for comments." after it.

@@ -1032,7 +1032,9 @@ function load() {
     // transport once, here, from platform_env: Gmail API, a generic HTTP
     // mail API, or the log transport — and ALWAYS the log transport in a
     // staging preview, which is a clone of production data and must never
-    // mail real people from an unvoted branch.
+    // mail real people from an unvoted branch. A provider an admin saved
+    // in Admin → Email delivery wins over this one at send time
+    // (services/mail/index.js transportFor), outside a staging preview.
     //
     // `mailTransport` is null when nothing can send, which is what makes
     // the mailer's loud "NOT delivered" error fire instead of a boot
@@ -1185,7 +1187,8 @@ function load() {
   }
   console.log(`  PLATFORM_MAIL=${config.mailTransport
     ? `${config.mailProvider}${config.mailStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.mailFrom}`
-    : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}`);
+    : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}${
+    config.mailStagingLogOnly ? '' : ' (an admin\'s saved choice wins)'}`);
 
   return config;
 }

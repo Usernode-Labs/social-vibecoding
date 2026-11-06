@@ -312,7 +312,9 @@ test('the preview: its own column beside the thread, three where they fit, halve
   assert.match(ai, /if \(detail\.kind === 'design' && openRoot && openRoot !== detail\.ref\.rootId\) closeDetail\(\);/, 'another thread in the column closes it');
   assert.match(ai, /if \(window\.location\.hash === BOT_TAB\) closeDetail\(\);/, 'the tab brings the list back');
   const css = read('public/css/app.css');
-  assert.match(css, /#ai-screen\[data-ai-preview="three"\] \{\n\s+--ai-preview-auto: max\(360px, calc\(var\(--ai-room\) - 480px - min\(var\(--ai-main-w\), 440px\)\)\);/);
+  // #6394: the widths are on the body, where the side panel (an island beside
+  // #ai-screen) can read them too; the screen inherits them.
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) \{\n\s+--ai-preview-auto: max\(360px, calc\(var\(--ai-room\) - 480px - min\(var\(--ai-main-w\), 440px\)\)\);/);
   assert.match(css, /\n\s+--ai-col-w: max\(320px, min\(var\(--ai-col-chosen-w, min\(var\(--ai-main-w\), 440px\)\), calc\(var\(--ai-room\) - 480px - var\(--ai-preview-w\)\)\)\);/,
     'until its edge is dragged the thread is Main\'s width, 440px at most');
   assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \.ai-screen-body \{ display: none; \}/, 'the list steps aside');

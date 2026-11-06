@@ -58,6 +58,18 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── One Home (#6361): the Discover screen (#apps) is retired ────────
+  // Home's Communities to join is the directory, and #apps / #apps/<slug>
+  // rewrite to Home and to the project's hub (app.js), so the screen and its
+  // two levels left the shell with features/apps/browse*.
+  'browse-screen': 'Discover\'s screen root (#apps). Retired with the screen: Home\'s Communities to join is the directory (One Home, #6361).',
+  'browse-search-bar': 'Discover\'s search bar, gone with its screen (One Home, #6361); Home\'s search reads apps and communities.',
+  'browse-search-input': 'Discover\'s search field, gone with its screen (One Home, #6361).',
+  'browse-search-clear': 'Discover\'s search clear button, gone with its screen (One Home, #6361).',
+  'browse-list-level': 'Discover\'s list level, gone with its screen (One Home, #6361).',
+  'browse-list': 'Discover\'s rows, gone with its screen (One Home, #6361): Communities to join draws the directory on Home.',
+  'browse-empty': 'Discover\'s empty note, gone with its screen (One Home, #6361).',
+  'browse-detail': 'Discover\'s app details level (#apps/<slug>), gone with its screen (One Home, #6361): the address rewrites to the project\'s hub, and the tile menu\'s row opens the hub.',
   // ── Overnight UI audit D10: the selection carets are gone ─────────
   // The owner's decision of 2 Nov 2026. Each pointed from the chosen option
   // to nothing below it, and read as a stray tooltip arrow once the option
@@ -525,9 +537,9 @@ const ADDED_IDS = {
   // somebody has tapped or once a tab has filtered to nothing, so none of
   // them is in the prerendered document, which is what this map is for.
   // #workshop-scope left this map with the chip itself (#2759), came back
-  // with it in #3051, and left again in #852: the Communities screen's "All
-  // ⌄" is the header's #header-scope-switch at every width now, which is
-  // conditional and so not in this map. The chip on an app's own Workshop
+  // with it in #3051, and left again in #852 for the header's
+  // #header-scope-switch, which was conditional and left with the screen's
+  // list (One Home, #6361). The chip on an app's own Workshop
   // was #dev-ws-scope-chip, which rendered client-side and was never in the
   // prerendered document; #3295 retired it for the header's
   // #header-app-switch, which is conditional and so not in this map either.
@@ -574,7 +586,6 @@ const ADDED_IDS = {
   // #6019: Discover left the phone's bar for a page Home's Discover block
   // opens; its seat there went to AI, the Homeroom bot's chat, which left
   // the Messages list. The desktop rail keeps a Discover tab (29 Oct 2026).
-  'platform-tab-discover': '#2718: the Discover tab, to #apps. #6019 retired it with Discover\'s seat on the phone\'s bar; it comes back on 29 Oct 2026 as the DESKTOP RAIL\'S, under Home (Evan: Home, Discover, Messages, AI, Communities). app.css hides it below 768px, where Home\'s Discover block opens the page.',
   'platform-tab-ai': '#6019: the AI tab, to #homeroom-bot (#ai until 29 Oct 2026): the Homeroom bot\'s chat, lit while it is the conversation on the Messages screen (features/nav/tab-bar.tsx). Takes the seat the Discover tab (#platform-tab-discover, #2718) had on the phone\'s bar, which left it for a page of Home\'s there.',
   // #6019 follow-up: the AI tab's own page, which #homeroom-bot opens.
   'ai-screen': '#6019 follow-up: the AI tab\'s main view (features/ai/index.tsx): Your work, In progress (Up next until 29 Oct 2026) and Live this week, with Main, the chat with Homeroom bot, docked beside it on a wide window. Ships hidden and empty; its lists load in effects.',
@@ -640,9 +651,7 @@ const ADDED_IDS = {
   // The app's own Workshop page answers "what is happening in THIS app";
   // nothing answered "which of my apps wants something from me", short of
   // opening each one in turn. This is that page's two numbers, once per app.
-  'workshop-screen': 'The Workshop SCREEN root (#workshop), a React-owned sibling of #messages-screen: every app in the viewer\'s "Your apps", with how many items that app\'s own Workshop page holds for them. Ships hidden and EMPTY — the rows arrive from GET /api/apps + GET /api/workshop/counts in the controller\'s open() — so the prerender and the first client render agree.',
-  'workshop-list': 'That screen\'s card of rows — a <GroupedList> from @/components/ui/grouped-list, the widget language\'s primary content shape, so the id sits on the primitive rather than on a hand-rolled div. It carries no rows in the prerender, like #browse-list beside it; a row is a <ListRow as="a"> with `[data-workshop-app="<slug>"]` carrying `[data-workshop-working]` and `[data-workshop-needs]`, which is what the declared checks select on.',
-  'workshop-empty': 'Its nothing-to-show state, for an account with no apps. #2445 made it a CARD rather than the grey caption line it shipped as — a <ListRow as="a" href="#apps"> reading as an invitation to the directory, the way Home\'s Discover block\'s own empty card does (#1913): title over subtitle with the row\'s disclosure chevron. THE ID IS ON A WRAPPER <div>, NOT ON THAT ANCHOR, and that is load-bearing in two directions. dapp.json selects `#workshop-empty.hidden`, so the id and the `hidden` class toggle stay together on one element and visibility is never conditional rendering; and a SECOND declared check selects `#workshop-list a[data-workshop-app]:first-of-type`, which an `<a id="workshop-empty">` sibling of the rows silently steals — `:first-of-type` is structural and `display: none` does not exempt it. That shipped once and failed on the next run; the wrapper is the fix. Ships `hidden`, and stays hidden while the list is still loading — the skeleton rows are that state, and an empty list that reads as "you have no apps" before the fetch lands is the bug this distinction prevents. It is the list\'s FIRST child, not its last: GroupedList\'s row separator is `[&:not(:last-child)]:after:*` on the row, so a note after the rows would leave the last one drawing a hairline under nothing.',
+  'workshop-screen': 'The Needs you SCREEN root (#needs; One Home, #6361: it was the Communities screen, #communities, whose list went to Home), a React-owned sibling of #messages-screen: every decision owed by the viewer across their projects, as the review flow. Ships hidden and EMPTY — the feed arrives from GET /api/workshop/needs-feed in the controller\'s open() — so the prerender and the first client render agree. Its list\'s #workshop-list, #workshop-empty and #workshop-search went with it.',
   'app-settings-modal': '#2158: dedicated app settings and danger zone.',
   'app-delete-name': '#2158: named confirmation before app deletion.',
   // ── #2304: access is an app setting ──────────────────────────────
@@ -1147,9 +1156,6 @@ const ADDED_IDS = {
   'side-panel-body': 'The panel\'s body: the one <iframe> of the panel\'s document (#side-panel-frame, rendered only while open, so absent here) and the loading spinner after it.',
   'side-panel-loading': 'The spinner shown over the panel\'s body until its document has booted and drawn its first page. Ships hidden.',
   // ── Discover's view switch, type row and Filters button ────────────
-  'browse-view-switch': 'The For you / Browse / Joined switch under Discover\'s search field. It replaced the All / Featured / Not joined / Joined / New chip row; the store\'s prerender value (For you) is the pressed part.',
-  'browse-type-row': 'The always-drawn row holding Discover\'s app-type chips and the Filters button at its end. It is rendered even when no project has a type, because the Filters button lives here and must stay reachable.',
-  'browse-filters-btn': 'The Filters button at the end of Discover\'s type row. It opens the Filters sheet, and carries data-active-count (the number of filters on) only when one is on.',
   // The prototype's History segment (#leaderboard-history-root, added above
   // as the Leaderboard screen's fourth pane) retired with the seasons it
   // listed (the Semi design, 2026-10-16); #leaderboard/seasons lands on
@@ -1218,8 +1224,7 @@ const ADDED_IDS = {
   // heading and no rows; the pins arrive from localStorage after mount.
   'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-rail-conversations and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
   'platform-rail-pinned-label': 'The section\'s "Pinned" heading, which names the group.',
-  'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: All communities with its search box focused and lit (features/workshop/communities-search.ts). dapp.json selects on it.',
-  'workshop-search': 'D: the search at the head of All communities (features/workshop/index.tsx), at every width since #5296: your communities by name, in the one list. Prerendered empty.',
+  'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: Home with its search box focused (features/workshop/communities-search.ts; All communities\' search until One Home, #6361). dapp.json selects on it.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

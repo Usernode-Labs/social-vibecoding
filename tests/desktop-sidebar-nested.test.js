@@ -36,7 +36,8 @@ const block1024 = () => {
 };
 
 test('which rows: a community you are visiting has one for as long as you are on its page', () => {
-  const { railRows } = loadTsx('frontend/src/features/nav/rail-communities.tsx');
+  const { railRows, RAIL_TOPICS } = loadTsx('frontend/src/features/nav/rail-communities.tsx');
+  assert.equal(RAIL_TOPICS, 2);
   assert.deepEqual(railRows(['a', 'b'], null), ['a', 'b']);
   assert.deepEqual(railRows(['a', 'b'], 'b'), ['a', 'b'], 'one of the five keeps its row');
   // #21 (19 Oct polish board): after the five, so a visit never moves them.
@@ -124,7 +125,7 @@ test('#5693: under Agents the sidebar seats the chats that ask for you only; the
   assert.deepEqual(keys(seats(new Map(), new Map())), ['person:7']);
 });
 
-test('the places: the column\'s own list, topics after two behind "Show N more", the one you are on kept; none in the sidebar', () => {
+test('the places: the column\'s own list, topics after two behind "Show N more", the one you are on kept', () => {
   const places = {
     channels: [
       { kind: 'general', handle: 'general', state: 'live', unread: 0 },
@@ -148,12 +149,14 @@ test('the places: the column\'s own list, topics after two behind "Show N more",
   const all = renderComponent('frontend/src/features/dev-board/workshop/project-places.tsx', 'ProjectPlaces', { ...props('status'), fold: undefined });
   assert.match(all, /data-place="c:bugs"/);
   assert.doesNotMatch(all, /data-places-more/);
-  // One Home (#6361): the sidebar nests no places under a community's row;
-  // the hub lists them, and the header's back returns to Home from it.
+  // The sidebar's part is that list, under the community's own row.
   const rail = read('frontend/src/features/nav/rail-communities.tsx');
-  assert.doesNotMatch(rail, /<ProjectPlaces|RailPlaces|platform-rail-places/);
-  assert.match(rail, /const open = false;/);
-  assert.match(rail, /const needs = c && !c\.unchosen \? Number\(c\.needs\) \|\| 0 : 0;\s*const votes = open \? 0 : needs;/, 'the row keeps its votes');
+  assert.match(rail, /<ProjectPlaces[\s\S]*?fold=\{RAIL_TOPICS\}\s*onPlace=\{\(key\) => \{ openPlace\(slug, key\); \}\}/);
+  assert.match(rail, /const open = sidebarRows && \(onPage === slug \|\| \(onApp === slug && yours\)\);/, 'it opens with the page, or the app of one of yours');
+  assert.match(rail, /<NestSlot open=\{open\} className="platform-rail-nest platform-rail-places" rows="\.dev-ws-place, \.dev-ws-places-head">\s*<RailPlaces slug=\{slug\} onPage=\{onPage === slug\} needs=\{needs\} \/>/);
+  // Open, its votes are Needs you's count, in its app too (audit N04).
+  assert.match(rail, /const needs = c && !c\.unchosen \? Number\(c\.needs\) \|\| 0 : 0;\s*const votes = open \? 0 : needs;/, 'open, its votes are Needs you\'s count');
+  assert.match(rail, /owed=\{here \? place\.owed : needs\}/);
 });
 
 test('the markup: the conversations follow Messages, empty in the prerender, and nothing is nested there', () => {
@@ -185,7 +188,7 @@ test('the motion: one clock for both parts, on the content\'s own height', () =>
   assert.match(css, /\.platform-rail-communities > \.platform-rail-nest \{\n    margin-top: -1px;\n  \}/, 'the section\'s gap does not arrive with it');
 });
 
-test('the pages: one pane at a time in the inbox, All communities one page, and the All row goes there', () => {
+test('the pages: one pane at a time in the inbox, and the All row goes to All communities', () => {
   const inbox = read('frontend/src/features/messages/index.tsx');
   assert.match(inbox, /const railClass = sidebarRows && !drawer\.on \? \(discussionOpen \? ' messages-list-in-rail' : ' messages-list-page'\) : '';/);
   const store = read('frontend/src/features/messages/store.ts');
@@ -202,14 +205,12 @@ test('the pages: one pane at a time in the inbox, All communities one page, and 
   assert.doesNotMatch(all, /MESSAGES' COLUMN IS ITS OWN LIST/);
   assert.doesNotMatch(css, /data-workshop-panes/, 'no column and page on All communities');
   // #5296: a search's answer IS the one list, narrowed in place, so no CSS
-  // hides the list for it; the screen leaves Join and Start out itself.
+  // hides the list for it. One Home (#6361): that list is Home's now.
   assert.doesNotMatch(all, /data-workshop-results/, 'no second list for a search');
-  assert.match(read('frontend/src/features/workshop/index.tsx'), /\{rows !== null && !state\.error && !q \? \(/, 'a search\'s answer is the whole list');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /if \(key === 'workshop' && sidebarRows\) \{\s*event\.preventDefault\(\);\s*if \(screen === 'workshop-screen'\) pressLitTab\(screen\);\s*else goToCommunity\(null\);/);
-  // One Home (#6361): the sidebar nests no places, so the place bar's button
-  // to them stays beside the docked sidebar too.
-  assert.doesNotMatch(css, /\.platform-tabs-folded\)\) \.dev-ws-places-btn \{\n    display: none;/);
+  // The places button has nothing to open beside the docked sidebar.
+  assert.match(css, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) \.dev-ws-places-btn \{\n    display: none;\n  \}/);
 });
 
 test('the look: one indent a level, one unbroken line, the parent unfilled; AI a sparkle', () => {
@@ -222,8 +223,8 @@ test('the look: one indent a level, one unbroken line, the parent unfilled; AI a
   assert.match(css, /--platform-rail-full: 212px;/, 'the deeper rows need 212px');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   // #6019: the Homeroom bot tab wears the bot's picture in line, not a
-  // sparkle. The rail keeps Discover's compass under Home (29 Oct 2026); on a
-  // phone it is a page of Home's.
+  // sparkle. One Home (#6361): Discover's compass is gone; its directory is
+  // Home's Communities to join.
   assert.match(bar, /\{ key: 'ai' as const, label: 'core:tabs\.ai', href: '#homeroom-bot', Icon: HomeroomBotIcon \}/);
-  assert.match(bar, /\{ key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps', Icon: CompassIcon \}/);
+  assert.doesNotMatch(bar, /key: 'discover'|CompassIcon/);
 });
