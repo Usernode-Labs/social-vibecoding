@@ -18463,6 +18463,28 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar { display: none; }
 :is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) :is(.dev-request-bar, .dev-request-scroll) {
   padding-inline: 12px;
 }
+/* THE COLUMN HAS MAIN CHAT'S SURFACE, #6432. The 30 Oct rules above took the
+   page's own sheets away so it would lie flat in the column, but nothing
+   painted the column itself: the panel document's body still drew the route
+   wallpaper (its star, grain and washes), sized to the column and not lined
+   up with the page's own, so Evan saw it through the request (6 Nov 2026).
+   Main got a surface under it (#ai-screen .ai-main-pane, --home-ground with
+   the --dc-sheet-fill thread pane over it); --dc-sheet-solid is that same
+   composite, the list's cards' colour in both themes, so the page lies on it
+   here. `background` clears the image too. `!important` is what beats the
+   route rule's `:has(:is(#…))` (one id deep) and the brand skin's body
+   background; the app-launch cover is written the same way. The fixed layer
+   is a second copy the phone's browser scroller paints behind the body, and
+   it goes too. No media query: the phone's drawer holds the same page. Only
+   the document beside the bot page (a panel document, never the top one) is
+   touched, so the full page and the Workshop's .dev-ws-side keep theirs, and
+   the thread's own cards keep their fills. */
+html.in-side-panel.side-panel-beside-ai body {
+  background: var(--dc-sheet-solid) !important;
+}
+html.in-side-panel.side-panel-beside-ai body::before {
+  background: none !important;
+}
 /* A DESIGN'S PREVIEW, A COLUMN OF ITS OWN (1 Nov 2026, threads, one loop
    C1; features/ai/preview.ts). Opened from a version in a thread, the design
    pane stands beside the thread: list | thread | preview where the three fit

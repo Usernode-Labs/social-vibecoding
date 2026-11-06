@@ -1579,6 +1579,32 @@ test('a request opened beside the bot list fills the column, not a box inside it
     'the 12px the wrapper gave the content stays on the bar and the transcript');
 });
 
+test('beside the bot page a request or a change lies on Main Chat\'s surface (#6432)', () => {
+  const css = read('public/css/app.css');
+  // The column is one sheet as Main is (30 Oct 2026), but the panel document
+  // still painted the route wallpaper on its body, sized to the column: a
+  // second star and grain showed through the request (6 Nov 2026). The page
+  // now lies on the same plane colour as Main's pane and the list's cards,
+  // and the intended declaration is the one the top document's own wallpaper
+  // rule and the brand skin cannot outrank.
+  assert.match(css, /html\.in-side-panel\.side-panel-beside-ai body \{\s+background: var\(--dc-sheet-solid\) !important;\s+\}/,
+    'the beside-ai body paints the plane colour, which clears the wallpaper image too');
+  assert.match(css, /html\.in-side-panel\.side-panel-beside-ai body::before \{\s+background: none !important;\s+\}/,
+    'and the phone browser\'s fixed wallpaper layer is gone behind it');
+  // The claim that the colour matches Main in both themes: the token is the
+  // one composite, and Main's pane is the ground the thread pane sits over.
+  assert.match(css, /--dc-sheet-solid: #faf9f2;/, 'light: the list\'s card colour');
+  assert.match(css, /--dc-sheet-solid: #17181d;/, 'dark: the same composite over the dark ground');
+  assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*background: var\(--home-ground\);/,
+    'the surface it must match is Main\'s pane');
+  // Everywhere else the wallpaper stays: the full page (the top document has
+  // no `in-side-panel`) and the Workshop's own panel are not named here.
+  assert.match(css, /\n  background: var\(--home-wallpaper\);\n\}/,
+    'the route wallpaper is still painted on the plain page');
+  assert.doesNotMatch(css, /(?:^|\n)(?:body|\.dev-ws-side[^\n]*body) \{[^}]*--dc-sheet-solid/,
+    'no plain body rule, and nothing in the Workshop\'s panel, paints the plane colour');
+});
+
 test('beside the bot page a request or a change has one header, so its own bar is not drawn (#6431)', () => {
   const css = read('public/css/app.css');
   // The column's heading carries the page's status pill and everything its ⋯
