@@ -26,6 +26,7 @@ const repoRef = require('../services/repo-ref');
 // reports as `busy`, so an issue's work-state chip and the session card it
 // points at can never disagree about whether an agent is actually running.
 const { isSessionBusy } = require('../services/active-workers');
+const { planRecordSql } = require('../services/request-specs');
 const { workedOnSql } = require('../workflow/session-work.ts');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -2247,7 +2248,7 @@ function issueRoutes(config) {
           WHERE app_id = $1 AND user_id = $2
             AND created_from_issue_number IS NOT NULL
             AND status <> 'archived'
-            AND NOT (source IS NOT DISTINCT FROM 'request_spec' AND branch_name IS NULL)
+            AND NOT ${planRecordSql('')}
           ORDER BY created_from_issue_number, created_at DESC`,
         [app.id, req.user.id]
       );
@@ -2275,7 +2276,7 @@ function issueRoutes(config) {
           WHERE cs.app_id = $1 AND cs.is_headless = FALSE
             AND cardinality(cs.linked_issues) > 0
             AND u.is_synthetic IS NOT TRUE
-            AND NOT (cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)
+            AND NOT ${planRecordSql('cs')}
             AND (cs.status IN ('active','promoted','merging')
                  OR (cs.status = 'paused'
                      AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,

@@ -1,5 +1,7 @@
 'use strict';
 
+const { planRecordSql } = require('./request-specs');
+
 // One work state per request and per change (5 Nov 2026, step 3 of one bot
 // per thread: docs/plans/bot-one-model.md).
 //
@@ -518,7 +520,7 @@ const REQUEST_FACTS_SQL = `
         FROM chat_sessions c
        WHERE c.app_id = it.app_id AND it.issue_number = ANY(c.linked_issues)
          AND c.is_headless = FALSE
-         AND NOT (c.source IS NOT DISTINCT FROM 'request_spec' AND c.branch_name IS NULL)
+         AND NOT ${planRecordSql('c')}
          AND c.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
        ORDER BY CASE c.status WHEN 'merged' THEN 0 WHEN 'merging' THEN 1 WHEN 'promoted' THEN 2 ELSE 3 END, c.id DESC
        LIMIT 1
