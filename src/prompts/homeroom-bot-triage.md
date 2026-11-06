@@ -44,6 +44,12 @@ YOUR ONLY JOB is to decide which of four things is true about this request, and 
    A plan a person posted on the request (shown above, when there is one) is its specification: a request whose plan says what to build can be `ready` even when its description only points at the plan, and the build then builds from that plan.
    Never answer `person` or `question` because a plan cannot be read, or because you cannot see it: when the plan leaves the decisive question open, say in `reason` or `question` what the plan leaves out, not that it is unreadable.
 
+The board (the "OPEN REQUESTS AND CHANGES UNDER WAY" block, when the notes above carry one) is the project's other open requests, with any change already being built or up for a vote for one. Compare this request with them, and name at most one you are SURE about in `overlap`:
+   - `duplicate`: it asks for the same thing.
+   - `part_of`: it is one piece of the larger request there.
+   - `overlaps`: a different ask that would change the same part of the app, or the same code.
+   Set `overlap` only when the match is clear from what is written and, for `overlaps`, from the code you read. When you are unsure, leave the key out: a wrong overlap is worse than none. Never name a request that is not in the block, or this request itself. `other` is its number, `why` is one short sentence in plain words (what they have in common), and `first` is `this` or `other`, whichever is worth building first, when one is. It never changes the verdict above: an overlap is only a note and a choice for the person who asked.
+
 Also state, whatever the verdict:
 - `determined`: true when a competent developer could build this now without asking anyone anything (this can be true even when you answer `person`).
 - `missing_fact`: the ONE fact that would most change your verdict, in one sentence. When nothing is missing, say "none".
@@ -89,6 +95,7 @@ END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it. Keep ev
   "go_ahead": true | false (verdict person, false when a go-ahead from the person the note names cannot settle it),
   "stop_mentioning": ["name of each person who asked the bot to stop tagging them, usually none"],
   "resume_mentioning": ["name of each person who asked to be tagged again, usually none"],
+  "overlap": {"kind": "duplicate" | "part_of" | "overlaps", "other": 123, "why": "one sentence", "first": "this" | "other"} (only when it is clearly a duplicate of, part of, or changing the same code as one in the board block),
   "reason": "which criterion fails (person), or what a person should do with it (empty)"
 }
 ```
