@@ -137,6 +137,19 @@ test('an empty stream says so once its history is in, and "Loading replies…" b
   assert.match(renderComponent(TRANSCRIPT, 'RequestRows', { view: { lead: lead(false), messages: [] } }), /Loading replies…/);
 });
 
+// #6421: a thread may hold several requests. A reply written on another one
+// is tagged with it, so the merged discussion still says where each word was
+// written.
+test('a reply written on another request of the merged thread is tagged with it', () => {
+  const lead = { earlier: false, placeholder: null, language: 'request', request: { loaded: true, githubMore: null } };
+  const html = renderComponent(TRANSCRIPT, 'RequestRows', { view: { lead, messages: [
+    row({ id: 1, username: 'sam', bodyHtml: '<p>Dawn is better</p>', requestOf: { number: 6212 } }),
+    row({ id: 2, username: 'evan', bodyHtml: '<p>On this one</p>' }),
+  ] } });
+  assert.match(html, /data-msg-on-request="6212"[^>]*>on #6212</);
+  assert.doesNotMatch(html, /On this one[\s\S]*data-msg-on-request/, 'the page\'s own request carries no tag');
+});
+
 const requestView = (status) => ({
   number: 4417, category: 'Communities & projects', menuKey: 'request:4417', asker: 'evan',
   askedAt: '2026-10-08T14:01:11Z', askedTime: '04:01 PM', askedTitle: 'Oct 8, 2026, 04:01 PM',

@@ -19,7 +19,9 @@
 // session's records all stay, so there is no dead link: whatever opens it
 // wakes it. This includes vote-backed previews, for that reason.
 //
-// WAKE. wake() scales it back to one replica and waits for the pod: the
+// WAKE. Web callers append preview.wake work and wait for its durable
+// receipt; only a conductor (or the standalone all role) writes Kubernetes.
+// wake() scales it back to one replica and waits for the pod: the
 // same image of the same head, no rebuild and no checks run again. Every
 // door wakes it:
 //   - Preview and Try it (routes/sessions.js ensure-staging, preview-status),
@@ -211,20 +213,30 @@ function wake(config, pool, sessionId, opts = {}) {
 
 async function readPreview(pool, id) {
   const { rows: [row] } = await pool.query(
-    `SELECT id, app_id, staging_url, staging_runtime_kind, staging_runtime_name, staging_asleep_at
+    `SELECT id, app_id, staging_url, staging_runtime_kind, staging_runtime_name, staging_asleep_at, status
        FROM chat_sessions WHERE id = $1`, [id]);
   return row || null;
 }
 
 async function wakeOnce(config, pool, id, {
-  reason = 'open', timeoutMs = WAKE_TIMEOUT_MS, edgeWaitMs = EDGE_WAIT_MS, edgePollMs = EDGE_POLL_MS, deps = {},
+  reason = 'open', timeoutMs = WAKE_TIMEOUT_MS, edgeWaitMs = EDGE_WAIT_MS, edgePollMs = EDGE_POLL_MS, repairRoute = false, deps = {},
 } = {}) {
   const kubernetes = deps.kubernetes || require('./kubernetes');
   const row = await readPreview(pool, id);
   if (!row || !row.staging_url || row.staging_runtime_kind !== 'kubernetes' || !row.staging_runtime_name) return { status: 'none' };
-  if (!row.staging_asleep_at) return { status: 'awake', url: row.staging_url };
+  if (!['active', 'paused', 'promoted', 'merging'].includes(row.status)) return { status: 'none' };
+  if (!row.staging_asleep_at && !repairRoute) return { status: 'awake', url: row.staging_url };
+  if (require('./process-role').processRole() === 'web') {
+    return (deps.workflow || require('../workflow/platform.ts')).requestPreviewWake({
+      sessionId: id, appId: row.app_id, reason, repairRoute,
+    }, { waitMs: timeoutMs + edgeWaitMs });
+  }
   const kube = kubernetesConfig(config);
   const name = row.staging_runtime_name;
+  if (!row.staging_asleep_at) {
+    await kubernetes.routePreviewForSleep(kube, name, { asleep: false });
+    return { status: 'awake', url: row.staging_url };
+  }
   const startedAt = Date.now();
   const { withSessionLock } = sessionLocks();
   // Scaled up under the lock: a sleep in progress finishes first, and is
@@ -355,11 +367,7 @@ async function wakeByHost(config, pool, rawHost, { now = Date.now(), deps = {} }
     return { status: 'waking' };
   }
   // Awake, yet its link reached the waking page: its route is put back.
-  const kubernetes = deps.kubernetes || require('./kubernetes');
-  kubernetes.routePreviewForSleep(kubernetesConfig(config), row.staging_runtime_name, { asleep: false })
-    .catch((err) => log.warn('preview-sleep', 'Could not route an awake preview\'s link back to it', {
-      sessionId: row.id, err: err.message,
-    }));
+  wake(config, pool, row.id, { reason: 'link', repairRoute: true, deps });
   return { status: 'awake' };
 }
 

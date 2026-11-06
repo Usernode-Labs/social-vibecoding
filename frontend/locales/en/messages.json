@@ -4707,6 +4707,14 @@
     "text": "Only you · Not in a community yet",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a private thread's row (its whole line; read by a screen reader too) with an idea that is for no project yet: only the person can see it."
   },
+  "ai.row.requests_one": {
+    "text": "· {{count}} request",
+    "description": "After the title of a row in the Homeroom bot tab's lists, when its thread holds one request and several were merged: how many requests the thread holds."
+  },
+  "ai.row.requests_other": {
+    "text": "· {{count}} requests",
+    "description": "After the title of a row in the Homeroom bot tab's lists, when its thread holds several requests: how many requests the thread holds."
+  },
   "ai.row.privateAbout": {
     "text": "Only you · {{project}} · About #{{number}}",
     "description": "Tooltip (and phone second line) of a row in the Homeroom bot tab's Needs you list for a private thread opened from a request's page: only the person sees it, the project, and the request it is about."

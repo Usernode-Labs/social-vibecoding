@@ -170,12 +170,6 @@ function RequestShell(props: ThreadShellProps) {
         <div id="gc-thread-bar" className="dev-request-bar" />
         <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain chat-transcript">
           <div id="gc-thread-head" />
-          {/* #5725: a change page's pin, where its Votes card is repeated and
-              sticks to the top of the scroller while the reader scrolls the
-              thread (topic/change-head.tsx). It is the scroller's own child,
-              so it travels the whole transcript; a request page renders none,
-              so its markup is unchanged. */}
-          {change ? <div id="gc-thread-pin" /> : null}
           <div id="gc-thread-messages" />
         </div>
         {/* Floating over the transcript's foot, with nothing behind it

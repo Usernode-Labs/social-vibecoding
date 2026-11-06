@@ -54,6 +54,16 @@ test('the bot\'s own step maps to one stage, with its queue or hold on the secon
   assert.equal(planning.stage, 'planning');
 });
 
+// #6423: a build waiting for a change that touches the same files says so,
+// with the pull request when it has one, and plainly when it has none.
+test('a build waiting on a change touching the same files says which', () => {
+  const waiting = derive({ verdict: 'ready', build_ok: null, build_waiting_at: ago(5), build_overlap_pr: 6404 });
+  assert.deepEqual([waiting.stage, waiting.line], ['building', { code: 'overlap_wait', pr: 6404 }]);
+  const other = derive({ verdict: 'ready', build_ok: null, build_waiting_at: ago(5) });
+  assert.deepEqual([other.stage, other.line.code, other.line.place], ['building', 'queued', undefined],
+    'no overlap: its place in line, as before');
+});
+
 test('the requester\'s move is always waiting_for_you, with why', () => {
   const plan = derive({ verdict: 'ready', build_ok: null, plan_waiting_at: ago(20) });
   assert.deepEqual([plan.stage, plan.why, plan.whoseMove], ['waiting_for_you', 'plan', 'requester']);

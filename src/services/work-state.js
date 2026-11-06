@@ -162,6 +162,9 @@ function fromStage(s, row, now = new Date()) {
     case 'held':
       return state('building', { since, line: { code: row.cap_suppressed === 'builds_per_app' ? 'held_builds' : 'held_waiting' } });
     case 'build_queued':
+      // #6423: waiting for a change that touches the same files, before it
+      // takes its turn.
+      if (row.build_overlap_pr) return state('building', { since, line: { code: 'overlap_wait', pr: Number(row.build_overlap_pr) } });
       // #5323: its place among the project's builds waiting to start, so it
       // never says a bare "waiting its turn".
       return state('building', { since, line: { code: 'queued', ...(row.build_place ? { place: Number(row.build_place) } : {}) } });

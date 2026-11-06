@@ -96,6 +96,8 @@ interface Line {
   /** The number names a change on GitHub: it reads "PR 12", never "#12". */
   pr?: boolean;
   title: string;
+  /** #6421: how many requests the thread holds, for "· 10 requests" after the title. */
+  requests?: number;
   right: string;
   tooltip: string;
   /** On a phone, a second line: the reason, where it is news. */
@@ -182,12 +184,16 @@ const FOLD_CLIP = 'min-h-0 overflow-hidden -ms-4 ps-4';
 
 function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
   const t = useMessages('messages');
+  // #6421: a thread that holds several requests says how many after its title.
+  const many = Number(line.requests) > 1;
+  const requestsWord = many ? t('messages:ai.row.requests', { count: line.requests }) : '';
+  const tooltip = many ? `${line.tooltip} · ${requestsWord}` : line.tooltip;
   return (
     <button
       type="button"
       className={`${line.lit ? LIT_ROW : quiet ? LIVE_ROW : ROW} relative`}
       onClick={line.open}
-      title={line.tooltip}
+      title={tooltip}
       data-ai-line={line.kind}
       data-ai-lit={line.lit ? '' : undefined}
       data-ai-fresh={line.fresh ? '' : undefined}
@@ -216,6 +222,11 @@ function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; 
                 : 'block truncate text-sm leading-5 font-medium text-zinc-900 dark:text-zinc-100'}
         >
           {line.title}
+          {many ? (
+            <span className="ms-1 text-xs font-normal text-zinc-500 dark:text-zinc-400" data-ai-line-requests={line.requests}>
+              {requestsWord}
+            </span>
+          ) : null}
         </span>
         {line.why ? (
           <span className="block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400 md:hidden" aria-hidden="true" data-ai-line-why="">{line.why}</span>
@@ -229,7 +240,7 @@ function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; 
       >
         {line.right}
       </span>
-      <span className="sr-only">{line.tooltip}</span>
+      <span className="sr-only">{tooltip}</span>
     </button>
   );
 }
@@ -804,6 +815,7 @@ export function AiLists({
     number: th.number,
     pr: changeOnGithub(th),
     title: th.title || '',
+    requests: th.requests || 0,
     right: say(shortWords(th))!,
     tooltip: say(nextWords(th))!,
     why: say(threadWhy(th)),

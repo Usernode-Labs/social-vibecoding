@@ -445,6 +445,11 @@ export interface TranscriptMessage {
    * that change. Absent on every other row.
    */
   changeOf?: { sessionId: number | null };
+  /**
+   * #6421: on a request's page, a message written on another request of a
+   * merged thread, tagged with that request's number ("on #6212").
+   */
+  requestOf?: { number: number | null };
   /** Spec-share rows only — see SpecShareView. Null on every other kind. */
   specShare: SpecShareView | null;
   /**
