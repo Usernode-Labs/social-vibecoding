@@ -1216,13 +1216,12 @@ const ADDED_IDS = {
   // rows arrive with the community list, so they carry no ids.
   'platform-rail-communities': 'D: the sidebar\'s Communities section (role=group), between #platform-tab-messages and #platform-tab-workshop. dapp.json pins the bar order through it.',
   'platform-rail-communities-label': 'D: the section\'s "Communities" heading, which names the group.',
-  'platform-rail-conversations': 'v3: the conversations nested under Messages in the sidebar of rows, right after #platform-tab-messages; an empty element while shut, so the bar\'s order is one order. dapp.json pins it there.',
   // 18 Oct 2026: the communities you pinned, under their own heading above
   // yours (features/nav/rail-pinned.tsx). Each community's app is a row
   // under it now, so #platform-strip-apps, the strip's Pinned and Recent
   // apps (#4417), went: a pin is a community's. It ships hidden with its
   // heading and no rows; the pins arrive from localStorage after mount.
-  'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-rail-conversations and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
+  'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-tab-messages and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
   'platform-rail-pinned-label': 'The section\'s "Pinned" heading, which names the group.',
   'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: Home with its search box focused (features/workshop/communities-search.ts; All communities\' search until One Home, #6361). dapp.json selects on it.',
 };

@@ -157,10 +157,14 @@ function fakePool({ existing = null, failOn = null } = {}) {
   };
 }
 
-function fakeDeps({ cardThrows = false, commentThrows = false } = {}) {
-  const sent = { cards: [], comments: [] };
+function fakeDeps({ cardThrows = false, commentThrows = false, planUpdates = null } = {}) {
+  const sent = { cards: [], comments: [], newerPlans: [] };
   return {
     sent,
+    // #6406: the bot is told about a newer plan after the post is stored.
+    planUpdates: planUpdates || {
+      async noticeNewerPlan(pool, args) { sent.newerPlans.push(args); return null; },
+    },
     ws: {
       async sendBotMessage(pool, appId, msg) {
         if (cardThrows) throw new Error('ws down');
@@ -278,8 +282,25 @@ test('a failed write stores nothing, and a failed card or comment never takes th
   assert.match(deps.sent.comments[0].body, /<details><summary>The plan<\/summary>[\s\S]*Spinner on the being-made screen/);
 });
 
-test('a refused spec reaches no database', async () => {
+test('#6406: a post tells the bot about the version, and never fails on it', async () => {
   const pool = fakePool();
+  const d = fakeDeps();
+  const out = await specs.postRequestSpec(pool, {
+    app: APP, repo: REPO, issueNumber: 4041, user: ADA, text: HTML,
+  }, d);
+  assert.equal(d.sent.newerPlans.length, 1);
+  assert.equal(d.sent.newerPlans[0].posted.sessionId, out.sessionId);
+  assert.equal(d.sent.newerPlans[0].posted.version, out.version);
+  assert.equal(d.sent.newerPlans[0].posted.user.username, 'ada');
+
+  const throwing = fakeDeps({ planUpdates: { async noticeNewerPlan() { throw new Error('bot down'); } } });
+  const ok = await specs.postRequestSpec(fakePool(), {
+    app: APP, repo: REPO, issueNumber: 4041, user: ADA, text: HTML,
+  }, throwing);
+  assert.equal(ok.version, 1, 'the plan was stored and shared anyway');
+});
+
+test('a refused spec reaches no database', async () => {  const pool = fakePool();
   await assert.rejects(() => specs.postRequestSpec(pool, {
     app: APP, repo: REPO, issueNumber: 1, user: ADA, text: '',
   }, fakeDeps()), (err) => err instanceof specs.SpecError && err.code === 'invalid_request');

@@ -92,7 +92,6 @@ import { navStore } from './nav-store.js';
 import { runningAppStore } from './parked-store.js';
 import { SideApps } from './side-apps';
 import { RAIL_COMMUNITIES, RailCommunities, useRailCommunities } from './rail-communities';
-import { RailConversations } from './rail-conversations';
 import { RailPinned } from './rail-pinned';
 import { useSidebarRows } from './sidebar-rows';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
@@ -1283,11 +1282,10 @@ export function PlatformTabs() {
             </span>
           ) : null}
         </a>,
-        // v3 (18 Oct 2026): THE CONVERSATIONS, nested under Messages while
-        // its screen is up in the sidebar of rows (./rail-conversations.tsx).
-        // The element is there at every width and on every screen, empty
-        // when shut, so the bar's sibling order is one order.
-        key === 'messages' ? <RailConversations key="conversations" /> : null,
+        // Messages nested its five most recent conversations under its row
+        // here (v3, 18 Oct 2026) until the sidebar kept its nesting for
+        // communities alone (7 Nov 2026): the inbox draws its own list
+        // beside an open conversation.
       ])}
       {/*
           SETTINGS, ONE CLICK FROM THE RAIL'S FOOT (#3120). A cog beside the

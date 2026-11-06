@@ -2,10 +2,10 @@
  * A ROW'S NESTED PART, in the desktop's sidebar of rows (v3, 18 Oct 2026).
  *
  * On a desktop the sidebar holds what the second column held: a community's
- * places open under its row while its page is up (./rail-communities.tsx),
- * and the conversations under Messages while the inbox is
- * (./rail-conversations.tsx). Only the part you are in is open, so moving
- * from one to the other shuts one as it opens the other.
+ * places open under its row while its page is up (./rail-communities.tsx).
+ * Only the part you are in is open, so moving from one community to another
+ * shuts one as it opens the other. (Messages nested its conversations too,
+ * until 7 Nov 2026: the inbox draws its own list beside a conversation now.)
  *
  * ── One clock for both ────────────────────────────────────────────────
  *

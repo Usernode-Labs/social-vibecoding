@@ -3563,6 +3563,18 @@
     "text": "Built from the plan \"{{title}}\"",
     "description": "On a request's page, under a change built from a plan posted on the request: says which plan it carries out, beside the plan's Read button. {{title}} is the plan's title."
   },
+  "topic.thread.page.fromPlanVersion": {
+    "text": "Built from v{{version}} of the plan \"{{title}}\"",
+    "description": "On a request's page, under a change built from a numbered version of a plan posted on the request: says which version it carries out, beside the plan's Read button. {{version}} is the plan's version number (1, 2, 3) and {{title}} is the plan's title."
+  },
+  "topic.thread.page.newerPlan": {
+    "text": "v{{version}} is newer",
+    "description": "After \"Built from v1 of the plan ...\" on a change whose plan has a newer version on the request, by the same person: says a newer version exists. {{version}} is that newer version's number (2, 3)."
+  },
+  "topic.thread.page.newerPlanOther": {
+    "text": "{{author}}'s plan is newer",
+    "description": "After \"Built from v1 of the plan ...\" on a change whose plan has a newer version on the request, posted by somebody else: says whose newer plan exists. {{author}} is the person's name, without an @."
+  },
   "topic.request.spec.opening": {
     "text": "Opening…",
     "description": "Replaces \"Read\" on a plan's card (under a request, or on the page of a change built from the plan) while the plan is being fetched."

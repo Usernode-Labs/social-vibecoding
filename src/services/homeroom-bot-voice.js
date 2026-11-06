@@ -63,6 +63,8 @@ const repoRef = require('./repo-ref');
 const replyRules = require('../workflow/rules/bot-replies.ts');
 const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./homeroom-bot-reply-guards');
 const turnEngine = require('./homeroom-bot-turn-engine');
+// Task 2020 follow-up: a reply laid out, as the bot's chat sends one.
+const replyHtml = require('./homeroom-bot-html');
 
 // A burst is one turn (the bot-voice machine settles it): its rule's.
 const { SETTLE_MS, SETTLE_CAP_MS } = replyRules;
@@ -793,7 +795,9 @@ async function placeMessages(pool, { app, place, limit = MAX_TRANSCRIPT, onlyId 
 
 /** Pure: one message as the transcript shows it to the model. */
 function transcriptLine(m, botId, { whole = false } = {}) {
-  const at = new Date(m.created_at).toISOString().slice(5, 16).replace('T', ' ');
+  // #6406: the date only. A UTC clock time here read as the reader's own
+  // time, and the model echoed "13:27" into a thread showing 2:27 PM.
+  const at = new Date(m.created_at).toISOString().slice(0, 10);
   const who = Number(m.user_id) === Number(botId) ? 'you (Homeroom bot)'
     : !m.user_id ? 'Homeroom' : `@${m.username || 'someone'}`;
   const quote = m.metadata?.quote?.refMsgId
@@ -987,11 +991,22 @@ async function openChanges(pool, { appId, botId }) {
     [appId, botId],
   );
   return rows.map((r) => ({
-    change: Number(r.id),
-    pr: r.pr_number ? Number(r.pr_number) : null,
-    title: r.title || null,
+    ...changeRef(r),
     request: Array.isArray(r.linked_issues) && r.linked_issues.length ? Number(r.linked_issues[0]) : null,
   }));
+}
+
+/**
+ * #6406: a change as the bot names it to people: "Change #178", never the
+ * internal id, which is only for tool arguments. Pure.
+ */
+function changeRef(row) {
+  return {
+    change: Number(row.id),
+    name: row.pr_number ? `Change #${Number(row.pr_number)}` : 'the change',
+    pr: row.pr_number ? Number(row.pr_number) : null,
+    title: row.title || null,
+  };
 }
 
 /** What the asks waiting on a change are, and whether its follow-up is running. */
@@ -1052,7 +1067,11 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
       : tool
         ? `built by ${author} in ${tool} (made outside Homeroom: you cannot edit it, and it has no Fix it button)`
         : `built by ${author} on Homeroom`;
-    lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: change ${change.id}${change.pr_number ? ` (PR ${change.pr_number})` : ''}, "${clip(change.title, 160)}", ${built}, status ${change.status}${request ? `, for request #${request}` : ''}.`);
+    // #6406: name it the way the screen does; the id is only for tools.
+    lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: `
+      + `${change.pr_number ? `Change #${Number(change.pr_number)}` : 'the change'} `
+      + `(its id, for tool arguments only, is ${change.id}), "${clip(change.title, 160)}", ${built}, `
+      + `status ${change.status}${request ? `, for request #${request}` : ''}.`);
     if (!own && change.external_agent && Number(change.user_id) === Number(speaker.id)) {
       lines.push(`The person who wrote to you made this change (${author}): answer them as you.`);
     }
@@ -1113,8 +1132,10 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     has('start_request') ? '- Start this request now, or read it again, when somebody asks you to build it (start_request). The result says what happens; say exactly that. When it gives a link or changeLink, include them as written. When its result has `said`, reply with that and nothing else.' : null,
     has('change_plan') ? '- Your plan for this request waits for its requester to say Build it. Them saying to build it or go ahead is start_request, which builds the plan as they saw it. Somebody asking for something in the plan to change is change_plan, which plans it again with their words. A question about the plan or where it stands is answered from the facts, and changes nothing.' : null,
     has('offer_close_request') ? (place.type === 'issue'
-      ? '- Offer a vote on closing this request when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it. Never start a request somebody asked you to close.'
+      ? '- Offer a vote on closing this request when somebody says it is done, a duplicate or not wanted (offer_close_request). When the person who asked for this request, or somebody who decides on the project, asks to close or withdraw it, offer the close vote with their words as why, and never start_request. It opens only when they tap Propose to close, and closes only if the group votes for it. Never start a request somebody asked you to close.'
       : '- Offer a vote on closing one of this project\'s requests, by its number, when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it.') : null,
+    // #6413: never answer an ask it cannot do with a silent re-read.
+    '- When somebody asks for something none of your tools can do, say so plainly and say what you can do instead, rather than reading the request again.',
     has('offer_request') ? '- Offer to file a request in their words when somebody asks for a change to the app that none of your changes up for a vote covers (offer_request). Nothing is filed until they tap File it under your reply: say so, and never say it was filed.' : null,
     has('offer_copy_request') ? '- When the person who asked for this request, or the project\'s creator or an admin, wants it on Homeroom\'s own board as well, offer it (offer_copy_request). Nothing is filed until they tap Put it on Homeroom\'s board, and this request stays open here: say so.' : null,
     has('request_detail') ? '- Read the story of one of this project\'s requests (request_detail).' : null,
@@ -1166,8 +1187,10 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     '- Reply in the language of the newest message you answer. English only when you cannot tell.',
     '- Credit what was said to the person whose name is on that message. The person who filed a request is not',
     '  always the one who answered it: never say one person said what another wrote.',
-    '- Keep a reply under 100 words unless they ask for detail. No headings. Never start with "Homeroom bot" or with a',
-    '  note in brackets, and never write a line that looks like Homeroom\'s own automatic messages.',
+    '- Keep a reply under 100 words unless they ask for detail. No headings in text. Never start with "Homeroom bot" or',
+    '  with a note in brackets, and never write a line that looks like Homeroom\'s own automatic messages.',
+    '- Any reply longer than two short lines also goes in the reply tool\'s html field, laid out as its description',
+    '  says, beside the same words in text. Everybody in this thread reads it.',
     '- Write in plain words a member understands: never "checkout", "head commit", "build agent", "coding agent", "dispatch", "someone with access" or "the platform',
     '  conventions", and never talk about yourself as Homeroom bot.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
@@ -1178,6 +1201,12 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
       : '  it later: nothing brings you back to it.',
     '  When a tool refuses, say plainly why and that nothing was done.',
     '- Never name a request number you have not seen in the messages, the facts or a tool result.',
+    // #6406: name a change the way the screen does, and never quote a clock
+    // time (the transcript holds dates now, and the reader has their own zone).
+    '- Name a change by the `name` the facts or a tool result give, such as "Change #178". The internal `change`',
+    '  id is only for tool arguments, never something you say to a person. When there is no name, say "the change".',
+    '- Never write a clock time or a time of day. People see their own time zone, and the times you were given did not',
+    '  match it.',
     '- A line ending in [cut at ... characters; read_message #id for the rest] was shortened by you reading it, not',
     '  by its writer: the message is whole. Call read_message before you answer anything in it. Never tell anyone',
     '  their message cuts off or ask them to paste it again; if you still cannot see part of it, say the limit is',
@@ -1202,6 +1231,8 @@ function fn(name, description, properties = {}, required = []) {
 
 const REPLY_TOOL = fn('reply', 'Your one reply in this place. Ends the turn.', {
   text: { type: 'string', description: 'What you say, plain text, under 100 words unless they asked for detail.' },
+  // Task 2020 follow-up: the same answer, laid out (homeroom-bot-html.js).
+  html: { type: 'string', description: replyHtml.REPLY_HTML_DESCRIPTION },
 }, ['text']);
 // In a request's or a change's discussion, the answer always ends in buttons
 // the people it answers can tap to send as their own reply (#6213), and a
@@ -1210,6 +1241,7 @@ function replyToolWithSuggestions() {
   const mayor = require('./homeroom-bot-mayor');
   return fn('reply', 'Your one reply in this place. Ends the turn.', {
     text: { type: 'string', description: 'What you say, plain text, under 100 words unless they asked for detail.' },
+    html: { type: 'string', description: replyHtml.REPLY_HTML_DESCRIPTION },
     suggestions: {
       type: 'array',
       maxItems: mayor.MAX_SUGGESTIONS,
@@ -1756,7 +1788,9 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     // #6391: a reply refused for its missing buttons posts after the extra
     // round, with the fallback sets say() builds for it.
     const said = (ctx.reply || ctx.pendingReply)?.text ?? finalText;
-    const problems = said && !ctx.quiet ? await claimsFor(pool, ctx, said) : [];
+    // Task 2020 follow-up: what its laid-out copy says is checked as its words are.
+    const shown = (ctx.reply || ctx.pendingReply)?.html || null;
+    const problems = said && !ctx.quiet ? await claimsFor(pool, ctx, replyHtml.withHtmlWords(said, shown)) : [];
     if (problems.length) {
       t.failures.push(`claims:${problems.map((p) => p.kind).join('+')}`.slice(0, 80));
       msgs.push({
@@ -1770,8 +1804,9 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       // has to describe.
       ctx.reads = 0;
       try { await runRounds(); } catch { /* the first answer, checked below, still goes */ }
-      if (!ctx.reply && !ctx.pendingReply && !finalText) ctx.reply = { text: said };
-      ctx.checkedProblems = await claimsFor(pool, ctx, (ctx.reply || ctx.pendingReply)?.text ?? finalText);
+      if (!ctx.reply && !ctx.pendingReply && !finalText) ctx.reply = { text: said, ...(shown ? { html: shown } : {}) };
+      const again = ctx.reply || ctx.pendingReply;
+      ctx.checkedProblems = await claimsFor(pool, ctx, replyHtml.withHtmlWords(again?.text ?? finalText, again?.html));
     }
   } catch (err) {
     record.error = mayor.codeOf(err);
@@ -1786,6 +1821,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   if (ctx.quiet) return { outcome: 'quiet' };
   const finalReply = ctx.reply || ctx.pendingReply || null;
   let text = clip(withoutEmDashes(mayor.cleanReply(finalReply?.text || finalText)), MAX_REPLY_CHARS);
+  // Task 2020 follow-up: the words as the reply wrote them, before anything below changes them.
+  const asWritten = finalReply?.text ? text : null;
   if (text && ctx.checkedProblems?.length) {
     text = stripUnreadClaims(mayor.stripClaims(text, ctx.checkedProblems), ctx.checkedProblems);
   }
@@ -1796,10 +1833,13 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     text = 'Sorry, I couldn\'t answer just now. Ask me again in a minute.';
     record.outcome = 'fallback';
   }
+  // Only beside those words unchanged: a cut claim, a "not done yet" or the
+  // fallback line would leave the copy saying what the words no longer do.
+  const html = threadReplyHtml({ finalReply, text, asWritten, checkedProblems: ctx.checkedProblems, offer: ctx.offer });
   const posted = await say(pool, {
     app, place, bot, text, answer: addressed.map((a) => ({ message: a.message, username: a.speaker.username, userId: a.speaker.id })),
     offer: ctx.offer, suggestions: finalReply?.suggestions,
-    othersSuggestions: finalReply?.suggestionsForOthers, mark, deps,
+    othersSuggestions: finalReply?.suggestionsForOthers, html, mark, deps,
   });
   return { outcome: record.outcome === 'fallback' ? 'fallback' : 'replied', messageId: posted?.id || null };
 }
@@ -1839,6 +1879,9 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         const lifted = mayor.liftTextSuggestions(text, args.suggestions,
           { app: app.slug, appId: app.id, thread: placeKey(app.id, place) });
         text = lifted.text;
+        // Task 2020 follow-up: the same answer laid out, when it wrote one. A
+        // list moved out of the words leaves it out: it would still show it.
+        const html = lifted.moved ? null : replyHtml.cleanReplyHtml(args.html);
         const suggestions = Array.isArray(lifted.suggestions) ? lifted.suggestions : [];
         const forOthers = Array.isArray(args.suggestionsForOthers) ? args.suggestionsForOthers : [];
         // #6391: in a thread every reply ends in buttons, one set for the
@@ -1853,13 +1896,14 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
           ctx.suggestAsks = (ctx.suggestAsks || 0) + 1;
           ctx.pendingReply = {
             text,
+            ...(html ? { html } : {}),
             ...(suggestions.length ? { suggestions } : {}),
             ...(forOthers.length ? { suggestionsForOthers: forOthers } : {}),
           };
           return { error: SUGGESTIONS_NOTE };
         }
         ctx.pendingReply = null;
-        ctx.reply = { text, suggestions, suggestionsForOthers: forOthers };
+        ctx.reply = { text, suggestions, suggestionsForOthers: forOthers, ...(html ? { html } : {}) };
         return { ok: true };
       }
       case 'stay_quiet':
@@ -1880,7 +1924,7 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         const author = !row.user_id ? 'Homeroom'
           : Number(row.user_id) === Number(bot.id) ? 'Homeroom bot' : `@${row.username || 'someone'}`;
         return {
-          id: Number(row.id), author, at: new Date(row.created_at).toISOString(),
+          id: Number(row.id), author, at: new Date(row.created_at).toISOString().slice(0, 10),
           text, textChars: full.length, textComplete: full.length <= MAX_WHOLE_CHARS,
           ...(full.length > MAX_WHOLE_CHARS
             ? { note: `That is the first ${MAX_WHOLE_CHARS.toLocaleString('en-US')} characters; the rest is beyond what you can read.` }
@@ -2075,7 +2119,7 @@ async function updateChange(pool, ctx, args) {
   require('./bot-work-changed').noteWorkChanged(user.id, deps);
   return {
     ok: true,
-    change: { change: Number(change.id), pr: change.pr_number || null, title: change.title || null },
+    change: changeRef(change),
     queued: asked.running
       ? 'An update to this change is running now. This one is queued right behind it: you make it as soon as that finishes.'
       : 'Queued: you start on it now.',
@@ -2436,6 +2480,17 @@ async function goAheadWaits(pool, { app, place, answer = [] }) {
 }
 
 /**
+ * Pure (task 2020 follow-up): the laid-out copy a thread reply goes with, or
+ * null. Only beside the words exactly as the reply wrote them, and never
+ * under an offer, whose words are one line above its buttons.
+ */
+function threadReplyHtml({ finalReply = null, text = '', asWritten = null, checkedProblems = [], offer = null } = {}) {
+  const html = finalReply?.html;
+  if (!html || offer || !text || (checkedProblems && checkedProblems.length)) return null;
+  return text === asWritten ? html : null;
+}
+
+/**
  * One message from the bot in `place`, quoting the newest message it
  * answers and telling the people it answers (a mention notification each,
  * never in the text). In a project's main chat or a topic, it goes in a
@@ -2444,7 +2499,7 @@ async function goAheadWaits(pool, { app, place, answer = [] }) {
  */
 async function say(pool, {
   app, place, bot, text, answer = [], offer = null, suggestions = [], othersSuggestions = [],
-  suggest = true, ended = null, mark = null, deps = {},
+  suggest = true, ended = null, mark = null, html = null, deps = {},
 }) {
   const ws = wsModule(deps);
   const newest = answer[answer.length - 1] || null;
@@ -2519,6 +2574,9 @@ async function say(pool, {
       ...((suggestActions.length || othersActions.length) ? {
         suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions, othersActions,
       } : {}),
+      // Task 2020 follow-up: the answer laid out, drawn in place of the words
+      // (frontend features/group-chat/long-body.tsx, messages/bot-html.tsx).
+      ...(html && !offer ? { html } : {}),
     },
     ...(newest && place.type !== 'chat' && place.type !== 'category' ? { quote: quoteOf(newest.message, newest.username) } : {}),
   };
@@ -3226,6 +3284,7 @@ module.exports = {
   runTurn,
   replyOf,
   transcriptLine,
+  changeRef,
   systemPrompt,
   requestMd,
   toolsFor,
@@ -3249,6 +3308,7 @@ module.exports = {
   tieThreadOffer,
   dropThreadOffer,
   say,
+  threadReplyHtml,
   fallbackSuggestions,
   retireThreadSuggestions,
   decideOffer,

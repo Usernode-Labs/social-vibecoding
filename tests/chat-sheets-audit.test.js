@@ -40,7 +40,9 @@ test('C06: an empty reply box on a request or a channel shows Send faded, as Mes
 });
 
 test('C04: a desktop conversation with nothing beside it keeps a reading width', () => {
-  assert.match(CSS, /\.messages-layout\.messages-list-in-rail > \.messages-thread-pane:last-child \{\s*max-width: 960px;\s*margin-inline: auto;\s*\}/);
+  // The list sits beside a conversation again (7 Nov 2026), so "nothing
+  // beside it" is a conversation set to Full width.
+  assert.match(CSS, /\.messages-layout\.messages-list-collapsed > \.messages-thread-pane:last-child \{\s*max-width: 960px;\s*margin-inline: auto;\s*\}/);
 });
 
 test('D13: the hover bar on somebody else\'s bubble hangs off its name line, beside the message', () => {
