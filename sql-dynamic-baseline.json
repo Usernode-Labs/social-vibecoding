@@ -1118,13 +1118,6 @@
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
-      "fingerprint": "175574c444ff7c922367",
-      "count": 1,
-      "preview": "`SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, c.channel_key, me.role AS my_role, me.status AS membership_st"
-    },
-    {
-      "source": "src/services/conversations.js",
-      "kind": "structural-template",
       "fingerprint": "1ed50d96de6aeca2b5eb",
       "count": 1,
       "preview": "`SELECT c.id, c.kind, c.title, c.status AS conversation_status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, cm.role, cm.status AS membership_statu"
@@ -1163,6 +1156,13 @@
       "fingerprint": "e8c55fd031f16d23f09f",
       "count": 1,
       "preview": "`SELECT CASE WHEN user_low_id = $2 THEN user_high_id ELSE user_low_id END AS other_id FROM conversation_direct_pairs WHERE conversation_id = $1 AND (user_low_id"
+    },
+    {
+      "source": "src/services/conversations.js",
+      "kind": "structural-template",
+      "fingerprint": "fe14b0071e91c113a599",
+      "count": 1,
+      "preview": "`SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, c.channel_key, me.role AS my_role, me.status AS membership_st"
     },
     {
       "source": "src/services/credential-store.js",

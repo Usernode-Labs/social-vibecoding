@@ -1678,6 +1678,88 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   font-weight: 600;
   opacity: .7;
 }
+/* #6426: Main Chat's "Welcome back" card, just above the message box. It is
+   the message box's own card (same surface, radius, shadow and width) with a
+   hairline, and its chips are the suggested-reply pill above, in one row
+   that scrolls sideways with a soft fade at its right edge. */
+.messages-welcome {
+  position: relative;
+  /* The message box's own width: the bar around that box holds 12px each
+     side (and the 720px reading column on a wide Main), so the card takes
+     the same inset. */
+  margin: 0 12px 8px;
+  padding: 12px 44px 12px 14px;
+  border-radius: 22px;
+  background: var(--messages-surface);
+  box-shadow: var(--messages-disc-shadow), inset 0 0 0 1px var(--app-sheet-line);
+}
+.messages-welcome-title {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.messages-welcome-line {
+  margin: 2px 0 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.messages-welcome-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  /* A soft right edge says the row goes on. */
+  -webkit-mask-image: linear-gradient(to right, #000 85%, transparent);
+  mask-image: linear-gradient(to right, #000 85%, transparent);
+}
+.messages-welcome-chips::-webkit-scrollbar { display: none; }
+.messages-welcome-chips button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 6px 13px;
+  border-radius: 9999px;
+  color: var(--brand-ink);
+  background: var(--brand-tint);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.messages-welcome-chips button:hover { filter: brightness(.97); }
+.messages-welcome-chips button:focus-visible,
+.messages-welcome-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.messages-welcome-dismiss {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+}
+.messages-welcome-dismiss:hover { background: var(--messages-surface-2); }
+@media (max-width: 767px) {
+  /* On a phone the chips run off the card's edge, behind the 44px ×. */
+  .messages-welcome-chips { margin-right: -44px; }
+  .messages-welcome-dismiss { top: 0; right: 0; width: 44px; height: 44px; }
+}
+/* Main Chat's 720px reading column (see `.chat-composer-bar` below): the
+   card keeps the box's inset at every width. */
+#ai-screen .ai-main-pane .messages-layout[data-main-chat] .messages-welcome {
+  margin-inline: max(12px, calc((100% - 720px) / 2));
+}
 .messages-bot-answered {
   margin-top: 4px;
   color: var(--text-muted);

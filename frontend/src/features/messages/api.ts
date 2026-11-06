@@ -607,6 +607,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     lastActivityAt: dateText(pick(row, 'lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at')),
     unreadCount: Number(pick(row, 'unreadCount', 'unread_count')) || 0,
     lastReadMessageId: readCursor(pick(row, 'lastReadMessageId', 'last_read_message_id')),
+    lastVisitAt: text(pick(row, 'lastVisitAt', 'last_visit_at')) || null,
     awaitingAcceptance: kind === 'direct' && pick(row, 'awaitingAcceptance', 'awaiting_acceptance') === true,
     canSend: typeof canSendValue === 'boolean' ? canSendValue : membershipStatus !== 'invited',
     canInvite: bool(pick(row, 'canInvite', 'can_invite'), kind === 'group' && membershipStatus !== 'invited'),

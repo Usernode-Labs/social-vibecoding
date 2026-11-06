@@ -5654,5 +5654,77 @@
   "ai.why.youBuilding": {
     "text": "You're building it",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line: the person is making the change themselves."
+  },
+  "welcome.title": {
+    "text": "Welcome back",
+    "description": "Main Chat: the heading of the small card shown above the message box the first time somebody opens the chat after eight hours away."
+  },
+  "welcome.dismiss": {
+    "text": "Dismiss",
+    "description": "Main Chat's Welcome back card: the accessible name of its × button, which hides the card until the next return."
+  },
+  "welcome.since": {
+    "text": "Since {{day}}: {{news}}",
+    "description": "Main Chat's Welcome back card: the line under the heading when something happened since the last visit. {{day}} is when that visit was (Tuesday, yesterday, this morning); {{news}} is the list of counts joined by dots."
+  },
+  "welcome.quiet": {
+    "text": "Nothing new since {{day}}. Things you can ask me:",
+    "description": "Main Chat's Welcome back card: the line under the heading when nothing happened since the last visit. {{day}} is when that visit was (Tuesday, yesterday, this morning)."
+  },
+  "welcome.live_one": {
+    "text": "{{count}} change went live",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for one change that went live. {{count}} is 1."
+  },
+  "welcome.live_other": {
+    "text": "{{count}} changes went live",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for changes that went live. {{count}} is a number above 1."
+  },
+  "welcome.votes_one": {
+    "text": "{{count}} waits for your vote",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for one change or decision waiting for the person's vote. {{count}} is 1."
+  },
+  "welcome.votes_other": {
+    "text": "{{count}} wait for your vote",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for changes or decisions waiting for the person's vote. {{count}} is a number above 1."
+  },
+  "welcome.build_one": {
+    "text": "{{count}} plan waits for your Build it",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for one plan waiting for the person to press Build it. {{count}} is 1."
+  },
+  "welcome.build_other": {
+    "text": "{{count}} plans wait for your Build it",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for plans waiting for the person to press Build it. {{count}} is a number above 1."
+  },
+  "welcome.day.thisMorning": {
+    "text": "this morning",
+    "description": "Main Chat's Welcome back card: the day of the last visit, when it was earlier today before noon. It fills {{day}} in the card's line and in the What went live chip."
+  },
+  "welcome.day.earlierToday": {
+    "text": "earlier today",
+    "description": "Main Chat's Welcome back card: the day of the last visit, when it was today after noon. It fills {{day}} in the card's line and in the What went live chip."
+  },
+  "welcome.day.yesterday": {
+    "text": "yesterday",
+    "description": "Main Chat's Welcome back card: the day of the last visit, when it was the day before. It fills {{day}} in the card's line and in the What went live chip."
+  },
+  "welcome.chip.waiting": {
+    "text": "What's waiting on me?",
+    "description": "Main Chat's Welcome back card: the first chip, a question the person can send to Homeroom bot."
+  },
+  "welcome.chip.live": {
+    "text": "What went live since {{day}}?",
+    "description": "Main Chat's Welcome back card: the second chip, a question the person can send to Homeroom bot. {{day}} is the day of their last visit (Tuesday, yesterday, this morning)."
+  },
+  "welcome.chip.project": {
+    "text": "Catch me up on {{project}}",
+    "description": "Main Chat's Welcome back card: the third chip, a question the person can send to Homeroom bot. {{project}} is the name of the project with the most activity since their last visit."
+  },
+  "welcome.chip.newProject": {
+    "text": "Let's start a new project",
+    "description": "Main Chat's Welcome back card: the fourth chip, a message the person can send to Homeroom bot."
+  },
+  "welcome.separator": {
+    "text": "·",
+    "description": "Main Chat's Welcome back card: the dot between the parts of the line under the heading, for example between '3 changes went live' and '2 wait for your vote'."
   }
 }
