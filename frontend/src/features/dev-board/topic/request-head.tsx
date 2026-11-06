@@ -524,15 +524,17 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const here = useMemo<ThreadHere>(() => ({ type: 'request', id: r.number }), [r.number]);
   const threadRead = useThreadPayload(slug, r.number);
   const layout = useMemo(() => threadLayout(threadRead.data, here), [threadRead.data, here]);
-  // Once a change is built for it (or a vote to close it is open), the
-  // change's own cards say where it stands, so the steps and the bot's track
-  // give way to them; a closed request still says how it ended.
-  const working = layout.changes.length > 0 || !!layout.close;
   // #6387: the row says a change addresses this request, so while its thread
   // is still being read the page holds the change section's place instead of
   // drawing a status card that may contradict it ("needs 1 more yes" while a
   // check has failed) and swapping it out a moment later.
   const holding = !r.status.closed && !!r.status.changeExpected && threadRead.loading;
+  // Once a change is built for it (or a vote to close it is open), the
+  // change's own cards say where it stands, so the steps and the bot's track
+  // give way to them; a closed request still says how it ended. A change
+  // section held open while the thread loads counts the same way: its own
+  // outline already says where things stand.
+  const working = layout.changes.length > 0 || !!layout.close || holding;
   const pill = requestPill(layout, r.status.closed ? 'closed' : track ? track.work.stage : null, (id) => translate(id));
   // A plan a change in the thread was built from goes with that change.
   const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
@@ -603,13 +605,13 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               note={!canTranslate || translation.state === 'idle' ? undefined : <TranslateNote view={translation} className="mt-1" />}
             />
           )}
-          {holding || (working && !r.status.closed) ? null : (
+          {working && !r.status.closed ? null : (
             <RequestStatus s={r.status} specs={specs} tracked={!!track} />
           )}
           {/* #6207/#6210: Homeroom bot's plan, public, with Build it for any member. */}
-          {holding || working || r.status.closed || !slug ? null : <RequestPlan slug={slug} number={r.number} specs={specs} />}
+          {working || r.status.closed || !slug ? null : <RequestPlan slug={slug} number={r.number} specs={specs} />}
           {ownAgent && agentOpen ? <OwnAgentLink slug={agentSlug} number={r.number} startOpen onClose={() => setAgentOpen(false)} /> : null}
-          {track && !working && !holding ? (
+          {track && !working ? (
             // 16 Oct 2026 (C4, V3): the same card a request's thread leads
             // with, where it is and why, its bar and its pictures, in place
             // of having to open the chat to find out. Drawn from the board's
