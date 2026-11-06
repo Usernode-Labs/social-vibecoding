@@ -2258,6 +2258,11 @@ function adminRoutes(config) {
       } catch (err) {
         log.warn('admin', 'managed OpenRouter allowance sync skipped', { userId, err: err.message });
       }
+      // #6377: a limit raised may give this person's week room again; what it
+      // held back is released now. Best-effort: the limit is already saved and
+      // a release that fails never changes this answer.
+      await homeroomBot.releaseAllowanceHolds(pool).catch((err) =>
+        log.warn('admin', 'Could not release requests held for a weekly limit change', { userId, err: err.message }));
       res.json({ ok: true, weekly_limit_cents: rows[0].weekly_limit_cents });
     } catch (err) {
       log.error('admin', 'Per-user weekly limit update failed', { message: err.message });
