@@ -28,6 +28,7 @@ export {
   _resetForTests,
 } from '../../frontend/src/features/side-panel/controller';
 export { installEmbeddedRuntime } from '../../frontend/src/features/side-panel/embedded';
+export { panelHeadStore } from '../../frontend/src/features/side-panel/head-store';
 export { sidePanelStore, sidePanelRefs, INITIAL } from '../../frontend/src/features/side-panel/store.js';
 export { headerTitleStore } from '../../frontend/src/features/header/header-title-store.js';
 export * as routes from '../../frontend/src/features/side-panel/routes';

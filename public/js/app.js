@@ -5910,6 +5910,13 @@ const App = {
         // not fit.
         App.setChromeless(false);
         App.navigateToAi();
+        // 6 Nov 2026 (#6425): on a desktop the tab's own page is its lists
+        // alone. The bare address closes whatever was open beside them — the
+        // tab pressed, or Back to `#homeroom-bot` — and the page takes it
+        // once, as it takes every ask.
+        if (parts.length === 1) {
+          window.UsernodeReact?.ai?.closeColumn?.();
+        }
         if (parts[1] === 'request' || parts[1] === 'change' || parts[1] === 'decision') {
           window.UsernodeReact?.ai?.openItem?.('#' + parts.join('/'));
         }
@@ -6086,6 +6093,9 @@ const App = {
             subTab = 'topic'; // #4367: by PR number; the topic view finds the session
             ref = { kind: 'proposal', id: null, pr: App._changeNumber(parts[4]) };
           } else if (sec === 'governance' && parts[4]) {
+            // #6439: a vote to close a request forwards to the request's
+            // page (`AppView._renderTopicSubView` and `openTopicInPanel`);
+            // every other decision keeps this page.
             subTab = 'topic';
             ref = { kind: 'gov', id: parseInt(parts[4]) || null };
           } else if (sec === 'shared' && parts[4]) {

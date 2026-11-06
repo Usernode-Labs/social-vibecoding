@@ -160,9 +160,9 @@ test('the demo DM and group declare the new shape, by #5680', () => {
   assert.match(dm.name, /own message on the right in its tinted bubble/);
   // The wrap is the self row's first child: no avatar before it, then the
   // head and the bubble. (The selector engine both runners use does not
-  // evaluate `:not(:has())`, and a selector longer than the manifest's
-  // 256-character cap is silently truncated — so the shape is spelled this
-  // way and no longer.)
+  // evaluate `:not(:has())`, and a selector longer than the runner's cap
+  // (`MAX_TEST_SELECTOR_LEN`) is silently truncated — so the shape is
+  // spelled this way and no longer.)
   assert.match(dm.expectSelector, /\.messages-message-self>\.messages-bubble-wrap:first-child>\.messages-message-head\+\.messages-bubble$/);
   assert.match(dm.expectSelector, /:has\(\.messages-message-bubble:not\(\.messages-message-self\)>span\[aria-hidden\]\+\.messages-bubble-wrap>\.messages-bubble\)/);
   assert.ok(dm.expectSelector.length <= 256, `the selector fits the manifest's cap (${dm.expectSelector.length})`);

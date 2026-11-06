@@ -27,22 +27,24 @@
  *   LIVE THIS WEEK · 1
  *   ( Ask Homeroom bot )                  ← a phone: Main
  *
- * THE LIST AND ONE THREAD (1 Nov 2026). Main Chat, the private conversation
- * with the bot, is the list's first row, and this page is the only place it
- * is drawn: every way into it lands here (./door.ts), never on the Messages
- * screen. From 768px the column beside the list holds one thing at a time:
- * Main Chat, or one private thread, alone under its own head (its name and
- * "Only you can see this thread"; ReplyThreadPanel `inMain`), and the row
- * of whichever it is is drawn lit. Main Chat is a row, and a thread in its
- * place leads with a back arrow to Main Chat. On a phone the list and the
- * column are one drawer, as Messages' list and a conversation are
- * (./phone-drawer.tsx): the column peeks at the list's right, a row or the
+ * THE LIST AND ONE THREAD (1 Nov 2026; 6 Nov 2026, request #6425). Main
+ * Chat, the private conversation with the bot, is the list's first row, and
+ * this page is the only place it is drawn: every way into it lands here
+ * (./door.ts), never on the Messages screen. From 768px the page opens on
+ * its lists alone, and the column beside them holds one thing at a time,
+ * opened by a row: Main Chat, a private thread alone under its own head
+ * (its name and "Only you can see this thread"; ReplyThreadPanel `inMain`),
+ * or a page. The row of whichever it is is drawn lit. Everything in the
+ * column closes with a × — a thread's own, Main Chat's, the side panel's
+ * for a page — and closing leaves the lists alone, unless Main Chat was open
+ * just before. On a phone the list and the column are one drawer, as
+ * Messages' list and a conversation are (./phone-drawer.tsx): a row or the
  * Ask bar slides it in, and a thread's back arrow slides the list back.
  *
  * A REQUEST, A CHANGE OR A DECISION OPENS HERE TOO. On a wide window in the
  * column beside the list, in Main's place: the side panel, drawn as this
- * page's own column (‹ Main Chat and the page's own name over it, no
- * Expand, no Close; ../side-panel/side-panel.tsx), and Main's composer
+ * page's own column (the page's own name over it and a ×, no Expand, no
+ * Back; ../side-panel/side-panel.tsx), and Main's composer
  * takes it as the item a question is about. Anywhere else on its page,
  * whose back chip says ‹ Homeroom bot and comes back here, with the
  * project's Workshop beside it (Improve.enterTopicFrom), and the tab bar
@@ -68,7 +70,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { LockIcon, MicrophoneIcon, SearchIcon } from '@/components/ui/icons';
+import { LockIcon, MicrophoneIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { KEPT_DRAW_MS, keepCopy, keptCopy } from '../../lib/kept-copies';
@@ -79,7 +81,7 @@ import { EmbeddedConversation } from '../messages';
 import { closeNewThread, NewThreadButton, useNewThread } from '../messages/new-thread';
 import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
-import { closeThread, useMessagesSnapshot } from '../messages/store';
+import { closeThread, embed, loadConversations, useMessagesSnapshot } from '../messages/store';
 import { SidePanelDivider } from '../side-panel/side-panel';
 import { panelEdgeStore } from '../side-panel/edge-store';
 import {
@@ -393,9 +395,11 @@ export function AiScreen(): ReactNode {
   }, [visible, session, moved]);
 
   // Main beside the list, on a desktop, or peeking beside it in a phone's
-  // drawer: the chat with the bot, opened once.
+  // drawer: the chat with the bot, opened once. The list is read here too,
+  // so Main's row says what is new without the chat being open (#6425).
   useEffect(() => {
     if (!visible || !(wide || phone) || botId || typeof window === 'undefined' || !(window as any).App?.user) return;
+    void loadConversations();
     void openBotConversation().then((id) => {
       if (!id) return;
       noteBotConversation(id);
@@ -426,7 +430,10 @@ export function AiScreen(): ReactNode {
   const threadUp = !!openRoot || blank;
   // THE COLUMN (./column.ts, 3 Nov 2026): the one answer to what is open
   // beside the list. The lit row, the address and Main's attachment all read
-  // it; nothing else keeps a copy.
+  // it; nothing else keeps a copy. 6 Nov 2026 (#6425): on a desktop the lists
+  // start alone, and Main Chat opens in the column only when its row (or a
+  // link to it) asks for it.
+  const [mainOpen, setMainOpen] = useState(false);
   const panelRoute = panel.open ? routeOf(panel.route) : null;
   const column: Column = !mounted || !botId ? null
     : phone ? (level === 1 ? (openRoot ? { at: 'thread', rootId: openRoot } : blank ? { at: 'new' } : { at: 'main' }) : null)
@@ -434,14 +441,23 @@ export function AiScreen(): ReactNode {
     : panelRoute ? { at: 'page', route: panelRoute }
     : blank ? { at: 'new' }
     : openRoot ? { at: 'thread', rootId: openRoot }
-    : { at: 'main' };
-  // What the chip above a page opened in the column goes back to (5 Nov 2026):
-  // a private thread that was open there, or Main. A blank "+" thread is not
-  // counted, since `underPanel()` closes it when a page opens.
+    : mainOpen ? { at: 'main' } : null;
+  // Whether anything is open beside the lists: the room Main takes, its
+  // divider, the aside's visibility and the list's padding all follow it.
+  const columnOpen = docked && !!column;
+  // THE CHAT IS MOUNTED ONLY WHEN IT CAN BE SEEN OR ASKED FOR (#6425): Main
+  // closed is neither drawn nor marked read, and its row keeps showing what
+  // is new. A thread asked for by a row or an address is not in the store
+  // yet, so `at` mounts the conversation that opens it.
+  const conversationUp = columnOpen || !!at?.threadRootId;
+  // A private thread closed with its own × leaves the lists alone: `at`
+  // named it, and keeping it would keep the conversation mounted beside them.
+  const hadThread = useRef<number | null>(null);
   useEffect(() => {
-    const backTo = docked && openRoot ? 'thread' : 'main';
-    if (sidePanelStore.get().backTo !== backTo) sidePanelStore.set({ backTo });
-  }, [docked, openRoot, panel.open, panel.frameKey]);
+    const before = hadThread.current;
+    hadThread.current = openRoot;
+    if (before && !openRoot) setAt(null);
+  }, [openRoot]);
   const shown = columnKey(column);
   const lit = shown === 'new' ? null : shown;
   // 1 Nov 2026 (C1), one store since #6230: what a thread opened to read
@@ -602,8 +618,8 @@ export function AiScreen(): ReactNode {
   // thread or a blank one open there gives way. On a phone the drawer slides
   // to it.
   // How the column came to change (./column.ts ColumnHow): this page's own
-  // doors say 'row'; a change none of them made is the side panel's
-  // ‹ Main Chat, 'back'. The item a row opened, for Main's composer.
+  // doors say 'row'; a change none of them made is the column's ×, 'back'.
+  // The item a row opened, for Main's composer.
   const how = useRef<ColumnHow>('back');
   const opened = useRef<{ route: string; about: AboutItem | null } | null>(null);
   const showAt = (next: BotAt) => {
@@ -614,18 +630,39 @@ export function AiScreen(): ReactNode {
     }
     if (!next.threadRootId && openRoot) closeThread();
     setAt({ ...next });
+    // A thread asked for goes into the store here, not only through the chat
+    // mounted below: with Main closed that chat is not drawn yet, and the
+    // column reads the thread from the store (#6425).
+    if (botId && next.threadRootId) embed(botId, next);
+    // Main Chat opens it; a thread leaves Main behind it only when it was.
+    setMainOpen(!next.threadRootId || column?.at === 'main');
     if (phone) setLevel(1);
   };
+  // CLOSING THE COLUMN (6 Nov 2026, #6425): × on Main Chat, or the tab
+  // pressed while something is open. Everything opened beside the lists goes;
+  // a page opened over a private thread is the side panel's own × instead,
+  // which leaves that thread under it.
+  const closeColumn = () => {
+    if (!docked) return;
+    sidePanel()?.close?.();
+    closeNewThread();
+    if (openRoot) closeThread();
+    closeDetail();
+    setMainOpen(false);
+    setAt(null);
+  };
   // The router's ask (./door.ts): `#homeroom-bot/main`, `/thread/<id>`, a
-  // message in either, from any door into the chat. Each once, once the page
-  // knows whether it is a phone's.
+  // message in either, from any door into the chat; a bare `#homeroom-bot`
+  // closes what is open. Each once, once the page knows whether it is a
+  // phone's.
   const ask = useBotTabAsk();
   const askTaken = useRef(0);
   useEffect(() => {
     if (!ask || ask.seq === askTaken.current || !visible || !(wide || phone)) return;
     askTaken.current = ask.seq;
     how.current = 'row';
-    if (ask.item) openItem(ask.item);
+    if (ask.close) closeColumn();
+    else if (ask.item) openItem(ask.item);
     else if (ask.at) showAt(ask.at);
   }, [ask, visible, wide, phone]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -634,9 +671,10 @@ export function AiScreen(): ReactNode {
     how.current = 'row';
     showAt({ threadRootId: null, focusMessageId: null });
   };
-  // A page the panel took is in the column, in Main's place, and its
-  // ‹ Main Chat gives the column back to Main: a thread that was open there
-  // gives way (1 Nov 2026). The address is the column's (below).
+  // A page the panel took is in the column, in Main's place, and closing it
+  // gives the column back to what was under it: a thread that was open there,
+  // or Main Chat when Main was (6 Nov 2026, #6425). The address is the
+  // column's (below).
   const underPanel = () => {
     closeNewThread();
     if (openRoot) closeThread();
@@ -654,6 +692,7 @@ export function AiScreen(): ReactNode {
   // it are, the same place a Vote or Needs Reply row for it opens.
   const openPage = (href: string | null, app: AiApp | null, title: string | null, about: AboutItem | null) => {
     how.current = 'row';
+    setMainOpen(column?.at === 'main');
     const route = routeOf(href);
     opened.current = route ? { route, about } : null;
     if (openPublic(href, app, title)) underPanel();
@@ -700,6 +739,7 @@ export function AiScreen(): ReactNode {
   function openItem(item: BotItem) {
     const route = botItemRoute(item);
     if (!route) { go(BOT_TAB); return; }
+    setMainOpen(column?.at === 'main');
     opened.current = { route, about: null };
     if (wide) {
       try {
@@ -775,6 +815,7 @@ export function AiScreen(): ReactNode {
     sidePanel()?.close?.();
     closeDetail();
     how.current = 'row';
+    setMainOpen(column?.at === 'main');
     if (phone) setLevel(1);
   };
   // SEARCH (#6398, 6 Nov 2026): a round button beside the plus opens a box
@@ -901,6 +942,7 @@ export function AiScreen(): ReactNode {
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
       data-page-bounce=""
       data-ai-docked={docked ? '' : undefined}
+      data-ai-open={columnOpen ? '' : undefined}
       data-ai-drawer={phone ? level : undefined}
       data-ai-preview={detailHere ? layout : undefined}
       style={{ position: 'relative' }}
@@ -916,7 +958,9 @@ export function AiScreen(): ReactNode {
 
       {/* Main's left edge is the side panel's handle (30 Oct 2026): drag it,
           or use the arrow keys, to share the window between the list and
-          Main; a page opened in Main's place keeps the width. */}
+          Main; a page opened in Main's place keeps the width. The aside stays
+          mounted while docked, because it opens a thread from `at`; app.css
+          hides it while nothing is open beside the lists (#6425). */}
       {docked ? (
         <aside
           id="ai-main-pane"
@@ -924,11 +968,11 @@ export function AiScreen(): ReactNode {
           className="ai-main-pane"
           aria-labelledby={threadUp ? undefined : 'ai-main-title'}
           data-ai-main=""
-          data-ai-column={threadUp ? 'thread' : 'main'}
+          data-ai-column={columnOpen ? (threadUp ? 'thread' : 'main') : undefined}
         >
           <SidePanelDivider
             panelRef={mainRef}
-            shown={docked}
+            shown={columnOpen}
             id="ai-main-divider"
             controls="ai-main-pane"
             widthKey={threeUp ? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY}
@@ -937,7 +981,8 @@ export function AiScreen(): ReactNode {
           />
           {/* Main Chat's name over it. 1 Nov 2026: a thread in its place is
               alone under its own (ReplyThreadPanel `inMain`), with no bar of
-              Main Chat's over it. */}
+              Main Chat's over it. 6 Nov 2026: Main Chat closes with its own
+              ×, leaving the lists alone (#6425). */}
           {threadUp ? null : (
             <header className="ai-main-head" data-ai-main-head="">
               <img src={BOT_AVATAR} alt="" className="w-8 h-8 rounded-[10px] object-cover shrink-0" />
@@ -950,9 +995,19 @@ export function AiScreen(): ReactNode {
                   <span className="truncate">{t('messages:ai.main.sub')}</span>
                 </span>
               </span>
+              <button
+                type="button"
+                className="messages-thread-action ms-auto"
+                data-ai-main-close=""
+                aria-label={t('messages:ai.main.close')}
+                title={t('messages:ai.main.close')}
+                onClick={closeColumn}
+              >
+                <XIcon className="w-4 h-4" aria-hidden="true" />
+              </button>
             </header>
           )}
-          <EmbeddedConversation conversationId={botId!} active={visible} at={at} mainChat />
+          {conversationUp ? <EmbeddedConversation conversationId={botId!} active={visible && columnOpen} at={at} mainChat /> : null}
         </aside>
       ) : null}
 
@@ -972,7 +1027,7 @@ export function AiScreen(): ReactNode {
           {layout === 'full' ? null : (
             <SidePanelDivider
               panelRef={previewRef}
-              shown={docked}
+              shown={columnOpen}
               id="ai-preview-divider"
               controls="ai-preview-pane"
               widthKey={AI_PREVIEW_WIDTH_KEY}

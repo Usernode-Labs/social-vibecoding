@@ -1840,9 +1840,10 @@ async function seedStagingBotWaitingRows(pool) {
                                AND metadata->>'stagingDemo' = 'person-note')`,
         [
           appId, botRow.rows[0].id,
-          'I can\'t build all of this one: Staging demo: moving App secrets in the infra repo and deleting a GitHub '
-            + 'Actions secret are operator work outside this app. I can do this part here: Remove the dead bot token '
-            + 'line from the deploy workflow.',
+          'I don\'t build changes like this myself, even with a go-ahead: Staging demo: moving App secrets in the infra '
+            + 'repo and deleting a GitHub Actions secret are operator work outside this app. A person has to build it, '
+            + 'for example with a coding agent, and the group votes on it as usual. I can build this part now: Remove '
+            + 'the dead bot token line from the deploy workflow.',
           JSON.stringify({
             stagingDemo: 'person-note',
             homeroomBot: {
@@ -1881,8 +1882,10 @@ async function seedStagingBotWaitingRows(pool) {
                                AND metadata->>'stagingDemo' = 'go-ahead-reply')`,
         [
           appId, botRow.rows[0].id,
-          'A go-ahead can\'t change this one: moving App secrets and deleting a GitHub Actions secret are operator '
-            + 'work outside this app. I can do this part here: Remove the dead bot token line from the deploy workflow.',
+          'I don\'t build changes like this myself, even with a go-ahead: moving App secrets and deleting a GitHub '
+            + 'Actions secret are operator work outside this app. A person has to build it, for example you with a '
+            + 'coding agent, and the group votes on it as usual. I can build this part now: Remove the dead bot token '
+            + 'line from the deploy workflow.',
           JSON.stringify({ stagingDemo: 'go-ahead-reply' }),
         ],
       );

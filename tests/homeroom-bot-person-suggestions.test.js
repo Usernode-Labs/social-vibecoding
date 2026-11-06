@@ -292,7 +292,7 @@ test('a go-ahead that meets a read saying it cannot settle it posts one plain re
   }
   assert.equal(says.length, 1);
   assert.match(says[0].homeroomText,
-    /^A go-ahead can't change this one: moving App secrets is operator work outside this app\. I can do this part here: Remove the dead bot token line\.$/);
+    /^I don't build changes like this myself, even with a go-ahead: moving App secrets is operator work outside this app\. A person has to build it, for example you with a coding agent, and the group votes on it as usual\. I can build this part now: Remove the dead bot token line\.$/);
   assert.doesNotMatch(says[0].homeroomText, /Go ahead/);
   assert.deepEqual(says[0].metadata.homeroomBot.actions.map((a) => a.label),
     ['Remove the dead bot token line', 'Not now']);

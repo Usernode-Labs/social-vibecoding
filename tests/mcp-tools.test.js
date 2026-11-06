@@ -1661,8 +1661,9 @@ test('proposing to close files a close_issue vote through the platform route', a
     assert.equal(out.title, '<untrusted-content>Dark mode</untrusted-content>');
     assert.equal(out.reasonChars, 'Shipped in PR #901 (proposal 4223).'.length);
     assert.equal(out.inProgress, null);
-    // The proposal's own page, keyed by its id — it has no GitHub issue.
-    assert.equal(out.webPath, `${ORIGIN}/app/recipe-box/dev/governance/701`);
+    // #6439: the vote is read on the request's page, where its thread draws
+    // it; the proposal id still comes back for anyone who needs the row.
+    assert.equal(out.webPath, `${ORIGIN}/app/recipe-box/dev/issues/12`);
     assert.match(out.nextStep, /stays open until that vote passes/);
     assert.match(out.nextStep, /never that it is closed/);
     assert.doesNotMatch(out.nextStep, /work in progress/, 'nobody is on it, so there is nobody to warn about');

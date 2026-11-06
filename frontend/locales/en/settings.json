@@ -1337,11 +1337,11 @@
   },
   "experimental.newLook.label": {
     "text": "New look",
-    "description": "Label of a switch in Settings, Experimental. When on, Homeroom is drawn in its new visual style: a warmer background, a new typeface and calmer colours."
+    "description": "Label of a switch in Settings, Experimental. When on, Homeroom is drawn in its new visual style: white cards on a light grey background, a new typeface, yellow for what needs the person and black for where they are."
   },
   "experimental.newLook.description": {
-    "text": "Try Homeroom's new look: a warmer background, the Geist typeface and calmer colours, closer to the Homeroom website. Light mode only. On for this browser.",
-    "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name."
+    "text": "Try Homeroom's new look: white cards on a light grey background, the Geist typeface with a serif for titles, and colours that each have a job: yellow for what needs you, black for where you are. Light mode only. On for this browser.",
+    "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name. Yellow and black name the colours of the highlights on screen."
   },
   "experimental.localAgents.title": {
     "text": "Local coding agent",

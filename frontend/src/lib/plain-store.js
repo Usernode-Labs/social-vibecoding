@@ -46,15 +46,25 @@ export function createStore(initial) {
      * Merge a patch (or replace via an updater) and notify synchronously.
      * A patch that changes nothing does not notify — that is what keeps
      * `mountFrame({ slug })` for the already-mounted app a genuine no-op.
+     *
+     * `null` is a REPLACEMENT, not a merge: spreading it would be a no-op
+     * copy, so a store whose state is nullable (the panel's page head, #6431)
+     * could never be cleared. And the change detection below must tolerate a
+     * null current state: the first patch such a store takes is the first
+     * non-null one, and reading `state[key]` there threw (#6431).
      */
     set(patch) {
-      const next = typeof patch === 'function' ? patch(state) : { ...state, ...patch };
+      const next = patch === null
+        ? null
+        : typeof patch === 'function' ? patch(state) : { ...state, ...patch };
       if (next === state) return;
+      if (next === null) { state = next; flush(notify); return; }
       let changed = false;
       for (const key of Object.keys(next)) {
-        if (next[key] !== state[key]) { changed = true; break; }
+        if (state === null || next[key] !== state[key]) { changed = true; break; }
       }
-      if (!changed && Object.keys(next).length === Object.keys(state).length) return;
+      const before = state === null ? 0 : Object.keys(state).length;
+      if (!changed && Object.keys(next).length === before) return;
       state = next;
       flush(notify);
     },
