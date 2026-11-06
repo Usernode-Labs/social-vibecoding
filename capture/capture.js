@@ -172,10 +172,18 @@ function parseCompanion(raw) {
   return { index, viewport };
 }
 
+// The longest declared check selector this image reads. It mirrors
+// MAX_TEST_SELECTOR_LEN in src/services/app-manifest.js: the capture image is
+// built on its own and cannot require the platform's code, so the number is
+// repeated here, and tests/proposal-tests-manifest.test.js asserts the two
+// stay equal. A shorter cap cut a valid selector mid-token once, which the
+// runner then reported as "was not found" on every build.
+const MAX_SELECTOR_LEN = 512;
+
 function parseReady(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const expectSelector = typeof raw.expectSelector === 'string'
-    ? raw.expectSelector.trim().slice(0, 256) : '';
+    ? raw.expectSelector.trim().slice(0, MAX_SELECTOR_LEN) : '';
   const expectText = typeof raw.expectText === 'string'
     ? raw.expectText.trim().slice(0, 256) : '';
   return (expectSelector || expectText) ? { expectSelector, expectText } : null;
@@ -1125,7 +1133,7 @@ function resolveTests(env, readStdin) {
       name: String(t.name || t.path || `test ${i + 1}`).slice(0, 200),
       path: String(t.path || '').slice(0, 512),
       url,
-      expectSelector: t.expectSelector ? String(t.expectSelector).slice(0, 256) : '',
+      expectSelector: t.expectSelector ? String(t.expectSelector).slice(0, MAX_SELECTOR_LEN) : '',
       expectText: t.expectText ? String(t.expectText).slice(0, 256) : '',
       allowConsoleErrors: !!t.allowConsoleErrors,
       // Who loads the check's page, and how many times. The platform sets
@@ -2768,4 +2776,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, tentativeInterfaces, waitForNetworkSettled, launchWhenSettled, NETWORK_SETTLE_MAX_MS, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, tentativeInterfaces, waitForNetworkSettled, launchWhenSettled, NETWORK_SETTLE_MAX_MS, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS, MAX_SELECTOR_LEN };

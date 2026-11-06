@@ -136,6 +136,10 @@ export function pageOf(route: string): HomeroomLink | null {
   const n = id(ref);
   if (!n) return null;
   if (section === 'issues') return page('issue', slug, `${base}/dev/issues/${n}`, { issueNumber: n });
+  // #6439: a pasted governance link keeps its own card; opening one goes
+  // through the forward in public/js/app-view.js `_renderTopicSubView`, so a
+  // vote to close a request lands on the request's page without the address
+  // in the message changing.
   if (section === 'governance') return page('governance', slug, `${base}/dev/governance/${n}`, { proposalId: n });
   // A change: its proposal page, its shared session's page, or its dev
   // session. One card for all three — the server shows it only where the

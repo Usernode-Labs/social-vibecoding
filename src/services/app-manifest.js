@@ -336,7 +336,13 @@ const LEGACY_GATING_HEAD = 12;
 // rather than `undefined`.
 const MAX_TESTS = LEGACY_GATING_HEAD;
 const MAX_TEST_NAME_LEN = 120;
-const MAX_TEST_SELECTOR_LEN = 256;
+// How long a declared check's `expectSelector` may be. The old 256 cut a
+// 286-character selector of this repo's side-panel check mid-token, which
+// left invalid CSS and made the check report "was not found" on every build.
+// capture/capture.js repeats this number because the capture image cannot
+// require the platform's code; tests/proposal-tests-manifest.test.js holds
+// the two equal. `expectText` keeps its own, smaller cap below.
+const MAX_TEST_SELECTOR_LEN = 512;
 const MAX_TEST_TEXT_LEN = 256;
 // How many times one check may load its page (`repeat`). Each load is a
 // fresh browser context, so this is a wall-clock budget as much as a repair
@@ -2655,6 +2661,7 @@ module.exports = {
   MAX_PLATFORM_ENV,
   MAX_TESTS,
   MAX_DECLARED_TESTS,
+  MAX_TEST_SELECTOR_LEN,
   MAX_CHECK_REPEAT,
   LEGACY_GATING_HEAD,
   MAX_APP_ADMINS,
