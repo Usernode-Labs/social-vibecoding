@@ -33,7 +33,9 @@ test('personal app blocks isolate viewers, preserve contributors, suppress alert
     const app = await addApp('team-app'), other = await addApp('other-app'), privateApp = await addApp('private-app','private'), platform = await addApp('platform','public',true);
     await pool.query("INSERT INTO app_collaborators (app_id,user_id,status) VALUES ($1,$2,'member'),($1,$3,'member'),($1,$4,'member')",[app.id,bob.id,collaborator.id,alice.id]);
     await pool.query('INSERT INTO app_favorites (user_id,app_id) VALUES ($1,$2)',[alice.id,app.id]);
-    await pool.query("INSERT INTO chat_sessions (app_id,user_id,status) VALUES ($1,$2,'promoted')",[app.id,bob.id]);
+    // #6402: a change is owed a vote only once its checks passed, so this one
+    // is placed there; this file is about blocks and the digest, not the gate.
+    await pool.query("INSERT INTO chat_sessions (app_id,user_id,status,check_state) VALUES ($1,$2,'promoted','passing')",[app.id,bob.id]);
     const savedMessage = (await pool.query("INSERT INTO chat_messages (app_id,user_id,content) VALUES ($1,$2,'Retained saved message') RETURNING id",[app.id,bob.id])).rows[0];
     const bookmarks = require('../src/services/message-bookmarks');
     await bookmarks.save(pool,alice.id,savedMessage.id);

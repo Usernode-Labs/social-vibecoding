@@ -2469,7 +2469,7 @@
     {
       "source": "src/workflow/rules/proposal-notifications.ts",
       "kind": "structural-template",
-      "fingerprint": "43955023a1d61bb8b386",
+      "fingerprint": "38c52b169fafc0016712",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind) SELECT u, $2, $3, $4, 'pr_proposed' FROM UNNEST($1::int[]) AS u WHERE NOT EXISTS "
     },
