@@ -78,6 +78,8 @@ import { swatchFor } from '../../messages/format';
 import { openBot } from '../../messages/store';
 import { togglePin } from '../../nav/pin-actions';
 import { pinnedAppsStore } from '../../nav/pinned-apps-store.js';
+import { gridStore } from '../../home/grid-store';
+import { homePinsStore, setHomePin } from '../../home/home-pins-store';
 import { useSidebarRows } from '../../nav/sidebar-rows';
 import type { StagedObject } from '../../messages/types';
 import { devWorkshopStore, voteSavedStore } from '../card/cards-store';
@@ -135,6 +137,13 @@ import {
   type SwipeAxis,
   type SwipeSide,
 } from './swipe-vote';
+
+/** ONE HOME (#6361): is this project's app pinned to Home? Home's own rule. */
+function homeAppPinned(slug: string): boolean {
+  const home = (typeof window !== 'undefined' ? (window as any).Home : null);
+  const app = Array.isArray(home?._apps) ? home._apps.find((a: { slug: string }) => a && a.slug === slug) : null;
+  return !!(app && home?.isYours?.(app));
+}
 
 export type SortKey = 'people' | 'activity' | 'open';
 // #4417: the page's places — a channel is `c:<handle>` (./places.ts).
@@ -3436,6 +3445,12 @@ export function DevWorkshop(): ReactNode {
   // The ⋯'s Pin to sidebar, beside the sidebar that draws the pins.
   const sidebarRows = useSidebarRows();
   const { apps: pins } = useStoreState(pinnedAppsStore);
+  // ONE HOME (#6361): the ⋯'s two Home pins read Home's own records: the
+  // pinned communities (../../home/home-pins-store.ts) and the apps grid,
+  // whose store repaints whenever Home.toggleAdded lands.
+  const homePins = useStoreState(homePinsStore);
+  useStoreState(gridStore);
+  const tHome = useMessages('home');
   // The improve store is the header's own record of the app, read only once
   // it is about this project, not the one the page was last pointed at.
   // THE COMMUNITY'S COLOUR is the header's (../../header/community-tint.ts):
@@ -3581,9 +3596,9 @@ export function DevWorkshop(): ReactNode {
      #4417: the four tabs are gone; the project's places are one list (Hub,
      Needs you, Workshop, then its channels: ./project-places.tsx). On a
      phone it is a tray behind the place bar's button, the bar naming where
-     you are (./place-bar.tsx); on a wide window it is nested under the
-     community's row in the sidebar (../../nav/rail-communities.tsx) and the
-     bar is the page's title row. Under the bar, All items leads with its way back to
+     you are (./place-bar.tsx); on a wide window the bar is the page's title
+     row, with the same button (One Home, #6361: the sidebar nests no places
+     any more). Under the bar, All items leads with its way back to
      the Workshop it is a page of.
 
      THE BAR IS THE BAND'S BOX, ON EVERY PAGE (#3651). It is what pins, and
@@ -3776,6 +3791,28 @@ export function DevWorkshop(): ReactNode {
                 : null}
               onLeave={canLeave(community) ? () => { void leaveCommunity(slug); } : null}
               appName={community?.name || app.name || slug}
+              // ONE HOME (#6361): the two Home pins, separate acts, for
+              // anyone signed in. No app row on Homeroom's own community,
+              // which has no app.
+              homeApp={!actions.selfHosted ? {
+                pinned: homeAppPinned(slug),
+                onToggle: () => { void (window as any).Home?.toggleAdded?.(slug, !homeAppPinned(slug)); },
+              } : null}
+              homeCommunity={{
+                pinned: homePins.pins.some((p) => p.slug === slug),
+                onToggle: () => {
+                  const name = community?.name || app.name || slug;
+                  const on = !homePins.pins.some((p) => p.slug === slug);
+                  void setHomePin({
+                    slug, name, iconUrl: own ? app.iconUrl || null : null, iconEmoji: own ? app.iconEmoji || null : null,
+                    iconColor: null, member: !!community?.is_member,
+                  }, on, {
+                    pinned: tHome('home:communities.pinned', { community: name }),
+                    unpinned: tHome('home:communities.unpinned', { community: name }),
+                    failed: (reason: string) => tHome('home:communities.failed', { reason }),
+                  });
+                },
+              }}
               // A member's, and only beside the sidebar (../../nav/pin-actions.ts).
               pin={sidebarRows && community?.is_member ? {
                 pinned: pins.some((p: { slug: string }) => p.slug === slug),

@@ -381,6 +381,12 @@ app.use((req, res, next) => {
       || (req.method === 'PATCH' && /^\/api\/apps\/[^/]+\/github-issues\/[^/]+\/body$/.test(req.path))) {
     return express.json({ limit: '1mb' })(req, res, next);
   }
+  // An email template or layout may be 100 KB of HTML (mail/html-safety.js
+  // MAX_EMAIL_HTML_BYTES) and as much text, which JSON escaping makes larger;
+  // the routes refuse an oversized one with the reason.
+  if (req.method === 'POST' && /^\/api\/admin\/email-(?:templates|layouts)(?:\/|$)/.test(req.path)) {
+    return express.json({ limit: '1mb' })(req, res, next);
+  }
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -710,6 +716,7 @@ app.use(require('./src/middleware/moderation').moderationGuard(config));
 app.use(require('./src/routes/moderation').moderationRoutes(config));
 app.use(require('./src/routes/app-blocks').appBlockRoutes(config));
 app.use(require('./src/routes/community-pins').communityPinRoutes(config));
+app.use(require('./src/routes/home-pins').homePinRoutes(config));
 app.use(require('./src/services/account-deletion-runtime').trackResponse);
 app.use(require('./src/routes/account-deletion').accountDeletionRoutes(config));
 app.use(cliBrowserRoutes(config));

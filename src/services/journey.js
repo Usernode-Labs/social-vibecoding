@@ -1400,6 +1400,7 @@ const PERSON_APPS_SQL = `SELECT ap.id, ap.slug, ap.name, ap.created_by = $1::int
            ORDER BY a1.date LIMIT 1) AS first_day_seconds,
          COUNT(*) FILTER (WHERE aa.seconds_spent >= 30)::int AS days_used,
          (EXISTS (SELECT 1 FROM app_favorites f WHERE f.user_id = $1::int AND f.app_id = ap.id AND f.hidden IS NOT TRUE)
+          OR EXISTS (SELECT 1 FROM home_community_pins hp WHERE hp.user_id = $1::int AND hp.community_id = ap.community_id)
           OR (ap.created_by = $1::int)
           OR EXISTS (SELECT 1 FROM app_collaborators c WHERE c.user_id = $1::int AND c.app_id = ap.id
                        AND c.accepted_at IS NOT NULL)) AS on_home

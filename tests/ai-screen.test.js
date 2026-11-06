@@ -1508,12 +1508,12 @@ test('Main\'s column is held inside the window, and the panel takes its place at
 test('the tab says Homeroom bot: a wide seat on a phone, two lines in the Duo column', () => {
   assert.equal(message('core:tabs.ai'), 'Homeroom bot');
   const css = read('public/css/app.css');
-  // Measured in the bar's font: 77px of label in a 94px seat at 375, 70 in 88 at 360.
-  // Home and You give Messages and the bot room (overnight audit M01): a lit
-  // Messages pill clears the bot's name by about 10px.
-  assert.match(css, /#platform-tabs \{ grid-template-columns: \.85fr 1\.3fr 1\.4fr 1\.1fr \.85fr; \}/,
-    'Communities, second, and Homeroom bot, third, take the wide seats');
-  assert.match(css, /#platform-tabs \{ grid-template-columns: \.85fr 1\.25fr 1\.35fr 1\.1fr \.85fr; \}/, 'a little less on the smallest phones');
+  // One Home (#6361): four seats, Home · Homeroom bot · Messages · You. The
+  // bot's holds the longest word, so it is the widest; Messages next, so a
+  // lit Messages pill still clears the bot's name (overnight audit M01).
+  assert.match(css, /#platform-tabs \{ grid-template-columns: 1fr 1\.4fr 1\.15fr 1fr; \}/,
+    'Homeroom bot, second, takes the wide seat');
+  assert.match(css, /#platform-tabs \{ grid-template-columns: 1fr 1\.35fr 1\.15fr 1fr; \}/, 'a little less on the smallest phones');
   assert.match(css, /:is\(#platform-tab-workshop, #platform-tab-ai\) \.platform-tab-label \{\s+letter-spacing: -\.02em;\s+overflow: visible;\s+text-overflow: clip;\s+\}/,
     'tightened and let out of the cell rather than cut');
   assert.match(css, /html\[data-side-strip\] #platform-tab-ai \.platform-tab-label \{\s+font-size: 9\.5px;\s+letter-spacing: -\.02em;\s+line-height: 1\.05;\s+white-space: normal;\s+text-align: center;\s+\}/,

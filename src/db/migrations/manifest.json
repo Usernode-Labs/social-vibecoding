@@ -165,6 +165,11 @@
       "id": "bot-cards",
       "sha256": "a219bde3c3474430e7c12a56d10fb944d3ed62bcdde01aa7c4c0781e55af72e8",
       "schemaSha256": "b8e25565f3e006e56c19a0abb3683eb99e3c95a4da21e64fae850d21cf877b19"
+    },
+    {
+      "id": "one-home-pins",
+      "sha256": "4972486faed76f44db09cf052f038c7909c3f033305dddaaee0deb1c7ecb339f",
+      "schemaSha256": "ca01f012df67f90516ca95dfe527cb8abe250afaedd2f085c96f5043e568b72f"
     }
   ]
 }

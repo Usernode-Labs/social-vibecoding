@@ -1,16 +1,15 @@
 /**
- * The guest Discover: what a visitor with no account sees first
+ * The guest Home: what a visitor with no account sees first
  * (features/auth/landing.tsx draws it under the story's short hero).
  *
- * ONE CARD FOR EVERY PROJECT (#landing cards, 29 Oct 2026). Featured is the
- * projects an admin featured that a visitor can try (guest-data
- * featuredApps), in one grid that reflows like any other: five across on a
- * wide screen, two on a phone, every card the same size and nothing
- * scrolling sideways. Under it All apps is the rest of the directory as the
- * same cards, twenty at a time (ten on a phone) with Show more; the "More
- * projects" rows are gone. Popular is the most people active first, so a
- * test app nobody uses never leads the list because it happens to be
- * tryable (sortApps). Search and the kinds still reach every project.
+ * ONE HOME, SIGNED OUT (#6361). The same page a member's Home is: one
+ * search, Pinned apps (until this device pins one, a few to try, each with a
+ * + to pin), the communities this device pinned, then Communities, the
+ * public directory as picture cards, each with Pin and Join, admin-featured
+ * first and then the most people active (../home/communities-to-join.tsx),
+ * more as you scroll. Pins are kept on the device (./device-pins.ts) and
+ * move to the account at sign-in. The Featured and All apps sections, their
+ * sort and Show more went with it.
  *
  * A card is its picture, its name and one sentence, the project's own
  * description, at most two lines. On the picture a pill says how many
@@ -20,7 +19,8 @@
  *
  * THE WHOLE CARD IS ONE LINK to the project's read-only page
  * (./guest-project.tsx), whose band leads with Try it, then Join, then the
- * community: there are no buttons on a card. The name is the link and
+ * community. Its only buttons are Home's Pin and Join, on a row under the
+ * words raised over the link (Card's `footer`); there is no Try it on a card. The name is the link and
  * stretches over the card, so a tap anywhere opens it, a screen reader meets
  * one link per card, and the keyboard's focus ring goes round the whole
  * card. Its href is the clean `/app/<slug>` a search engine can follow
@@ -40,8 +40,8 @@
  * the finger; and the picture grows into the project page's band as it
  * opens (./card-morph.ts).
  *
- * Above the grid: a search and the kinds of app the directory has; beside
- * All apps, the sort. What an account adds is the hero's to say
+ * Above the grid: the kinds of app the directory has. What an account adds
+ * is the hero's to say
  * (features/auth/story.tsx), with its one button: the "Want to join in?"
  * card that said it again partway down is gone (Evan, 22 Oct 2026). Ways in
  * are asked for where somebody wants to do something (the project page's
@@ -50,32 +50,27 @@
 
 import { type AnchorHTMLAttributes, type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
-import { Chip, ChipRail } from '@/components/ui/chip';
-import { ArrowRightShortIcon, SearchIcon, UserIcon } from '@/components/ui/icons';
+import { ArrowRightShortIcon, PlusIcon, SearchIcon, UserIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
+import { useStoreState } from '../../lib/use-store-state';
+import { CommunitiesToJoin } from '../home/communities-to-join';
+import { CORNER_PIN, CORNER_UNPIN, CommunityTileFace, MinusGlyph } from '../home/pinned-communities';
+import { devicePinsStore, loadDevicePins, toggleDevicePin } from './device-pins';
 import { useCommunityColor } from '../../lib/community-color';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { cardCover, morph, projectHero } from './card-morph';
 import {
   type GuestApp,
-  type GuestSort,
   MIN_PEOPLE,
-  SORTS,
   canTryHere,
   featuredApps,
   inHomeroomApp,
-  filterApps,
-  presentCategories,
   projectHash,
   projectPath,
   sortApps,
 } from './guest-data';
-
-/** All apps shows this many cards at a time: four rows of five on a wide screen, five rows of two on a phone. */
-const CARDS_STEP = 10;
-const CARDS_STEP_WIDE = 20;
 
 /** A project made in the last 30 days wears "New". */
 const NEW_FOR_MS = 30 * 24 * 60 * 60 * 1000;
@@ -83,10 +78,11 @@ const NEW_FOR_MS = 30 * 24 * 60 * 60 * 1000;
 export const SMALL_CAPS_LABEL = 'text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
 
 /**
- * The grid Featured and All apps share: as many 190px columns as fit, never
- * fewer than two (half the width, less half the gap, is the floor).
+ * The grid of picture cards (Home's Communities to join, signed in or out):
+ * as many 190px columns as fit, never fewer than two (half the width, less
+ * half the gap, is the floor).
  */
-const CARD_GRID = 'grid grid-cols-[repeat(auto-fill,minmax(min(190px,calc(50%_-_6px)),1fr))] gap-3';
+export const CARD_GRID = 'grid grid-cols-[repeat(auto-fill,minmax(min(190px,calc(50%_-_6px)),1fr))] gap-3';
 
 function isNew(app: GuestApp, now = Date.now()): boolean {
   const t = app.created_at ? Date.parse(app.created_at) : NaN;
@@ -252,7 +248,14 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
  * tall (`py-3`) with `-my-3` taking the padding back out of the card, so a
  * finger has a real target while the card looks exactly as it did.
  */
-function Card({ app, eager, featured = false }: { app: GuestApp; eager: boolean; featured?: boolean }) {
+export function Card({ app, eager, featured = false, footer }: {
+  app: GuestApp;
+  eager: boolean;
+  featured?: boolean;
+  /** One Home (#6361): a row under the words, raised over the card's link so
+      its buttons (Join, Pin) take their own taps. */
+  footer?: ReactNode;
+}) {
   const t = useMessages('auth');
   const people = app.active_users || 0;
   return (
@@ -281,6 +284,7 @@ function Card({ app, eager, featured = false }: { app: GuestApp; eager: boolean;
             {app.description}
           </span>
         ) : null}
+        {footer ? <span className="relative z-[2] mt-2.5 flex items-center gap-2" data-guest-card-footer="">{footer}</span> : null}
       </span>
     </article>
   );
@@ -319,48 +323,7 @@ export function TryLink({ app, className, onOpenInside, inside = false, children
   );
 }
 
-function SortControl({ sort, onSort }: { sort: GuestSort; onSort: (s: GuestSort) => void }) {
-  const t = useMessages('auth');
-  const label: Record<GuestSort, string> = {
-    trending: t('auth:guest.sort.trending'),
-    new: t('auth:guest.sort.new'),
-    built: t('auth:guest.sort.built'),
-  };
-  return (
-    <div role="group" aria-label={t('auth:guest.sort.label')} className="flex rounded-full bg-black/5 p-[3px] dark:bg-white/10">
-      {SORTS.map((s) => (
-        <button
-          key={s}
-          type="button"
-          aria-pressed={s === sort}
-          data-guest-sort={s}
-          onClick={() => onSort(s)}
-          className={cn(
-            'min-h-11 rounded-full px-3 text-[13px] font-semibold',
-            s === sort
-              ? 'bg-white text-zinc-950 shadow-sm dark:bg-zinc-800 dark:text-white'
-              : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-          )}
-        >
-          {label[s]}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function CardGrid({ apps, featured = false }: { apps: GuestApp[]; featured?: boolean }) {
-  if (!apps.length) return null;
-  return (
-    <div className={CARD_GRID}>
-      {apps.map((app, i) => (
-        <Card key={app.slug} app={app} eager={i < 5} featured={featured} />
-      ))}
-    </div>
-  );
-}
-
-export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false }: {
+export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, onIntent, onOpenInside }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read. */
@@ -370,38 +333,62 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false }:
   /** Read the directory again, from the line that says it could not be. */
   onRetry?: () => void;
   /**
-   * A waitlisted account is looking (landing.tsx): it is signed in, so
-   * every public project opens for it, Featured holds every project an
-   * admin featured, and nothing here asks it to sign up.
+   * An account still on the waitlist is looking (landing.tsx): every public
+   * app opens for it, signed in, and joining waits until it is let in.
    */
   signedIn?: boolean;
+  /** ONE HOME (#6361): Join on a card asks to sign up, titled for the project. */
+  onIntent?: (intent: { kind: 'join'; app: GuestApp }) => void;
+  /** Open an app in the landing's own viewer (TryLink). */
+  onOpenInside?: (app: GuestApp) => void;
 }) {
+  // ONE HOME (#6361): THE SAME HOME, SIGNED OUT. Under the story: one search,
+  // Pinned apps (a few to try, each with a + to pin, until this device has
+  // pinned one), the communities this device pinned, then Communities, the
+  // directory's picture cards with Pin and Join. Pins are kept on the device
+  // (./device-pins.ts) and move to the account at sign-in. The Featured and
+  // All apps sections, their sort control and Show more went with it.
   const t = useMessages('auth');
+  const th = useMessages('home');
   const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<string | null>(null);
-  const [sort, setSort] = useState<GuestSort>('trending');
-  const [shown, setShown] = useState(0);
+  const device = useStoreStateLocal();
+  useEffect(() => { loadDevicePins(); }, []);
 
   const all = apps || [];
-  const kinds = useMemo(() => presentCategories(all), [all]);
-  const browsing = !query.trim() && !category;
+  const bySlug = useMemo(() => new Map(all.map((a) => [a.slug, a])), [all]);
   const inApp = inHomeroomApp();
   const tryable = useCallback((app: GuestApp) => signedIn || canTryHere(app, inApp), [signedIn, inApp]);
-  const featured = useMemo(() => (browsing ? featuredApps(all, tryable) : []), [all, browsing, tryable]);
-  const list = useMemo(() => {
-    const above = new Set(featured.map((a) => a.slug));
-    // Sorted, then searched: the search's exact-name lead must survive the sort (#5891).
-    return filterApps(sortApps(all, sort), query, category).filter((a) => !above.has(a.slug));
-  }, [all, query, category, sort, featured]);
-  useEffect(() => { setShown(0); }, [query, category, sort]);
-  const wide = typeof window !== 'undefined' && window.matchMedia?.('(min-width: 768px)').matches;
-  const step = wide ? CARDS_STEP_WIDE : CARDS_STEP;
-  const cards = list.slice(0, shown || step);
+  const q = query.trim();
+  const matches = (app: GuestApp) => !q || [app.name, app.slug, app.description].some((f) => typeof f === 'string' && f.toLowerCase().includes(q.toLowerCase()));
+  const pinnedApps = device.apps.map((s) => bySlug.get(s)).filter((a): a is GuestApp => !!a && matches(a));
+  const suggested = useMemo(() => (device.ready && !device.apps.length
+    ? featuredApps(all, tryable).concat(sortApps(all, 'trending').filter((a) => tryable(a))).filter((a, i, list) => list.findIndex((b) => b.slug === a.slug) === i).slice(0, 4)
+    : []), [all, device.ready, device.apps.length, tryable]);
+  const pinnedCommunities = device.communities.map((s) => bySlug.get(s)).filter((a): a is GuestApp => !!a && matches(a));
+  const pinnedSet = useMemo(() => new Set(device.communities), [device.communities]);
+  const open = onOpenInside || (() => {});
+
+  const appTile = (app: GuestApp, suggestion: boolean) => (
+    <span key={app.slug} className="relative flex min-w-0 flex-col items-center gap-1.5 py-1 text-center" data-guest-pinned-app={suggestion ? undefined : app.slug} data-guest-suggested-app={suggestion ? app.slug : undefined}>
+      <TryLink app={app} className="flex min-w-0 flex-col items-center gap-1.5 no-underline" onOpenInside={open} inside={signedIn}>
+        <GuestIcon app={app} size="md" />
+        <span className="max-w-full line-clamp-2 break-words text-[12.5px] font-semibold leading-[15px] text-zinc-800 dark:text-zinc-200">{app.name}</span>
+      </TryLink>
+      <button
+        type="button"
+        className={`absolute -top-1.5 end-1 w-6 h-6 rounded-full flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)] ${suggestion ? CORNER_PIN : CORNER_UNPIN}`}
+        aria-label={suggestion ? th('home:guest.pinApp', { app: app.name }) : th('home:guest.unpinApp', { app: app.name })}
+        onClick={() => { toggleDevicePin('apps', app.slug); }}
+      >
+        {suggestion ? <PlusIcon className="w-3.5 h-3.5" aria-hidden="true" /> : <MinusGlyph />}
+      </button>
+    </span>
+  );
 
   return (
     <div data-guest-discover="" className="flex flex-col gap-5">
       {hero}
-      <div className="flex flex-col gap-5 px-4">
+      <div className="flex flex-col gap-2 px-4">
         <label className="flex h-11 items-center gap-2 rounded-[14px] bg-white px-3.5 text-zinc-400 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-500">
           <SearchIcon className="h-[18px] w-[18px] shrink-0" />
           <input
@@ -409,78 +396,70 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false }:
             data-guest-search=""
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('auth:guest.search.placeholder')}
-            aria-label={t('auth:guest.search.label')}
+            placeholder={th('home:search.placeholder')}
+            aria-label={th('home:search.label')}
             className="h-11 min-w-0 flex-1 bg-transparent text-base text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
           />
         </label>
 
-        {kinds.length ? (
-          <ChipRail role="group" aria-label={t('auth:guest.categories.label')} className="-mx-4 -my-2 gap-2">
-            <Chip size="bar" className="min-h-11" selected={!category} data-guest-category="all" onClick={() => setCategory(null)}>
-              {t('auth:guest.category.all')}
-            </Chip>
-            {kinds.map((k) => (
-              <Chip key={k} size="bar" className="min-h-11" selected={category === k} data-guest-category={k} onClick={() => setCategory(category === k ? null : k)}>
-                {t(`auth:guest.category.${k}`)}
-              </Chip>
-            ))}
-          </ChipRail>
-        ) : null}
-
-        {featured.length ? (
-          <section className="flex flex-col gap-2.5">
-            <h2 className={SMALL_CAPS_LABEL}>{t('auth:guest.featured')}</h2>
-            <CardGrid apps={featured} featured />
+        {pinnedApps.length || (suggested.length && !q) ? (
+          <section data-guest-pinned-apps="">
+            <h2 className={`${SMALL_CAPS_LABEL} pt-4 pb-1.5`}>{th('home:grid.heading')}</h2>
+            {!pinnedApps.length ? <p className="pb-1 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{th('home:guest.appsHint')}</p> : null}
+            <div className="grid grid-cols-4 gap-x-1 gap-y-4 pt-2">
+              {pinnedApps.length ? pinnedApps.map((a) => appTile(a, false)) : suggested.map((a) => appTile(a, true))}
+            </div>
           </section>
         ) : null}
 
-        <section className="flex flex-col gap-3" aria-busy={apps ? undefined : true}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className={SMALL_CAPS_LABEL}>{browsing ? t('auth:guest.all') : t('auth:guest.results')}</h2>
-            <SortControl sort={sort} onSort={setSort} />
-          </div>
-          {!apps && !failed ? (
-            <div className={CARD_GRID} aria-label={t('auth:guest.loading')}>
-              {[0, 1, 2, 3].map((i) => <span key={i} className="aspect-[16/10] rounded-[20px] bg-black/5 dark:bg-white/10" />)}
+        {pinnedCommunities.length ? (
+          <section data-guest-pinned-communities="">
+            <h2 className={`${SMALL_CAPS_LABEL} pt-4 pb-1.5`}>{th('home:communities.heading')}</h2>
+            <div className="grid grid-cols-4 gap-x-1 gap-y-4 pt-2">
+              {pinnedCommunities.map((app) => (
+                <ProjectLink key={app.slug} slug={app.slug} className="flex min-w-0 flex-col items-center gap-1.5 rounded-2xl py-1 text-center no-underline" data-guest-pinned-community={app.slug}>
+                  <CommunityTileFace slug={app.slug} name={app.name || app.slug} iconUrl={app.icon_url || null} iconEmoji={app.icon_emoji || null} iconColor={app.icon_color || null} />
+                  <span className="max-w-full line-clamp-2 break-words text-[12.5px] font-semibold leading-[15px] text-zinc-800 dark:text-zinc-200">{app.name}</span>
+                </ProjectLink>
+              ))}
             </div>
-          ) : null}
-          {failed ? (
-            // The sentence, and the one thing to do about it (landing.tsx
-            // has already tried twice more by itself before this shows).
-            <div className="flex flex-col items-center gap-3 py-6">
-              <p className="text-center text-[15px] text-zinc-500 dark:text-zinc-400">{t('auth:guest.loadFailed')}</p>
-              {onRetry ? (
-                <button
-                  type="button"
-                  data-guest-retry=""
-                  // The same pill as Show more, below.
-                  className="min-h-11 self-center rounded-full bg-white px-5 text-[15px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-                  onClick={onRetry}
-                >
-                  {t('auth:guest.retry')}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          <CardGrid apps={cards} />
-          {list.length > cards.length ? (
+          </section>
+        ) : null}
+      </div>
+
+      {failed ? (
+        <div className="flex flex-col items-center gap-3 px-4 py-6">
+          <p className="text-center text-[15px] text-zinc-500 dark:text-zinc-400">{t('auth:guest.loadFailed')}</p>
+          {onRetry ? (
             <button
               type="button"
-              data-guest-show-more=""
+              data-guest-retry=""
               className="min-h-11 self-center rounded-full bg-white px-5 text-[15px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-              onClick={() => setShown(cards.length + step)}
+              onClick={onRetry}
             >
-              {t('auth:guest.showMore')}
+              {t('auth:guest.retry')}
             </button>
           ) : null}
-          {apps && !list.length ? (
-            <p className="py-6 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
-              {browsing ? t('auth:guest.emptyAll') : t('auth:guest.empty')}
-            </p>
-          ) : null}
-        </section>
-      </div>
+        </div>
+      ) : (
+        <div className="px-1">
+          <CommunitiesToJoin
+            apps={apps}
+            exclude={EMPTY}
+            signedIn={false}
+            query={q}
+            pinned={pinnedSet}
+            onPin={(app) => { toggleDevicePin('communities', app.slug); }}
+            onJoin={(app) => { onIntent?.({ kind: 'join', app }); }}
+          />
+        </div>
+      )}
     </div>
   );
+}
+
+const EMPTY: ReadonlySet<string> = new Set();
+
+function useStoreStateLocal() {
+  return useStoreState(devicePinsStore);
 }

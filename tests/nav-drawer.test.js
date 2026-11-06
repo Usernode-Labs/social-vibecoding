@@ -181,12 +181,11 @@ test('the header takes the grid or the arrow, and the titles, only while it appl
 // Evan, 3 Nov 2026: "when you're on a community, the top left gets like one
 // of those icons which represents lots of different apps. And then when you
 // click that, you go back to seeing all the communities in a grid."
-test('on the Hub the grid opens All communities; on a place the arrow goes up to the Hub', () => {
+test('on the Hub the arrow goes back to Home (One Home, #6361); on a place it goes up to the Hub', () => {
   const calls = [];
   const ui = loadTsx(`${DIR}/header-drawer.tsx`, {
     stubs: {
       '../dev-board/workshop/place-store': { openPlace: (slug, key) => { calls.push(['place', slug, key]); return false; } },
-      '../workshop/community-scope': { goToCommunity: (slug) => { calls.push(['community', slug]); } },
     },
   });
   ui.upFromPlace('notes', 'workshop');
@@ -197,19 +196,21 @@ test('on the Hub the grid opens All communities; on a place the arrow goes up to
   ui.upFromPlace('notes', 'all');
   ui.upFromPlace('notes', 'plan');
   assert.deepEqual(calls, [['place', 'notes', 'workshop'], ['place', 'notes', 'status']], 'a page under a place goes up to it');
-  calls.length = 0;
-  ui.toAllCommunities();
-  assert.deepEqual(calls, [['community', null]], 'the grid is All communities, a page');
+  const saved = globalThis.window;
+  const went = [];
+  globalThis.window = { App: { navigateHome: () => went.push('home') }, location: { hash: '' } };
+  try { ui.toHome(); } finally { globalThis.window = saved; }
+  assert.deepEqual(went, ['home'], 'the Hub\'s back is Home, where your communities are');
   const drawer = read(`${DIR}/header-drawer.tsx`);
-  assert.match(drawer, /if \(shown\.place === 'status'\) \{\s*return <BackDisc mode=\{mode\} grid label=\{t\('core:header\.drawer\.allCommunities'\)\} onBack=\{toAllCommunities\} \/>;/);
-  assert.match(drawer, /\? <Squares2X2Icon className="w-\[18px\] h-\[18px\]" aria-hidden="true" \/>/, 'the All communities glyph');
+  assert.match(drawer, /if \(shown\.place === 'status'\) \{\s*return <BackDisc mode=\{mode\} label=\{t\('core:header\.drawer\.toHome'\)\} onBack=\{toHome\} \/>;/);
+  assert.doesNotMatch(drawer, /Squares2X2Icon|toAllCommunities|data-nav-drawer-grid/, 'no grid of every community any more');
   assert.match(drawer, /t\('core:header\.drawer\.toHub', \{ community: shown\.name \}\)/);
   // The Hub names the community alone, as a name alone is drawn (depth 1).
   assert.match(drawer, /const hub = mode === 'communities' && shown\.place === 'status';/);
   assert.match(drawer, /const words = hubRef\.current \? headerFrame\(1, slot\.current, reducedMotion\(\)\)\.inner : frame\.inner;/);
   const hubWords = math.headerFrame(1, 44).inner;
   assert.equal(hubWords.subOpacity, 0, 'no line under it');
-  assert.equal(math.headerFrame(2, 44).back.live, true, 'and the grid is pressable where it rests');
+  assert.equal(math.headerFrame(2, 44).back.live, true, 'and the arrow is pressable where it rests');
 });
 
 test('the lit tab climbs the same ladder on a phone: a place to its Hub, the Hub to All communities', () => {
@@ -223,12 +224,13 @@ test('the lit tab climbs the same ladder on a phone: a place to its Hub, the Hub
 
 test('its words are catalog entries', () => {
   const core = JSON.parse(read('frontend/locales/en/core.json'));
-  for (const key of ['header.drawer.allCommunities', 'header.drawer.toHub', 'header.drawer.toPlace', 'header.drawer.toBot',
+  for (const key of ['header.drawer.toHome', 'header.drawer.toHub', 'header.drawer.toPlace', 'header.drawer.toBot',
     'header.drawer.messages', 'header.drawer.toMessages']) {
     assert.ok(core[key] && core[key].description, key);
   }
   assert.equal(core['header.drawer.toHub'].text, "Back to {{community}}'s Hub");
-  assert.equal(core['header.drawer.allCommunities'].text, 'All communities');
+  assert.equal(core['header.drawer.toHome'].text, 'Back to Home');
+  assert.equal(core['header.drawer.allCommunities'], undefined, 'the Hub\'s grid went with One Home (#6361)');
 });
 
 // ── Messages on the same drawer ────────────────────────────────────────

@@ -4385,7 +4385,7 @@
   },
   "menu.pin.add": {
     "text": "Pin to sidebar",
-    "description": "Row in a project's ⋯ menu on its hub, on a computer: keeps the project's community in the desktop sidebar's Pinned section."
+    "description": "Row in a project's ⋯ menu on its hub, on a computer: keeps the project's community at the top of the desktop sidebar's Recents."
   },
   "menu.pin.sub": {
     "text": "Keep it at the top of your sidebar",
@@ -4393,7 +4393,31 @@
   },
   "menu.pin.remove": {
     "text": "Unpin from sidebar",
-    "description": "The same row once the community is pinned: takes it off the desktop sidebar's Pinned section. It stays one of the person's communities."
+    "description": "The same row once the community is pinned: lets it move with the rest of the desktop sidebar's Recents again. It stays one of the person's communities."
+  },
+  "menu.homeApp.add": {
+    "text": "Pin app to Home",
+    "description": "Row in a project's ⋯ menu on its hub: puts the project's app among Home's Pinned apps, where its tile opens the app. Pinning does not join."
+  },
+  "menu.homeApp.sub": {
+    "text": "Its tile opens the app",
+    "description": "Second line under Pin app to Home in the project's ⋯ menu, saying what the pinned tile does."
+  },
+  "menu.homeApp.remove": {
+    "text": "Unpin app from Home",
+    "description": "The same row once the app is pinned: takes the app's tile off Home's Pinned apps. Membership does not change."
+  },
+  "menu.homeCommunity.add": {
+    "text": "Pin community to Home",
+    "description": "Row in a project's ⋯ menu on its hub: puts the community among Home's Pinned communities, where its tile opens this hub. Pinning does not join."
+  },
+  "menu.homeCommunity.sub": {
+    "text": "Its tile opens this hub",
+    "description": "Second line under Pin community to Home in the project's ⋯ menu, saying what the pinned tile does."
+  },
+  "menu.homeCommunity.remove": {
+    "text": "Unpin community from Home",
+    "description": "The same row once the community is pinned: takes its tile off Home's Pinned communities. Membership does not change."
   },
   "menu.appSettings.title": {
     "text": "App settings",

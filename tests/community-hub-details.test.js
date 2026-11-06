@@ -177,8 +177,11 @@ test('the hub draws no charts: who is around is faces, a count and names, and no
   // #3969 added the Accessibility settings check above it, so it moved
   // 288 → 289; #5992 removed the two feedback destination checks above it,
   // so it moved 289 → 287; #6000 added the Propose reopening check above it,
-  // so it moved 287 → 288.)
-  const declared = JSON.parse(read('dapp.json')).tests[288];
+  // so it moved 287 → 288; One Home, #6361, retired three Discover checks
+  // above it, so it is found by what it reads now, not by its place.)
+  const declared = JSON.parse(read('dapp.json')).tests
+    .find((t) => (t.expectSelector || '').includes(':has(.dev-ws-hero [data-ws-active-people])'));
+  assert.ok(declared, 'the check is declared');
   assert.match(declared.expectSelector, /:has\(\.dev-ws-hero \[data-ws-active-people\]\) > \.dev-ws-tabbody > \[data-ws-hub-for-you\] > \.dev-ws-foryou > \[data-ws-hub-needs-votes\] > button\[data-ws-hub-needs-open\]$/);
   assert.equal(declared.expectText, 'to vote');
 });

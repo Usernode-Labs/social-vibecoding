@@ -23061,7 +23061,9 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
      are a little wider than the other three: they hold the longest words,
      and the bar's other labels (Home, Messages, and your name last, which
      ellipsizes) have room to spare in theirs. */
-  #platform-tabs { grid-template-columns: .85fr 1.3fr 1.4fr 1.1fr .85fr; }
+  /* ONE HOME (#6361): four seats, Home · Homeroom bot · Messages · You. The
+     bot's holds the longest word, so it is a little wider. */
+  #platform-tabs { grid-template-columns: 1fr 1.4fr 1.15fr 1fr; }
   :is(#platform-tab-workshop, #platform-tab-ai) { overflow: visible; }
   :is(#platform-tab-workshop, #platform-tab-ai) .platform-tab-label {
     letter-spacing: -.02em;
@@ -23072,7 +23074,7 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
 @media (max-width: 374.98px) {
   /* The smallest phones: every label drops half a point and tightens, the
      cells lose their 2px sides, and the two wide seats widen a little less. */
-  #platform-tabs { grid-template-columns: .85fr 1.25fr 1.35fr 1.1fr .85fr; }
+  #platform-tabs { grid-template-columns: 1fr 1.35fr 1.15fr 1fr; }
   .platform-tab { padding: 0; }
   .platform-tab .platform-tab-label { font-size: 10.5px; letter-spacing: -.02em; }
 }
@@ -23089,10 +23091,14 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
 @media (max-width: 767.98px) {
   #platform-tab-discover { display: none; }
   #platform-tab-home { order: -4; }
-  #platform-tab-workshop { order: -3; }
-  #platform-tab-ai { order: -2; }
-  #platform-tab-messages { order: -1; }
+  #platform-tab-ai { order: -3; }
+  #platform-tab-messages { order: -2; }
 }
+/* ONE HOME (#6361): the Communities tab is drawn on neither bar, and
+   Discover on neither: Home holds your communities and the ones to join.
+   Both nodes stay, for the routes and links that still name them. */
+#platform-tab-workshop,
+#platform-tab-discover { display: none !important; }
 
 /* A QUIET GREY DISC, NOT THE BELL'S RED (#2912). This used to be the same
    red disc as #notifications-badge, on the argument that two counts on one
@@ -25331,12 +25337,9 @@ section + .workshop-search {
   .platform-tabs:has(#platform-rail-conversations > [data-nest="open"] [aria-current="page"]) #platform-tab-messages[aria-current="page"] .platform-tab-glyph {
     color: var(--text-primary);
   }
-  /* The places are in the sidebar, so the place bar's button to the tray has
-     nothing to open beside it. Folded, the sidebar is away and the button
-     is the way to the places again. */
-  body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) .dev-ws-places-btn {
-    display: none;
-  }
+  /* ONE HOME (#6361): the sidebar nests no places under a community's row,
+     so the place bar's button to the tray is the way to them on a wide
+     window too, sidebar shown or folded, as it is on a phone. */
 
   /* ── MESSAGES, ONE PANE AT A TIME (v3) ───────────────────────────────
      features/messages/index.tsx. The list is in the sidebar, so an open
@@ -27012,6 +27015,53 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 @media (max-width: 1759px) {
   #dev-workshop:has(> .dev-ws[data-ws-side-open]) { margin-inline-start: 0; max-width: none; }
   .dev-ws-side { inset-inline-start: calc(var(--dev-ws-side-start) + var(--platform-gutter, 0px) + 24px); }
+}
+
+/* ── ONE HOME (#6361): THE SIDEBAR'S RECENTS ────────────────────────────
+   One list under one heading: the communities pinned to its top
+   (#platform-rail-pinned, community_pins, four at most), then the ones you
+   opened lately, each where it first arrived (#platform-rail-communities).
+   The pinned group carries the heading when it is drawn, and the list under
+   it then draws none of its own. The search beside the heading went with
+   the Communities page: Home lists and searches every community. */
+@media (min-width: 768px) {
+  #platform-rail-pinned:not(.hidden) + #platform-rail-communities > .platform-rail-head { display: none; }
+  #platform-rail-search { display: none; }
+
+  /* A row: the link fills it, and the pin and the count sit over its end in
+     their own columns, the pin first, so the count keeps the row's end and
+     does not move when the pin shows. */
+  .platform-rail-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+  }
+  .platform-rail-row > .platform-rail-community { grid-column: 1 / -1; grid-row: 1; padding-inline-end: 38px; }
+  .platform-rail-row[data-votes] > .platform-rail-community { padding-inline-end: 62px; }
+  .platform-rail-pin {
+    grid-column: 2; grid-row: 1; position: relative; z-index: 2;
+    width: 26px; height: 26px; margin-inline-end: 6px; border-radius: 8px;
+    display: grid; place-items: center;
+    color: var(--text-muted);
+    opacity: 0;
+    transition: opacity 120ms ease, background-color 120ms ease;
+  }
+  .platform-rail-row[data-votes] > .platform-rail-pin { margin-inline-end: 2px; }
+  .platform-rail-row > .platform-rail-votes {
+    grid-column: 3; grid-row: 1; position: relative; z-index: 2;
+    margin-inline-end: 8px; pointer-events: none;
+  }
+  .platform-rail-pin-glyph { width: 16px; height: 16px; }
+  .platform-rail-row:hover > .platform-rail-pin,
+  .platform-rail-row:focus-within > .platform-rail-pin { opacity: 1; }
+  .platform-rail-pin:hover { background: var(--lit-tint); color: var(--lit-ink); }
+  .platform-rail-pin[aria-pressed="true"] { opacity: 1; color: var(--lit-ink); }
+  .platform-rail-pin[aria-pressed="true"] .platform-rail-pin-glyph { fill: currentColor; }
+  .platform-rail-pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; opacity: 1; }
+}
+@media (min-width: 768px) and (hover: none) {
+  .platform-rail-pin { opacity: .55; }
 }
 
 /* ── THE NEW LOOK, AN EXPERIMENT (Settings › Experimental, off by default) ──

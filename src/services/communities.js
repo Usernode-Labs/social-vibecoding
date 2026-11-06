@@ -28,6 +28,7 @@ const log = require('./logger');
 const appAccess = require('./app-access');
 const appAdmins = require('./app-admins');
 const { positiveId } = require('./row-id');
+const homePins = require('./home-pins');
 
 // The three audiences, in the order the Workshop lists them.
 const AUDIENCES = Object.freeze(['open', 'invited', 'solo']);
@@ -101,12 +102,11 @@ async function getMembership(pool, app, userId) {
   };
 }
 
-// Join the community `app` belongs to. Also pins the app to Home, which is
-// what "Add" did before it was "Join": the directory's one-tap button keeps
-// putting the app where you will find it again. The pin would join you by
-// itself (the app_favorites trigger in schema.sql), but the membership row
-// is written first and explicitly so it records 'joined' rather than
-// 'favorite'.
+// Join the community `app` belongs to, and pin the COMMUNITY to Home (One
+// Home, #6361: services/home-pins.js). Its app is not pinned: pinning an app
+// is its own act now, and the client offers "Pin its app too" once the join
+// lands. Neither pin joins anybody any more (one-home-pins.sql dropped the
+// app_favorites trigger).
 async function join(pool, app, userId) {
   await pool.query(
     `INSERT INTO community_members (community_id, user_id, source)
@@ -115,16 +115,23 @@ async function join(pool, app, userId) {
      ON CONFLICT (community_id, user_id) DO NOTHING`,
     [app.id, userId]
   );
-  await pool.query(
-    `INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)
-     ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE`,
-    [app.id, userId]
-  );
+  if (app.community_id) {
+    await homePins.pinCommunity(pool, app.community_id, userId);
+  } else {
+    await pool.query(
+      `INSERT INTO home_community_pins (community_id, user_id, position)
+       SELECT a.community_id, $2, COALESCE((SELECT MAX(position) + 1 FROM home_community_pins WHERE user_id = $2), 0)
+         FROM apps a WHERE a.id = $1 AND a.community_id IS NOT NULL
+       ON CONFLICT (user_id, community_id) DO NOTHING`,
+      [app.id, userId]
+    );
+  }
 }
 
 // Leave. One transaction, three rows: the membership, the collaborator row
 // (on a private app that is your access — leaving it is the point, and the
-// confirm says so), and the Home pin. The creator cannot leave: an app with
+// confirm says so), and the community's pin on Home. The app's own pin
+// (app_favorites) stays: One Home (#6361) keeps a pinned app where it is. The creator cannot leave: an app with
 // no creator in its community would have nobody who can invite anyone back,
 // which is a state no screen explains. Returns { ok } or { error, status }.
 async function leave(pool, app, userId) {
@@ -144,7 +151,8 @@ async function leave(pool, app, userId) {
       [app.id, userId]
     );
     await client.query(
-      'DELETE FROM app_favorites WHERE app_id = $1 AND user_id = $2',
+      `DELETE FROM home_community_pins p USING apps a
+        WHERE a.id = $1 AND p.community_id = a.community_id AND p.user_id = $2`,
       [app.id, userId]
     );
     await client.query('COMMIT');

@@ -382,6 +382,9 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── One Home (#6361): Home's sections for communities ─────────────
+  'home-communities-section': 'Home\'s Pinned communities (features/home/pinned-communities.tsx), under Pinned apps: the communities you pinned, each a tile that opens its hub, then All communities and New community. Ships hidden: the pins load after mount. The tours and dapp.json\'s checks select it.',
+  'home-join-section': 'Home\'s Communities to join (features/home/home-join.tsx over communities-to-join.tsx), last on Home: the public directory\'s picture cards, each with Join, more as you scroll. Discover\'s lane went with it (#home-browse-btn, its See all, left this map with that lane). Ships hidden; signed out, the landing draws the same section without the id.',
   // ── #6134, #6136: Settings > Connectors, one card per AI tool ───────
   'connector-tool-claude': 'The Claude.ai card in Settings > Connectors (features/settings/sections/connectors.tsx): its status word, its setup steps and its connections. The four cards replace one list of setup rows; #connectors-list stays as what holds them.',
   'connector-tool-chatgpt': 'The ChatGPT card, the same shape as #connector-tool-claude.',
@@ -697,7 +700,6 @@ const ADDED_IDS = {
   'improve-working-dot': 'What was left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse (a small blue corner spinner since the #2779 follow-up), rendered only while a dev session the viewer can see is mid-turn (their own, since the same follow-up). It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact that needs no dismissal. #2718 retired the button and the dot outlived it: it is on the Homeroom mark\'s tile now, which is the control on screen on every route. Top-right, so it cannot hide under the bottom-left outbox dot, which followed it there.',
   'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty. Opened ONLY from Settings → Homeroom app → connection ("Connect existing wallet"); it used to open itself on every failed admission attempt, which is the pop-up that was reported.',
   // ── Home area labels: the block chrome moved above the card ──────
-  'home-browse-btn': 'Discover\'s way into the #apps directory. Not a new control — it has always been the block\'s browse link — but it is in the COLD DOCUMENT now, which is why it is a new id here. The block\'s title moved out of the card to become the section\'s label, its controls followed (a card whose first row was chrome with one link floating at the end of it reads worse than one that opens on content), and a section heading is constant markup where the block behind it is fetched. So the control ships with the shell instead of appearing when /api/home-panels answers — which is also one less thing that pops in on a cached load.',
   // ── Platform UI pass: the update state, and where the versions live ──
   'settings-about-section': 'Settings → About: the three version rows. They have moved twice before (#1431 built an About block, #1443 took them to the Improve panel\'s footer). They are back because the question they were being read for — "is something happening, and is there a new version yet" — is answered directly by that footer now, as a note and a reload button. What is left over is reference material, and this is the reference screen.',
   'about-row-app-version': 'The open app\'s latest merged main, in that pane. Gated on `slug && !selfHosted`, exactly as the Improve panel\'s copy was: on the platform\'s own app this row IS the platform, so it and "Platform version" under it printed the same seven characters twice.',
@@ -947,7 +949,9 @@ const ADDED_IDS = {
   // grid host did so the dapp.json checks still select on it.
   'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the others.',
   'home-apps-more': '"Show all N apps" — revealed only when a viewer has more than the two-row default shows. The cap is on what is DRAWN, never on what they may have.',
-  'home-discover-section': 'Area 2: featured tiles, the Popular lane and the way into the app directory.',
+  // #home-discover-section (area 2) left this map when One Home (#6361) took
+  // Discover's lane off Home; #home-join-section, below #home-challenges-section,
+  // is the directory there now.
   'home-challenges-section': 'Area 3: the season\'s open challenges, and under them the leaderboard standings the retired #drawer-row-leaderboard used to point at.',
   // #home-create-section (area 4) left this map when Create moved into the
   // launcher grid; it is recorded in RETIRED_IDS.

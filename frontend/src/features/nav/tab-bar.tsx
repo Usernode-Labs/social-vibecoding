@@ -151,15 +151,18 @@ const TABS = [
     href: '/',
     Icon: HomeIcon,
   },
-  // The rail's alone: app.css hides it on the phone's bar (see above).
+  // ONE HOME (#6361): Discover's directory is Home's Communities to join,
+  // so its tab is drawn nowhere (app.css hides it on both bars). The node
+  // stays for the routes and links that still name #apps.
   { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: CompassIcon },
-  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   // #6019: the Homeroom bot's chat, which left the Messages list for a tab
   // of its own. `#homeroom-bot` opens it (app.js; `#ai`, its old address,
   // still does), and the tab is lit while it is the
   // conversation on screen (the nav store's `bot`). Its glyph is the bot's
-  // own picture in line, not a sparkle (29 Oct 2026).
+  // own picture in line, not a sparkle (29 Oct 2026). One Home (#6361) put
+  // it above Messages, on the phone's bar and the desktop sidebar alike.
   { key: 'ai' as const, label: 'core:tabs.ai', href: '#homeroom-bot', Icon: HomeroomBotIcon },
+  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
   // "You", signed in or not (N7 of the 19 Oct polish board); the accessible
   // name adds whose account it is — see tabLabel below.
@@ -896,9 +899,10 @@ function openCommunitiesPage(): void {
  * The Duo's side strip is left alone: its Apps section is the bar's first
  * child, which this list would not reach.
  */
+// ONE HOME (#6361): four tabs, in the markup's own order now; the
+// Communities tab (#platform-tab-workshop) is drawn on neither bar.
 export const PHONE_TAB_ORDER = [
   'platform-tab-home',
-  'platform-tab-workshop',
   'platform-tab-ai',
   'platform-tab-messages',
   'platform-tab-me',
