@@ -1699,6 +1699,30 @@ function besideBot(route, head) {
   if (head) api.embeddedApi.head(route, head);
 }
 
+test('the head store starts empty and takes, and clears, a page\'s head (#6431)', () => {
+  // The panel document's head store starts null, and the first thing that
+  // ever happens to it is the page publishing an object. createStore's
+  // change detection read the key off that null state and threw, so the
+  // pill and the page's rows never reached the column: running the app with
+  // a request in the panel logged "Cannot read properties of null (reading
+  // 'kind')" at the store's set, and the page's bar had already gone.
+  api.panelHeadStore.set(null);
+  assert.equal(api.panelHeadStore.get(), null);
+  api.panelHeadStore.set({ kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6431' });
+  assert.equal(api.panelHeadStore.get().kind, 'request');
+  assert.equal(api.panelHeadStore.get().pill.key, 'building');
+  assert.equal(api.panelHeadStore.get().menuKey, 'request:6431');
+  // And it is cleared the same way: null REPLACES the state rather than
+  // merging into a no-op copy of it, or the page's pill would outlive it.
+  api.panelHeadStore.set(null);
+  assert.equal(api.panelHeadStore.get(), null);
+  // A store with an object state keeps the merge contract every other
+  // plain-store user relies on.
+  api.panelHeadStore.set({ kind: 'change', pill: null, menuKey: 'detail:proposal:9' });
+  assert.equal(api.panelHeadStore.get().kind, 'change');
+  api.panelHeadStore.set(null);
+});
+
 test('beside the bot page the column\'s heading carries the page\'s own status pill (#6431)', () => {
   const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
   const HEAD = read('frontend/src/features/side-panel/head-store.ts');
