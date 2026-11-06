@@ -1669,7 +1669,7 @@ const GroupChat = {
     // the change as its root post and every notice a single line. `closed`
     // is what a change nobody else can see yet says instead of a stream: its
     // thread is not read at all (only its author can open the page).
-    const language = ['chat', 'request', 'change'].includes(opts.language) ? opts.language : 'flat';
+    const language = ['chat', 'request', 'change', 'decision'].includes(opts.language) ? opts.language : 'flat';
     const closed = language === 'change' && opts.closed ? String(opts.closed) : null;
     // #5007: a change built for a request points its replies at that
     // request's own page, where the conversation lives. Only the change
@@ -1728,6 +1728,8 @@ const GroupChat = {
       maxLength: GC_MAX_MESSAGE_LEN,
       request: fill && language === 'request',
       change: fill && language === 'change',
+      // #6440: a governance vote's page, the same sheet as a request's.
+      decision: fill && language === 'decision',
     });
 
     // Kit polish: keyboard avoidance on the unified thread scroller
@@ -2525,7 +2527,7 @@ const GroupChat = {
     const prevTop = scroll ? scroll.scrollTop : 0;
     const wasLoaded = el.dataset.loaded === '1';
 
-    const language = ['chat', 'request', 'change'].includes(a.language) ? a.language : 'flat';
+    const language = ['chat', 'request', 'change', 'decision'].includes(a.language) ? a.language : 'flat';
     const chat = language === 'chat';
     GroupChat._react()?.mountTranscript(el, 'thread');
     // #2387: a reply thread opens with the message it hangs off — from the

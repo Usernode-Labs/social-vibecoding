@@ -204,7 +204,9 @@ test('the gate pair paints plain and decides in the browser whether it sticks', 
 
 test('group-chat.js carries the change language from the mount to the shell and the transcript', () => {
   const src = read('public/js/group-chat.js');
-  assert.match(src, /const language = \['chat', 'request', 'change'\]\.includes\(opts\.language\) \? opts\.language : 'flat';/);
+  // #6440 adds a governance vote's page ('decision') as a fourth language;
+  // the change page's own wiring is unchanged.
+  assert.match(src, /const language = \['chat', 'request', 'change', 'decision'\]\.includes\(opts\.language\) \? opts\.language : 'flat';/);
   assert.match(src, /change: fill && language === 'change',/);
   assert.match(src, /if \(closed\) return;\n\s+if \(!st\.loaded\) GroupChat\.loadThreadHistory\(type, ref\);/,
     'an unshared change\'s thread is not read');

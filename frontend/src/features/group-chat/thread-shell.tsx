@@ -102,9 +102,14 @@ export interface ThreadShellProps {
    * as its root post. Fill mode only.
    */
   change?: boolean;
+  /**
+   * #6440: a governance vote's page — the same sheet again, with the vote as
+   * its root post. Fill mode only.
+   */
+  decision?: boolean;
 }
 
-function Composer({ fill, readOnly, notice, placeholder, maxLength, request = false, change = false }: ThreadShellProps) {
+function Composer({ fill, readOnly, notice, placeholder, maxLength, request = false, change = false, decision = false }: ThreadShellProps) {
   // `platform-safe-bar` on BOTH variants: in fill mode this block is the
   // bottom of the screen, so it carries the home-indicator inset above its own
   // padding, and the read-only notice that replaces it needs the identical
@@ -122,7 +127,7 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength, request = fa
       </div>
     );
   }
-  if (request || change) {
+  if (request || change || decision) {
     return (
       <ChatComposerBar className="messages-composer messages-composer-thread">
         <ComposerSlots scope="thread" />
@@ -158,15 +163,23 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength, request = fa
  * #4455: a change's page is the same sheet, with the change as its root post
  * (features/dev-board/topic/change-head.tsx). `.dev-change` beside
  * `.dev-request` is what app.css tells the two apart by.
+ *
+ * #6440: a governance vote's page is the same sheet a third time, with the
+ * vote as its root post (features/dev-board/topic/governance-head.tsx); it
+ * wears `.dev-decision` beside `.dev-request`, which is what app.css reads.
  */
 function RequestShell(props: ThreadShellProps) {
   const t = useMessages('project');
   const scroll = useRef<HTMLDivElement>(null);
   const change = !!props.change;
+  const decision = !!props.decision;
+  const cls = change ? 'dev-request dev-change platform-kb-column'
+    : decision ? 'dev-request dev-decision platform-kb-column'
+      : 'dev-request platform-kb-column';
   return (
-    <div className={change ? 'dev-request dev-change platform-kb-column' : 'dev-request platform-kb-column'}>
+    <div className={cls}>
       <div id="gc-thread-back" className="dev-request-back" />
-      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? t('project:topic.change.sheetLabel') : t('project:topic.request.sheetLabel')}>
+      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? t('project:topic.change.sheetLabel') : decision ? t('project:topic.decision.sheetLabel') : t('project:topic.request.sheetLabel')}>
         <div id="gc-thread-bar" className="dev-request-bar" />
         <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain chat-transcript">
           <div id="gc-thread-head" />
@@ -188,7 +201,7 @@ function RequestShell(props: ThreadShellProps) {
 export function ThreadShell(props: ThreadShellProps) {
   const { fill, withHeader } = props;
   const scroll = useRef<HTMLDivElement>(null);
-  if (fill && (props.request || props.change)) return <RequestShell {...props} />;
+  if (fill && (props.request || props.change || props.decision)) return <RequestShell {...props} />;
   if (fill) {
     return (
       // `platform-kb-column` is what app.css hangs the keyboard reservation

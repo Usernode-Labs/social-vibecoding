@@ -2261,7 +2261,7 @@
     {
       "name": "The closing state also renders on the proposal's own discussion page (#1010)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100074",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100074'] .gc-merging-badge .dc-status-spinner-arc"
+      "expectSelector": "#gc-thread-head [data-gov-root='9100074'] [data-gov-outcome='applying'] .dc-status-spinner-arc"
     },
     {
       "name": "An illustration proposal card previews the proposed image beside the current one (#2086)",
@@ -2272,19 +2272,19 @@
     {
       "name": "An illustration proposal's discussion page carries the same preview (#2086)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100077",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100077'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
+      "expectSelector": "#gc-thread-head [data-gov-root='9100077'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
       "expectText": "Change the featured illustration"
     },
     {
       "name": "An applied close proposal opens its discussion, not the board (#1115)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100060",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100060']"
+      "expectSelector": "#gc-thread-head [data-gov-root='9100060']"
     },
     {
       "name": "An applied close proposal reachable only by id still opens (#1115)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100062",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100062']",
-      "expectText": "closed by vote"
+      "expectSelector": "#gc-thread-head [data-gov-root='9100062'] [data-gov-outcome='applied']",
+      "expectText": "Passed"
     },
     {
       "name": "#2603: a governance card's vote is the same picker a change's is, so the reason box opens with it",
@@ -2295,7 +2295,7 @@
     {
       "name": "#2603: a close proposal's page lists the votes cast on it, each in the voter's own words",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100072",
-      "expectSelector": "#gc-thread-head .dev-topic-about .dev-topic-roster .dev-ledger-reason[data-vote=\"yes\"]",
+      "expectSelector": "#gc-thread-head [data-gov-root='9100072'] .dev-topic-roster .dev-ledger-reason[data-vote=\"yes\"]",
       "expectText": "Checked it myself, nothing left to fix."
     },
     {
