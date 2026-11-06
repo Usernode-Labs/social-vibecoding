@@ -185,10 +185,10 @@ test('each section groups its rows by project, and a project shows its first few
   // #6262: Needs you orders its rows with the new ones first, before the
   // drawn order is held, then folds through the same pure rule (which never
   // hides a fresh row either).
-  assert.match(lists, /const ordered = freshStyle \? freshFirst\(lines\) : lines;/);
+  assert.match(lists, /const ordered = freshStyle \|\| foldFresh \? freshFirst\(lines\) : lines;/);
   assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
     'the new first, then the drawn order held');
-  assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(g\.items, first, open\);/,
+  assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(g\.items, first, open, !foldFresh\);/,
     'the group draws through the pure order rule');
   assert.match(lists, /\{\(hidden \? items\.slice\(0, shown\) : items\)\.map\(/);
   assert.match(lists, /aria-hidden=\{open \? undefined : true\}\s+inert=\{!open\}/, 'the folded rest is out of reach until it opens');
@@ -330,6 +330,62 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   assert.ok(!quiet.includes('data-ai-earlier'), 'and no Earlier line');
   assert.ok(!quiet.includes('data-ai-fresh'), 'and no count at all');
 });
+
+// #6408 (6 Nov 2026, Evan): Live this week showed 50 of a project's 76 rows
+// before Show more, because every "it's live" row was new and #6262 never
+// folds a fresh row. New in Live only means a change went live since the
+// viewer last looked, so Live folds after its first few whatever is new: its
+// rows put the new ones first, and the fold says how many of them it holds.
+// Needs you and Waiting & in progress keep the never-fold rule.
+test('#6408: Live this week folds after its first few rows whatever is new', () => {
+  const { groupRows, GROUP_FIRST } = loadTsx(MODEL);
+  // Eight rows, six of them new. Folded to Live's first three, five fold.
+  const many = Array.from({ length: 8 }, (_, i) => ({ key: `r${i + 1}`, fresh: i < 6 }));
+  const folded = groupRows(many, GROUP_FIRST.live, false, false);
+  assert.deepEqual(folded.items.map((r) => r.key), many.map((r) => r.key), 'the order is the one the section gave');
+  assert.deepEqual([folded.shown, folded.hidden], [3, 5], 'the first three show; the new rows fold with the rest');
+  // The row you are on is still lifted out of the fold, folded.
+  const lit = many.map((r, i) => ({ ...r, lit: i === 6 }));
+  const withLit = groupRows(lit, GROUP_FIRST.live, false, false);
+  assert.deepEqual([withLit.shown, withLit.hidden], [4, 4], 'where you are is never hidden');
+  assert.equal(withLit.items[3].key, 'r7');
+  // By default #6262 holds: a new row past the first few is never folded
+  // away, which is what Needs you and Waiting & in progress draw.
+  const held = groupRows(many, GROUP_FIRST.live, false);
+  assert.deepEqual([held.shown, held.hidden], [6, 2], 'a fresh row is lifted by default');
+
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /const freshHidden = foldFresh \? items\.slice\(shown\)\.filter\(\(line\) => line\.fresh\)\.length : 0;/,
+    'the fold counts the new rows it holds');
+  assert.match(lists, /<Section list="live" quiet head=\{t\('messages:ai\.live\.title', \{ count: liveLines\.length \}\)\} lines=\{liveLines\}[^>]*foldFresh \/>/,
+    'Live this week is the section that folds what is new');
+  assert.equal(message('messages:ai.work.showMoreFresh', { count: 73, fresh: 44 }), 'Show 73 more · 44 new');
+
+  // Rendered: a project's eight live rows, six new, show three rows and the
+  // fold that holds the other three new ones.
+  const live = Array.from({ length: 8 }, (_, i) => thread(30 + i, 410 + i, 'going_live', {
+    group: 'live', at: '2026-11-06T10:00:00Z', unread: i < 6 ? 1 : 0,
+  }));
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: [], lit: null, progress: [], waiting: [], live, openRow() {}, openThread() {},
+  });
+  const sheet = html.slice(html.indexOf('data-ai-sheet="live"'));
+  const shown = sheet.slice(0, sheet.indexOf('data-ai-group-rest'));
+  assert.equal((shown.match(/data-ai-line=/g) || []).length, 3, 'three rows before the fold');
+  assert.match(sheet, /Show 5 more · 3 new/, 'the fold says how many new rows it holds');
+  // None of the folded rows new: the plain words, as every other list says them.
+  const older = live.map((t) => ({ ...t, unread: 0 }));
+  const calm = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: [], lit: null, progress: [], waiting: [], live: older, openRow() {}, openThread() {},
+  });
+  const calmSheet = calm.slice(calm.indexOf('data-ai-sheet="live"'));
+  assert.match(calmSheet, /Show 5 more/, 'nothing new in the fold says only how many');
+  assert.ok(!/Show 5 more ·/.test(calmSheet), 'and does not mention new ones');
+});
+
 
 // #6312 (4 Nov 2026, Evan): "Show 11 more" made two rows' blue dots disappear
 // the instant it was pressed. Folded, a new row is lifted above the fold, so
@@ -1831,6 +1887,107 @@ test('an item in the bot page\'s column has an address of its own, and its own p
   const { aboutRoute } = loadTsx('frontend/src/features/ai/index.tsx');
   assert.deepEqual(plain(aboutRoute('app/garden/dev/issues/12')), { type: 'issue', appSlug: 'garden', issueNumber: 12, title: null });
   assert.equal(aboutRoute('app/garden/dev/governance/3'), null);
+});
+
+// #6398 (6 Nov 2026, Evan: "offer a search icon here, next to the plus, to
+// search through your threads"). A round search button beside the plus opens
+// a box under the heading; every list narrows to the threads whose title,
+// number ("6011" or "#6011") or project name contains what was typed, a
+// section with no match folds away, Main Chat steps aside, and one short note
+// says when nothing matched at all.
+test('#6398: the search narrows every list by title, number or project, hides Main Chat, and says when nothing matches', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const LISTS = 'frontend/src/features/ai/lists.tsx';
+  const games = { slug: 'games', name: 'Game corner', icon_url: null, icon_emoji: null };
+  const need = (key, title, a, number) => ({
+    key, title, app: a, who: 'all', unread: 0,
+    sub: { id: 'messages:ai.row.where', values: { project: a.name, number } },
+    pill: { id: 'messages:ai.pill.vote' }, href: `#app/${a.slug}/dev/issues/${number}`, rootId: null,
+    threadId: number,
+  });
+  const at = (threadId, number, what, a, title, group = 'next') => thread(threadId, number, what, {
+    app: a, title, group, href: `#app/${a.slug}/dev/issues/${number}`,
+  });
+  const all = {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 2,
+    rows: [
+      need('need:proposal:1', 'Releases: make the migration job cheaper', app, 6010),
+      need('need:proposal:2', 'Dark mode', games, 403),
+    ],
+    progress: [at(3, 6011, 'building', app, 'Releases: reuse image scan results safely')],
+    waiting: [at(4, 6012, 'vote', games, 'Seed the garden')],
+    live: [at(5, 777, 'live', games, 'Ship the seed catalogue', 'live')],
+    openRow() {}, openThread() {},
+  };
+  const html = (extra) => renderComponent(LISTS, 'AiLists', { ...all, ...extra });
+
+  // No search: every row, Main Chat first, nothing folded away.
+  const plain = html({ query: '' });
+  assert.match(plain, /data-ai-main-row=""/, 'Main Chat is drawn with an empty search');
+  for (const title of ['make the migration', 'Dark mode', 'reuse image scan', 'Seed the garden', 'Ship the seed']) {
+    assert.ok(plain.includes(title), title);
+  }
+
+  // A title keeps only the row that says it; the sections with no match fold away.
+  const byTitle = html({ query: 'migration' });
+  assert.match(byTitle, /make the migration job cheaper/);
+  assert.doesNotMatch(byTitle, /Dark mode|reuse image scan|Seed the garden|Ship the seed/, 'only the matching row');
+  assert.doesNotMatch(byTitle, /data-ai-main-row/, 'Main Chat steps aside while you search');
+  assert.doesNotMatch(byTitle, /data-ai-list="busy"/, 'In progress & waiting has no match, so its card is gone');
+  assert.doesNotMatch(byTitle, /data-ai-list="live"/, 'nor Live this week');
+  assert.equal(message('messages:ai.work.titleCount', { count: 1 }), 'Needs you · 1');
+  assert.match(byTitle, /Needs you · 1/, 'the Needs you count over its rows is its matches');
+
+  // A number matches with or without the #, as the row shows it.
+  for (const query of ['6011', '#6011']) {
+    const byNumber = html({ query });
+    assert.match(byNumber, /reuse image scan results safely/, query);
+    assert.doesNotMatch(byNumber, /make the migration|Dark mode|Seed the garden|Ship the seed/, query);
+  }
+
+  // A project's name keeps every row of it, in whatever list.
+  const byProject = html({ query: 'game corner' });
+  assert.match(byProject, /Dark mode/);
+  assert.match(byProject, /Seed the garden/);
+  assert.match(byProject, /Ship the seed/);
+  assert.doesNotMatch(byProject, /make the migration|reuse image scan/);
+
+  // A match past a project's first few is drawn, not folded: with no search
+  // the seventh row waits behind Show more, and with one it is on the page.
+  const many = Array.from({ length: 7 }, (_, i) => need(`need:proposal:${i + 1}`, `Release note ${i + 1}`, app, 500 + i));
+  const folded = renderComponent(LISTS, 'AiLists', { ...all, rows: many, progress: [], waiting: [], live: [], owed: 7 });
+  assert.match(folded, /data-ai-group-rest=""/, 'the rest of a project folds away with no search');
+  const matched = renderComponent(LISTS, 'AiLists', { ...all, rows: many, progress: [], waiting: [], live: [], owed: 7, query: 'release note' });
+  assert.doesNotMatch(matched, /data-ai-group-rest=""/, 'every match shows, with no fold over it');
+  assert.match(matched, /Release note 7/);
+
+  // Nothing matches: one short note in place of every list.
+  const none = html({ query: 'zzz' });
+  assert.match(none, /<div class="[^"]*" data-ai-search-empty=""><p class="[^"]*">No threads match “zzz”<\/p><\/div>/);
+  assert.ok(none.includes(message('messages:ai.search.none', { query: 'zzz' })));
+  assert.doesNotMatch(none, /data-ai-list="(?:work|busy|live|history)"/, 'every card folds away');
+  assert.doesNotMatch(none, /data-ai-main-row/, 'and Main Chat is hidden');
+
+  // Before the lists are read, the skeleton stays and no note is shown.
+  const loading = html({ query: 'zzz', ready: false });
+  assert.match(loading, /data-ai-loading=""/);
+  assert.doesNotMatch(loading, /data-ai-search-empty/);
+
+  // The button and the box (index.tsx): the search button sits beside the
+  // plus, with the app's magnifying glass, and the box's text is what the
+  // lists narrow to.
+  const src = read('frontend/src/features/ai/index.tsx');
+  const toggle = src.indexOf('data-ai-search-toggle=""');
+  assert.ok(toggle > 0 && toggle < src.indexOf('<NewThreadButton'), 'the search button is beside the plus, before it');
+  const button = src.slice(src.lastIndexOf('<button', toggle), src.indexOf('</button>', toggle));
+  assert.match(button, /aria-label=\{t\('messages:ai\.search\.open'\)\}/, 'it is named for what it does');
+  assert.match(button, /<SearchIcon aria-hidden="true" \/>/);
+  assert.match(button, /h-10 w-10[^"]*rounded-full/, 'the plus\'s own round button');
+  assert.match(src, /query=\{searchOpen \? query : ''\}/, 'the box\'s text is passed to the lists');
+  assert.match(src, /data-ai-search=""/, 'the box the More projects panel has');
+  assert.equal(message('messages:ai.search.open'), 'Search your threads');
+  assert.equal(message('messages:ai.search.label'), 'Search your threads');
+  assert.equal(message('messages:ai.search.none', { query: 'releases' }), 'No threads match “releases”');
 });
 
 // #6389: the person's own change, made through a coding agent, whose votes

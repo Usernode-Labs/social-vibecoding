@@ -240,6 +240,30 @@ test('#6148: newer pages read in at a linked window\'s foot move nothing and pin
   assert.equal(el.scrollTop, el.scrollHeight - el.clientHeight, 'and follows it');
 });
 
+test('#6405: a follow whose scroll event arrives after the text grew stays pinned', () => {
+  const { attachStickToBottom } = loadTsx(MODULE);
+  const { env, sizes } = fakeObservers();
+  const el = fakeScroller({ scrollHeight: 2000, clientHeight: 600, scrollTop: 1400 });
+  const pinned = { current: true };
+  attachStickToBottom(el, pinned, { current: true }, env);
+  sizes.callback(); // the first follow: pinned, so it goes to the newest line
+  assert.equal(el.scrollTop, 1400);
+  // The bot's answer grows by more than the allowance before the scroll event
+  // our own write caused has been delivered.
+  el.scrollHeight += 700;
+  el.scroll();
+  assert.equal(pinned.current, true, 'our own scroll, measured late, is not the reader leaving');
+  sizes.callback();
+  assert.equal(el.scrollTop, el.scrollHeight - el.clientHeight, 'and it keeps following the end');
+  // The reader scrolling up still un-pins.
+  el.scrollTop = 1800;
+  el.scroll();
+  assert.equal(pinned.current, false, 'a move above where we left them is theirs');
+  el.scrollHeight += 600;
+  sizes.callback();
+  assert.equal(el.scrollTop, 1800, 'and nothing yanks them down');
+});
+
 test('every row is watched for size, as rows come and go, and the scroller itself', () => {
   const { attachStickToBottom } = loadTsx(MODULE);
   const { env, sizes, rows } = fakeObservers();

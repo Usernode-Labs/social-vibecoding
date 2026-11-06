@@ -8,7 +8,9 @@
 //
 // Send answers is decided here ('answer', the answers in the questions'
 // order), and You decide too ('skip'), so the card shows them read-only on
-// every device; the client then says them as the person, numbered.
+// every device; the client then says them as the person, numbered. The same
+// write closes the message's suggested replies (#6404, see ./index.js): the
+// card's choices are the one set of answers.
 
 const MAX_ANSWER_CHARS = 200;
 const list = (value) => (Array.isArray(value) ? value : []);

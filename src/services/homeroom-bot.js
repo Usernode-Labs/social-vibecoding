@@ -4815,6 +4815,11 @@ async function runTriage(pool, config, {
         // request's first look has no note before it, and speaks.
         askedLook: item.reason === ASKED_REASON,
         comments,
+        // #6399: a read a person asked for again, once the reason its last
+        // one handed back had gone (homeroom-bot-dm.js askBotToBuild
+        // `readAgain`), always says what it found: the page offered it
+        // because that note is out of date, so it may not be held back.
+        askedAgain: item.reason === READ_AGAIN_REASON && Number(item.requested_by) > 0,
         model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
         quietHold: item.reason === APP_AGAIN_REASON || item.reason === BACKLOG_REASON,
         proposalCeiling: botProposalCeiling(settings),
@@ -7455,7 +7460,8 @@ async function heldLimit(pool, { capSuppressed, app, issueNumber, proposalCeilin
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
-  proposalCeiling = EVERYONE_PROPOSAL_CEILING, firstVersion = false, relook = false, askedLook = false, comments = [],
+  proposalCeiling = EVERYONE_PROPOSAL_CEILING, firstVersion = false, relook = false, askedLook = false,
+  askedAgain = false, comments = [],
   decider = null, backlog = false, goAhead = null, deps,
 }) {
   const { github, ws } = deps;
@@ -7485,7 +7491,7 @@ async function actOnVerdict({
   // there is the voice's to answer (homeroom-bot-voice.js), not a reason to
   // say the note again.
   const voiceAnswers = (relook || askedLook) && voiceModule(deps).voiceOn(await readSettings(pool).catch(() => null), { type: 'issue' });
-  const gated = (relook || askedLook) && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict);
+  const gated = (relook || askedLook) && !askedAgain && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict);
   // #6146: after "a person needs to decide", which tells them to reply in the
   // discussion, a plain message there from its requester or a decider it
   // names is their answer (answerersOf), not people talking among themselves.

@@ -19,6 +19,27 @@ test('the ten stages, and nothing else, are what a request can be in', () => {
   assert.deepEqual(ws.WHYS, ['question', 'plan', 'decide', 'already_works', 'needs_detail']);
 });
 
+// #6399: #6351's hand-back reason named a limit Homeroom lifted on 6 Nov
+// 2026 (it could not read a plan a person posted), so its card offers to
+// read it again rather than keeping a reason that is no longer true.
+test('#6399: a hand-back reason a release has since lifted is out of date', () => {
+  const line = {
+    code: 'reason',
+    text: "A design decision: the new look exists only in evan's version 3 plan, which cannot be read here, and the request does not say whether the p…",
+  };
+  const before = { stage: 'waiting_for_you', why: 'decide', line, since: '2026-11-05T11:19:00Z' };
+  assert.equal(ws.outdatedReason(before), 'posted_plan');
+  assert.equal(ws.outdatedReason({ ...before, since: '2026-11-06T14:00:00Z' }), null,
+    'a reason given after the fix is current');
+  assert.equal(ws.outdatedReason({ ...before, line: { code: 'reason', text: 'It cannot read what the plan says.' } }),
+    'posted_plan', 'the other word order');
+  assert.equal(ws.outdatedReason({ ...before, line: { code: 'reason', text: 'Not a small change.' } }), null,
+    'an unrelated decide reason');
+  assert.equal(ws.outdatedReason({ ...before, stage: 'building' }), null);
+  assert.equal(ws.outdatedReason({ ...before, line: { code: 'queued', place: 2 } }), null, 'not a reason line');
+  assert.equal(ws.outdatedReason(null), null);
+});
+
 test('the bot\'s own step maps to one stage, with its queue or hold on the second line', () => {
   const reading = derive({ queue_id: 3, started_at: ago(1), verdict: null });
   assert.equal(reading.stage, 'reading');
