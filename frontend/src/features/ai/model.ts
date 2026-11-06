@@ -157,6 +157,8 @@ export interface NeedItem {
   /** #6262: the thread its page is, and how many messages in it are new. */
   threadId?: number | null;
   unread?: number;
+  /** When it started needing the viewer: the day its row is grouped under. */
+  at?: string | null;
 }
 
 /** Homeroom bot's account: its changes up for a vote hold a project's build slots. */
@@ -223,6 +225,12 @@ export interface WorkRow {
    */
   threadId: number | null;
   unread: number;
+  /**
+   * When it first needed the viewer: the day its row is grouped under (6 Nov
+   * 2026, Needs you and Waiting & in progress split each project's rows by
+   * day). A private thread's last activity; absent from an older server.
+   */
+  at: string | null;
 }
 
 /**
@@ -243,6 +251,37 @@ export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: Ai
     groups[at.get(key)!].items.push(row);
   }
   return groups;
+}
+
+/**
+ * Pure (6 Nov 2026): the reader's own calendar day a row belongs to, as
+ * `YYYY-MM-DD`, or '' when its moment is missing or unreadable. Needs you and
+ * Waiting & in progress split each project's rows by it (./lists.tsx), so a
+ * row joins the day it first needed the viewer, read in their own time zone.
+ */
+export function dayKey(at: string | null | undefined): string {
+  const d = new Date(String(at || ''));
+  if (!Number.isFinite(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Pure (6 Nov 2026): rows by their day, the newest day first and each day's
+ * rows in the order they came in, so a project's day headings are one run
+ * each rather than Today, Yesterday, Today. A row with no day goes last.
+ */
+export function byDay<T extends { at?: string | null }>(rows: readonly T[]): T[] {
+  return rows
+    .map((row, i) => ({ row, i, key: dayKey(row.at) }))
+    .sort((a, b) => {
+      if (!a.key || !b.key) {
+        if (a.key) return -1;
+        if (b.key) return 1;
+        return a.i - b.i;
+      }
+      return a.key === b.key ? a.i - b.i : (a.key < b.key ? 1 : -1);
+    })
+    .map(({ row }) => row);
 }
 
 /**
@@ -565,6 +604,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       // #6262: a feed item's thread, and what is new in it.
       threadId: item.threadId ?? null,
       unread: Math.max(0, Number(item.unread) || 0),
+      at: item.at || null,
     });
   }
   for (const t of work?.needs || []) {
@@ -593,6 +633,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       rootId: null,
       threadId: t.threadId,
       unread: Math.max(0, Number(t.unread) || 0),
+      at: t.at,
     });
   }
   for (const p of work?.private || []) {
@@ -638,6 +679,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       // A private thread is not a `threads` row: Main Chat's "N new" counts it.
       threadId: null,
       unread: 0,
+      at: p.at || null,
     });
   }
   return rows;
