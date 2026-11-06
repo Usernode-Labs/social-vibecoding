@@ -37,6 +37,7 @@ import {
 import { Profile } from './profile.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
+import { AppSlotsSheet } from './app-slots-sheet';
 import { FeedbackSheet } from './feedback-sheet';
 import { FriendsSheet } from './friends-sheet';
 import { ProfileEditSheet } from './profile-edit-sheet';
@@ -431,6 +432,9 @@ export function ProfileRoot(): ReactNode {
           status={state.friendsStatus || ''}
         />
       ) : null}
+      {/* #6446: the App allowance card, opened by the App slots row when no
+          slot is free. */}
+      {state.appSlotsOpen ? <AppSlotsSheet /> : null}
       {/*
           Two columns from lg (the navigation review): who you are on the
           left, with your Account group under it; Your work and Rewards on

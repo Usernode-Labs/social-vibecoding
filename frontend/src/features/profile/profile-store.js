@@ -79,6 +79,7 @@ function factLine(parts) {
  * @property {string} friendsStatus         — why the last answer failed, if it did
  * @property {boolean} feedbackOpen         — the "Your feedback" list is up (#3186)
  * @property {boolean} friendsOpen          — the Friends card is up (UI overhaul)
+ * @property {boolean} appSlotsOpen         — the App allowance card is up (#6446)
  */
 
 export const profileStore = createStore(/** @type {ProfileState} */ ({
@@ -96,6 +97,7 @@ export const profileStore = createStore(/** @type {ProfileState} */ ({
   friendsStatus: '',
   feedbackOpen: false,
   friendsOpen: false,
+  appSlotsOpen: false,
 }));
 
 /** Only ever render an http(s) URL as a real anchor. Escaping alone would not
