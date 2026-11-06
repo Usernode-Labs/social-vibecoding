@@ -171,7 +171,14 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
         {t('project:topic.change.gate.closesHead', { count: closes.length })}
       </p>
       {shown.map((r) => (
-        <p key={r.number} data-change-vote-closes-on={r.number} data-confirmed={r.confirmed ? 'true' : 'false'}>
+        <p
+          key={r.number}
+          // #6225: a hanging indent, so a long title wrapping on a phone stays
+          // aligned after the "#number" link rather than under it.
+          className="pl-[3.4em] -indent-[3.4em]"
+          data-change-vote-closes-on={r.number}
+          data-confirmed={r.confirmed ? 'true' : 'false'}
+        >
           {r.title && r.by ? (
             <RichMessage
               id="project:topic.change.gate.closesLine"
@@ -184,7 +191,7 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
             <RichMessage id="project:topic.change.gate.closesLineUntitled" values={{ number: r.number }} components={[link(r.number)]} />
           )}
           {r.confirmed ? null : (
-            <>{' · '}<span className="font-semibold text-zinc-700 dark:text-zinc-300">{t('project:topic.change.gate.closesUnconfirmed')}</span></>
+            <>{' · '}<span className="whitespace-nowrap font-semibold text-zinc-700 dark:text-zinc-300">{t('project:topic.change.gate.closesUnconfirmed')}</span></>
           )}
         </p>
       ))}

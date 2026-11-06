@@ -139,6 +139,11 @@ async function migrate(config) {
   // Homeroom), so Needs you has the row that says what it waits on, its page
   // the Votes card and the bot's plain reply.
   await seedStagingOwnChangeWaitingOnFix(pool);
+  // #6225's shots: a change of the capture member's up for a vote that
+  // closes three requests, one of them filed by someone else, so the Votes
+  // card's "Closes N requests" list (and one unconfirmed request) has a state
+  // to show on a fresh staging copy.
+  await seedStagingClosesListFixture(pool);
   // #6282's shots: an update queued on that same change, so the AI tab has
   // "Update queued" to show instead of a Vote, and its Votes card the note.
   await seedStagingBotUpdateComing(pool);
@@ -2465,6 +2470,81 @@ async function seedStagingOwnChangeWaitingOnFix(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging own-change waiting-on-fix seeding failed', { message: err.message });
+  }
+}
+
+
+// #6225 (6 Nov 2026): the Votes card's closes list, before & after shots. A
+// change of the shots' member fixture (usernode-capture) is up for a vote and
+// names three requests in linked_issues, one of them filed by somebody else,
+// so the card lists all three and marks that one "not confirmed by its
+// requester". Obviously fake, idempotent, and strictly a no-op outside staging.
+async function seedStagingClosesListFixture(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const SESSION_ID = 999_999_992;
+  try {
+    const people = await pool.query(
+      "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'usernode-capture-admin')",
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const other = people.rows.find((row) => row.username === 'usernode-capture-admin');
+    if (!member || !other) return;
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES (900098, 'Staging demo: the closes list', 'staging-demo-closes-list',
+               'running', 'members', 'public', $1)
+       ON CONFLICT (id) DO NOTHING`,
+      [member.id],
+    );
+    const appId = (await pool.query('SELECT id FROM apps WHERE id = 900098')).rows[0]?.id;
+    if (!appId) return;
+    await pool.query(
+      `INSERT INTO community_members (community_id, user_id)
+       SELECT community_id, $1 FROM apps WHERE id = $2 AND community_id IS NOT NULL
+       ON CONFLICT DO NOTHING`,
+      [member.id, appId],
+    );
+    const changeNumber = 999999992;
+    const title = 'Staging demo: the request the change was built for';
+    const requests = [
+      [900120, title, member.id],
+      [900121, 'Staging demo: a request it also closes, filed by the change\'s author', member.id],
+      [900122, 'Staging demo: a request it also closes, filed by somebody else', other.id],
+    ];
+    const thread = await pool.query(
+      `INSERT INTO threads (app_id, number, kind, title, created_at)
+       SELECT $1::int, $2::int, 'work', $3::text, NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM threads WHERE app_id = $1::int AND number = $2::int AND kind = 'work')
+        RETURNING id`,
+      [appId, changeNumber, title],
+    );
+    const threadId = thread.rows[0]?.id || (await pool.query(
+      'SELECT id FROM threads WHERE app_id = $1 AND number = $2 AND kind = \'work\'', [appId, changeNumber],
+    )).rows[0]?.id || null;
+    for (const [number, requestTitle, filer] of requests) {
+      await pool.query(
+        `INSERT INTO requests (app_id, number, title, body, created_by, thread_id, created_at, updated_at)
+         SELECT $1::int, $2::int, $3::text, 'Staging demo: obviously fake.', $4::int, $5::int,
+                NOW() - INTERVAL '4 days', NOW() - INTERVAL '2 days'
+          WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1::int AND number = $2::int)`,
+        [appId, number, requestTitle, filer, threadId],
+      );
+    }
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, session_title, pr_title, pr_number, status, linked_issues,
+          created_from_issue_number, thread_id, promoted_at, external_agent, check_state, check_phase,
+          mergeability, integration_merges_clean, merge_conflict_state, votes_required, approval_epoch,
+          requires_explicit_approval, created_at, last_activity_at)
+       SELECT $1::int, $2::int, $3::int, 'staging-fixture/closes-list', $4::text, $4::text,
+              $1::int, 'promoted', ARRAY[900120, 900121, 900122]::int[], 900120, $5::int,
+              NOW() - INTERVAL '1 day', 'claude-code', 'passing', 'done', 'clean', TRUE, 'clean', 1, 0, TRUE,
+              NOW() - INTERVAL '3 days', NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE id = $1::int)`,
+      [SESSION_ID, appId, member.id, title, threadId],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging closes-list seeding failed', { message: err.message });
   }
 }
 
