@@ -600,8 +600,35 @@ test('#6234: where the bot\'s fix of its change\'s checks stands: fixing, queued
   assert.equal(await progress.changeBotFix(fixPool({ session: BOT_CHANGE }), 5001), null);
 });
 
-test('#6234: a change of a person\'s, one not up for a vote, one whose checks pass, and a read that fails all read as nothing', async () => {
-  const person = fixPool({ session: { ...BOT_CHANGE, username: 'maya' }, queue: [{ started_at: ago(1), enqueued_at: ago(2) }] });
+// #6388: the bot already leaves a failure that looks like the platform's to
+// Homeroom's preview (homeroom-bot.js oweChecksFix). changeBotFix had no state
+// for that, so the card fell back to "Its author needs to fix this".
+test('#6388: a failure that looks like the platform is left to Homeroom, not the bot to fix', async () => {
+  const infra = {
+    name: 'Pages render with their stylesheets (platform check)',
+    path: '/app/staging-demo-admins',
+    status: 'fail',
+    failureReason: 'HTTP 503 Service Unavailable for /b/594ec2a2…/usernode-native/v1/native.css',
+  };
+  const onHead = { ...BOT_CHANGE, checks_commit_sha: 'a'.repeat(40), test_results: [infra] };
+  assert.deepEqual(await progress.changeBotFix(fixPool({ session: onHead }), 5001), { state: 'platform', since: null, reason: null });
+  // A queue row for a fix still wins, as it always did.
+  const queued = fixPool({ session: onHead, queue: [{ started_at: null, enqueued_at: ago(2) }] });
+  assert.deepEqual(await progress.changeBotFix(queued, 5001), { state: 'queued', since: ago(2), reason: null });
+  // An assertion failure is the change's own: no platform state.
+  const own = fixPool({
+    session: {
+      ...onHead,
+      test_results: [{ name: 'Signed-in people see the vote button', path: '/vote', status: 'fail', failureReason: 'Expected selector #vote-btn' }],
+    },
+  });
+  assert.equal(await progress.changeBotFix(own, 5001), null);
+  // A verdict on another commit says nothing about the head up for a vote.
+  const older = fixPool({ session: { ...onHead, checks_commit_sha: 'b'.repeat(40) }, runs: [{ id: 901 }] });
+  assert.deepEqual(await progress.changeBotFix(older, 5001), { state: 'handed_off', since: null, reason: null });
+});
+
+test('#6234: a change of a person\'s, one not up for a vote, one whose checks pass, and a read that fails all read as nothing', async () => {  const person = fixPool({ session: { ...BOT_CHANGE, username: 'maya' }, queue: [{ started_at: ago(1), enqueued_at: ago(2) }] });
   assert.equal(await progress.changeBotFix(person, 5001), null);
   assert.equal(person.asked.length, 1, 'nothing more is read for a person\'s change');
   for (const session of [
