@@ -102,6 +102,24 @@ export function heroHeight(inner: number, pageH: number, strip: boolean): number
   const room = pageH - PAGE_CHROME - (strip ? STRIP_H : 0);
   return Math.round(Math.max(inner * 0.5, Math.min(inner * 1.5, room)));
 }
+/** From 768px, what the panel keeps clear under its foot (app.css `--rf-room`). */
+const FOOT_CLEAR = 16;
+/** The least the panel is clamped to: past it the window scrolls, never clips. */
+const ROOM_FLOOR = 360;
+
+/**
+ * #6356: the panel's room from 768px. app.css's `--rf-room` assumes the
+ * panel starts right under the platform header; on a project's page it starts
+ * under the project's own header and tabs too, and a room that tall pushed
+ * the vote off the bottom of the window. So the room is also what the window
+ * leaves below the panel's top, less 16px clear under it, never under
+ * ROOM_FLOOR. A phone's page (no max height, `cssMax` NaN) is left alone.
+ */
+export function pageRoom(cssMax: number, top: number, viewH: number, wide: boolean): number {
+  if (!wide || !Number.isFinite(cssMax) || cssMax <= 0) return cssMax;
+  const fit = Math.max(ROOM_FLOOR, Math.round(viewH - top - FOOT_CLEAR));
+  return Math.min(cssMax, fit);
+}
 /** The change page is never wider than this (app.css `.rf-page`). */
 const COLUMN = 520;
 
@@ -586,9 +604,17 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const page = pageRef.current;
     if (!open || !page) return undefined;
     const measure = () => {
+      // From 768px the panel is as tall as what it holds, up to its room:
+      // app.css's, read with this page's own clamp taken off, then clamped to
+      // what the window leaves below the panel's top (pageRoom). The clamp is
+      // set as the page's `--rf-room`, so the page's max height, the vote
+      // sheet's (a No's reason) and the picture all keep to the one budget.
+      page.style.removeProperty('--rf-room');
       const pr = page.getBoundingClientRect();
-      // From 768px the panel is as tall as what it holds, up to its room.
-      const max = parseFloat(getComputedStyle(page).maxHeight);
+      const css = parseFloat(getComputedStyle(page).maxHeight);
+      const wide = typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 768px)').matches;
+      const max = pageRoom(css, pr.top, window.innerHeight, wide);
+      if (max !== css && Number.isFinite(max)) page.style.setProperty('--rf-room', `${max}px`);
       // Less the bar over it, which on a phone also holds the status bar's
       // inset, and the home indicator's inset the vote bar keeps clear of.
       const safe = safeRef.current ? safeRef.current.offsetHeight : 0;
@@ -599,8 +625,14 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       setSize({ w: Math.min(COLUMN, pr.width), h });
     };
     measure();
+    // Again once what is above it has settled (a project's header and tabs
+    // can land a frame later and move the panel's top), and on every resize.
+    const frame = window.requestAnimationFrame(measure);
     window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', measure);
+    };
   }, [open]);
 
   // The run comes up in the pane: the page fades in.

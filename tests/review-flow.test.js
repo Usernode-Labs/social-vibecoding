@@ -240,6 +240,25 @@ test('the picture takes the page\'s free height, up to 3:2, and gives way to 2:1
   assert.match(read('frontend/src/features/review-flow/review-flow.tsx'), /const PAGE_CHROME = 6 \+ 42 \+ 14 \+ 120;/);
   assert.match(read('public/css/app.css'), /\.rf-claim \{ flex: none; margin: 0 0 14px; padding: 6px 16px 0; min-height: 42px;/, 'the budget is the line\'s own box');
 });
+test('#6356: from 768px the panel\'s room stops at the window\'s foot, whatever is above it', () => {
+  const flow = loadTsx('frontend/src/features/review-flow/review-flow.tsx');
+  // Under the platform header alone (top 72 in a 965 window) app.css's room already fits.
+  assert.equal(flow.pageRoom(845, 72, 965, true), 845, 'the card under the header keeps app.css\'s room');
+  // Under a project's header and tabs (top 240) the room is what the window leaves, 16px clear.
+  assert.equal(flow.pageRoom(845, 240, 965, true), 965 - 240 - 16, 'a project page: the vote stays on screen');
+  // A very short window keeps a floor: the stage scrolls inside, the window past it.
+  assert.equal(flow.pageRoom(845, 500, 600, true), 360, 'never under the floor');
+  // A phone's page has no max height and is left exactly as it was.
+  assert.ok(Number.isNaN(flow.pageRoom(NaN, 240, 844, true)), 'no max height: nothing to clamp');
+  assert.equal(flow.pageRoom(700, 240, 844, false), 700, 'under 768px: unchanged');
+  // The picture is sized from the same clamped budget as the page itself.
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(src, /page\.style\.removeProperty\('--rf-room'\);\s*const pr = page\.getBoundingClientRect\(\);\s*const css = parseFloat\(getComputedStyle\(page\)\.maxHeight\);/);
+  assert.match(src, /window\.matchMedia\('\(min-width: 768px\)'\)\.matches;\s*const max = pageRoom\(css, pr\.top, window\.innerHeight, wide\);/);
+  assert.match(src, /if \(max !== css && Number\.isFinite\(max\)\) page\.style\.setProperty\('--rf-room', `\$\{max\}px`\);/);
+  assert.match(src, /const h = \(Number\.isFinite\(max\) && max > 0 \? max : pr\.height\) - bar - safe;/);
+  assert.match(src, /window\.addEventListener\('resize', measure\);/, 'measured again on a resize');
+});
 // ── 2b. The preview card ────────────────────────────────────────────────
 
 test('the page leads with what the change does, then its picture, then the strip', () => {
