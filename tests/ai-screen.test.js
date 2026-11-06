@@ -185,10 +185,10 @@ test('each section groups its rows by project, and a project shows its first few
   // #6262: Needs you orders its rows with the new ones first, before the
   // drawn order is held, then folds through the same pure rule (which never
   // hides a fresh row either).
-  assert.match(lists, /const ordered = freshStyle \? freshFirst\(lines\) : lines;/);
+  assert.match(lists, /const ordered = freshStyle \|\| foldFresh \? freshFirst\(lines\) : lines;/);
   assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
     'the new first, then the drawn order held');
-  assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(g\.items, first, open\);/,
+  assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(g\.items, first, open, !foldFresh\);/,
     'the group draws through the pure order rule');
   assert.match(lists, /\{\(hidden \? items\.slice\(0, shown\) : items\)\.map\(/);
   assert.match(lists, /aria-hidden=\{open \? undefined : true\}\s+inert=\{!open\}/, 'the folded rest is out of reach until it opens');
@@ -330,6 +330,62 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   assert.ok(!quiet.includes('data-ai-earlier'), 'and no Earlier line');
   assert.ok(!quiet.includes('data-ai-fresh'), 'and no count at all');
 });
+
+// #6408 (6 Nov 2026, Evan): Live this week showed 50 of a project's 76 rows
+// before Show more, because every "it's live" row was new and #6262 never
+// folds a fresh row. New in Live only means a change went live since the
+// viewer last looked, so Live folds after its first few whatever is new: its
+// rows put the new ones first, and the fold says how many of them it holds.
+// Needs you and Waiting & in progress keep the never-fold rule.
+test('#6408: Live this week folds after its first few rows whatever is new', () => {
+  const { groupRows, GROUP_FIRST } = loadTsx(MODEL);
+  // Eight rows, six of them new. Folded to Live's first three, five fold.
+  const many = Array.from({ length: 8 }, (_, i) => ({ key: `r${i + 1}`, fresh: i < 6 }));
+  const folded = groupRows(many, GROUP_FIRST.live, false, false);
+  assert.deepEqual(folded.items.map((r) => r.key), many.map((r) => r.key), 'the order is the one the section gave');
+  assert.deepEqual([folded.shown, folded.hidden], [3, 5], 'the first three show; the new rows fold with the rest');
+  // The row you are on is still lifted out of the fold, folded.
+  const lit = many.map((r, i) => ({ ...r, lit: i === 6 }));
+  const withLit = groupRows(lit, GROUP_FIRST.live, false, false);
+  assert.deepEqual([withLit.shown, withLit.hidden], [4, 4], 'where you are is never hidden');
+  assert.equal(withLit.items[3].key, 'r7');
+  // By default #6262 holds: a new row past the first few is never folded
+  // away, which is what Needs you and Waiting & in progress draw.
+  const held = groupRows(many, GROUP_FIRST.live, false);
+  assert.deepEqual([held.shown, held.hidden], [6, 2], 'a fresh row is lifted by default');
+
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /const freshHidden = foldFresh \? items\.slice\(shown\)\.filter\(\(line\) => line\.fresh\)\.length : 0;/,
+    'the fold counts the new rows it holds');
+  assert.match(lists, /<Section list="live" quiet head=\{t\('messages:ai\.live\.title', \{ count: liveLines\.length \}\)\} lines=\{liveLines\}[^>]*foldFresh \/>/,
+    'Live this week is the section that folds what is new');
+  assert.equal(message('messages:ai.work.showMoreFresh', { count: 73, fresh: 44 }), 'Show 73 more · 44 new');
+
+  // Rendered: a project's eight live rows, six new, show three rows and the
+  // fold that holds the other three new ones.
+  const live = Array.from({ length: 8 }, (_, i) => thread(30 + i, 410 + i, 'going_live', {
+    group: 'live', at: '2026-11-06T10:00:00Z', unread: i < 6 ? 1 : 0,
+  }));
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: [], lit: null, progress: [], waiting: [], live, openRow() {}, openThread() {},
+  });
+  const sheet = html.slice(html.indexOf('data-ai-sheet="live"'));
+  const shown = sheet.slice(0, sheet.indexOf('data-ai-group-rest'));
+  assert.equal((shown.match(/data-ai-line=/g) || []).length, 3, 'three rows before the fold');
+  assert.match(sheet, /Show 5 more · 3 new/, 'the fold says how many new rows it holds');
+  // None of the folded rows new: the plain words, as every other list says them.
+  const older = live.map((t) => ({ ...t, unread: 0 }));
+  const calm = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: [], lit: null, progress: [], waiting: [], live: older, openRow() {}, openThread() {},
+  });
+  const calmSheet = calm.slice(calm.indexOf('data-ai-sheet="live"'));
+  assert.match(calmSheet, /Show 5 more/, 'nothing new in the fold says only how many');
+  assert.ok(!/Show 5 more ·/.test(calmSheet), 'and does not mention new ones');
+});
+
 
 // #6312 (4 Nov 2026, Evan): "Show 11 more" made two rows' blue dots disappear
 // the instant it was pressed. Folded, a new row is lifted above the fold, so

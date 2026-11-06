@@ -4647,6 +4647,14 @@
     "text": "Show {{count}} more",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Row at the end of a list showing only its first rows: shows the rest. {{count}} is how many more."
   },
+  "ai.work.showMoreFresh_one": {
+    "text": "Show {{count}} more · {{fresh}} new",
+    "description": "The AI tab's Live this week list: the button under a project's first rows when some of the folded rows have something new. {{count}} is how many more rows it shows, {{fresh}} how many of them are new."
+  },
+  "ai.work.showMoreFresh_other": {
+    "text": "Show {{count}} more · {{fresh}} new",
+    "description": "The AI tab's Live this week list: the button under a project's first rows when some of the folded rows have something new. {{count}} is how many more rows it shows, {{fresh}} how many of them are new."
+  },
   "ai.work.showLess": {
     "text": "Show less",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Row at the end of a list showing all its rows: shows only the first ones again."
