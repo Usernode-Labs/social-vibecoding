@@ -53,6 +53,7 @@
 
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import { isBotChatRoute } from '../ai/door';
+import { stashWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from '../dev-board/workshop/panel-target';
 import {
   embeddedAllows,
   expandRoute,
@@ -64,6 +65,7 @@ import {
   routeFromUrl,
   samePage,
   titleFor,
+  workshopItemOf,
 } from './routes';
 import { INITIAL, sidePanelRefs, sidePanelStore } from './store.js';
 
@@ -514,6 +516,33 @@ export function expand(): void {
   if (sidePanelStore.get().open || sidePanelStore.get().frameSrc) drop();
 }
 
+/**
+ * Open in workshop (#6380): the project's Workshop, with this request, change
+ * or decision in the panel beside its list, the way its own row opens it
+ * there (frontend/src/features/dev-board/workshop/). The item is left for the
+ * Workshop tab (../dev-board/workshop/panel-target.ts), which takes it as
+ * it shows.
+ *
+ * A window too narrow for that panel would land on a Workshop with nothing
+ * open, so it opens the item's own page instead — what Expand does, with its
+ * "‹ Workshop" chip to get back. Either way the column goes with the page it
+ * was showing, as it does on Expand.
+ */
+export function openInWorkshop(): void {
+  const route = sidePanelStore.get().route;
+  const item = route ? workshopItemOf(route) : null;
+  if (!item) return;
+  const narrow = typeof window.matchMedia === 'function' && !window.matchMedia(WORKSHOP_SIDE_QUERY).matches;
+  if (narrow) {
+    expand();
+    return;
+  }
+  stashWorkshopPanelItem(item.slug, { ref: item.ref, pr: item.pr });
+  try { (window as any).AppView?._landOnTab?.(item.slug, 'workshop'); } catch { /* the page's own tab */ }
+  navigateTop(`app/${encodeURIComponent(item.slug)}/workshop`);
+  if (sidePanelStore.get().open || sidePanelStore.get().frameSrc) drop();
+}
+
 interface CarriesPane {
   UsernodeReact?: { agentSession?: { paneToCarry?: () => unknown; adoptPane?: (pane: unknown) => void } };
 }
@@ -732,6 +761,7 @@ export const SidePanel = {
   drop,
   back,
   expand,
+  openInWorkshop,
   appPresence,
   isOpen,
   pend,

@@ -216,19 +216,20 @@ test('For you on a project nobody else is in: Your work and the Discussion from 
   // 15 Oct 2026: a ready-made app's hub had no For you at all in its first
   // week (an empty Your work and the Discussion were both left out), and
   // looked nothing like an older project's. Now the card is the same from
-  // the first day: Your work says "No work in progress.", the Discussion
+  // the first day: Your work (5 Nov 2026: one row opening the Homeroom bot
+  // tab narrowed to the project, which lists the work), the Discussion
   // "No messages yet.", and Needs you shows only when a vote waits on you.
   const { ForYouCard } = hub;
-  const empty = { viewer: true, bot: true, count: 0, shown: 3, rows: [] };
+  const empty = { viewer: true, bot: true };
   const channel = { recent: [], unread_count: 0, last_message: null, last_at: null, last_by: null, href: '#messages/app/geneva-hikes', handle: null };
   const card = (over = {}) => renderToHtml(createElement(ForYouCard, {
     slug: 'geneva-hikes', queue: [], mine: empty, alone: true, unclaimed: 0,
     data: community({ channel }), canPost: true, onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, ...over,
   }));
   const html = card();
-  assert.match(html, /^<section class="dev-ws-hub-section" data-ws-hub-for-you=""[^>]*><h2[^>]*>For you<\/h2><div class="dev-ws-strip dev-ws-foryou"><button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-mine-card="" data-ws-mine-open="workshop">/,
-    'no Needs you line: nothing needs you, and nobody else could put a vote up');
-  assert.match(html, /<span data-ws-mine-empty="">No work in progress\.<\/span>/, 'Your work, saying so, as on every project');
+  // (React hoists the bot's mark ahead of the card as a preload hint.)
+  assert.match(html, /^(?:<link rel="preload"[^>]*\/>)?<section class="dev-ws-hub-section" data-ws-hub-for-you=""[^>]*><h2[^>]*>For you<\/h2><div class="dev-ws-strip dev-ws-foryou"><a [^>]*href="#homeroom-bot\?project=geneva-hikes"[^>]*data-ws-mine-card="">/,
+    'no Needs you line: nothing needs you, and nobody else could put a vote up; Your work leads');
   assert.match(html, /data-ws-channel="preview" data-ws-channel-open=""[\s\S]*<span data-ws-channel-empty="">No messages yet\.<\/span>/,
     'and the Discussion, a door to the room, saying so');
   assert.doesNotMatch(html, /data-ws-hub-needs|Nothing more to vote on|data-ws-mine-empty="(bot|menu)"|tell Homeroom bot|Say hi/);
@@ -237,20 +238,19 @@ test('For you on a project nobody else is in: Your work and the Discussion from 
   assert.match(card({ queue: [vote] }), /<div class="dev-ws-strip dev-ws-foryou"><div class="dev-ws-foryou-item" data-ws-hub-needs="" data-ws-hub-needs-votes="1">/);
   // A visitor has no work to list, and without a room it may talk in there
   // is no Discussion row: nothing left to say, so no card.
-  assert.equal(card({ mine: { viewer: false, count: 0, shown: 3, rows: [] }, data: community() }), '');
-  // The empty Your work is the one the declared check reads on Homeroom's
-  // own hub, so a new project's says it the same way.
+  assert.equal(card({ mine: { viewer: false }, data: community() }), '');
+  // The row the declared check reads on Homeroom's own hub, so a new
+  // project's is the same row.
   const declared = JSON.parse(read('dapp.json')).tests
-    .find((t) => t.name === 'Hub: Your work stays when nothing is in progress, and says so (#3489)');
-  assert.equal(declared.expectText, 'No work in progress.');
+    .find((t) => t.name === 'Hub: For you\'s Your work row opens Homeroom bot narrowed to this project');
+  assert.equal(declared.expectText, 'Your work');
   assert.match(declared.path, /#app\/usernode-2d5619\/workshop$/);
   assert.equal(declared.expectSelector,
-    '#dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-mine-card] [data-ws-mine-empty=""]',
-    'For you\'s Your work row, saying so');
+    '#dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > a[data-ws-mine-card][data-ws-desk-open][href="#homeroom-bot?project=usernode-2d5619"]',
+    'For you\'s Your work row, opening the tab on the project');
   const src = read(HUB);
   assert.equal(hub.hubWorkEmpty, undefined, 'no other words for an empty Your work');
-  assert.match(src, /if \(!cards\.length && !mine\?\.viewer\) return null;/);
-  assert.match(src, /const work = cards \|\| !!mine\?\.viewer \|\| places;\s*const talk = !!\(data && data\.channel\);/);
+  assert.match(src, /const work = !!mine\?\.viewer;\s*const talk = !!\(data && data\.channel\);/);
   assert.doesNotMatch(src, /hub\.work\.emptyBot|hub\.work\.emptyMenu|hub\.channel\.sayHi/);
 });
 
@@ -275,10 +275,10 @@ test('the hub puts the first version under the hero, and stands the start-here p
   assert.match(LANDER, /const alone = hubAlone\(community\);/);
   assert.doesNotMatch(LANDER, /first_week|weekOne|hubWorkEmpty/, 'the same hub from the first day (15 Oct 2026)');
   // For you: Needs you's quiet line leaves out its zero on a project nobody
-  // else is in; Your work says "No work in progress." for everyone.
+  // else is in; Your work is there for everyone signed in.
   assert.match(hubTab, /<ForYouCard[\s\S]{0,200}mine=\{v\.mine\}\s+alone=\{alone\}/);
   assert.match(read(HUB), /: <NothingToVote unclaimed=\{claims\} onOpen=\{onWork\} alone=\{alone\} \/>\}/);
-  assert.match(read(HUB), /if \(!cards\.length && !mine\?\.viewer\) return null;/, 'Your work for a signed-in viewer');
+  assert.match(read(HUB), /\{work \? \(\s*<YourWorkRow slug=\{slug\}/, 'Your work for a signed-in viewer');
   // The thumbnail's row is app.css's, beside the hub's doors.
   assert.match(read('public/css/app.css'), /\.dev-ws-hub-first-row \{ display: flex; align-items: center; gap: 10px; min-width: 0; \}/);
 });

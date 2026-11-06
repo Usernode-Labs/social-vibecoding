@@ -151,10 +151,10 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   const weeks = 'frontend/src/features/dev-board/workshop/week-pages.tsx';
   has(weeks, /className="dev-ws-reveal touch-target-32" data-ws-week=\{week\.key\} data-ws-week-all=""/, 'All of this week');
   has(ws, /className="dev-ws-reveal touch-target-32"\s+data-ws-weeks-more=""/, 'Earlier weeks');
-  has(ws, /className="dev-ws-reveal touch-target-32"\s+data-ws-fresh-more=""/, 'New for you\'s Show N more');
   has(weeks, /className="dev-ws-reveal touch-target-32" data-ws-week-group-more=""/, 'a week group\'s Show all N');
   has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Mark all seen');
-  has(ws, /className="dev-ws-since-clear un-touch-target"\s+data-ws-fresh-clear=""/, 'New for you\'s Mark all seen');
+  // New for you folded into What happened (5 Nov 2026): one Mark all seen,
+  // and no Show N more of its own.
   // After-Workshop-B: the Overview's Rules, and a row's one act (Vote,
   // Build it, the card's own), wear the kit's slop.
   has('frontend/src/features/dev-board/workshop/community-card.tsx', new RegExp(`className="dev-ws-hub-open dev-ws-ov-rule-edit ${KIT}"`), 'Rules');

@@ -2221,7 +2221,11 @@
   },
   "sidePanel.menu.copyLink": {
     "text": "Copy link",
-    "description": "The one row of the ⋯ menu in the heading beside the AI tab's page: copies a link to the request's, change's or decision's own page, which can be shared with anyone who can see the project."
+    "description": "The first row of the ⋯ menu in the heading beside the AI tab's page: copies a link to the request's, change's or decision's own page, which can be shared with anyone who can see the project."
+  },
+  "sidePanel.menu.openInWorkshop": {
+    "text": "Open in workshop",
+    "description": "The second row of the ⋯ menu in the heading beside the AI tab's page: leaves the AI tab and opens the project's Workshop, with this request, change or decision open in the panel beside its list. 'Workshop' is the name the project's own page gives that place; keep the word sentence-cased as here."
   },
   "sidePanel.linkCopied": {
     "text": "Link copied",

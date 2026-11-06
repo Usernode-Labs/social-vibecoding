@@ -2225,6 +2225,9 @@ function issueRoutes(config) {
       // session must not flip the label) and 'archived' rows are excluded
       // so the button reverts to "Create proposal" after the viewer
       // abandons their session. Independent of the headless lookup above.
+      // A person's posted plan (request-specs.js) is not work: it has no
+      // branch, so it never counts as the viewer's own session here — the
+      // same rule as issue-proposal-ref.js (1 Nov 2026, #6385).
       const { rows: prSessionRows } = await pool.query(
         `SELECT DISTINCT ON (created_from_issue_number)
                 created_from_issue_number AS n, id
@@ -2232,6 +2235,7 @@ function issueRoutes(config) {
           WHERE app_id = $1 AND user_id = $2
             AND created_from_issue_number IS NOT NULL
             AND status <> 'archived'
+            AND NOT (source IS NOT DISTINCT FROM 'request_spec' AND branch_name IS NULL)
           ORDER BY created_from_issue_number, created_at DESC`,
         [app.id, req.user.id]
       );
@@ -2246,7 +2250,10 @@ function issueRoutes(config) {
       // in 'merged', so those exclude themselves). Headless runs are
       // deliberately NOT part of this field — they already ship as
       // issue.headless above, and the FE ORs the two (keeps the 8s
-      // headless poller's field-scoped merge correct).
+      // headless poller's field-scoped merge correct). A person's posted
+      // plan (request-specs.js) is not work: a planning record with no
+      // branch never counts, the same rule as issue-proposal-ref.js
+      // (1 Nov 2026, #6385).
       const { rows: inProgressRows } = await pool.query(
         `SELECT UNNEST(cs.linked_issues) AS n,
                 cs.id, cs.user_id, cs.status, cs.shared_at,
@@ -2256,6 +2263,7 @@ function issueRoutes(config) {
           WHERE cs.app_id = $1 AND cs.is_headless = FALSE
             AND cardinality(cs.linked_issues) > 0
             AND u.is_synthetic IS NOT TRUE
+            AND NOT (cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)
             AND (cs.status IN ('active','promoted','merging')
                  OR (cs.status = 'paused'
                      AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,
@@ -2639,26 +2647,6 @@ function issueRoutes(config) {
       const used = await countWeeklyBountiesUsed(pool, req.user.id, weekStartUtc());
       const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
-      // #4772: what Homeroom bot waits on this viewer for here (its plans
-      // waiting for their Build it and its open questions to them), for the
-      // Workshop's Waiting on you. A back and forth with it is not listed
-      // (#5229). Best-effort: services/workshop-waiting.js never throws. The
-      // staging demo shows one of each on the mock requests.
-      const workshopWaiting = require('../services/workshop-waiting');
-      const waitingOnYou = IS_STAGING && req.query.demo === '1'
-        ? workshopWaiting.demoWaiting()
-        : await workshopWaiting.waitingOnViewer(pool, { appId: app.id, userId: req.user.id });
-
-      // #5385: what Homeroom bot has in hand for this viewer on THIS
-      // project, and where it needs them, as the Activity drawer's tracks
-      // (services/homeroom-bot-tray.js workFor, already keyed to the signed-
-      // in person), so the Workshop's What's happening draws the work as it
-      // happens and cannot disagree with the drawer. The staging demo shows
-      // the two mock requests' rows.
-      const homeroomBotWork = IS_STAGING && req.query.demo === '1'
-        ? workshopWaiting.demoBotWork(app)
-        : await workshopWaiting.botWorkOnApp(pool, { app, user: req.user });
-
       res.json({
         issues,
         truncatedList: !!result.truncatedList,
@@ -2672,8 +2660,6 @@ function issueRoutes(config) {
         myRemaining,
         limit: WEEKLY_BOUNTY_LIMIT,
         ...(botDoor ? { homeroomBot: botDoor } : {}),
-        waitingOnYou,
-        homeroomBotWork,
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });

@@ -56,6 +56,7 @@ const AGENT_MAYOR_TOOLS = Object.freeze([
   'get_app',
   'list_requests',
   'get_request',
+  'get_spec',
   'get_discussion',
   'get_message',
   'get_proposal',

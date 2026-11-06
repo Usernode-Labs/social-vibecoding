@@ -65,6 +65,19 @@ test('no surface offers a tool its profile does not list, and every rule named i
   }
 });
 
+test('#6384: a plan is read in the chat, on a request and on a change, and nowhere else', () => {
+  for (const kind of ['main', 'private', 'request', 'change']) {
+    assert.ok(profiles.profileOf(kind).tools.includes('get_spec'), kind);
+  }
+  for (const kind of ['channel', 'reply', 'design']) {
+    assert.ok(!profiles.profileOf(kind).tools.includes('get_spec'), `${kind} posts no plans`);
+  }
+  const voice = require('../src/services/homeroom-bot-voice');
+  const names = (place) => voice.toolsFor(place, { platform: true }).map((t) => t.function.name);
+  for (const type of ['issue', 'session']) assert.ok(names({ type, ref: 1 }).includes('get_spec'), type);
+  for (const type of ['chat', 'category', 'message']) assert.ok(!names({ type, ref: 1 }).includes('get_spec'), type);
+});
+
 test('the surfaces\' limits are their profiles\'', () => {
   const mayor = require('../src/services/homeroom-bot-mayor');
   const voice = require('../src/services/homeroom-bot-voice');

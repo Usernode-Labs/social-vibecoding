@@ -39,7 +39,7 @@
 
 import { useLayoutEffect, useRef, useState, type ComponentType } from 'react';
 
-import { AdjustmentsIcon, UserCheckIcon, UserPenIcon, type IconProps } from '@/components/ui/icons';
+import { AdjustmentsIcon, UserCheckIcon, UserIcon, type IconProps } from '@/components/ui/icons';
 
 import {
   kanbanFiltersStore,
@@ -99,12 +99,12 @@ const SEARCH_CLS = 'h-8 rounded-full border border-zinc-300 dark:border-zinc-700
  */
 // `label` is a message id (frontend/locales/en/project.json), read when the strip renders.
 const QUICK_FILTERS: Array<{
-  key: 'assignedToMe' | 'createdByMe';
+  key: 'assignedToMe' | 'yours';
   label: string;
   Icon: ComponentType<IconProps>;
 }> = [
   { key: 'assignedToMe', label: 'project:filters.quick.assignedToYou', Icon: UserCheckIcon },
-  { key: 'createdByMe', label: 'project:filters.quick.createdByYou', Icon: UserPenIcon },
+  { key: 'yours', label: 'project:filters.quick.yours', Icon: UserIcon },
 ];
 
 /**

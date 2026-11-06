@@ -5,8 +5,9 @@
  *
  * ── Your work ──────────────────────────────────────────────────────────
  *
- * Your record of what you did here, one row each, every one a drill-in to
- * the Your work screen (./my-proposals.tsx) on its view:
+ * Your record of what you did here, one row each, every one a door to the
+ * Homeroom bot tab's History on that kind of work (5 Nov 2026: it was the
+ * Your work screen, which listed the same things by authorship alone):
  *
  *   Your changes    "12 merged · 2 in progress". It was "Your proposals"
  *                   (#5310), and it took the Communities tab's "What you are
@@ -147,7 +148,7 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
         <ListRow
           as="a"
           id="profile-row-proposals"
-          href="#profile/your-changes"
+          href="#homeroom-bot/history?kind=change"
           leading={<IconTile size="sm"><BallotIcon /></IconTile>}
           title={t('profile:work.changes.title')}
           titleClassName={TITLE}
@@ -157,7 +158,7 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
         <ListRow
           as="a"
           id="profile-row-feedback"
-          href="#profile/your-requests"
+          href="#homeroom-bot/history?kind=request"
           leading={<IconTile size="sm"><ChatIcon /></IconTile>}
           title={t('profile:work.requests.title')}
           titleClassName={TITLE}
@@ -170,7 +171,7 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
         <ListRow
           as="a"
           id="profile-row-votes"
-          href="#profile/your-votes"
+          href="#homeroom-bot/history?kind=vote"
           leading={<IconTile size="sm"><HandRaisedIcon /></IconTile>}
           title={t('profile:work.votes.title')}
           titleClassName={TITLE}

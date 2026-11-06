@@ -102,13 +102,13 @@ test('what feeds it: the lock toggle and the Friday sweep record events, not cha
   assert.equal(EVENT_TYPES.WEEKLY_DIGEST, 'weekly_digest');
 });
 
-test('the Workshop tab draws no "Lately in this project" panel: Overview leads straight into What\'s happening', () => {
+test('the Workshop tab draws no "Lately in this project" panel: Overview leads straight into Your work', () => {
   assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/dev-board/workshop/notices.tsx')), 'the panel is gone');
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.doesNotMatch(lander, /WorkshopNotices|NoticesPanel|data-ws-notices|from '\.\/notices'/);
   const ws = lander.slice(lander.indexOf("{tab === 'workshop' && !weekUp ? ("), lander.indexOf("{tab === 'needs' ? ("));
-  assert.match(ws, /\{slug \? <ApprovalLine slug=\{slug\} \/> : null\}\n\s*<\/section>\n\s*\) : null\}\n\n\s*\{\/\* ── WHAT'S HAPPENING ──/,
-    'the Overview card, then What\'s happening');
+  assert.match(ws, /\{slug \? <ApprovalLine slug=\{slug\} \/> : null\}\n\s*<\/section>\n\s*\) : null\}\n\n\s*\{\/\* ── YOUR WORK ──/,
+    'the Overview card, then Your work (5 Nov 2026: it was What\'s happening)');
   assert.doesNotMatch(read('public/css/app.css'), /\.dev-ws-notice/, 'and none of its CSS');
   assert.doesNotMatch(read('frontend/locales/en/project.json'), /"notices\./, 'and none of its words');
 });

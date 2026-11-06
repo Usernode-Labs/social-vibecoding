@@ -440,6 +440,26 @@ test('the config writer gives each persona its own shots directory and records c
   }
 });
 
+// #6379: the screenshot tool waits for a settled page only when the browser
+// says so, and every shots browser, desktop and phone, says so.
+test('every shots browser waits for a settled page before a screenshot', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-settle-config-'));
+  try {
+    for (const extra of [{}, { SHOTS_DEVICE_DENSITY: '1' }]) {
+      const { config } = writeConfig(dir, { ...extra, SHOTS_PHONE_PERSONAS: '["member","guest"]' });
+      const browsers = Object.entries(config.mcpServers).filter(([name]) => name.startsWith('browser_'));
+      assert.deepEqual(browsers.map(([name]) => name).sort(),
+        ['browser_admin', 'browser_full_admin', 'browser_guest', 'browser_guest_phone',
+          'browser_member', 'browser_member_phone']);
+      for (const [name, server] of browsers) {
+        assert.equal(server.env.SHOTS_SCREENSHOT_SETTLE, '1', `${name} ${JSON.stringify(extra)}`);
+      }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a persona with a phone screen gets a phone browser: its sign-in, its proxy listener, a phone\'s device', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-phone-config-'));
   const ports = '{"member":17892,"read_only_admin":17893,"full_admin":17894,"guest":17895}';
