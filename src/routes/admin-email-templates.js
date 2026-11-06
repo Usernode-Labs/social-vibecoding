@@ -25,8 +25,21 @@
 //   POST   /api/admin/email-templates/:id/restore
 //   DELETE /api/admin/email-templates/:id        body { replacementId } for a live one, and
 //                                                { expectedLiveId } to refuse a stale delete
+//   POST   /api/admin/email-templates/:id/translate          start Translate for that version
+//                                                           ({ overwrite, languages } both optional)
+//                                                           (body { overwrite } to replace an admin's own)
+//   GET    /api/admin/email-templates/:id/translate          its progress, any admin
+//   GET    /api/admin/email-templates/:id/translations       every language of that version
+//   PUT    /api/admin/email-templates/:id/translations/:locale  an admin's correction, to the
+//                                                           live version only ({ expectedLiveId })
 // and the same under /api/admin/email-layouts, where DELETE takes the layout's
-// family id (a layout is deleted as a whole) and `replacementId` is a family id.
+// family id (a layout is deleted as a whole) and `replacementId` is a family id;
+// everything else there takes a layout version's id.
+//
+// A save that leaves some translation broken (services/mail/template-translate.js
+// recheckTranslations) is not refused for it: that translation is marked
+// unusable, English goes for that part, and the response lists it in
+// `unusableTranslations`.
 
 const { Router } = require('express');
 const { requireAdminWrite } = require('../middleware/admin');
@@ -40,6 +53,7 @@ const { ACTIONS, actionFor } = require('../services/mail/actions');
 // Read through the module, so a test can stand in for it.
 const renderer = require('../services/mail/render');
 const { validateTemplate, validateLayout, LAYOUT_PLACEHOLDERS } = require('../services/mail/template-validation');
+const translate = require('../services/mail/template-translate');
 
 const STATUS = {
   invalid: 400,
@@ -47,8 +61,12 @@ const STATUS = {
   not_found: 404,
   conflict: 409,
   retry: 409,
+  unchanged: 409,
   replacement_required: 422,
   invalid_replacement: 422,
+  english_only: 400,
+  budget: 429,
+  no_model: 503,
 };
 
 const MESSAGES = {
@@ -150,13 +168,24 @@ const LIVE_ONLY_MESSAGE = 'No live template for that action to show the layout w
 function emailTemplateAdminRoutes(pool, config) {
   const router = Router();
 
-  // Locales each version has a translation for, by version id.
+  // Locales each version has a translation for, by version id, and those of
+  // them marked unusable (which send the English until fixed), so the list
+  // can count only the translations that are actually sent.
   async function localesBy(table) {
     const { rows } = table === 'templates'
-      ? await pool.query('SELECT template_id AS id, array_agg(locale ORDER BY locale) AS locales FROM email_template_translations GROUP BY template_id')
-      : await pool.query('SELECT layout_id AS id, array_agg(locale ORDER BY locale) AS locales FROM email_layout_translations GROUP BY layout_id');
-    return new Map(rows.map((r) => [r.id, r.locales]));
+      ? await pool.query(`SELECT template_id AS id, array_agg(locale ORDER BY locale) AS locales,
+          array_agg(locale ORDER BY locale) FILTER (WHERE unusable IS NOT NULL) AS unusable
+          FROM email_template_translations GROUP BY template_id`)
+      : await pool.query(`SELECT layout_id AS id, array_agg(locale ORDER BY locale) AS locales,
+          array_agg(locale ORDER BY locale) FILTER (WHERE unusable IS NOT NULL) AS unusable
+          FROM email_layout_translations GROUP BY layout_id`);
+    return new Map(rows.map((r) => [r.id, { locales: r.locales, unusable: r.unusable || [] }]));
   }
+  const NONE = { locales: [], unusable: [] };
+  const withLocales = (row, map) => {
+    const { locales, unusable } = map.get(row.id) || NONE;
+    return { ...row, locales, unusableLocales: unusable };
+  };
 
   // What a send in `locale` would render these fields with: the reader's
   // language (null for English), the translator for words built in code, and
@@ -179,6 +208,8 @@ function emailTemplateAdminRoutes(pool, config) {
   // live version's translation of it, so that is what is shown. Any other
   // draft has no translation yet, and its readers would get its English after
   // a save: `untranslated` says so, and the console labels the preview.
+  // `ownWords` says the fields already are that language's words (a language
+  // being corrected), shown as they are.
   async function partsFor(what, body) {
     const kind = str(body.action) || (what === 'layout' ? 'otp' : '');
     const action = actionFor(kind);
@@ -195,8 +226,9 @@ function emailTemplateAdminRoutes(pool, config) {
         layout = store.inReaderLanguage(snap.layouts[familyId], reader, 'layout');
       }
       const validation = validateTemplate(kind, { ...template, name: undefined }, layout);
-      const shown = reader ? savedTranslation(snap, kind, template, reader) : null;
-      return { kind, template: shown || template, layout, validation, untranslated: !!reader && !shown };
+      const ownWords = body.ownWords === true;
+      const shown = reader && !ownWords ? savedTranslation(snap, kind, template, reader) : null;
+      return { kind, template: shown || template, layout, validation, untranslated: !!reader && !ownWords && !shown };
     }
     const layout = layoutFields(fields);
     if (!Object.hasOwn(snap.templates, kind)) throw invalid([{ field: 'action', message: LIVE_ONLY_MESSAGE }]);
@@ -285,8 +317,8 @@ function emailTemplateAdminRoutes(pool, config) {
         actions: describeActions(),
         layoutPlaceholders: Object.entries(LAYOUT_PLACEHOLDERS).map(([name, p]) => ({ name, description: p.description })),
         languages: languages(),
-        templates: all.templates.map((row) => ({ ...row, locales: templateLocales.get(row.id) || [] })),
-        layouts: all.layouts.map((row) => ({ ...row, locales: layoutLocales.get(row.id) || [] })),
+        templates: all.templates.map((row) => withLocales(row, templateLocales)),
+        layouts: all.layouts.map((row) => withLocales(row, layoutLocales)),
       });
     } catch (err) {
       sendError(res, err, 'list templates');
@@ -301,11 +333,25 @@ function emailTemplateAdminRoutes(pool, config) {
       const fields = templateFields(body);
       const layoutFamilyId = optionalId(body, 'layoutFamilyId');
       const expectedLiveId = optionalId(body, 'expectedLiveId');
+      let unusableTranslations = [];
+      let translationsKept = false;
       const row = await store.saveTemplate(pool, { action, ...fields, layoutFamilyId, expectedLiveId }, req.user.id, {
-        check: async ({ layout }) => refuseUnless(validateTemplate(action, fields, layout)),
+        check: async ({ layout, client }) => {
+          refuseUnless(validateTemplate(action, fields, layout));
+          unusableTranslations = await translate.recheckTranslations(client, { templates: [{ ...fields, action, id: null }], layout });
+        },
+        // The English words did not change, so the live version's
+        // translations came along; the layout may have, so they are checked
+        // in the one this version is sent in.
+        afterSave: async ({ row: saved, layout, client, carried }) => {
+          if (!carried) return;
+          translationsKept = true;
+          unusableTranslations = unusableTranslations.concat(
+            await translate.recheckTranslations(client, { templates: [saved], layout }));
+        },
       });
       await changed(req, { what: 'template', change: 'saved', id: row.id, action: row.action, version: row.version });
-      res.json({ template: row });
+      res.json({ template: row, unusableTranslations, translationsKept });
     } catch (err) {
       sendError(res, err, 'save template');
     }
@@ -320,11 +366,15 @@ function emailTemplateAdminRoutes(pool, config) {
       const id = toId(req.params.id);
       if (!id) throw Object.assign(new Error('That template does not exist'), { code: 'not_found' });
       const expectedLiveId = optionalId(req.body || {}, 'expectedLiveId');
+      let unusableTranslations = [];
       const row = await store.restoreTemplate(pool, id, { expectedLiveId }, req.user.id, {
-        check: async ({ row: version, layout }) => refuseUnless(validateTemplate(version.action, version, layout)),
+        check: async ({ row: version, layout, client }) => {
+          refuseUnless(validateTemplate(version.action, version, layout));
+          unusableTranslations = await translate.recheckTranslations(client, { templates: [version], layout });
+        },
       });
       await changed(req, { what: 'template', change: 'restored', id: row.id, action: row.action, version: row.version });
-      res.json({ template: row });
+      res.json({ template: row, unusableTranslations });
     } catch (err) {
       sendError(res, err, 'restore template');
     }
@@ -336,12 +386,16 @@ function emailTemplateAdminRoutes(pool, config) {
       if (!id) throw Object.assign(new Error('That template does not exist'), { code: 'not_found' });
       const body = req.body || {};
       const replacementId = optionalId(body, 'replacementId');
+      let unusableTranslations = [];
       const result = await store.deleteTemplate(pool, id, { replacementId, ...expected(body) }, req.user.id, {
-        check: async ({ row: version, layout }) => refuseUnless(validateTemplate(version.action, version, layout)),
+        check: async ({ row: version, layout, client }) => {
+          refuseUnless(validateTemplate(version.action, version, layout));
+          unusableTranslations = await translate.recheckTranslations(client, { templates: [version], layout });
+        },
       });
       const { rows: [gone] } = await pool.query('SELECT action FROM email_templates WHERE id = $1', [id]);
       await changed(req, { what: 'template', change: 'deleted', id, action: gone ? gone.action : null, replacementId: result.liveId });
-      res.json(result);
+      res.json({ ...result, unusableTranslations });
     } catch (err) {
       sendError(res, err, 'delete template');
     }
@@ -363,7 +417,7 @@ function emailTemplateAdminRoutes(pool, config) {
         languages: languages(),
         layouts: all.layouts.map((row) => ({
           ...row,
-          locales: locales.get(row.id) || [],
+          ...withLocales(row, locales),
           usedBy: row.status === 'live' && !row.deleted_at ? usedBy.get(row.family_id) || [] : [],
         })),
       });
@@ -378,11 +432,18 @@ function emailTemplateAdminRoutes(pool, config) {
       const fields = layoutFields(body);
       const familyId = optionalId(body, 'familyId');
       const expectedLiveId = optionalId(body, 'expectedLiveId');
+      let unusableTranslations = [];
       const row = await store.saveLayout(pool, { familyId, ...fields, expectedLiveId }, req.user.id, {
-        check: async ({ templates }) => refuseUnless(validateLayout(fields, templates)),
+        // The English templates must work inside it, or nothing is saved. A
+        // translation that does not is marked, never a reason to refuse: the
+        // new version has no translations yet, so they are sent inside it.
+        check: async ({ templates, client }) => {
+          refuseUnless(validateLayout(fields, templates));
+          unusableTranslations = await translate.recheckTranslations(client, { templates, layout: { html: fields.html, text: fields.text } });
+        },
       });
       await changed(req, { what: 'layout', change: 'saved', id: row.id, familyId: row.family_id, version: row.version });
-      res.json({ layout: row });
+      res.json({ layout: row, unusableTranslations });
     } catch (err) {
       sendError(res, err, 'save layout');
     }
@@ -397,11 +458,16 @@ function emailTemplateAdminRoutes(pool, config) {
       const id = toId(req.params.id);
       if (!id) throw Object.assign(new Error('That layout version does not exist'), { code: 'not_found' });
       const expectedLiveId = optionalId(req.body || {}, 'expectedLiveId');
+      let unusableTranslations = [];
       const row = await store.restoreLayout(pool, id, { expectedLiveId }, req.user.id, {
-        check: async ({ row: version, templates }) => refuseUnless(validateLayout({ html: version.html, text: version.text }, templates)),
+        check: async ({ row: version, templates, client }) => {
+          refuseUnless(validateLayout({ html: version.html, text: version.text }, templates));
+          // Every template it frames is checked, so a mark can be cleared too.
+          unusableTranslations = await translate.recheckTranslations(client, { templates, layout: version, complete: true });
+        },
       });
       await changed(req, { what: 'layout', change: 'restored', id: row.id, familyId: row.family_id, version: row.version });
-      res.json({ layout: row });
+      res.json({ layout: row, unusableTranslations });
     } catch (err) {
       sendError(res, err, 'restore layout');
     }
@@ -414,9 +480,10 @@ function emailTemplateAdminRoutes(pool, config) {
       if (!familyId) throw Object.assign(new Error('That layout does not exist'), { code: 'not_found' });
       const body = req.body || {};
       const replacementFamilyId = optionalId(body, 'replacementId');
+      let unusableTranslations = [];
       const result = await store.deleteLayout(pool, familyId, { replacementFamilyId, ...expected(body) }, req.user.id, {
         // Every template that moves must still work inside the replacement.
-        check: async ({ templates, layout }) => {
+        check: async ({ templates, layout, client }) => {
           const errors = [];
           const broken = [];
           for (const template of templates) {
@@ -426,14 +493,102 @@ function emailTemplateAdminRoutes(pool, config) {
             errors.push({ field: 'replacementId', message: `"${template.name}" would break in that layout: ${result.errors[0].message}` });
           }
           if (errors.length) throw invalid(errors, { templates: broken });
+          unusableTranslations = await translate.recheckTranslations(client, { templates, layout });
         },
       });
       await changed(req, { what: 'layout', change: 'deleted', familyId, replacementId: result.movedTo });
-      res.json(result);
+      res.json({ ...result, unusableTranslations });
     } catch (err) {
       sendError(res, err, 'delete layout');
     }
   });
+
+  // ── Translations ─────────────────────────────────────────────────────
+
+  const versionId = (req, kind) => {
+    const id = toId(req.params.id);
+    if (!id) throw Object.assign(new Error(kind === 'template' ? 'That template does not exist' : 'That layout version does not exist'), { code: 'not_found' });
+    return id;
+  };
+
+  // One set of handlers for both kinds. The paths are written out below
+  // rather than built from the kind, so the route inventory in
+  // tests/same-site-browser.test.js can read them as admin paths.
+  const handlers = (kind) => ({
+    start: async (req, res) => {
+      try {
+        const id = versionId(req, kind);
+        const body = req.body || {};
+        const overwrite = body.overwrite === true;
+        // `languages` narrows a run to those locales (Retranslate on one
+        // language the sender cannot use); absent, it is every language.
+        let languages = null;
+        if (body.languages !== undefined) {
+          const known = new Set(Object.keys(translate.configuredLanguages()));
+          if (!Array.isArray(body.languages) || !body.languages.length
+            || !body.languages.every((code) => typeof code === 'string' && code !== 'en' && known.has(code))) {
+            throw invalid([{ field: 'languages', message: 'Choose languages from the list of languages Homeroom offers.' }]);
+          }
+          languages = [...new Set(body.languages)];
+        }
+        const { started, job } = await translate.startTranslation(pool, kind, id, { overwrite, languages, userId: req.user.id });
+        if (started) {
+          await changed(req, { what: kind, change: 'translate', id, overwrite, ...(languages ? { languages } : {}) });
+          log.warn('admin', 'Admin started Translate for an email', { by: req.user.username, kind, id, overwrite });
+        }
+        res.status(202).json({ started, ...job });
+      } catch (err) {
+        sendError(res, err, `translate ${kind}`);
+      }
+    },
+
+    progress: async (req, res) => {
+      try {
+        res.json(await translate.jobStatus(pool, kind, versionId(req, kind)));
+      } catch (err) {
+        sendError(res, err, `translate ${kind} progress`);
+      }
+    },
+
+    read: async (req, res) => {
+      try {
+        res.json({ translations: await translate.translationsOf(pool, kind, versionId(req, kind)) });
+      } catch (err) {
+        sendError(res, err, `${kind} translations`);
+      }
+    },
+
+    correct: async (req, res) => {
+      try {
+        const id = versionId(req, kind);
+        const body = req.body || {};
+        // The version the admin opened is the live one they saw; when they
+        // name another, their screen is stale.
+        const expectedLiveId = optionalId(body, 'expectedLiveId');
+        if (expectedLiveId !== null && expectedLiveId !== id) {
+          throw Object.assign(new Error('Another version was saved first'), { code: 'conflict' });
+        }
+        const fields = kind === 'template'
+          ? { subject: str(body.subject), preheader: str(body.preheader), why: str(body.why), html: str(body.html), text: str(body.text) }
+          : { html: str(body.html), text: str(body.text) };
+        const result = await translate.saveCorrection(pool, kind, id, req.params.locale, fields);
+        await changed(req, { what: `${kind} translation`, change: 'corrected', id, locale: req.params.locale });
+        res.json(result);
+      } catch (err) {
+        sendError(res, err, `correct ${kind} translation`);
+      }
+    },
+  });
+  const templates = handlers('template');
+  const layouts = handlers('layout');
+  router.post('/api/admin/email-templates/:id/translate', requireAdminWrite, templates.start);
+  router.get('/api/admin/email-templates/:id/translate', templates.progress);
+  router.get('/api/admin/email-templates/:id/translations', templates.read);
+  router.put('/api/admin/email-templates/:id/translations/:locale', requireAdminWrite, templates.correct);
+  router.post('/api/admin/email-layouts/:id/translate', requireAdminWrite, layouts.start);
+  router.get('/api/admin/email-layouts/:id/translate', layouts.progress);
+  router.get('/api/admin/email-layouts/:id/translations', layouts.read);
+  router.put('/api/admin/email-layouts/:id/translations/:locale', requireAdminWrite, layouts.correct);
 
   return router;
 }

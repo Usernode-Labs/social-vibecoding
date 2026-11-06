@@ -15,7 +15,7 @@
 
 const log = require('./logger');
 const repoRef = require('./repo-ref');
-const { requestClosedSql, requestRecordJoinsSql } = require('./homeroom-bot-progress');
+const { requestClosedSql, requestRecordJoinsSql, holdOf } = require('./homeroom-bot-progress');
 const workState = require('./work-state');
 const { changeHref } = require('./change-destination');
 
@@ -32,7 +32,7 @@ const STEP_OF_STAGE = Object.freeze({
   up_for_vote: 'vote', going_live: 'live', live: 'live', stopped: null, closed: null,
 });
 // A line that says nobody is at it yet, or that it waits its turn.
-const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold', 'first_version_wait']);
+const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold', 'cooldown', 'first_version_wait']);
 const READY = new Set(['queued', 'held_builds', 'held_waiting']);
 
 // The limits a request can be held at. `builds`: the project's builds
@@ -150,7 +150,9 @@ function linksFor(slug, issueNumber, proposalId, prNumber = null) {
  *   held     its place among the project's held requests ({ position })
  *   doneBy   who shipped it, when somebody else's change closed it
  *            ({ username, prNumber, sessionId })
- *   until    when a hold on the week's building time lifts (limits.weeklyResetAt)
+ *   until    when its hold lifts (its queue row's held_until): the week's
+ *            building time's (`held`), or a day's pause after its look
+ *            threw again and again (`retryAt`, #6357)
  */
 function trackOf({ job, work = null, runs = [], held = null, doneBy = null, until = null }) {
   const state = work || { stage: 'reading', why: null, reason: null, line: { code: 'waiting' }, whoseMove: 'bot', since: null };
@@ -204,6 +206,7 @@ function trackOf({ job, work = null, runs = [], held = null, doneBy = null, unti
     track.held = { limit: code === 'held_builds' ? 'builds' : 'slots', position: held?.position || null, until: null };
   }
   if (code === 'on_hold') track.held = { limit: 'allowance', position: null, until: iso(until) };
+  if (code === 'cooldown' && iso(until)) track.retryAt = iso(until);
   if (state.stage === 'reading' && code === 'queued' && Number(state.line.place) > 0) {
     track.queue = { ahead: Number(state.line.place) - 1 };
   }
@@ -364,7 +367,7 @@ const REQUEST_ROWS_SQL = `
            ORDER BY i.id DESC LIMIT 1) AS issue_title,
          COALESCE((SELECT rq.first_version FROM homeroom_bot_requesters rq
                     WHERE rq.app_id = a.id AND rq.issue_number = w.n), FALSE) AS first_version,
-         q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until,
+         q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until, q.held_reason,
          run.id AS run_id, run.mode, run.verdict, run.created_at AS run_at, run.duration_ms AS run_duration_ms,
          run.cap_suppressed, run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
          run.live_build_waiting_at AS build_waiting_at, run.awaiting_go_at AS plan_waiting_at,
@@ -460,7 +463,6 @@ async function tracksForRequests(pool, { appId, numbers, deps = {}, people = nul
     }
     const closed = jobs.filter(([, , work]) => work?.stage === 'closed').map(([, job]) => ({ appId: Number(appId), n: job.issueNumber }));
     const doneBy = closed.length ? await doneByFor(pool, closed) : new Map();
-    const until = jobs.some(([, , work]) => code(work) === 'on_hold') ? (deps.limits || require('./limits')).weeklyResetAt() : null;
     for (const [row, job, work] of jobs) {
       const runsHere = (runsOf.get(job.issueNumber) || []).map((run) => (Number(run.id) === Number(row.run_id)
         ? { ...run, no_change_said: row.no_change_said } : run));
@@ -470,7 +472,8 @@ async function tracksForRequests(pool, { appId, numbers, deps = {}, people = nul
         runs: runsHere,
         held: held.get(`${appId}#${job.issueNumber}`) || null,
         doneBy: doneBy.get(`${appId}#${job.issueNumber}`) || null,
-        until,
+        // #6357: the hold's own end, never a guess at the week's.
+        until: holdOf(row)?.until || null,
       }));
     }
     // A merge of Homeroom itself going live: when its release comes
@@ -602,7 +605,9 @@ async function slotsView(pool, { app, user = null, settings = null, deps = {} })
   const waiting = mine.filter((h) => h.position).sort((a, b) => a.position - b.position
     || Date.parse(a.since || 0) - Date.parse(b.since || 0));
   const taken = mine.filter((h) => h.limit === 'taken').sort((a, b) => Date.parse(a.since || 0) - Date.parse(b.since || 0));
-  const onHold = queue.filter((q) => q.held_until && Date.parse(q.held_until) > Date.now());
+  // On hold for the week's building time; a day's pause after repeated
+  // errors (#6357) is up next, its track saying when it is tried again.
+  const onHold = queue.filter((q) => holdOf(q)?.kind === 'allowance');
   const numbers = [...holders.map((h) => Number(h.issue_number)), ...waiting.map((w) => w.issueNumber),
     ...taken.map((w) => w.issueNumber), ...onHold.map((q) => Number(q.issue_number))].filter((n) => n > 0);
   const [tracks, asked] = await Promise.all([
@@ -638,7 +643,7 @@ async function slotsView(pool, { app, user = null, settings = null, deps = {} })
     issueNumber: Number(q.issue_number), ...about(Number(q.issue_number)), until: iso(q.held_until),
     track: tracks.get(Number(q.issue_number)) || null,
   }));
-  view.reading = queue.filter((q) => !q.started_at && !(q.held_until && Date.parse(q.held_until) > Date.now())).length;
+  view.reading = queue.filter((q) => !q.started_at && !holdOf(q)).length;
   await placeTheRest(pool, view, { app, open, queue, people, tracks, asked, settings: s, deps, about, placed: new Set(numbers) });
   if (user?.id) {
     view.week = await (deps.buildingTime || require('./building-time')).weekFor(pool, Number(user.id), { settings: s })
@@ -692,7 +697,7 @@ async function placeTheRest(pool, view, { app, open, queue, people, tracks, aske
     // What waits in the bot's queue to be read, in its order.
     for (const q of queue) {
       const n = Number(q.issue_number);
-      if (!isRest.has(n) || q.started_at || (q.held_until && Date.parse(q.held_until) > Date.now())) continue;
+      if (!isRest.has(n) || q.started_at || holdOf(q)?.kind === 'allowance') continue;
       queued.add(n);
       view.upNext.push(row(n, { kind: 'queued', since: iso(q.enqueued_at) }));
     }
@@ -721,7 +726,7 @@ async function placeTheRest(pool, view, { app, open, queue, people, tracks, aske
 // The project's rows in the bot's queue: being read, waiting to be, or on
 // hold until its payer's week resets.
 const QUEUE_SQL = `
-  SELECT q.issue_number, q.started_at, q.enqueued_at, q.held_until
+  SELECT q.issue_number, q.started_at, q.enqueued_at, q.held_until, q.held_reason
     FROM homeroom_bot_queue q
    WHERE q.app_id = $1
    ORDER BY q.enqueued_at, q.id`;

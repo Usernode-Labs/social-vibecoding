@@ -1,15 +1,19 @@
 'use strict';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { AdminUI } from '../admin-console.js';
 import { PreviewPane } from './preview';
 import {
   confirmDiscard, editedLabel, errorsFor, FailureNotice, FieldErrors, isDirty, isLive, keepDraft,
-  languagesLabel, liveTemplate, PlaceholderList, readFailure, request, useUnloadGuard,
+  liveTemplate, PlaceholderList, readFailure, request, unusableOf, useUnloadGuard,
   type Failure, type KeptDraft, type LayoutRow, type TemplatesPayload,
 } from './shared';
 import { VisualTab } from './visual-tab';
+import {
+  confirmHandCorrected, keptLanguage, LAYOUT_PARTS, LanguageForm, otherLanguages, translationSummary, useEditorLanguages,
+  type LanguageDraft, type UnusableItem,
+} from './translations';
 
 // Layouts: the header and footer an email is wrapped in. Each email picks one
 // and writes only its middle ({{content}}). A layout is a family of versions;
@@ -82,7 +86,7 @@ export function LayoutList({
                       <span className={AdminUI.badge.success}>Live</span>
                     </div>
                     <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5" title={using.join(', ')}>
-                      {`${usedByLabel(using)} · ${languagesLabel(l.locales, false)} · ${editedLabel(l, now)}`}
+                      {`${usedByLabel(using)} · ${translationSummary(l, otherLanguages(payload.languages).map((x) => x.code), false)} · ${editedLabel(l, now)}`}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -146,7 +150,8 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
   familyId: number | null;
   canWrite: boolean;
   onDone: () => void;
-  onSaved: (row: LayoutRow) => void;
+  // The saved row, and any translations the save left unusable.
+  onSaved: (row: LayoutRow, unusable: UnusableItem[]) => void;
   onReload: () => void;
   // A draft kept when the console left mid-edit, restored by Continue editing.
   restore?: (KeptDraft & { kind: 'layout' }) | null;
@@ -162,23 +167,35 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
   const [openedLiveId] = useState<number | null>(() => (restore ? restore.openedLiveId : live ? live.id : null));
   const [draft, setDraft] = useState<LayoutDraft>(() => (restore ? restore.draft : opened));
   const dirty = isDirty(draft, opened);
-  useUnloadGuard(dirty);
+  // A layout's languages belong to the saved version this editor opened on.
+  const english: LanguageDraft = useMemo(() => ({ html: opened.html, text: opened.text }), [opened]);
+  const languages = useEditorLanguages({
+    base: '/api/admin/email-layouts', versionId: openedLiveId, englishOnly: false, englishDirty: dirty, canWrite,
+    english, parts: LAYOUT_PARTS, languages: payload.languages, initial: restore?.language || null, idPrefix: 'email-layout',
+  });
+  const { lang } = languages;
+  const anyDirty = dirty || lang.dirty;
+  useUnloadGuard(anyDirty);
   // As in the template editor: set when left on purpose, so unmounting with
   // unsaved edits otherwise keeps them for the section to offer back.
   const settled = useRef(false);
-  const latest = useRef({ draft, dirty });
-  latest.current = { draft, dirty };
+  const latest = useRef({ draft, dirty, lang });
+  latest.current = { draft, dirty, lang };
   useEffect(() => () => {
-    if (settled.current || !latest.current.dirty) return;
-    keepDraft({ kind: 'layout', familyId, label: latest.current.draft.name || 'a new layout', draft: latest.current.draft, opened, openedLiveId });
-  }, [familyId, opened, openedLiveId]);
+    const now = latest.current;
+    if (settled.current || !(now.dirty || now.lang.dirty)) return;
+    const language = keptLanguage(now.lang);
+    const name = now.draft.name || 'a new layout';
+    const label = language ? `${name} (${payload.languages.find((l) => l.code === language.locale)?.label || language.locale})` : name;
+    keepDraft({ kind: 'layout', familyId, label, draft: now.draft, opened, openedLiveId, language });
+  }, [familyId, opened, openedLiveId, payload]);
   const leave = async () => {
-    if (dirty && !(await confirmDiscard('Your changes to this layout are not saved. Leave and lose them?'))) return;
+    if (anyDirty && !(await confirmDiscard('Your changes to this layout are not saved. Leave and lose them?'))) return;
     settled.current = true;
     onDone();
   };
   const reload = async () => {
-    if (dirty && !(await confirmDiscard('Reload discards your changes and shows the version saved now.', 'Reload'))) return;
+    if (anyDirty && !(await confirmDiscard('Reload discards your changes and shows the version saved now.', 'Reload'))) return;
     settled.current = true;
     onReload();
   };
@@ -196,13 +213,20 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
 
   const save = async () => {
     if (saving || !canWrite) return;
+    // A new name keeps the translations; only new words need the warning.
+    const reworded = draft.html !== opened.html || draft.text !== opened.text;
+    if (reworded && !(await confirmHandCorrected(lang.rows, 'layout'))) return;
     setSaving(true);
     setFailure(null);
     const res = await request('/api/admin/email-layouts', 'POST', {
       familyId, name: draft.name, html: draft.html, text: draft.text, expectedLiveId: openedLiveId,
     });
     setSaving(false);
-    if (res.ok && res.data && res.data.layout) { settled.current = true; onSaved(res.data.layout); return; }
+    if (res.ok && res.data && res.data.layout) {
+      settled.current = true;
+      onSaved(res.data.layout, unusableOf(res.data));
+      return;
+    }
     const refused = readFailure(res.status, res.data);
     setFailure(refused);
     if (refused.kind === 'fields') {
@@ -218,6 +242,33 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
   const described = (id: string, errors: string[]) => (errors.length
     ? { 'aria-invalid': true as const, 'aria-describedby': `${id}-error` } : {});
   const shownInfo = payload.actions.find((a) => a.action === shown);
+  const shownWith = (
+    <label className="block text-xs">
+      <span className="text-zinc-500 dark:text-zinc-400">Shown with</span>
+      <select className={`${AdminUI.select} mt-1`} value={shown} onChange={(ev) => setShown(ev.target.value)}>
+        {payload.actions.filter((a) => liveTemplate(payload, a.action))
+          .map((a) => <option key={a.action} value={a.action}>{a.label}</option>)}
+      </select>
+    </label>
+  );
+
+  if (lang.locale !== 'en' && lang.draft && lang.opened) {
+    return (
+      <LanguageForm language={languages.name} draft={lang.draft} opened={lang.opened} english={english} parts={LAYOUT_PARTS}
+        tab={tab} onTab={setTab} failure={lang.failure} saving={lang.saving} saved={lang.saved} unusable={languages.unusable}
+        canWrite={canWrite} retranslating={languages.retranslating} placeholders={payload.layoutPlaceholders}
+        idPrefix="email-layout-translation" backLabel="‹ All layouts" onBack={leave} onChange={lang.setField} onSave={lang.save}
+        onRevert={lang.revert} onRetranslate={languages.retranslate} languagesCard={languages.card} languages={payload.languages}
+        hasRow={languages.hasRow} onTranslateOne={languages.translateOne} onReload={reload}
+        preview={(
+          <PreviewPane base="/api/admin/email-layouts"
+            body={{ action: shown, fields: { name: draft.name, html: lang.draft.html || '', text: lang.draft.text || '' } }}
+            mode={tab === 'text' ? 'text' : 'html'} languages={payload.languages} englishOnly={false}
+            canWrite={canWrite} onFieldFailure={() => {}} fixedLocale={lang.locale} extra={shownWith} />
+        )}
+        side={<div className={`${AdminUI.card} p-4`}><PlaceholderList placeholders={payload.layoutPlaceholders} required={['content']} /></div>} />
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -226,7 +277,8 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
         {canWrite ? (
           <div className="flex flex-wrap gap-2">
             <button type="button" className={AdminUI.btn.outline} disabled={saving} onClick={leave}>Cancel</button>
-            <button type="button" id="email-layout-save" className={AdminUI.btn.primary} disabled={saving} onClick={save}>
+            {/* As for templates: nothing to save until something changed. */}
+            <button type="button" id="email-layout-save" className={AdminUI.btn.primary} disabled={saving || (live != null && !dirty)} onClick={save}>
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
@@ -237,6 +289,7 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
           Editing needs full admin access. You can read this layout and preview it.
         </p>
       )}
+      {familyId == null ? null : languages.card}
       <FailureNotice failure={failure} shownFields={SHOWN} onReload={reload} onRetry={save} />
       <div className="grid gap-4 lg:grid-cols-2">
         <div className={`${AdminUI.card} p-4 space-y-3 min-w-0`}>
@@ -280,15 +333,7 @@ export function LayoutEditor({ payload, familyId, canWrite, onDone, onSaved, onR
               body={{ action: shown, fields: { name: draft.name, html: draft.html, text: draft.text } }}
               mode={tab === 'text' ? 'text' : 'html'} languages={payload.languages} englishOnly={!!(shownInfo && shownInfo.englishOnly)}
               canWrite={canWrite} onFieldFailure={setFailure}
-              extra={(
-                <label className="block text-xs">
-                  <span className="text-zinc-500 dark:text-zinc-400">Shown with</span>
-                  <select className={`${AdminUI.select} mt-1`} value={shown} onChange={(ev) => setShown(ev.target.value)}>
-                    {payload.actions.filter((a) => liveTemplate(payload, a.action))
-                      .map((a) => <option key={a.action} value={a.action}>{a.label}</option>)}
-                  </select>
-                </label>
-              )} />
+              extra={shownWith} />
           </div>
           <div className={`${AdminUI.card} p-4`}>
             <PlaceholderList placeholders={payload.layoutPlaceholders} required={['content']} />

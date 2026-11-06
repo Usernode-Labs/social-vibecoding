@@ -8315,6 +8315,14 @@
     "text": "Before and after",
     "description": "Title of the card on a change's page that holds its before and after screenshots, and the accessible name of that card's contents."
   },
+  "shots.pane.close": {
+    "text": "Close the before and after",
+    "description": "The × at the right of the head above a change's before and after screenshots, shown beside a thread on the Homeroom bot tab, in the Workshop's request panel or on a request's page: closes those screenshots and returns the column to the thread. Its accessible name and tooltip."
+  },
+  "shots.pane.back": {
+    "text": "Back to the thread",
+    "description": "On a phone, the arrow at the top left of a change's before and after screenshots, which cover the screen: goes back to the thread the change is in. Its accessible name and tooltip."
+  },
   "request.page.askerUnknown": {
     "text": "someone",
     "description": "Stands in for the name of the person who filed a request, at the top of the request's page, when that person is not known. Lower case, as a username would sit there."
@@ -8378,6 +8386,10 @@
   "request.status.lead.botQueued": {
     "text": "Homeroom bot will build this next.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; the request is next in its queue. \"Build\" is a verb."
+  },
+  "request.status.lead.botOnHoldUntil": {
+    "text": "Homeroom bot has this on hold until {{date}}.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it has the request in its queue but holds it until {{date}}, a short month and day, and nothing needs to be done meanwhile."
   },
   "request.status.lead.botWaitsPlan": {
     "text": "Homeroom bot is waiting for your plan.",

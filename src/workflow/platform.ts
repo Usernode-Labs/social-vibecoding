@@ -802,6 +802,14 @@ export async function botNotOwed(db: Db, p: { appId: number; issueNumber: number
   }, { requestKey: p.key, source: BOT_SOURCE('refresh'), appId: Number(p.appId) });
 }
 
+// #6377: the payer's week has room again (a weekly limit raised or cleared, a
+// charge refunded): what was held for its building time may look again now.
+export async function botAllowanceFreed(db: Db, p: { appId: number; issueNumber: number; key: string }): Promise<void> {
+  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'AllowanceFreed', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber) } as any,
+  }, { requestKey: p.key, source: BOT_SOURCE('allowance'), appId: Number(p.appId) });
+}
+
 // A person wrote on a request's thread (in the statement's transaction).
 export async function botActivity(db: Db, p: { appId: number; issueNumber: number; messageId?: number | null }): Promise<void> {
   await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
@@ -1741,6 +1749,12 @@ export async function reportUnreachable(appId: number, requestKey: string): Prom
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   await runtime.append(DELIVERY, appKey(appId), { type: 'Unreachable', payload: { appId } },
     { requestKey, source: { kind: 'system', name: 'visit' }, appId });
+}
+
+export async function reportAppWake(appId: number, requestKey: string): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(DELIVERY, appKey(appId), { type: 'WakeRequested', payload: { appId } },
+    { requestKey, source: { kind: 'system', name: 'app-wake' }, appId });
 }
 
 // main at a commit production does not run (the main-drift clock, keyed by

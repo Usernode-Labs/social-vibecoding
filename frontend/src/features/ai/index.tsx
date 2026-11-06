@@ -65,7 +65,7 @@
  * moves (./live.ts), not only when it is shown again.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { LockIcon, MicrophoneIcon } from '@/components/ui/icons';
@@ -81,7 +81,14 @@ import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
 import { closeThread, useMessagesSnapshot } from '../messages/store';
 import { SidePanelDivider } from '../side-panel/side-panel';
-import { AI_MAIN_WIDTH_KEY } from '../side-panel/resize';
+import {
+  AI_MAIN_WIDTH_KEY,
+  AI_PREVIEW_COLUMN_WIDTH_KEY,
+  AI_PREVIEW_WIDTH_KEY,
+  MIN_PANEL_W,
+  inlineStartOf,
+  probeLayout,
+} from '../side-panel/resize';
 import { sidePanelStore } from '../side-panel/store.js';
 import { attachmentFor, columnAddress, columnKey, routeOf, type Column, type ColumnDetail, type ColumnHow } from './column';
 import {
@@ -104,6 +111,10 @@ import {
 
 // 1 Nov 2026: the column is docked from 768px, where a phone's drawer ends.
 const WIDE = '(min-width: 768px)';
+
+/** The narrowest a design's or a plan's preview is in three columns
+ *  (app.css, A DESIGN'S PREVIEW, A COLUMN OF ITS OWN). */
+const PREVIEW_MIN_W = 360;
 /** This page's address: where a thread opened from it comes back to. */
 const BOT_PAGE = BOT_TAB;
 
@@ -235,6 +246,7 @@ export function AiScreen(): ReactNode {
   const t = useMessages('messages');
   const screenRef = useRef<HTMLElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
+  const previewRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'ai-screen', false);
   const visible = useVisibility('ai-screen', false);
   const wide = useWide();
@@ -442,6 +454,31 @@ export function AiScreen(): ReactNode {
     ? detail.ref.conversationId === botId && openRoot === detail.ref.rootId
       && (phone ? level === 1 : docked && !panel.open)
     : !!column && (column.at === 'page' || column.at === 'thread'));
+  // With a preview beside the thread both edges are handles (#6359), each
+  // the width of the column after it, the list taking what is left. In three
+  // columns the thread's width runs to where the preview begins, and its
+  // bound keeps the list's floor beside the preview as it is now drawn, the
+  // same room app.css leaves it (`--ai-room` - 480px - `--ai-preview-w`), so
+  // the handle stops where the column does; it is read again whenever the
+  // preview's width changes (`watch` below). The preview's keeps the list's
+  // floor and the thread's. In halves the list has stepped aside, so the
+  // thread's edge is no handle and the preview's keeps only the thread's floor.
+  const threeUp = detailHere && layout === 'three';
+  const threadProbe = useCallback(() => {
+    const probe = probeLayout();
+    const pane = previewRef.current;
+    const box = pane ? pane.getBoundingClientRect() : null;
+    if (!box || box.width <= 0) return { ...probe, neighbourMin: (probe.neighbourMin ?? 0) + PREVIEW_MIN_W };
+    const endAt = inlineStartOf(box);
+    const roomEnd = probe.innerWidth - Math.max(0, probe.rightInset || 0);
+    return { ...probe, neighbourMin: (probe.neighbourMin ?? 0) + Math.max(0, roomEnd - endAt), endAt };
+  }, []);
+  const previewProbe = useCallback(() => {
+    const probe = probeLayout();
+    return layout === 'three'
+      ? { ...probe, neighbourMin: (probe.neighbourMin ?? 0) + MIN_PANEL_W, selfMin: PREVIEW_MIN_W }
+      : { ...probe, neighbourMin: MIN_PANEL_W };
+  }, [layout]);
   const detailSlot: ColumnDetail | undefined = !detailHere || !detail ? undefined
     : detail.kind === 'design' ? { kind: 'design', version: detail.version }
       : detail.kind === 'plan' && detail.ref.sessionId ? { kind: 'plan', sessionId: detail.ref.sessionId, version: detail.version }
@@ -825,7 +862,15 @@ export function AiScreen(): ReactNode {
           data-ai-main=""
           data-ai-column={threadUp ? 'thread' : 'main'}
         >
-          <SidePanelDivider panelRef={mainRef} shown={docked} id="ai-main-divider" controls="ai-main-pane" widthKey={AI_MAIN_WIDTH_KEY} />
+          <SidePanelDivider
+            panelRef={mainRef}
+            shown={docked}
+            id="ai-main-divider"
+            controls="ai-main-pane"
+            widthKey={threeUp ? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY}
+            probe={threeUp ? threadProbe : undefined}
+            watch={threeUp ? previewRef : undefined}
+          />
           {/* Main Chat's name over it. 1 Nov 2026: a thread in its place is
               alone under its own (ReplyThreadPanel `inMain`), with no bar of
               Main Chat's over it. */}
@@ -851,7 +896,25 @@ export function AiScreen(): ReactNode {
           read beside it — a design's preview, a plan, or a change's before
           and after. Three side by side, halves, or the whole screen. */}
       {detailHere && detail ? (
-        <aside className="ai-preview-pane" data-ai-preview-pane={layout} aria-label={t('messages:design.pane.label')}>
+        <aside
+          ref={previewRef}
+          id="ai-preview-pane"
+          className="ai-preview-pane"
+          data-ai-preview-pane={layout}
+          aria-label={t('messages:design.pane.label')}
+        >
+          {/* The thread | preview edge, a handle too (#6359): it sets the
+              preview's own width, and the list takes what is left. */}
+          {layout === 'full' ? null : (
+            <SidePanelDivider
+              panelRef={previewRef}
+              shown={docked}
+              id="ai-preview-divider"
+              controls="ai-preview-pane"
+              widthKey={AI_PREVIEW_WIDTH_KEY}
+              probe={previewProbe}
+            />
+          )}
           <DetailPane layout={layout} />
         </aside>
       ) : null}

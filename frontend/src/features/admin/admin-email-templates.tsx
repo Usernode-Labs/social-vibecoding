@@ -5,14 +5,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { TemplateList } from './email-templates/list';
-import { draftFrom, ENGLISH_UNTIL_TRANSLATED, expectedLiveFor, TemplateEditor, TemplateForm } from './email-templates/editor';
+import { draftFrom, ENGLISH_UNTIL_TRANSLATED, expectedLiveFor, TemplateEditor, TemplateForm, TRANSLATIONS_KEPT } from './email-templates/editor';
 import { LayoutEditor, LayoutList } from './email-templates/layouts';
 import { layoutReplacements, ReplaceDialog, templateReplacements } from './email-templates/replace-dialog';
-import { PreviewView } from './email-templates/preview';
+import { PreviewPane, PreviewView } from './email-templates/preview';
 import {
-  FailureNotice, isDirty, keepDraft, keptDraft, KeptDraftNotice, liveTemplate, PlaceholderList, readFailure, request, isLive,
+  FailureNotice, isDirty, keepDraft, unusableOf, keptDraft, KeptDraftNotice, liveTemplate, PlaceholderList, readFailure, request, isLive,
   type Failure, type KeptDraft, type LayoutRow, type TemplateRow, type TemplatesPayload,
 } from './email-templates/shared';
+import {
+  SavedBanner, TranslateProgressView, LanguageForm, translationSummary, languagesColumn, jobSummary, stateWords,
+  UnusableLanguageNotice, LanguageSwitch, TranslateControlsView, translateBlocked, unusableReason, languageSaveRequest,
+  retranslateBody, languageMove, keptLanguage, TranslateControls, handCorrectedWarning, type UnusableItem,
+} from './email-templates/translations';
 
 // Admin > Email templates (#admin/email-templates): every email Homeroom
 // sends, written from templates an admin can edit here, and the layouts
@@ -38,7 +43,10 @@ type Dialog =
   | { kind: 'template'; live: TemplateRow }
   | { kind: 'layout'; live: LayoutRow };
 
-type Banner = { kind: 'ok'; text: string } | { kind: 'failure'; failure: Failure; retry?: () => void } | null;
+type Banner =
+  | { kind: 'ok'; text: string; unusable?: UnusableItem[]; translate?: { base: string; versionId: number } | null }
+  | { kind: 'failure'; failure: Failure; retry?: () => void }
+  | null;
 
 const canWrite = () => !!(typeof window !== 'undefined'
   && (window as any).AdminConsole && (window as any).AdminConsole.canWrite());
@@ -60,6 +68,13 @@ function deletedText(kind: 'template' | 'layout', gone: TemplateRow | LayoutRow,
   const movedTo = result && typeof result.movedTo === 'number' ? result.movedTo : null;
   const to = fresh && movedTo != null ? fresh.layouts.find((l) => l.family_id === movedTo && isLive(l)) : null;
   return to ? `The layout ${gone.name} was deleted. Its emails now use ${to.name}.` : `The layout ${gone.name} was deleted.`;
+}
+
+// Which email or layout an unusable translation belongs to, for the notice.
+function unusableWhere(payload: TemplatesPayload, item: UnusableItem): string | null {
+  if (item.action) return payload.actions.find((a) => a.action === item.action)?.label || item.action;
+  if (item.layoutId != null) return `layout ${payload.layouts.find((l) => l.id === item.layoutId)?.name || ''}`.trim();
+  return null;
 }
 
 function EmailTemplatesSection() {
@@ -112,7 +127,11 @@ function EmailTemplatesSection() {
     setBanner(null);
     const res = await request(url, method, body);
     if (!alive.current) return;
-    if (res.ok) { await load(); setBanner({ kind: 'ok', text: done }); return; }
+    if (res.ok) {
+      await load();
+      setBanner({ kind: 'ok', text: done, unusable: unusableOf(res.data) });
+      return;
+    }
     setBanner({ kind: 'failure', failure: readFailure(res.status, res.data), retry: again });
   };
 
@@ -185,7 +204,7 @@ function EmailTemplatesSection() {
     opener.current = null;
     const fresh = await load();
     if (!alive.current) return;
-    setBanner({ kind: 'ok', text: deletedText(dialog.kind, gone, res.data, fresh) });
+    setBanner({ kind: 'ok', text: deletedText(dialog.kind, gone, res.data, fresh), unusable: unusableOf(res.data) });
     setFocusBanner((n) => n + 1);
   };
 
@@ -229,27 +248,38 @@ function EmailTemplatesSection() {
 
   const now = Date.now();
   const back = () => { setView({ kind: 'list' }); };
-  const saved = (text: string) => async () => {
+  // After a save: back on the list, saying what went live, which
+  // translations the save left unusable, and offering Translate for the
+  // version just saved (an English-only email has nothing to offer).
+  const saved = (text: string, unusable: UnusableItem[], translate: { base: string; versionId: number } | null) => async () => {
     await load();
     if (!alive.current) return;
     setView({ kind: 'list' });
-    setBanner({ kind: 'ok', text });
+    setBanner({ kind: 'ok', text, unusable, translate });
+    setFocusBanner((n) => n + 1);
   };
 
   if (view.kind === 'template') {
     return (
       <TemplateEditor key={`t-${view.action}-${editorKey}`} payload={payload} action={view.action} isNew={view.isNew}
         restore={view.restore || null} canWrite={write} onDone={back} onReload={reload}
-        onSaved={(row) => saved(payload.actions.find((a) => a.action === row.action)?.englishOnly
-          ? `${row.name} v${row.version} is live.`
-          : `${row.name} v${row.version} is live. ${ENGLISH_UNTIL_TRANSLATED}`)()} />
+        onSaved={(row, unusable, kept) => {
+          const englishOnly = !!payload.actions.find((a) => a.action === row.action)?.englishOnly;
+          if (englishOnly || kept) {
+            saved(englishOnly ? `${row.name} v${row.version} is live.` : `${row.name} v${row.version} is live. ${TRANSLATIONS_KEPT}`, unusable, null)();
+            return;
+          }
+          saved(`${row.name} v${row.version} is live. ${ENGLISH_UNTIL_TRANSLATED}`, unusable,
+            { base: '/api/admin/email-templates', versionId: row.id })();
+        }} />
     );
   }
   if (view.kind === 'layout') {
     return (
       <LayoutEditor key={`l-${view.familyId}-${editorKey}`} payload={payload} familyId={view.familyId}
         restore={view.restore || null} canWrite={write} onDone={back} onReload={reload}
-        onSaved={(row) => saved(`${row.name} v${row.version} is live.`)()} />
+        onSaved={(row, unusable) => saved(`${row.name} v${row.version} is live.`, unusable,
+          { base: '/api/admin/email-layouts', versionId: row.id })()} />
     );
   }
 
@@ -266,9 +296,8 @@ function EmailTemplatesSection() {
       </div>
       <div ref={bannerRef} tabIndex={-1} className="outline-none space-y-2" id="email-templates-banner">
         {banner && banner.kind === 'ok' ? (
-          <p className="rounded-lg bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300" role="status">
-            {banner.text}
-          </p>
+          <SavedBanner text={banner.text} unusable={banner.unusable} translate={banner.translate}
+            languages={payload.languages} labelFor={(item) => unusableWhere(payload, item)} onFinished={load} />
         ) : null}
         {banner && banner.kind === 'failure'
           ? <FailureNotice failure={banner.failure} onReload={reload} onRetry={banner.retry} />
@@ -329,4 +358,8 @@ export {
   AdminEmailTemplates, EmailTemplatesSection, TemplateList, TemplateForm, draftFrom, LayoutList, ReplaceDialog,
   templateReplacements, layoutReplacements, PreviewView, FailureNotice, PlaceholderList, readFailure,
   deletedText, isDirty, KeptDraftNotice, TemplateEditor, LayoutEditor, keepDraft, keptDraft, expectedLiveFor,
+  SavedBanner, TranslateProgressView, LanguageForm, translationSummary, languagesColumn, jobSummary, stateWords,
+  UnusableLanguageNotice, LanguageSwitch, TranslateControlsView, translateBlocked, unusableWhere,
+  unusableReason, languageSaveRequest, retranslateBody, languageMove, keptLanguage, TranslateControls, unusableOf, PreviewPane,
+  handCorrectedWarning,
 };

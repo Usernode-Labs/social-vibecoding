@@ -52,8 +52,8 @@
 // wherever it lives. A slot freeing in this process wakes its waiters at
 // once (slotFreed); a waiter elsewhere sees it at its next poll.
 //
-// Never throws into a checks run, and fails OPEN: a pass that cannot be
-// taken lets the run go, as it would have gone before the queue existed.
+// Legacy placement fails open. A required batch pool fails closed: no lost
+// queue row or unavailable admission pass may bypass the capacity envelope.
 
 const log = require('./logger');
 const checkRuns = require('./check-runs');
@@ -133,6 +133,7 @@ async function enqueue(pool, {
     );
     return rows[0] ? rows[0].queued_at : null;
   } catch (err) {
+    if (require('./check-pool').required()) throw err;
     log.warn('checks-queue', 'Could not join the checks queue; running without it', {
       runId, kind, sessionId, appId, err: err.message,
     });
@@ -207,7 +208,7 @@ const QUEUE_SQL = `
 // the cluster. The line is strict: when the run at its head cannot have a
 // slot, nobody behind it gets one. `self` is the run asking, which counts as
 // alive whatever its last heartbeat says.
-function planAdmission(rows, { cap = maxConcurrentRuns(), self = null } = {}) {
+function planAdmission(rows, { cap = maxConcurrentRuns(), self = null, available = true } = {}) {
   const runs = (rows || []).map((row) => ({
     runId: row.run_id,
     kind: row.kind === 'main' ? 'main' : 'proposal',
@@ -236,7 +237,7 @@ function planAdmission(rows, { cap = maxConcurrentRuns(), self = null } = {}) {
   const admit = [];
   for (const run of runs) {
     if (!run.waiting) continue;
-    if (run.kind === 'main' ? (mains === 0 || sharedUsed() < cap) : sharedUsed() < cap) {
+    if (available && (run.kind === 'main' ? (mains === 0 || sharedUsed() < cap) : sharedUsed() < cap)) {
       if (run.kind === 'main') mains += 1; else proposals += 1;
       run.waiting = false;
       run.holding = true;
@@ -268,6 +269,8 @@ function planAdmission(rows, { cap = maxConcurrentRuns(), self = null } = {}) {
 // `self` also refreshes that run's heartbeat in the same transaction, so a
 // waiter is never mistaken for dead by its own pass. Returns the plan.
 async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
+  const capacity = await require('./kubernetes').checkPoolCapacity();
+  cap = Math.min(cap, capacity.cap);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -280,7 +283,7 @@ async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
     }
     const { rows } = await client.query(QUEUE_SQL,
       [Math.round(checkRuns.ORPHAN_MS), Math.round(jobHoldMs()), MAIN_ROW_RETENTION_MS]);
-    const plan = planAdmission(rows, { cap, self });
+    const plan = planAdmission(rows, { cap, self, available: capacity.available });
     if (plan.admit.length) {
       await client.query(
         'UPDATE check_runs SET admitted_at = NOW() WHERE run_id = ANY($1::uuid[]) AND admitted_at IS NULL',
@@ -381,6 +384,11 @@ async function waitForSlot(pool, {
     try {
       plan = await admit(pool, { self: runId, ...(cap === undefined ? {} : { cap }) });
     } catch (err) {
+      if (require('./check-pool').required()) {
+        log.warn('checks-queue', 'Dedicated checks admission unavailable; keeping the run queued', { runId, err: err.message });
+        await nap(pollMs, signal);
+        continue;
+      }
       log.warn('checks-queue', 'Admission pass failed; letting the run go', { runId, err: err.message });
       await markAdmitted(pool, runId);
       return granted({ failedOpen: true });
@@ -388,6 +396,7 @@ async function waitForSlot(pool, {
     signal?.throwIfAborted();
     const mine = plan.byRun.get(runId);
     if (!mine) {
+      if (require('./check-pool').required()) throw new Error('Required checks admission lost its queue row');
       log.warn('checks-queue', 'The run is not in the checks queue; letting it go', { runId });
       return granted({ failedOpen: true });
     }

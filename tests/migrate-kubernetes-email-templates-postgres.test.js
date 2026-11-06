@@ -53,6 +53,7 @@ test('requireEmailTemplates against PostgreSQL', { timeout: 180000 }, async (t) 
     assert.match(err.message, /release stops/);
     return true;
   });
-  // A preview seeds after its import, in the background: never checked there.
+  // A preview is never checked: its mail is not production's, and a reviewer may
+  // have deleted a template on purpose.
   await requireEmailTemplates(pool, { USERNODE_ENV: 'staging' });
 });

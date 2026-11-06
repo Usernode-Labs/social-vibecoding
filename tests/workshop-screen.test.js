@@ -1626,3 +1626,26 @@ test('#5462: re-entry asks no-cache, so a voted card stays gone after coming bac
     global.fetch = priorFetch;
   }
 });
+
+// ── #6380: the column's "Open in workshop" lands here ─────────────────
+//
+// The ⋯ beside the Homeroom bot's list leaves the request, change or
+// decision for this tab (side-panel/controller.ts openInWorkshop), and the
+// Workshop opens it in the panel beside its list as its own row would.
+
+test('#6380: the Workshop takes the item the column left for it, and sets that page open', () => {
+  assert.match(workshopTsx, /import \{ takeWorkshopPanelItem, WORKSHOP_SIDE_QUERY \} from '\.\/panel-target';/);
+  // The breakpoint is the one place's now, asked by the column too.
+  assert.match(workshopTsx, /const sideWide = useMediaFlag\(WORKSHOP_SIDE_QUERY\);/);
+  assert.doesNotMatch(workshopTsx, /const SIDE_QUERY = /);
+  // Taken only where the panel can be, and into the panel's item.
+  assert.match(workshopTsx, /if \(!v\.slug \|\| tab !== 'workshop' \|\| !sideWide \|\| !pageShown\) return;\s*const slug = v\.slug;\s*void takeWorkshopPanelItem\(slug\)\.then\(\(ref\) => \{\s*if \(live && ref && slug === v\.slug\) setSideItem\(ref\);/);
+  // And a page already up takes it too, a turn later, from the event.
+  assert.match(workshopTsx, /window\.addEventListener\('usernode:workshop-panel-target', onTarget\);/);
+  assert.match(workshopTsx, /\}, \[v\.slug, tab, sideWide, pageShown\]\);/);
+  // It runs AFTER the resets that would wipe it: a page mounting straight
+  // onto the stash keeps it.
+  const at = workshopTsx.indexOf('takeWorkshopPanelItem(slug)');
+  assert.ok(at > workshopTsx.indexOf('}, [v.slug]);\n  // A deep link'), 'after the project reset');
+  assert.ok(at > workshopTsx.indexOf("}, [pageShown]);"), 'and after the page-shown reset');
+});

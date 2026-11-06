@@ -12,9 +12,11 @@ const path = require('node:path');
 const { Pool } = require('pg');
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
-test('server.js gives the email template writes a parser that fits a 100 KB template', () => {
+test('server.js gives the email template writes and corrections a parser that fits a 100 KB template', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.match(server, /\/\^\\\/api\\\/admin\\\/email-\(\?:templates\|layouts\)\(\?:\\\/\|\$\)\/\.test\(req\.path\)\) \{\n\s+return express\.json\(\{ limit: '1mb' \}\)/);
+  // A language's correction (PUT .../translations/:locale) carries a whole email too.
+  assert.match(server, /if \(\(req\.method === 'POST' \|\| req\.method === 'PUT'\) && \/\^\\\/api\\\/admin\\\/email-/);
 });
 
 test('admin.js mounts the routes behind its admin gate', () => {
@@ -141,6 +143,36 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
     const gone = await call('POST', '/api/admin/email-templates', otpBody(current, { layoutFamilyId: 424242 }));
     assert.equal(gone.status, 404); assert.match(gone.body.error, /layout/i);
     assert.equal((await call('POST', '/api/admin/email-templates/abc/restore', {})).status, 404);
+  });
+
+  await t.test('a save identical to the live version is 409 unchanged and records nothing', async () => {
+    const current = await live('otp');
+    const before = (await eventsOf()).length;
+    const res = await call('POST', '/api/admin/email-templates', otpBody(current));
+    assert.equal(res.status, 409);
+    assert.equal(res.body.code, 'unchanged');
+    assert.match(res.body.error, /Nothing has changed/);
+    assert.equal((await live('otp')).id, current.id);
+    assert.equal((await eventsOf()).length, before);
+    const layout = await liveLayout();
+    const same = await call('POST', '/api/admin/email-layouts', { familyId: layout.family_id, name: layout.name, html: layout.html, text: layout.text, expectedLiveId: layout.id });
+    assert.equal(same.status, 409); assert.equal(same.body.code, 'unchanged');
+  });
+
+  await t.test('a new name keeps the translations and says so; new words do not', async () => {
+    const current = await live('otp');
+    await pool.query(
+      `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
+       VALUES ($1, 'fr', $2, $3, $4, $5, $6, 'machine')`,
+      [current.id, current.subject, current.preheader, current.why, current.html, current.text]);
+    const renamed = await call('POST', '/api/admin/email-templates', otpBody(current, { name: `${current.name} (renamed)` }));
+    assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
+    assert.equal(renamed.body.translationsKept, true);
+    const kept = await pool.query('SELECT locale FROM email_template_translations WHERE template_id = $1', [renamed.body.template.id]);
+    assert.deepEqual(kept.rows.map((r) => r.locale), ['fr']);
+    const reworded = await call('POST', '/api/admin/email-templates', otpBody(await live('otp'), { subject: 'Your Homeroom code, reworded' }));
+    assert.equal(reworded.status, 200, JSON.stringify(reworded.body));
+    assert.equal(reworded.body.translationsKept, false);
   });
 
   await t.test('a valid save goes live, archives the last version and records an event', async () => {
@@ -378,6 +410,12 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
       assert.equal(edited.body.untranslated, true);
       const english = await call('POST', '/api/admin/email-templates/preview', { action: 'otp', locale: 'en', fields: otpBody(current) }, 'view');
       assert.equal(english.body.untranslated, false);
+      // A language's own words being corrected are shown as they are.
+      const own = await call('POST', '/api/admin/email-templates/preview', { action: 'otp', locale: 'fr', ownWords: true, fields: { ...otpBody(current), subject: 'Mon code {{code}}' } }, 'view');
+      assert.equal(own.body.subject, 'Mon code 123456');
+      assert.equal(own.body.untranslated, false);
+      const ownUnchanged = await call('POST', '/api/admin/email-templates/preview', { action: 'otp', locale: 'fr', ownWords: true, fields: otpBody(current) }, 'view');
+      assert.equal(ownUnchanged.body.subject, current.subject.replace('{{code}}', '123456'), 'never swapped for the saved translation');
       const untranslatedLanguage = await call('POST', '/api/admin/email-templates/preview', { action: 'otp', locale: 'es', fields: otpBody(current) }, 'view');
       assert.equal(untranslatedLanguage.body.untranslated, true, 'no Spanish translation: Spanish readers get the English');
     } finally {

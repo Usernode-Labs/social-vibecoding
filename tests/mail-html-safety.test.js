@@ -118,7 +118,7 @@ test('title and textarea text holds no markup, and every srcset candidate is che
   allowed('<title>Your code &amp; more</title><textarea>plain</textarea>');
   refused('<img srcset="a.png 1x, data:image/svg+xml,xx 2x">', /script or data/);
   refused('<img srcset="a.png 1x,  &#100;ata:image/png,xx 2x">', /script or data/);
-  allowed('<img srcset="https://x.example/a.png 1x, https://x.example/b.png?data=1 2x">');
+  allowed('<img src="https://x.example/a.png" alt="" srcset="https://x.example/a.png 1x, https://x.example/b.png?data=1 2x">');
 });
 
 test('scanHtml reports comment and bogus comment ranges', () => {
@@ -142,7 +142,7 @@ test('openAtEnd: a part closes every element it opens, and none it did not', () 
   assert.match(openAtEnd('x<div style="display:none">'), /leaves <div> open/);
   assert.match(openAtEnd('</div><p>visible</p>'), /did not open/);
   assert.match(openAtEnd('<a href="https://a.test/"><b>x</a></b>'), /still open/);
-  assert.equal(openAtEnd('<p>a<br><img src="https://a.test/x.png"></p><!--[if mso]><table><![endif]-->'), null);
+  assert.equal(openAtEnd('<p>a<br><img src="https://a.test/x.png" alt=""></p><!--[if mso]><table><![endif]-->'), null);
 });
 
 test('template, select and their kin are not allowed', () => {
@@ -164,4 +164,33 @@ test('<image> is read as the void <img> it is, and attr() is refused in any CSS'
   allowed('<p>x<image src="https://x.example/a.png" alt=""></p>');
   refused('<p style="background:image(attr(href))">x</p>', /attr\(\)/);
   refused('<style>a::after{content:attr(href)}</style>', /attr\(\)/);
+});
+
+// Images: an admin's own upload is served from Homeroom over https, and the
+// seeded emails draw brand images from the production origin, so any https
+// address is fine. A data: URL is refused (Gmail and Outlook drop it), and so
+// is plain http, which a mail client blocks or warns about.
+test('html-safety allows <img src="https://..."> with alt, and refuses data: and http:', () => {
+  allowed('<p><img src="https://app.onhomeroom.com/email-images/0123456789abcdef0123456789abcdef" alt="Our team" width="480" height="240" style="display:block;max-width:100%;height:auto;border:0"></p>');
+  allowed('<img src="https://x.example/a.png" alt="">');
+  // A placeholder in an image's address would be fetched on open, value and all.
+  refused('<img src="{{url}}" alt="">', /cannot hold a placeholder/);
+  refused('<img src="https://evil.example/p.gif?u={{url}}" alt="">', /cannot hold a placeholder/);
+  refused('<img src=" {{url}}" alt="">', /cannot hold a placeholder/);
+  refused('<img src="https://x.example/a.png" srcset="https://evil.example/{{code}}.png 2x" alt="">', /cannot hold a placeholder/);
+  allowed('<IMG SRC="HTTPS://X.EXAMPLE/A.PNG" ALT="">');
+  refused('<img src="data:image/png;base64,AAAA" alt="">', /data/);
+  refused('<img src="http://x.example/a.png" alt="">', /https/);
+  refused('<img src="  h&#116;tp://x.example/a.png" alt="">', /https/);
+  refused('<img src="//x.example/a.png" alt="">', /https/);
+  refused('<img src="/email-images/0123456789abcdef0123456789abcdef" alt="">', /https/);
+  refused('<img alt="">', /https/);
+  refused('<img src="https://x.example/a.png">', /alt/);
+  // <image> is <img> to a browser: the probe's http pixel is refused the same way.
+  refused('<p>x<image src="http://evil.example/p.gif"></p>', /https/);
+  refused('<p>x<image src="http://evil.example/p.gif"></image></p>', /https/);
+  refused('<image src="{{url}}" alt="">', /cannot hold a placeholder/);
+  refused('<img src="https://x.example/a.png" alt="" srcset="https://x.example/a.png 1x, http://x.example/b.png 2x">', /https/);
+  // Inside an Outlook conditional comment the same rules hold.
+  refused('<!--[if mso]><img src="http://x.example/a.png" alt=""><![endif]-->', /https/);
 });

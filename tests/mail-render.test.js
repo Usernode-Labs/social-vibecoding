@@ -173,3 +173,21 @@ test('resolve: an English-only kind stays English whatever the row holds', () =>
   const snapshot = { templates: { content_report: { ...OTP, action: 'content_report', layout_family_id: null, translations: { fr: FR_OTP } } }, layouts: {} };
   assert.equal(resolve(snapshot, 'content_report', 'fr').template.subject, OTP.subject);
 });
+
+test('a word built in code whose translation adds a line break is English, that word only', () => {
+  const { renderResolved } = require('../src/services/mail/render');
+  const english = (id) => require('./lib/platform-i18n').message(id);
+  const template = {
+    subject: '{{subject}}', preheader: '', why: 'w', html: '<p>{{app}}: {{lead}}</p>', text: '{{app}}: {{lead}}\n{{unsubscribeUrl}}',
+  };
+  const spanish = { ...template, why: 'Por qué' };
+  const t = (id) => ({
+    'email:buildReady.lead.ready': 'Prêt\nBcc: x',
+    'email:buildReady.subject.ready': 'Listo para probar',
+  }[id] || '');
+  const out = renderResolved('build_ready', { template: spanish, layout: null, english: { template, layout: null }, t, readerHasLanguage: true },
+    { appName: 'Pal', unsubscribeUrl: 'https://x.test/u' });
+  assert.equal(out.text, `Pal: ${english('email:buildReady.lead.ready')}\nhttps://x.test/u`);
+  assert.doesNotMatch(out.html, /Bcc/);
+  assert.equal(out.subject, 'Listo para probar', 'the other word keeps its translation');
+});

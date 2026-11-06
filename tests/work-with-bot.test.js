@@ -108,6 +108,41 @@ test('a request nobody is building: Work on this with Homeroom bot, and the agen
   assert.equal(AppView._requestStatusView(baseIssue()).action.label, 'Ask Homeroom bot to build this', 'where the bot builds, its door stays');
 });
 
+// #6375: queued but held until later, its queue row is no `bot` (its read
+// keeps unheld rows only), so the status card read "Nobody is working on
+// this yet." with Ask over the track card's "On hold until …". The stored
+// work state (the track) says it now, with nothing offered and no spinner.
+test('a request the bot holds until later says so, offers no Ask and does not spin', () => {
+  const { AppView } = makeAppView();
+  AppView._ghIssuesMeta = { myRemaining: 5, homeroomBot: { typicalMinutes: 8 } };
+  const track = { work: { stage: 'reading', why: null, reason: null, line: { code: 'on_hold' } }, held: { limit: 'allowance', position: null, until: '2026-11-09T01:00:00.000Z' } };
+  const held = plain(AppView._requestStatusView(baseIssue({ track })));
+  assert.equal(held.lead, message('core:work.line.onHold'), 'the stored line\'s own words');
+  assert.doesNotMatch(held.lead, /Nobody/);
+  assert.equal(held.action, null, 'no Ask Homeroom bot to build this');
+  assert.equal(held.botSays, true);
+  assert.equal(held.ownAgent, false);
+  assert.equal(held.agentSession, false);
+  assert.equal(AppView._issueWorkState(baseIssue({ track })), null, 'no bot state, so no working spinner');
+  // A hold whose line has no words here says until when, and nothing more.
+  const other = plain(AppView._requestStatusView(baseIssue({ track: { ...track, work: { ...track.work, line: { code: 'later' } } } })));
+  assert.match(other.lead, /^Homeroom bot has this on hold until Nov 9\.$/);
+  assert.equal(other.action, null);
+  // Queued and not held: as before, and it spins.
+  const queued = baseIssue({ bot: { what: 'queued', since: null } });
+  assert.equal(AppView._requestStatusView(queued).lead, message('changes:request.status.lead.botQueued'));
+  assert.equal(AppView._issueWorkState(queued).spinner, true);
+  // Nobody on it, and a track that holds nothing: Nobody, with Ask.
+  for (const issue of [baseIssue(), baseIssue({ track: { work: { stage: 'reading', line: { code: 'queued' } } } })]) {
+    const nobody = AppView._requestStatusView(issue);
+    assert.equal(nobody.lead, 'Nobody is working on this yet.');
+    assert.equal(nobody.action.label, 'Ask Homeroom bot to build this');
+  }
+  // A person in review still wins over the hold.
+  const review = AppView._requestStatusView(baseIssue({ track, in_progress: { sessions: [{ sessionId: 5, username: 'ada', status: 'promoted' }] } }));
+  assert.equal(review.lead, 'ada’s change for this is waiting for approval.');
+});
+
 test('while the bot waits for her plan, the request says so, with Let the bot build it now', () => {
   const { AppView } = makeAppView();
   const held = baseIssue({ botHold: { rootId: 77, href: '#homeroom-bot/thread/77' } });

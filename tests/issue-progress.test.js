@@ -121,6 +121,17 @@ test('the session half uses the paused window, not the claim TTL', async () => {
   assert.equal(sessionQuery.params[1], IN_PROGRESS_PAUSED_WINDOW_DAYS);
 });
 
+// #6385: a person's posted plan is a `chat_sessions` row with source
+// 'request_spec' and no branch (request-specs.js). The Workshop's in-progress
+// list leaves it out, the same rule the Board's read applies.
+test('the session half leaves a branchless planning record out', async () => {
+  const pool = poolOf({ sessions: [{ n: 5 }] });
+  await inProgressIssueNumbers(pool, 7);
+  const sessionQuery = pool.seen.find((q) => /FROM chat_sessions/.test(q.sql));
+  assert.match(sessionQuery.sql,
+    /AND NOT \(cs\.source IS NOT DISTINCT FROM 'request_spec' AND cs\.branch_name IS NULL\)/);
+});
+
 test('no claims means no thread read at all', async () => {
   const pool = poolOf({ sessions: [{ n: 5 }] });
   await inProgressIssueNumbers(pool, 7);

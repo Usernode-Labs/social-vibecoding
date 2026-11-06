@@ -1484,7 +1484,8 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // the keyboard the kit measures from the screen.
   assert.match(css, /html\.un-kb body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{ bottom: var\(--un-kb-inset, 0px\); \}/);
   assert.match(css, /#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\) \.ai-main-pane \{\s+width: var\(--ai-col-w\);\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
-  assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \{\s+--ai-col-w: calc\(var\(--ai-room\) \/ 2\);/);
+  assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \{\s+--ai-preview-w: max\(320px, min\(var\(--ai-preview-chosen-w, calc\(var\(--ai-room\) \/ 2\)\), calc\(var\(--ai-room\) - 320px\)\)\);\s+--ai-col-w: calc\(var\(--ai-room\) - var\(--ai-preview-w\)\);/,
+    'halves until the preview\'s edge is dragged, the thread the rest');
   const page = css.slice(css.indexOf('body:has(#ai-screen:not(.hidden)) {'), css.indexOf('/* A phone: the whole of the page, over the drawer'));
   assert.equal((page.match(/100vw/g) || []).length, 0,
     'no width here is taken from the window: the room is the page\'s usable box, and every other is taken from the room');
@@ -1500,9 +1501,34 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // 2026 it sets Main's own width under its own key.
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /import \{ SidePanelDivider \} from '\.\.\/side-panel\/side-panel';/);
-  assert.match(src, /import \{ AI_MAIN_WIDTH_KEY \} from '\.\.\/side-panel\/resize';/);
-  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider panelRef=\{mainRef\} shown=\{docked\} id="ai-main-divider" controls="ai-main-pane" widthKey=\{AI_MAIN_WIDTH_KEY\} \/>/);
+  assert.match(src, /import \{\n\s+AI_MAIN_WIDTH_KEY,\n\s+AI_PREVIEW_COLUMN_WIDTH_KEY,\n\s+AI_PREVIEW_WIDTH_KEY,[^}]*\} from '\.\.\/side-panel\/resize';/);
+  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{docked\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threeUp \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY\}\s+probe=\{threeUp \? threadProbe : undefined\}\s+watch=\{threeUp \? previewRef : undefined\}\s+\/>/);
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /export function SidePanelDivider\(\{\s+panelRef,\s+shown,\s+id = 'side-panel-divider',\s+controls = 'platform-side-panel',\s+widthKey,/);
+});
+
+test('a preview beside the thread: both edges drag, each the width of the column after it (#6359)', () => {
+  const css = read('public/css/app.css');
+  const src = read('frontend/src/features/ai/index.tsx');
+  // The thread's edge was hidden while a preview was open; now only in halves,
+  // where the list has stepped aside.
+  assert.doesNotMatch(css, /#ai-screen\[data-ai-preview\] \.ai-main-pane > \.side-panel-divider \{ display: none; \}/);
+  assert.match(css, /#ai-screen:not\(\[data-ai-preview="three"\]\)\[data-ai-preview\] \.ai-main-pane > \.side-panel-divider \{ display: none; \}/);
+  assert.doesNotMatch(css, /its edge is no\s+handle then/);
+  // The chosen widths are honoured, held to every column's floor.
+  assert.match(css, /--ai-preview-w: max\(360px, min\(var\(--ai-preview-chosen-w, var\(--ai-preview-auto\)\), calc\(var\(--ai-room\) - 800px\)\)\);/);
+  assert.match(css, /--ai-col-w: max\(320px, min\(var\(--ai-col-chosen-w, /);
+  // Each handle sits on its own line.
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) #ai-screen\[data-ai-preview="three"\] #ai-main-divider \{\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);/);
+  assert.match(css, /#ai-preview-divider \{\s+--divider-at: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
+  // The preview's own divider, not drawn where the preview is the whole screen.
+  assert.match(src, /\{layout === 'full' \? null : \(\s+<SidePanelDivider\s+panelRef=\{previewRef\}\s+shown=\{docked\}\s+id="ai-preview-divider"\s+controls="ai-preview-pane"\s+widthKey=\{AI_PREVIEW_WIDTH_KEY\}\s+probe=\{previewProbe\}/);
+  assert.match(src, /const threeUp = detailHere && layout === 'three';/);
+  assert.match(src, /const endAt = inlineStartOf\(box\);/, 'the thread is measured to where the preview begins');
+  assert.match(src, /neighbourMin: \(probe\.neighbourMin \?\? 0\) \+ Math\.max\(0, roomEnd - endAt\), endAt/,
+    'and its bound keeps the preview as it is drawn, the room app.css leaves the thread');
+  assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /new ResizeObserver\(\(\) => settle\(\)\)/,
+    'read again when the preview is resized');
+  assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /probe: measure = probeLayout,/);
 });
 
 test('the tab says Homeroom bot: a wide seat on a phone, two lines in the Duo column', () => {

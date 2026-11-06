@@ -16,6 +16,7 @@ export {
   drop,
   back,
   expand,
+  openInWorkshop,
   pend,
   clearPending,
   appPresence,
@@ -30,4 +31,5 @@ export { installEmbeddedRuntime } from '../../frontend/src/features/side-panel/e
 export { sidePanelStore, sidePanelRefs, INITIAL } from '../../frontend/src/features/side-panel/store.js';
 export { headerTitleStore } from '../../frontend/src/features/header/header-title-store.js';
 export * as routes from '../../frontend/src/features/side-panel/routes';
+export * as panelTarget from '../../frontend/src/features/dev-board/workshop/panel-target';
 export * as resize from '../../frontend/src/features/side-panel/resize';

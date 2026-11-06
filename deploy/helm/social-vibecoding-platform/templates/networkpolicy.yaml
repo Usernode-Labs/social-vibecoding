@@ -47,6 +47,27 @@ spec:
       ports: [{protocol: TCP, port: {{ .Values.platform.conductor.metricsPort | int64 }}}]
     {{- end }}
   egress:
+    {{- if and .Values.config.checkNodePoolRequired .Values.config.checkPoolMetricsUrl }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.checkPoolMetricsNamespace | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports: [{protocol: TCP, port: 9090}]
+    {{- end }}
+    # Aggregate activity from every gateway, including draining replicas. No
+    # app Pod exposes this listener, and no public Service routes to it.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "networkPolicy.appNamespace is required" .Values.networkPolicy.appNamespace | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: social-vibecoding-app-gate
+              app.kubernetes.io/name: usernode-app-gate
+      ports: [{protocol: TCP, port: 3001}]
     # Runtime health probes use generated app/preview Services directly.
     - to:
         - namespaceSelector:

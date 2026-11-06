@@ -18671,9 +18671,15 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
    pane stands beside the thread: list | thread | preview where the three fit
    (1500px and up: the list keeps 480px, the thread 440px at most, the
    preview the rest), the thread and the preview in halves where they do not
-   (the list steps aside), and the whole screen on a phone. The thread's
-   width is the preview's to decide while it is open, so its edge is no
-   handle then. */
+   (the list steps aside), and the whole screen on a phone.
+   BOTH EDGES ARE HANDLES (#6359, 6 Nov 2026). Each sets the width of the
+   column after it and the list takes what is left: the thread's edge
+   `--ai-col-chosen-w`, the preview's `--ai-preview-chosen-w`
+   (features/side-panel/resize.ts). Until one is dragged the widths are the
+   ones above. The floors hold here as in the drag: the list 480px, the
+   thread 320px, the preview 360px; a preview dragged wide narrows the
+   thread before it squeezes the list. In halves the list has stepped aside,
+   so only the preview's edge is a handle there, and the thread is the rest. */
 #ai-screen .ai-preview-pane {
   position: fixed;
   z-index: 21;
@@ -18690,15 +18696,26 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
   border-inline-start: 1px solid var(--app-sheet-line);
 }
 #ai-screen .ai-preview-pane > .messages-design-pane { border-radius: 0; box-shadow: none; padding-top: 4px; }
-#ai-screen[data-ai-preview] .ai-main-pane > .side-panel-divider { display: none; }
+#ai-screen:not([data-ai-preview="three"])[data-ai-preview] .ai-main-pane > .side-panel-divider { display: none; }
 #ai-screen[data-ai-preview="three"] {
-  --ai-col-w: min(var(--ai-main-w), 440px);
-  --ai-preview-w: max(360px, calc(var(--ai-room) - 480px - var(--ai-col-w)));
+  --ai-preview-auto: max(360px, calc(var(--ai-room) - 480px - min(var(--ai-main-w), 440px)));
+  --ai-preview-w: max(360px, min(var(--ai-preview-chosen-w, var(--ai-preview-auto)), calc(var(--ai-room) - 800px)));
+  --ai-col-w: max(320px, min(var(--ai-col-chosen-w, min(var(--ai-main-w), 440px)), calc(var(--ai-room) - 480px - var(--ai-preview-w))));
   padding-inline-end: calc(var(--ai-col-w) + var(--ai-preview-w));
 }
 #ai-screen[data-ai-preview="halves"] {
-  --ai-col-w: calc(var(--ai-room) / 2);
-  --ai-preview-w: var(--ai-col-w);
+  --ai-preview-w: max(320px, min(var(--ai-preview-chosen-w, calc(var(--ai-room) / 2)), calc(var(--ai-room) - 320px)));
+  --ai-col-w: calc(var(--ai-room) - var(--ai-preview-w));
+}
+/* The edges' lines: the thread's in the list's 16px gutter, as Main's is
+   (and outweighing that rule, at THE DIVIDER below), the preview's on the
+   hairline where it meets the thread. */
+body:has(#ai-screen:not(.hidden)) #ai-screen[data-ai-preview="three"] #ai-main-divider {
+  --divider-at: calc(var(--ai-col-w) + var(--ai-preview-w) + var(--ai-edge, 0px) + 8px);
+}
+#ai-preview-divider {
+  --divider-at: calc(var(--ai-preview-w) + var(--ai-edge, 0px));
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) + .5rem);
 }
 #ai-screen[data-ai-preview="halves"] .ai-screen-body { display: none; }
 #ai-screen:is([data-ai-preview="three"], [data-ai-preview="halves"]) .ai-main-pane {
@@ -26940,8 +26957,11 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
    `data-detail` says which, and `:has()` lets a frame that has always
    been one flex row split by it. */
 
-/* The shots viewer used to be a popover over the page; in the column it
-   is simply its contents, scrolling under the reader's header. */
+/* The shots viewer is still a popover, even here; in the column only its
+   CLOSED state is flattened into the column's contents, scrolling under
+   the reader's header. Open, it must keep `.shots-viewer:popover-open`: it
+   goes to the top layer and is drawn as the window-sized card over a dim.
+   Flattening that too left a dim with nothing readable in it (#6382). */
 .gc-detail-shots {
   flex: 1 1 auto;
   min-height: 0;
@@ -26949,7 +26969,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   overflow: auto;
   padding: 0 4px 12px;
 }
-.gc-detail-shots :is(.shots-viewer, [popover]) {
+.gc-detail-shots :is(.shots-viewer, [popover]):not(:popover-open) {
   display: block !important;
   position: static !important;
   inset: auto !important;
@@ -26959,6 +26979,26 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   border: 0;
   padding: 0;
 }
+/* #6381: the before and after's own toolbar has no way out of the column,
+   so this small head above it carries the close the design preview has in
+   its header — an × at the right, or the back arrow at the left where the
+   column is the whole screen. */
+.gc-detail-shots-head {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 4px 8px 2px;
+}
+.gc-detail-shots-close {
+  margin-inline-start: auto;
+  width: 32px; height: 32px; padding: 0; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 999px; cursor: pointer;
+  background: transparent; color: var(--text-primary, #18181b);
+}
+.gc-detail-shots-close:hover { background: var(--state-neutral-bg, rgba(24,24,27,.06)); }
+.gc-detail-shots-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gc-detail-shots-close svg { width: 18px; height: 18px; }
 .gc-detail-back {
   width: 32px; height: 32px; padding: 0; flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;

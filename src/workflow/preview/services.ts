@@ -208,6 +208,9 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
     // only while fewer unit suites run than the checks queue lets runs go at
     // once, so a burst of builds cannot fill the worker namespace's quota
     // ahead of the runs the queue admits. EARLY_UNIT_SUITE=0 turns it off.
+    // A required batch pool admits whole runs, not speculative early suites:
+    // those would bypass its shared budget. Their suite runs after the build,
+    // inside the admitted checks run instead.
     [WORK.unitEarly]: {
       // Its Jobs outlive a lost claim, and a retry finds them.
       maxAttempts: 2,
@@ -216,7 +219,8 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       async run({ input, signal }): Promise<Json> {
         const off = ['0', 'false', 'off'].includes(String(process.env.EARLY_UNIT_SUITE ?? '1').trim().toLowerCase());
         const unitSuite = legacy('services/unit-suite');
-        if (off || config.workerRuntime !== 'kubernetes' || !unitSuite.isEnabled()) return { started: false, why: 'off' };
+        if (off || config.kubernetes?.checkNodePoolRequired || config.workerRuntime !== 'kubernetes'
+          || !unitSuite.isEnabled()) return { started: false, why: 'off' };
         // Only while its attempt is still being built: once it serves, its
         // checks run is under way and runs a suite of its own if it finds
         // none; once it is superseded or failed, nothing will read one.

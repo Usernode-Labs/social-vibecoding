@@ -12,6 +12,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { patchSource, EDITS } = require('../worker/patch-playwright-mcp-screenshot');
 const { pngWidth } = require('../worker/verify-shots-browser-mcp');
 
@@ -53,6 +54,66 @@ test('the patched tool takes a close-up of a screen region at a density, through
   const closeup = handler.slice(handler.indexOf('if (params.closeup)'), handler.indexOf('const fileType'));
   assert.doesNotMatch(closeup, /addImage/);
   assert.match(closeup, /saved it as \$\{fileName\}/, 'the answer names the file as an ordinary screenshot does');
+});
+
+// #6379: the agent does not always call browser_wait_for first, so a thread
+// that rendered just after the page went idle was missing from a shot. With
+// SHOTS_SCREENSHOT_SETTLE (every shots browser) each screenshot waits for the
+// page to settle first.
+test('with SHOTS_SCREENSHOT_SETTLE a screenshot waits for the page to settle, close-ups excepted', () => {
+  const patched = patchSource(HANDLE);
+  const handler = patched.slice(patched.indexOf('handle: async (tab, params, response) => {'));
+  // The close-up branch has returned before it, and it is before the capture.
+  assert.ok(handler.indexOf('if (params.closeup)') < handler.indexOf('SHOTS_SCREENSHOT_SETTLE'));
+  assert.ok(handler.indexOf('SHOTS_SCREENSHOT_SETTLE') < handler.indexOf('const buffer = locator ?'));
+  assert.match(patched, /if \(process\.env\.SHOTS_SCREENSHOT_SETTLE === "1"\) \{/);
+  assert.equal(patched.split('const buffer = locator ?').length - 1, 1);
+  // A quarter of a second of quiet, three seconds at most, and never a
+  // failure of its own: an evaluate that errors is swallowed.
+  assert.match(patched, /await tab\.page\.evaluate\(settleInPage, \{ quietMs: 250, maxMs: 3000 \}\)\.catch\(\(\) => \{\}\);/);
+  assert.match(patched, /while \(Date\.now\(\) - startedAt < maxMs\)/);
+  assert.match(patched, /if \(now === previous && \(window\.__usernodeShotsInFlight \|\| 0\) === 0\) return;/);
+  assert.doesNotThrow(() => new Function('require', 'module', 'exports', patched));
+});
+
+// The wait itself, run as the browser runs it: quiet and no requests.
+function settleHarness(patched) {
+  const start = patched.indexOf('const settleInPage = ');
+  const end = patched.indexOf('\n      };', start) + '\n      };'.length;
+  let clock = 0;
+  let ticks = 0;
+  const sandbox = {
+    window: { __usernodeShotsInFlight: 0 },
+    document: { getElementsByTagName: () => ({ length: 10 }), body: { textContent: 'a thread' } },
+    Date: { now: () => clock },
+    setTimeout: (fn, ms) => { ticks += 1; clock += ms; fn(); },
+  };
+  vm.runInNewContext(`${patched.slice(start, end)}\nglobalThis.settleInPage = settleInPage;`, sandbox);
+  return { settleInPage: sandbox.settleInPage, sandbox, clock: () => clock, ticks: () => ticks };
+}
+
+test('the wait ends on a quiet page at once and gives up after the 3 second cap', async () => {
+  const patched = patchSource(HANDLE);
+  const quiet = settleHarness(patched);
+  await quiet.settleInPage({ quietMs: 250, maxMs: 3000 });
+  assert.equal(quiet.ticks(), 1, 'one quarter-second reading is enough');
+  assert.equal(quiet.clock(), 250);
+
+  // A request still running: the page does not read as finished.
+  const busy = settleHarness(patched);
+  busy.sandbox.window.__usernodeShotsInFlight = 1;
+  await busy.settleInPage({ quietMs: 250, maxMs: 3000 });
+  assert.equal(busy.clock(), 3000, 'no longer than the cap');
+
+  // A page that keeps changing: same, and it resolves rather than throwing.
+  const moving = settleHarness(patched);
+  let words = 0;
+  moving.sandbox.document.body.textContent = 'x';
+  moving.sandbox.document.getElementsByTagName = () => ({ length: 10 });
+  const counting = moving.sandbox.document;
+  Object.defineProperty(counting.body, 'textContent', { get: () => 'x'.repeat((words += 1)) });
+  await moving.settleInPage({ quietMs: 250, maxMs: 3000 });
+  assert.equal(moving.clock(), 3000);
 });
 
 test('a Playwright version whose tool moved fails the image build instead of saving 1x shots', () => {

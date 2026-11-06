@@ -748,6 +748,12 @@ Two behaviours are easy to lose to React's defaults and are worth naming:
   stays in code is listed in the README: the admin console, a server's own
   error sentences, text a person wrote, developer-only messages, and the
   standalone pages that load no shell bundle.
+- **An email's words are not catalog text, and never code.** Every mail is a
+  stored template, written and translated by admins in the admin console;
+  `src/db/email-template-seeds.js` holds the first versions as plain English
+  data, and `frontend/locales/en/email.json` only the few words an action
+  builds in code. `frontend/locales/README.md` ("An email") has the rest, and
+  `tests/mail-no-hardcoded.test.js` holds it.
 - **A catalog entry is a whole message with a description.**
   `{ "text": "…", "description": "…" }`: no fragment joined to another, named
   parameters (`{{email}}`, never `{{value1}}`), a `_one`/`_other` pair for a

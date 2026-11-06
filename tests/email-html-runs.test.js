@@ -20,8 +20,7 @@ const { loadTsx } = require('./lib/render-tsx');
 const { scanHtml } = require('../src/services/mail/html-safety');
 const { placeholdersIn } = require('../src/services/mail/template-language');
 const { KINDS } = require('../src/services/mail/templates');
-const { englishTemplate, translatedTemplate, seededLayout } = require('../src/db/email-template-seeds');
-const { translatorFrom } = require('../src/services/push-text');
+const { englishTemplate, seededLayout } = require('../src/db/email-template-seeds');
 
 const runs = loadTsx('frontend/src/features/admin/email-templates/html-runs.ts');
 const { editableBlocks, findBlocks, spliceBlock, insertAfterBlock, tokenize } = runs;
@@ -34,14 +33,11 @@ const SOURCES = [
   ['layout: Homeroom standard', seededLayout('Homeroom standard').html],
 ];
 
-// Every message prefixed with characters a translator could send, the way
-// tests/mail-seed-equivalence.test.js builds its hostile translation.
-const ENGLISH = Object.fromEntries(Object.entries(require('../frontend/locales/en/email.json')).map(([k, v]) => [k, v.text]));
-const HOSTILE = Object.fromEntries(Object.entries(ENGLISH).map(([key, text]) => [key, `L'"<&>  <7>x</7> &amp; ${text}`]));
-const hostile = translatorFrom('fr', HOSTILE, ENGLISH);
+// Every paragraph prefixed with characters a translator could send, escaped as a
+// translation's words reach the html: the seeds' text with the worst of it.
+const HOSTILE_WORDS = 'L\'&quot;&lt;&amp;&gt;  &lt;7&gt;x&lt;/7&gt; &amp;amp; ';
 const HOSTILE_SOURCES = KINDS
-  .map((kind) => [`hostile ${kind}`, (translatedTemplate(kind, hostile) || {}).html])
-  .filter(([, html]) => typeof html === 'string');
+  .map((kind) => [`hostile ${kind}`, englishTemplate(kind).html.replace(/<p\b[^>]*>/g, (open) => `${open}${HOSTILE_WORDS}`)]);
 
 const MARKER = /\{\{\s*(#if|#unless|else|\/if|\/unless)\b[^}]*\}\}/g;
 const STRUCTURE_TAG = /<\/?(table|tbody|thead|tfoot|tr|td|th|p|div|h[1-6]|li|ul|ol|img)\b/i;

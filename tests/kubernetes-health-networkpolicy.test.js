@@ -18,7 +18,7 @@ for (const namespace of ['social-apps', 'custom-apps']) {
     const objects = parseAllDocuments(result.stdout).map((doc) => doc.toJSON());
     const policies = objects.filter((o) => o?.kind === 'NetworkPolicy');
     const platform = policies.find((o) => o.spec.podSelector.matchLabels['app.kubernetes.io/component'] === 'platform');
-    const rule = platform.spec.egress.find((rule) => rule.to?.some((peer) =>
+    const rule = platform.spec.egress.find((rule) => rule.ports?.some((port) => port.port === 3000) && rule.to?.some((peer) =>
       peer.namespaceSelector?.matchLabels['kubernetes.io/metadata.name'] === namespace));
     assert.deepEqual(rule, {
       to: [{

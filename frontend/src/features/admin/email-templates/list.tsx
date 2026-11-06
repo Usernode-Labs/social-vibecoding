@@ -2,8 +2,9 @@
 
 import { AdminUI } from '../admin-console.js';
 import {
-  editedLabel, isLive, languagesLabel, liveTemplate, type TemplateRow, type TemplatesPayload,
+  editedLabel, isLive, liveTemplate, type TemplateRow, type TemplatesPayload,
 } from './shared';
+import { languagesColumn } from './translations';
 
 // The list everyone lands on: one row per action (every email Homeroom
 // sends), with the version that is live, how many languages it is
@@ -112,13 +113,13 @@ export function TemplateList({
                         <span className={AdminUI.badge.success}>Live</span>
                         {/* The two columns a phone has no room for, as one line. */}
                         <span className="md:hidden basis-full text-xs text-zinc-500 dark:text-zinc-400">
-                          {`${languagesLabel(live.locales, a.englishOnly)} · ${editedLabel(live, now)}`}
+                          {`Languages: ${languagesColumn(payload, a.englishOnly, live)} · ${editedLabel(live, now)}`}
                         </span>
                       </div>
                     ) : <span className={AdminUI.badge.warn}>No live version</span>}
                   </td>
-                  <td className="hidden md:table-cell px-3 sm:px-6 py-3 align-middle text-zinc-600 dark:text-zinc-300 whitespace-nowrap">
-                    {live ? languagesLabel(live.locales, a.englishOnly) : ''}
+                  <td className="hidden md:table-cell px-3 sm:px-6 py-3 align-middle text-zinc-600 dark:text-zinc-300 max-w-[16rem]">
+                    {live ? languagesColumn(payload, a.englishOnly, live) : ''}
                   </td>
                   <td className="hidden md:table-cell px-3 sm:px-6 py-3 align-middle text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
                     {live ? editedLabel(live, now) : ''}

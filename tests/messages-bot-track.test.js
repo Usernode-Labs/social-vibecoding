@@ -101,6 +101,14 @@ test('each stage has its word, and its second line a sentence; a loop says which
   assert.match(trackLine(week), /^On hold until .+: this week's building time is used up$/);
   assert.equal(trackLine({ ...week, held: { ...week.held, until: null } }), core('work.line.onHold'), 'no date: the stage\'s own line');
   assert.equal(trackPlace(week), null, 'no place in a line it is not in');
+  // #6357: paused a day after repeated errors: no building time in it,
+  // and when it is tried again.
+  const cool = track({ work: at('reading', { line: { code: 'cooldown' } }), step: null, retryAt: '2026-10-13T09:41:00Z' });
+  assert.match(trackLine(cool), /^Paused after repeated errors: trying again .+$/);
+  assert.doesNotMatch(trackLine(cool), /building time/);
+  assert.equal(trackLine({ ...cool, retryAt: undefined }), core('work.line.cooldown'), 'no date: the stage\'s own line');
+  assert.equal(trackStateWord(cool), 'Not started yet');
+  assert.equal(loadTsx(TRACK).trackLook(cool).tone, 'held');
   // In Homeroom bot's line: its place is its line's own words.
   const queued = track({ work: at('reading', { line: { code: 'queued', place: 3 } }), step: null, queue: { ahead: 2 } });
   assert.equal(trackStateWord(queued), 'Not started yet');

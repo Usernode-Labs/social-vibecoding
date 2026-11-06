@@ -631,6 +631,14 @@
     "text": "Your building time for this week is used up",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"On hold until Monday\": why the work waits."
   },
+  "bot.state.cooldown": {
+    "text": "Paused after repeated errors",
+    "description": "Small heading on a Homeroom bot activity card: Homeroom bot's tries at the request failed several times in a row, so it waits a day before trying again. Nothing to do with building time."
+  },
+  "bot.state.line.cooldown": {
+    "text": "Homeroom bot tries again later",
+    "description": "The line under a Homeroom bot activity card's title, under the heading \"Paused after repeated errors\": the work waits a day and is then tried again."
+  },
   "bot.state.line.stop.time": {
     "text": "It took longer than I’m allowed",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"Stopped\": the bot (speaking as I) ran out of the time it may spend building."
@@ -4390,6 +4398,10 @@
   "bot.track.line.held.until": {
     "text": "On hold until {{date}}: this week's building time is used up",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under the title of a request held because the building time of whoever pays for it is used up this week. {{date}} is when it resets, a short weekday and time."
+  },
+  "bot.track.line.cooldown.until": {
+    "text": "Paused after repeated errors: trying again {{date}}",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under the title of a request Homeroom bot paused because its tries failed several times in a row (nothing to do with building time). {{date}} is when it tries again, a short weekday and time."
   },
   "bot.track.held.next": {
     "text": "Next in line for a slot",
