@@ -2681,9 +2681,9 @@
       "expectText": "is working on this"
     },
     {
-      "name": "Homeroom bot's History: your finished work by month below Live this week, with kind chips for Me › Your work's old tabs",
+      "name": "Homeroom bot's History: your finished work in one list per project below Live this week, with kind chips for Me › Your work's old tabs",
       "path": "/?demo=1#homeroom-bot/history",
-      "expectSelector": "#ai-screen [data-ai-sheet=\"history\"] [data-ai-history-month] [data-ai-line=\"history-change\"]",
+      "expectSelector": "#ai-screen [data-ai-sheet=\"history\"] [data-ai-group] [data-ai-line=\"history-change\"]",
       "expectText": "Staging demo: a calendar sync, closed"
     },
     {

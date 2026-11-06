@@ -78,7 +78,7 @@ import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
 import { SmallTile } from './small-tile';
 import { HISTORY_KINDS, type HistoryKind } from './filter-address';
-import { byMonth, historyGlyph, historyTooltip, historyWords, monthName, type HistoryRow, type HistoryState } from './history';
+import { historyGlyph, historyTooltip, historyWords, type HistoryRow, type HistoryState } from './history';
 
 // The plane a list stands on, as GroupedList draws one: the sheet's solid
 // fill, 20px, one inset hairline. Complete literals for Tailwind.
@@ -759,9 +759,10 @@ export function AiLists({
   // by its name, rather than the lists quietly showing every project.
   const onlyApp = picked.length === 1 ? ranked.find((p) => p.app.slug === picked[0])?.app || null : null;
   const nothingHere = !!onlyApp && !needLines.length && !busyLines.length && !stillLines.length && !liveLines.length;
-  // HISTORY (5 Nov 2026, ./history.ts): what has finished, by month, then by
-  // project, in the quiet rows Live this week draws. Narrowed by the chips
-  // above, as every list is; its own chips pick a kind.
+  // HISTORY (5 Nov 2026, ./history.ts): what has finished, one list per
+  // project, in the quiet rows Live this week draws. No date headings split
+  // it: each row keeps the date it ended (or went live) on its right.
+  // Narrowed by the chips above, as every list is; its own chips pick a kind.
   const locale = getDateLocale();
   const historyLines = (history?.rows || []).filter((row) => shows(row.app)).map((row): Line & { at: string | null } => {
     const glyph = historyGlyph(row);
@@ -787,7 +788,6 @@ export function AiLists({
       at: row.at,
     };
   });
-  const historyMonths = byMonth(historyLines);
   const owedShown = picked.length ? needLines.filter((line) => line.owe).length : owed;
   // One project picked: its chip names it, so its name is not said again over every section.
   const heads = picked.length !== 1;
@@ -952,12 +952,11 @@ export function AiLists({
               {history.ready && !history.failed && !historyLines.length && !history.next ? (
                 <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-history-empty="">{t('messages:ai.history.empty')}</p>
               ) : null}
-              {historyMonths.map((month) => (
-                <div key={month.key} data-ai-history-month={month.key}>
-                  <h3 className="m-0 pt-4 text-[13px] font-bold text-zinc-900 dark:text-zinc-100">{monthName(month.at, locale)}</h3>
-                  <GroupList lines={month.rows} quiet heads={heads} first={GROUP_FIRST.live} />
-                </div>
-              ))}
+              {historyLines.length ? (
+                // One list per project, newest first: the month headings that
+                // used to split it are gone, and each row's own date stays.
+                <GroupList lines={historyLines} quiet heads={heads} first={GROUP_FIRST.live} />
+              ) : null}
               {history.ready && history.next ? (
                 <button
                   type="button"
