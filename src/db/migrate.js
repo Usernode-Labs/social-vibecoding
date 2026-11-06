@@ -2922,8 +2922,8 @@ async function seedStagingBotOverlap(pool) {
     const bot = Number(bots.rows[0].id);
     if (!appId || !member || !bot || member === bot) return;
     // The larger request first, then the one that is part of it.
-    const bigger = 9112;
-    const smaller = 9113;
+    const bigger = 9114;
+    const smaller = 9115;
     const requests = [
       [bigger, 'Staging demo: Main Chat keeps only what you said there', 'Staging demo: obviously fake. A request a smaller one is part of.'],
       [smaller, 'Staging demo: a plan row opens Main Chat', 'Staging demo: obviously fake. One piece of the larger request.'],
@@ -2949,6 +2949,18 @@ async function seedStagingBotOverlap(pool) {
                              AND user_id = $2 AND content = $3 AND deleted_at IS NULL)
        RETURNING id`,
       [appId, bot, note, smaller],
+    );
+    // #6211's third screen: the larger request's discussion carries one line
+    // saying what was chosen, so a shot of it can be taken too.
+    const linkLine = `Request [#${smaller}](${link(smaller)}) is part of this one. `
+      + 'usernode-capture chose to fold it in, so it is built as part of this request.';
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+       SELECT $1, $2, $3, 'message', 'issue', $4, NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                           WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $4
+                             AND user_id = $2 AND content = $3 AND deleted_at IS NULL)`,
+      [appId, bot, linkLine, bigger],
     );
     // The message was there already (a later boot): nothing more to seed.
     if (!said) return;

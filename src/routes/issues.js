@@ -402,6 +402,18 @@ function stagingMockIssues(repoUrl) {
     // so its status card says the reason may be out of date and offers
     // "Ask Homeroom bot to read this again". A staging copy has no GitHub to
     // read the request from, so its page's own fetch finds it here.
+    // #6211: the pair whose discussions show an overlap note. 9115 is the
+    // smaller request the bot read as part of 9114: its thread carries the
+    // note and the three choices (seedStagingBotOverlap in src/db/migrate.js
+    // stores them), and 9114's thread carries the line saying what was
+    // chosen. A staging copy has no GitHub to read either request from, so
+    // each page's own fetch finds it here.
+    mk(9114, 'Staging demo: Main Chat keeps only what you said there',
+      'Staging demo: obviously fake. A request a smaller one was found to '
+      + 'be part of.\n\n**Source:** Homeroom user (usernode-capture)', 30),
+    mk(9115, 'Staging demo: a plan row opens Main Chat',
+      'Staging demo: obviously fake. One piece of the larger request.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 30),
     mk(9112, 'Staging demo: a request handed back over a plan the bot could not read',
       'Staging demo: obviously fake. The bot handed this back because it '
       + 'could not read a plan a person posted, and Homeroom can read one now.\n\n'
