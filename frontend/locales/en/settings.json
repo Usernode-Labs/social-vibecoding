@@ -1964,11 +1964,11 @@
     "description": "Paragraph in Settings > User guide. \"Just you\", \"Private community\" and \"Public community\" are the names shown on screen for who a community is for. \"Workshop\" is the name of a place on a project's page."
   },
   "guide.place.apps.title": {
-    "text": "My apps",
-    "description": "Row title in Settings > User guide, about the My apps section of the home screen. Same words as that section's heading."
+    "text": "Pinned apps",
+    "description": "Row title in Settings > User guide, about the Pinned apps section of the home screen. Same words as that section's heading."
   },
   "guide.place.apps.body": {
-    "text": "Home lists the apps from your communities under My apps. Select one to open it. + New project starts your own: it asks what the app should do and what to call it, then makes a private community you can invite people to.",
+    "text": "Home lists the apps from your communities under Pinned apps. Select one to open it. + New project starts your own: it asks what the app should do and what to call it, then makes a private community you can invite people to.",
     "description": "Paragraph in Settings > User guide. \"+ New project\" is the tile on the home screen that starts a project."
   },
   "guide.place.appMenu.title": {

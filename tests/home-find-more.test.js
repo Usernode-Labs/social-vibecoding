@@ -562,7 +562,7 @@ test('renderAppCard: an already-added app renders the ✓ state', () => {
   const added = app({ slug: 'mine', is_favorited: true });
   const html = Home.renderAppCard(added, { mode: 'browse' });
   assert.match(html, /data-added="true"/);
-  assert.match(html, /Remove mine from My apps|Remove Some App from My apps/);
+  assert.match(html, /Remove mine from Pinned apps|Remove Some App from Pinned apps/);
 });
 
 test('renderAppCard: home mode leaves the icon free of menu badges (#1616)', () => {
@@ -584,12 +584,17 @@ test('index.html stacks the three home areas in order', () => {
   // made every one of them feel optional. Then Create moved INTO Your apps as
   // the grid's trailing tile (the prototype's scrHome): not a widget with a
   // stored cell, but a tile whose cell is derived from the grid it ends.
-  const grid = INDEX.indexOf('id="app-list"');
-  const discover = INDEX.indexOf('id="home-discover-section"');
+  // One Home (#6361): Pinned apps, Pinned communities, Challenges as a
+  // sideways row, then Communities to join; Discover's lane went with it.
+  const grid = INDEX.indexOf('id="home-apps-section"');
+  const communities = INDEX.indexOf('id="home-communities-section"');
   const challenges = INDEX.indexOf('id="home-challenges-section"');
+  const join = INDEX.indexOf('id="home-join-section"');
   assert.ok(grid > 0, 'the launcher grid is present');
-  assert.ok(discover > grid, 'Discover comes after the apps grid');
-  assert.ok(challenges > discover, 'Challenges after Discover');
+  assert.ok(communities > grid, 'Pinned communities comes after Pinned apps');
+  assert.ok(challenges > communities, 'Challenges after Pinned communities');
+  assert.ok(join > challenges, 'Communities to join last');
+  assert.equal(INDEX.indexOf('id="home-discover-section"'), -1, 'no Discover lane on Home');
   assert.equal(INDEX.indexOf('id="home-create-section"'), -1,
     'Create app is no longer a section of its own');
   // The widgets' fallback host is gone with the placement it existed for: it
@@ -665,7 +670,7 @@ test('every block is one bordered box, sized by its own content', () => {
   assert.doesNotMatch(ROUTE, /sizes:/);
   // What each host DOES still carry is the key of the block it is for — the
   // hook the dapp.json checks and the screenshot assertions select on.
-  for (const key of ['discover', 'challenges']) {
+  for (const key of ['challenges']) {
     assert.match(INDEX, new RegExp(`<section id="home-${key}-section" data-panel-slot="${key}"`),
       `${key}: its section names it`);
   }

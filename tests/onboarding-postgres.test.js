@@ -162,12 +162,13 @@ test('the first run: join screen and First challenges, against the full schema',
       'SELECT status FROM app_collaborators WHERE app_id = $1 AND user_id = $2', [club.id, newbie.id]);
     assert.equal(collab.rows[0].status, 'member', 'the invite was accepted, as the notification would');
     assert.equal(await inCommunity(club, newbie.id), true);
-    const pin = await pool.query('SELECT hidden FROM app_favorites WHERE app_id = $1 AND user_id = $2', [garden.id, newbie.id]);
-    assert.equal(pin.rows[0]?.hidden, false, 'joining puts it on Home');
+    // One Home (#6361): joining pins the community to Home.
+    const pinned = async (app) => (await pool.query(
+      'SELECT 1 FROM home_community_pins WHERE community_id = $1 AND user_id = $2', [app.community_id, newbie.id])).rowCount === 1;
+    assert.equal(await pinned(garden), true, 'joining puts its community on Home');
     // The accepted invite too: the vote digest finds a member through this
     // pin, so a join with no pin would never be told a vote waits on them.
-    const invitedPin = await pool.query('SELECT hidden FROM app_favorites WHERE app_id = $1 AND user_id = $2', [club.id, newbie.id]);
-    assert.equal(invitedPin.rows[0]?.hidden, false, 'accepting the invite here puts it on Home, as an invite link does');
+    assert.equal(await pinned(club), true, 'accepting the invite here puts it on Home, as an invite link does');
     const u = (await pool.query(
       'SELECT needs_communities_choice, communities_onboarded_at FROM users WHERE id = $1', [newbie.id])).rows[0];
     assert.equal(u.needs_communities_choice, false);

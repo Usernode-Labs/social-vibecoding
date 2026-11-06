@@ -604,12 +604,12 @@
     "description": "Label of the disabled main button on an app's page in Discover when the app cannot be opened and its state is unknown."
   },
   "detail.myApps.add": {
-    "text": "Add to My apps",
-    "description": "Second button on an app's page in Discover: puts a tile for the app on the viewer's Home screen. \"My apps\" is the name of that section of Home."
+    "text": "Pin to Home",
+    "description": "Second button on an app's page in Discover: puts a tile for the app on the viewer's Home screen. \"Pinned apps\" is the name of that section of Home."
   },
   "detail.myApps.remove": {
-    "text": "Remove from My apps",
-    "description": "Second button on an app's page in Discover when the app already has a tile on the viewer's Home: takes the tile away. \"My apps\" is the name of that section of Home."
+    "text": "Unpin from Home",
+    "description": "Second button on an app's page in Discover when the app already has a tile on the viewer's Home: takes the tile away. \"Pinned apps\" is the name of that section of Home."
   },
   "detail.share.label": {
     "text": "Share",

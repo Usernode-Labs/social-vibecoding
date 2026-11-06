@@ -30,7 +30,7 @@ test('the private member\'s walk: the three cards every newcomer gets, and no wa
   assert.deepEqual(steps.map((s) => s.target), [
     '#app-list .app-card[data-slug="best-brunch"]',
     '#platform-tab-ai',
-    '#platform-tab-workshop',
+    '#home-communities-section [data-home-community="best-brunch"]',
   ]);
   assert.deepEqual(steps.map((s) => [s.title, s.text]), [
     ['Welcome to Homeroom', 'Best Brunch lives here, on Home.'],
@@ -233,14 +233,17 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   assert.match(byPhone, /id="home-waitlist-add-email"[^>]*>Add an email too</);
   assert.match(byPhone, new RegExp(`href="#more/${token}"`));
   assert.doesNotMatch(listed, /Add an email too/, 'an email row has nothing to add');
-  // Discover follows the launcher directly (#4937); the waitlist card keeps
-  // its place after it.
-  assert.match(read('frontend/src/features/home/index.tsx'), /<AppsMore \/>\s+<\/section>[\s\S]*<DiscoverSection \/>\s+[\s\S]*<WaitlistCard \/>/);
+  // Pinned communities follows the launcher directly (One Home, #6361; it
+  // was Discover, #4937); the waitlist card keeps its place after it.
+  assert.match(read('frontend/src/features/home/index.tsx'), /<AppsMore \/>\s+<\/section>[\s\S]*<PinnedCommunities \/>\s+[\s\S]*<WaitlistCard \/>/);
 });
 
-test('Home for a private member: no New project tile, Discover kept, no Challenges or Create panels', () => {
+test('Home for a private member: no New community tile, no Challenges or Create panels', () => {
   const home = read('frontend/src/features/home/home.js');
   assert.match(home, /if \(App\.user\?\.privateMember\) create = null;/);
+  // One Home (#6361): making something is Pinned communities' tile, which a
+  // private member is not offered.
+  assert.match(read('frontend/src/features/home/pinned-communities.tsx'), /const offerCreate = state\.ready && !win\?\.App\?\.user\?\.privateMember;/);
   const panels = read('src/routes/home-panels.js');
   assert.match(panels, /const PRIVATE_MEMBER_PANELS = new Set\(\['discover'\]\);/);
   assert.match(panels, /if \(req\.user\.privateMember && !PRIVATE_MEMBER_PANELS\.has\(panel\.key\)\) continue;/);

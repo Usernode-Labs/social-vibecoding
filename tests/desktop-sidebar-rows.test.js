@@ -163,7 +163,7 @@ test('the width: one block on every desktop window, from 768px; the phone\'s bar
   assert.doesNotMatch(read('frontend/src/Shell.tsx'), /SectionColumn|platform-section-column/);
 });
 
-test('the apps: none apart from their communities; Pinned, above them, only while something is pinned', () => {
+test('the apps: none apart from their communities; the pinned group, above them under Recents, only while something is pinned', () => {
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.doesNotMatch(bar, /StripApps/, 'no Pinned and Recent apps sections');
   const src = read('frontend/src/features/nav/rail-pinned.tsx');
@@ -171,10 +171,13 @@ test('the apps: none apart from their communities; Pinned, above them, only whil
   assert.match(src, /useHiddenClass\(ref, items\.length === 0 && !drop\);/);
   const css = read('public/css/app.css');
   assert.match(css, /\.platform-rail-pinned:not\(\.hidden\) \{\n    display: flex;/, 'drawn in the block once shown');
-  assert.equal(message('core:rail.pinned'), 'Pinned');
+  // One Home (#6361): one Recents heading over the pinned group and the
+  // rest; the rest's own heading hides while the group carries it.
+  assert.equal(message('core:rail.pinned'), 'Recents');
+  assert.match(css, /#platform-rail-pinned:not\(\.hidden\) \+ #platform-rail-communities > \.platform-rail-head \{ display: none; \}/);
 });
 
-test('#6025: the community rows drag onto My apps while Home is on show', () => {
+test('#6025: the community rows drag onto Pinned apps while Home is on show', () => {
   const mod = loadTsx(RAIL);
   assert.equal(mod.RAIL_DRAG_ITEMS, '.platform-rail-community[data-rail-community]',
     'the rows, not their App line or the places under them');

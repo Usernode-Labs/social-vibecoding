@@ -199,9 +199,13 @@ async function acceptAndPin(pool, appId, userId) {
       [appId, userId]
     );
     if (rows.length) {
+      // One Home (#6361): an accepted invite pins the community to Home.
+      // The app is on Home already, as one this person builds.
       await client.query(
-        `INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)
-         ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE`,
+        `INSERT INTO home_community_pins (community_id, user_id, position)
+         SELECT a.community_id, $2, COALESCE((SELECT MAX(position) + 1 FROM home_community_pins WHERE user_id = $2), 0)
+           FROM apps a WHERE a.id = $1 AND a.community_id IS NOT NULL
+         ON CONFLICT (user_id, community_id) DO NOTHING`,
         [appId, userId]
       );
     }

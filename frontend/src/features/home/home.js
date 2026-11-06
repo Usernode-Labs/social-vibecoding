@@ -1078,6 +1078,10 @@ const Home = {
       // button beside the heading, not this tile, so the trailing tile keeps
       // exactly the presence it has at rest.
       if (App.user?.privateMember) create = null;
+      // ONE HOME (#6361): making something new is Pinned communities'
+      // "New community" tile now (./pinned-communities.tsx), so the apps
+      // grid draws no trailing tile of its own.
+      create = null;
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -1108,90 +1112,7 @@ const Home = {
     // from render() on purpose — see publishImproveTarget for why that is the
     // one call that makes it consistent.
     Home.publishImproveTarget();
-    // ?shot=discover-add, once the first real paint has happened.
-    Home._maybeDiscoverAddShot();
   },
-
-  // ===== ?shot=discover-add — the add round trip, as a URL (#1567) =====
-  //
-  // Adding an app from a Discover rail is a TAP, so no URL rendered the
-  // result of one: the before/after screenshots and every declared check saw
-  // the home screen with nothing added, and the fix they exist to protect was
-  // invisible to both. This drives the flow the way a finger would — press
-  // the +, watch "Your apps" take the app WITHOUT a reload, press the ✓,
-  // watch it leave — and stamps how far it got on <body>.
-  //
-  // <body> rather than a node inside the grid: #app-list and
-  // #home-apps-section are React-owned, and an imperative write into either
-  // is a second writer that the next push paints over. `body.is-offline` is
-  // the same precedent, and six declared checks already select through it.
-  //
-  // Ungated and identical in both environments, like every other shot link
-  // here — the "before" side of a capture is shot against production, so an
-  // env-gated link would starve it forever. It writes only what the tap it
-  // imitates writes, and it ends by undoing that write, so a preview it ran
-  // in is left as it was found — except for one row, as it would be for a
-  // finger: a pin joins the app's community (the app_favorites trigger in
-  // schema.sql), and taking the pin off Home is not leaving it.
-  _discoverAddShotRan: false,
-  _quietLeaveOffer: false,
-  async _maybeDiscoverAddShot() {
-    if (Home._discoverAddShotRan) return;
-    try {
-      if (new URLSearchParams(location.search).get('shot') !== 'discover-add') return;
-    } catch (err) { return; }
-    Home._discoverAddShotRan = true;
-
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-    const until = async (pred, budgetMs) => {
-      const started = Date.now();
-      let out = pred();
-      while (!out && Date.now() - started < budgetMs) {
-        await wait(30);
-        out = pred();
-      }
-      return out;
-    };
-
-    // Every leg bails WITHOUT stamping. A half-finished round trip must not
-    // read as a passing one, and the check's selector is the final stamp.
-    // The corner control is a pill now, and the state it acts on is
-    // data-join: "join" for a card the viewer has neither joined nor added.
-    const badge = await until(() => document.querySelector(
-      '#home-discover-section .app-card:not([data-demo]) .card-add-btn[data-join="join"]',
-    ), 8000);
-    if (!badge) return;
-    const slug = badge.dataset.slug;
-    if (!slug) return;
-    badge.click();
-
-    // The tile is in "Your apps" now, painted from the cached flags with no
-    // refetch — which is the whole claim this shot is here to make.
-    const tile = await until(
-      () => document.querySelector(`#app-list .app-card[data-slug="${slug}"]`),
-      8000,
-    );
-    if (!tile) return;
-    document.body.dataset.shotAdd = 'added';
-
-    // The card stayed put in the rail (that is _discoverKeep) with its pill
-    // now saying "Joined", so the same finger can undo it. A click would open
-    // the leave confirm — a person's path — so the undo here is the call the
-    // confirm's own accept makes, quiet, as befits the fixture's finger.
-    const ticked = await until(() => document.querySelector(
-      `#home-discover-section .card-add-btn[data-slug="${slug}"][data-join="joined"]`,
-    ), 8000);
-    if (!ticked) return;
-    Home.setMembership(slug, false, undefined, { confirmed: true });
-
-    const gone = await until(
-      () => !document.querySelector(`#app-list .app-card[data-slug="${slug}"]`),
-      8000,
-    );
-    if (!gone) return;
-    document.body.dataset.shotAdd = 'round-trip';
-  },
-
 
   // One app -> the flat facts its tile renders. Every conditional the old
   // template string evaluated inline is resolved HERE, where the `App.user`
@@ -2421,14 +2342,10 @@ const Home = {
     // answered by a toast rather than by silence.
     if (app && app.demo) return;
     if (!app) return Home._favoriteUnknown(slug, desired, onChange);
-    // #5962: a member is asked BEFORE the tile moves, so Cancel leaves Home
-    // exactly as it was. The leave, when chosen, follows the unpin below.
-    let leaveToo = false;
-    if (!desired) {
-      const choice = await Home._askBeforeUnpin(app);
-      if (choice === 'cancel') return;
-      leaveToo = choice === 'leave';
-    }
+    // ONE HOME (#6361): pinning an app is only that. It no longer joins the
+    // app's community, and taking it off Home no longer asks about leaving
+    // (#5962's sheet): the community has its own pin, on Pinned communities,
+    // and its own Leave, on its hub.
     const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden, is_member: app.is_member };
     // Asked BEFORE the flip, while the answer still describes where the card
     // is: an app currently in a rail stays in it for the rest of the visit.
@@ -2439,9 +2356,6 @@ const Home = {
     }
     app.is_favorited = desired;
     if (app.is_collaborator) app.your_apps_hidden = !desired;
-    // A pin JOINS (the app_favorites trigger in schema.sql), so the cached
-    // flag follows it, and Discover's pill and the Workshop agree at once.
-    if (desired) app.is_member = true;
     // Only an ADD needs the reveal: a removal takes a tile away, and a grid
     // that expanded itself to show an absence would be nonsense.
     if (desired) Home._revealSlug = slug;
@@ -2456,12 +2370,6 @@ const Home = {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(errorText(data) || `HTTP ${res.status}`);
       PlatformUI.toast(desired ? message('home:myApps.added') : message('home:myApps.removed'));
-      // #4600: a pin that JOINED (the server says so: `joined`, after it has
-      // counted "Join a community") is a join, and says so as setMembership
-      // does, so Home's Challenges block reads again now rather than on its
-      // next refresh.
-      if (desired && data && data.joined === true) Home._announceMembership(slug, true);
-      if (leaveToo) await Home.setMembership(app.slug, false, undefined, { confirmed: true });
     } catch (err) {
       app.is_favorited = prev.is_favorited;
       app.your_apps_hidden = prev.your_apps_hidden;
@@ -2476,46 +2384,14 @@ const Home = {
     }
   },
 
-  // Taking an app off Home is not leaving it (a pin is a shortcut), but it is
-  // the moment someone might MEAN to, so a member is asked first, in one
-  // sheet: Remove from Home, Remove and leave, or Cancel (#5962). It used to
-  // be asked after the unpin had landed, as "Leave <app> too?", so the tile
-  // was gone whichever button was pressed. A leave goes through setMembership
-  // with its own confirm skipped: this question already was the confirm.
-  //
-  // Resolves 'remove', 'leave' or 'cancel'. Nothing is asked ('remove') of
-  // someone who could not leave: never the creator (the server refuses),
-  // never someone who is not in it, nor during the ?shot=discover-add round
-  // trip, whose unpin is a fixture's, not a person's. With no native kit
-  // there is no sheet, and the unpin goes ahead unasked, as a pin always did.
-  async _askBeforeUnpin(app) {
-    if (!app || !app.is_member || app.demo || Home._quietLeaveOffer) return 'remove';
-    const me = typeof App !== 'undefined' && App.user ? App.user.id : null;
-    if (me != null && app.created_by === me) return 'remove';
-    const ui = typeof PlatformUI !== 'undefined' ? PlatformUI : null;
-    if (!ui || typeof ui.actionSheet !== 'function' || (typeof ui.hasKit === 'function' && !ui.hasKit())) {
-      return 'remove';
-    }
-    const name = app.name || app.slug;
-    const picked = await ui.actionSheet({
-      title: app.view_visibility === 'private'
-        ? message('home:unpin.ask.private', { community: name })
-        : message('home:unpin.ask.public', { community: name }),
-      actions: [
-        { label: message('home:unpin.ask.remove'), choice: 'remove' },
-        { label: message('home:unpin.ask.leave', { community: name }), destructive: true, choice: 'leave' },
-      ],
-    });
-    return picked && (picked.choice === 'remove' || picked.choice === 'leave') ? picked.choice : 'cancel';
-  },
-
   // Join or leave the community `slug` belongs to — Discover's Join pill,
   // its detail page and the join-required prompt all come through here.
   // POST /api/apps/:slug/membership (src/routes/apps.js).
   //
-  // JOINING ALSO PINS, because the button it replaced was "Add to Your
-  // apps" and the server does both (communities.join): the cached flags flip
-  // together so Home's grid and Discover's pill agree in the same paint.
+  // JOINING ALSO PINS THE COMMUNITY to Home (One Home, #6361: the server
+  // does both, communities.join), never the app: the app's pin is its own
+  // act, offered on the join's toast. Leaving unpins the community and
+  // leaves the app's pin where it is.
   //
   // LEAVING ASKS FIRST. It is the one membership change with a cost you
   // might not expect — on a private app it is your access, and everywhere it
@@ -2563,11 +2439,12 @@ const Home = {
       is_collaborator: app.is_collaborator,
       member_count: app.member_count,
     } : null;
+    // ONE HOME (#6361): joining pins the COMMUNITY to Home (the server writes
+    // it, ./home-pins-store.ts reads it back on the membership event below);
+    // the app's own pin is untouched either way.
     if (app) {
       app.is_member = desired;
-      app.is_favorited = desired;
-      if (desired) app.your_apps_hidden = false;
-      else app.is_collaborator = false;
+      if (!desired) app.is_collaborator = false;
       app.member_count = Math.max(0, (Number(app.member_count) || 0) + (desired ? 1 : -1));
       if (desired) Home._revealSlug = slug;
       Home.render();
@@ -2586,7 +2463,14 @@ const Home = {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(errorText(data) || `HTTP ${res.status}`);
       if (app && Number.isFinite(Number(data.member_count))) app.member_count = Number(data.member_count);
-      PlatformUI.toast(desired ? message('home:membership.joined', { community: name }) : message('home:membership.left', { community: name }));
+      if (desired) {
+        const pinnable = app && !Home.isYours(app) && !app.demo;
+        PlatformUI.toast(message('home:membership.joinedPinned', { community: name }), pinnable ? {
+          action: { label: message('home:membership.pinAppToo'), handler: () => { void Home.toggleAdded(slug, true); } },
+        } : undefined);
+      } else {
+        PlatformUI.toast(message('home:membership.left', { community: name }));
+      }
       Home._announceMembership(slug, desired);
       if (!app) {
         await Home.load();

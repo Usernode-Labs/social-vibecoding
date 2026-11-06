@@ -8868,6 +8868,19 @@ async function seedStagingYourApps(pool, config) {
          ON CONFLICT (app_id, user_id) DO NOTHING`,
         [viewerId]
       );
+      // One Home (#6361): Home's Pinned communities. The demo app's
+      // community (one the viewer is in) and Chess Arena's (followed, not
+      // joined: a pin is not a join), so the shots and the checks see both
+      // kinds of tile. The other demo apps stay Communities to join.
+      await pool.query(
+        `INSERT INTO home_community_pins (community_id, user_id, position)
+         SELECT a.community_id, $1, CASE a.slug WHEN 'staging-demo-app' THEN 0 ELSE 1 END
+           FROM apps a
+          WHERE a.slug IN ('staging-demo-app', 'staging-demo-chess-arena')
+            AND a.community_id IS NOT NULL
+         ON CONFLICT (user_id, community_id) DO NOTHING`,
+        [viewerId]
+      );
     }
     log.info('db', 'Staging your-apps fixtures seeded', { viewers: viewerRows.length });
   } catch (err) {

@@ -64,7 +64,7 @@ export async function createPrProposedNotifications(
   const { rows: extra } = await db.query(
     `SELECT created_by AS id FROM apps WHERE id = $1 AND created_by IS NOT NULL
      UNION
-     SELECT user_id AS id FROM app_favorites WHERE app_id = $1`,
+     SELECT user_id AS id FROM app_stakes WHERE app_id = $1`,
     [appId]);
   const all = new Set<number>([...active.map(Number), ...extra.map((r) => Number(r.id))]);
   if (proposerId != null) all.delete(Number(proposerId));

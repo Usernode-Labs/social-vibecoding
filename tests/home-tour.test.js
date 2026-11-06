@@ -111,17 +111,19 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
   // Every step has something to point at.
   for (const step of steps.TOUR_STEPS) assert.ok(step.targets.length > 0, `${step.id} points at something`);
-  // The whole My apps section, heading included, so the card never sits on
-  // the heading the step is about (#3240); the grid is the fallback.
+  // The whole Pinned apps section, heading included, so the card never sits
+  // on the heading the step is about (#3240); the grid is the fallback.
   assert.deepEqual([...byId.apps.targets], ['#home-apps-section', '#app-list']);
-  assert.match(message(byId.apps.body), /select \+ New project to start your own/,
-    'the step names the last tile, "+ New project", as the grid labels it');
+  assert.match(message(byId.apps.body), /select New community/,
+    'the step names the tile that starts one, as Pinned communities labels it (One Home, #6361)');
+  assert.ok(message(byId.apps.body).includes(message('home:communities.new')));
   // The way into Settings is the Me tab, whose screen carries
   // #profile-row-settings (#2718) — on a phone it is the only entrance,
   // since the phone has no sidebar gear to point the tour at.
   assert.deepEqual([...byId.settings.targets], ['#platform-tab-me']);
-  // #3567: the Communities tab, whose key and id are still `workshop`.
-  assert.deepEqual([...byId.communities.targets], ['#platform-tab-workshop']);
+  // #3567, moved by One Home (#6361): Home's Pinned communities, with
+  // Communities to join while nothing is pinned. No Communities tab.
+  assert.deepEqual([...byId.communities.targets], ['#home-communities-section', '#home-join-section']);
   // #4604, moved by #6019: the bot's own tab. It left the Messages list for
   // that tab, so a stop pointing at Messages pointed at a screen without it.
   assert.deepEqual([...byId['meet-bot'].targets], ['#platform-tab-ai']);
@@ -137,11 +139,7 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // Discover, and the phone's order names this one.
   const tabsCss = read('public/css/app.css');
   assert.doesNotMatch(tabsCss, /#platform-tab-ai \{ display: none/);
-  assert.match(tabsCss, /#platform-tab-ai \{ order: -2; \}/);
-  assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
-    /\{ key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities'/);
-  assert.equal(message('core:tabs.communities'), 'Communities',
-    'the tab the step points at is the one labelled Communities');
+  assert.match(tabsCss, /#platform-tab-ai \{ order: -3; \}/, 'second on the phone\'s bar since One Home (#6361)');
   // THE MENU ARC: the mark that opens it, then the well inside it that holds
   // both of its actions. The mark is on screen on every route, which is what
   // lets this step be the one the arc falls back to. No mock anywhere in the
