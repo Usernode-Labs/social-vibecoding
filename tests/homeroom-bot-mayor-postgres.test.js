@@ -2431,6 +2431,26 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal((await read(sent)).metadata.homeroomBot.status, 'closed', 'the earlier ones went when it answered again');
   });
 
+  await t.test('#6404: a Questions card is the one set of answers, so its reply stores no suggested replies beside it', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const asked = await turn('which of my projects should you look at?', scripted([
+      [['ask_questions', { questions: [{ question: 'Which project?', answers: ['Bread Bot', 'Sheep countrr'], guess: 0 }] }]],
+      [['reply', { text: 'Pick one, or say another.', suggestions: ['Bread Bot', 'Sheep countrr'] }]],
+    ]));
+    const meta = (await read(asked)).metadata.homeroomBot;
+    assert.equal(meta.card.type, 'questions');
+    assert.equal(meta.actions, undefined, 'the card is the one set of answers');
+    assert.equal(meta.status, undefined, 'nothing else is offered to tap beside it');
+
+    const plain = await turn('anything new?', scripted([
+      [['reply', { text: 'Nothing new.', suggestions: ['Show my requests', 'What is left?'] }]],
+    ]));
+    const flat = (await read(plain)).metadata.homeroomBot;
+    assert.deepEqual(flat.actions.map((a) => a.label), ['Show my requests', 'What is left?'],
+      'a reply with no card keeps its suggestions');
+    assert.equal(flat.status, 'open');
+  });
+
   await t.test('1 Nov 2026: draw_screen ends the turn and hands it to the designer, for the project it names', async () => {
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
     const handed = [];

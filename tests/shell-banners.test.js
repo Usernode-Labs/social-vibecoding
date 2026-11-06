@@ -21,6 +21,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
+const { message } = require('./lib/platform-i18n');
+
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
@@ -37,6 +39,18 @@ test('the offline banner reads the visibility store and writes its class by ref'
   // The initial value has to come from the store too, or a ?shot=offline deep
   // link (which pins the state during App.init) renders one frame online.
   assert.match(BANNERS, /offlineBannerVisible\(\)/);
+});
+
+test('a planned restart shows the update words in the same banner', () => {
+  // Issue #6403: a release's 1012 close is not an outage. The banner reads
+  // the restart key, clears its minute-long timer on reconnect, and swaps the
+  // text without a second element or id.
+  assert.match(BANNERS, /useVisibility\(RESTART_NOTICE_ID/);
+  assert.match(BANNERS, /restartNoticeVisible\(\)/);
+  assert.match(BANNERS, /core:banner\.restart\.text/);
+  assert.match(BANNERS, /visible = offline \|\| restarting/);
+  assert.equal(message('core:banner.restart.text'), 'Updating Homeroom...');
+  assert.equal(message('core:banner.offline.text'), 'Reconnecting to Homeroom. Showing saved content');
 });
 
 test('the offline banner prerenders hidden, with `hidden` leading the class string', () => {

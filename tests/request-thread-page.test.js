@@ -197,6 +197,41 @@ function appView(username = 'evan', globals = {}) {
   return c.av;
 }
 
+/** app-view.js in a sandbox whose `location` and `querySelector` a test owns. */
+function sandboxAppView(location, query) {
+  const c = {
+    console,
+    App: { user: { id: 42, username: 'evan' }, currentApp: 'example' },
+    relTime: () => 'just now',
+    document: {
+      getElementById: () => null,
+      querySelector: (sel) => query[sel] || null,
+      querySelectorAll: () => ({ forEach: () => {} }),
+      addEventListener() {},
+      createElement: () => ({ style: {}, classList: { add() {}, remove() {} } }),
+      body: { appendChild: () => {} },
+      documentElement: {},
+    },
+    localStorage: { getItem: () => null, setItem: () => {} },
+    addEventListener() {},
+    dispatchEvent() {},
+    CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init && init.detail; } },
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    location, URLSearchParams,
+  };
+  c.window = c;
+  c.globalThis = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  require('./lib/repo-link').installRepoLink(c);
+  vm.createContext(c);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8'), c);
+  vm.runInContext('globalThis.av = AppView', c);
+  c.av.appData = { slug: 'example', can_collaborate: true };
+  c.av._govProposals = [];
+  return c.av;
+}
+
 const issue = (patch = {}) => ({
   number: 4417, state: 'open', title: 'Add topics', created_by_username: 'evan',
   body: '**Source:** Homeroom admin (evan)\n\nConsider "topics" as other channels.',
@@ -280,6 +315,73 @@ test('the status card asks the bot no more once its change waits for approval', 
   assert.equal(built.action.act, undefined);
 });
 
+// #6399: the status card and the track card said different things at once:
+// "WAITING FOR YOU TO DECIDE" beside "Nobody is working on this yet." with
+// Ask Homeroom bot to build this. The status card now reads the same track.
+test('#6399 the status card agrees with the track when Homeroom bot waits for you', () => {
+  const av = appView();
+  av._ghIssuesMeta = { homeroomBot: { typicalMinutes: 7 } };
+  const reason = 'A design decision: the request does not say which of the two layouts to keep.';
+  const track = (why, line, since = '2026-11-05T11:19:00Z') => ({ work: { stage: 'waiting_for_you', why, line, since } });
+
+  const decide = av._requestStatusView(issue({ track: track('decide', { code: 'reason', text: reason }) }));
+  assert.equal(decide.lead, `Waiting for you to decide. ${reason}`);
+  assert.equal(decide.action.label, 'Go ahead');
+  assert.deepEqual(JSON.parse(JSON.stringify(decide.action.act)),
+    { fn: 'answerBotOnRequest', args: [4417, 0, 1, 'Go ahead'] });
+  assert.equal(decide.botSays, true);
+  assert.equal(decide.ownAgent, false);
+  assert.notEqual(decide.lead, 'Nobody is working on this yet.');
+
+  // Its note in the thread is the reply Go ahead goes to.
+  const noted = av._requestStatusView(issue({
+    botAwaits: { kind: 'person', messageId: 9 }, track: track('decide', { code: 'reason', text: reason }),
+  }));
+  assert.deepEqual(JSON.parse(JSON.stringify(noted.action.act)),
+    { fn: 'answerBotOnRequest', args: [4417, 9, 1, 'Go ahead'] });
+
+  // Waiting for more detail replies to it instead.
+  const detail = av._requestStatusView(issue({ track: track('needs_detail', { code: 'reason', text: 'It needs the screen to change.' }) }));
+  assert.equal(detail.lead, 'Waiting for more detail from you. It needs the screen to change.');
+  assert.equal(detail.action.label, 'Reply to Homeroom bot');
+  assert.deepEqual(JSON.parse(JSON.stringify(detail.action.act)), { fn: 'answerBotOnRequest', args: [4417, 0, 1] });
+
+  // A held queue row keeps its own sentence, as before.
+  assert.equal(av._requestStatusView(issue({ track: { work: { stage: 'reading', why: null, line: { code: 'on_hold' }, since: null } } })).lead,
+    'On hold until Monday: this week\'s building time is used up');
+
+  // A person's session on it wins over the stored track.
+  const worked = av._requestStatusView(issue({
+    in_progress: { claims: [{ username: 'evan', mine: true, claimedAt: '2026-11-05T11:00:00Z' }], sessions: [], users: [], count: 0 },
+    track: track('decide', { code: 'reason', text: reason }),
+  }));
+  assert.equal(worked.lead, 'You’re working on this.');
+
+  // Read-only viewers see the sentence and no action.
+  av.appData = { slug: 'example', can_collaborate: false };
+  const readOnly = av._requestStatusView(issue({ track: track('decide', { code: 'reason', text: reason }) }));
+  assert.equal(readOnly.lead, `Waiting for you to decide. ${reason}`);
+  assert.equal(readOnly.action, null);
+});
+
+// #6399: #6351's reason named a limit Homeroom lifted on 6 Nov 2026. The
+// card says so and offers to read the request again.
+test('#6399 an out-of-date hand-back reason offers to read it again', () => {
+  const av = appView();
+  const stale = av._requestStatusView(issue({
+    track: {
+      work: {
+        stage: 'waiting_for_you', why: 'decide', since: '2026-11-05T11:19:00Z',
+        line: { code: 'reason', text: 'version 3 plan cannot be read here', outdated: 'posted_plan' },
+      },
+    },
+  }));
+  assert.equal(stale.note, 'Homeroom bot can read posted plans now, so this may be out of date.');
+  assert.equal(stale.action.label, 'Ask Homeroom bot to read this again');
+  assert.deepEqual(JSON.parse(JSON.stringify(stale.action.act)), { fn: 'askBotToReadAgain', args: [4417] });
+  assert.notEqual(stale.action.label, 'Ask Homeroom bot to build this');
+});
+
 // One request, one story: the status card says what is really happening.
 test('the status card says what Homeroom bot is really doing, or waiting for', () => {
   const av = appView();
@@ -309,9 +411,63 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   const button = (bot) => av._issuePrimaryActionSpec(issue({ bot }), { noNav: true });
   // #6210: a plan opens its request's page at the plan, for anyone.
   assert.equal(button({ what: 'queued', plan: true, askedBy: 'sam' }).label, 'See the plan');
-  assert.equal(JSON.stringify(button({ what: 'queued', plan: true, askedBy: 'sam' }).act), JSON.stringify({ fn: 'openBotChatFromRequest', args: [issue().number] }));
+  assert.equal(JSON.stringify(button({ what: 'queued', plan: true, askedBy: 'sam' }).act), JSON.stringify({ fn: 'openBotChatFromRequest', args: [issue().number, 'plan'] }));
+  // #6401: See progress names the progress card, not the plan.
+  assert.equal(JSON.stringify(button({ what: 'building', askedBy: 'sam', mine: true }).act), JSON.stringify({ fn: 'openBotChatFromRequest', args: [issue().number, 'progress'] }));
   assert.equal(button({ what: 'queued', held: true }).label, 'Homeroom bot will build this');
   assert.equal(button({ what: 'queued' }).label, 'Homeroom bot is on it');
+});
+
+// #6401: pressing See progress from the Workshop list does not redraw the
+// page when the side panel is already on it (its route is the path, the hash
+// empty), lands on the card the label names even when the plan is there, and
+// outlines that card.
+test('#6401 See progress and See the plan land on the card their label names, without redrawing the page', () => {
+  const calls = [];
+  const card = (track) => ({
+    getAttribute: (name) => (name === 'data-request-track' ? track : null),
+    scrollIntoView: (opts) => calls.push({ card: track || 'plan', scroll: opts }),
+    animate: (frames, opts) => calls.push({ card: track || 'plan', animate: opts, frames }),
+  });
+  const location = { hash: '', pathname: '/app/example/dev/issues/4417' };
+  const query = { '.dev-request-track': card('reading'), '[data-request-plan]': card(null) };
+  const av = sandboxAppView(location, query);
+  av.openBotChatFromRequest(4417, 'progress');
+  assert.equal(location.hash, '', 'the side panel is already on the request: no hash, no redraw');
+  assert.equal(calls[0].card, 'reading');
+  assert.equal(calls[0].scroll.block, 'center');
+  assert.equal(calls[0].scroll.behavior, 'smooth');
+  assert.equal(calls[1].card, 'reading', 'the progress card, not the plan card beside it');
+  assert.equal(calls[1].animate.duration, 1600);
+  assert.match(calls[1].frames[0].outline, /^3px solid /);
+  assert.equal(calls[1].frames[2].outline, '3px solid transparent', 'it fades back to normal');
+
+  // See the plan lands on the plan, with no fallback to the progress card.
+  calls.length = 0;
+  av.openBotChatFromRequest(4417, 'plan');
+  assert.equal(location.hash, '');
+  assert.deepEqual(calls.map((c) => c.card), ['plan', 'plan']);
+
+  // From the board, the hash is written and the page draws.
+  const board = { hash: '#app/example/dev/workshop', pathname: '/app/example/dev/workshop' };
+  const away = sandboxAppView(board, query);
+  away.openBotChatFromRequest(4417, 'progress');
+  assert.equal(board.hash, '#app/example/dev/issues/4417');
+});
+
+// #6401: the progress card drawn from the board's older row (`pending`) is
+// not landed on: the loop waits for the fresh row.
+test('#6401 a pending progress card is waited for, not scrolled to', () => {
+  const calls = [];
+  const pending = {
+    getAttribute: () => 'pending',
+    scrollIntoView: () => calls.push('scroll'),
+    animate: () => calls.push('animate'),
+  };
+  const av = sandboxAppView({ hash: '#app/example/dev/issues/4417', pathname: '/' },
+    { '.dev-request-track': pending, '[data-request-plan]': null });
+  av.openBotChatFromRequest(4417, 'progress');
+  assert.deepEqual(calls, [], 'the hidden card holds its place unseen');
 });
 
 // #6387: a change whose checks failed cannot go live, however many yes votes

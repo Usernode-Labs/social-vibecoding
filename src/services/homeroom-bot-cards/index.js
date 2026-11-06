@@ -58,10 +58,21 @@ function boundedValue(value) {
 }
 
 /**
- * Merge `patch` into a message's card and tell every tab that has it open.
- * Never throws.
+ * Pure: whether a bot message's buttons are all suggestions of what to say
+ * next, never a decision (the same test as homeroom-bot-dm.js suggestsOnly).
  */
-async function setCardState(pool, messageId, patch, { userId = null, ws = null } = {}) {
+function suggestionsOnly(bot) {
+  const actions = Array.isArray(bot?.actions) ? bot.actions : [];
+  return actions.length > 0 && actions.every((action) => action?.type === 'reply' || (action?.type === 'prompt' && !action.quote));
+}
+
+/**
+ * Merge `patch` into a message's card and tell every tab that has it open.
+ * `closeSuggestions` also settles the message's own suggestions in the same
+ * write (#6404: answering a Questions card leaves nothing else to tap, on
+ * every device at once). Never throws.
+ */
+async function setCardState(pool, messageId, patch, { userId = null, ws = null, closeSuggestions = false } = {}) {
   try {
     const { rows } = await pool.query(
       'SELECT metadata, conversation_id, sender_id, thread_root_id FROM conversation_messages WHERE id = $1',
@@ -72,9 +83,9 @@ async function setCardState(pool, messageId, patch, { userId = null, ws = null }
     const bot = metadata.homeroomBot && typeof metadata.homeroomBot === 'object' ? metadata.homeroomBot : {};
     const card = bot.card && typeof bot.card === 'object' ? bot.card : null;
     if (!card) return false;
-    await require('../conversations').setMessageMetadata(pool, messageId, {
-      ...metadata, homeroomBot: { ...bot, card: { ...card, ...patch } },
-    });
+    const next = { ...bot, card: { ...card, ...patch } };
+    if (closeSuggestions && bot.status === 'open' && suggestionsOnly(bot)) next.status = 'closed';
+    await require('../conversations').setMessageMetadata(pool, messageId, { ...metadata, homeroomBot: next });
     const io = ws || require('../ws');
     io.pushConversationEvent([rows[0].sender_id, userId].filter(Boolean), {
       type: 'conversation_message_updated', conversationId: Number(rows[0].conversation_id), messageId: Number(messageId),
@@ -121,7 +132,11 @@ async function decide(pool, config, { user, messageId, action, value = null, dep
     });
     if (!out || typeof out !== 'object') return { ok: false, status: 500, error: 'That did not work just now' };
     if (out.ok && out.patch && typeof out.patch === 'object') {
-      await setCardState(pool, Number(row.id), out.patch, { userId: user.id, ws: deps.ws || null });
+      // #6404: a Questions card is the message's one set of answers, so
+      // answering or skipping it closes its suggested replies too.
+      await setCardState(pool, Number(row.id), out.patch, {
+        userId: user.id, ws: deps.ws || null, closeSuggestions: card.type === 'questions',
+      });
     }
     const { patch: _patch, ...rest } = out;
     return rest;

@@ -104,7 +104,10 @@ const PROFILES = Object.freeze({
   }),
   change: profile('change', {
     surface: 'thread', scope: 'thread', prompt: 'change', places: ['session'], limits: THREAD_LIMITS,
-    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'offer_withdraw']),
+    // #6389: the change's author (or its request's requester, once it is
+    // abandoned) may ask the bot to make its own version of a change made
+    // outside Homeroom.
+    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'offer_withdraw', 'make_own_version']),
     speaks: Object.freeze([...THREAD_CHECKS, 'not_queued_as_ask', 'own_change', 'addressed']),
   }),
   channel: profile('channel', {

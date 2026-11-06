@@ -385,7 +385,7 @@ const SETTLE_REASONS = new Set(['thread', 'proposal_thread']);
 // request gets a card in its requester's chat with the bot, however it was
 // asked (homeroom-bot-activity.js startCard); `inDm` says only that its
 // thread starts "Filed from our chat."
-const DM_REASONS = new Set(['dm_request', 'dm_start', 'dm_go_ahead', 'dm_answer', 'dm_comment', 'dm_revise', 'plan_change']);
+const DM_REASONS = new Set(['dm_request', 'dm_start', 'dm_go_ahead', 'dm_answer', 'dm_comment', 'dm_revise', 'plan_change', 'dm_own_version']);
 // #6252: a start the person the bot's last note named asked for in their
 // chat, said in answer to that note. It is charged as `dm_start` is, but its
 // look reads the request knowing that what the note left for a person is
@@ -4815,6 +4815,11 @@ async function runTriage(pool, config, {
         // request's first look has no note before it, and speaks.
         askedLook: item.reason === ASKED_REASON,
         comments,
+        // #6399: a read a person asked for again, once the reason its last
+        // one handed back had gone (homeroom-bot-dm.js askBotToBuild
+        // `readAgain`), always says what it found: the page offered it
+        // because that note is out of date, so it may not be held back.
+        askedAgain: item.reason === READ_AGAIN_REASON && Number(item.requested_by) > 0,
         model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
         quietHold: item.reason === APP_AGAIN_REASON || item.reason === BACKLOG_REASON,
         proposalCeiling: botProposalCeiling(settings),
@@ -7455,7 +7460,8 @@ async function heldLimit(pool, { capSuppressed, app, issueNumber, proposalCeilin
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
-  proposalCeiling = EVERYONE_PROPOSAL_CEILING, firstVersion = false, relook = false, askedLook = false, comments = [],
+  proposalCeiling = EVERYONE_PROPOSAL_CEILING, firstVersion = false, relook = false, askedLook = false,
+  askedAgain = false, comments = [],
   decider = null, backlog = false, goAhead = null, deps,
 }) {
   const { github, ws } = deps;
@@ -7485,7 +7491,7 @@ async function actOnVerdict({
   // there is the voice's to answer (homeroom-bot-voice.js), not a reason to
   // say the note again.
   const voiceAnswers = (relook || askedLook) && voiceModule(deps).voiceOn(await readSettings(pool).catch(() => null), { type: 'issue' });
-  const gated = (relook || askedLook) && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict);
+  const gated = (relook || askedLook) && !askedAgain && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict);
   // #6146: after "a person needs to decide", which tells them to reply in the
   // discussion, a plain message there from its requester or a decider it
   // names is their answer (answerersOf), not people talking among themselves.
@@ -8644,6 +8650,27 @@ async function noteBuiltFrom(pool, { sessionId, from }) {
   }
 }
 
+// ── #6389: the bot's own version of a person's change ────────────────────
+
+/** The one unused ask to rebuild a request's change, or null. */
+async function takeOwnVersionAsk(pool, appId, issueNumber) {
+  const { rows } = await pool.query(
+    `SELECT id, from_session_id, asked_by FROM bot_version_asks
+      WHERE app_id = $1 AND issue_number = $2 AND used_at IS NULL
+      ORDER BY id LIMIT 1`,
+    [Number(appId), Number(issueNumber)],
+  );
+  return rows[0] || null;
+}
+
+/** Mark an ask taken: one unused ask per request, so a second look finds none. */
+async function markOwnVersionAskUsed(pool, askId) {
+  await pool.query('UPDATE bot_version_asks SET used_at = now() WHERE id = $1 AND used_at IS NULL', [Number(askId)]);
+}
+
+// #6389: the two lines on the changes' threads once the bot's own version is
+// proposed live in the live module (`live.sayOwnVersionProposed`), which is
+// the one place this file posts through.
 async function buildLive({
   pool, config, bot, app, repo, issueNumber, issue, parsed, runId,
   seed, seedReadAt, postedAt = [], turnBudgetMs, model: stageBuildModel, specModel: stageSpecModel = null, botLogin = null,
@@ -8672,6 +8699,20 @@ async function buildLive({
   const model = recipe ? recipe.models.build : stageBuildModel;
   const specModel = recipe ? recipe.models.spec : stageSpecModel;
   const guidance = recipe ? await botConfigs().recipeGuidance(pool, recipe) : null;
+  // #6389: a person asked the bot to make its own version of their change.
+  // Read once, as a durable step: the build starts from that change's
+  // branch (session-lifecycle's rebuilt_from_session_id) and its note says
+  // what to do with it.
+  const ownAsk = await steps.once('own_version_ask', async () => {
+    const ask = await takeOwnVersionAsk(pool, app.id, issueNumber);
+    return ask
+      ? { id: Number(ask.id), fromSessionId: Number(ask.from_session_id), askedBy: ask.asked_by == null ? null : Number(ask.asked_by) }
+      : null;
+  });
+  const buildNote = ownAsk
+    ? [parsed?.buildNote, 'Start from the person\'s change already on this branch, keep what it does, bring it up to date with main, and make its failing tests pass.']
+      .filter(Boolean).join('\n')
+    : parsed?.buildNote;
   if (version) {
     await pool.query('UPDATE homeroom_bot_runs SET bot_config_version_id = $2 WHERE id = $1', [runId, version.id])
       .catch((err) => log.warn('homeroom-bot', 'Could not record the run\'s configuration', { runId, err: err.message }));
@@ -8738,7 +8779,7 @@ async function buildLive({
     // and so do its side builds, which replay this snapshot.
     const starter = firstVersion ? await starterOfApp(pool, app.id).catch(() => null) : null;
     const snapshotId = await steps.once('snapshot', () => recordBuildSnapshot(pool, {
-      runId, app, repo, issueNumber, seed, buildNote: parsed.buildNote, github,
+      runId, app, repo, issueNumber, seed, buildNote, github,
       firstVersion, platformRepo: isPlatformRepo(app, config), model, specModel, starter,
     }));
     // The side builds, queued on the App bench lane before the live build
@@ -8769,9 +8810,12 @@ async function buildLive({
     const requester = await (deps.dm || require('./homeroom-bot-dm'))
       .requesterOf(pool, app.id, issueNumber).catch(() => null);
     const buildArgs = {
-      pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
+      pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
       ...recipeBudgets(app, config, turnBudgetMs, { firstVersion, recipe }), model, specModel, deps, onSpec, proposalCeiling,
       platformRepo: isPlatformRepo(app, config), presetSpec,
+      // #6389: the change this version is built from, for its branch
+      // (session-lifecycle.ensureSessionBranch) and their link on the page.
+      fromSessionId: ownAsk?.fromSessionId || null,
       locale: requester?.locale || null,
       // #3737: a first version's spec and build decide and record its look;
       // made from a game starter, they build on it.
@@ -8803,6 +8847,11 @@ async function buildLive({
         if (!claim.claimed) return LOST_CLAIM;
         claims += 1;
         if (builtFrom) await noteBuiltFrom(pool, { sessionId: session.id, from: builtFrom });
+        // #6389: the ask is taken once its build has a session, so a second
+        // look of the same request starts nothing of its own.
+        if (ownAsk?.id) {
+          await markOwnVersionAskUsed(pool, ownAsk.id).catch((err) => log.warn('homeroom-bot', 'Could not mark an own-version ask used', { runId, err: err.message }));
+        }
         const { waitedMs } = claim;
         log.info('homeroom-bot', 'A live build took its slot', {
           app: app.slug, issueNumber, runId, sessionId: session.id, waitedMs, attempt: claims,
@@ -8993,6 +9042,25 @@ async function buildLive({
     acted = await steps.once('announced', () => announceBuilt({
       pool, ws, app, bot, issueNumber, runId, built, say, domain: deps.domain, firstVersion,
     }));
+    // #6389: the bot's own version of somebody's change is on their page
+    // beside theirs, and both say the votes do not carry over.
+    if (ownAsk?.fromSessionId && built.sessionId) {
+      await steps.once('own_version_said', async () => {
+        const author = ownAsk.askedBy
+          ? (await pool.query('SELECT username FROM users WHERE id = $1', [ownAsk.askedBy]).catch(() => ({ rows: [] }))).rows[0]?.username || null
+          : null;
+        const { rows: [original] } = await pool.query(
+          'SELECT id, pr_number FROM chat_sessions WHERE id = $1', [ownAsk.fromSessionId],
+        ).catch(() => ({ rows: [] }));
+        if (original) {
+          await live.sayOwnVersionProposed(pool, {
+            app, ws, originalId: original.id, originalNumber: original.pr_number,
+            newId: built.sessionId, newNumber: built.prNumber || null, author,
+          });
+        }
+        return true;
+      });
+    }
   }
   await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [runId]).catch(() => {});
   await live.advanceSeen({

@@ -2187,7 +2187,15 @@ function sayDoing(pool, ctx, name, args = {}) {
       project = ctx.projectNames.get(asked);
     }
     const what = doingFor(name, args, { project });
-    if (what !== undefined) await doing(what);
+    if (what === undefined) return;
+    // #6405: once the turn has named a step, a tool with no name of its own
+    // leaves that step up, rather than dropping the card back to "Thinking".
+    if (what === null) {
+      if (ctx.doingNamed) return;
+    } else {
+      ctx.doingNamed = true;
+    }
+    await doing(what);
   };
   ctx.saying = (ctx.saying || Promise.resolve()).then(say).catch((err) => {
     log.warn('homeroom-bot-mayor', 'Could not say what the bot is doing', { tool: clip(name, 40), err: clip(err?.message, 200) });
@@ -2263,7 +2271,7 @@ function draftOf({ content = '', toolCalls = [] } = {}) {
 
 /**
  * What shows the answer as it is written, for one turn: `onDelta` for the
- * transport, `clear()` before a pass that writes it again, `close()` once
+ * transport, `restart()` before a pass that writes it again, `close()` once
  * the turn's own message is on its way. Null when nothing can show it (no
  * working card: deps.doing). Never rejects.
  */
@@ -2272,6 +2280,10 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
   if (typeof doing !== 'function') return null;
   let latest = '';
   let shown = '';
+  // #6405: after `restart()`, the words already on the card stay until the
+  // rewritten answer has caught up with them, so it never shrinks or streams
+  // again from its first word.
+  let floor = 0;
   let queued = false;
   let closed = false;
   let lastAt = 0;
@@ -2279,13 +2291,22 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
     const gap = lastAt + every - Date.now();
     if (gap > 0) await wait(gap);
     queued = false;
-    if (closed || latest === shown) return;
+    // A round that calls another tool writes no answer: say nothing and keep
+    // the words on the card, instead of dropping it back to "Thinking".
+    if (closed || !latest || latest === shown) return;
     shown = latest;
     lastAt = Date.now();
-    await doing(shown ? { kind: 'writing', text: shown } : null);
+    ctx.doingNamed = true;
+    await doing({ kind: 'writing', text: shown });
   };
   const set = (text) => {
     if (closed) return;
+    if (floor) {
+      // A rewritten answer shows only once it is at least as long as what is
+      // already on the card.
+      if (!text || text.length < floor) return;
+      floor = 0;
+    }
     latest = text;
     if (queued || latest === shown) return;
     queued = true;
@@ -2299,7 +2320,10 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
       // 2 Nov 2026: the words already kept from earlier rounds stay on the card (answerText).
       if (text !== null) set(text && ctx.besides?.length ? answerText(ctx.besides, text) : text);
     },
-    clear() { set(''); },
+    // #6405: the correction pass writes the answer again. What is shown stays,
+    // and the rewrite takes over only once it has caught up with it (or with
+    // the longer update still on its way to the card).
+    restart() { floor = Math.max(shown.length, latest.length); },
     // `clear`: what was shown goes too (the turn found no answer to send).
     close({ clear = false } = {}) {
       if (closed) return;
@@ -4159,8 +4183,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         });
         const first = ctx.reply ? { ...ctx.reply } : { text: finalText, cards: [] };
         messages.push({ role: 'user', content: checkNote(problems) });
-        // P1: the answer shown as it was written goes; the next pass writes it again.
-        draft?.clear();
+        // P1: the next pass writes the answer again; what is already shown
+        // stays until the rewrite has caught up with it (#6405).
+        draft?.restart();
         ctx.reply = null;
         finalText = '';
         // #6307: the first pass's words beside its calls go too, so the second
@@ -4271,8 +4296,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   cards = [...ctx.cards, ...replyCards];
   const unique = [...new Map(cards.map((c) => [JSON.stringify(c), c])).values()].slice(0, MAX_CARDS);
   // What they might say next, as buttons to tap (dm.retireSuggestions
-  // closes them once the bot says something newer).
-  const next = suggestionLabels(ctx.reply?.suggestions);
+  // closes them once the bot says something newer). #4046, #6404: one set of
+  // answers at a time: a Questions card under this reply is the answer set,
+  // so the reply's suggestions are dropped rather than stored beside it.
+  const next = toolCard?.type === 'questions' ? [] : suggestionLabels(ctx.reply?.suggestions);
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
   const actions = prompts.slice(0, 3);
   const project = named.project ? { appSlug: named.project } : {};
@@ -5811,6 +5838,23 @@ async function startRequest(pool, ctx, args) {
   const payer = user.id;
   if (await dm.overWeeklyAllowance(pool, settings, payer)) {
     return { ok: false, error: 'Their building time for this week is used up, so it cannot start this week. Nothing was started. It resets on Monday; someone else in the project can ask for it before then.' };
+  }
+  // #6389: the person asked the bot to make its own version of their change
+  // (homeroom-bot-voice.js makeOwnVersion). The look builds from the
+  // original change's branch, which the ask records; its own pending and
+  // cap checks still decide whether there is room.
+  if (Number.isInteger(Number(args.ownVersionOf)) && Number(args.ownVersionOf) > 0) {
+    const queuedOwn = await botModule(deps).enqueueFront(pool, {
+      appId: app.id, issueNumber: n, userId: user.id, reason: 'dm_own_version', payerId: user.id,
+    });
+    ctx.started = name;
+    ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
+    require('./bot-work-changed').noteWorkChanged(user.id, deps);
+    return {
+      ok: true,
+      ...(queuedOwn ? {} : { already: 'A look on it is running now; this one follows it.' }),
+      built: 'Your own version starts as soon as a builder is free. It begins from their change, fixes what fails and brings it up to date with main.',
+    };
   }
   const open = await liveModule(deps).openBotProposal(pool, ctx.bot.id, app.id, n);
   if (open?.status === 'promoted') {
