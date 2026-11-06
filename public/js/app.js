@@ -6086,6 +6086,9 @@ const App = {
             subTab = 'topic'; // #4367: by PR number; the topic view finds the session
             ref = { kind: 'proposal', id: null, pr: App._changeNumber(parts[4]) };
           } else if (sec === 'governance' && parts[4]) {
+            // #6439: a vote to close a request forwards to the request's
+            // page (`AppView._renderTopicSubView` and `openTopicInPanel`);
+            // every other decision keeps this page.
             subTab = 'topic';
             ref = { kind: 'gov', id: parseInt(parts[4]) || null };
           } else if (sec === 'shared' && parts[4]) {

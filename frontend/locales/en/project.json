@@ -6207,6 +6207,22 @@
     "text": "You said no.",
     "description": "Line under the Votes card of a proposal to close the request, once the person voted no."
   },
+  "topic.thread.close.closedByVote": {
+    "text": "Closed by vote.",
+    "description": "First words of the line under a request's vote to close it, once the vote has ended: the group voted to close the request, and it closed."
+  },
+  "topic.thread.close.keptOpen": {
+    "text": "Kept open.",
+    "description": "First words of the line under a request's vote to close it, once the vote has ended: the vote was withdrawn or could not be applied, so the request stays open."
+  },
+  "topic.thread.close.closedElsewhere": {
+    "text": "Ended: the request closed another way.",
+    "description": "First words of the line under a request's vote to close it, once the vote has ended because the request closed another way (a change merged, or it was closed on GitHub)."
+  },
+  "topic.thread.close.showAll": {
+    "text": "Show all replies",
+    "description": "Button under a request's vote to close it, under the first few replies people posted on the vote: opens the rest of them."
+  },
   "topic.thread.pill.choosing": {
     "text": "Pick one",
     "description": "Status pill beside a request's number in its page's header: two or more changes (or a change and a proposal to close it) are up for one vote between them."
