@@ -403,14 +403,17 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
   let lead: ReactNode;
   let eyebrow: string;
   let status: ReactNode;
-  if (card && working && card.stage === 'on_hold') {
-    // Its building time for the week is used up: no step moving, no spinner.
+  if (card && working && (card.stage === 'on_hold' || card.stage === 'cooldown')) {
+    // Its building time for the week is used up, or (#6357) it is paused for
+    // a day after repeated errors: no step moving, no spinner.
+    const cooldown = card.stage === 'cooldown';
     lead = <ActivityLead />;
-    eyebrow = t('messages:bot.state.onHold');
+    eyebrow = cooldown ? t('messages:bot.state.cooldown') : t('messages:bot.state.onHold');
     status = (
       <>
         {project ? <span>{`${project} · `}</span> : null}
-        <span role="status">{card.doing ? capitalized(card.doing) : t('messages:bot.state.line.onHold')}</span>
+        <span role="status">{card.doing ? capitalized(card.doing)
+          : cooldown ? t('messages:bot.state.line.cooldown') : t('messages:bot.state.line.onHold')}</span>
       </>
     );
   } else if (card && working) {

@@ -93,7 +93,7 @@ const REASON_WORDS: Record<Reason, string> = {
   stalled: 'core:work.reason.stalled',
 };
 
-const NOT_STARTED: ReadonlySet<string> = new Set(['queued', 'waiting', 'on_hold', 'first_version_wait']);
+const NOT_STARTED: ReadonlySet<string> = new Set(['queued', 'waiting', 'on_hold', 'cooldown', 'first_version_wait']);
 const READY: ReadonlySet<string> = new Set(['queued', 'held_builds', 'held_waiting']);
 
 // The second lines that need no value.
@@ -103,6 +103,7 @@ const LINE_WORDS: Record<string, string> = {
   held_builds: 'core:work.line.heldBuilds',
   held_waiting: 'core:work.line.heldWaiting',
   on_hold: 'core:work.line.onHold',
+  cooldown: 'core:work.line.cooldown',
   reply: 'core:work.line.reply',
   retry_plan: 'core:work.line.retryPlan',
   starting: 'core:work.line.starting',

@@ -459,6 +459,8 @@ export interface BotTrack {
   links: HomeroomBotLinks;
   /** `by`: who has it, for a request a person took (limit 'taken'). */
   held?: { limit: string; position: number | null; until: string | null; by?: string | null };
+  /** #6357: paused after repeated errors (line `cooldown`): when Homeroom bot tries again. */
+  retryAt?: string;
   queue?: { ahead: number };
   doneBy?: { username: string | null; prNumber: number | null };
   release?: ReleaseOutlook;

@@ -1514,6 +1514,7 @@ export function normalizeBotTrack(input: unknown): BotTrack | null {
         ...(text(pick(held, 'limit')) === 'taken' ? { by: text(pick(held, 'by')) || null } : {}),
       },
     } : {}),
+    ...(text(pick(row, 'retryAt')) ? { retryAt: text(pick(row, 'retryAt')) } : {}),
     ...(pick(queue, 'ahead') !== undefined ? { queue: { ahead: Math.max(0, Number(pick(queue, 'ahead')) || 0) } } : {}),
     ...(work.stage === 'closed' && pick(row, 'doneBy') ? {
       doneBy: { username: text(pick(doneBy, 'username')) || null, prNumber: strictId(pick(doneBy, 'prNumber')) },
@@ -1643,7 +1644,8 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
       ...(working && from && to && from <= to && to <= 120 ? { typicalMinutes: { from, to } } : {}),
       // Who the work waits on while it waits (`them`: the viewer), so the card can say it needs them.
       ...(working && text(pick(row, 'waitingOn')) ? { waitingOn: text(pick(row, 'waitingOn')).slice(0, 40) } : {}),
-      // The stage it is at while it works (`on_hold`: until Monday), a short word.
+      // The stage it is at while it works (`on_hold`: until Monday; `cooldown`:
+      // paused after repeated errors), a short word.
       ...(working && /^[a-z_]{1,40}$/.test(text(pick(row, 'stage'))) ? { stage: text(pick(row, 'stage')) } : {}),
       // Why a build stopped, and which limit holds a request back: known words only.
       ...(!working && outcome === 'build_failed' && STOP_CAUSES.has(text(pick(row, 'stopCause')))

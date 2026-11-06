@@ -430,7 +430,7 @@ function waitingRank(t) {
   if (stage === 'checking' || (stage === 'planning' && code !== 'retry_plan')) return 0;
   if (stage === 'planning') return 4;
   if (stage === 'building') return code === 'queued' ? 2 : 3;
-  if (stage === 'reading') return code === 'queued' ? 4 : code === 'on_hold' ? 5 : 6;
+  if (stage === 'reading') return code === 'queued' ? 4 : code === 'on_hold' || code === 'cooldown' ? 5 : 6;
   return 6;
 }
 
