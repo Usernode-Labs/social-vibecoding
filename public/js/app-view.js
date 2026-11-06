@@ -6307,11 +6307,16 @@ const AppView = {
     const upForVote = (!st || st.key === 'bot') && ref && ref.state === 'review';
     // 1 Nov 2026: the bot waits for their plan (_planHeld).
     const planHeld = !merged && !closed && !ref && AppView._planHeld(issue);
+    // #6375: queued but held until later. issue.bot leaves a held queue row
+    // out (homeroom-bot-progress.js botWorkByIssue), so with nobody else on
+    // it the stored work state says where it is, as the track card does.
+    const hold = !st && !merged && !closed ? AppView._requestHoldLead(issue.track) : null;
     let lead;
     if (merged) lead = PlatformI18n.t('changes:request.status.lead.live');
     else if (waitingOnBot && waitingOnBot.kind === 'question') lead = PlatformI18n.t('changes:request.status.lead.botQuestion');
     else if (planHeld) lead = PlatformI18n.t('changes:request.status.lead.botWaitsPlan');
     else if (upForVote) lead = AppView._requestUpForVoteLead(ref);
+    else if (hold) lead = hold;
     else if (!st) lead = PlatformI18n.t('changes:request.status.lead.nobody');
     else if (st.key === 'in_review') {
       lead = who === 'you' ? PlatformI18n.t('changes:request.status.lead.reviewYours')
@@ -6386,6 +6391,9 @@ const AppView = {
       // #6210 (3 Nov 2026): the plan is on this page, under this card, with
       // its Build it (request-plan.tsx): no button here sends anyone away.
       action = null;
+    } else if (hold) {
+      // #6375: the bot already has it: asking it again would do nothing.
+      action = toChange;
     } else if (!AppView.readOnly) {
       const primary = AppView._issuePrimaryActionSpec(issue, { noNav: true });
       action = primary
@@ -6411,7 +6419,7 @@ const AppView = {
       closed: closed && !merged ? (when ? PlatformI18n.t(closedIds.when, { when }) : PlatformI18n.t(closedIds.alone)) : null,
       // The sentence is Homeroom bot's state, plan included: no "Plan v1 is
       // ready for comments." after it (request-head.tsx).
-      botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot') || planHeld),
+      botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot') || planHeld || !!hold),
       // 1 Nov 2026: "Build it in an agent session" is a row of the page's ⋯,
       // where its one action is Work on this with Homeroom bot.
       agentSession,
@@ -6419,9 +6427,27 @@ const AppView = {
       // where starting work on it is still open to this viewer: an open
       // request with no change built for it, nobody's bot on it, and no
       // session of the viewer's own already working on it.
-      ownAgent: !closed && !merged && !ref && !AppView.readOnly && !bot && !waitingOnBot
+      ownAgent: !closed && !merged && !ref && !AppView.readOnly && !bot && !waitingOnBot && !hold
         && !issue.myPrSessionId && !(st && st.key === 'in_review'),
     };
+  },
+
+  // #6375: the stored work state's own second line for a request Homeroom
+  // bot holds (routes/issues.js track, services/work-state.js), the words
+  // the track card says, or plainly until when when that line has no words
+  // here. Null when its track holds nothing.
+  REQUEST_HOLD_LINE_IDS: {
+    on_hold: 'core:work.line.onHold',
+    held_builds: 'core:work.line.heldBuilds',
+    held_waiting: 'core:work.line.heldWaiting',
+  },
+  _requestHoldLead(track) {
+    const work = track && track.work;
+    if (!work) return null;
+    const id = AppView.REQUEST_HOLD_LINE_IDS[work.line && work.line.code];
+    if (id) return PlatformI18n.t(id);
+    const date = track.held && track.held.until ? AppView._workDateText(Date.parse(track.held.until)) : '';
+    return date ? PlatformI18n.t('changes:request.status.lead.botOnHoldUntil', { date }) : null;
   },
 
   // The status card's sentence for a change up for a vote that no person's
