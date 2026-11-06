@@ -297,6 +297,17 @@ async function postRequestSpec(pool, { app, repo, issueNumber, issueTitle = null
   } catch (err) {
     log.warn('request-specs', 'Could not lift the bot\'s wait for a plan', { appId: app.id, issueNumber, err: err.message });
   }
+  // #6406: a newer version must reach the bot while it builds, or after the
+  // change is up, not only when somebody asks. The post never fails on it.
+  try {
+    await (deps.planUpdates || require('./homeroom-bot-plan-updates')).noticeNewerPlan(pool, {
+      app, issueNumber, posted: { sessionId, version, user },
+    }, deps);
+  } catch (err) {
+    log.warn('request-specs', 'Could not tell the bot about a newer plan', {
+      appId: app.id, issueNumber, sessionId, version, err: err.message,
+    });
+  }
   return {
     sessionId: Number(sessionId),
     version: Number(version),

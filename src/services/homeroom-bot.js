@@ -5568,7 +5568,12 @@ async function runFollowUp(pool, config, {
     // Updates a person asked for have their own higher cap, and an open
     // grant buys one more of the bot's own.
     const revisions = await followup.revisionCounts(pool, session.id);
-    return { ...revisions, baseSha: session.reviewed_head_sha || null, spec: await proposalSpec(pool, session.id) };
+    // #6406: the newest plan on the request, when the change is not built
+    // from it, so the update follows it and notes what it now builds from.
+    const newerPlan = await require('./homeroom-bot-plan-updates')
+      .newerPlanFor(pool, { appId: app.id, issueNumber, sessionId: session.id })
+      .catch(() => null);
+    return { ...revisions, baseSha: session.reviewed_head_sha || null, spec: await proposalSpec(pool, session.id), newerPlan };
   });
   // A checks fix may run on the bot's own rounds, or on a grant somebody
   // spent; a reply may update the change while asked updates remain.
@@ -5622,6 +5627,8 @@ async function runFollowUp(pool, config, {
     // #5371: the requester's name, so the prompt can tell them apart from
     // whoever answered its questions about the request.
     requester: requester?.username || null,
+    // #6406: the newer plan this update should follow, when there is one.
+    newerPlan: basis.newerPlan || null,
   });
   snapshot = {
     stage: 'followup', appId: app.id, issueNumber,
@@ -5786,6 +5793,14 @@ async function runFollowUp(pool, config, {
   // this for the new head (server.js finalizeRecoveredTurn).
   // Each once across the look's attempts (a retry after a restart).
   if (moved) await look.once('reconcile', async () => { await reconcileRevision({ config, pool, session, app, issueNumber, deps }); return true; });
+  // #6406: an update that followed a newer plan now builds from it, so the
+  // change's plan line reads "Built from v2" and no longer says v2 is newer.
+  if (moved && basis.newerPlan) {
+    await look.once('built_from', () => noteBuiltFrom(pool, {
+      sessionId: session.id,
+      from: { sessionId: basis.newerPlan.sessionId, version: basis.newerPlan.version },
+    }));
+  }
   // #3767: and its name, when the revision changed what it does. Ear Trainer's
   // size options were taken out and its proposal was still called "Lead size
   // options with the number of sounds" when it merged.
@@ -6865,6 +6880,14 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
         app: app.slug, issueNumber, sessionId: built.sessionId, err: err.message,
       }));
     }
+    // #6406: a plan posted while this build ran is followed now, without
+    // waiting for somebody to ask. It says so in the thread and queues the
+    // update through the voice's ask path. Best effort, never into the build.
+    await require('./homeroom-bot-plan-updates').followNewerPlan(pool, {
+      app, issueNumber, sessionId: built.sessionId, bot, reason: 'building',
+    }).catch((err) => log.warn('homeroom-bot', 'Could not follow a plan posted while building', {
+      app: app.slug, issueNumber, sessionId: built.sessionId, err: err.message,
+    }));
     return 'proposed';
   }
   if (built.blocked) {
@@ -11270,6 +11293,12 @@ module.exports = {
   // #4662: put a live run back in line with its kept plan, markdown and HTML.
   liveSayer,
   announceBuilt,
+  // 1 Nov 2026 (C2.3): a ready request with a plan a person posted on it.
+  // #6406: the plan update module calls it when a newer version replaces the
+  // one a waiting run recorded.
+  usePersonPlan,
+  // C2.3: the plan a change is built from.
+  noteBuiltFrom,
   RESTART_REASON,
   RETRY_FAILED_REASON,
   READ_AGAIN_REASON,

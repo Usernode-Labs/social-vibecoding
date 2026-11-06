@@ -793,7 +793,9 @@ async function placeMessages(pool, { app, place, limit = MAX_TRANSCRIPT, onlyId 
 
 /** Pure: one message as the transcript shows it to the model. */
 function transcriptLine(m, botId, { whole = false } = {}) {
-  const at = new Date(m.created_at).toISOString().slice(5, 16).replace('T', ' ');
+  // #6406: the date only. A UTC clock time here read as the reader's own
+  // time, and the model echoed "13:27" into a thread showing 2:27 PM.
+  const at = new Date(m.created_at).toISOString().slice(0, 10);
   const who = Number(m.user_id) === Number(botId) ? 'you (Homeroom bot)'
     : !m.user_id ? 'Homeroom' : `@${m.username || 'someone'}`;
   const quote = m.metadata?.quote?.refMsgId
@@ -987,11 +989,22 @@ async function openChanges(pool, { appId, botId }) {
     [appId, botId],
   );
   return rows.map((r) => ({
-    change: Number(r.id),
-    pr: r.pr_number ? Number(r.pr_number) : null,
-    title: r.title || null,
+    ...changeRef(r),
     request: Array.isArray(r.linked_issues) && r.linked_issues.length ? Number(r.linked_issues[0]) : null,
   }));
+}
+
+/**
+ * #6406: a change as the bot names it to people: "Change #178", never the
+ * internal id, which is only for tool arguments. Pure.
+ */
+function changeRef(row) {
+  return {
+    change: Number(row.id),
+    name: row.pr_number ? `Change #${Number(row.pr_number)}` : 'the change',
+    pr: row.pr_number ? Number(row.pr_number) : null,
+    title: row.title || null,
+  };
 }
 
 /** What the asks waiting on a change are, and whether its follow-up is running. */
@@ -1052,7 +1065,11 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
       : tool
         ? `built by ${author} in ${tool} (made outside Homeroom: you cannot edit it, and it has no Fix it button)`
         : `built by ${author} on Homeroom`;
-    lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: change ${change.id}${change.pr_number ? ` (PR ${change.pr_number})` : ''}, "${clip(change.title, 160)}", ${built}, status ${change.status}${request ? `, for request #${request}` : ''}.`);
+    // #6406: name it the way the screen does; the id is only for tools.
+    lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: `
+      + `${change.pr_number ? `Change #${Number(change.pr_number)}` : 'the change'} `
+      + `(its id, for tool arguments only, is ${change.id}), "${clip(change.title, 160)}", ${built}, `
+      + `status ${change.status}${request ? `, for request #${request}` : ''}.`);
     if (!own && change.external_agent && Number(change.user_id) === Number(speaker.id)) {
       lines.push(`The person who wrote to you made this change (${author}): answer them as you.`);
     }
@@ -1178,6 +1195,12 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
       : '  it later: nothing brings you back to it.',
     '  When a tool refuses, say plainly why and that nothing was done.',
     '- Never name a request number you have not seen in the messages, the facts or a tool result.',
+    // #6406: name a change the way the screen does, and never quote a clock
+    // time (the transcript holds dates now, and the reader has their own zone).
+    '- Name a change by the `name` the facts or a tool result give, such as "Change #178". The internal `change`',
+    '  id is only for tool arguments, never something you say to a person. When there is no name, say "the change".',
+    '- Never write a clock time or a time of day. People see their own time zone, and the times you were given did not',
+    '  match it.',
     '- A line ending in [cut at ... characters; read_message #id for the rest] was shortened by you reading it, not',
     '  by its writer: the message is whole. Call read_message before you answer anything in it. Never tell anyone',
     '  their message cuts off or ask them to paste it again; if you still cannot see part of it, say the limit is',
@@ -1880,7 +1903,7 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         const author = !row.user_id ? 'Homeroom'
           : Number(row.user_id) === Number(bot.id) ? 'Homeroom bot' : `@${row.username || 'someone'}`;
         return {
-          id: Number(row.id), author, at: new Date(row.created_at).toISOString(),
+          id: Number(row.id), author, at: new Date(row.created_at).toISOString().slice(0, 10),
           text, textChars: full.length, textComplete: full.length <= MAX_WHOLE_CHARS,
           ...(full.length > MAX_WHOLE_CHARS
             ? { note: `That is the first ${MAX_WHOLE_CHARS.toLocaleString('en-US')} characters; the rest is beyond what you can read.` }
@@ -2075,7 +2098,7 @@ async function updateChange(pool, ctx, args) {
   require('./bot-work-changed').noteWorkChanged(user.id, deps);
   return {
     ok: true,
-    change: { change: Number(change.id), pr: change.pr_number || null, title: change.title || null },
+    change: changeRef(change),
     queued: asked.running
       ? 'An update to this change is running now. This one is queued right behind it: you make it as soon as that finishes.'
       : 'Queued: you start on it now.',
@@ -3226,6 +3249,7 @@ module.exports = {
   runTurn,
   replyOf,
   transcriptLine,
+  changeRef,
   systemPrompt,
   requestMd,
   toolsFor,

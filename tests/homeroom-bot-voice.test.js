@@ -502,11 +502,20 @@ test('the prompt says where it is, lists only what it can do, and holds it to wh
 
 test('a transcript line says who wrote it, what it replied to, and the bot as "you"', () => {
   const at = new Date('2026-10-09T12:30:00Z');
+  // #6406: the date only. A UTC clock time read as the reader's own.
   assert.equal(voice.transcriptLine({ id: 5, user_id: 2, username: 'evan', content: 'Make it\nblue', msg_type: 'message', created_at: at, metadata: {} }, 1),
-    '#5 [10-09 12:30] @evan: Make it blue');
+    '#5 [2026-10-09] @evan: Make it blue');
+  assert.doesNotMatch(voice.transcriptLine({ id: 5, user_id: 2, username: 'evan', content: 'x', msg_type: 'message', created_at: at, metadata: {} }, 1), /\d{1,2}:\d{2}/);
   assert.match(voice.transcriptLine({ id: 6, user_id: 1, content: 'Done', msg_type: 'message', created_at: at, metadata: {} }, 1), /you \(Homeroom bot\): Done/);
   assert.match(voice.transcriptLine({ id: 7, user_id: 2, username: 'evan', content: 'thanks', msg_type: 'message', created_at: at, metadata: { quote: { refMsgId: 6, author: 'homeroom_bot', snippet: 'Done' } } }, 1),
     /replying to #6 by @homeroom_bot: "Done"/);
+});
+
+test('#6406: a change is named the way the screen does, never by its internal id', () => {
+  assert.deepEqual(voice.changeRef({ id: 12758, pr_number: 178, title: 'Design: Recipe home' }),
+    { change: 12758, name: 'Change #178', pr: 178, title: 'Design: Recipe home' });
+  assert.deepEqual(voice.changeRef({ id: 12758, pr_number: null, title: null }),
+    { change: 12758, name: 'the change', pr: null, title: null });
 });
 
 test('a long message is marked where it was cut, and read whole when it is the one answered', () => {
