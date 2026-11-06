@@ -1822,6 +1822,27 @@ const PROJECT_MENTION_ANCHOR = /\b(?:drafts?|drafted|drafting|file it|filed|fili
 const PROJECT_NAME_AFTER = /\b(?:for|on)\s+(?:"([^"]{2,60})"|([A-Z][\w'’&.-]*(?:\s+[A-Z0-9][\w'’&.-]*){0,5}))/g;
 const QUOTED_NAME = /"([^"]{2,60})"/g;
 
+// #6376: a day, a month or a time word after "for" or "on" is when a thing
+// happens, never a project. A reply saying "I will start this request on
+// Monday" lost that sentence to a note that no project called "Monday" exists.
+const PROJECT_TIME_WORDS = new Set([
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+  'mon', 'tue', 'tues', 'wed', 'thu', 'thur', 'thurs', 'fri', 'sat', 'sun',
+  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+  'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct', 'nov', 'dec',
+  'today', 'tonight', 'tomorrow', 'yesterday', 'morning', 'afternoon', 'evening', 'night',
+  'midnight', 'noon', 'week', 'weekend', 'weekday', 'month', 'year', 'now',
+]);
+// "next Monday", "this week", "the weekend": the word in front names a time too.
+const PROJECT_TIME_LEAD = new Set(['next', 'this', 'the', 'last']);
+
+/** Pure: does `name` open with a time, so it is a date rather than a project? */
+function isTimePhrase(name) {
+  const words = squashWords(name).split(' ').filter(Boolean);
+  while (words.length && PROJECT_TIME_LEAD.has(words[0])) words.shift();
+  return !words.length || PROJECT_TIME_WORDS.has(words[0]);
+}
+
 /** Pure: the project names `text` gives as a draft's or a request's, once each. */
 function projectMentions(text) {
   const out = [];
@@ -1831,7 +1852,10 @@ function projectMentions(text) {
     // "Next after this is \"Block World\"" says a project without the word draft.
     if (/\bprojects?\b/i.test(sentence)) for (const m of sentence.matchAll(QUOTED_NAME)) out.push(m[1]);
   }
-  return [...new Set(out.map((n) => String(n).trim()).filter((n) => n && !PROJECT_NAME_STOPWORDS.has(squashWords(n))))];
+  return [...new Set(out
+    // #6376: "Pageberry." is Pageberry; a dot inside a name (Node.js) stays.
+    .map((n) => String(n).trim().replace(/[.,;:]+$/, ''))
+    .filter((n) => n && !PROJECT_NAME_STOPWORDS.has(squashWords(n)) && !isTimePhrase(n)))];
 }
 
 /** Note a project a tool returned this turn, so a reply naming another one is caught. */
