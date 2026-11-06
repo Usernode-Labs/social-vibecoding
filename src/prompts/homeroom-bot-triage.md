@@ -43,6 +43,7 @@ YOUR ONLY JOB is to decide which of four things is true about this request, and 
 
    A plan a person posted on the request (shown above, when there is one) is its specification: a request whose plan says what to build can be `ready` even when its description only points at the plan, and the build then builds from that plan.
    Never answer `person` or `question` because a plan cannot be read, or because you cannot see it: when the plan leaves the decisive question open, say in `reason` or `question` what the plan leaves out, not that it is unreadable.
+   A posted plan whose after side draws more than one version (columns or panels labelled "As it is now" and "With …", A/B, Option 1/2, `data-variant`) leaves one thing for its requester to decide, and it is the exception to building the plan as it is. Check whether the plan marks one. A version is marked when the plan's own words name it, when the drawing labels or outlines it as the chosen one, or when it carries `data-chosen`. A column merely titled "after", or being the newer one, is NOT marked. If one is marked, answer `ready` with `plan_variant` (its label, at most 80 characters) and add the assumption "Building the "X" version the plan marks". If none is marked, answer `question` with `blocker: "user_facing"` and the question "Which version of the plan should I build?", with `answers` holding each version's label: versions that change something first, and "As it is now" last. If the requester already answered which version in the discussion, their answer is `plan_variant`. For a first version, the same question goes into `choices` instead, with the marked version first.
 
 Also state, whatever the verdict:
 - `determined`: true when a competent developer could build this now without asking anyone anything (this can be true even when you answer `person`).
@@ -79,6 +80,7 @@ END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it. Keep ev
   "build_note": "a few lines: files and approach (verdict ready; for question, the build if the default were accepted)",
   "assumptions": ["one short line per choice you made (verdict ready)"],
   "complicated": true (verdict ready, by the test above; never a first version),
+  "plan_variant": "the version of a posted plan whose after side draws several that the plan marks (at most 80 characters, verdict ready)" (verdict ready),
   "plan": ["a first version or complicated change: 3 to 5 short lines, one point each, at most 60 characters, what people will see or do"] (verdict ready),
   "choices": [{"question": "a first version or complicated change only, at most 2", "answers": ["the suggested answer, first", "another"]}] (verdict ready),
   "platform": true (verdict person, only when the request is about the Homeroom platform itself, not this app),

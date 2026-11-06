@@ -24,6 +24,9 @@ export interface Facts {
   runId: number | null;
   issueNumber: number | null;
   requesterId: number | null;
+  // #6407: the session of the plan a person posted that this change was
+  // built from, or null when it was not built from a person's plan.
+  builtFromSessionId: number | null;
   // A fix round of the bot's recorded the reviewed head (it looked at it).
   looked: boolean;
   // A fix round revised the proposal once already (a skip is never a second round).
@@ -31,7 +34,7 @@ export interface Facts {
 }
 
 export const NO_FACTS: Facts = {
-  row: null, runId: null, issueNumber: null, requesterId: null, looked: false, fixRevised: false,
+  row: null, runId: null, issueNumber: null, requesterId: null, builtFromSessionId: null, looked: false, fixRevised: false,
 };
 
 export async function readFacts(tx: Tx, sessionId: number): Promise<Facts> {
@@ -39,6 +42,7 @@ export async function readFacts(tx: Tx, sessionId: number): Promise<Facts> {
     `SELECT cs.id, cs.app_id, cs.status, cs.source, cs.check_state, cs.approval_epoch, cs.merged_at,
             cs.reviewed_head_sha, cs.imported_pr_head_sha, cs.checks_commit_sha, cs.handoff_head_sha,
             cs.checks_checked_at, cs.shots_state, cs.shots_run_id, cs.shots_detail, cs.shots_updated_at,
+            cs.built_from_session_id, cs.built_from_version,
             cs.test_results, cs.linked_issues,
             run.id AS run_id, run.issue_number, req.user_id AS requester_id,
             EXISTS (SELECT 1 FROM homeroom_bot_runs x
@@ -58,6 +62,7 @@ export async function readFacts(tx: Tx, sessionId: number): Promise<Facts> {
     runId: r.run_id ?? null,
     issueNumber: r.issue_number ?? null,
     requesterId: r.requester_id ?? null,
+    builtFromSessionId: r.built_from_session_id == null ? null : Number(r.built_from_session_id),
     looked: !!r.looked,
     fixRevised: !!r.fix_revised,
   };

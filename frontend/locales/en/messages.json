@@ -1103,6 +1103,30 @@
     "text": "{{project}} is built, but not everything works yet",
     "description": "Title of the card Homeroom bot sends when a project's first version is built but some of it does not work yet. {{project}} is the project's name."
   },
+  "bot.ready.title.projectOffPlan": {
+    "text": "{{project}} is built, but doesn't match the plan yet",
+    "description": "Title of the card Homeroom bot sends when a change is built but its screens do not show what the plan a person posted draws. {{project}} is the project's name."
+  },
+  "bot.ready.title.changeOffPlan": {
+    "text": "Your change to {{project}} is built, but doesn't match the plan yet",
+    "description": "Title of the card Homeroom bot sends when a change a person asked for is built but does not show what the plan posted on the request draws. {{project}} is the project's name."
+  },
+  "bot.ready.title.unnamedOffPlan": {
+    "text": "Your project is built, but doesn't match the plan yet",
+    "description": "Title of the card Homeroom bot sends when a change is built but does not show what the plan draws, when the project's name is not known."
+  },
+  "bot.ready.title.changeUnnamedOffPlan": {
+    "text": "Your change to Your project is built, but doesn't match the plan yet",
+    "description": "Title of the card Homeroom bot sends when a change a person asked for is built but does not show what the plan draws, when the project's name is not known."
+  },
+  "bot.ready.offPlan": {
+    "text": "Not what @{{author}}'s plan (version {{version}}) draws: {{misses}}",
+    "description": "Red line on Homeroom bot's card saying a built change does not show what the plan a person posted draws. {{author}} is their username without the @, {{version}} its version number, {{misses}} what is missing."
+  },
+  "bot.ready.offPlanUnnamed": {
+    "text": "Not what the plan draws: {{misses}}",
+    "description": "Red line on Homeroom bot's card saying a built change does not show what the plan draws, when the plan's author is not known. {{misses}} is what is missing."
+  },
   "bot.ready.title.unnamed": {
     "text": "Your project is ready to try",
     "description": "Title of the card Homeroom bot sends when a project's first version is built and can be tried, when the project's name is not known."

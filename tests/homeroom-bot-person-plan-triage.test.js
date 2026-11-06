@@ -185,3 +185,19 @@ test('the read is told a posted plan is the specification, and that not reading 
     assert.ok(!/—/.test(note), 'the note has no em dashes');
   }
 });
+
+test('#6407: the triage reads which version of a multi-version plan is marked', () => {
+  const prompt = read('src/prompts/homeroom-bot-triage.md');
+  assert.match(prompt, /after side draws more than one version/);
+  assert.match(prompt, /A column merely titled "after"[\s\S]*?NOT marked/);
+  assert.match(prompt, /"plan_variant"/);
+  const marked = bot.parseVerdict(JSON.stringify({
+    verdict: 'ready', determined: true, build_note: 'Files: history.ts', plan_variant: 'With date headings',
+  }));
+  assert.equal(marked.planVariant, 'With date headings');
+  const long = bot.parseVerdict(JSON.stringify({
+    verdict: 'ready', build_note: 'x', plan_variant: 'y'.repeat(200),
+  }));
+  assert.equal(long.planVariant.length, 80);
+  assert.equal(bot.parseVerdict(JSON.stringify({ verdict: 'ready', build_note: 'x' })).planVariant, null);
+});

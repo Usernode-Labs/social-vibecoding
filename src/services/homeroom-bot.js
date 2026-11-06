@@ -1534,6 +1534,7 @@ function plainVerdict(v) {
     } : v.plan,
     reason: plain(v.reason),
     firstStep: plain(v.firstStep),
+    planVariant: plain(v.planVariant),
   };
 }
 
@@ -1720,6 +1721,10 @@ function readVerdict(text) {
       // are reviewed once it is. Only a ready verdict carries it; a first
       // version is always planned with its creator and drops it (actOnVerdict).
       complicated: verdict === 'ready' && obj.complicated === true,
+      // #6407: when a posted plan's after side draws several versions and the
+      // plan marks one, the triage names it here, so the build says which it
+      // built. Null when there is no such plan, or none is marked.
+      planVariant: verdict === 'ready' ? clip(obj.plan_variant, 80) : null,
       // #4239: a request the bot leaves because it is about Homeroom itself,
       // not the app it was filed on. Only a person verdict carries it.
       platform: verdict === 'person' && obj.platform === true,
@@ -7682,11 +7687,11 @@ async function actOnVerdict({
     } else if (firstVersion) {
       // 1 Nov 2026 (C2.3): a first version made from a design builds from
       // the design's plan on its request (homeroom-bot-dm.js fileFirstRequest).
-      const own = await usePersonPlan(pool, { runId, app, issueNumber, firstVersion: true, deps });
+      const own = await usePersonPlan(pool, { runId, app, issueNumber, firstVersion: true, variant: parsed.planVariant, deps });
       acted = PLAN_ACTED[await awaitGo(pool, {
         runId, app, issueNumber, parsed, bot, deps, fromPlan: own?.use === 'build' ? own.fromPlan : null,
       })];
-    } else if ((ownPlan = await usePersonPlan(pool, { runId, app, issueNumber, deps }))?.use === 'build') {
+    } else if ((ownPlan = await usePersonPlan(pool, { runId, app, issueNumber, variant: parsed.planVariant, deps }))?.use === 'build') {
       // 1 Nov 2026 (C2.3): a plan a person posted on the request, enough to
       // build from, is built as it is: no plan of the bot's, no second card.
       await queueLiveBuild(pool, { runId, appId: app.id });
@@ -7767,11 +7772,17 @@ function personPlanTriageNote(plan) {
  * 'build' | 'plan', fromPlan } or null (no plan, or nothing written).
  * Never throws.
  */
-async function usePersonPlan(pool, { runId, app, issueNumber, firstVersion = false, deps = {} }) {
+async function usePersonPlan(pool, { runId, app, issueNumber, firstVersion = false, variant = null, deps = {} }) {
   try {
     const plan = await (deps.requestSpecs || require('./request-specs')).personPlanOf(pool, { appId: app.id, issueNumber });
     if (!plan || (!plan.enough && firstVersion)) return null;
-    const fromPlan = { sessionId: plan.sessionId, version: plan.version, author: plan.author || null };
+    // #6407: the version of the plan's own after screen to build, when the
+    // triage read one as marked. Omitted, not null, so older plans' shape
+    // stays what it was.
+    const fromPlan = {
+      sessionId: plan.sessionId, version: plan.version, author: plan.author || null,
+      ...(variant ? { variant: String(variant).slice(0, 80) } : {}),
+    };
     const { rowCount } = plan.enough
       ? await pool.query(
         `UPDATE homeroom_bot_runs
@@ -8807,6 +8818,10 @@ async function buildLive({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
       ...recipeBudgets(app, config, turnBudgetMs, { firstVersion, recipe }), model, specModel, deps, onSpec, proposalCeiling,
       platformRepo: isPlatformRepo(app, config), presetSpec,
+      // #6407: the person's plan this change is built from, with the version
+      // of its after screen the triage named: the build's prompt and the
+      // change's summary say which plan, which version, and where they left it.
+      ...(fromPlan ? { fromPlan } : {}),
       // #6389: the change this version is built from, for its branch
       // (session-lifecycle.ensureSessionBranch) and their link on the page.
       fromSessionId: ownAsk?.fromSessionId || null,
