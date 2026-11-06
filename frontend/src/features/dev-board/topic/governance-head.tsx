@@ -147,8 +147,13 @@ function GovernanceWhat({ g }: { g: GovernanceView }): ReactNode {
  * refreshed the roster redraws the same page with it.
  */
 function viewOf(row: any): GovernanceView {
-  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
-  const app = typeof window !== 'undefined' ? (window as any).App : null;
+  // `window` may be absent (the head is also rendered server-side by the
+  // topic-head tests), so every global is reached through one guarded read.
+  // `typeof (window as any).X` alone would not do: its operand is evaluated
+  // first, so it throws on an undefined `window`.
+  const win: any = typeof window === 'undefined' ? null : (window as any);
+  const av = win ? win.AppView : null;
+  const app = win ? win.App : null;
   const id = Number(row && row.id) || 0;
   const menuKey = av && typeof av._registerCardMenu === 'function'
     ? av._registerCardMenu(`gov:${id}:decision`, av._govDecisionMenu?.(row) || [])
@@ -156,8 +161,8 @@ function viewOf(row: any): GovernanceView {
   const pill = av && typeof av._govCardModel === 'function'
     ? (av._govCardModel(row, { noNav: true }) || {}).pill?.state || null
     : null;
-  const stamp = typeof (window as any).GroupChat?._stamp === 'function' && row && row.created_at
-    ? (window as any).GroupChat._stamp(row.created_at) : null;
+  const stamp = win && typeof win.GroupChat?._stamp === 'function' && row && row.created_at
+    ? win.GroupChat._stamp(row.created_at) : null;
   return governanceView(row, {
     username: app && app.user ? app.user.username : '',
     appName: av && av.appData ? av.appData.name : '',
