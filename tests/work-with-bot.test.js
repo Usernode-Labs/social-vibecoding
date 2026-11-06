@@ -94,8 +94,21 @@ test('a request nobody is building: Work on this with Homeroom bot, and the agen
   assert.equal(AppView._requestStatusView(baseIssue({ myPrSessionId: 9 })).action.label, 'Continue your work');
   assert.equal(AppView._requestStatusView(baseIssue({ myPrSessionId: 9 })).agentSession, false);
   const botOn = AppView._requestStatusView(baseIssue({ bot: { what: 'building', since: null, askedBy: 'me', mine: true } }));
-  assert.equal(botOn.action.label, 'See progress');
+  // #6401: the progress card under this one already says where the bot is,
+  // so the page offers no button that scrolls to it.
+  assert.equal(botOn.action, null);
   assert.equal(botOn.agentSession, false);
+  // The Workshop list keeps it (its page is not the one the press lands on).
+  assert.equal(plain(AppView._issuePrimaryActionSpec(
+    baseIssue({ bot: { what: 'building', since: null, askedBy: 'me', mine: true } }),
+  )).label, 'See progress');
+  // The progress card drawn (the track): still no action on the page.
+  const tracked = plain(AppView._requestStatusView(baseIssue({
+    bot: { what: 'reading', since: null, askedBy: 'me', mine: true },
+    track: { work: { stage: 'reading' } },
+  })));
+  assert.equal(tracked.action, null, 'no See progress while the progress card is drawn');
+  assert.equal(tracked.agentSession, false);
   // #6210 (3 Nov 2026): her own plan waits for her: "you", and the plan
   // with its Build it is right under this card, so the card has no button.
   const planMine = plain(AppView._requestStatusView(baseIssue({ bot: { what: 'reading', plan: true, since: null, askedBy: 'me', mine: true } })));

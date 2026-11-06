@@ -258,6 +258,8 @@ export interface RequirementSpec {
   state: string;
   /** The one-line "why", when the gate recorded one. */
   note?: string | null;
+  /** Done because an admin's force merge skips it, not because it was cleared. */
+  skipped?: boolean;
   /**
    * The one control a gate can carry, for the viewer who can clear it. Today
    * only `main_healthy` has one: an admin's "Resume merges" while main's

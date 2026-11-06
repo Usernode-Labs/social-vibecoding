@@ -639,7 +639,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Add their words to a request that already exists when they ask you to (comment_on_request): drafted for its',
     '  public discussion under their name; once they tap Post it, you look at the request again. Say so.',
     '- Start one of their requests now when they ask you to (start_request): it goes to the front of your queue,',
-    '  and the result says whether you are on it or what it still waits for. Say exactly that.',
+    '  and the result says whether you are on it or what it still waits for. Say exactly that. When its result has',
+    '  `said`, say that and nothing else.',
     '- Withdraw one of your own changes that is still open when the person who asked for its request, or the',
     '  project\'s owner, asks you to (withdraw_proposal). It is withdrawn only once they tap Withdraw it under your',
     '  message, so ask them to. The one exception: a second change for a request that already has one approved',
@@ -4270,8 +4271,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   cards = [...ctx.cards, ...replyCards];
   const unique = [...new Map(cards.map((c) => [JSON.stringify(c), c])).values()].slice(0, MAX_CARDS);
   // What they might say next, as buttons to tap (dm.retireSuggestions
-  // closes them once the bot says something newer).
-  const next = suggestionLabels(ctx.reply?.suggestions);
+  // closes them once the bot says something newer). #4046, #6404: one set of
+  // answers at a time: a Questions card under this reply is the answer set,
+  // so the reply's suggestions are dropped rather than stored beside it.
+  const next = toolCard?.type === 'questions' ? [] : suggestionLabels(ctx.reply?.suggestions);
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
   const actions = prompts.slice(0, 3);
   const project = named.project ? { appSlug: named.project } : {};
@@ -5811,6 +5814,23 @@ async function startRequest(pool, ctx, args) {
   if (await dm.overWeeklyAllowance(pool, settings, payer)) {
     return { ok: false, error: 'Their building time for this week is used up, so it cannot start this week. Nothing was started. It resets on Monday; someone else in the project can ask for it before then.' };
   }
+  // #6389: the person asked the bot to make its own version of their change
+  // (homeroom-bot-voice.js makeOwnVersion). The look builds from the
+  // original change's branch, which the ask records; its own pending and
+  // cap checks still decide whether there is room.
+  if (Number.isInteger(Number(args.ownVersionOf)) && Number(args.ownVersionOf) > 0) {
+    const queuedOwn = await botModule(deps).enqueueFront(pool, {
+      appId: app.id, issueNumber: n, userId: user.id, reason: 'dm_own_version', payerId: user.id,
+    });
+    ctx.started = name;
+    ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
+    require('./bot-work-changed').noteWorkChanged(user.id, deps);
+    return {
+      ok: true,
+      ...(queuedOwn ? {} : { already: 'A look on it is running now; this one follows it.' }),
+      built: 'Your own version starts as soon as a builder is free. It begins from their change, fixes what fails and brings it up to date with main.',
+    };
+  }
   const open = await liveModule(deps).openBotProposal(pool, ctx.bot.id, app.id, n);
   if (open?.status === 'promoted') {
     return { ok: false, code: 'already_built', error: 'You already built it: its proposal is up for the group\'s vote. To change it, use revise_proposal. Nothing was started.' };
@@ -5836,10 +5856,22 @@ async function startRequest(pool, ctx, args) {
   // named who. A go-ahead from that person is the decision the note asked
   // for, so the queued look records it rather than asking again.
   const { rows: lastLook } = await pool.query(
-    `SELECT verdict, reason FROM homeroom_bot_runs
+    `SELECT verdict, reason, go_ahead_decides, first_step FROM homeroom_bot_runs
       WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
     [app.id, n],
   );
+  // 6 Nov 2026 (#6395): the last look left it for a person, and its read says
+  // a go-ahead cannot settle it (credentials, auth, billing, permissions,
+  // operator work outside the app, a non-append-only database change, or too
+  // big for one build). Queueing would only read it to the same answer.
+  if (lastLook[0]?.verdict === 'person' && lastLook[0].go_ahead_decides === false) {
+    return {
+      ok: false,
+      code: 'go_ahead_cannot',
+      said: liveModule(deps).goAheadCannotText({ reason: lastLook[0].reason, firstStep: lastLook[0].first_step }),
+      next: 'Say exactly this. Do not say you are on it, and do not offer tell_me_when.',
+    };
+  }
   const goAhead = lastLook[0]?.verdict === 'person'
     && await botModule(deps).goAheadCounts(pool, app, requester, user.id);
   const queued = await botModule(deps).enqueueFront(pool, {

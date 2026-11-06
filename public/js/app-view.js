@@ -6417,7 +6417,12 @@ const AppView = {
       action = toChange;
     } else if (!AppView.readOnly) {
       const primary = AppView._issuePrimaryActionSpec(issue, { noNav: true });
-      action = primary
+      // #6401: See progress would scroll to the progress card drawn right
+      // under this card, which already says where Homeroom bot is; on the
+      // request's own page it is not offered. The Workshop list keeps it
+      // (`_issuePrimaryActionSpec` itself), where the page is not current.
+      const redundant = !!(primary && primary.act && primary.act.fn === 'openBotChatFromRequest');
+      action = redundant ? null : primary
         ? { label: primary.label, title: primary.title, disabled: !!primary.disabled, act: primary.act }
         : toChange;
       // 1 Nov 2026: Build it now moved into the ⋯, as an agent session.
@@ -7011,6 +7016,7 @@ const AppView = {
       const step = {
         key: AppView.STEP_KEYS[g.key] || g.key, gate: g.key, state: g.state, label: g.label,
         line: g.note || null, actions: [],
+        ...(g.skipped ? { skipped: true, attrs: { 'data-req-skipped': 'force' } } : {}),
       };
       if (g.action) step.actions.push({ key: `req:${g.key}`, cls: 'gc-vote-btn', label: g.action.label, title: g.action.title, act: g.action.act });
       const authorsTurn = g.actor === 'author' && (g.state === 'blocked' || g.state === 'waiting');
@@ -7035,7 +7041,7 @@ const AppView = {
               act: { fn: 'swapToStagingForSession', args: [item.id, ''] } });
           }
         }
-        if (g.state === 'done' && AppView._freshnessOf(item).baseVerdict === 'superseded') {
+        if (g.state === 'done' && !g.skipped && AppView._freshnessOf(item).baseVerdict === 'superseded') {
           step.attrs = { 'data-checks-base': 'superseded' };
         }
       }
@@ -7689,6 +7695,25 @@ const AppView = {
     return Array.from({ length: total }, (_, i) => ({ weight: 1, pct: i < filled ? 100 : 0, state }));
   },
 
+  // The Votes card while an admin's force merge is held: the vote is not
+  // being counted, so it names who forced it and on which commit instead of
+  // asking for another member's yes.
+  _forceVotesView(item, force, yes, maj) {
+    const by = force.by || PlatformI18n.t('changes:page.votes.note.adminMergeNoName');
+    const head = force.head ? String(force.head).slice(0, 7) : null;
+    return {
+      name: PlatformI18n.t('changes:page.votes.name'),
+      figure: PlatformI18n.t('changes:page.votes.figure.adminMerge'),
+      tone: 'muted',
+      done: false,
+      segments: [{ weight: 1, pct: 100, state: 'idle' }],
+      label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
+      note: [head
+        ? PlatformI18n.t('changes:page.votes.note.adminMerge', { by, head })
+        : PlatformI18n.t('changes:page.votes.note.adminMergeNoHead', { by })],
+    };
+  },
+
   // The Votes card: its figure ("Needs 1 more yes", in the accent when the
   // viewer can give it, or "1 of 1 yes"), one part of the bar per yes it
   // needs, and one line under it: who can give it, any yes a newer push
@@ -7722,8 +7747,22 @@ const AppView = {
     // now is cleared when it lands, so the card says so and offers no Vote
     // until then; the tally and who can vote stay as they are.
     const updateComing = item.status === 'promoted' && !!item.update_coming;
+    // A held admin force merge skips the vote, so the card says that instead
+    // of asking for another member's yes; a force an authored push ended is
+    // named under the ordinary card so nobody wonders why it stopped.
+    const force = item.merge_force && typeof item.merge_force === 'object' ? item.merge_force : null;
+    const forceDropped = !force && item.merge_force_dropped && typeof item.merge_force_dropped === 'object'
+      ? item.merge_force_dropped : null;
+    if (force && item.status !== 'merged') return AppView._forceVotesView(item, force, yes, maj);
     const note = [];
     if (updateComing) note.push(PlatformI18n.t('changes:page.votes.note.updateComing'));
+    if (forceDropped) {
+      const by = forceDropped.by || PlatformI18n.t('changes:page.votes.note.adminMergeNoName');
+      const head = forceDropped.head ? String(forceDropped.head).slice(0, 7) : null;
+      note.push(head
+        ? PlatformI18n.t('changes:page.votes.note.adminMergeDropped', { by, head })
+        : PlatformI18n.t('changes:page.votes.note.adminMergeDroppedNoHead', { by }));
+    }
     if (item.status === 'merged' || item.status === 'merging') {
       const said = ready && ready.yesNames && ready.yesNames.length
         ? AppView._saidYesLine(ready.yesNames) : null;
@@ -7800,7 +7839,27 @@ const AppView = {
     // Not for a change whose code is missing: testing is not what it waits
     // on, and the page's notice says what is (_changeThreadView codeMissing).
     if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped' && !AppView._codeMissing(item)) {
-      note.push(item.check_state === 'failing' ? PlatformI18n.t('changes:page.votes.note.liveOnceFixed') : PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
+      if (item.check_state !== 'failing') {
+        note.push(PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
+      } else if (AppView._botBuilt(item)) {
+        // Homeroom bot's own change: it is fixing it (or stopped).
+        note.push(PlatformI18n.t('changes:page.votes.note.liveOnceFixed'));
+      } else if (mine) {
+        // #6389: your own change, made outside Homeroom, waits on your fix.
+        // Name the tool it was made in where the page knows it.
+        const agent = AppView.externalAgentProduct(item.external_agent);
+        note.push(agent
+          ? PlatformI18n.t('changes:page.votes.note.liveOnceYouFixIn', { agent })
+          : item.external_agent
+            ? PlatformI18n.t('changes:page.votes.note.liveOnceYouFixThere')
+            : PlatformI18n.t('changes:page.votes.note.liveOnceYouFix'));
+      } else {
+        // Somebody else's change: name who has to act.
+        const author = item.author || item.username || null;
+        note.push(author
+          ? PlatformI18n.t('changes:page.votes.note.liveOnceAuthorFixes', { author })
+          : PlatformI18n.t('changes:page.votes.note.liveOnceFixed'));
+      }
     }
     const fill = Math.min(yes, maj);
     return {
@@ -17732,6 +17791,15 @@ const AppView = {
     };
     const live = AppView._withLiveState(gates, p);
     const s = AppView._summarizeRequirements(live, viewer);
+    // A held admin force merge says where it is instead of whose turn it is:
+    // the vote steps it skips are done, and the one it waits on is named.
+    const forced = block && block.forced && typeof block.forced === 'object' ? block.forced : null;
+    const FORCE_HEADLINE = {
+      main: 'changes:step.force.headline.main',
+      conflict: 'changes:step.force.headline.conflict',
+      merging: 'changes:step.force.headline.merging',
+      stopped: 'changes:step.force.headline.stopped',
+    };
     // One short line per step, the same words on the card and on the page;
     // the collapsed line's detail IS the current step's line, so the two can
     // never describe one fact differently.
@@ -17740,16 +17808,17 @@ const AppView = {
     return {
       t: 'requirements',
       key: `req:${p.id}`,
-      headline: s.headline,
+      headline: forced ? PlatformI18n.t(FORCE_HEADLINE[forced.step] || FORCE_HEADLINE.merging) : s.headline,
       detail: at >= 0 ? lines[at] : null,
       done: s.done,
       total: s.total,
       // Shut unless the step it is stuck on is one THIS viewer can clear.
       // Not remembered per viewer: a remembered "closed" would hide the one
       // case the rule exists for.
-      open: s.needsViewer,
+      open: forced ? (forced.step === 'stopped' && s.needsViewer) : s.needsViewer,
       gates: live.map((g, i) => ({
         key: g.key, label: g.label, actor: g.actor, state: g.state,
+        skipped: !!(g.detail && g.detail.skipped === 'force'),
         note: lines[i],
         action: AppView._requirementAction(g, viewer),
       })),
@@ -17788,6 +17857,9 @@ const AppView = {
   _stepLine(g, p, opts) {
     const o = opts || {};
     const detail = (g && g.detail) || {};
+    // A gate an admin's force merge skips says so, whatever its key: it is
+    // done, but not because the group or the checks did it.
+    if (detail.skipped === 'force') return PlatformI18n.t('changes:step.force.skipped');
     const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
     const gates = o.gates || [];
     // A step not reached yet says nothing, except where the columns already
@@ -22949,7 +23021,9 @@ const AppView = {
         return {
           key: 'primary', cls: 'gc-vote-btn', label: plan ? PlatformI18n.t('changes:issue.action.seePlan') : PlatformI18n.t('changes:issue.action.seeProgress'),
           title: plan ? PlatformI18n.t('changes:issue.action.seePlanTitle') : PlatformI18n.t('changes:issue.action.seeProgressTitle'),
-          act: { fn: 'openBotChatFromRequest', args: [n] },
+          // #6401: the label names the card it lands on — the plan, or the
+          // bot's progress card under the status card.
+          act: { fn: 'openBotChatFromRequest', args: [n, plan ? 'plan' : 'progress'] },
         };
       }
       // What it is really doing: its plan waits for whoever asked for it,
@@ -23319,23 +23393,71 @@ const AppView = {
    * (`[data-request-plan]`) or at the bot's progress card
    * (`.dev-request-track`). It used to open the chat with Homeroom bot,
    * where the plan's Build it was; a request's news is on its page now.
+   *
+   * #6401 (6 Nov 2026): the label names the card, so `target` decides
+   * between them with no fallback to the other, and pressing it while the
+   * page is already open (the side panel's `/app/…?panel=1`, whose route is
+   * in the path and not the empty hash) scrolls and outlines instead of
+   * writing the hash and redrawing the page.
    */
-  openBotChatFromRequest(issueNumber) {
+  openBotChatFromRequest(issueNumber, target) {
     const slug = AppView.appData && AppView.appData.slug;
     const n = Number(issueNumber);
     if (!slug || !n) return;
+    const toPlan = target === 'plan';
+    const selector = toPlan ? '[data-request-plan]' : '.dev-request-track';
     const at = () => {
-      const el = document.querySelector('[data-request-plan]') || document.querySelector('.dev-request-track');
-      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      return !!el;
+      const el = document.querySelector(selector);
+      // Drawn from the board's older row, the card holds its place unseen
+      // (`data-request-track="pending"`): wait for the fresh row.
+      if (!el || el.getAttribute('data-request-track') === 'pending') return false;
+      AppView._scrollToLandedCard(el);
+      return true;
     };
-    const page = `#app/${slug}/dev/issues/${n}`;
-    if (location.hash === page) { at(); return; }
-    location.hash = page;
-    // Once the page has drawn: a few tries, then it is where it opened.
-    let tries = 0;
+    // The route the way the side panel's own document names it
+    // (`_canonicalizeChangeAddress`): the hash, or the path when it is empty.
+    const page = `app/${slug}/dev/issues/${n}`;
+    const route = location.hash
+      ? location.hash.replace(/^#/, '').split('?')[0]
+      : (location.pathname || '').replace(/^\/+/, '');
     const wait = () => { if (!at() && (tries += 1) < 20) setTimeout(wait, 150); };
+    let tries = 0;
+    if (route === page) { wait(); return; }
+    location.hash = `#${page}`;
+    // Once the page has drawn: a few tries, then it is where it opened.
     setTimeout(wait, 150);
+  },
+
+  /**
+   * #6401: where the eye should land — the card centred, then a brief
+   * outline in the app's "you are here" ink. It is a Web Animations
+   * animation rather than a class, because the card lives in the
+   * React-owned request page and the older script must not write into it
+   * (`scripts/audit-react-ownership.mjs`). Under reduced motion the outline
+   * holds and then goes, with no fade and no movement.
+   */
+  _scrollToLandedCard(el) {
+    if (!el) return;
+    const reduced = typeof matchMedia === 'function'
+      && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+    }
+    if (typeof el.animate !== 'function') return;
+    const root = document.documentElement;
+    const ink = (typeof getComputedStyle === 'function' && root
+      ? getComputedStyle(root).getPropertyValue('--lit-ink').trim() : '') || 'currentColor';
+    const frames = [
+      { outline: `3px solid ${ink}`, outlineOffset: '2px' },
+      { outline: `3px solid ${ink}`, outlineOffset: '2px' },
+      { outline: '3px solid transparent', outlineOffset: '2px' },
+    ];
+    try {
+      el.animate(frames, {
+        duration: reduced ? 1200 : 1600,
+        easing: reduced ? 'steps(1, end)' : 'ease-out',
+      });
+    } catch (_) { /* an engine without keyframe support simply lands */ }
   },
 
   // The issue card's SECOND action: the claim toggle, promoted out of the
@@ -27687,6 +27809,14 @@ const AppView = {
     if (!App.user?.isAdmin) return;
     const key = `admin-merge:${sessionId}`;
     if (AppView._voteInFlight.has(key)) return;
+    // One force at a time: a queued one is already what this click would ask
+    // for, so say so instead of sending a second request (the route refuses
+    // one too, in case two tabs race).
+    const row = AppView._findItem('proposal', Number(sessionId));
+    if (row && row.merge_force && typeof row.merge_force === 'object') {
+      PlatformUI.toast(PlatformI18n.t('changes:vote.forceMerge.alreadyQueued'));
+      return;
+    }
     const ok = await ConfirmModal.show({
       title: PlatformI18n.t('changes:vote.forceMerge.title'),
       message: PlatformI18n.t('changes:vote.forceMerge.message'),
@@ -27703,7 +27833,14 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.forceMerge.failedHttp', { status: resp.status }));
+        if (data.error === 'already_queued') {
+          PlatformUI.toast(PlatformI18n.t('changes:vote.forceMerge.alreadyQueued'));
+        } else {
+          PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.forceMerge.failedHttp', { status: resp.status }));
+        }
+      } else {
+        // Queued is not merged: say so, and what it waits on, straight away.
+        PlatformUI.toast(PlatformI18n.t('changes:vote.forceMerge.queued'));
       }
       AppView.refreshDevData('vote');
     } catch (err) {

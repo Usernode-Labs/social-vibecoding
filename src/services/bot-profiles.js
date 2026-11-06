@@ -100,11 +100,14 @@ const PROFILES = Object.freeze({
     // up for a vote answers anyone; the requester or an admin straight after
     // a post of the bot's is answering it; else only a mention or a reply,
     // and never one that answers its question (the build reads that).
-    speaks: Object.freeze([...THREAD_CHECKS, 'not_queued_as_ask', 'own_change_up', 'followed_a_post', 'addressed_or_stop', 'not_an_answer', 'speak_addressed']),
+    speaks: Object.freeze([...THREAD_CHECKS, 'not_queued_as_ask', 'own_change_up', 'followed_a_post', 'go_ahead_reply', 'addressed_or_stop', 'not_an_answer', 'speak_addressed']),
   }),
   change: profile('change', {
     surface: 'thread', scope: 'thread', prompt: 'change', places: ['session'], limits: THREAD_LIMITS,
-    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'offer_withdraw']),
+    // #6389: the change's author (or its request's requester, once it is
+    // abandoned) may ask the bot to make its own version of a change made
+    // outside Homeroom.
+    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'offer_withdraw', 'make_own_version']),
     speaks: Object.freeze([...THREAD_CHECKS, 'not_queued_as_ask', 'own_change', 'addressed']),
   }),
   channel: profile('channel', {

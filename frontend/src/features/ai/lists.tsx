@@ -219,9 +219,11 @@ function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; 
           <span className="block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400 md:hidden" aria-hidden="true" data-ai-line-why="">{line.why}</span>
         ) : null}
       </span>
+      {/* #6389: a pill may be two words ("Tests failing", "Conflicts with
+          main"), so it never wraps: the title truncates instead. */}
       <span className={line.owe
-        ? 'shrink-0 text-[13px] font-semibold text-violet-700 dark:text-violet-300'
-        : 'shrink-0 text-[13px] text-zinc-500 dark:text-zinc-400'}
+        ? 'shrink-0 whitespace-nowrap text-[13px] font-semibold text-violet-700 dark:text-violet-300'
+        : 'shrink-0 whitespace-nowrap text-[13px] text-zinc-500 dark:text-zinc-400'}
       >
         {line.right}
       </span>

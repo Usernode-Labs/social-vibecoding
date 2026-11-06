@@ -125,7 +125,7 @@ test('an older request\'s first read rings only when it is ready to try (16 Oct 
 
 test('a re-read and the ask to repair a reply restate the verdict\'s keys (runs 1390, 1451, 1454 answered in keys of their own)', () => {
   const again = bot.continuedTriagePrompt({ seed: 'SEED', issueNumber: 30 });
-  assert.match(again, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #30, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\."\}\nUse these keys and the others your instructions name \(such as `answers`, `blocker`, `assumptions`, `platform`\): a block with keys of its own, or no `verdict`, cannot be read\.$/);
+  assert.match(again, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #30, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false\}\nUse these keys and the others your instructions name \(such as `answers`, `blocker`, `assumptions`, `platform`\): a block with keys of its own, or no `verdict`, cannot be read\.$/);
   assert.match(bot.VERDICT_REPAIR_PROMPT, /with nothing before or after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person",[^\n]+\}\nUse these keys and the others your instructions name/);
   assert.ok(bot.triageClosing(30).endsWith(`in this format, and nothing after it:\n${bot.VERDICT_FORMAT}`), 'the first read says the same shape');
 });
@@ -1760,9 +1760,11 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // a tracker in an app is still refused and the shell's own tag is named.
   // #6383: the posted plan's rule (about 450 more), so a request whose plan
   // says what to build is read from it rather than handed back as unreadable.
-  assert.ok(prompt.length < 25250, `a triage prompt stays small: ${prompt.length} chars`);
+  // 6 Nov 2026 (#6395): `go_ahead` (about 780 more), so a read can say that a
+  // go-ahead cannot settle a request and what part of it can still be built.
+  assert.ok(prompt.length < 26500, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
-  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\."\}$/);
+  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false\}$/);
 });
 
 test('the bot\'s GitHub login resolves to a string, or to null when it cannot be read', async () => {
