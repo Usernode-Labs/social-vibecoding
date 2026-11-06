@@ -6,13 +6,14 @@
  *
  *   signed in    "N up for a vote" and Join (Home.setMembership, which joins
  *                and pins the community; the card leaves this list then).
- *   signed out   Pin (kept on the device) and Join (which asks to sign up).
+ *   signed out   nothing: a visitor's card is its picture, name and sentence
+ *                (#6433), and the page behind it has Try it, Join and Pin.
  *
  * Kind chips over the cards. Then FEATURED, the communities an admin
- * featured, in their order (featured_order), as one sideways row of the
- * same cards: the first strip of the section, of the chosen kind, and left
- * out while a search is typed (its matches are the grid, featured first).
- * Then the rest, the most used first; more load as the reader reaches the
+ * featured, in their order (featured_order), in the same wrapping grid as
+ * the rest (#6434): the first group of the section, of the chosen kind, and
+ * left out while a search is typed (its matches are the grid, featured
+ * first). Then the rest under "More communities", the most used first; more load as the reader reaches the
  * end (an IntersectionObserver on the last card's
  * sentinel, inside Home's own scroller), with two placeholder cards while
  * they come. The directory is GET /api/public/apps, which answers every
@@ -38,7 +39,7 @@ export function joinOrder(apps: readonly GuestApp[]): GuestApp[] {
   return [...featured, ...sortApps(apps, 'trending').filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPin, pinned }: {
+export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** Communities already on this Home (joined or pinned), left out of the list. */
@@ -46,10 +47,6 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
   signedIn: boolean;
   query: string;
   onJoin: (app: GuestApp) => void;
-  /** Signed out only: pin to this device's Home. */
-  onPin?: (app: GuestApp) => void;
-  /** Signed out only: what this device has pinned already. */
-  pinned?: ReadonlySet<string>;
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
@@ -91,6 +88,8 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
   }, [more, shown]);
 
   if (query && !list.length) return null;
+  // Signed out, a card has no footer at all (#6433): the row is the
+  // signed-in one's, with the votes or members line and Join.
   const footerFor = (app: GuestApp) => (signedIn ? (
       <>
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-zinc-500 dark:text-zinc-400">
@@ -104,21 +103,7 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
           {t('home:join.button')}
         </Button>
       </>
-    ) : (
-      <>
-        <Button type="button" variant="pillNeutral" size="sm" ink="neutral" className="min-h-11 flex-1 py-0 un-touch-target" data-home-pin={app.slug}
-          aria-pressed={!!pinned?.has(app.slug)}
-          aria-label={t('home:join.pinNamed', { community: app.name })}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onPin?.(app); }}>
-          {pinned?.has(app.slug) ? t('home:join.pinned') : t('home:join.pin')}
-        </Button>
-        <Button type="button" variant="pillAccent" size="sm" ink="solid" className="min-h-11 py-0 un-touch-target" data-home-join={app.slug}
-          aria-label={t('home:join.buttonNamed', { community: app.name })}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onJoin(app); }}>
-          {t('home:join.button')}
-        </Button>
-      </>
-    ));
+    ) : null);
   const heading = signedIn ? t('home:join.heading') : t('home:join.headingSignedOut');
   return (
     // The id is the signed-in Home's (the tours and the declared checks find
@@ -144,10 +129,10 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
           <div
             role="list"
             aria-labelledby={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'}
-            className="-mx-3 flex snap-x snap-mandatory scroll-px-4 gap-3 overflow-x-auto px-4 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className={`${CARD_GRID} px-1`}
           >
             {featured.map((app, i) => (
-              <div key={app.slug} role="listitem" className="flex w-[min(17rem,72vw)] shrink-0 snap-start [&>article]:flex-1">
+              <div key={app.slug} role="listitem" className="flex [&>article]:flex-1">
                 <Card app={app} eager={i < 3} featured footer={footerFor(app)} />
               </div>
             ))}
@@ -159,6 +144,11 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
           {[0, 1, 2, 3].map((i) => <span key={i} className="aspect-[16/10] rounded-[20px] bg-black/5 dark:bg-white/10" />)}
         </div>
       ) : list.length ? (
+        <>
+        {/* Featured above, so the rest get a heading of their own: without
+            it they read as more of Featured (#6434). A search leaves
+            Featured out, and then there is one grid and no second heading. */}
+        {featured.length ? <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`} data-home-join-rest="">{t('home:join.more')}</h3> : null}
         <div className={`${CARD_GRID} px-1`}>
           {list.slice(0, shown).map((app, i) => (
             <Card
@@ -169,6 +159,7 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
             />
           ))}
         </div>
+        </>
       ) : featured.length ? null : (
         <p className="px-2 py-4 text-[14px] text-zinc-500 dark:text-zinc-400">{t('home:join.allJoined')}</p>
       )}

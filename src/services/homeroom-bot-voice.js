@@ -2359,8 +2359,30 @@ function quoteOf(message, username) {
   };
 }
 
+/** Pure (#6211): the words an overlap note's buttons carry, from what it found. */
+function overlapWords(args = {}) {
+  const other = Number(args.other);
+  if (args.overlap === 'duplicate') {
+    return { yes: 'Propose to close as a duplicate', no: 'Keep both' };
+  }
+  if (args.overlap === 'part_of') {
+    return { yes: `Fold it into #${other}`, first: 'Build this one first', no: 'Keep separate' };
+  }
+  return { yes: `Build #${other} first`, first: 'Build this one first', no: 'Keep separate' };
+}
+
 /** Pure: an offer's buttons, as the thread draws them under the reply. */
-function offerActions(kind, offerId) {
+function offerActions(kind, offerId, args = {}) {
+  // #6211: an overlap's three choices for the requester. Duplicate is the
+  // two the close vote's own note has; the rest offer the order as well.
+  if (kind === 'overlap') {
+    const words = overlapWords(args);
+    return [
+      { id: 'yes', label: words.yes, style: 'primary', offerId: Number(offerId) },
+      ...(words.first ? [{ id: 'first', label: words.first, style: 'secondary', offerId: Number(offerId) }] : []),
+      { id: 'no', label: words.no, style: 'secondary', offerId: Number(offerId) },
+    ];
+  }
   const words = OFFER_WORDS[kind];
   if (!words) return [];
   return [
@@ -2419,7 +2441,7 @@ async function threadOffer(pool, { app, kind, forUserId, args = {} }) {
       id,
       metadata: {
         offer: { id, kind, status: 'open', forUserId: Number(forUserId) || null },
-        actions: offerActions(kind, id),
+        actions: offerActions(kind, id, args),
       },
     };
   } catch (err) {
@@ -2670,16 +2692,18 @@ async function say(pool, {
  */
 async function decideOffer(pool, config, { app, user: viewer, messageId, choice, rows = null, deps = {} }) {
   if (!viewer?.id) return { ok: false, status: 404, error: 'Nothing to decide here.' };
-  if (choice !== 'yes' && choice !== 'no') return { ok: false, status: 400, error: 'choice must be yes or no' };
+  if (choice !== 'yes' && choice !== 'no' && choice !== 'first') return { ok: false, status: 400, error: 'choice must be yes or no' };
   // #6305: a many-project card's File on all says which rows are ticked.
   if (choice === 'yes' && Array.isArray(rows) && !rows.length) {
     return { ok: false, status: 400, error: 'Tick at least one project.' };
   }
   const { rows: [offer] } = await pool.query(
-    `SELECT o.id, o.status, o.expires_at <= NOW() AS expired FROM ${OFFERS_SQL} o
+    `SELECT o.id, o.kind, o.status, o.expires_at <= NOW() AS expired FROM ${OFFERS_SQL} o
       WHERE o.message_id = $1 AND o.app_id = $2 ORDER BY o.id DESC LIMIT 1`, [Number(messageId), app.id],
   );
   if (!offer) return { ok: false, status: 404, error: 'Nothing to decide here.' };
+  // #6211: an overlap's third choice, and only an overlap's.
+  if (choice === 'first' && offer.kind !== 'overlap') return { ok: false, status: 400, error: 'choice must be yes or no' };
   // 14 days and it is no longer an offer: its buttons go.
   if (offer.expired && offer.status === 'open') {
     await markOfferMessage(pool, { app, messageId: Number(messageId), status: 'expired', deps });
@@ -2747,9 +2771,49 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
     return { decision: status };
   };
   if (gaveUp) return settle('failed', { error: 'gave_up' }, 'That didn\'t work just now. Try again in a minute.');
+  const args = offer.args || {};
+  // #6211: a note that this request is a duplicate of, part of, or overlaps
+  // another one. Keep both / Keep separate decline it and say nothing.
+  if (offer.kind === 'overlap') {
+    if (choice !== 'yes' && choice !== 'first') return settle('declined', {}, null);
+    if (!app || !user) return settle('declined', {}, null);
+    const other = Number(args.other);
+    if (!Number.isInteger(other) || other <= 0 || other === Number(args.issueNumber)) {
+      return settle('failed', { error: 'no_other' }, 'I could not find the other request again, so nothing is noted.');
+    }
+    const overlap = require('./homeroom-bot-overlap');
+    const mayor = mayorModule(deps);
+    const sayInOther = async (kind) => botModule(deps).postThreadNoteNow({
+      pool, ws: wsModule(deps), app, issueNumber: other, kind, text: overlap.linkText({
+        kind: args.overlap, choice, from: args.issueNumber, requester: user.username,
+        domain: domainOf(deps), appSlug: app.slug,
+      }),
+      bot,
+    });
+    // Duplicate: the same close vote a request page opens, with this request
+    // as its subject. It closes only if the group votes for it.
+    if (args.overlap === 'duplicate' && choice === 'yes') {
+      const full = await mayor.findApp(pool, app.slug);
+      const gate = await mayor.closeGate(pool, { app: full, issueNumber: args.issueNumber, user, deps });
+      if (!gate.ok) return settle('failed', { error: gate.code }, gate.code === 'already_proposed' ? 'A vote on closing it is already open.' : `I couldn't propose closing it: ${gate.error}`);
+      const proposed = await require('./homeroom-bot-move').proposeClose(pool, {
+        app: full, user, issueNumber: args.issueNumber, issueTitle: gate.issue.title,
+        reason: `Duplicate of #${other}${args.why ? `: ${args.why}` : ''}`, deps,
+      });
+      if (!proposed.ok) return settle('failed', { error: proposed.code }, 'I couldn\'t propose closing it just now.');
+      await sayInOther('overlap_link').catch(() => false);
+      return settle('done', { other, ...(proposed.id ? { closeIssueId: proposed.id } : {}) },
+        overlap.choiceSaid({ kind: args.overlap, choice, other }));
+    }
+    // Fold it in, build this one first, build the other first: recorded in
+    // both discussions, and nothing else. A build under way carries on
+    // (#6423 is the build-time check).
+    const linked = await sayInOther('overlap_link').catch(() => false);
+    if (!linked) return settle('failed', { error: 'not_linked' }, 'I couldn\'t note it on the other request just now.');
+    return settle('done', { other }, overlap.choiceSaid({ kind: args.overlap, choice, other }));
+  }
   // Keep it / Not now: the buttons go, and nothing is said.
   if (choice !== 'yes' || !app || !user) return settle('declined', {}, null);
-  const args = offer.args || {};
   const settings = await botModule(deps).readSettings(pool);
   const mayor = mayorModule(deps);
   if (offer.kind === 'withdraw_change') {

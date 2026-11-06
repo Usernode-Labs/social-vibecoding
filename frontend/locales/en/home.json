@@ -901,7 +901,11 @@
   },
   "join.featured": {
     "text": "Featured",
-    "description": "Small heading over the sideways row of communities the platform features, the first row of cards in Communities to join on Home (signed in or out)."
+    "description": "Small heading over the communities the platform features, the first group of cards in Communities to join on Home (signed in or out)."
+  },
+  "join.more": {
+    "text": "More communities",
+    "description": "Small heading over the rest of the community cards, after the Featured ones, in Communities to join on Home (signed in or out). Shown only when Featured is shown above it."
   },
   "join.votes_one": {
     "text": "{{count}} up for a vote",
@@ -926,18 +930,6 @@
   "join.buttonNamed": {
     "text": "Join {{community}}",
     "description": "Accessible name of the Join button on a community's card. {{community}} is the project's name."
-  },
-  "join.pin": {
-    "text": "Pin",
-    "description": "Button on a community's card for a visitor who is not signed in: keeps the community on this device's Home."
-  },
-  "join.pinned": {
-    "text": "Pinned",
-    "description": "The same button once the community is on this device's Home; pressing it again unpins it."
-  },
-  "join.pinNamed": {
-    "text": "Pin {{community}} to Home",
-    "description": "Accessible name of the Pin button on a community's card for a visitor who is not signed in. {{community}} is the project's name."
   },
   "join.allJoined": {
     "text": "You're in every community of this kind.",
@@ -971,17 +963,9 @@
     "text": "{{count}} pins from this device moved to your account",
     "description": "Brief notice after signing in, when apps or communities pinned on this device while signed out were moved to the account. Plural."
   },
-  "guest.pinApp": {
-    "text": "Pin {{app}} to Home",
-    "description": "Accessible name of the + on a suggested app on Home for a visitor who is not signed in: keeps it on this device's Home. {{app}} is the app's name."
-  },
   "guest.unpinApp": {
     "text": "Unpin {{app}} from Home",
     "description": "Accessible name of the remove badge on an app a visitor pinned on this device. {{app}} is the app's name."
-  },
-  "guest.appsHint": {
-    "text": "Tap + to pin an app. Pins stay on this device until you sign in.",
-    "description": "Line under Pinned apps on Home for a visitor who is not signed in, before they have pinned one."
   },
   "guest.pinCommunity": {
     "text": "Pin",

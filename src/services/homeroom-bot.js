@@ -1520,11 +1520,14 @@ function planQuestions(raw) {
  * is nothing to build) without em dashes, whatever the model wrote
  * (em-dashes.js). Pure.
  */
-function plainVerdict(v) {
+function plainVerdict(v, { overlapCandidates = [], issueNumber = null } = {}) {
   if (!v) return v;
   const plain = (t) => (typeof t === 'string' ? withoutEmDashes(t) : t);
   return {
     ...v,
+    // #6211: the read's overlap call, kept only when it names one of the
+    // requests it was given and one of the three kinds (homeroom-bot-overlap.js).
+    overlap: require('./homeroom-bot-overlap').parseOverlap(v.overlap, overlapCandidates, issueNumber),
     question: plain(v.question),
     questionDefault: plain(v.questionDefault),
     questionAnswers: Array.isArray(v.questionAnswers) ? v.questionAnswers.map(plain) : v.questionAnswers,
@@ -1537,8 +1540,8 @@ function plainVerdict(v) {
   };
 }
 
-function parseVerdict(text) {
-  return plainVerdict(readVerdict(text));
+function parseVerdict(text, opts = {}) {
+  return plainVerdict(readVerdict(text), opts);
 }
 
 // How much of a reply whose verdict could not be read is kept on its run:
@@ -1757,6 +1760,9 @@ function readVerdict(text) {
         ? obj.go_ahead !== false : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
+      // #6211: the read's overlap call, as it wrote it. plainVerdict keeps it
+      // only when it names one of the board's requests (parseOverlap).
+      overlap: obj.overlap && typeof obj.overlap === 'object' ? obj.overlap : null,
     };
   }
   return null;
@@ -2546,6 +2552,10 @@ function triagePromptFor({
   // #6383: the newest plan a person posted on the request ({ version,
   // author, screens, markdown }), which is its specification.
   personPlan = null,
+  // #6211: the project's other open requests and changes under way, as
+  // homeroom-bot-overlap.js candidatesFor gives them. Nothing is added to
+  // the prompt without them, so a read without the board is what it was.
+  overlapCandidates = null,
 }) {
   return [
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
@@ -2553,6 +2563,7 @@ function triagePromptFor({
     locale ? `The requester's locale is \`${locale}\`.` : null,
     live.requestRulesLines().join('\n').trim(),
     signal ? signalNote(signal) : null,
+    require('./homeroom-bot-overlap').overlapNote(overlapCandidates) || null,
     firstVersion ? firstVersionNote(starter) : null,
     firstVersion ? membersNote(members) : null,
     firstVersion ? planChangeNote(planChange) : null,
@@ -4382,6 +4393,15 @@ async function runTriage(pool, config, {
   const personPlan = postedPlan
     ? { version: postedPlan.version, author: postedPlan.author || null, screens: postedPlan.screens, markdown: postedPlan.markdown }
     : null;
+  // #6211: the board the read is given, so it can say when this request is a
+  // duplicate of, part of, or overlaps an open one. A project's first
+  // version is read alone (there is no board it belongs on), and a read that
+  // is not the bot's to speak from has nobody to offer anything.
+  const overlapCandidates = liveMode && !requester?.firstVersion
+    ? await require('./homeroom-bot-overlap').candidatesFor(pool, {
+      app, bot, issueNumber, deps: { github, ...(deps.slotHolders ? { slotHolders: deps.slotHolders } : {}) },
+    })
+    : [];
   const promptInput = {
     seed, issueNumber, firstVersion: !!requester?.firstVersion, decider,
     ...(members ? { members } : {}),
@@ -4394,6 +4414,8 @@ async function runTriage(pool, config, {
     ...(personPlan ? { personPlan } : {}),
     // #6252: a go-ahead said in the person's chat, when this look carries one.
     goAhead,
+    // #6211: the board the read was given, so it can offer an overlap.
+    ...(overlapCandidates.length ? { overlapCandidates } : {}),
   };
   // The prompt as it stands before the turn resolves its model. The one sent
   // is rendered at dispatch, for what that model can see, and replaces this
@@ -4423,6 +4445,8 @@ async function runTriage(pool, config, {
   };
   // #6252: and the go-ahead, so the benchmark replays the prompt it read.
   snapshot.extra.goAhead = goAhead;
+  // #6211: and the board it read, so the replay says the same thing.
+  if (overlapCandidates.length) snapshot.extra.overlapCandidates = overlapCandidates;
 
   let session;
   try {
@@ -4735,7 +4759,7 @@ async function runTriage(pool, config, {
     return recordFailure(code, { sessionId: session.id }, { infra: INFRA_ERRORS.has(code) || code.startsWith('dispatch:') });
   }
   const text = String(result.lastResultText || '');
-  let parsed = parseVerdict(text);
+  let parsed = parseVerdict(text, { overlapCandidates, issueNumber });
   if (!parsed) {
     const body = clip(text.slice(-300), 300);
     if (!body) {
@@ -4795,7 +4819,7 @@ async function runTriage(pool, config, {
       usage.inputTokens = addKnown(usage.inputTokens, spent.inputTokens);
       usage.outputTokens = addKnown(usage.outputTokens, spent.outputTokens);
       repairText = repair.routed?.result?.lastResultText || null;
-      parsed = repair.stopped || repair.routed?.error ? null : parseVerdict(repairText);
+      parsed = repair.stopped || repair.routed?.error ? null : parseVerdict(repairText, { overlapCandidates, issueNumber });
       log.info('homeroom-bot', parsed ? 'Triage verdict recovered by asking for its JSON block' : 'Asking for the JSON block did not recover a verdict', {
         app: app.slug, issueNumber, verdict: parsed?.verdict || null, costUsd: spent.costUsd,
         stopped: repair.stopped || null, error: repair.routed?.error || null,
@@ -5366,7 +5390,9 @@ async function postThreadNote(args) {
   return look ? look.once(`note:${args?.kind}`, () => postThreadNoteNow(args)) : postThreadNoteNow(args);
 }
 
-async function postThreadNoteNow({ pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId = null }) {
+async function postThreadNoteNow({
+  pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId = null, metadata = null,
+}) {
   try {
     if (sessionId) {
       await live.postOnProposal({ pool, ws, app, issueNumber, runId, kind, text, bot, sessionId: Number(sessionId) });
@@ -5376,10 +5402,15 @@ async function postThreadNoteNow({ pool, ws, app, issueNumber, runId = null, kin
       'INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind) VALUES ($1, $2, $3, $4)',
       [app.id, issueNumber, runId, kind],
     );
-    await ws.sendBotMessage(pool, app.id, {
-      user: bot, content: require('./homeroom-bot-words').firstPerson(text), thread: { type: 'issue', ref: Number(issueNumber) },
+    // #6211: an offer's metadata rides with the note, as a live reply's does:
+    // its buttons are drawn from the message, so the note is what ties them.
+    const posted = await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: require('./homeroom-bot-words').firstPerson(text),
+      thread: { type: 'issue', ref: Number(issueNumber) },
+      ...(metadata ? { metadata } : {}),
     });
-    return true;
+    // `messageId` for a caller that ties an offer to it; true for the rest.
+    return posted?.id ? { messageId: Number(posted.id), message: posted } : true;
   } catch (err) {
     log.warn('homeroom-bot', 'Could not post a note in the thread', { app: app?.slug, issueNumber, kind, err: err.message });
     return false;
@@ -7913,6 +7944,17 @@ async function actOnVerdict({
       await queueLiveBuild(pool, { runId, appId: app.id });
       acted = 'build_queued';
     }
+  }
+  // #6211: the read found this request is a duplicate of, part of, or
+  // overlaps one on the board: one note in this discussion, after the usual
+  // reply, with the choice for its requester (homeroom-bot-overlap.js). A
+  // request with nothing in it, one already done, and one asked to be closed
+  // get none, and neither does a note whose pair was offered before.
+  if (parsed.overlap && parsed.verdict !== 'empty' && !parsed.done && !parsed.withdrawn) {
+    const requester = await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null);
+    await require('./homeroom-bot-overlap').offerOverlap(pool, {
+      app, bot, issueNumber, overlap: parsed.overlap, requester, ws: ws || null, deps,
+    }).catch(() => false);
   }
   await live.advanceSeen({
     pool, github, threadContext: deps.threadContext, app, repo, issueNumber, runId,
@@ -11659,6 +11701,8 @@ module.exports = {
   BLOCKERS,
   capRoomFor,
   slotHolders,
+  // #6211: a note in a request's thread, which an overlap's choice is tied to.
+  postThreadNoteNow,
   slotCounts,
   SLOT_HOLDERS_SQL,
   simulateCaps,

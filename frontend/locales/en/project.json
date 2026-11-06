@@ -741,39 +741,39 @@
   },
   "workshop.desk.title": {
     "text": "Your work",
-    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's title."
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's title."
   },
   "workshop.desk.open": {
     "text": "Opens Homeroom bot, showing your work in {{project}}",
-    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's tooltip. {{project}} is the project's name."
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's tooltip. {{project}} is the project's name."
   },
   "workshop.desk.both": {
     "text": "Needs you: <0>{{needs}}</0> · In progress: {{progress}}",
-    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end, in the Homeroom bot tab's own words: how many things wait on the person, and how many are being worked on. <0></0> marks the number that asks for them, drawn in the accent."
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end, in the Homeroom bot tab's own words: how many things wait on the person, and how many are being worked on. <0></0> marks the number that asks for them, drawn in the accent."
   },
   "workshop.desk.needs": {
     "text": "Needs you: <0>{{needs}}</0>",
-    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end when things wait on the person and nothing else is being worked on. <0></0> marks the number, drawn in the accent."
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end when things wait on the person and nothing else is being worked on. <0></0> marks the number, drawn in the accent."
   },
   "workshop.desk.progress": {
     "text": "In progress: {{progress}}",
-    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end when nothing waits on the person but some of their work is being worked on."
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end when nothing waits on the person but some of their work is being worked on."
   },
   "workshop.desk.waiting": {
     "text": "Waiting: {{waiting}}",
-    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end when the person's work only waits on somebody else (votes, a free builder)."
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end when the person's work only waits on somebody else (votes, a free builder)."
   },
   "workshop.desk.next": {
     "text": "Next: {{title}}",
-    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's second line: the first thing that waits on the person. {{title}} is its title, written by a person."
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's second line: the first thing that waits on the person. {{title}} is its title, written by a person."
   },
   "workshop.desk.empty": {
     "text": "Nothing of yours here right now.",
-    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview) and on its Hub (For you): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's second line when none of the person's work is under way or waiting in this project."
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's second line when none of the person's work is under way or waiting in this project."
   },
   "hub.workshop.sub": {
     "text": "What happened, and every item",
-    "description": "On a phone, the Workshop row of a project's Hub (For you): opens the project's Workshop, which shows what happened week by week and All items, the whole board. Not the person's own work, which has its own row (Your work)."
+    "description": "The Workshop row of a project's Hub (For you): opens the project's Workshop, which shows what happened week by week and All items, the whole board. Not the person's own work, which has its own card on the Workshop tab (Your work)."
   },
   "workshop.fresh.buildIt": {
     "text": "Build it",

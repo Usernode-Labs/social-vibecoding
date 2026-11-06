@@ -700,7 +700,8 @@ test('a tap under an offer is the person\'s own, from their browser, and members
   assert.ok(at > 0);
   const route = routes.slice(at, at + 1400);
   assert.match(route, /groupChatWriteLimiter, sameOriginBrowserOnly,\s*communities\.requireAppMembership\(pool\)/);
-  assert.match(route, /if \(choice !== 'yes' && choice !== 'no'\)/);
+  // #6211: an overlap note's third choice (build this one first) is accepted too.
+  assert.match(route, /if \(choice !== 'yes' && choice !== 'no' && choice !== 'first'\)/);
   assert.match(route, /appAccess\.getAppForUser\(pool, req\.params\.slug, req\.user, 'collab'/);
   assert.match(route, /decideOffer\(pool, config, \{/);
 });

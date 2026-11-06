@@ -8,10 +8,11 @@
 // how a phone reaches the places, and All communities, a grid of tiles, is
 // where it switches community. These pin the two halves of that:
 //
-//   - the Hub's rows: For you's Workshop row, always there on a phone and
-//     named for the place it opens, and a Topics card, a row a live topic,
-//     each opening its channel (frontend/src/features/dev-board/workshop/
-//     hub-cards.tsx TopicsCard, drawn by ./workshop.tsx on a phone only);
+//   - the Hub's rows: For you's Workshop row, always there for a signed-in
+//     viewer and named for the place it opens, and a Topics card, a row a
+//     live topic, each opening its channel (frontend/src/features/dev-board/
+//     workshop/hub-cards.tsx TopicsCard, drawn by ./workshop.tsx on a phone
+//     only);
 //   - All communities as a grid on a phone (frontend/src/features/workshop/
 //     index.tsx CommunityTile), whose tile is a door to the Hub.
 //
@@ -45,14 +46,15 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(ws, /\{slug && drawerOn \? <TopicsCard data=\{community\} onOpen=\{\(key\) => openTab\(key\)\} \/> : null\}/,
     'on a phone only: a wide window lists the topics in its sidebar');
-  assert.match(ws, /places=\{drawerOn\}\s*\/>/);
 });
 
-test('on a phone For you\'s Workshop row is always there, and named for the place it opens', () => {
+test('For you\'s Workshop row is there at every width, opening the Workshop, and named for the place', () => {
   const cards = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
-  // 5 Nov 2026: a row of its own, beside Your work (which opens the Homeroom
-  // bot tab, where your work is): the Workshop row was both until then.
-  assert.match(cards, /\{places \? <WorkshopRow onOpen=\{onWork\} \/> : null\}/);
-  assert.match(cards, /if \(!needs && !work && !places && !talk\) return null;/, 'there whenever the Hub is the way to the places');
+  // 3 Nov 2026: a row of its own on a phone, beside Your work, which opened
+  // the Homeroom bot tab. 6 Nov 2026: it takes Your work's place, at every
+  // width, as For you's door to the project's Workshop.
+  assert.match(cards, /\{work \? <WorkshopRow onOpen=\{onWork\} \/> : null\}/);
+  assert.match(cards, /if \(!needs && !work && !talk\) return null;/, 'there for a signed-in viewer, with no phone-only flag');
+  assert.doesNotMatch(cards, /places=\{drawerOn\}|data-ws-mine-card/, 'no Your work row on the Hub any more');
   assert.match(cards, /title=\{placeName\('workshop'\)\}\s+subtitle=\{t\('project:hub\.workshop\.sub'\)\}/);
 });
