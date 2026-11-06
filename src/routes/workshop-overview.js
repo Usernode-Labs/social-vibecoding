@@ -84,6 +84,7 @@ const { firstVersionSql } = require('../services/first-version-rule');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const { threadsInSql } = require('../services/ai-work');
 const { updateComingSql } = require('../services/homeroom-bot-progress');
+const { voteReadySql } = require('../services/vote-ready');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
 const codeMissing = require('../services/code-missing');
@@ -198,10 +199,22 @@ const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
        -- while any of its changes has an update coming, so nobody picks a
        -- change that is about to change.
        AND ${updateComingSql('cs')} IS NULL
+       -- #6402 (6 Nov 2026): a vote is asked only once the change is ready:
+       -- its checks passed (or it had nothing to test) and it merges cleanly
+       -- with main. Until then it waits under Waiting & in progress, worded
+       -- by services/work-state.js. Voting early stays possible on the
+       -- change's own page.
+       AND ${voteReadySql('cs')}
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
              SELECT 1 FROM chat_sessions ru
               WHERE ${RIVAL_SQL('cs', 'ru')}
                 AND ${updateComingSql('ru')} IS NOT NULL))
+       -- A ballot waits too while any of its changes is not ready, so nobody
+       -- picks between changes that are still being checked.
+       AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
+             SELECT 1 FROM chat_sessions rr
+              WHERE ${RIVAL_SQL('cs', 'rr')}
+                AND NOT ${voteReadySql('rr')}))
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND (
              EXISTS (SELECT 1 FROM chat_sessions rv
                       WHERE ${RIVAL_SQL('cs', 'rv')}

@@ -228,6 +228,25 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     await ws.drainDirty(pool);
   });
 
+  await t.test('a change\'s phase or a merge conflict marks its work state', async () => {
+    // #6402: deferred checks and a recorded conflict change how a checking
+    // change is worded, so each moves the stored row.
+    const marks = async () => (await pool.query(
+      'SELECT session_id FROM work_state_dirty ORDER BY id')).rows.map((r) => Number(r.session_id));
+    await pool.query('DELETE FROM work_state_dirty');
+    await pool.query("UPDATE chat_sessions SET check_phase = 'deferred' WHERE id = $1", [own.id]);
+    assert.deepEqual(await marks(), [Number(own.id)]);
+    await pool.query('DELETE FROM work_state_dirty');
+    await pool.query("UPDATE chat_sessions SET merge_conflict_state = 'conflict' WHERE id = $1", [own.id]);
+    assert.deepEqual(await marks(), [Number(own.id)]);
+    await pool.query('DELETE FROM work_state_dirty');
+    await pool.query('UPDATE chat_sessions SET integration_merges_clean = FALSE WHERE id = $1', [own.id]);
+    assert.deepEqual(await marks(), [Number(own.id)], 'a measured conflict moves it too');
+    await pool.query('DELETE FROM work_state_dirty');
+    await pool.query("UPDATE chat_sessions SET check_phase = 'deferred' WHERE id = $1", [own.id]);
+    assert.deepEqual(await marks(), [], 'writing the same value again marks nothing');
+  });
+
   await t.test('readers: a person\'s own rows, and a project\'s by number', async () => {
     const hers = await ws.forRequester(pool, ada.id);
     assert.deepEqual(hers.map((r) => r.ref).sort((a, b) => a - b), [1, 2, 3, 4, 8]);

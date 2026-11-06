@@ -102,6 +102,56 @@ test('where an item goes depends on whose move it is and who is looking', () => 
   assert.equal(ws.placeFor({ stage: 'closed' }, { requester: true }), null);
 });
 
+// 6 Nov 2026 (#6402): a change still being checked says what it waits on, and
+// is not asked for a vote until its checks pass and it merges cleanly.
+test('a checking change words its wait: about N min left, or waiting to sync with main', () => {
+  const estimate = { buildMs: 180000, checksMs: 540000 };
+  // Ten minutes into a twelve-minute median run: about two minutes left.
+  const running = ws.deriveChange({
+    status: 'promoted', check_state: 'pending', check_phase: 'testing',
+    checks_at: ago(10), checks_estimate: estimate,
+  }, { now: NOW });
+  assert.deepEqual([running.stage, running.line], ['checking', { code: 'checks_running', minutes: 2 }]);
+  assert.equal(ws.lineSays(running), 'About 2 min left');
+  // The phase may be absent on an old row: pending alone is still a run.
+  const legacy = ws.deriveChange({
+    status: 'promoted', check_state: 'pending', checks_at: ago(11), checks_estimate: estimate,
+  }, { now: NOW });
+  assert.deepEqual(legacy.line, { code: 'checks_running', minutes: 1 });
+  // No estimate, a run past it, or a queued run: the stage word alone.
+  assert.equal(ws.deriveChange({ status: 'promoted', check_state: 'pending', checks_at: ago(1) }, { now: NOW }).line, null);
+  assert.equal(ws.deriveChange({
+    status: 'promoted', check_state: 'pending', checks_at: ago(30), checks_estimate: estimate,
+  }, { now: NOW }).line, null);
+  assert.equal(ws.deriveChange({
+    status: 'promoted', check_state: 'pending', check_phase: 'queued', checks_at: ago(1), checks_estimate: estimate,
+  }, { now: NOW }).line, null);
+  // Checks deferred until it merges cleanly, or a recorded conflict: sync.
+  const deferred = ws.deriveChange({
+    status: 'promoted', check_state: 'pending', check_phase: 'deferred', checks_estimate: estimate,
+  }, { now: NOW });
+  assert.deepEqual([deferred.stage, deferred.line], ['checking', { code: 'sync_wait' }]);
+  assert.equal(ws.lineSays(deferred), 'Waiting to sync with main');
+  for (const extra of [{ merge_conflict_state: 'conflict' }, { merge_conflict_state: 'failed' }, { integration_merges_clean: false }]) {
+    assert.deepEqual(ws.deriveChange({ status: 'promoted', check_state: 'pending', ...extra }, { now: NOW }).line,
+      { code: 'sync_wait' });
+  }
+  // A passing change that has since stopped merging cleanly moves back to
+  // waiting, and is not up for a vote.
+  const moved = ws.deriveChange({ status: 'promoted', check_state: 'passing', merge_conflict_state: 'conflict' }, { now: NOW });
+  assert.deepEqual([moved.stage, moved.line], ['checking', { code: 'sync_wait' }]);
+  // Failing checks stay failing, not a sync wait: the fix is what is owed.
+  const failed = ws.deriveChange({ status: 'promoted', check_state: 'failing', merge_conflict_state: 'conflict' }, { now: NOW });
+  assert.deepEqual(failed.line, { code: 'checks_failing' });
+});
+
+test('the new wait words are the catalog\'s, keyed by the same entries', () => {
+  const core = require('../frontend/locales/en/core.json');
+  assert.equal(ws.WORDS['work.line.checksRunning_one'], core['work.line.checksRunning_one'].text);
+  assert.equal(ws.WORDS['work.line.checksRunning_other'], core['work.line.checksRunning_other'].text);
+  assert.equal(ws.WORDS['work.line.syncWait'], core['work.line.syncWait'].text);
+});
+
 test('a change of stage rings: needs you, ready to vote, stopped, live; a moved line rings nothing', () => {
   assert.equal(ws.bellOf({ stage: 'reading' }, { stage: 'waiting_for_you', why: 'question' }), 'needs_you');
   assert.equal(ws.bellOf({ stage: 'waiting_for_you', why: 'question' }, { stage: 'waiting_for_you', why: 'question' }), null);

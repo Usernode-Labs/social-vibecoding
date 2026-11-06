@@ -31,6 +31,8 @@ export interface WorkLine {
   of?: number;
   /** `checks_failing`: how many tests failed. */
   failing?: number;
+  /** `checks_running`: about how many minutes are left. */
+  minutes?: number;
   /** `claimed`: who pressed Claim. */
   by?: string;
   /** `reason`: Homeroom bot's own sentence. */
@@ -112,6 +114,7 @@ const LINE_WORDS: Record<string, string> = {
   revising: 'core:work.line.revising',
   update_queued: 'core:work.line.updateQueued',
   checks_failing: 'core:work.line.checksFailing',
+  sync_wait: 'core:work.line.syncWait',
   first_version: 'core:work.line.firstVersion',
   planning_with_you: 'core:work.line.planningWithYou',
   waiting: 'core:work.line.waiting',
@@ -152,6 +155,10 @@ export function lineWords(state: WorkState): Phrase | null {
       return line.failing
         ? { id: 'core:work.line.checksFailingCount', values: { count: line.failing } }
         : { id: LINE_WORDS.checks_failing };
+    case 'checks_running':
+      return line.minutes
+        ? { id: 'core:work.line.checksRunning', values: { count: line.minutes } }
+        : null;
     case 'claimed':
       return line.by ? { id: 'core:work.line.claimed', values: { username: line.by } } : null;
     case 'reason':
@@ -188,6 +195,7 @@ export function normalizeWorkState(input: unknown): WorkState | null {
     ...(num(lineIn.round) ? { round: num(lineIn.round) } : {}),
     ...(num(lineIn.of) ? { of: num(lineIn.of) } : {}),
     ...(num(lineIn.failing) ? { failing: num(lineIn.failing) } : {}),
+    ...(num(lineIn.minutes) ? { minutes: num(lineIn.minutes) } : {}),
     ...(text(lineIn.by) ? { by: text(lineIn.by).slice(0, 64) } : {}),
     ...(text(lineIn.text) ? { text: text(lineIn.text).slice(0, 200) } : {}),
   } : null;
