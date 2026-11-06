@@ -191,7 +191,8 @@ test('the look reads a live first version\'s people into its prompt and its snap
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /const members = liveMode && requester\?\.firstVersion\s+\? await projectMembers\(pool, app\)\.catch\(/);
   assert.match(src, /seed, issueNumber, firstVersion: !!requester\?\.firstVersion, decider,\s+\.\.\.\(members \? \{ members \} : \{\}\),/);
-  assert.match(src, /\.\.\.\(deciderNote\(decider\) \? \{ decider \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+(?:\.\.\.\(starter \? \{ starter \} : \{\}\),\s+)?\},/,
+  // #6383: the plan the read saw rides beside them.
+  assert.match(src, /\.\.\.\(deciderNote\(decider\) \? \{ decider \} : \{\}\),[\s\S]{0,90}\.\.\.\(personPlan \? \{ personPlan \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+(?:\.\.\.\(starter \? \{ starter \} : \{\}\),\s+)?\},/,
     'kept in the snapshot');
   assert.match(read('src/services/bench/runner.js'), /members: snapshot\.extra\?\.members \|\| null,/);
 });

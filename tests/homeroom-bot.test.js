@@ -1758,7 +1758,9 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // this" is `done` (about 175 more), so its note carries the buttons.
   // #6314: the data rules' one exception (about 150 more), so a request for
   // a tracker in an app is still refused and the shell's own tag is named.
-  assert.ok(prompt.length < 24750, `a triage prompt stays small: ${prompt.length} chars`);
+  // #6383: the posted plan's rule (about 450 more), so a request whose plan
+  // says what to build is read from it rather than handed back as unreadable.
+  assert.ok(prompt.length < 25250, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\."\}$/);
 });
