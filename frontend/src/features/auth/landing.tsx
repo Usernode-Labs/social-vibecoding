@@ -37,7 +37,7 @@ import { flushSync } from 'react-dom';
 
 import { alertVariants } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
-import { ChevronLeftIcon, LockIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import { ChevronLeftIcon, LockIcon, PushPinIcon, SpinnerArcIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 import { cn } from '@/lib/utils';
 
@@ -45,6 +45,7 @@ import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { Message, RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { useStoreState } from '../../lib/use-store-state';
 import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
   AUTH_SCREEN_IDS,
@@ -77,6 +78,7 @@ import {
 } from './sign-in-sheet';
 import { Story } from './story';
 import { cardCover, morph, projectHero } from '../guest/card-morph';
+import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../guest/device-pins';
 import { GuestDiscover } from '../guest/guest-discover';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
 import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, projectHash } from '../guest/guest-data';
@@ -1611,6 +1613,19 @@ export function LandingScreen() {
   // The bar's back button: out of the open app, else from a project's page
   // to Discover.
   const showBack = !!openApp || !!guestProject || appDiscover;
+  // #6433: A VISITOR PINS AN APP FROM THE APP ITSELF. Home no longer
+  // suggests apps with a + before the first pin, so the open app's bar
+  // carries the pin: kept on this device (../guest/device-pins.ts), shown on
+  // Home's Pinned apps, and moved to the account at sign-in like every
+  // device pin. Signed in, the app's own About and menu pin to the account.
+  const devicePins = useStoreState(devicePinsStore);
+  useEffect(() => { loadDevicePins(); }, []);
+  const openAppPinned = !!openApp && devicePins.apps.includes(openApp.slug);
+  const onPinOpenApp = useCallback(() => {
+    if (!openApp) return;
+    const on = toggleDevicePin('apps', openApp.slug);
+    legacy().PlatformUI?.toast?.(translate(on ? 'auth:landing.appPinned' : 'auth:landing.appUnpinned', { app: openApp.name || openApp.slug }));
+  }, [openApp]);
   // The guest Discover's own bar: the wordmark at the left edge of the
   // column, Sign in and Sign up at its right, a hairline under it. A
   // project's page or an open app keeps the centred title and its back.
@@ -1755,6 +1770,18 @@ export function LandingScreen() {
           data-landing-actions=""
           className={hiddenLast(session || !guestPages, guestTop ? 'flex shrink-0 items-center gap-1.5' : `absolute bottom-4 end-4 flex items-center gap-1.5 ${GUEST_BAR_RIGHT}`)}
         >
+          {openApp ? (
+            <button
+              type="button"
+              data-landing-pin-app={openApp.slug}
+              aria-pressed={openAppPinned}
+              aria-label={t(openAppPinned ? 'auth:landing.unpinApp' : 'auth:landing.pinApp', { app: openApp.name || openApp.slug })}
+              className={cn(LANDING_BACK_CLASS, openAppPinned && '[&_path]:fill-current')}
+              onClick={onPinOpenApp}
+            >
+              <PushPinIcon className="w-4 h-4" aria-hidden="true" />
+            </button>
+          ) : null}
           <button
             type="button"
             data-landing-sign-in=""

@@ -6,7 +6,8 @@
  *
  *   signed in    "N up for a vote" and Join (Home.setMembership, which joins
  *                and pins the community; the card leaves this list then).
- *   signed out   Pin (kept on the device) and Join (which asks to sign up).
+ *   signed out   no footer (#6433): the card opens the project's page, whose
+ *                band has Try it, Join and Pin.
  *
  * Kind chips over the cards. Then FEATURED, the communities an admin
  * featured, in their order (featured_order), as one sideways row of the
@@ -38,18 +39,15 @@ export function joinOrder(apps: readonly GuestApp[]): GuestApp[] {
   return [...featured, ...sortApps(apps, 'trending').filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPin, pinned }: {
+export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** Communities already on this Home (joined or pinned), left out of the list. */
   exclude: ReadonlySet<string>;
   signedIn: boolean;
   query: string;
+  /** Signed in only: a card's Join. */
   onJoin: (app: GuestApp) => void;
-  /** Signed out only: pin to this device's Home. */
-  onPin?: (app: GuestApp) => void;
-  /** Signed out only: what this device has pinned already. */
-  pinned?: ReadonlySet<string>;
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
@@ -104,21 +102,7 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
           {t('home:join.button')}
         </Button>
       </>
-    ) : (
-      <>
-        <Button type="button" variant="pillNeutral" size="sm" ink="neutral" className="min-h-11 flex-1 py-0 un-touch-target" data-home-pin={app.slug}
-          aria-pressed={!!pinned?.has(app.slug)}
-          aria-label={t('home:join.pinNamed', { community: app.name })}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onPin?.(app); }}>
-          {pinned?.has(app.slug) ? t('home:join.pinned') : t('home:join.pin')}
-        </Button>
-        <Button type="button" variant="pillAccent" size="sm" ink="solid" className="min-h-11 py-0 un-touch-target" data-home-join={app.slug}
-          aria-label={t('home:join.buttonNamed', { community: app.name })}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onJoin(app); }}>
-          {t('home:join.button')}
-        </Button>
-      </>
-    ));
+    ) : null);
   const heading = signedIn ? t('home:join.heading') : t('home:join.headingSignedOut');
   return (
     // The id is the signed-in Home's (the tours and the declared checks find

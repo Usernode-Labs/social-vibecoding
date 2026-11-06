@@ -109,9 +109,9 @@ test('Try it where it can open here: the viewer anywhere, the app\'s own address
   assert.equal(canTryHere(noLogin, true), true);
   assert.equal(canTryHere(guestOnly, true), false);
   assert.equal(canTryHere(neither, true), false);
-  // Discover asks it for every card, with this page's answer (a signed-in
-  // waitlisted account can open every project); the project page too.
-  assert.match(read(DISCOVER), /const tryable = useCallback\(\(app: GuestApp\) => signedIn \|\| canTryHere\(app, inApp\), \[signedIn, inApp\]\);/);
+  // The project page asks it, with this page's answer (a signed-in
+  // waitlisted account can open every project). Home offers no apps to try
+  // since #6433, so Discover no longer asks.
   assert.match(read(PROJECT), /\{signedIn \|\| canTryHere\(app, inHomeroomApp\(\)\) \? \(\s+<TryLink\s+app=\{app\}\s+inside=\{signedIn\}/);
   const { inHomeroomApp } = loadTsx(DATA);
   assert.equal(inHomeroomApp(), false, 'a server render is never the app');
@@ -218,8 +218,8 @@ test('a card is its picture, its name and its own sentence; how many used it lat
     assert.ok(!words.some((w) => /member|people active|up for a vote|voted in|Updated|Latest change/.test(w)), `${slug}: ${words}`);
     assert.doesNotMatch(cardOf(html, slug), /data-guest-card-(?:fact|activity|votes)=/);
   }
-  assert.deepEqual(text(quiet).slice(1), ['Quiet', message('home:join.pin'), message('home:join.button')],
-    'the letter tile, then the name, then Home\'s Pin and Join (One Home, #6361)');
+  assert.deepEqual(text(quiet).slice(1), ['Quiet'],
+    'the letter tile, then the name, and no buttons (#6433)');
 });
 
 test('the cards are one grid that reflows, two columns at least, and the cards look worth tapping', () => {
@@ -245,27 +245,48 @@ test('the cards are one grid that reflows, two columns at least, and the cards l
   assert.match(card, /<span aria-hidden="true" class="absolute bottom-2 end-2 [^"]*opacity-0[^"]*group-hover:opacity-100[^"]*group-has-\[a:focus-visible\]:opacity-100/);
 });
 
-test('a card\'s only buttons are Pin and Join, under its words: Try it is the project page\'s, and a waitlisted account still sees every project (One Home, #6361)', () => {
+test('a visitor\'s card has no buttons: Try it, Join and Pin are the project page\'s, and a waitlisted account still sees every project (#6433)', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
   assert.doesNotMatch(html, /data-guest-try=/);
   assert.doesNotMatch(html, /<button[^>]*>Try it/);
   for (const slug of ['todo-list', 'game-corner', 'fresh-one']) {
     const card = cardOf(html, slug);
-    const buttons = [...card.matchAll(/<button[^>]*>/g)].map((m) => m[0]);
-    assert.equal(buttons.length, 2, `${slug}: two buttons`);
-    assert.match(buttons[0], new RegExp(`data-home-pin="${slug}"`));
-    assert.match(buttons[0], /aria-pressed="false"/, 'nothing pinned on this device yet');
-    assert.match(buttons[1], new RegExp(`data-home-join="${slug}"`));
-    // Over the card's stretched link, so they take their own taps.
-    assert.match(card, /<span class="relative z-\[2\] mt-2\.5 flex items-center gap-2" data-guest-card-footer="">/);
+    assert.doesNotMatch(card, /<button/, `${slug}: no button on the card`);
+    assert.doesNotMatch(card, /data-home-pin=|data-home-join=|data-guest-card-footer=/, slug);
   }
-  // Pin keeps it on this device; Join asks the landing to sign up for it.
-  assert.match(read(DISCOVER), /onPin=\{\(app\) => \{ toggleDevicePin\('communities', app\.slug\); \}\}\s*onJoin=\{\(app\) => \{ onIntent\?\.\(\{ kind: 'join', app \}\); \}\}/);
+  // The landing hands Home no community pin: a card opens the project's page.
+  assert.doesNotMatch(read(DISCOVER), /onPin=|pinned=\{/);
+  assert.doesNotMatch(read(JOIN), /data-home-pin|home:join\.pin/);
   // A waitlisted account is signed in: every project is still there,
   // Featured's and the rest.
   const signedIn = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ signedIn: true }));
   assert.deepEqual([...signedIn.matchAll(/<article data-guest-(?:featured|card)="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'game-corner', 'fresh-one']);
   assert.doesNotMatch(signedIn, /data-guest-join=/);
+});
+
+test('signed out, Pinned apps is only what this device pinned: no suggested apps, no + and no hint line before the first pin (#6433)', () => {
+  const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
+  assert.doesNotMatch(html, /data-guest-pinned-apps=|data-guest-suggested-app=/, 'nothing pinned on this device: no section');
+  const src = read(DISCOVER);
+  assert.doesNotMatch(src, /suggested|appsHint|PlusIcon/);
+  // The section is gated on the device's pins alone, each tile with its − badge.
+  assert.match(src, /const pinnedApps = device\.apps\.map\(\(s\) => bySlug\.get\(s\)\)/);
+  assert.match(src, /\{pinnedApps\.length \? \(\s*<section data-guest-pinned-apps="">/);
+  assert.match(src, /aria-label=\{th\('home:guest\.unpinApp', \{ app: app\.name \}\)\}/);
+});
+
+test('signed out, the open app\'s bar pins it to this device\'s Home, which moves to the account at sign-in (#6433)', () => {
+  const src = read(LANDING);
+  assert.match(src, /import \{ devicePinsStore, loadDevicePins, toggleDevicePin \} from '\.\.\/guest\/device-pins';/);
+  // In the guest bar's actions, so a signed-in session never sees it, and only while an app is open.
+  const actions = src.slice(src.indexOf('data-landing-actions=""'), src.indexOf('data-landing-sign-in=""'));
+  assert.match(actions, /\{openApp \? \(\s*<button\s+type="button"\s+data-landing-pin-app=\{openApp\.slug\}\s+aria-pressed=\{openAppPinned\}/);
+  assert.match(src, /const on = toggleDevicePin\('apps', openApp\.slug\);/);
+  assert.match(src, /const openAppPinned = !!openApp && devicePins\.apps\.includes\(openApp\.slug\);/);
+  assert.equal(message('auth:landing.pinApp', { app: 'Todo List' }), 'Pin Todo List to Home');
+  assert.match(message('auth:landing.appPinned', { app: 'Todo List' }), /on this device/);
+  // The move at sign-in is the device pins' own (importDevicePins).
+  assert.match(read('frontend/src/features/home/home-pins-store.ts'), /for \(const slug of pins\.apps\)/);
 });
 
 // Twenty projects, the even ones (a01, a03, …) open for a visitor.
@@ -297,12 +318,12 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   assert.deepEqual(featuredOf(found), []);
   assert.deepEqual(cardsOf(found), ['todo-list', 'game-corner', 'fresh-one']);
   assert.doesNotMatch(found, /data-home-join-featured/);
-  // Signed out the same strip, with Pin then Join on each card, and its own
-  // label id (the landing and Home share a document).
-  const guest = draw({ signedIn: false, pinned: new Set(), onPin() {} });
+  // Signed out the same strip, with no Pin or Join on a card (#6433), and its
+  // own label id (the landing and Home share a document).
+  const guest = draw({ signedIn: false });
   assert.deepEqual(featuredOf(guest), ['todo-list', 'game-corner']);
   assert.match(guest, /id="guest-join-featured-label"/);
-  assert.match(cardOf(guest, 'todo-list'), /data-home-pin="todo-list"[\s\S]*data-home-join="todo-list"/);
+  assert.doesNotMatch(guest, /data-home-pin=|data-home-join=/);
   // Nothing featured: no strip, and the grid is everything.
   const none = draw({ apps: APPS.map((a) => ({ ...a, featured: false })) });
   assert.doesNotMatch(none, /data-home-join-featured/);
