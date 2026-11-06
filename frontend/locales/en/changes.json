@@ -8395,6 +8395,10 @@
     "text": "Homeroom bot will build this next.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; the request is next in its queue. \"Build\" is a verb."
   },
+  "request.status.lead.botOnHoldUntil": {
+    "text": "Homeroom bot has this on hold until {{date}}.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it has the request in its queue but holds it until {{date}}, a short month and day, and nothing needs to be done meanwhile."
+  },
   "request.status.lead.botWaitsPlan": {
     "text": "Homeroom bot is waiting for your plan.",
     "description": "The one sentence on the status card of a request's page while the viewer, who asked for it, works on it with Homeroom bot (the platform's assistant) in a private thread: the bot builds nothing until they post a plan on it or let it go ahead."
