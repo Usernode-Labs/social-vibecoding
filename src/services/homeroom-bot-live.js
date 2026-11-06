@@ -1515,9 +1515,10 @@ async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = 
   const askedBy = await askerOf(pool, sessionId);
   const credited = built.description && askedBy ? creditedDescription(built.description, askedBy) : built.description;
   // #4488: and a complicated change says its plan was checked with them.
+  const description = credited && checkedFirst ? checkedDescription(credited, askedBy) : credited;
   // #6407: a change built from a person's plan names that plan first, and
   // says where it departed when the model left that out.
-  const description = credited && checkedFirst ? checkedDescription(credited, askedBy) : withPlanLine(credited, fromPlan);
+  const proposalDescription = withPlanLine(description, fromPlan);
   if (ccOutput) {
     try {
       await pool.query(
@@ -1525,7 +1526,7 @@ async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = 
          VALUES ($1, 'system', $2, $3)`,
         [Number(sessionId), 'Homeroom bot finished building', JSON.stringify({
           ccOutput,
-          ...(description ? { proposalDescription: description } : {}),
+          ...(proposalDescription ? { proposalDescription } : {}),
           ccOutcome: 'success',
           agentBackend: 'codex_openrouter',
           agentModel: model || null,
@@ -1537,7 +1538,7 @@ async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = 
       });
     }
   }
-  return { title, description };
+  return { title, description: proposalDescription };
 }
 
 /**

@@ -3070,7 +3070,11 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], of
   const link = require('./homeroom-bot-live').proposalLink(domain, run.slug, id);
   // B7: what its asker can do on the card, and who else must approve it.
   const requester = await requesterOf(pool, run.id, Number(run.issue_number));
-  const approval = await approvalState(pool, { sessionId: id, userId: requester?.userId || null });
+  const approvalNow = await approvalState(pool, { sessionId: id, userId: requester?.userId || null });
+  // #6407: a change built from a person's plan that misses it is not put
+  // straight to the vote: its card says what the plan draws and it does
+  // not, and nobody else is asked to approve it until it does.
+  const approval = offPlan ? null : approvalNow;
   // #5506: a Yes from someone who does not build on the project is refused
   // by the session guard ("Session not found"), whatever its governance
   // says, so their card offers no Approve. Its Try it opens the look-only
@@ -3078,7 +3082,7 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], of
   const canBuild = await requesterCanBuild(pool, run.id, requester?.userId);
   // A first version goes live without a vote (D1): nobody is waited on,
   // and the card offers Try it and Change something, never Approve.
-  const noVote = !!approval?.firstVersion;
+  const noVote = !!approvalNow?.firstVersion;
   const waiting = approval && !noVote
     ? await usernamesOf(pool, await needsYesFrom(pool, approval, { except: requester?.userId ? [requester.userId] : [] }))
     : [];
@@ -3121,7 +3125,7 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], of
   // the group talks about it.
   // Nor is anybody asked to approve a first version (D1): it needs no Yes,
   // so needsYesFrom names nobody and nothing is sent.
-  if (approval && !broken.length && !offPlan) {
+  if (approval && !broken.length) {
     await noteApproversReady(pool, { sessionId: id, epoch: state.epoch, requesterId: requester?.userId || null, state: approval, strict: true });
   }
   // B9: and the chat message it was asked in, if it was, says Try it.
