@@ -187,7 +187,7 @@ test('a native shell still restores the session it keeps, on an answered "nobody
 test('a device with a snapshot keeps the plain read: no optional answer over a live session', async () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
   const reconcile = app.slice(app.indexOf('async _reconcileSession('), app.indexOf('async enterAnonymous('));
-  assert.match(reconcile, /res = await App\._fetchSession\(\);/);
+  assert.match(reconcile, /App\._fetchSession\(\{ late: true \}\)/);
   assert.doesNotMatch(reconcile, /optional/);
 });
 
