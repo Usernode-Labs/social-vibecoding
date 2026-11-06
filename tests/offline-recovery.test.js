@@ -66,28 +66,36 @@ test('a stalled health check expires, releases the probe, and ignores its late r
   assert.equal(api.isOffline(), false);
   t.mock.timers.tick(1);
   await flush();
-  assert.equal(api.isOffline(), true, 'a stuck request cannot hide the outage indefinitely');
+  assert.equal(api.isOffline(), false, 'one expired check only starts the confirming one');
   await first;
   assert.equal(requests[0].options.signal.aborted, true);
+  // The confirming check runs two seconds later; until it fails, no banner.
+  t.mock.timers.tick(2000);
+  await flush();
+  assert.equal(requests.length, 2, 'a second check confirms the outage');
+  assert.equal(api.isOffline(), false);
+  t.mock.timers.tick(5000);
+  await flush();
+  assert.equal(api.isOffline(), true, 'a stuck request cannot hide the outage indefinitely');
   assert.equal(visibility.get('offline-banner'), true);
   assert.equal(bodyClasses.has('is-offline'), true);
 
   const recovered = api.probe();
   await flush();
-  assert.equal(requests.length, 2, 'a new request is allowed after the deadline');
-  requests[1].resolve({ ok: true });
+  assert.equal(requests.length, 3, 'a new request is allowed after the deadline');
+  requests[2].resolve({ ok: true });
   await recovered;
   assert.equal(api.isOffline(), false);
   assert.equal(visibility.get('offline-banner'), false);
   assert.equal(bodyClasses.has('is-offline'), false);
   assert.deepEqual(changes, [true, false], 'consumers receive the recovery event');
 
-  requests[0].resolve({ ok: false });
+  requests[1].resolve({ ok: false });
   await flush();
   assert.equal(api.isOffline(), false, 'the expired request cannot overwrite a newer result');
   t.mock.timers.tick(60000);
   await flush();
-  assert.equal(requests.length, 2, 'successful recovery stops the retry loop');
+  assert.equal(requests.length, 3, 'successful recovery stops the retry loop');
 });
 
 test('server failures retry and recover while navigator.onLine stays true', async (t) => {
@@ -96,8 +104,8 @@ test('server failures retry and recover while navigator.onLine stays true', asyn
   await flush();
   requests[0].resolve({ ok: false, status: 503 });
   await first;
-  assert.equal(api.isOffline(), true);
-  t.mock.timers.tick(15000);
+  assert.equal(api.isOffline(), false, 'one failed check only asks again');
+  t.mock.timers.tick(2000);
   await flush();
   assert.equal(requests.length, 2);
   requests[1].reject(new TypeError('Connection reset'));
@@ -112,29 +120,63 @@ test('server failures retry and recover while navigator.onLine stays true', asyn
   assert.deepEqual(changes, [true, false]);
 });
 
+test('one failed check followed by a good one never shows the offline banner', async (t) => {
+  const { api, requests, visibility, changes } = setup(t);
+  const first = api.probe();
+  await flush();
+  requests[0].reject(new TypeError('Disconnected'));
+  await first;
+  t.mock.timers.tick(2000);
+  await flush();
+  assert.equal(requests.length, 2, 'the confirming check runs on the timer');
+  requests[1].resolve({ ok: true });
+  await flush();
+  assert.equal(api.isOffline(), false, 'a good answer clears the count');
+  assert.equal(visibility.get('offline-banner'), undefined, 'nothing was ever published');
+  assert.deepEqual(changes, []);
+
+  // The counter reset: the next failure alone does not show the banner either.
+  api.probe();
+  await flush();
+  requests[2].reject(new TypeError('Disconnected'));
+  await flush();
+  assert.equal(api.isOffline(), false);
+  t.mock.timers.tick(2000);
+  await flush();
+  requests[3].resolve({ ok: false });
+  await flush();
+  assert.equal(api.isOffline(), true, 'two in a row do');
+  assert.deepEqual(changes, [true]);
+});
+
 test('returning to an offline tab probes immediately and overlapping focus events deduplicate', async (t) => {
   const { api, window, document, requests } = setup(t);
   const first = api.probe();
   await flush();
   requests[0].reject(new TypeError('Disconnected'));
   await first;
+  t.mock.timers.tick(2000);
+  await flush();
+  requests[1].reject(new TypeError('Disconnected'));
+  await flush();
+  assert.equal(api.isOffline(), true);
   document.visibilityState = 'hidden';
   document.dispatchEvent(new Event('visibilitychange'));
   window.dispatchEvent(new Event('focus'));
   await flush();
-  assert.equal(requests.length, 1);
+  assert.equal(requests.length, 2);
   document.visibilityState = 'visible';
   document.dispatchEvent(new Event('visibilitychange'));
   window.dispatchEvent(new Event('focus'));
   await flush();
-  assert.equal(requests.length, 2);
-  requests[1].resolve({ ok: true });
+  assert.equal(requests.length, 3);
+  requests[2].resolve({ ok: true });
   await flush();
   assert.equal(api.isOffline(), false);
   document.dispatchEvent(new Event('visibilitychange'));
   window.dispatchEvent(new Event('focus'));
   await flush();
-  assert.equal(requests.length, 2, 'healthy tabs do not probe on every focus');
+  assert.equal(requests.length, 3, 'healthy tabs do not probe on every focus');
 });
 
 test('browser connectivity events still probe the server instead of trusting the flag', async (t) => {
@@ -224,4 +266,68 @@ test('forced screenshot state survives a pending success and disables all retrie
   await flush();
   assert.equal(requests.length, 1);
   assert.deepEqual(changes, [true]);
+});
+
+test('a planned restart shows the update notice without turning on the offline look', async (t) => {
+  const { api, visibility, bodyClasses, changes, requests } = setup(t);
+  api.restartNotice();
+  assert.equal(visibility.get('offline-banner:restart'), true);
+  assert.equal(api.restartNoticeVisible(), true, 'the first render reads it too');
+  assert.equal(api.isOffline(), false);
+  assert.equal(bodyClasses.has('is-offline'), false, 'the offline look never engages');
+  assert.deepEqual(changes, [], 'and no offline-change event fires');
+  api.restartDone();
+  assert.equal(visibility.get('offline-banner:restart'), false);
+  assert.equal(api.restartNoticeVisible(), false);
+  t.mock.timers.tick(60000);
+  await flush();
+  assert.equal(requests.length, 0, 'the cleared notice leaves no probe behind');
+});
+
+test('the update notice gives way to the normal offline path after about a minute', async (t) => {
+  const { api, visibility, requests } = setup(t);
+  api.restartNotice();
+  api.restartNotice();
+  t.mock.timers.tick(59999);
+  await flush();
+  assert.equal(visibility.get('offline-banner:restart'), true);
+  assert.equal(requests.length, 0);
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(visibility.get('offline-banner:restart'), false);
+  assert.equal(requests.length, 1, 'the second call kept the first timer, and the probe takes over');
+});
+
+test('a pinned screenshot state ignores the update notice', async (t) => {
+  const { api, visibility, requests } = setup(t);
+  api.forceOffline();
+  api.restartNotice();
+  assert.equal(visibility.get('offline-banner:restart'), undefined, '?shot=offline stays the offline banner');
+  api.restartDone();
+  assert.equal(visibility.get('offline-banner:restart'), undefined);
+  t.mock.timers.tick(60000);
+  await flush();
+  assert.equal(requests.length, 0);
+});
+
+test('a 1012 close from a release raises the update notice instead of probing', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  const app = read('public/js/app.js');
+  assert.match(app, /App\.eventsWs\.onclose = \(ev\) => \{[\s\S]*?App\._eventsLost\(ev && ev\.code\);/,
+    'the events socket hands its close code on');
+  const lost = app.slice(app.indexOf('  _eventsLost(code) {'), app.indexOf('  // The phone handed over'));
+  assert.match(lost, /if \(code === 1012\) \{[\s\S]*?Offline\.restartNotice\(\);/);
+  assert.match(lost, /else if \(window\.Offline\) \{\s+Offline\.nudge\(\);/,
+    'every other close still nudges the probe');
+  const open = app.slice(app.indexOf('App.eventsWs.onopen = () => {'), app.indexOf('App.eventsWs.onerror'));
+  assert.match(open, /Offline\.restartDone\(\)/);
+  assert.match(open, /Offline\.nudge\(\)/);
+
+  const chat = read('public/js/group-chat.js');
+  assert.match(chat, /GroupChat\._scheduleReconnect\(ev\.code\)/);
+  assert.match(chat, /_scheduleReconnect\(code\) \{[\s\S]*?if \(code === 1012\) window\.Offline\?\.restartNotice\(\);/);
+  const chatOpen = chat.slice(chat.indexOf('ws.onopen = () => {'), chat.indexOf('ws.onmessage = (event)'));
+  assert.match(chatOpen, /window\.Offline\?\.restartDone\(\)/);
 });

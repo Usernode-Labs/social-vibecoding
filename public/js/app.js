@@ -3214,11 +3214,20 @@ const App = {
     App._eventsLost();
   },
 
-  _eventsLost() {
+  _eventsLost(code) {
     // A dropped global-events socket is the strongest early signal that
     // we've gone offline: nudge the connectivity probe so the offline
     // banner appears without waiting for a browser `offline` event.
-    if (window.Offline) Offline.nudge();
+    //
+    // 1012 is not a drop: the server sends it to every socket when a release
+    // replaces the Pod (src/services/ws.js closeAllForRelease), so the tab is
+    // told Homeroom is updating instead of being probed as unreachable
+    // (issue #6403).
+    if (code === 1012) {
+      if (window.Offline) Offline.restartNotice();
+    } else if (window.Offline) {
+      Offline.nudge();
+    }
     App._eventsFailures += 1;
     const step = Math.min(App.EVENTS_RETRY_MAX_MS,
       App.EVENTS_RETRY_MIN_MS * 2 ** (App._eventsFailures - 1));
@@ -3309,6 +3318,8 @@ const App = {
       console.log(`[ws] Global events ${isReconnect ? 'reconnected' : 'connected'}`);
       // A (re)opened socket proves we're online — clear the offline
       // banner immediately instead of waiting for the slow re-probe loop.
+      // A planned-restart notice goes too: the release is over.
+      if (window.Offline) Offline.restartDone();
       if (window.Offline) Offline.nudge();
       // #4318: a new socket watches nothing until told; tell it every
       // session still on screen before anything else can be missed.
@@ -3521,11 +3532,12 @@ const App = {
       } catch {}
     };
 
-    App.eventsWs.onclose = () => {
-      // Nudges the probe and retries with backoff (_eventsLost). A socket
-      // already replaced or given up is detached and never gets here.
+    App.eventsWs.onclose = (ev) => {
+      // Nudges the probe and retries with backoff (_eventsLost), or, for a
+      // release's 1012, shows the update notice. A socket already replaced
+      // or given up is detached and never gets here.
       if (App.eventsWs !== socket) return;
-      App._eventsLost();
+      App._eventsLost(ev && ev.code);
     };
   },
 
