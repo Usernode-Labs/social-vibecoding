@@ -699,6 +699,45 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
 
   // ── What the caller read, and the guard ─────────────────────────────
 
+  await t.test('P20b an authored push ends an admin force and records what it was; a mechanical move keeps it', async () => {
+    defaults();
+    const s = await session({ status: 'promoted', promotedAgo: 0 });
+    await pool.query(`UPDATE chat_sessions SET shots_state = 'verified' WHERE id = $1`, [s.id]);
+    await send(s, 'ForceMerge', { from: 'promoted', username: 'evan', userId: 7 }, route);
+    await settle();
+    let inst = await instance(s);
+    assert.equal(inst.data.force.by, 'evan');
+    assert.equal(inst.data.force.head, SHA('a'));
+
+    // A mechanical move of main carries the force, and its head, with it.
+    await send(s, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('a'), to: SHA('b'), keepVotes: true, reason: 'mechanical' });
+    await settle();
+    inst = await instance(s);
+    assert.equal(inst.data.force.head, SHA('b'), 'a mechanical move follows the force');
+    assert.equal(inst.data.forceDropped, null);
+
+    // The author's own push ends it, and the record of what it was survives
+    // so the card and the thread can say it no longer applies.
+    await send(s, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('b'), to: SHA('c'), keepVotes: false, reason: 'authored' });
+    await settle();
+    inst = await instance(s);
+    assert.equal(inst.data.force, null);
+    assert.equal(inst.data.forceDropped.by, 'evan');
+    assert.equal(inst.data.forceDropped.head, SHA('b'));
+    assert.equal(inst.data.forceDropped.to, SHA('c'));
+    const { rows: lines } = await pool.query(
+      `SELECT content FROM chat_messages WHERE thread_type = 'session' AND thread_ref = $1
+         AND content ILIKE '%admin merge by evan%'`, [s.id]);
+    assert.equal(lines.length, 1, 'the change\'s thread says the force no longer applies');
+
+    // A new force clears the dropped record.
+    await send(s, 'ForceMerge', { from: 'promoted', username: 'evan', userId: 7 }, route);
+    await settle();
+    inst = await instance(s);
+    assert.ok(inst.data.force);
+    assert.equal(inst.data.forceDropped, null);
+  });
+
   await t.test('P21 every status move names what its caller read: a payload without `from` is refused at the append', async () => {
     const s = await session();
     for (const type of ['Promote', 'Unpromote', 'Pause', 'Resume', 'Close', 'Reopen', 'ReviewHeadMoved']) {
