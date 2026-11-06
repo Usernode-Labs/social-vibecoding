@@ -116,6 +116,18 @@ interface ChangeView {
 const hasCards = (item: ThreadItem) => item.state === 'review' || item.state === 'merged';
 
 /**
+ * #6392: Homeroom bot is on this change, so its private-thread button is left
+ * out: it is still building it, or it is fixing or about to fix its failing
+ * checks (its Testing card's `botFix`; a fix it handed back, stopped or
+ * found to be the platform's is no longer the bot at work).
+ */
+function changeBotAtWork(item: ThreadItem, view: ChangeView | null): boolean {
+  if (item.byBot && item.state === 'underway' && !item.ready) return true;
+  const fix = view?.v.testing.botFix;
+  return fix === 'fixing' || fix === 'queued';
+}
+
+/**
  * Each change's own page read, and the view its page builds from it, in the
  * order given. Null until it is read. One hook for the list, so the count of
  * changes can move without moving the hooks. 1 Nov 2026: a change still
@@ -507,8 +519,14 @@ function ChangeBlock({ item, plan = null, request }: { item: ThreadItem; plan?: 
     <div ref={box} className="mt-3" data-thread-change={item.id} data-thread-change-state={item.state || ''}>
       <ChangeLine item={item} view={view} />
       <ChangeBody item={item} view={view} plan={plan} request={request} />
-      {/* 1 Nov 2026: ask about it, or sketch a revision, privately. */}
-      <WorkWithBotButton slug={pageSlug()} number={item.number} />
+      {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392: the
+          words say so, and the bot building or fixing it leaves this out. */}
+      <WorkWithBotButton
+        slug={pageSlug()}
+        number={item.number}
+        voting={!!view?.v.votes.facts?.length}
+        botAtWork={changeBotAtWork(item, view)}
+      />
     </div>
   );
 }
