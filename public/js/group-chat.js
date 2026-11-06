@@ -935,7 +935,7 @@ const GroupChat = {
           return;
         }
         GroupChat._react()?.appendTranscriptMessage(
-          GroupChat._messageView(msg, { language: GroupChat.activeThread && GroupChat.activeThread.language }),
+          GroupChat._messageView(msg, { language: GroupChat.activeThread && GroupChat.activeThread.language, number: GroupChat.activeThread && GroupChat.activeThread.ref }),
           'thread',
         );
         if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
@@ -1249,6 +1249,12 @@ const GroupChat = {
         : (opts && opts.language === 'request' && meta.aboutChange && Number(meta.aboutChange.sessionId))
           ? { changeOf: { sessionId: Number(meta.aboutChange.sessionId) } }
           : {}),
+      // #6421: on a request's page, a message written on another request of
+      // the merged thread carries that request's number, drawn as "on #N".
+      ...(opts && opts.language === 'request' && !changeRow && scopeType === 'issue' && opts.number != null
+        && Number(msg.thread_ref ?? (msg.thread && msg.thread.ref)) !== Number(opts.number)
+        ? { requestOf: { number: Number(msg.thread_ref ?? (msg.thread && msg.thread.ref)) || null } }
+        : {}),
       senderId: Number(msg.userId ?? msg.user_id) || null,
       kind,
       username,
@@ -2527,8 +2533,8 @@ const GroupChat = {
     if (a.type === 'message') {
       root = st.root || GroupChat.messages.find((m) => Number(m.id) === Number(a.ref)) || null;
     }
-    let rows = st.messages.map((m) => GroupChat._messageView(m, { language }));
-    if (root) rows.unshift(GroupChat._messageView({ ...root, _threadRoot: true }, { language }));
+    let rows = st.messages.map((m) => GroupChat._messageView(m, { language, number: a.ref }));
+    if (root) rows.unshift(GroupChat._messageView({ ...root, _threadRoot: true }, { language, number: a.ref }));
     // #4453: a request's page is ONE stream in time order. Its GitHub
     // comments (AppView's per-issue cache, fetched once the page opens) join
     // the thread's own rows by when they were written, and the specs among
