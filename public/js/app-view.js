@@ -1842,8 +1842,9 @@ const AppView = {
   //   * A way back: the frame must say it opened (the bridge's
   //     `__usernode_offline_cache: 'open'`). Online, a page that never says so
   //     (one that needs the token to load, or loads no bridge) is framed the
-  //     old way on this device for a week. Offline, it gives way to the
-  //     "needs a connection" placeholder.
+  //     old way on this device for a week, and reported: two people on one
+  //     build make it the old way on every device until the app deploys
+  //     again. Offline, it gives way to the "needs a connection" placeholder.
   //
   // Per device and per viewer, like the offline-ready map: dropped with the
   // session (clearOfflineReady).
@@ -1946,9 +1947,29 @@ const AppView = {
       // The page did not open without the token in its query: the old
       // address, on this device, for a while.
       map[slug] = { at: Date.now(), oldAddressUntil: Date.now() + AppView.OFFLINE_CACHE_RETRY_MS };
+      AppView._reportOfflineCacheDidNotOpen(slug);
     }
     AppView._writeOfflineCache(map);
     if (AppView.appData && AppView.appData.slug === slug) AppView.renderAppTab();
+  },
+
+  // Online, and the page never said it opened: tell the platform as well.
+  // Once two people have seen it on the same build, every device frames the
+  // app the old way until it deploys again (`offline_cache` comes back
+  // false; services/offline-cache-refusals.js), instead of each one opening
+  // it signed out first. Best effort: the device's own fallback above
+  // stands either way.
+  _reportOfflineCacheDidNotOpen(slug) {
+    const build = String(AppView.buildFor(slug) || '');
+    if (!slug || !/^[0-9a-f]{40}$/i.test(build)) return;
+    try {
+      fetch(`/api/apps/${encodeURIComponent(slug)}/offline-cache/did-not-open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ build }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch { /* no fetch here: the device's fallback alone */ }
   },
 
   // Bridge -> shell: `{ __usernode_offline_cache: 'open', fresh }`, from the
@@ -6318,7 +6339,7 @@ const AppView = {
     if (merged) lead = PlatformI18n.t('changes:request.status.lead.live');
     else if (waitingOnBot && waitingOnBot.kind === 'question') lead = PlatformI18n.t('changes:request.status.lead.botQuestion');
     else if (planHeld) lead = PlatformI18n.t('changes:request.status.lead.botWaitsPlan');
-    else if (upForVote) lead = AppView._requestUpForVoteLead(ref);
+    else if (upForVote) lead = AppView._requestUpForVoteLead(issue);
     else if (hold) lead = hold;
     else if (!st) lead = PlatformI18n.t('changes:request.status.lead.nobody');
     else if (st.key === 'in_review') {
@@ -6423,6 +6444,9 @@ const AppView = {
       // The sentence is Homeroom bot's state, plan included: no "Plan v1 is
       // ready for comments." after it (request-head.tsx).
       botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot') || planHeld || !!hold),
+      // #6387: the row expects a change section (request-head.tsx), so the
+      // page holds its place while the thread is still being read.
+      changeExpected: !!ref,
       // 1 Nov 2026: "Build it in an agent session" is a row of the page's ⋯,
       // where its one action is Work on this with Homeroom bot.
       agentSession,
@@ -6454,10 +6478,14 @@ const AppView = {
   },
 
   // The status card's sentence for a change up for a vote that no person's
-  // session stands for (Homeroom bot built it): how many more yes it needs,
-  // from the vote panel's own reading of it, or plainly that it is up when
-  // that is not known yet.
-  _requestUpForVoteLead(ref) {
+  // session stands for (Homeroom bot built it): a failed check if it has one
+  // (it cannot go live until fixed, whatever the votes say), else how many
+  // more yes it needs from the vote panel's own reading of it, or plainly
+  // that it is up when that is not known yet.
+  _requestUpForVoteLead(issue) {
+    const ref = AppView._issueProposalRefView(issue);
+    const line = issue && issue.track && issue.track.work && issue.track.work.line;
+    if (line && line.code === 'checks_failing') return PlatformI18n.t('changes:request.status.lead.upForVoteChecksFailing');
     const st = AppView.voteState || {};
     const item = ref && st.bySession ? st.bySession[String(ref.sessionId)] : null;
     if (item && typeof AppView.statusPillState === 'function') {

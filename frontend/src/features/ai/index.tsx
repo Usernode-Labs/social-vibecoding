@@ -81,6 +81,7 @@ import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
 import { closeThread, useMessagesSnapshot } from '../messages/store';
 import { SidePanelDivider } from '../side-panel/side-panel';
+import { panelEdgeStore } from '../side-panel/edge-store';
 import {
   AI_MAIN_WIDTH_KEY,
   AI_PREVIEW_COLUMN_WIDTH_KEY,
@@ -464,6 +465,7 @@ export function AiScreen(): ReactNode {
   // floor and the thread's. In halves the list has stepped aside, so the
   // thread's edge is no handle and the preview's keeps only the thread's floor.
   const threeUp = detailHere && layout === 'three';
+  const pageInColumn = column?.at === 'page';
   const threadProbe = useCallback(() => {
     const probe = probeLayout();
     const pane = previewRef.current;
@@ -479,6 +481,22 @@ export function AiScreen(): ReactNode {
       ? { ...probe, neighbourMin: (probe.neighbourMin ?? 0) + MIN_PANEL_W, selfMin: PREVIEW_MIN_W }
       : { ...probe, neighbourMin: MIN_PANEL_W };
   }, [layout]);
+  // A PAGE IN THE SIDE PANEL WITH A DETAIL BESIDE IT (#6394, 6 Nov 2026):
+  // list | request | plan. That middle column is its own island, outside
+  // #ai-screen, so its divider cannot take threadProbe as a prop: this store
+  // is the seam (../side-panel/edge-store). While it is set, the panel's edge
+  // sets the column's own width under the thread's key, with the thread's
+  // probe (the list's floor plus the preview) and the preview to watch.
+  // Cleared whenever the column is not that page, or the detail or the third
+  // column goes, so the edge is Main's again.
+  useEffect(() => {
+    panelEdgeStore.set({
+      slot: visible && threeUp && pageInColumn
+        ? { widthKey: AI_PREVIEW_COLUMN_WIDTH_KEY, probe: threadProbe, watch: previewRef }
+        : null,
+    });
+    return () => { panelEdgeStore.set({ slot: null }); };
+  }, [visible, threeUp, pageInColumn, threadProbe]);
   const detailSlot: ColumnDetail | undefined = !detailHere || !detail ? undefined
     : detail.kind === 'design' ? { kind: 'design', version: detail.version }
       : detail.kind === 'plan' && detail.ref.sessionId ? { kind: 'plan', sessionId: detail.ref.sessionId, version: detail.version }

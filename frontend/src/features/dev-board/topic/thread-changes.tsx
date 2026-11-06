@@ -63,6 +63,7 @@ import { projectChangesOnGithub } from '../../../lib/change-ref';
 import { reload as reloadTab } from '../../../lib/tab-build';
 import { detailDrawn, detailEntry, markShotsArrival, takeShotsArrival } from '../../ai/detail';
 import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { ActionButton, StatusPill } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
 import { ChangeGates, ChangeSpentLine } from './change-head';
@@ -114,6 +115,18 @@ interface ChangeView {
 
 /** Whether a change has cards to draw: it is up for a vote, or went in. */
 const hasCards = (item: ThreadItem) => item.state === 'review' || item.state === 'merged';
+
+/**
+ * #6392: Homeroom bot is on this change, so its private-thread button is left
+ * out: it is still building it, or it is fixing or about to fix its failing
+ * checks (its Testing card's `botFix`; a fix it handed back, stopped or
+ * found to be the platform's is no longer the bot at work).
+ */
+function changeBotAtWork(item: ThreadItem, view: ChangeView | null): boolean {
+  if (item.byBot && item.state === 'underway' && !item.ready) return true;
+  const fix = view?.v.testing.botFix;
+  return fix === 'fixing' || fix === 'queued';
+}
 
 /**
  * Each change's own page read, and the view its page builds from it, in the
@@ -462,6 +475,38 @@ function AlsoCloses({ item, request }: { item: ThreadItem; request: number }): R
 }
 
 /**
+ * #6387: the change section's shape while the request's thread is still being
+ * read (./request-head.tsx `holding`): its line — the small-caps kicker and
+ * its status pill — its title, then its Votes and Testing cards. The loaded
+ * section fills the same place, so nothing swaps or jumps.
+ */
+export function ChangeSectionSkeleton(): ReactNode {
+  const t = useMessages('project');
+  return (
+    <section className="mt-4 border-t border-[color:var(--app-sheet-line)]" data-thread-change-skeleton="">
+      <SkeletonGroup label={t('project:topic.thread.page.changeLoading')} className="mt-3">
+        <div className="flex items-center gap-2">
+          <Skeleton shape="muted" className="w-32" />
+          <Skeleton shape="block" className="h-5 w-24 rounded-full" />
+        </div>
+        <Skeleton className="mt-2.5 h-3.5 w-3/5" />
+        <ChangeGatesSkeleton />
+      </SkeletonGroup>
+    </section>
+  );
+}
+
+/** The Votes and Testing cards' place, until the change's own read lands. */
+function ChangeGatesSkeleton(): ReactNode {
+  return (
+    <div className="dev-change-pair">
+      <Skeleton shape="block" className="h-16 rounded-2xl" />
+      <Skeleton shape="block" className="h-16 rounded-2xl" />
+    </div>
+  );
+}
+
+/**
  * What a change's section draws under its line: which other requests it
  * also closes, its summary, the plan it was built from, its before and
  * after, then its Votes and Testing cards (or, still being built, the line
@@ -488,7 +533,11 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
         </p>
       ) : view ? (
         <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} />
-      ) : null}
+      ) : (
+        // #6387: the cards keep their place while the change's own read is
+        // still landing, so they fill in rather than pushing the page down.
+        <ChangeGatesSkeleton />
+      )}
       {/* #6116: still being built it has no cards, and its cost is still news to its author. */}
       {(item.state === 'underway' || !hasCards(item)) && view?.v.testing.spent
         ? <ChangeSpentLine spent={view.v.testing.spent} />
@@ -507,8 +556,14 @@ function ChangeBlock({ item, plan = null, request }: { item: ThreadItem; plan?: 
     <div ref={box} className="mt-3" data-thread-change={item.id} data-thread-change-state={item.state || ''}>
       <ChangeLine item={item} view={view} />
       <ChangeBody item={item} view={view} plan={plan} request={request} />
-      {/* 1 Nov 2026: ask about it, or sketch a revision, privately. */}
-      <WorkWithBotButton slug={pageSlug()} number={item.number} />
+      {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392: the
+          words say so, and the bot building or fixing it leaves this out. */}
+      <WorkWithBotButton
+        slug={pageSlug()}
+        number={item.number}
+        voting={!!view?.v.votes.facts?.length}
+        botAtWork={changeBotAtWork(item, view)}
+      />
     </div>
   );
 }

@@ -15,7 +15,9 @@
 //      rendered by ./templates buildMessage, or the owner's failure order when
 //      there are none
 //   2. the throttle decision (./rate-limit, fed from mail_deliveries)
-//   3. picking the transport (./select, resolved once at boot in config.js)
+//   3. picking the transport (./select: resolved at boot in config.js, and
+//      swapped at send time when an admin saved another provider in
+//      Admin → Email delivery)
 //   4. recording the outcome in mail_deliveries
 //   5. swallowing absolutely everything
 //
@@ -65,6 +67,36 @@ function stagingLogOnly(config) {
     return config.mailStagingLogOnly;
   }
   return process.env.USERNODE_ENV === 'staging';
+}
+
+// Which transport this send goes out on: { transport, provider }.
+//
+// config.js resolved one at boot from the environment. An admin's saved
+// provider (./select savedChoice, read through its ten-second cache) wins
+// over it, so the switch in Admin → Email delivery needs no redeploy. A
+// staging preview is never switched: its boot transport is the log, and a
+// copy of production's saved row must not point a preview at a real provider.
+// A saved provider that is not configured is null, the same loud
+// "NOT delivered" a named PLATFORM_MAIL_PROVIDER gets, never a quiet
+// fallback to another sender.
+async function transportFor(config, pool) {
+  // `mailTransport` is what config.js resolves today;
+  // `topochainMailTransport` is the original hook name, still honoured
+  // so an injected test transport and any older caller keep working.
+  const boot = (config && (config.mailTransport || config.topochainMailTransport)) || null;
+  const bootProvider = (boot && boot.provider)
+    || (config && config.mailProvider)
+    || (boot ? 'injected' : null);
+  if (stagingLogOnly(config)) return { transport: boot, provider: bootProvider };
+  const saved = await select.savedChoice(pool);
+  if (!saved || saved === bootProvider) return { transport: boot, provider: bootProvider };
+  const transport = select.transportNamed(saved, process.env);
+  if (!transport) {
+    log.error('platform-mail',
+      'The mail provider saved in the admin console is not configured — email will NOT be delivered',
+      { provider: saved });
+  }
+  return { transport, provider: transport ? saved : null };
 }
 
 function maxPerHour(config) {
@@ -258,14 +290,8 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
     // consulting a throttle, a provider or the templates for it.
     if (!actionFor(kind)) throw unknownKind(kind);
 
-    // `mailTransport` is what config.js resolves today;
-    // `topochainMailTransport` is the original hook name, still honoured
-    // so an injected test transport and any older caller keep working.
-    const transport = (config && (config.mailTransport || config.topochainMailTransport)) || null;
-    const provider = (transport && transport.provider)
-      || (config && config.mailProvider)
-      || (transport ? 'injected' : null);
     const pool = poolFor(config);
+    const { transport, provider } = await transportFor(config, pool);
 
     if (!transport) {
       await record(pool, { kind, to, messageId, provider: null, status: 'no_transport' });
@@ -400,11 +426,14 @@ async function sendTest(config, { to, preview = null } = {}) {
   };
 
   try {
-    // Presence summary for the panel: which provider was ASKED for and
-    // which keys are absent. describe() reads env only — it never returns
-    // a value, so nothing here can carry a credential.
+    const pool = poolFor(config);
+
+    // Presence summary for the panel: which provider was ASKED for (an
+    // admin's saved choice first, then the deploy's) and which keys are
+    // absent. describe() never returns a value, so nothing here can carry a
+    // credential.
     try {
-      const described = select.describe(process.env);
+      const described = select.describe(process.env, { saved: await select.savedChoice(pool) });
       outcome.requestedProvider = described.requestedProvider || null;
       outcome.missing = Array.isArray(described.missing) ? described.missing : [];
       outcome.from = described.from || null;
@@ -419,14 +448,10 @@ async function sendTest(config, { to, preview = null } = {}) {
       return outcome;
     }
 
-    const transport = (config && (config.mailTransport || config.topochainMailTransport)) || null;
-    const provider = (transport && transport.provider)
-      || (config && config.mailProvider)
-      || (transport ? 'injected' : null);
+    const { transport, provider } = await transportFor(config, pool);
     outcome.provider = provider;
     if (transport && transport.from) outcome.from = transport.from;
 
-    const pool = poolFor(config);
     const messageId = events.messageId();
 
     // A short, non-secret handle that appears in the email body, in the
@@ -705,6 +730,9 @@ module.exports = {
   KINDS,
   chooseTransport: select.chooseTransport,
   describe: select.describe,
+  savedChoice: select.savedChoice,
+  setProvider: select.setProvider,
+  transportFor,
   RETENTION_DAYS,
   PRUNE_LIMIT,
 };

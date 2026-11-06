@@ -92,6 +92,7 @@ import {
   type LayoutProbe,
 } from './resize';
 import { sidePanelRefs, sidePanelStore } from './store.js';
+import { panelEdgeStore } from './edge-store';
 import { dirSign } from '../../lib/i18n/direction';
 
 /** The app header's round control, as its #back-btn draws it — less its
@@ -117,6 +118,10 @@ const BACK = `hidden ${DISC_BOX}`;
 export function SidePanel(): ReactNode {
   const t = useMessages('agent');
   const s = useStoreState(sidePanelStore);
+  // The AI page sets this while the panel is the middle column of three,
+  // beside a detail opened from the page it holds (#6394); otherwise the
+  // divider keeps its own defaults.
+  const edge = useStoreState(panelEdgeStore).slot;
   const rootRef = useRef<HTMLElement | null>(null);
   const backRef = useRef<HTMLButtonElement | null>(null);
   const loadingRef = useRef<HTMLDivElement | null>(null);
@@ -141,7 +146,13 @@ export function SidePanel(): ReactNode {
       className="side-panel hidden"
       aria-labelledby="side-panel-title"
     >
-      <SidePanelDivider panelRef={rootRef} shown={s.open && !!s.frameSrc} />
+      <SidePanelDivider
+        panelRef={rootRef}
+        shown={s.open && !!s.frameSrc}
+        widthKey={edge?.widthKey}
+        probe={edge?.probe}
+        watch={edge?.watch}
+      />
       <div className="side-panel-head flex items-center gap-2 shrink-0">
         <Button
           id="side-panel-back"

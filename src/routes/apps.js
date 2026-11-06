@@ -19,6 +19,7 @@ const pendingSecrets = require('../services/pending-secrets');
 const { encrypt: encryptSecret } = require('../services/secrets');
 const appManifest = require('../services/app-manifest');
 const offlineCache = require('../services/offline-cache');
+const offlineCacheRefusals = require('../services/offline-cache-refusals');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const topicsPr = require('../services/topics-pr');
@@ -4586,6 +4587,31 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.status(result.duplicate ? 200 : 201).json({ ok: true, ...result });
     } catch (err) {
       log.error('apps', 'Failed to record app opening', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Offline apps: this viewer's frame did not say it opened at the cacheable
+  // address on build `body.build` (public/js/app-view.js
+  // _offlineCacheDidNotOpen). Two people on the same build switch that
+  // address off for the app until it deploys again
+  // (services/offline-cache-refusals.js). Same visibility guard as the app
+  // detail request. Always 204 for a report it can take, so the shell never
+  // retries it.
+  router.post('/api/apps/:slug/offline-cache/did-not-open', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+    const build = offlineCacheRefusals.parseBuild(req.body && req.body.build);
+    if (!build) return res.status(400).json({ error: 'A build sha is required' });
+    try {
+      const appRow = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, main_sha`
+      );
+      if (!appRow) return res.status(404).json({ error: 'App not found' });
+      if (appRow.self_hosted) return res.status(204).end();
+      await offlineCacheRefusals.recordRefusal(pool, { app: appRow, userId: req.user.id, build });
+      return res.status(204).end();
+    } catch (err) {
+      log.error('apps', 'Failed to record an offline-cache refusal', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

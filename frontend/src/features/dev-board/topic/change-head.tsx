@@ -603,8 +603,14 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           <ChangeGates ref={pair} id={id} card={card} v={v} />
           {v.upstream ? <UpstreamDecline u={v.upstream} id={id} /> : null}
           {v.shots ? <ShotsCard s={v.shots} /> : null}
-          {/* 1 Nov 2026: ask about it, or sketch a revision, privately. */}
-          <WorkWithBotButton slug={pageSlug()} number={v.number} />
+          {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392:
+              the words say so, and the bot building or fixing it leaves this out. */}
+          <WorkWithBotButton
+            slug={pageSlug()}
+            number={v.number}
+            voting={!!v.votes.facts?.length}
+            botAtWork={v.testing.botFix === 'fixing' || v.testing.botFix === 'queued'}
+          />
         </div>
       </article>
     </>

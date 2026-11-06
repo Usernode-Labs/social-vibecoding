@@ -93,6 +93,11 @@ const READING_DONE = readingDoneNote('queue the change with update_change');
 const LAST_ROUND_TOOLS = Object.freeze(['reply', 'stay_quiet', 'update_change']);
 const LAST_ROUND_NOTE = lastRoundNote('queue the change they asked for with update_change');
 const STAND_IN_NOTE = standInNote('queue the change with update_change');
+// #6391: a reply in a thread always ends in buttons. One that leaves a set
+// out is refused once, as a stand-in is, and the second answer is kept.
+const SUGGESTIONS_NOTE = 'That reply has no buttons for people to tap. Give one to three short things the people you '
+  + 'answered might say next in suggestions (its answers when you asked a question), and one to three for other '
+  + 'members in suggestionsForOthers. Then answer again.';
 // #6268: a person's coding agent posts for them through the connector
 // (`posted_via = 'agent'`). On these places it is heard as the person's own
 // message; on a channel it is not answered, as before.
@@ -839,7 +844,7 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   const answer = addressed.map((a) => ({ message: a.message, username: a.speaker.username, userId: a.speaker.id }));
   const mark = { key: turnKey, through: record.throughId };
   if (sorry) {
-    const sent = await say(pool, { app, place, bot, text: SORRY_TEXT, answer, mark, deps });
+    const sent = await say(pool, { app, place, bot, text: SORRY_TEXT, answer, mark, suggest: false, deps });
     record.replyId = sent?.id || null;
     record.error = 'gave_up';
     await restOfChat();
@@ -1052,10 +1057,14 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     'Finish every turn by calling reply exactly once, or stay_quiet when the newest messages are people talking to each',
     'other and nothing is asked of you.',
     ...(['issue', 'session'].includes(place.type)
-      ? ['Put one to three short things the people you answered might say next, in their own words, in the reply',
-        'tool\'s suggestions field. They are shown as buttons that send them as that person\'s own reply. Never',
-        'write them in the text. Leave them out when the conversation has plainly ended (the change is built or',
-        'live, the request is closed, or you are only saying where things stand).']
+      ? ['Always put one to three short things the people you answered might say next, in their own words, in the',
+        'reply tool\'s suggestions field. They are shown as buttons that send them as that person\'s own reply.',
+        'Never write them in the text. When your reply asks a question, they are its answers (for "Want me to tell',
+        'you here when it is ready to vote?" put "Yes, tell me here" and "No thanks"). When the change is live or',
+        'the request is closed, a short closing pair such as "Thanks" and "Something\'s still wrong".',
+        'Put one to three short things a member of this community whom you did not answer might say next in the',
+        'reply tool\'s suggestionsForOthers field, such as "I\'d like this too", "Can I try it?" or "What\'s left',
+        'to do?".']
       : []),
     '',
     'Rules:',
@@ -1099,8 +1108,9 @@ function fn(name, description, properties = {}, required = []) {
 const REPLY_TOOL = fn('reply', 'Your one reply in this place. Ends the turn.', {
   text: { type: 'string', description: 'What you say, plain text, under 100 words unless they asked for detail.' },
 }, ['text']);
-// In a request's or a change's discussion, the answer may end in buttons the
-// people it answers can tap to send as their own reply.
+// In a request's or a change's discussion, the answer always ends in buttons
+// the people it answers can tap to send as their own reply (#6213), and a
+// second set for the members it did not answer (#6391).
 function replyToolWithSuggestions() {
   const mayor = require('./homeroom-bot-mayor');
   return fn('reply', 'Your one reply in this place. Ends the turn.', {
@@ -1108,9 +1118,18 @@ function replyToolWithSuggestions() {
     suggestions: {
       type: 'array',
       maxItems: mayor.MAX_SUGGESTIONS,
-      description: 'Up to 3 short things the people you answered might say next, in their own words, shown as buttons '
-        + 'to tap that send them as that person\'s reply. '
-        + `Each at most ${mayor.MAX_SUGGESTION_CHARS} characters. Leave this out when the conversation has plainly ended.`,
+      description: 'One to three short things the people you answered might say next, in their own words, shown as '
+        + 'buttons to tap that send them as that person\'s reply. Always give them: when your reply asks a question '
+        + 'they are its answers, and when the request is closed or the change is live they are a short closing pair. '
+        + `Each at most ${mayor.MAX_SUGGESTION_CHARS} characters.`,
+      items: { type: 'string' },
+    },
+    suggestionsForOthers: {
+      type: 'array',
+      maxItems: mayor.MAX_SUGGESTIONS,
+      description: 'One to three short things a member of this community whom you did not answer might say next, such '
+        + 'as "I\'d like this too", "Can I try it?" or "What\'s left to do?". Shown as their own buttons, never to the '
+        + `people you answered. Each at most ${mayor.MAX_SUGGESTION_CHARS} characters.`,
       items: { type: 'string' },
     },
   }, ['text']);
@@ -1551,6 +1570,7 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     // so (once per turn, whichever pass queued it).
     let warnedAt = 0;
     let handledStandIns = 0;
+    let handledSuggestionAsks = 0;
     let saidQueued = false;
     // 5 Nov 2026: the voice is one profile on Homeroom bot's turn engine
     // (homeroom-bot-turn-engine.js), which counts the rounds, asks, and
@@ -1605,6 +1625,11 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
           handledStandIns = ctx.standIns;
           turnRounds.limit = Math.max(turnRounds.limit, rounds + 1);
         }
+        // #6391: a reply refused its buttons gets the one more round too.
+        if ((ctx.suggestAsks || 0) > handledSuggestionAsks) {
+          handledSuggestionAsks = ctx.suggestAsks;
+          turnRounds.limit = Math.max(turnRounds.limit, rounds + 1);
+        }
         return undefined;
       },
     };
@@ -1627,7 +1652,9 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       }
     };
     await runRounds();
-    const said = ctx.reply?.text ?? finalText;
+    // #6391: a reply refused for its missing buttons posts after the extra
+    // round, with the fallback sets say() builds for it.
+    const said = (ctx.reply || ctx.pendingReply)?.text ?? finalText;
     const problems = said && !ctx.quiet ? await claimsFor(pool, ctx, said) : [];
     if (problems.length) {
       t.failures.push(`claims:${problems.map((p) => p.kind).join('+')}`.slice(0, 80));
@@ -1642,8 +1669,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       // has to describe.
       ctx.reads = 0;
       try { await runRounds(); } catch { /* the first answer, checked below, still goes */ }
-      if (!ctx.reply && !finalText) ctx.reply = { text: said };
-      ctx.checkedProblems = await claimsFor(pool, ctx, ctx.reply?.text ?? finalText);
+      if (!ctx.reply && !ctx.pendingReply && !finalText) ctx.reply = { text: said };
+      ctx.checkedProblems = await claimsFor(pool, ctx, (ctx.reply || ctx.pendingReply)?.text ?? finalText);
     }
   } catch (err) {
     record.error = mayor.codeOf(err);
@@ -1656,7 +1683,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     await chargeTurn(pool, bot, t.usage.costUsd);
   }
   if (ctx.quiet) return { outcome: 'quiet' };
-  let text = clip(withoutEmDashes(mayor.cleanReply(ctx.reply?.text || finalText)), MAX_REPLY_CHARS);
+  const finalReply = ctx.reply || ctx.pendingReply || null;
+  let text = clip(withoutEmDashes(mayor.cleanReply(finalReply?.text || finalText)), MAX_REPLY_CHARS);
   if (text && ctx.checkedProblems?.length) {
     text = stripUnreadClaims(mayor.stripClaims(text, ctx.checkedProblems), ctx.checkedProblems);
   }
@@ -1669,7 +1697,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   }
   const posted = await say(pool, {
     app, place, bot, text, answer: addressed.map((a) => ({ message: a.message, username: a.speaker.username, userId: a.speaker.id })),
-    offer: ctx.offer, suggestions: ctx.reply?.suggestions, mark, deps,
+    offer: ctx.offer, suggestions: finalReply?.suggestions,
+    othersSuggestions: finalReply?.suggestionsForOthers, mark, deps,
   });
   return { outcome: record.outcome === 'fallback' ? 'fallback' : 'replied', messageId: posted?.id || null };
 }
@@ -1709,7 +1738,27 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         const lifted = mayor.liftTextSuggestions(text, args.suggestions,
           { app: app.slug, appId: app.id, thread: placeKey(app.id, place) });
         text = lifted.text;
-        ctx.reply = { text, ...(Array.isArray(lifted.suggestions) ? { suggestions: lifted.suggestions } : {}) };
+        const suggestions = Array.isArray(lifted.suggestions) ? lifted.suggestions : [];
+        const forOthers = Array.isArray(args.suggestionsForOthers) ? args.suggestionsForOthers : [];
+        // #6391: in a thread every reply ends in buttons, one set for the
+        // people it answered and one for the other members. A set the model
+        // left out, or wrote unusable, is asked for once more (one more
+        // round, as a refused stand-in gets); the answer after it is kept
+        // even if the sets are still empty, and say() builds them.
+        const wantsSets = (place.type === 'issue' || place.type === 'session') && !ctx.offer;
+        if (wantsSets && !ctx.suggestAsked
+            && (!mayor.suggestionLabels(suggestions).length || !mayor.suggestionLabels(forOthers).length)) {
+          ctx.suggestAsked = true;
+          ctx.suggestAsks = (ctx.suggestAsks || 0) + 1;
+          ctx.pendingReply = {
+            text,
+            ...(suggestions.length ? { suggestions } : {}),
+            ...(forOthers.length ? { suggestionsForOthers: forOthers } : {}),
+          };
+          return { error: SUGGESTIONS_NOTE };
+        }
+        ctx.pendingReply = null;
+        ctx.reply = { text, suggestions, suggestionsForOthers: forOthers };
         return { ok: true };
       }
       case 'stay_quiet':
@@ -2155,13 +2204,101 @@ async function dropThreadOffer(pool, offerId) {
 }
 
 /**
+ * Pure (#6391): the button sets Homeroom builds when the model gave none, or
+ * wrote one that cannot be used. `ended`: the request is closed or the change
+ * is live, so the reply is only where things stand. A reply that asks
+ * something gets its answers; any other gets a way to say thanks and a way
+ * to ask what happens next.
+ */
+function fallbackSuggestions({ text = '', ended = false } = {}) {
+  const mayor = require('./homeroom-bot-mayor');
+  const others = ended
+    ? ["Something's still wrong", 'Can I try it?']
+    : ["I'd like this too", 'Can I try it?', "What's left to do?"];
+  let answered;
+  if (ended) answered = ['Thanks', "Something's still wrong"];
+  else {
+    const lastSentence = String(text || '').trim().split(/(?<=[.!?])\s+/).pop() || '';
+    if (/\?[\s"'”’]*$/.test(lastSentence)) {
+      answered = /tell you here when/i.test(lastSentence) ? ['Yes, tell me here', 'No thanks'] : ['Yes', 'No'];
+    } else {
+      answered = ['Thanks', 'What happens next?'];
+    }
+  }
+  return { answered: mayor.suggestionLabels(answered), others: mayor.suggestionLabels(others) };
+}
+
+/**
+ * #6391: whether this thread's work is over: the change is live, or the
+ * request is closed (or its change merged). Read best-effort: a failed read
+ * counts as not ended.
+ */
+async function threadEnded(pool, { app, place, deps = {} }) {
+  try {
+    if (place.type === 'session') {
+      const change = await changeRow(pool, place.ref);
+      return change?.status === 'merged';
+    }
+    if (place.type !== 'issue') return false;
+    const { rows } = await pool.query(
+      `SELECT 1 FROM chat_sessions
+        WHERE app_id = $1 AND $2::int = ANY(linked_issues) AND status = 'merged' LIMIT 1`,
+      [Number(app.id), Number(place.ref)],
+    );
+    if (rows.length) return true;
+    const repo = repoRef.ownerRepo(app.repo_url);
+    const gh = deps.github;
+    if (!repo || !gh || typeof gh.getIssue !== 'function') return false;
+    const issue = await gh.getIssue(repo.owner, repo.repo, Number(place.ref));
+    return issue?.state === 'closed';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * #6391: the people a note in this request's thread is still waiting on to
+ * say Go ahead, or null. A later reply keeps that button for them. It stops
+ * once somebody answered with the words Go ahead, or a change has started.
+ */
+async function goAheadWaits(pool, { app, place, answer = [] }) {
+  try {
+    const said = answer.some((a) => String(a?.message?.content || '').trim().toLowerCase() === 'go ahead');
+    if (said) return null;
+    const { rows: [note] } = await pool.query(
+      `SELECT metadata->'homeroomBot'->'suggest'->'forUserIds' AS ids
+         FROM chat_messages
+        WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2 AND deleted_at IS NULL
+          AND metadata->'homeroomBot'->'suggest'->>'status' = 'open'
+          AND metadata->'homeroomBot'->'actions' @> '[{"id":"go_ahead"}]'::jsonb
+        ORDER BY id DESC LIMIT 1`,
+      [Number(app.id), Number(place.ref)],
+    );
+    if (!note) return null;
+    const { rows: changes } = await pool.query(
+      `SELECT 1 FROM chat_sessions
+        WHERE app_id = $1 AND $2::int = ANY(linked_issues) AND status <> 'archived' LIMIT 1`,
+      [Number(app.id), Number(place.ref)],
+    );
+    if (changes.length) return null;
+    return (Array.isArray(note.ids) ? note.ids : [])
+      .map(Number).filter((id) => Number.isSafeInteger(id) && id > 0);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * One message from the bot in `place`, quoting the newest message it
  * answers and telling the people it answers (a mention notification each,
  * never in the text). In a project's main chat or a topic, it goes in a
  * reply thread under that message. With an offer, its buttons go under it.
  * Resolves the message, or null.
  */
-async function say(pool, { app, place, bot, text, answer = [], offer = null, suggestions = [], mark = null, deps = {} }) {
+async function say(pool, {
+  app, place, bot, text, answer = [], offer = null, suggestions = [], othersSuggestions = [],
+  suggest = true, ended = null, mark = null, deps = {},
+}) {
   const ws = wsModule(deps);
   const newest = answer[answer.length - 1] || null;
   const thread = place.type === 'chat' || place.type === 'category'
@@ -2179,16 +2316,45 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, sug
     const id = await newOffer(pool, { appId: app.id, kind: offer.kind, args: offer.args, forUserId: offer.forUserId });
     offerRow = id ? { id } : null;
   }
-  // A request's or a change's discussion may end in buttons to tap: only the
-  // people it answered see them, and an offer keeps its own Yes/No instead.
-  const suggestFor = !offer && (place.type === 'issue' || place.type === 'session')
+  // #6391: a request's or a change's discussion always ends in buttons. The
+  // people it answered see one set; the other members see the second one.
+  // An offer keeps its own Yes/No instead, and a caller that says
+  // `suggest: false` (the "I couldn't answer" line) carries none.
+  const threadPlace = place.type === 'issue' || place.type === 'session';
+  const labelsOf = (list) => require('./homeroom-bot-mayor').suggestionLabels(list);
+  let suggestFor = suggest && !offer && threadPlace
     ? [...new Set(answer.map((a) => Number(a.userId)).filter((id) => Number.isSafeInteger(id) && id > 0))]
     : [];
-  const suggestLabels = suggestFor.length
-    ? require('./homeroom-bot-mayor').suggestionLabels(suggestions)
+  const modelAnswered = suggestFor.length ? labelsOf(suggestions) : [];
+  const modelOthers = suggest && !offer && threadPlace ? labelsOf(othersSuggestions) : [];
+  // The model gives both sets. One it left out, or wrote unusable, is built
+  // from the reply and the thread's state: a question's answers, Go ahead
+  // where a note waits for one, a closing pair once the work is done.
+  let fallback = null;
+  if (suggest && !offer && threadPlace
+      && ((suggestFor.length && !modelAnswered.length) || !modelOthers.length)) {
+    const over = ended != null ? ended : await threadEnded(pool, { app, place, deps });
+    fallback = fallbackSuggestions({ text, ended: !!over });
+  }
+  const answeredLabels = modelAnswered.length ? modelAnswered : (fallback?.answered || []);
+  const othersLabels = modelOthers.length ? modelOthers : (fallback?.others || []);
+  let suggestActions = suggestFor.length
+    ? answeredLabels.map((label, i) => ({ id: `suggest-${i + 1}`, label, style: 'secondary', type: 'prompt' }))
     : [];
-  const suggestActions = suggestLabels.map((label, i) => ({
-    id: `suggest-${i + 1}`, label, style: 'secondary', type: 'prompt',
+  // A note waiting for someone to say Go ahead keeps its button in the bot's
+  // later replies here, for the people it asked (#6391).
+  if (suggest && !offer && place.type === 'issue' && suggestFor.length) {
+    const carry = await goAheadWaits(pool, { app, place, answer, deps });
+    if (carry) {
+      suggestActions = [
+        { id: 'go_ahead', label: 'Go ahead', style: 'primary', type: 'prompt' },
+        ...suggestActions.filter((a) => a.label.toLowerCase() !== 'go ahead'),
+      ].slice(0, 3);
+      suggestFor = [...new Set([...suggestFor, ...carry])];
+    }
+  }
+  const othersActions = othersLabels.map((label, i) => ({
+    id: `others-${i + 1}`, label, style: 'secondary', type: 'prompt',
   }));
   const metadata = {
     homeroomBot: {
@@ -2203,8 +2369,8 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, sug
         },
         actions: offerActions(offer.kind, offerRow.id),
       } : {}),
-      ...(suggestActions.length ? {
-        suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions,
+      ...((suggestActions.length || othersActions.length) ? {
+        suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions, othersActions,
       } : {}),
     },
     ...(newest && place.type !== 'chat' && place.type !== 'category' ? { quote: quoteOf(newest.message, newest.username) } : {}),
@@ -2476,8 +2642,10 @@ async function retireThreadSuggestions(pool, { appId, thread, keepMessageId, dep
     const { rows } = await pool.query(
       `UPDATE chat_messages
           SET metadata = jsonb_set(
-                jsonb_set(metadata, '{homeroomBot,suggest,status}', '"closed"'::jsonb, true),
-                '{homeroomBot,actions}', '[]'::jsonb, true)
+                jsonb_set(
+                  jsonb_set(metadata, '{homeroomBot,suggest,status}', '"closed"'::jsonb, true),
+                  '{homeroomBot,actions}', '[]'::jsonb, true),
+                '{homeroomBot,othersActions}', '[]'::jsonb, true)
         WHERE app_id = $1 AND thread_type = $2 AND thread_ref = $3 AND id < $4
           AND metadata->'homeroomBot'->'suggest'->>'status' = 'open'
         RETURNING id, metadata, thread_type, thread_ref`,
@@ -2934,6 +3102,7 @@ module.exports = {
   tieThreadOffer,
   dropThreadOffer,
   say,
+  fallbackSuggestions,
   retireThreadSuggestions,
   decideOffer,
   actOnOffer,

@@ -118,6 +118,10 @@ const EVENT_TYPES = Object.freeze({
   // the provider accepted it. No backfill — the button didn't exist
   // before this shipped.
   MAIL_TEST_SENT: 'mail_test_sent',
+  // An admin switched who sends platform mail (src/routes/admin.js PUT
+  // /api/admin/mail/provider). Metadata carries { from, to }, provider names
+  // (`from` is null when nothing could send before), never a credential.
+  MAIL_PROVIDER_CHANGED: 'mail_provider_changed',
   // An admin changed an email template or layout from Admin > Email templates
   // (src/routes/admin-email-templates.js). Metadata carries { what:
   // 'template'|'layout', change: 'saved'|'restored'|'deleted', id, action or
