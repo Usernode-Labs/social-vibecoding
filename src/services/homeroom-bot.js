@@ -8818,7 +8818,7 @@ async function buildLive({
       // from the early first look its maker has been shown, when that was
       // drawn from the plan it is built from (first-version-early-look.js).
       ...(firstVersion ? {
-        earlyLook: () => firstVersionEarlyLook().forSpec(pool, { appId: app.id, buildNote }),
+        earlyLook: () => firstVersionEarlyLook().forSpec(pool, { appId: app.id, buildNote: parsed.buildNote }),
       } : {}),
       // WP1 (#2): asked once the plan is written and again just before it is
       // proposed (whyNotBuild).
