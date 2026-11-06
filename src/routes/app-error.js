@@ -57,14 +57,15 @@ function escapeHtml(s) {
 // Self-contained page: no external assets (the app origin is down and we
 // don't want the error path depending on anything else), works in both
 // the shell iframe and a direct tab, light/dark aware.
-function renderPage(displayName) {
+function renderPage(displayName, { starting = false } = {}) {
   const name = escapeHtml(displayName || 'This app');
+  const action = starting ? 'starting' : 'restarting';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${name} is restarting</title>
+<title>${name} is ${action}</title>
 <style>
   :root { color-scheme: light dark; }
   body {
@@ -91,8 +92,8 @@ function renderPage(displayName) {
 <body>
   <div class="wrap">
     <div class="spinner" id="spinner"></div>
-    <h1 id="title">${name} is restarting</h1>
-    <p id="msg">It&#39;ll be back in a moment. This page retries automatically.</p>
+    <h1 id="title">${name} is ${action}</h1>
+    <p id="msg">${starting ? 'It was resting while nobody used it. This page retries automatically.' : 'It&#39;ll be back in a moment. This page retries automatically.'}</p>
   </div>
 <script>
 (function () {
@@ -121,7 +122,7 @@ function renderPage(displayName) {
       escalated = true;
       document.getElementById('title').textContent = 'Still not responding';
       document.getElementById('msg').textContent =
-        'The team has been notified. We\\u2019ll keep retrying in the background.';
+        ${JSON.stringify(starting ? 'Starting is taking longer than expected. We will keep retrying.' : 'The team has been notified. We’ll keep retrying in the background.')};
     }
     setTimeout(tick, escalated ? 15000 : 5000);
   }
@@ -151,6 +152,14 @@ async function asleepPreview(pool, rawHost) {
 function appErrorRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+  // Used by the gateway after a cold start exceeds its initial request
+  // budget. Generic copy reveals no private app identity and records no
+  // outage: the next request to the original app URL asks to wake it again.
+  router.get('/__app_starting', (req, res) => {
+    res.status(503).set('Retry-After', '5').set('Cache-Control', 'no-store');
+    if (!wakingPage.wantsDocument(req.headers)) return res.json({ error: 'app_starting' });
+    return res.type('html').send(renderPage(null, { starting: true }));
+  });
 
   // The waking page's ask (#6157): wake the preview this host names. Sent
   // by the page from the preview's own origin with no credentials and no

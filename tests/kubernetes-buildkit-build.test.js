@@ -123,6 +123,17 @@ test.afterEach(() => {
   kubernetes._setClientsForTest(null);
   buildkit._forTest.resetUnavailable();
 });
+
+test('strict batch placement keeps Dockerfile builds on the dedicated pool too', () => {
+  const cfg = config({ checkNodePoolRequired: true, checkNodePool: 'pool=batch' }).kubernetes;
+  const body = buildkit._forTest.jobManifest(cfg, runtimeWith({}), {
+    app, revision, environment: 'staging', sessionId: 1, dockerfile: 'Dockerfile',
+    name: 'build', tag: 'registry.test/app:test', cacheRef: 'registry.test/cache:test', recipe: 'recipe', inputSecretName: 'input',
+  });
+  assert.deepEqual(body.spec.template.spec.nodeSelector, { pool: 'batch' });
+  assert.deepEqual(body.spec.template.spec.tolerations, [{ key: 'pool', operator: 'Equal', value: 'batch', effect: 'NoSchedule' }]);
+  assert.equal(body.spec.template.spec.automountServiceAccountToken, false);
+});
 // A Job followed after its image was handed over is read again this often.
 buildkit._forTest.setSettlePollMs(5);
 

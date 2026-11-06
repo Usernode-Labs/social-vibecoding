@@ -12,6 +12,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+test('the preview idle default is one hour, with a configurable window and zero to disable', () => {
+  const { sleepAfterMs, DEFAULT_SLEEP_AFTER_MS } = require('../src/services/preview-sleep');
+  assert.equal(DEFAULT_SLEEP_AFTER_MS, 60 * 60 * 1000);
+  assert.equal(sleepAfterMs({ previewSleepAfterMs: NaN }), DEFAULT_SLEEP_AFTER_MS);
+  assert.equal(sleepAfterMs({ previewSleepAfterMs: 30 * 60 * 1000 }), 30 * 60 * 1000);
+  assert.equal(sleepAfterMs({ previewSleepAfterMs: 0 }), 0);
+});
+
 function stub(path, exports) {
   const id = require.resolve(path);
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };

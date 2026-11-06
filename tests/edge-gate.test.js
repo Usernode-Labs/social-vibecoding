@@ -630,6 +630,23 @@ test('asked by the Kubernetes gate, a 2xx names the app’s Service', async () =
 
 // ── Custom domains (#4405) ─────────────────────────────────────────────
 
+test('authorization precedes production waking, and previews never ask the production wake path', async (t) => {
+  const calls = [];
+  t.mock.method(require('../src/services/production-sleep'), 'access', async (_pool, id, uri) => {
+    calls.push({ id, uri }); return { eligible: true, ready: false, waking: true };
+  });
+  const extra = { 'X-Usernode-Gate': 'kubernetes' };
+  const denied = await gate({ host: PRIV_HOST, uri: '/api/write', method: 'POST', extra });
+  assert.notEqual(denied.status, 200); assert.deepEqual(calls, []);
+  const publicApp = await gate({ host: PUB_HOST, uri: '/api/read', extra });
+  assert.equal(publicApp.status, 503);
+  assert.equal(publicApp.headers['retry-after'], '5');
+  assert.equal(publicApp.headers['x-usernode-runtime-sleep'], 'waking');
+  assert.deepEqual(calls, [{ id: PUB_APP_ID, uri: '/api/read' }]);
+  await gate({ host: `pubapp--s42.${DOMAIN}`, extra });
+  assert.equal(calls.length, 1);
+});
+
 test('a live custom domain is the app’s production address: the same gate, the same sign-in', async () => {
   require('../src/services/app-domains').resetCachesForTest();
   // A public app: a guest, like at its Homeroom address.

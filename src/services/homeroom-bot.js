@@ -422,7 +422,7 @@ const PAUSED_SESSION_WINDOW_DAYS = 7;
 // VOTE_BACKED_STATUSES), and on a small project it paces the votes the bot
 // asks of people. An admin may set either for one project (KEY_APP_CAPS,
 // appCapsOf), between 1 and MAX_*. 50 waiting since #6157: a preview nobody
-// opens for two hours sleeps (services/preview-sleep.js), so a change
+// opens for one hour sleeps (services/preview-sleep.js), so a change
 // waiting for votes holds little more than its database clone. Building
 // stays at 5: that is the bot's own work, and sleep does nothing for it.
 //

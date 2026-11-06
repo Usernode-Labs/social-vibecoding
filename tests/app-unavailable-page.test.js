@@ -86,10 +86,10 @@ test.before(async () => {
 
 test.after(() => new Promise((resolve) => server.close(resolve)));
 
-function get(headers = {}) {
+function get(headers = {}, pathname = '/__app_unavailable') {
   return new Promise((resolve, reject) => {
     const req = http.request({
-      host: '127.0.0.1', port, path: '/__app_unavailable', method: 'GET', headers,
+      host: '127.0.0.1', port, path: pathname, method: 'GET', headers,
     }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
@@ -105,6 +105,18 @@ function get(headers = {}) {
 }
 
 // ── route behavior ─────────────────────────────────────────────────────
+
+test('a planned cold start has a truthful retrying page and does not report an outage', async () => {
+  const before = healCalls.length;
+  const page = await get({ accept: 'text/html', 'sec-fetch-dest': 'document' }, '/__app_starting');
+  assert.equal(page.status, 503);
+  assert.equal(page.headers['retry-after'], '5');
+  assert.match(page.body, /This app is starting/);
+  assert.match(page.body, /It was resting while nobody used it/);
+  assert.doesNotMatch(page.body, /team has been notified/);
+  assert.equal(healCalls.length, before);
+  assert.equal(JSON.parse((await get({ accept: 'application/json' }, '/__app_starting')).body).error, 'app_starting');
+});
 
 test('document navigation gets a 503 HTML page with the neutral restarting copy', async () => {
   const res = await get({ host: PUB_HOST, 'sec-fetch-dest': 'document' });

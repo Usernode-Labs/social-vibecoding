@@ -488,8 +488,13 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_session_id) VALUES ($1, 70, 'live', 'ready', $2)`,
       [app.id, build.id],
     );
-    const [stored] = await require('../src/services/work-state').refresh(pool, [{ appId: app.id, issueNumber: 70 }]);
-    assert.equal(stored.state.stage, 'building', 'it is being built, not waiting for her answer');
+    await require('../src/services/work-state').refresh(pool, [{ appId: app.id, issueNumber: 70 }]);
+    // refresh returns only changed rows; a workflow refresh may have already
+    // stored this stage. The request's persisted state is what people read.
+    const { rows: [stored] } = await pool.query(
+      `SELECT stage FROM work_states WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 70`, [app.id],
+    );
+    assert.equal(stored.stage, 'building', 'it is being built, not waiting for her answer');
     const closed = await conversations.getMessage(pool, ada, asked.conversationId, asked.messageId);
     assert.equal(closed.metadata.homeroomBot.status, 'closed');
   });

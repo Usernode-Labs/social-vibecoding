@@ -89,6 +89,41 @@ test('kpack Build is isolated in social-builds and returns status.latestImage', 
   assert.ok(!created.body.spec.tags[0].endsWith(`-${unstampedRecipe}`), 'the same commit must rebuild its previously unstamped image');
 });
 
+test('strict batch placement applies to kpack Build Pods and reuses completed images without a pool', async () => {
+  let created;
+  let available = true;
+  kubernetes._setClientsForTest({
+    core: { async listNode() {
+      assert.ok(available, 'a completed build must be reused without checking node availability');
+      return { items: [{ metadata: {}, spec: {}, status: { allocatable: { cpu: '96', memory: '125Gi', pods: '110' },
+        conditions: [{ type: 'Ready', status: 'True' }] } }] };
+    } },
+    custom: {
+      async createNamespacedCustomObject(request) { created = request; },
+      async getNamespacedCustomObject() {
+        return { status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: 'registry.test/demo@sha256:built' } };
+      },
+    },
+  });
+  const cfg = config();
+  Object.assign(cfg.kubernetes, { checkNodePoolRequired: true, checkNodePool: 'pool=batch',
+    builderImage: `builder.example/image@sha256:${'d'.repeat(64)}` });
+  const params = { app: { id: 7, slug: 'demo', repo_url: 'https://github.com/example/demo' },
+    revision: 'c'.repeat(40), environment: 'production' };
+  await kubernetes.createBuild(cfg, params);
+  assert.deepEqual(created.body.spec.nodeSelector, { pool: 'batch' });
+  assert.deepEqual(created.body.spec.tolerations, [{ key: 'pool', operator: 'Equal', value: 'batch', effect: 'NoSchedule' }]);
+  available = false;
+  // Existing completed-image lookup uses list, distinct from the live status read.
+  const previous = { ...created.body, metadata: { ...created.body.metadata, name: 'retained-build' },
+    status: { conditions: [{ type: 'Succeeded', status: 'True', lastTransitionTime: new Date().toISOString() }],
+      latestImage: `ghcr.io/example/social-apps/demo@sha256:${'e'.repeat(64)}` } };
+  kubernetes._setClientsForTest({ custom: { async listNamespacedCustomObject() {
+    return { items: [previous] };
+  } } });
+  assert.equal((await kubernetes.createBuild(cfg, params)).imageRef, previous.status.latestImage);
+});
+
 test('kpack runs the shell generator during build when the checked-out app declares it', async (t) => {
   const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'usernode-kpack-source-'));
   t.after(() => fs.rmSync(sourceDir, { recursive: true, force: true }));
@@ -810,7 +845,7 @@ for (const kind of ['Capture', 'UnitSuite']) {
 
 // CHECK_NODE_POOL (services/kubernetes.js checkPlacement): the Jobs both check
 // kinds create, with the pool set as `checkNodePool`.
-async function checkJobsWithNodePool(checkNodePool) {
+async function checkJobsWithNodePool(checkNodePool, required = false) {
   const jobs = [];
   kubernetes._setClientsForTest({
     batch: {
@@ -818,6 +853,10 @@ async function checkJobsWithNodePool(checkNodePool) {
       async readNamespacedJob() { return { status: { succeeded: 1 } }; },
     },
     core: {
+      async listNode() { return { items: [{ metadata: { name: 'checks' }, spec: {}, status: {
+        allocatable: { cpu: '96', memory: '125Gi', pods: '110' },
+        conditions: [{ type: 'Ready', status: 'True' }],
+      } }] }; },
       async createNamespacedSecret() {},
       async deleteNamespacedSecret() {},
       async listNamespacedPod() { return { items: [{ metadata: { name: 'check-pod' } }] }; },
@@ -826,6 +865,7 @@ async function checkJobsWithNodePool(checkNodePool) {
   });
   const cfg = config();
   cfg.kubernetes.checkNodePool = checkNodePool;
+  cfg.kubernetes.checkNodePoolRequired = required;
   for (const [index, kind] of ['Capture', 'UnitSuite'].entries()) {
     await kubernetes[`run${kind}Job`](cfg, { sessionId: 60 + index, env: {}, previewRunId: `pool-${index}` });
   }
@@ -866,6 +906,168 @@ test('a node pool label without a prefix is accepted', async () => {
   for (const pod of await checkJobsWithNodePool(' pool=checks_1.a ')) {
     assert.deepEqual(pod.tolerations, [{ key: 'pool', operator: 'Equal', value: 'checks_1.a', effect: 'NoSchedule' }]);
   }
+});
+
+test('required checks placement cannot spill onto app nodes, for both check kinds', async () => {
+  for (const pod of await checkJobsWithNodePool('pool=checks', true)) {
+    assert.deepEqual(pod.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution, {
+      nodeSelectorTerms: [{ matchExpressions: [{ key: 'pool', operator: 'In', values: ['checks'] }] }],
+    });
+    assert.equal(pod.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution, undefined);
+  }
+  for (const pool of ['', 'not a label']) {
+    await assert.rejects(checkJobsWithNodePool(pool, true), /needs a valid CHECK_NODE_POOL/);
+  }
+});
+
+test('dedicated pool capacity excludes down, cordoned and untolerated nodes', async () => {
+  const node = (over = {}) => ({ metadata: { name: 'checks' }, spec: {}, status: {
+    allocatable: { cpu: '95950m', memory: '125Gi', pods: '110' },
+    conditions: [{ type: 'Ready', status: 'True' }],
+  }, ...over });
+  let nodes = [node({ spec: { taints: [{ key: 'pool', value: 'checks', effect: 'NoSchedule' }] } })];
+  kubernetes._setClientsForTest({ core: { async listNode({ labelSelector }) {
+    assert.equal(labelSelector, 'pool=checks'); return { items: nodes };
+  } } });
+  const cfg = { kubernetes: { checkNodePool: 'pool=checks', checkNodePoolRequired: true } };
+  const capacity = await kubernetes.checkPoolCapacity(cfg);
+  assert.equal(capacity.available, true);
+  assert.ok(capacity.cap >= 4);
+  for (const bad of [node({ spec: { unschedulable: true } }),
+    node({ spec: { taints: [{ key: 'node.kubernetes.io/not-ready', effect: 'NoExecute' }] } }),
+    node({ status: { conditions: [{ type: 'Ready', status: 'False' }] } })]) {
+    nodes = [bad];
+    assert.deepEqual(await kubernetes.checkPoolCapacity(cfg), { available: false, cap: 0, nodes: 0 });
+  }
+});
+
+test('Prometheus capacity mode needs no cluster-wide node permission and fails closed on invalid metrics', async (t) => {
+  const pool = require('../src/services/check-pool');
+  const metrics = ['cpu', 'memory', 'pods'].map((resource, i) => ({
+    metric: { node: 'checks', resource }, value: [0, ['95.95', String(125 * 1024 ** 3), '110'][i]],
+  }));
+  kubernetes._setClientsForTest({ core: { listNode() { assert.fail('production metrics mode must not read nodes'); } } });
+  let broken = false;
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    assert.equal(url.hostname, 'prometheus.monitoring.svc');
+    const query = url.searchParams.get('query');
+    assert.ok(query.includes('label_usernodelabs_org_node_pool="cpu-heavy"'));
+    assert.ok(query.includes('NoExecute'));
+    assert.ok(query.includes('timestamp('));
+    return { ok: true, json: async () => broken ? { status: 'error' }
+      : { status: 'success', data: { resultType: 'vector', result: metrics } } };
+  });
+  const cfg = { kubernetes: { checkNodePool: 'usernodelabs.org/node-pool=cpu-heavy',
+    checkNodePoolRequired: true, checkPoolMetricsUrl: 'http://prometheus.monitoring.svc:9090' } };
+  assert.ok((await kubernetes.checkPoolCapacity(cfg)).cap >= 4);
+  broken = true;
+  await assert.rejects(kubernetes.checkPoolCapacity(cfg), /Invalid check-pool metrics/);
+  assert.deepEqual(pool.fromMetrics([]), { available: false, cap: 0, nodes: 0 });
+  assert.throws(() => pool.fromMetrics([{ metric: { node: 'checks', resource: 'cpu' }, value: [0, 'NaN'] }]), /Invalid/);
+});
+
+test('capacity shard budgets match the runner parsers for invalid and valid counts', (t) => {
+  const pool = require('../src/services/check-pool');
+  const { unitSuiteShardCount } = require('../src/services/unit-suite');
+  const { captureShardCount } = require('../src/services/visuals');
+  const keys = ['UNIT_SUITE_SHARDS', 'CAPTURE_SHARDS'];
+  const saved = keys.map((key) => process.env[key]);
+  t.after(() => keys.forEach((key, i) => {
+    if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i];
+  }));
+  for (const raw of ['', '-1', '0', 'nonsense', '1', '3', '9', '4.5']) {
+    for (const key of keys) process.env[key] = raw;
+    const budget = pool.budgets();
+    const unit = unitSuiteShardCount(raw); const capture = captureShardCount(raw);
+    assert.equal(budget.pods, unit + capture, raw);
+    assert.equal(budget.mainMemory, unit * 1024 ** 3, raw);
+    assert.equal(budget.memory, (unit + capture * 3) * 1024 ** 3, raw);
+  }
+});
+
+test('batch admission waits through transient metrics errors before allowing resource creation', async (t) => {
+  const cfg = { kubernetes: { checkNodePoolRequired: true, checkNodePool: 'pool=batch',
+    checkPoolMetricsUrl: 'http://prometheus.monitoring.svc:9090' } };
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('temporary monitoring connection reset');
+    if (calls === 2) return { ok: false, status: 503 };
+    return { ok: true, json: async () => ({ status: 'success', data: { resultType: 'vector', result:
+      ['cpu', 'memory', 'pods'].map((resource, i) => ({ metric: { node: 'batch', resource },
+        value: [0, ['95.95', String(125 * 1024 ** 3), '110'][i]] })) } }) };
+  });
+  await kubernetes.waitForBatchPool(cfg, { waitMs: 250, pollMs: 1 });
+  assert.equal(calls, 3);
+});
+
+test('an exhausted batch wait is infrastructure failure and an aborted wait stays cancelled', async (t) => {
+  const cfg = { kubernetes: { checkNodePoolRequired: true, checkNodePool: 'pool=batch',
+    checkPoolMetricsUrl: 'http://prometheus.monitoring.svc:9090' } };
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 503 }));
+  await assert.rejects(kubernetes.waitForBatchPool(cfg, { waitMs: 10, pollMs: 1 }),
+    (err) => err.infrastructure === true && /dedicated checks pool/.test(err.message));
+  const controller = new AbortController();
+  const pending = kubernetes.waitForBatchPool(cfg, { waitMs: 250, pollMs: 50, signal: controller.signal });
+  controller.abort(new Error('cancelled batch wait'));
+  await assert.rejects(pending, /cancelled batch wait/);
+});
+
+test('batch configuration errors fail immediately rather than entering a monitoring retry', async (t) => {
+  t.mock.method(globalThis, 'fetch', () => assert.fail('invalid configuration must not query monitoring'));
+  for (const settings of [{ checkNodePool: '' }, { checkNodePool: 'pool=batch', checkPoolMetricsUrl: 'not a URL' },
+    { checkNodePool: 'pool=batch', checkPoolMetricsUrl: 'file:///tmp/metrics' }]) {
+    await assert.rejects(kubernetes.waitForBatchPool({ kubernetes: { checkNodePoolRequired: true, ...settings } },
+      { waitMs: 250, pollMs: 1 }), (err) => err.code === 'CHECK_POOL_CONFIG' && err.infrastructure === true);
+  }
+});
+
+test('only explicitly assigned ordinary production apps use smaller requests; all keep their ceilings', () => {
+  const profiles = require('../src/services/app-resource-profiles');
+  const cfg = { selfAppSlug: 'platform', kubernetes: { appResourceProfiles: '{"7":"small","2147482999":"small"}' } };
+  const app = { id: 7, slug: 'demo' };
+  assert.deepEqual(profiles.forApp(cfg, app, 'production'), {
+    profile: 'small', resources: { requests: { cpu: '25m', memory: '64Mi' }, limits: { cpu: '1', memory: '1Gi' } },
+  });
+  for (const [candidate, env, opts] of [[app, 'staging', {}], [app, 'production', { internalOnly: true }],
+    [{ ...app, slug: 'platform' }, 'production', {}], [{ ...app, self_hosted: true }, 'production', {}],
+    [{ ...app, id: 2147482999 }, 'production', {}], [{ ...app, id: 8 }, 'production', {}]]) {
+    assert.equal(profiles.forApp(cfg, candidate, env, opts).profile, 'standard');
+  }
+  assert.equal(profiles.forApp(cfg, app, 'production', { cpus: '2' }).resources.limits.cpu, '2');
+  for (const bad of ['invalid', '[]', 'null', '{"7":"tiny"}', '{"-1":"small"}', '{"7":"__proto__"}']) {
+    assert.throws(() => profiles.assignments(bad), /resource profile|RESOURCE_PROFILES/);
+  }
+});
+
+test('resource profile reconciliation rolls one ready assigned app, preserves ceilings/storage, and can restore standard', async () => {
+  const profiles = require('../src/services/app-resource-profiles');
+  const deployments = [7, 8].map((id) => ({ metadata: { name: `app-${id}`, resourceVersion: '7', generation: 1,
+    labels: { 'social.usernode.io/app-id': String(id) } }, spec: { replicas: 1, template: {
+      metadata: { annotations: {} }, spec: { containers: [{ name: 'app', resources: {
+        requests: { cpu: '100m', memory: '128Mi', 'ephemeral-storage': '256Mi' },
+        limits: { cpu: '2', memory: '2Gi', 'ephemeral-storage': '2Gi' },
+      } }] },
+    } }, status: { observedGeneration: 1, replicas: 1, readyReplicas: 1, updatedReplicas: 1 } }));
+  const writes = [];
+  kubernetes._setClientsForTest({ apps: {
+    async listNamespacedDeployment() { return { items: deployments }; },
+    async replaceNamespacedDeployment({ body }) { writes.push(body); },
+  } });
+  const cfg = config(); cfg.kubernetes.appResourceProfiles = { 7: 'small', 8: 'small' };
+  const rows = [7, 8].map((id) => ({ id, slug: `demo-${id}` }));
+  assert.equal((await kubernetes.reconcileAppResourceProfiles(cfg, rows)).changed, 1);
+  assert.equal(writes.length, 1);
+  const changed = writes[0].spec.template.spec.containers[0].resources;
+  assert.deepEqual(changed.requests, { cpu: '25m', memory: '64Mi', 'ephemeral-storage': '256Mi' });
+  assert.deepEqual(changed.limits, deployments[0].spec.template.spec.containers[0].resources.limits);
+  assert.equal(writes[0].metadata.resourceVersion, '7');
+  deployments[0] = writes[0]; deployments[0].status = { observedGeneration: 1, replicas: 1, readyReplicas: 1, updatedReplicas: 1 };
+  cfg.kubernetes.appResourceProfiles = {};
+  assert.equal((await kubernetes.reconcileAppResourceProfiles(cfg, rows)).changed, 1);
+  assert.equal(writes.at(-1).spec.template.metadata.annotations[profiles.ANNOTATION], 'standard');
+  assert.deepEqual(writes.at(-1).spec.template.spec.containers[0].resources.requests,
+    { cpu: '100m', memory: '128Mi', 'ephemeral-storage': '256Mi' });
 });
 
 test('check kinds and sessions share one spread group without including resident workers', async () => {
