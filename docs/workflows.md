@@ -1325,7 +1325,7 @@ release built is known, and retired by identity once a newer attempt serves).
   else given back. An older Pod during a rollout never judges the new build's previews by
   its own fingerprint.
 - **Sleep** (#6157) is outside the machine: the `preview-sleep` clock scales a Kubernetes
-  preview unused for `PREVIEW_SLEEP_AFTER_MS` (2 h) to no replicas, vote-backed ones
+  preview unused for `PREVIEW_SLEEP_AFTER_MS` (1 h) to no replicas, vote-backed ones
   included, only while the instance rests in a state where an attempt serves
   (`settled`, `deferred`, `failed`) and nothing works on the session; the row records it
   (`staging_asleep_at`). The machine is not told: its `checks.run` wakes the preview

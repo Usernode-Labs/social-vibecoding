@@ -475,6 +475,14 @@ async function handleAccess(pool, req, res) {
       res.set('X-Usernode-Identity', guestToken(vis.appId));
     }
     if (viaKubernetesGate) {
+      if (isProduction) {
+        const runtime = await require('./production-sleep').access(pool, vis.appId, uri);
+        if (runtime.eligible) res.set('X-Usernode-Runtime-Sleep', runtime.ready ? 'eligible' : runtime.waking ? 'waking' : 'asleep');
+        if (!runtime.ready) {
+          res.set('Retry-After', '5');
+          return res.status(503).json({ error: 'app_starting', message: 'This app is starting. Try again shortly.' });
+        }
+      }
       const upstream = await upstreamFor(pool, parsed, vis);
       if (!upstream) return res.status(404).send('Not found');
       res.set('X-Usernode-Upstream', upstream);

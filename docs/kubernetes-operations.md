@@ -337,7 +337,7 @@ namespace. Ordinary runtime status still inventories Deployments only.
 
 ## Sleeping previews
 
-A preview nobody has used for `PREVIEW_SLEEP_AFTER_MS` (2 h by default; 0
+A preview nobody has used for `PREVIEW_SLEEP_AFTER_MS` (1 h by default; 0
 switches it off) sleeps (#6157, `src/services/preview-sleep.js`): the
 `preview-sleep` clock (every 5 minutes, a few previews a run) scales its
 Deployment to `replicas: 0`. Its image, Deployment, Service, env Secret,

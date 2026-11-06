@@ -61,12 +61,17 @@ test('app-delivery machine against the full PostgreSQL schema', { timeout: 12000
   const deploys = { calls: [], next: [] };
   // The heal: each call answers what `next` says, in order.
   const heals = { calls: [], next: [] };
+  const wakes = [];
   const COOLDOWN_MS = 10 * 60 * 1000;
   const machine = appDelivery({ healCooldownMs: COOLDOWN_MS, githubOn: () => true, runtimeMode: 'kubernetes' });
   const pushed = [];
   const rt = createRuntime({
     pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
     services: {
+      [WORK.wake]: {
+        ...require('../src/workflow/app-delivery/services.ts').appDeliveryServices({ config: {}, pool })[WORK.wake],
+        async run({ input }) { wakes.push(input.appId); return { status: 'started' }; },
+      },
       [WORK.deploy]: {
         maxAttempts: 2, backoffMs: () => 0,
         async run({ input, key }) {
@@ -711,5 +716,22 @@ test('app-delivery machine against the full PostgreSQL schema', { timeout: 12000
     await ask(a);
     await settle();
     await assert.rejects(pool.query(`UPDATE apps SET deploy_state = 'deploying' WHERE id = $1`, [a.id]), /WF_OWNERSHIP_VIOLATION/);
+  });
+
+  await t.test('planned wakes coalesce, bypass outage backoff, and use globally bounded conductor work', async () => {
+    const a = await app();
+    await report(a, 'Unhealthy', { state: 'exited' }); await settle();
+    assert.ok((await inst(a)).data.heal.streak > 0);
+    await report(a, 'WakeRequested'); await report(a, 'WakeRequested');
+    await settle();
+    assert.deepEqual(wakes, [a.id]);
+    assert.equal((await inst(a)).data.heal.streak, 0, 'intentional wake is not another outage');
+    const handler = require('../src/workflow/app-delivery/services.ts').appDeliveryServices({ config: {}, pool })[WORK.wake];
+    assert.equal(handler.concurrency, 2);
+    assert.equal(handler.maxAttempts, 1);
+    const outsider = await rt.append(machine, appKey(a.id), { type: 'WakeRequested', payload: { appId: a.id } },
+      { requestKey: `untrusted-wake:${a.id}`, appId: a.id, source: { kind: 'user', userId: owner.id } });
+    await rt.drain();
+    assert.equal((await outcomeOf(outsider)).reason, 'system_only');
   });
 });

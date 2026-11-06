@@ -45,6 +45,20 @@
  * panel's box, which counted the column, so the first 84px of a drag moved
  * nothing.
  *
+ * ── With a preview open, two edges and three columns (#6359) ──────────
+ *
+ * A design's or a plan's preview stands beside the thread (features/ai,
+ * list | thread | preview at 1500px and up, thread | preview in halves
+ * below). Both edges are handles then, each setting the width of the column
+ * after it while the list takes what is left: the thread's under
+ * `AI_PREVIEW_COLUMN_WIDTH_KEY` (`--ai-col-chosen-w`), not Main's, since the
+ * thread is a narrower column there, and the preview's under
+ * `AI_PREVIEW_WIDTH_KEY` (`--ai-preview-chosen-w`). The thread does not reach
+ * the window's edge, so its width is measured to where the preview begins
+ * (`endAt`), and each edge's bound reserves the floors of the columns beside
+ * it (`neighbourMin`, the list's and the other column's), the stylesheet
+ * keeping the same floors.
+ *
  * ── Per device, and never trusted blindly ─────────────────────────────
  *
  * localStorage, one number. Every read and write is wrapped: storage can be
@@ -64,10 +78,18 @@ export const WIDTH_KEY = 'usernode_side_panel_w_v1';
  */
 export const AI_MAIN_WIDTH_KEY = 'usernode_ai_main_w_v1';
 
+/** The thread's width beside a design's or a plan's preview (#6359). */
+export const AI_PREVIEW_COLUMN_WIDTH_KEY = 'usernode_ai_preview_col_w_v1';
+
+/** The preview's own width beside the thread (#6359). */
+export const AI_PREVIEW_WIDTH_KEY = 'usernode_ai_preview_w_v1';
+
 /** The CSS property each key drives on <html>. */
 const WIDTH_PROPERTY: Record<string, string> = {
   [WIDTH_KEY]: '--side-panel-w',
   [AI_MAIN_WIDTH_KEY]: '--ai-main-chosen-w',
+  [AI_PREVIEW_COLUMN_WIDTH_KEY]: '--ai-col-chosen-w',
+  [AI_PREVIEW_WIDTH_KEY]: '--ai-preview-chosen-w',
 };
 
 function propertyFor(key: string): string {
@@ -95,8 +117,15 @@ export interface LayoutProbe {
   appLeft: number;
   /** The Duo's column on the panel's side, which the panel runs under but does not count. */
   rightInset?: number;
-  /** The narrowest the neighbour may be left: the app's, or the bot's list's. */
+  /** The narrowest the neighbour may be left: the app's, or the bot's list's
+   *  (with a preview open, the floors of every other column together). */
   neighbourMin?: number;
+  /** The narrowest this column may be dragged, when not MIN_PANEL_W. */
+  selfMin?: number;
+  /** Where the column's room ends, from the window's inline-start edge, when
+   *  another column follows it (the thread before a preview); the window's
+   *  far edge otherwise. */
+  endAt?: number;
 }
 
 /** The far end of the room the panel's width is measured to, on the panel's side. */
@@ -107,12 +136,13 @@ function roomRight(probe: LayoutProbe): number {
 /** The range the panel's width may take in this window. */
 export function bounds(probe: LayoutProbe): WidthBounds {
   const room = Math.floor(roomRight(probe) - Math.max(0, probe.appLeft) - (probe.neighbourMin ?? MIN_APP_W));
-  return { min: MIN_PANEL_W, max: Math.max(MIN_PANEL_W, room) };
+  const min = probe.selfMin ?? MIN_PANEL_W;
+  return { min, max: Math.max(min, room) };
 }
 
 /** The panel's width as chosen: its inner edge to the end of the room. */
 export function shownWidth(panelLeft: number, probe: LayoutProbe): number {
-  return Math.round(roomRight(probe) - panelLeft);
+  return Math.round((probe.endAt ?? roomRight(probe)) - panelLeft);
 }
 
 /**
