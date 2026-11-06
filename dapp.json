@@ -931,6 +931,11 @@
       "expectText": "Requests"
     },
     {
+      "name": "Homeroom bot: a round search button sits beside the plus at the top of the tab (#6398)",
+      "path": "/?demo=1#homeroom-bot",
+      "expectSelector": "#ai-screen [data-ai-hero] button[data-ai-search-toggle][aria-expanded=\"false\"]:has(svg)"
+    },
+    {
       "name": "Edit profile keeps social accounts proof-backed and sends management to Linked accounts (#982, #1939)",
       "path": "/?shot=profile-edit#profile",
       "expectSelector": "#profile-edit-sheet #profile-edit-github:not(:has(input)) + #profile-edit-x:not(:has(input)) + a[href='#settings/linked-accounts']",

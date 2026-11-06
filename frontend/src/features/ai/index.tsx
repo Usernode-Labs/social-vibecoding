@@ -68,7 +68,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { LockIcon, MicrophoneIcon } from '@/components/ui/icons';
+import { LockIcon, MicrophoneIcon, SearchIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { KEPT_DRAW_MS, keepCopy, keptCopy } from '../../lib/kept-copies';
@@ -777,28 +777,73 @@ export function AiScreen(): ReactNode {
     how.current = 'row';
     if (phone) setLevel(1);
   };
+  // SEARCH (#6398, 6 Nov 2026): a round button beside the plus opens a box
+  // under the heading, and every list narrows to the threads whose title,
+  // number or project matches what it says (./lists.tsx). It starts closed
+  // each time the page loads, closing it clears what was typed, and it is
+  // not kept in the address: the chips are what a link carries.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => { if (searchOpen) searchRef.current?.focus(); }, [searchOpen]);
+
   const heroLine = work ? heroWords(owed, progress.length, fresh) : null;
   const hero = (
-    <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
-      <img src={BOT_AVATAR} alt="" className="w-12 h-12 rounded-2xl object-cover shrink-0" />
-      <span className="min-w-0 flex-1 flex flex-col">
-        <h1 className="text-[1.375rem] font-bold leading-tight">{t('messages:ai.hero.name')}</h1>
-        {heroLine ? (
-          <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
-            <RichMessage
-              id={heroLine.id}
-              values={heroLine.values}
-              components={[<strong className="font-semibold text-violet-700 dark:text-violet-300" />]}
-            />
-          </span>
-        ) : null}
-      </span>
-      <NewThreadButton
-        conversationId={botId || null}
-        onOpen={openBlank}
-        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-zinc-700 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 [&>svg]:h-5 [&>svg]:w-5"
-      />
-    </section>
+    <>
+      <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
+        <img src={BOT_AVATAR} alt="" className="w-12 h-12 rounded-2xl object-cover shrink-0" />
+        <span className="min-w-0 flex-1 flex flex-col">
+          <h1 className="text-[1.375rem] font-bold leading-tight">{t('messages:ai.hero.name')}</h1>
+          {heroLine ? (
+            <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
+              <RichMessage
+                id={heroLine.id}
+                values={heroLine.values}
+                components={[<strong className="font-semibold text-violet-700 dark:text-violet-300" />]}
+              />
+            </span>
+          ) : null}
+        </span>
+        {/* The plus's own button, with the magnifying glass: the app's icon. */}
+        <button
+          type="button"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-zinc-700 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 [&>svg]:h-5 [&>svg]:w-5"
+          aria-label={t('messages:ai.search.open')}
+          title={t('messages:ai.search.open')}
+          aria-expanded={searchOpen}
+          data-ai-search-toggle=""
+          onClick={() => {
+            if (searchOpen) setQuery('');
+            setSearchOpen((open) => !open);
+          }}
+        >
+          <SearchIcon aria-hidden="true" />
+        </button>
+        <NewThreadButton
+          conversationId={botId || null}
+          onOpen={openBlank}
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-zinc-700 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 [&>svg]:h-5 [&>svg]:w-5"
+        />
+      </section>
+      {/* The More projects panel's own search box, under the heading and
+          between it and the project chips (./project-picker.tsx). */}
+      {searchOpen ? (
+        <label className="mx-4 mt-3 flex h-[38px] shrink-0 items-center gap-2 rounded-xl bg-zinc-900/[0.05] px-3 text-zinc-500 focus-within:shadow-[inset_0_0_0_2px_var(--accent)] dark:bg-white/[0.08] dark:text-zinc-400">
+          <SearchIcon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+          <input
+            ref={searchRef}
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setQuery(''); setSearchOpen(false); } }}
+            placeholder={t('messages:ai.search.label')}
+            aria-label={t('messages:ai.search.label')}
+            className="h-full min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-base text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-100 dark:placeholder:text-zinc-400 [&::-webkit-search-cancel-button]:hidden"
+            data-ai-search=""
+          />
+        </label>
+      ) : null}
+    </>
   );
 
   const listContent = (
@@ -807,6 +852,7 @@ export function AiScreen(): ReactNode {
         <AiLists
           hero={hero}
           main={{ lit: lit === 'main', unread, open: openMain }}
+          query={searchOpen ? query : ''}
           lit={lit}
           ready={!!work && !!needs}
           failed={failed}

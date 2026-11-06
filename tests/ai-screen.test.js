@@ -1831,3 +1831,104 @@ test('an item in the bot page\'s column has an address of its own, and its own p
   assert.deepEqual(plain(aboutRoute('app/garden/dev/issues/12')), { type: 'issue', appSlug: 'garden', issueNumber: 12, title: null });
   assert.equal(aboutRoute('app/garden/dev/governance/3'), null);
 });
+
+// #6398 (6 Nov 2026, Evan: "offer a search icon here, next to the plus, to
+// search through your threads"). A round search button beside the plus opens
+// a box under the heading; every list narrows to the threads whose title,
+// number ("6011" or "#6011") or project name contains what was typed, a
+// section with no match folds away, Main Chat steps aside, and one short note
+// says when nothing matched at all.
+test('#6398: the search narrows every list by title, number or project, hides Main Chat, and says when nothing matches', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const LISTS = 'frontend/src/features/ai/lists.tsx';
+  const games = { slug: 'games', name: 'Game corner', icon_url: null, icon_emoji: null };
+  const need = (key, title, a, number) => ({
+    key, title, app: a, who: 'all', unread: 0,
+    sub: { id: 'messages:ai.row.where', values: { project: a.name, number } },
+    pill: { id: 'messages:ai.pill.vote' }, href: `#app/${a.slug}/dev/issues/${number}`, rootId: null,
+    threadId: number,
+  });
+  const at = (threadId, number, what, a, title, group = 'next') => thread(threadId, number, what, {
+    app: a, title, group, href: `#app/${a.slug}/dev/issues/${number}`,
+  });
+  const all = {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 2,
+    rows: [
+      need('need:proposal:1', 'Releases: make the migration job cheaper', app, 6010),
+      need('need:proposal:2', 'Dark mode', games, 403),
+    ],
+    progress: [at(3, 6011, 'building', app, 'Releases: reuse image scan results safely')],
+    waiting: [at(4, 6012, 'vote', games, 'Seed the garden')],
+    live: [at(5, 777, 'live', games, 'Ship the seed catalogue', 'live')],
+    openRow() {}, openThread() {},
+  };
+  const html = (extra) => renderComponent(LISTS, 'AiLists', { ...all, ...extra });
+
+  // No search: every row, Main Chat first, nothing folded away.
+  const plain = html({ query: '' });
+  assert.match(plain, /data-ai-main-row=""/, 'Main Chat is drawn with an empty search');
+  for (const title of ['make the migration', 'Dark mode', 'reuse image scan', 'Seed the garden', 'Ship the seed']) {
+    assert.ok(plain.includes(title), title);
+  }
+
+  // A title keeps only the row that says it; the sections with no match fold away.
+  const byTitle = html({ query: 'migration' });
+  assert.match(byTitle, /make the migration job cheaper/);
+  assert.doesNotMatch(byTitle, /Dark mode|reuse image scan|Seed the garden|Ship the seed/, 'only the matching row');
+  assert.doesNotMatch(byTitle, /data-ai-main-row/, 'Main Chat steps aside while you search');
+  assert.doesNotMatch(byTitle, /data-ai-list="busy"/, 'In progress & waiting has no match, so its card is gone');
+  assert.doesNotMatch(byTitle, /data-ai-list="live"/, 'nor Live this week');
+  assert.equal(message('messages:ai.work.titleCount', { count: 1 }), 'Needs you · 1');
+  assert.match(byTitle, /Needs you · 1/, 'the Needs you count over its rows is its matches');
+
+  // A number matches with or without the #, as the row shows it.
+  for (const query of ['6011', '#6011']) {
+    const byNumber = html({ query });
+    assert.match(byNumber, /reuse image scan results safely/, query);
+    assert.doesNotMatch(byNumber, /make the migration|Dark mode|Seed the garden|Ship the seed/, query);
+  }
+
+  // A project's name keeps every row of it, in whatever list.
+  const byProject = html({ query: 'game corner' });
+  assert.match(byProject, /Dark mode/);
+  assert.match(byProject, /Seed the garden/);
+  assert.match(byProject, /Ship the seed/);
+  assert.doesNotMatch(byProject, /make the migration|reuse image scan/);
+
+  // A match past a project's first few is drawn, not folded: with no search
+  // the seventh row waits behind Show more, and with one it is on the page.
+  const many = Array.from({ length: 7 }, (_, i) => need(`need:proposal:${i + 1}`, `Release note ${i + 1}`, app, 500 + i));
+  const folded = renderComponent(LISTS, 'AiLists', { ...all, rows: many, progress: [], waiting: [], live: [], owed: 7 });
+  assert.match(folded, /data-ai-group-rest=""/, 'the rest of a project folds away with no search');
+  const matched = renderComponent(LISTS, 'AiLists', { ...all, rows: many, progress: [], waiting: [], live: [], owed: 7, query: 'release note' });
+  assert.doesNotMatch(matched, /data-ai-group-rest=""/, 'every match shows, with no fold over it');
+  assert.match(matched, /Release note 7/);
+
+  // Nothing matches: one short note in place of every list.
+  const none = html({ query: 'zzz' });
+  assert.match(none, /<div class="[^"]*" data-ai-search-empty=""><p class="[^"]*">No threads match “zzz”<\/p><\/div>/);
+  assert.ok(none.includes(message('messages:ai.search.none', { query: 'zzz' })));
+  assert.doesNotMatch(none, /data-ai-list="(?:work|busy|live|history)"/, 'every card folds away');
+  assert.doesNotMatch(none, /data-ai-main-row/, 'and Main Chat is hidden');
+
+  // Before the lists are read, the skeleton stays and no note is shown.
+  const loading = html({ query: 'zzz', ready: false });
+  assert.match(loading, /data-ai-loading=""/);
+  assert.doesNotMatch(loading, /data-ai-search-empty/);
+
+  // The button and the box (index.tsx): the search button sits beside the
+  // plus, with the app's magnifying glass, and the box's text is what the
+  // lists narrow to.
+  const src = read('frontend/src/features/ai/index.tsx');
+  const toggle = src.indexOf('data-ai-search-toggle=""');
+  assert.ok(toggle > 0 && toggle < src.indexOf('<NewThreadButton'), 'the search button is beside the plus, before it');
+  const button = src.slice(src.lastIndexOf('<button', toggle), src.indexOf('</button>', toggle));
+  assert.match(button, /aria-label=\{t\('messages:ai\.search\.open'\)\}/, 'it is named for what it does');
+  assert.match(button, /<SearchIcon aria-hidden="true" \/>/);
+  assert.match(button, /h-10 w-10[^"]*rounded-full/, 'the plus\'s own round button');
+  assert.match(src, /query=\{searchOpen \? query : ''\}/, 'the box\'s text is passed to the lists');
+  assert.match(src, /data-ai-search=""/, 'the box the More projects panel has');
+  assert.equal(message('messages:ai.search.open'), 'Search your threads');
+  assert.equal(message('messages:ai.search.label'), 'Search your threads');
+  assert.equal(message('messages:ai.search.none', { query: 'releases' }), 'No threads match “releases”');
+});
