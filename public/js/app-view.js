@@ -5640,11 +5640,24 @@ const AppView = {
   // thing that decides whether a governance address has that home: the row's
   // kind, and the request a close vote targets. Only a close_issue answers
   // with a number; every other decision keeps its own page.
+  //
+  // A row the lists or the on-demand cache already hold answers at once,
+  // with no read: it is the same row this page would draw, and asking the
+  // server for a copy of it is the needless by-id fetch the topic page
+  // already avoids (#4524).
   _closeVoteHomes: new Map(),
   async _closeVoteHomeOf(id) {
     const slug = App.currentApp || AppView.appData?.slug;
     const n = Number(id);
     if (!slug || !Number.isInteger(n) || n <= 0) return null;
+    const held = AppView._findItem('gov', n);
+    if (held) {
+      if (held.kind !== 'close_issue' && held.row_type !== 'close_issue') return null;
+      const asked = Number(held.payload && held.payload.issueNumber);
+      // A close vote names the request it closes; one that somehow does not
+      // is read below rather than guessed at.
+      if (Number.isInteger(asked) && asked > 0) return asked;
+    }
     const key = `${slug}:${n}`;
     if (!AppView._closeVoteHomes.has(key)) {
       const read = fetch(`/api/apps/${encodeURIComponent(slug)}/governance/${n}${AppView._demoQS()}`)
