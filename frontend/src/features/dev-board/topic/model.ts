@@ -477,6 +477,8 @@ export interface StepRow {
   fix?: FixChecksView | null;
   /** Extra hooks on the row (the superseded-base marker on Checks). */
   attrs?: Record<string, string>;
+  /** Done because an admin's force merge skips it, not because it was cleared. */
+  skipped?: boolean;
 }
 
 /**

@@ -190,6 +190,11 @@ export interface Data {
   // where a merge of main moved it by pure git; absent on a force given
   // before it was recorded, which skips the checks nowhere.
   force?: { by: string | null; userId: number | null; at: string; head?: string | null } | null;
+  // The force an authored push ended (headMoved): what it was, the commit it
+  // was given on, and the commit that replaced it. Kept until the next force
+  // or until the proposal leaves review, so the card can say the old one no
+  // longer applies instead of silently reverting to a plain vote.
+  forceDropped?: { by: string | null; userId: number | null; at: string | null; head: string | null; to: string | null; droppedAt: string } | null;
   sync?: Sync | null;
   lastSync?: SyncOutcome | null;
   // GitHub's last refusal (named once per head), what the AI could not
@@ -705,7 +710,7 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
 const unpromote: Handler = (s, e, f, ctx, deps) => {
   const n = s.data.n + 1;
   const destroy = destroyWorker(s.data, n);
-  const next: Live = { name: 'underway', data: { ...(noSlot(s.data) ? s.data : doom(s.data, destroy)), n, slot: slotFor(s.data), force: null } };
+  const next: Live = { name: 'underway', data: { ...(noSlot(s.data) ? s.data : doom(s.data, destroy)), n, slot: slotFor(s.data), force: null, forceDropped: null } };
   const who = e.payload.username || 'The author';
   return step(next, {
     writes: [
@@ -750,7 +755,7 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
   // A retarget waiting behind the close is dropped with it (prMove), so the
   // proposal no longer waits for one: a later parent's merge, after a
   // reopen, moves it again.
-  let d: Data = { ...s.data, n, reason, promoting: null, claim: null, force: null, attempt: null, sync: null, retarget: null, owedSync: null,
+  let d: Data = { ...s.data, n, reason, promoting: null, claim: null, force: null, forceDropped: null, attempt: null, sync: null, retarget: null, owedSync: null,
     answer: s.name === 'proposing' && s.data.promoting
       ? { n: s.data.promoting.n, ok: false, code: 'session_state_changed' } : s.data.answer };
   // A gate or a sync under way is ended with it (the worker's removal below
@@ -833,7 +838,7 @@ const abandoned: Handler = (s, e, f, ctx, deps) => {
   // Its force, its gate or attempt and its sync end with it (a force never
   // outlives the proposal it was given to).
   const { told, cancel, work } = endSlots(s.data, 'declined', { reason: 'closed' });
-  const next: Live = { name: 'underway', data: { ...s.data, claim: null, slot: slotFor(s.data), force: null, attempt: null, sync: null } };
+  const next: Live = { name: 'underway', data: { ...s.data, claim: null, slot: slotFor(s.data), force: null, forceDropped: null, attempt: null, sync: null } };
   return step(next, {
     messages: told, cancel, work,
     writes: [
@@ -908,7 +913,7 @@ const stopRequested: Handler = (s, e, f) => {
 // The changes stacked on its branch are told it is on main.
 const merged: Handler = (s, e, f) => {
   const { told, cancel, work } = endSlots(s.data, 'merged');
-  const out: Live = { name: 'merged', data: { ...s.data, claim: null, promoting: null, force: null, sync: null, retarget: null,
+  const out: Live = { name: 'merged', data: { ...s.data, claim: null, promoting: null, force: null, forceDropped: null, sync: null, retarget: null,
     attempt: s.data.attempt ? { ...s.data.attempt, stage: 'merged' } : null } };
   return step(out, { timer: null, messages: [...told, ...parentMerged(s.data, f)], cancel, work });
 };
@@ -1160,8 +1165,9 @@ function observed(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps
 // An admin forces the merge (M4): it lasts until it merges, closes, leaves
 // review or its author pushes new code.
 const forceMerge: Handler = (s, e, f, ctx) => step(
-  { name: s.name, data: { ...s.data, force: { by: e.payload.username ?? null, userId: e.payload.userId ?? null,
-    at: ctx.now.toISOString(), head: f.row?.head ?? null } } } as Live,
+  { name: s.name, data: { ...s.data, forceDropped: null,
+    force: { by: e.payload.username ?? null, userId: e.payload.userId ?? null,
+      at: ctx.now.toISOString(), head: f.row?.head ?? null } } } as Live,
   { messages: [toQueue(s.data, 'MergeWanted', { reason: 'force', force: true })] },
 );
 
@@ -1381,19 +1387,42 @@ function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
 // an admin's force over its checks.
 const MECHANICAL_MOVES: ReadonlySet<string> = new Set(['mechanical', 'imported_head_mechanical']);
 
-const headMoved: Handler = (s, e, f) => {
+const headMoved: Handler = (s, e, f, ctx) => {
   const p = e.payload;
   const force = s.data.force;
   // New code nobody forced: an admin's force ends with an authored push. It
   // lasts through a merge of main, conflicts included (M4), but follows only
   // a mechanical one: the head a resolution wrote merges on its own checks.
+  const dropped = !!force && !p.keepVotes;
   const next = !force ? s
-    : !p.keepVotes ? ({ name: s.name, data: { ...s.data, force: null } } as Live)
+    : dropped ? ({
+      name: s.name,
+      data: {
+        ...s.data,
+        force: null,
+        forceDropped: {
+          by: force.by ?? null,
+          userId: force.userId ?? null,
+          at: force.at ?? null,
+          head: force.head ?? null,
+          to: p.to ?? null,
+          droppedAt: ctx.now.toISOString(),
+        },
+      },
+    } as Live)
       : MECHANICAL_MOVES.has(p.reason) && !!force.head && force.head === p.from
         ? ({ name: s.name, data: { ...s.data, force: { ...force, head: p.to } } } as Live)
         : s;
+  const writes: DomainWrite[] = [{ type: 'headMoved', sessionId: s.data.sessionId, column: p.column, to: p.to, keepVotes: p.keepVotes, fixOnly: p.fixOnly }];
+  if (dropped) {
+    const short = String(force.head || '').slice(0, 7);
+    writes.push({
+      ...line(e, s.data, `The admin merge by ${force.by || 'an admin'} was for an earlier commit${short ? ` (${short})` : ''}. New code replaced it, so it no longer applies: this version waits for its vote and checks.`),
+      dedupe: true,
+    });
+  }
   return step(next, {
-    writes: [{ type: 'headMoved', sessionId: s.data.sessionId, column: p.column, to: p.to, keepVotes: p.keepVotes, fixOnly: p.fixOnly }],
+    writes,
     messages: f.row!.shots ? [toShots(s.data, 'HeadMoved', { head: p.to, reason: p.reason, pin: p.column, from: null })] : [],
   });
 };
