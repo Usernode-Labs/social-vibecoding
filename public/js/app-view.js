@@ -7664,7 +7664,7 @@ const AppView = {
       via,
       status: statusState && statusState.label ? statusState : null,
       votes: AppView._changeVotesView(item, card),
-      testing: { ...AppView._changeTestingView(item), spent: AppView._changeSpentView(kind, item) },
+      testing: AppView._changeTestingView(item),
       shots: AppView._changeShotsView(kind, item),
       thanks: !AppView.readOnly && AppView._kudosOffered(item) && !['active', 'paused'].includes(item.status),
       // Its code did not come across from GitHub (_codeMissing): the page
@@ -7678,23 +7678,6 @@ const AppView = {
       // change has (_stackedOn): said in a notice above Votes and Testing,
       // with a door to the change it waits for.
       ...AppView._stackedView(kind, item),
-    };
-  },
-
-  // #6116: the Testing card's quiet line for a change's author: what the
-  // change has cost so far, the dev chat meter's "this change $X" as a
-  // sentence. The server sends the figure to its author and admins only
-  // (services/session-cost.js sessionCostForViewer), and never for a change
-  // submitted from a fork. Nothing at zero or unknown, like the meter.
-  _changeSpentView(kind, item) {
-    if (kind === 'gov' || !item || item.source === 'imported') return null;
-    const cents = Number(item.cost_total_cents);
-    if (!Number.isFinite(cents) || cents < 0) return null;
-    const amount = (cents / 100).toFixed(2);
-    if (amount === '0.00') return null;
-    return {
-      text: PlatformI18n.t('changes:page.testing.spent', { amount }),
-      title: PlatformI18n.t('devchat:budget.pill.thisChangeTitle'),
     };
   },
 
