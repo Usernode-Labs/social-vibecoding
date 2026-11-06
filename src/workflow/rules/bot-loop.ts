@@ -377,7 +377,9 @@ export const READ_CANDIDATES_SQL = `
 // The live builds waiting for a slot, oldest first: requests in
 // `building` whose build was not granted yet, on apps the bot acts on
 // ($1: paused slugs), not held by their project's first version nor by
-// their requester's plan (planHoldSql).
+// their requester's plan (planHoldSql). A hold stored for an overlap with
+// another change (#6423) holds nothing since builds stopped waiting for one
+// (#6428): such a build is granted on the next pass.
 export const BUILD_CANDIDATES_SQL = `
   SELECT w.app_id, (w.data->>'issueNumber')::int AS issue_number, (w.data->'build'->>'runId')::int AS run_id,
          COALESCE(rq.user_id, i.created_by) AS person_id
@@ -390,7 +392,8 @@ export const BUILD_CANDIDATES_SQL = `
        ORDER BY id LIMIT 1
     ) i ON TRUE
    WHERE w.machine = '${BOT_REQUEST}' AND w.state = 'building' AND w.data->'build'->>'phase' = 'waiting' AND w.flag IS NULL
-     AND (w.data->'build'->>'heldUntil' IS NULL OR (w.data->'build'->>'heldUntil')::timestamptz <= NOW())
+     AND (w.data->'build'->>'heldUntil' IS NULL OR (w.data->'build'->>'heldUntil')::timestamptz <= NOW()
+          OR w.data->'build'->>'heldFor' = 'overlap')
      AND NOT (a.slug = ANY($1::text[]))
      AND NOT ${GRANT_PENDING('w.key')}
      AND NOT EXISTS (
@@ -425,17 +428,15 @@ export const NEXT_ELIGIBLE_SQL = `
      WHERE q.started_at IS NULL AND m.created_at > NOW() - make_interval(secs => ${SETTLE_MS / 1000})
   ) n`;
 
-// ── Overlap with other changes (#6423) ──────────────────────────────────
+// ── Overlap with other changes (#6423, #6428) ───────────────────────────
 //
 // Before a build uses its building slot, the files its plan names are
 // compared with the files the project's other open changes and its running
-// builds touch. On an overlap the build waits for the other one, builds on
-// top of it, or goes ahead in parallel (append-only shared files only), and
-// says which in its request's thread and on its track.
-
-// How long a build waits for the overlapping change before it builds on
-// main anyway.
-export const OVERLAP_WAIT_MS = 2 * 60 * 60 * 1000;
+// builds really change (their diffs). An overlap never holds a build: it
+// goes ahead in parallel and says what it shares in its request's thread,
+// and whichever change merges second gets the merge's automatic sync with
+// main. A build goes on top of another change only when its request
+// depends on that change's request.
 
 // The most file names one plan is read for.
 export const NAMED_FILES_CAP = 200;
@@ -465,58 +466,63 @@ export interface OverlapOther {
   prNumber: number | null;
   status: string | null;
   branch: string | null;
+  // The requests its change is for (its session's linked requests), which a
+  // dependent request names; `issueNumber` alone when absent.
+  requests?: number[];
   // Built on top of another change itself: never built on again.
   stacked?: boolean;
   files: string[];
 }
 
 export interface OverlapDecision {
-  strategy: 'none' | 'parallel' | 'wait' | 'stack' | 'timeout';
+  strategy: 'none' | 'parallel' | 'stack';
   with: OverlapOther | null;
   files: string[];
 }
 
 const EMPTY: OverlapDecision = Object.freeze({ strategy: 'none', with: null, files: [] });
 
-// Pure: what this build does about the files it expects. `files` are its
-// own; `others` the open changes and running builds of the same project;
-// `since` when it first waited (null: it has not waited yet). A shared file
-// that is append-only is combined by the merge sync, so on its own it never
-// blocks. Every other shared file blocks: one promoted change (with a pull
-// request, a branch, not stacked itself) may be built on; anything else is
-// waited for, until OVERLAP_WAIT_MS has passed since the first wait.
+const requestsOf = (o: OverlapOther): number[] => (o.requests?.length ? o.requests : (o.issueNumber ? [o.issueNumber] : []));
+
+// A change that can be built on: up for a vote, with a pull request and a
+// branch, and not on top of another change itself.
+const canBuildOn = (o: OverlapOther) => o.status === 'promoted' && !!o.prNumber && !!o.branch && !o.stacked;
+
+// Pure: what this build does about the project's other work. `files` are
+// the paths its own plan names; `others` the open changes and running
+// builds of the same project, each with the files its diff changes;
+// `dependsOn` the requests this one is to be built after (a "build first"
+// link, #6211). Nothing passes `dependsOn` yet, so nothing stacks today.
+//
+// `stack`: its request depends on another change's request, and that change
+// can be built on. `parallel`: it shares a file with another change, and
+// builds now beside it. A shared file that really may conflict is named
+// before one on the append-only list, which the merge sync combines on its
+// own. `none`: nothing shared.
 export function decideOverlap(p: {
   files: readonly string[];
   others: readonly OverlapOther[];
-  since?: string | Date | null;
-  now?: Date;
+  dependsOn?: readonly number[];
 }): OverlapDecision {
   const mine = new Set((p.files || []).map((f) => String(f)));
+  const sharedWith = (o: OverlapOther) => [...new Set((o.files || []).map((f) => String(f)))].filter((f) => mine.has(f)).sort();
+  const after = new Set((p.dependsOn || []).map(Number).filter((n) => Number.isInteger(n) && n > 0));
+  if (after.size) {
+    const parent = (p.others || []).find((o) => canBuildOn(o) && requestsOf(o).some((n) => after.has(n)));
+    if (parent) return { strategy: 'stack', with: parent, files: sharedWith(parent).filter((f) => !isAppendOnly(f)) };
+  }
   if (!mine.size) return { ...EMPTY };
-  let blocking: { other: OverlapOther; shared: string[] }[] = [];
+  let real: { other: OverlapOther; shared: string[] } | null = null;
   let plain: { other: OverlapOther; shared: string[] } | null = null;
   for (const other of p.others || []) {
-    const shared = [...new Set((other.files || []).map((f) => String(f)))].filter((f) => mine.has(f)).sort();
+    const shared = sharedWith(other);
     if (!shared.length) continue;
-    if (shared.every(isAppendOnly)) { plain = plain || { other, shared }; continue; }
-    blocking.push({ other, shared });
+    const conflicting = shared.filter((f) => !isAppendOnly(f));
+    if (conflicting.length) real = real || { other, shared: conflicting };
+    else plain = plain || { other, shared };
   }
-  if (!blocking.length) {
-    return plain ? { strategy: 'parallel', with: plain.other, files: plain.shared } : { ...EMPTY };
-  }
-  const files = [...new Set(blocking.flatMap((b) => b.shared.filter((f) => !isAppendOnly(f))))].sort();
-  const stackable = blocking.length === 1
-    && blocking[0].other.status === 'promoted'
-    && !!blocking[0].other.prNumber && !!blocking[0].other.branch && !blocking[0].other.stacked;
-  if (stackable) return { strategy: 'stack', with: blocking[0].other, files };
-  // The earliest of them: the oldest change (its session was opened first,
-  // so it has the lowest id) or, failing that, the order it was given.
-  const earliest = blocking.reduce((a, b) => (
-    (b.other.sessionId ?? Number.MAX_SAFE_INTEGER) < (a.other.sessionId ?? Number.MAX_SAFE_INTEGER) ? b : a));
-  const started = p.since ? Date.parse(String(p.since)) : NaN;
-  const now = (p.now || new Date()).getTime();
-  const strategy = Number.isFinite(started) && now >= started + OVERLAP_WAIT_MS ? 'timeout' : 'wait';
-  return { strategy, with: earliest.other, files: earliest.shared.filter((f) => !isAppendOnly(f)) };
+  const pick = real || plain;
+  return pick ? { strategy: 'parallel', with: pick.other, files: pick.shared } : { ...EMPTY };
 }
 
 // ── Picks ───────────────────────────────────────────────────────────────

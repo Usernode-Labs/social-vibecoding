@@ -73,21 +73,12 @@ export interface Look {
   // again, once (a read started over is never started over again).
   interrupted: boolean;
 }
-// `heldUntil`: its payer's week is spent, or it waits for a change touching
-// the same files (#6423); it waits for its slot from then. `heldFor` says
-// which: only an overlap hold belongs to another change, and only that one
-// is lifted by the change merging or closing (OverlapEnded), never by an
-// allowance freed.
-export interface Build {
-  runId: number;
-  phase: 'waiting' | 'starting' | 'running';
-  since: string;
-  key: string | null;
-  heldUntil?: string | null;
-  heldFor?: BuildHold | null;
-  overlap?: { since: string; until: string; sessionId: number | null; runId: number | null; prNumber: number | null } | null;
-}
-export type BuildHold = 'allowance' | 'overlap';
+// `heldUntil`: its payer's week is spent; it waits for its slot from then.
+// A build stored while builds waited for a change touching the same files
+// (#6423) may still carry `heldFor` and `overlap`: since #6428 that hold
+// holds nothing (the lane grants it on its next pass, BUILD_CANDIDATES_SQL),
+// and both fields go at the build's next step (current).
+export interface Build { runId: number; phase: 'waiting' | 'starting' | 'running'; since: string; key: string | null; heldUntil?: string | null }
 // A read's `readSlot`: which of its project's triage sessions it runs on
 // (the lane's pick, never another read's while it runs).
 export interface Slot { grant: number; kind: string; person: string; appId: number; readSlot?: number }
@@ -180,10 +171,6 @@ const EVENTS = {
   // #6377: a payer's week has room again (a weekly limit raised or set to 0,
   // a charge refunded): what the spent week held back may look again now.
   AllowanceFreed: (p: any) => request(p),
-  // #6423: the change a build waited for merged or closed: the hold the
-  // overlap put on it is lifted, and the build looks at the same files
-  // again (it may now build, stack or wait on something else).
-  OverlapEnded: (p: any) => request(p),
   // Its clock: a hold or a backoff.
   Due: () => ({}),
 };
@@ -241,19 +228,13 @@ function waitUntil(d: Data): Date | null {
   return t.length ? new Date(Math.max(...t)) : null;
 }
 
-// What an overlap hold records about the change it waits for (#6423): the
-// moment the wait started (the two hours count from it), its deadline, and
-// the change's own ids, which the track and the thread note name.
-function overlapOf(r: any, until: string, now: string): NonNullable<Build['overlap']> {
-  const w = r?.with && typeof r.with === 'object' ? r.with : (r?.overlap?.with || {});
-  const since = optTime(r?.since) || optTime(r?.overlap?.since) || now;
-  return {
-    since,
-    until,
-    sessionId: optInt(w.sessionId ?? r?.overlap?.sessionId),
-    runId: optInt(w.runId ?? r?.overlap?.runId),
-    prNumber: optInt(w.prNumber ?? r?.overlap?.prNumber),
-  };
+// A build as this build of the machine keeps it: without the fields an
+// overlap hold stored (#6423), whose hold, if it was one, holds nothing now
+// (#6428). A hold for the payer's week stays.
+function current(b: Build): Build {
+  const { heldFor, overlap, ...kept } = b as Build & { heldFor?: unknown; overlap?: unknown };
+  if (heldFor === undefined && overlap === undefined) return b;
+  return heldFor === 'overlap' ? { ...kept, heldUntil: null } : kept;
 }
 
 // Owed and waiting for a slot: the lane hears, and the instance's clock is
@@ -350,18 +331,9 @@ function granted(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): Out
   if (p.kind === 'build') {
     if (s.name !== 'building' || !d.build || d.build.phase !== 'waiting') return step(s.name, d, { messages: [look(d)] });
     const b = (d.b || 0) + 1;
-    const build: Build = { ...d.build, phase: 'starting', heldUntil: null, heldFor: null, overlap: null };
+    const build: Build = { ...current(d.build), phase: 'starting', heldUntil: null };
     return step('building', { ...d, b, slot, build }, {
-      work: [{
-        kind: WORK.build, key: `build:${b}`,
-        input: {
-          appId: d.appId, issueNumber: d.issueNumber, runId: build.runId, n: b, person: slot.person,
-          // #6423: the two hours count from the first wait, and the change
-          // waited for is named in the note that says the wait ended.
-          overlapSince: d.build.overlap?.since ?? null,
-          overlap: (d.build.overlap ?? null) as unknown as Json,
-        },
-      }],
+      work: [{ kind: WORK.build, key: `build:${b}`, input: { appId: d.appId, issueNumber: d.issueNumber, runId: build.runId, n: b, person: slot.person } }],
       push: workChanged(slot.person),
     });
   }
@@ -539,19 +511,17 @@ function buildStarted(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext)
   if (r.outcome === 'requested' && typeof r.key === 'string') {
     return step('building', { ...d, build: { ...d.build, phase: 'running', key: r.key } });
   }
-  if (r.outcome === 'held') {
+  if (r.outcome === 'held' && r.heldFor !== 'overlap') {
     const until = optTime(r.until) || later(ctx, 7 * 24 * 3600 * 1000).toISOString();
-    // An overlap hold (#6423) is told apart from the week's: it names the
-    // change waited for, and only that change's end lifts it.
-    const heldFor: BuildHold = r.heldFor === 'overlap' ? 'overlap' : 'allowance';
-    const overlap = heldFor === 'overlap' ? overlapOf(r, until, iso(ctx)) : null;
-    return step('building', { ...d, slot: null, build: { ...d.build, phase: 'waiting', heldUntil: until, heldFor, overlap } },
+    return step('building', { ...d, slot: null, build: { ...current(d.build), phase: 'waiting', heldUntil: until } },
       { timer: { at: new Date(until), event: { type: 'Due' } }, messages: [toLane('Released', {}, d.appId)] });
   }
-  if (r.outcome === 'fault' || r.outcome === 'budget' || r.outcome === 'github' || r.outcome === 'not_started') {
+  // An older build's start held it for an overlap (#6423), which holds
+  // nothing now (#6428): it waits for its slot again, as one not started.
+  if (r.outcome === 'held' || r.outcome === 'fault' || r.outcome === 'budget' || r.outcome === 'github' || r.outcome === 'not_started') {
     const lane: Record<string, Json> = r.outcome === 'budget' ? { budget: true } : r.outcome === 'fault' ? { fault: true }
       : r.outcome === 'github' ? { github: optTime(r.until) } : {};
-    return step('building', { ...d, slot: null, build: { ...d.build, phase: 'waiting' } },
+    return step('building', { ...d, slot: null, build: { ...current(d.build), phase: 'waiting' } },
       { messages: [toLane('Released', lane, d.appId)] });
   }
   return rest({ ...d, build: null, slot: null }, ctx, { messages: [toLane('Released', {}, d.appId)] });
@@ -645,21 +615,10 @@ function allowanceFreed(s: Live, _e: Event<any>, _f: Facts, ctx: TransitionConte
   const d0 = s.data;
   const d: Data = d0.owed?.heldUntil ? { ...d0, owed: { ...d0.owed, heldUntil: null } } : d0;
   if (s.name === 'queued') return queue(d, ctx);
-  if (s.name === 'building' && d.build?.heldUntil && d.build.heldFor !== 'overlap') {
-    return step('building', { ...d, build: { ...d.build, heldUntil: null, heldFor: null } }, { timer: null, messages: [look(d)] });
+  if (s.name === 'building' && d.build?.heldUntil) {
+    return step('building', { ...d, build: { ...current(d.build), heldUntil: null } }, { timer: null, messages: [look(d)] });
   }
   return step(s.name, d);
-}
-
-// The change a build waited for is over (#6423): merged or closed. The
-// overlap hold is lifted and the lane looks at the build again, where the
-// bot compares the files afresh (it may now build, stack on something else,
-// or wait on it no longer).
-function overlapEnded(s: Live, _e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<RState> {
-  const d = s.data;
-  if (s.name !== 'building' || !d.build?.overlap) return step(s.name, d);
-  return step('building', { ...d, build: { ...d.build, heldUntil: null, heldFor: null } },
-    { timer: null, messages: [look(d)] });
 }
 
 function workDone(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<RState> {
@@ -696,7 +655,7 @@ export function botRequest(deps: Deps = { staging: false }) {
   const row = {
     Owed: any(owed), NotOwed: live(notOwed), Activity: any(activity), Granted: live(granted), BuildOwed: any(buildOwed),
     BuildEnded: live(buildEnded), FixAsked: any(fixAsked), RequestMerged: live(requestMerged), StopRequested: live(stopRequested),
-    LookOn: live(lookOn), AllowanceFreed: live(allowanceFreed), OverlapEnded: live(overlapEnded), Due: live(due),
+    LookOn: live(lookOn), AllowanceFreed: live(allowanceFreed), Due: live(due),
     WorkSucceeded: live(workDone), WorkFailed: live(workDone), WorkExhausted: live(workDone),
   };
   const states: Name[] = ['idle', 'queued', 'reading', 'following_up', 'building'];
@@ -705,7 +664,7 @@ export function botRequest(deps: Deps = { staging: false }) {
     Owed: any(owed), Activity: any(activity), BuildOwed: any(buildOwed), FixAsked: any(fixAsked),
     NotOwed: { ignore: 'not_owed' }, Granted: { ignore: 'not_owed' }, BuildEnded: { ignore: 'not_building' },
     RequestMerged: { ignore: 'nothing_owed' }, StopRequested: { ignore: 'not_looking' }, LookOn: { ignore: 'not_looking' },
-    AllowanceFreed: { ignore: 'gone' }, OverlapEnded: { ignore: 'gone' }, Due: { ignore: 'gone' },
+    AllowanceFreed: { ignore: 'gone' }, Due: { ignore: 'gone' },
     '*': { ignore: 'not_owed' },
   };
   return defineMachine<RState, Facts>({
@@ -731,7 +690,6 @@ export function botRequest(deps: Deps = { staging: false }) {
     authorize: {
       Owed: anyProducer, NotOwed: anyProducer, Activity: anyProducer, Granted: fromLane, BuildOwed: anyProducer,
       BuildEnded: fromBuild, FixAsked: fromChange, RequestMerged: anyProducer, LookOn: anyProducer, AllowanceFreed: anyProducer,
-      OverlapEnded: anyProducer,
       StopRequested: (e) => (['route', 'system', 'admin'].includes(e.source.kind) ? ok() : reject('not_a_producer')),
       Due: (e) => (e.source.kind === 'timer' ? ok() : reject('not_the_clock')),
     },
