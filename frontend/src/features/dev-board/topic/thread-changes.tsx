@@ -54,7 +54,7 @@
  *   [ Testing  All checks passed ] [Try it]
  */
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
@@ -525,6 +525,31 @@ function ChangeGatesSkeleton(): ReactNode {
 }
 
 /**
+ * #6421: how many requests the thread holds, for the changes drawn in it.
+ * `ThreadChanges` sets it from the thread's read; 0 elsewhere, where there
+ * is no thread around the change to count.
+ */
+const ThreadRequests = createContext(0);
+
+/**
+ * #6421: when a thread holds several requests, a change that closes only
+ * some of them says so under its title ("Closes 3 of the 10 requests in this
+ * thread"), from its own `closes` and the thread's request count. Nothing on
+ * a thread of one request, or on a change that closes all of them.
+ */
+function ClosesOf({ item, requests }: { item: ThreadItem; requests: number }): ReactNode {
+  const t = useMessages('project');
+  const closes = Array.isArray(item.closes) ? item.closes.filter((n) => Number(n) > 0) : [];
+  if (requests <= 1 || !closes.length || closes.length >= requests) return null;
+  return (
+    <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-closes-of={item.id}
+      data-thread-change-closes-of-count={closes.length} data-thread-change-closes-of-total={requests}>
+      {t('project:topic.thread.page.closesOf', { count: closes.length, total: requests })}
+    </p>
+  );
+}
+
+/**
  * What a change's section draws under its line: which other requests it
  * also closes, its summary, the plan it was built from, its before and
  * after, then its Votes and Testing cards (or, still being built, the line
@@ -536,9 +561,11 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
 }): ReactNode {
   const t = useMessages('project');
   const summary = view?.body.summaryHtml || '';
+  const threadRequests = useContext(ThreadRequests);
   return (
     <>
       <AlsoCloses item={item} request={request} />
+      <ClosesOf item={item} requests={threadRequests} />
       {summary ? <div className="dev-thread-change-summary" data-thread-change-summary={item.id}><RequestWords html={summary} /></div> : null}
       {view?.body.summaryStale && summary
         ? <p className="dev-change-stale" role="note" data-thread-change-stale={item.id}>{t('project:topic.change.summaryStale')}</p>
@@ -988,14 +1015,16 @@ export function ThreadChanges({ slug, data, number, changes, close, onChanged, p
   const rest = changes.filter((c) => !competing.has(c.id));
   const closeAlone = close && !(ballot && ballot.close && ballot.close.id === close.id) ? close : null;
   return (
-    <section className="mt-4 border-t border-[color:var(--app-sheet-line)]" data-thread-changes={changes.length}>
-      {ballot ? (
-        <Competing key={ballot.options.map((o) => o.id).join(',')} slug={slug} data={data} anchor={anchor}
-          options={ballot.options} close={ballot.close} onChanged={onChanged} plans={plans} />
-      ) : null}
-      {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} plan={plans?.get(item.id) || null} request={number} /></Fragment>)}
-      {closeAlone ? <CloseVote slug={slug} close={closeAlone} onChanged={onChanged} /> : null}
-      <Elsewhere list={elsewhere} />
-    </section>
+    <ThreadRequests.Provider value={Number(data.thread.requests) || 0}>
+      <section className="mt-4 border-t border-[color:var(--app-sheet-line)]" data-thread-changes={changes.length}>
+        {ballot ? (
+          <Competing key={ballot.options.map((o) => o.id).join(',')} slug={slug} data={data} anchor={anchor}
+            options={ballot.options} close={ballot.close} onChanged={onChanged} plans={plans} />
+        ) : null}
+        {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} plan={plans?.get(item.id) || null} request={number} /></Fragment>)}
+        {closeAlone ? <CloseVote slug={slug} close={closeAlone} onChanged={onChanged} /> : null}
+        <Elsewhere list={elsewhere} />
+      </section>
+    </ThreadRequests.Provider>
   );
 }

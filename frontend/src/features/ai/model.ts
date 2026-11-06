@@ -72,6 +72,12 @@ export interface AiThread {
   title: string | null;
   app: AiApp | null;
   change: { id: number; number: number | null } | null;
+  /**
+   * #6421: how many requests the thread holds (a change for several requests
+   * gathers their threads into one). Absent from an older server, which reads
+   * as one.
+   */
+  requests?: number;
   href: string;
   group: 'needs' | 'next' | 'waiting' | 'live';
   /**

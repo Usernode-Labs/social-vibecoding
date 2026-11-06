@@ -81,6 +81,10 @@ export interface ThreadPayload {
     lead: 'request' | 'change' | 'decision';
     title: string | null;
     state: 'open' | 'closed';
+    /** #6421: how many requests the thread holds. */
+    requests?: number;
+    /** #6421: the thread's name: its change's title while one lives there, else its first request's. */
+    name?: string | null;
   };
   items: ThreadItem[];
   /** Null signed out: there is no one to notify. */
@@ -135,6 +139,16 @@ export interface ThreadMove {
   deadline: string;
   agreed: number[];
   governanceId: number | null;
+  /**
+   * #6421: a change's consent question, asked of the request's other
+   * requesters (services/thread-moves.js gather). Yes gathers the thread
+   * into the change's; Keep separate leaves it linked where it is.
+   */
+  forChange?: { id: number | null; number: number | null };
+  /** #6421: the requesters still to answer, by username. */
+  askOf?: string[];
+  /** #6421: the viewer is one of them. */
+  canAnswer?: boolean;
 }
 
 /** The page the list is drawn on: a request by its number, the rest by id. */
@@ -258,6 +272,19 @@ export function followButton(follow: ThreadFollow | null): FollowButtonView | nu
  */
 export function moveLines(move: ThreadMove, now: number = Date.now()): { what: Phrase; when: Phrase } {
   const items = move.input.items || [];
+  // #6421: a change's question to a request's other askers.
+  if (move.forChange) {
+    return {
+      what: {
+        id: 'project:topic.thread.move.consentAsk',
+        values: { number: move.input.intoNumber ?? '?', change: move.forChange.number ?? '?' },
+      },
+      when: {
+        id: 'project:topic.thread.move.consentWaiting',
+        values: { names: (move.askOf || []).join(', ') },
+      },
+    };
+  }
   const what: Phrase = move.kind === 'merge'
     ? { id: 'project:topic.thread.move.merge', values: { number: move.input.intoNumber ?? '?' } }
     : move.kind === 'breakup'
