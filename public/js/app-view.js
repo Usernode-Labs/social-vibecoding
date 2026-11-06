@@ -6314,12 +6314,20 @@ const AppView = {
     // out (homeroom-bot-progress.js botWorkByIssue), so with nobody else on
     // it the stored work state says where it is, as the track card does.
     const hold = !st && !merged && !closed ? AppView._requestHoldLead(issue.track) : null;
+    // #6390: between a person's reply and the run starting, the stored track
+    // already says the bot is reading that reply while `issue.bot` is still
+    // empty (homeroom-bot-progress.js). The card must not say nobody is on it
+    // while its own track card underneath says the bot is reading.
+    const readingTrack = !st && !merged && !closed && !hold
+      && !waitingOnBot && !planHeld && !upForVote
+      && !!(issue.track && issue.track.work && issue.track.work.stage === 'reading');
     let lead;
     if (merged) lead = PlatformI18n.t('changes:request.status.lead.live');
     else if (waitingOnBot && waitingOnBot.kind === 'question') lead = PlatformI18n.t('changes:request.status.lead.botQuestion');
     else if (planHeld) lead = PlatformI18n.t('changes:request.status.lead.botWaitsPlan');
     else if (upForVote) lead = AppView._requestUpForVoteLead(ref);
     else if (hold) lead = hold;
+    else if (readingTrack) lead = PlatformI18n.t('changes:request.status.lead.botReading');
     else if (!st) lead = PlatformI18n.t('changes:request.status.lead.nobody');
     else if (st.key === 'in_review') {
       lead = who === 'you' ? PlatformI18n.t('changes:request.status.lead.reviewYours')
@@ -6397,6 +6405,9 @@ const AppView = {
     } else if (hold) {
       // #6375: the bot already has it: asking it again would do nothing.
       action = toChange;
+    } else if (readingTrack) {
+      // #6390: it is reading; the Ask button is gone, as on a fresh page.
+      action = toChange;
     } else if (!AppView.readOnly) {
       const primary = AppView._issuePrimaryActionSpec(issue, { noNav: true });
       action = primary
@@ -6422,7 +6433,7 @@ const AppView = {
       closed: closed && !merged ? (when ? PlatformI18n.t(closedIds.when, { when }) : PlatformI18n.t(closedIds.alone)) : null,
       // The sentence is Homeroom bot's state, plan included: no "Plan v1 is
       // ready for comments." after it (request-head.tsx).
-      botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot') || planHeld || !!hold),
+      botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot') || planHeld || !!hold || readingTrack),
       // 1 Nov 2026: "Build it in an agent session" is a row of the page's ⋯,
       // where its one action is Work on this with Homeroom bot.
       agentSession,
@@ -6430,7 +6441,7 @@ const AppView = {
       // where starting work on it is still open to this viewer: an open
       // request with no change built for it, nobody's bot on it, and no
       // session of the viewer's own already working on it.
-      ownAgent: !closed && !merged && !ref && !AppView.readOnly && !bot && !waitingOnBot && !hold
+      ownAgent: !closed && !merged && !ref && !AppView.readOnly && !bot && !waitingOnBot && !hold && !readingTrack
         && !issue.myPrSessionId && !(st && st.key === 'in_review'),
     };
   },
@@ -10344,6 +10355,65 @@ const AppView = {
     AppView._renderTopicHead();
     return true;
   },
+  // #6390: the request open on screen re-reads its own row when Homeroom
+  // bot's work moves. On the board's topic sub-view `refreshDevData` already
+  // re-reads `_ghIssues`; this is for everywhere else, chiefly the Homeroom
+  // bot tab's side column, where `refreshDevData` returns at once — the
+  // status card there was drawn from the row the page opened with and kept
+  // saying nobody was on it while the track card under it said the bot was
+  // reading.
+  //
+  // One fetch in flight per request, and one queued behind it at most: a
+  // burst of work events asks for one more read, not one per event.
+  _requestRowRefresh: null,
+  _refreshOpenRequestRow() {
+    const topic = AppView._devTopic;
+    if (!topic || topic.kind !== 'issue') return Promise.resolve(false);
+    const onPage = typeof App !== 'undefined' && App.currentTab === 'dev' && App.currentSubTab === 'topic';
+    if (!AppView._devTopicInPanel && !onPage) return Promise.resolve(false);
+    const id = Number(topic.id);
+    if (!Number.isInteger(id) || id <= 0) return Promise.resolve(false);
+    const key = `${(AppView.appData && AppView.appData.slug) || ''}:${id}`;
+    // What the page is drawn from now, so a read that changes nothing the
+    // card shows does not repaint it.
+    const cached = AppView._boardListsCurrent() && Array.isArray(AppView._ghIssues)
+      ? AppView._ghIssues.find((x) => x && Number(x.number) === id) || null
+      : null;
+    const running = AppView._requestRowRefresh;
+    if (running && running.key === key) {
+      running.queued = true;
+      return running.done;
+    }
+    const entry = { key, queued: false, done: null };
+    entry.done = (async () => {
+      try {
+        let row = null;
+        do {
+          entry.queued = false;
+          row = await AppView._fetchIssueByNumber(id);
+        } while (entry.queued);
+        // The panel closed, or moved to another item, while the fetch was in
+        // flight: the result paints nothing.
+        if (!row || AppView._devTopic !== topic) return false;
+        // The work event may have been another person's: one GET, and no
+        // repaint when the open request's own row has not moved.
+        if (cached && JSON.stringify(cached) === JSON.stringify(row)) return false;
+        // _findItem('issue') prefers the board's list over _topicIssue, so
+        // the open row in it is replaced too, where that list is this app's.
+        if (AppView._boardListsCurrent() && Array.isArray(AppView._ghIssues)) {
+          const i = AppView._ghIssues.findIndex((x) => x && Number(x.number) === id);
+          if (i >= 0) AppView._ghIssues[i] = row;
+        }
+        AppView._renderTopicHead();
+        return true;
+      } finally {
+        if (AppView._requestRowRefresh === entry) AppView._requestRowRefresh = null;
+      }
+    })();
+    AppView._requestRowRefresh = entry;
+    return entry.done;
+  },
+
   // #6001: a release finished for `slug`. A change it carries that is open —
   // its Votes card moves from "It's going live." to "It's live." — re-reads
   // its own row, because the live event names the app, not the change.
@@ -31846,7 +31916,10 @@ if (typeof window !== 'undefined') {
   // app.js): the Workshop's rows of it re-read, as the Activity drawer
   // does. refreshDevData does nothing off the board.
   window.addEventListener('homeroom-bot-work-changed', () => {
-    AppView.refreshDevData('homeroom-bot');
+    const refreshed = AppView.refreshDevData('homeroom-bot');
+    // #6390: off the board (the Homeroom bot tab's side column) that does
+    // nothing; the request open there re-reads its own row instead.
+    if (refreshed === undefined) AppView._refreshOpenRequestRow();
   });
   // #1038: wire the Dev board's card surfaces to live session state. Both
   // subscriptions are registered ONCE here rather than per mount, so no

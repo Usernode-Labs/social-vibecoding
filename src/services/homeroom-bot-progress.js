@@ -713,7 +713,7 @@ function stageOf(input, { now = new Date() } = {}) {
   if (row.started_at) {
     // #6228: a read under way after a person replied is reading that reply.
     if (replyWaits(row, { now })) {
-      return { stage: 'reading', reply: true, since: row.started_at, doing: 'reading the newest reply', limit: 'reading' };
+      return { stage: 'reading', reply: true, since: row.started_at, doing: 'reading the new reply', limit: 'reading' };
     }
     return { stage: 'reading', since: row.started_at, doing: `reading ${it} to decide whether to ask a question or build it`, limit: 'reading' };
   }
@@ -808,7 +808,7 @@ function stageOf(input, { now = new Date() } = {}) {
     // #6228: a reply waiting for the read the bot has queued reads as that
     // read about to happen, not as a request waiting its turn.
     if (replyWaits(row, { now })) {
-      return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'about to read the newest reply' };
+      return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'reading the new reply in a moment' };
     }
     return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder',
       ...(planFailed(row) ? { retry: 'plan' } : {}) };
@@ -816,7 +816,7 @@ function stageOf(input, { now = new Date() } = {}) {
   // #6228: a reply nobody has queued a read for yet still reads as one
   // coming, for REPLY_WAIT_MS: the bot's refresh sees it and queues it.
   if (replyWaits(row, { now })) {
-    return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'about to read the newest reply' };
+    return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'reading the new reply in a moment' };
   }
   return null;
 }
