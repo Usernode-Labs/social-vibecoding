@@ -79,6 +79,7 @@ import {
   alsoCloses,
   ballotOf,
   ballotVotes,
+  closesList,
   elsewhereFor,
   type Ballot,
   type ThreadElsewhere,
@@ -550,7 +551,7 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
           {t(item.ready ? 'project:topic.thread.page.ready' : 'project:topic.thread.page.underway')}
         </p>
       ) : view ? (
-        <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} />
+        <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} closes={closesList(item)} />
       ) : (
         // #6387: the cards keep their place while the change's own read is
         // still landing, so they fill in rather than pushing the page down.

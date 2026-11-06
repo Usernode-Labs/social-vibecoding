@@ -170,6 +170,50 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
     assert.deepEqual(first.elsewhere, [], 'the first request\'s page has it in its own thread');
   });
 
+  // #6225: a change's Votes card lists every request a yes would close, each
+  // resolved to its title and filer, and says whether its requester agreed.
+  await t.test('#6225: the closes list resolves titles and filers and marks the unconfirmed', async () => {
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, created_by) VALUES ($1, 13, 'Sidebar rows too tight', $2), ($1, 14, 'Another one', $2)`,
+      [app.id, maya.id]);
+    const { rows: [bot] } = await pool.query(
+      `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ('op_bot', 'x', TRUE, TRUE) RETURNING id`);
+    const made = async (by, { pr, linked, from = null }) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, pr_number, pr_title, branch_name, created_from_issue_number)
+       VALUES ($1, $2, 'promoted', $3::int[], $4, $5, $6, $7) RETURNING id`,
+      [app.id, by.id, linked, pr, `Change ${pr}`, `feature/${pr}`, from])).rows[0];
+    const human = await made(dewi, { pr: 30, linked: [10, 13, 11, 99], from: 10 });
+    const authored = await made(ana, { pr: 31, linked: [10, 11, 13] });
+    const bots = await made(bot, { pr: 32, linked: [10, 13, 14], from: 13 });
+
+    const page = await threads.threadPage(pool, {
+      thread: await threads.threadForNumber(pool, { appId: app.id, number: 10 }), viewerId: ana.id,
+    });
+    const of = (id) => page.items.find((i) => i.type === 'change' && i.id === Number(id)).closesRequests;
+
+    assert.deepEqual(of(human.id), [
+      { number: 10, title: 'Pin a message', by: 'op_ana', confirmed: true },
+      { number: 11, title: 'Pin in DMs', by: 'op_ana', confirmed: false },
+      { number: 13, title: 'Sidebar rows too tight', by: 'op_maya', confirmed: false },
+      { number: 99, title: null, by: null, confirmed: false },
+    ], 'built for #10, whoever filed it; the rest not agreed to; a number with no request is bare');
+
+    assert.deepEqual(of(authored.id), [
+      { number: 10, title: 'Pin a message', by: 'op_ana', confirmed: true },
+      { number: 11, title: 'Pin in DMs', by: 'op_ana', confirmed: true },
+      { number: 13, title: 'Sidebar rows too tight', by: 'op_maya', confirmed: false },
+    ], 'a change its author filed requests for: those are confirmed');
+
+    assert.deepEqual(of(bots.id), [
+      { number: 10, title: 'Pin a message', by: 'op_ana', confirmed: false },
+      { number: 13, title: 'Sidebar rows too tight', by: 'op_maya', confirmed: true },
+      { number: 14, title: 'Another one', by: 'op_maya', confirmed: true },
+    ], 'Homeroom bot\'s change is the requester it was built for: that person\'s requests are confirmed');
+
+    assert.deepEqual(of(pin.id).map((r) => r.confirmed), [false, false],
+      'a change with no built-from request: only its author\'s own requests would be confirmed');
+  });
+
   // #6124: a title chosen before the change has a pull request lands in
   // proposed_pr_title. The request page's rows read it before the session's
   // old name, so a corrected title is the name on the card — both in the

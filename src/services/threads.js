@@ -505,7 +505,8 @@ SELECT 'request' AS type, r.id::bigint AS id, r.number, r.title, r.state AS stat
        NULL::text AS reason, NULL::int AS target, NULL::int[] AS closes,
        NULL::int AS built_from_session_id, NULL::int AS built_from_version,
        FALSE AS ready,
-       NULL::timestamptz AS live_at
+       NULL::timestamptz AS live_at,
+       NULL::jsonb AS closes_requests, NULL::int AS built_for_user_id
   FROM requests r LEFT JOIN users ru ON ru.id = r.created_by
  WHERE r.thread_id = $1
 UNION ALL
@@ -523,7 +524,21 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
        COALESCE(cs.linked_issues, '{}'::int[]),
        cs.built_from_session_id, cs.built_from_version,
        ${CHANGE_READY_SQL},
-       cs.live_at
+       cs.live_at,
+       -- #6225: every request it closes, resolved for the Votes card, and
+       -- the person a yes would be for: its author, or, for a change
+       -- Homeroom bot built, the requester it was built for.
+       (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                 'number', c.n, 'title', r.title, 'by', COALESCE(ru.username, r.author_login),
+                 'filerId', r.created_by, 'builtFor', c.n = cs.created_from_issue_number) ORDER BY c.n), '[]'::jsonb)
+          FROM (SELECT DISTINCT unnest(COALESCE(cs.linked_issues, '{}'::int[])) AS n) c
+          LEFT JOIN requests r ON r.app_id = cs.app_id AND r.number = c.n
+          LEFT JOIN users ru ON ru.id = r.created_by
+         WHERE c.n > 0) AS closes_requests,
+       CASE WHEN COALESCE(cu.is_synthetic, FALSE)
+            THEN (SELECT r2.created_by FROM requests r2
+                   WHERE r2.app_id = cs.app_id AND r2.number = cs.created_from_issue_number)
+            ELSE cs.user_id END AS built_for_user_id
   FROM chat_sessions cs LEFT JOIN users cu ON cu.id = cs.user_id
  WHERE cs.thread_id = $1 AND cs.is_headless = FALSE
    AND (cs.status IN ('active', 'promoted', 'merging', 'merged')
@@ -545,7 +560,8 @@ SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::
        CASE WHEN i.kind = 'close_issue' AND (i.payload->>'issueNumber') ~ '^[0-9]{1,9}$'
             THEN (i.payload->>'issueNumber')::int END,
        NULL::int[], NULL::int, NULL::int, FALSE,
-       NULL::timestamptz AS live_at
+       NULL::timestamptz AS live_at,
+       NULL::jsonb AS closes_requests, NULL::int AS built_for_user_id
   FROM issues i LEFT JOIN users iu ON iu.id = i.created_by
  WHERE i.thread_id = $1 AND i.kind <> 'general'
  ORDER BY created_at, type, id`;
@@ -566,6 +582,35 @@ SELECT f.thread_type, f.thread_ref, f.id, f.content, f.created_at, u.username, u
   JOIN users u ON u.id = f.user_id
  WHERE f.k <= $3
  ORDER BY f.id`;
+
+/**
+ * #6225: the requests a change closes, as its Votes card lists them: each
+ * one's number, title and filer, and whether its requester has agreed to it.
+ * A request counts as confirmed when the change was built for it, whoever
+ * filed it, or when its filer is the change's author — and for a change
+ * Homeroom bot built, the person it was built for counts as its author
+ * (`builtForUserId`). `rows` is ITEMS_SQL's `closes_requests`: `filerId`
+ * never leaves the server. Ascending, without duplicates. Pure.
+ */
+function closesRequests(rows, builtForUserId) {
+  const seen = new Set();
+  const out = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row) continue;
+    const number = Number(row.number);
+    if (!Number.isInteger(number) || number <= 0 || seen.has(number)) continue;
+    seen.add(number);
+    const filerId = row.filerId == null ? null : Number(row.filerId);
+    const author = builtForUserId == null ? null : Number(builtForUserId);
+    out.push({
+      number,
+      title: row.title == null ? null : String(row.title),
+      by: row.by == null ? null : String(row.by),
+      confirmed: row.builtFor === true || (filerId != null && author != null && filerId === author),
+    });
+  }
+  return out.sort((a, b) => a.number - b.number);
+}
 
 /**
  * What a thread page draws: the thread (what leads it, by kind), every item
@@ -617,6 +662,9 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
       // The requests it closes when it merges (its linked_issues): changes
       // compete only where these overlap (closeRivals).
       item.closes = Array.isArray(row.closes) ? row.closes.map(Number).filter((n) => n > 0) : [];
+      // #6225: the same list with each request's title and filer, and whether
+      // its requester agreed to be closed by this change (votes card).
+      item.closesRequests = closesRequests(row.closes_requests, row.built_for_user_id);
       // 1 Nov 2026 (C2.3): the plan it was built from (a person's on the
       // request, or the bot's own its requester approved), which the
       // request's page draws with it (request-head.tsx plansByChange).
@@ -878,6 +926,7 @@ async function closeThreadChanges(db, { appId, threadId, closed: numbers = [], c
 module.exports = {
   closeRivals,
   closeThreadChanges,
+  closesRequests,
   threadForNumber,
   threadById,
   threadPage,

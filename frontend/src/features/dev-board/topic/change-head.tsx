@@ -56,6 +56,7 @@ import type { ChangeGateView, ChangeThreadView, ChangeUpstreamView, FixChecksVie
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { ThreadItems, pageSlug } from './thread-items';
+import type { ClosesRequest } from './thread-model';
 import { changeMenuKey } from './thread-menu';
 import { TopicBack } from './topic-back';
 import { WorkWithBotButton } from './work-with-bot';
@@ -146,6 +147,63 @@ function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): React
 }
 
 /**
+ * #6225: what a yes on a change would close, under its Votes card's tally:
+ * every request the change closes, each a link to its page with its title and
+ * filer. A request its requester has not agreed to says so, so a voter can see
+ * overreach and vote no. Five lines, then one tap for the rest.
+ */
+function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
+  const t = useMessages('project');
+  const [open, setOpen] = useState(false);
+  const shown = open || closes.length <= 5 ? closes : closes.slice(0, 5);
+  const rest = closes.length - shown.length;
+  const slug = (window as any).AppView?.appData?.slug || '';
+  const linkClass = 'font-semibold text-violet-700 hover:underline dark:text-violet-300';
+  const link = (n: number) => (
+    <a href={slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${n}` : `#${n}`} className={linkClass} />
+  );
+  return (
+    <div
+      className="col-span-full mt-2.5 border-t border-[color:var(--app-sheet-line)] pt-2 text-[13px] leading-normal text-zinc-500 dark:text-zinc-400"
+      data-change-vote-closes={closes.length}
+    >
+      <p className="font-semibold text-zinc-700 dark:text-zinc-300">
+        {t('project:topic.change.gate.closesHead', { count: closes.length })}
+      </p>
+      {shown.map((r) => (
+        <p key={r.number} data-change-vote-closes-on={r.number} data-confirmed={r.confirmed ? 'true' : 'false'}>
+          {r.title && r.by ? (
+            <RichMessage
+              id="project:topic.change.gate.closesLine"
+              values={{ number: r.number, title: r.title, by: r.by }}
+              components={[link(r.number)]}
+            />
+          ) : r.title ? (
+            <RichMessage id="project:topic.change.gate.closesLineNoFiler" values={{ number: r.number, title: r.title }} components={[link(r.number)]} />
+          ) : (
+            <RichMessage id="project:topic.change.gate.closesLineUntitled" values={{ number: r.number }} components={[link(r.number)]} />
+          )}
+          {r.confirmed ? null : (
+            <>{' · '}<span className="font-semibold text-zinc-700 dark:text-zinc-300">{t('project:topic.change.gate.closesUnconfirmed')}</span></>
+          )}
+        </p>
+      ))}
+      {rest > 0 ? (
+        <button
+          type="button"
+          className={linkClass}
+          aria-expanded="false"
+          data-change-vote-closes-more={rest}
+          onClick={() => setOpen(true)}
+        >
+          {t('project:topic.change.gate.closesMore', { count: rest })}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * One card: its name and figure over its bar, its button beside them, and
  * one line under. A bar still moving is drawn in the lit ink; a finished
  * one is full and green, with a green check and figure (AGENTS.md: a
@@ -157,8 +215,8 @@ function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): React
  * beside it (`fix`, `rerun`). From the tap until the build conversation's
  * turn ends it reads "Fixing", with a door into that conversation.
  */
-export function GateCard({ which, g, action, rerun = null, id, repeat = false }: {
-  which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; repeat?: boolean;
+export function GateCard({ which, g, action, rerun = null, id, repeat = false, closes = [] }: {
+  which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; repeat?: boolean; closes?: ClosesRequest[];
 }): ReactNode {
   const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
@@ -237,6 +295,9 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
           ))}
         </div>
       ) : null}
+      {/* #6225: what a yes would close, under the tally; the pinned repeat
+          card at the foot of the page stays as it is. */}
+      {which === 'votes' && !repeat && closes.length ? <VoteCloses closes={closes} /> : null}
       {why ? (
         <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>
           {page ? `${why} ` : why}
@@ -419,12 +480,12 @@ function gateActions(card: DevCardModel, v: ChangeThreadView) {
  * between it and its rivals keeps its Votes card without its own Vote
  * button, so there is one way to vote.
  */
-export const ChangeGates = forwardRef<HTMLDivElement, { id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean }>(
-  function ChangeGates({ id, card, v, ballot = false }, ref) {
+export const ChangeGates = forwardRef<HTMLDivElement, { id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean; closes?: ClosesRequest[] }>(
+  function ChangeGates({ id, card, v, ballot = false, closes = [] }, ref) {
     const { voteAction, testAction, withFix, testingActions, stopped } = gateActions(card, v);
     return (
       <div ref={ref} className="dev-change-pair">
-        <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} />
+        <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} closes={closes} />
         <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix || stopped ? testingActions : null} id={id} />
       </div>
     );
