@@ -107,7 +107,7 @@ test('both prompts send suggestions to the field and forbid a list in the text',
     place: { type: 'issue', ref: 1 },
     tools: voice.toolsFor({ type: 'issue', ref: 1 }),
   });
-  assert.match(prompt, /in the reply\s+tool's suggestions field/);
+  assert.match(prompt, /the\s+reply tool's suggestions field/);
   assert.match(prompt, /They are shown as buttons/);
   assert.match(prompt, /Never\s+write them in the text/);
   assert.doesNotMatch(prompt, /End the reply with one to three short things/);

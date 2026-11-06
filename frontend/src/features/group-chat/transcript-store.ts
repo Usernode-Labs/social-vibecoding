@@ -154,6 +154,8 @@ export interface BotOfferRow {
 export interface BotSuggestView {
   status: 'open' | 'closed';
   forMe: boolean;
+  /** #6391: whose set this is: the people the reply answered, or the other members. */
+  audience: 'answered' | 'others' | null;
   actions: { id: string; label: string; primary: boolean }[];
 }
 
