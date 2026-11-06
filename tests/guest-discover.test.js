@@ -315,6 +315,10 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   const none = draw({ apps: APPS.map((a) => ({ ...a, featured: false })) });
   assert.doesNotMatch(none, /data-home-join-featured/);
   assert.doesNotMatch(none, /data-home-join-rest/, 'nothing featured: one grid, no second heading');
+  // Only featured ones: Featured alone, no empty second heading.
+  const onlyFeatured = draw({ apps: APPS.filter((a) => a.featured) });
+  assert.match(onlyFeatured, /data-home-join-featured/);
+  assert.doesNotMatch(onlyFeatured, /data-home-join-rest/, 'no rest: no More communities heading');
   assert.deepEqual(cardsOf(none), ['game-corner', 'todo-list', 'fresh-one']);
 });
 
