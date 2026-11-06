@@ -196,7 +196,7 @@ export function GovernanceHead({ row, view = null }: { row: any; view?: Governan
           <h1 className="dev-request-title" data-gov-title={g.id}>{g.title}</h1>
           <GovernanceWhat g={g} />
           <GovVote g={g} />
-          {g.roster ? <Roster r={g.roster} /> : null}
+          {g.roster ? <div className="dev-topic-roster"><Roster r={g.roster} /></div> : null}
         </div>
       </article>
     </>

@@ -1087,6 +1087,9 @@ export function GovVote({ g }: { g: GovernanceView }): ReactNode {
             </div>
           ) : null}
           <p className="dev-change-gate-note">
+            {!open && votes.outcome === 'applying'
+              ? <span className="dc-status-spinner-arc" aria-hidden="true" />
+              : null}
             {open
               ? (mine
                 ? t(mine === 'yes' ? 'project:topic.thread.close.saidYes' : 'project:topic.thread.close.saidNo')

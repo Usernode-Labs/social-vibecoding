@@ -50,6 +50,7 @@ import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { TopicBack } from './topic-back';
 import { RequestHead, RequestWords } from './request-head';
 import { ChangeThreadHead } from './change-head';
+import { GovernanceHead } from './governance-head';
 import { ThreadItems, pageSlug } from './thread-items';
 import { changeDetailAsk, changeDetailRow, mergeChangePatch } from './change-detail-refresh';
 import { DescriptionEditor } from './description-editor';
