@@ -180,7 +180,7 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
           key={r.number}
           // #6225: a hanging indent, so a long title wrapping on a phone stays
           // aligned after the "#number" link rather than under it.
-          className="pl-[3.4em] -indent-[3.4em]"
+          className="ps-[3.4em] -indent-[3.4em]"
           data-change-vote-closes-on={r.number}
           data-confirmed={r.confirmed ? 'true' : 'false'}
         >
@@ -227,8 +227,8 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
  * beside it (`fix`, `rerun`). From the tap until the build conversation's
  * turn ends it reads "Fixing", with a door into that conversation.
  */
-export function GateCard({ which, g, action, rerun = null, id, repeat = false, closes = [] }: {
-  which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; repeat?: boolean; closes?: ClosesRequest[];
+export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
+  which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; closes?: ClosesRequest[];
 }): ReactNode {
   const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
@@ -303,9 +303,8 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false, c
           ))}
         </div>
       ) : null}
-      {/* #6225: what a yes would close, under the tally; the pinned repeat
-          card at the foot of the page stays as it is. */}
-      {which === 'votes' && !repeat && closes.length ? <VoteCloses closes={closes} /> : null}
+      {/* #6225: what a yes would close, under the tally. */}
+      {which === 'votes' && closes.length ? <VoteCloses closes={closes} /> : null}
       {why ? (
         <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>
           {page ? `${why} ` : why}

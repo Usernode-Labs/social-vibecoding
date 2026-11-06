@@ -470,10 +470,9 @@ test('#6225: one request reads "Closes 1 request", and past five the rest fold b
   assert.equal(message('project:topic.change.gate.closesMore', { count: 2 }), '2 more');
 });
 
-test('#6225: only a change up for a vote draws the list, and the pinned repeat card never does', () => {
+test('#6225: only a change up for a vote draws the list', () => {
   const list = closesOf([[10, 'One', 'evan', true], [11, 'Two', 'mara', false]]);
   assert.doesNotMatch(drawGate({ which: 'testing', closes: list }), /data-change-vote-closes=/);
-  assert.doesNotMatch(drawGate({ closes: list, repeat: true }), /data-change-vote-closes=/);
   assert.doesNotMatch(drawGate({ closes: [] }), /data-change-vote-closes=/);
 });
 
