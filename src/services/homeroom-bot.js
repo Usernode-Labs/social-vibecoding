@@ -2762,10 +2762,15 @@ function deciderNote(decider) {
 function goAheadNote(goAhead) {
   const by = typeof goAhead?.by === 'string' ? goAhead.by.trim() : '';
   if (!by) return null;
+  // 6 Nov 2026 (#6430): the go-ahead may be typed in the request's own
+  // discussion, not only in the bot's private chat with the person.
+  const inThread = goAhead?.where === 'thread';
   return [
-    '==== A GO-AHEAD FROM THEIR CHAT ====',
+    inThread ? '==== A GO-AHEAD FROM THIS REQUEST\'S DISCUSSION ====' : '==== A GO-AHEAD FROM THEIR CHAT ====',
     '',
-    `@${by}, who your last note on this request named, said to go ahead in their private chat with you just now. Their words are not in the discussion below. What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still \`person\`, with \`go_ahead\` false; \`reason\` says who acts and where. So is a change too big for one build, and \`first_step\` names the part that can be built here.`,
+    `@${by}, who your last note on this request named, said to go ahead ${inThread
+      ? 'in this request\'s discussion just now, in reply to your last note. Their words are below in the discussion.'
+      : 'in their private chat with you just now. Their words are not in the discussion below.'} What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still \`person\`, with \`go_ahead\` false; \`reason\` says what kind of change this is in plain words, that you do not build it yourself even with a go-ahead, and that a person has to build it (for example with a coding agent). It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it. So is a change too big for one build, and \`first_step\` names the part that can be built here.`,
   ].join('\n');
 }
 
@@ -2896,6 +2901,61 @@ async function goAheadCounts(pool, app, requester, userId, decider = null) {
     return (await idsOfUsernames(pool, names)).includes(id);
   } catch (err) {
     log.warn('homeroom-bot', 'Could not read whether a go-ahead counts', { app: app?.slug, err: err.message });
+    return false;
+  }
+}
+
+/**
+ * 6 Nov 2026 (#6430): a go-ahead typed in the request's own discussion. The
+ * bot's last live read left the request for a person, and a plain go-ahead
+ * from the person that read named, newer than the read, is the same decision
+ * a go-ahead in the bot's chat is. Resolves { by, where: 'thread',
+ * messageId } or null. Never throws.
+ */
+async function threadGoAhead(pool, { app, issueNumber, botId, requester, decider = null }) {
+  try {
+    const { rows: [lastRun] } = await pool.query(
+      `SELECT verdict, created_at FROM homeroom_bot_runs
+        WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
+      [app.id, Number(issueNumber)],
+    );
+    if (lastRun?.verdict !== 'person' || !lastRun.created_at) return null;
+    const { rows: [message] } = await pool.query(
+      `SELECT m.id, m.content, m.user_id, u.username
+         FROM chat_messages m JOIN users u ON u.id = m.user_id
+        WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2
+          AND m.deleted_at IS NULL AND m.msg_type = 'message'
+          AND m.user_id <> $3 AND m.created_at > $4
+        ORDER BY m.id DESC LIMIT 1`,
+      [app.id, Number(issueNumber), Number(botId), lastRun.created_at],
+    );
+    if (!message || !live.saysGoAhead(message.content)) return null;
+    if (!(await goAheadCounts(pool, app, requester, message.user_id, decider))) return null;
+    return { by: message.username, where: 'thread', messageId: Number(message.id) };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read a go-ahead in a request\'s discussion', {
+      app: app.slug, issueNumber, err: err.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * #6430: whether the bot already answered this go-ahead in the request's
+ * discussion (its fixed reply carries the message id it answered). A re-read
+ * then says nothing: the refusal appears once. Never throws.
+ */
+async function threadAnsweredGoAhead(pool, { app, issueNumber, messageId }) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM chat_messages
+        WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2 AND deleted_at IS NULL
+          AND metadata->'homeroomBot'->'goAheadCannot'->>'messageId' = $3
+        LIMIT 1`,
+      [app.id, Number(issueNumber), String(Number(messageId))],
+    );
+    return rows.length > 0;
+  } catch {
     return false;
   }
 }
@@ -4269,6 +4329,13 @@ async function runTriage(pool, config, {
       });
       if (who?.username) goAhead = { by: who.username };
     }
+  }
+  // 6 Nov 2026 (#6430): a go-ahead typed in the request's own discussion,
+  // after the bot's last read left it for a person, is the same decision as
+  // one in its chat. It is read here so the re-read knows it is decided, and
+  // so a read a go-ahead cannot settle answers once instead of asking again.
+  if (liveMode && !goAhead) {
+    goAhead = await threadGoAhead(pool, { app, issueNumber, botId: bot.id, requester, decider });
   }
   // 2026-10-04: and who is in its project, so the plan is about its real
   // people rather than the sketch's sample ones.
@@ -7744,14 +7811,25 @@ async function actOnVerdict({
     // Go ahead that was just refused.
     const goAheadCannot = parsed.goAheadDecides === false && !!goAhead?.by;
     const noteText = goAheadCannot
-      ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep })
+      ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep, reader: goAhead.by })
       : withdrawnNote
         ? live.withdrawnHomeroomText(parsed)
         : live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
     // #6391: the note also gives the other members a set of their own.
     const suggestOthers = ["I'd like this too", "What's left to do?"]
       .map((label, i) => ({ id: `others-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
-    if (await unchangedNote('person', noteText, parsed.done ? 'empty' : null)) {
+    // 6 Nov 2026 (#6430): the request's own discussion already answered this
+    // go-ahead with the one plain sentence, so the re-read says nothing: the
+    // refusal appears once, not under itself.
+    const alreadyAnswered = goAheadCannot && goAhead?.messageId
+      ? await threadAnsweredGoAhead(pool, { app, issueNumber, messageId: goAhead.messageId })
+      : false;
+    if (alreadyAnswered) {
+      acted = 'answered';
+      log.info('homeroom-bot', 'A go-ahead in the request\'s discussion was already answered', {
+        app: app.slug, issueNumber, messageId: Number(goAhead.messageId),
+      });
+    } else if (await unchangedNote('person', noteText, parsed.done ? 'empty' : null)) {
       acted = 'unchanged';
       log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
         app: app.slug, issueNumber, verdict: parsed.verdict,
@@ -7785,6 +7863,10 @@ async function actOnVerdict({
         dm: {
           reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
           ...(parsed.done ? { done: true } : {}),
+          // 6 Nov 2026 (#6430): the DM says a person has to build it, not
+          // that a go-ahead can settle it, and names the smaller part.
+          ...(parsed.goAheadDecides === false ? { goAheadDecides: false } : {}),
+          ...(parsed.firstStep ? { firstStep: parsed.firstStep } : {}),
           ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
           ...(withdrawnNote ? { withdrawn: true, quiet: true } : {}),
         },
@@ -11456,6 +11538,8 @@ module.exports = {
   starterOfApp,
   deciderNote,
   goAheadNote,
+  threadGoAhead,
+  threadAnsweredGoAhead,
   whoDecides,
   goAheadCounts,
   answerersOf,
