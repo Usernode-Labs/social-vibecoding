@@ -2998,9 +2998,9 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages and its conversations, then Recents (the pinned group, then the rest), then you (One Home, #6361; the Discover and Communities nodes stay in the markup, drawn on neither bar, for the routes that name them)",
+      "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages and its conversations, then Recents (the pinned group, then the rest), then you (One Home, #6361; the Communities node stays in the markup, drawn on neither bar, for the routes that name it)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-tab-messages + #platform-rail-conversations + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-tab-messages + #platform-rail-conversations + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -4755,7 +4755,7 @@
     {
       "name": "#4417, v3: on a desktop a project's places are nested under its row in the sidebar, the place on show lit there (Needs you), with no column beside it",
       "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "body:not(:has(#platform-section-column)) #platform-rail-communities > a[data-rail-community=\"usernode-2d5619\"][aria-current=\"page\"][data-rail-open] + .platform-rail-nest [data-places=\"usernode-2d5619\"] [data-place=\"needs\"][aria-current=\"page\"]",
+      "expectSelector": "body:not(:has(#platform-section-column)) #platform-rail-communities > [data-rail-row=\"usernode-2d5619\"]:has(> [aria-current=\"page\"][data-rail-open]) + .platform-rail-nest [data-place=\"needs\"][aria-current=\"page\"]",
       "expectText": "Needs you"
     },
     {
