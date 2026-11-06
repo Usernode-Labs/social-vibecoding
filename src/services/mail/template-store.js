@@ -11,7 +11,17 @@
 // last saw a different live row throws `conflict` instead of overwriting it.
 //
 // Errors carry a `code` for routes to map: conflict, replacement_required,
-// invalid_replacement, unknown_action, not_found, invalid_origin.
+// invalid_replacement, unknown_action, not_found, invalid_origin, invalid (with
+// `errors: [{ field, message }]`) and retry.
+//
+// A write that puts content live takes an optional `check(context)`, run inside
+// its transaction once the rows it changes are locked, with the rows the new
+// content will meet (the layout a template wears, the templates a layout
+// frames), and the transaction's `client`, for a check that marks translations
+// the change leaves unusable. The admin routes validate there, so a layout edit
+// and a template edit that each pass on their own cannot both land and break a
+// mail together: the second waits for the first and is checked against it. A
+// check that throws rolls the write back.
 
 const log = require('../logger');
 const { ACTIONS, actionFor } = require('./actions');
@@ -37,6 +47,9 @@ async function inTransaction(pool, work) {
     // A first save for an action that raced past the lock check still meets the
     // one-live-row index; that is the same "somebody else saved first".
     if (err && err.code === '23505') throw fail('conflict', 'Another version was saved first');
+    // A deadlock between two edits, or a lock that waited too long: nothing
+    // was written, and the same request is likely to work a moment later.
+    if (err && (err.code === '40P01' || err.code === '55P03')) throw fail('retry', 'The database was busy with another change');
     throw err;
   } finally {
     client.release(rollbackFailed);
@@ -49,12 +62,21 @@ const lock = (client, scope, key) => client.query('SELECT pg_advisory_xact_lock(
 // a layout takes it FOR UPDATE (`exclusive`), which waits for those saves and so
 // counts and moves them, and which a later save waits behind until it sees the
 // layout deleted.
-async function assertLiveLayout(client, familyId, exclusive = false) {
+async function liveLayout(client, familyId, exclusive = false) {
   const { rows } = exclusive
-    ? await client.query("SELECT id FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [familyId])
-    : await client.query("SELECT id FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR SHARE", [familyId]);
-  return rows.length > 0;
+    ? await client.query("SELECT * FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [familyId])
+    : await client.query("SELECT * FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR SHARE", [familyId]);
+  return rows[0] || null;
 }
+
+// The live templates that wear a layout family, for a check.
+async function wearers(client, familyId) {
+  const { rows } = await client.query(
+    "SELECT * FROM email_templates WHERE layout_family_id = $1 AND status = 'live' AND deleted_at IS NULL ORDER BY action", [familyId]);
+  return rows;
+}
+
+const noCheck = async () => {};
 
 // The live row the caller believes is current must still be the live one.
 function checkExpected(liveRow, expectedLiveId) {
@@ -62,39 +84,82 @@ function checkExpected(liveRow, expectedLiveId) {
   if ((expectedLiveId == null ? null : Number(expectedLiveId)) !== liveId) throw fail('conflict', 'Another version was saved first');
 }
 
-async function saveTemplate(pool, input, userId) {
+// The English words a template's translations are translations of. A new
+// version that keeps them keeps its translations; one that changes any of
+// them starts with none, since what they say no longer matches.
+const TEMPLATE_WORDS = ['subject', 'preheader', 'why', 'html', 'text'];
+const LAYOUT_WORDS = ['html', 'text'];
+const sameWords = (row, input, fields) => fields.every((field) => (row[field] ?? '') === (input[field] ?? ''));
+const UNCHANGED = 'Nothing has changed since the live version, so there is nothing to save';
+
+/**
+ * Saves a new live version of the template for `action`. A save identical to
+ * the live version is refused (`unchanged`): it would only make a copy, and a
+ * copy starts with no translations. A save that keeps the English words (a
+ * new name or layout) carries the live version's translations over, and
+ * `afterSave` is called with them carried, inside the same transaction, so the
+ * caller can check them against the layout the new version is sent in.
+ */
+async function saveTemplate(pool, input, userId, { check = noCheck, afterSave = noCheck } = {}) {
   const { action, name, layoutFamilyId = null, subject, preheader = '', why = '', html, text, expectedLiveId = null } = input;
   if (!actionFor(action)) throw fail('unknown_action', `Unknown email action: ${action}`);
   return inTransaction(pool, async (client) => {
     await lock(client, 'email_templates', action);
-    if (layoutFamilyId != null && !(await assertLiveLayout(client, layoutFamilyId))) throw fail('not_found', 'That layout does not exist');
+    const layout = layoutFamilyId == null ? null : await liveLayout(client, layoutFamilyId);
+    if (layoutFamilyId != null && !layout) throw fail('not_found', 'That layout does not exist');
     const { rows: [liveRow] } = await client.query(
-      "SELECT id FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [action]);
+      "SELECT * FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [action]);
     checkExpected(liveRow, expectedLiveId);
+    const words = { subject, preheader, why, html, text };
+    const keepsWords = !!liveRow && sameWords(liveRow, words, TEMPLATE_WORDS);
+    if (keepsWords && liveRow.name === name && (liveRow.layout_family_id ?? null) === layoutFamilyId) {
+      throw fail('unchanged', UNCHANGED);
+    }
+    await check({ layout, client });
     if (liveRow) await client.query("UPDATE email_templates SET status = 'archived' WHERE id = $1", [liveRow.id]);
     const { rows: [{ version }] } = await client.query('SELECT COALESCE(MAX(version), 0) + 1 AS version FROM email_templates WHERE action = $1', [action]);
     const { rows: [row] } = await client.query(
       `INSERT INTO email_templates (action, name, layout_family_id, version, status, subject, preheader, why, html, text, created_by)
        VALUES ($1, $2, $3, $4, 'live', $5, $6, $7, $8, $9, $10) RETURNING *`,
       [action, name, layoutFamilyId, version, subject, preheader, why, html, text, userId == null ? null : userId]);
+    if (keepsWords) {
+      await client.query(
+        `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin, updated_at, unusable)
+         SELECT $2, locale, subject, preheader, why, html, text, origin, updated_at, unusable
+           FROM email_template_translations WHERE template_id = $1`,
+        [liveRow.id, row.id]);
+    }
+    await afterSave({ row, layout, client, carried: keepsWords });
     return row;
   });
 }
 
-async function saveLayout(pool, input, userId) {
+/**
+ * Saves a new live version of a layout (a new family when `familyId` is
+ * null). As with templates, a save identical to the live version is refused,
+ * and one that keeps the words (a new name) carries the translations over.
+ */
+async function saveLayout(pool, input, userId, { check = noCheck } = {}) {
   const { familyId = null, name, html, text, expectedLiveId = null } = input;
   return inTransaction(pool, async (client) => {
     let family = familyId;
     let version = 1;
+    let carryFrom = null;
     if (family == null) {
       checkExpected(null, expectedLiveId);
+      await check({ templates: [], client });
       family = (await client.query("SELECT nextval('email_layout_family_seq')::int AS id")).rows[0].id;
     } else {
       await lock(client, 'email_layouts', family);
       const { rows: [liveRow] } = await client.query(
-        "SELECT id FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [family]);
+        "SELECT * FROM email_layouts WHERE family_id = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [family]);
       if (!liveRow) throw fail('not_found', 'That layout does not exist');
       checkExpected(liveRow, expectedLiveId);
+      if (sameWords(liveRow, { html, text }, LAYOUT_WORDS)) {
+        if (liveRow.name === name) throw fail('unchanged', UNCHANGED);
+        carryFrom = liveRow.id;
+      }
+      await check({ templates: await wearers(client, family), client });
       await client.query("UPDATE email_layouts SET status = 'archived' WHERE id = $1", [liveRow.id]);
       version = (await client.query('SELECT MAX(version) + 1 AS version FROM email_layouts WHERE family_id = $1', [family])).rows[0].version;
     }
@@ -102,6 +167,13 @@ async function saveLayout(pool, input, userId) {
       `INSERT INTO email_layouts (family_id, name, version, status, html, text, created_by)
        VALUES ($1, $2, $3, 'live', $4, $5, $6) RETURNING *`,
       [family, name, version, html, text, userId == null ? null : userId]);
+    if (carryFrom != null) {
+      await client.query(
+        `INSERT INTO email_layout_translations (layout_id, locale, html, text, origin, updated_at, unusable)
+         SELECT $2, locale, html, text, origin, updated_at, unusable
+           FROM email_layout_translations WHERE layout_id = $1`,
+        [carryFrom, row.id]);
+    }
     return row;
   });
 }
@@ -109,13 +181,27 @@ async function saveLayout(pool, input, userId) {
 // Deleting the live version needs an archived version of the same action to
 // take its place, so an action is never left without a template by accident.
 // Deleting an archived version needs nothing.
-async function deleteTemplate(pool, id, { replacementId = null } = {}, userId) { // eslint-disable-line no-unused-vars
+//
+// `expectedLiveId`, when given (null included), is the live version the caller
+// saw. If another save, restore or delete has changed it since, the delete is
+// a conflict: otherwise a stale screen could delete what is now an archived
+// row, drop its chosen replacement and report it as live. Left undefined, it
+// is not checked, for callers that act on what they just read.
+async function deleteTemplate(pool, id, { replacementId = null, expectedLiveId } = {}, userId, { check = noCheck } = {}) { // eslint-disable-line no-unused-vars
   return inTransaction(pool, async (client) => {
     const { rows: [peek] } = await client.query('SELECT action FROM email_templates WHERE id = $1', [id]);
     if (!peek) throw fail('not_found', 'That template does not exist');
     await lock(client, 'email_templates', peek.action);
     const { rows: [row] } = await client.query('SELECT * FROM email_templates WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
     if (!row) throw fail('not_found', 'That template does not exist');
+    if (expectedLiveId !== undefined) {
+      const { rows: [liveRow] } = await client.query(
+        "SELECT id FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL", [row.action]);
+      checkExpected(liveRow, expectedLiveId);
+    }
+    // A replacement only makes sense for the live version: a caller naming one
+    // for an archived row believed it was live, so it saw an older state.
+    if (row.status !== 'live' && replacementId != null) throw fail('conflict', 'Another version was saved first');
     let replacement = null;
     if (row.status === 'live') {
       if (replacementId == null) throw fail('replacement_required', 'Choose a version to put live instead');
@@ -123,9 +209,11 @@ async function deleteTemplate(pool, id, { replacementId = null } = {}, userId) {
         "SELECT * FROM email_templates WHERE id = $1 AND action = $2 AND status = 'archived' AND deleted_at IS NULL AND id <> $3 FOR UPDATE",
         [replacementId, row.action, id]);
       if (!found) throw fail('invalid_replacement', 'The replacement must be an archived version of the same action');
-      if (found.layout_family_id != null && !(await assertLiveLayout(client, found.layout_family_id))) {
+      const layout = found.layout_family_id == null ? null : await liveLayout(client, found.layout_family_id);
+      if (found.layout_family_id != null && !layout) {
         throw fail('invalid_replacement', 'The replacement uses a layout that was deleted');
       }
+      await check({ row: found, layout, client });
       replacement = found;
     }
     await client.query("UPDATE email_templates SET status = 'archived', deleted_at = NOW() WHERE id = $1", [id]);
@@ -136,17 +224,21 @@ async function deleteTemplate(pool, id, { replacementId = null } = {}, userId) {
 
 // A layout is deleted as a whole family. While live templates use it, they are
 // moved to the replacement family so none is left pointing at a deleted layout.
-async function deleteLayout(pool, familyId, { replacementFamilyId = null } = {}, userId) { // eslint-disable-line no-unused-vars
+// `expectedLiveId` is the live version of the family the caller saw, checked
+// as in deleteTemplate when given.
+async function deleteLayout(pool, familyId, { replacementFamilyId = null, expectedLiveId } = {}, userId, { check = noCheck } = {}) { // eslint-disable-line no-unused-vars
   return inTransaction(pool, async (client) => {
     await lock(client, 'email_layouts', familyId);
-    if (!(await assertLiveLayout(client, familyId, true))) throw fail('not_found', 'That layout does not exist');
+    const live = await liveLayout(client, familyId, true);
+    if (!live) throw fail('not_found', 'That layout does not exist');
+    if (expectedLiveId !== undefined) checkExpected(live, expectedLiveId);
     const { rows: [{ n }] } = await client.query(
       "SELECT count(*)::int AS n FROM email_templates WHERE layout_family_id = $1 AND status = 'live' AND deleted_at IS NULL", [familyId]);
     if (n > 0 && replacementFamilyId == null) throw fail('replacement_required', 'Choose a layout for the templates that use this one');
     if (replacementFamilyId != null) {
-      if (Number(replacementFamilyId) === Number(familyId) || !(await assertLiveLayout(client, replacementFamilyId))) {
-        throw fail('invalid_replacement', 'The replacement must be a different, live layout');
-      }
+      const layout = Number(replacementFamilyId) === Number(familyId) ? null : await liveLayout(client, replacementFamilyId);
+      if (!layout) throw fail('invalid_replacement', 'The replacement must be a different, live layout');
+      await check({ templates: await wearers(client, familyId), layout, client });
       await client.query(
         'UPDATE email_templates SET layout_family_id = $2 WHERE layout_family_id = $1 AND deleted_at IS NULL', [familyId, replacementFamilyId]);
     }
@@ -159,7 +251,7 @@ async function deleteLayout(pool, familyId, { replacementFamilyId = null } = {},
 // live row is archived, and a deleted version comes back (deleted_at cleared).
 // `expectedLiveId` is the live row the caller saw; a different one is a conflict.
 // A version whose layout was deleted cannot go live.
-async function restoreTemplate(pool, id, { expectedLiveId = null } = {}, userId) { // eslint-disable-line no-unused-vars
+async function restoreTemplate(pool, id, { expectedLiveId = null } = {}, userId, { check = noCheck } = {}) { // eslint-disable-line no-unused-vars
   return inTransaction(pool, async (client) => {
     const { rows: [peek] } = await client.query('SELECT action FROM email_templates WHERE id = $1', [id]);
     if (!peek) throw fail('not_found', 'That template does not exist');
@@ -169,12 +261,36 @@ async function restoreTemplate(pool, id, { expectedLiveId = null } = {}, userId)
     const { rows: [liveRow] } = await client.query(
       "SELECT id FROM email_templates WHERE action = $1 AND status = 'live' AND deleted_at IS NULL FOR UPDATE", [row.action]);
     checkExpected(liveRow, expectedLiveId);
-    if (row.layout_family_id != null && !(await assertLiveLayout(client, row.layout_family_id))) {
+    const layout = row.layout_family_id == null ? null : await liveLayout(client, row.layout_family_id);
+    if (row.layout_family_id != null && !layout) {
       throw fail('invalid_replacement', 'That version uses a layout that was deleted');
     }
+    await check({ row, layout, client });
     if (liveRow) await client.query("UPDATE email_templates SET status = 'archived' WHERE id = $1", [liveRow.id]);
     const { rows: [restored] } = await client.query(
       "UPDATE email_templates SET deleted_at = NULL, status = 'live' WHERE id = $1 RETURNING *", [id]);
+    return restored;
+  });
+}
+
+// Puts an archived version of a live layout back live, archiving the current
+// one: the layout counterpart of restoreTemplate. A deleted layout stays deleted
+// (it was deleted as a whole family, and its templates moved elsewhere), so a
+// version of one is not_found here.
+async function restoreLayout(pool, id, { expectedLiveId = null } = {}, userId, { check = noCheck } = {}) { // eslint-disable-line no-unused-vars
+  return inTransaction(pool, async (client) => {
+    const { rows: [peek] } = await client.query('SELECT family_id FROM email_layouts WHERE id = $1', [id]);
+    if (!peek) throw fail('not_found', 'That layout version does not exist');
+    await lock(client, 'email_layouts', peek.family_id);
+    const live = await liveLayout(client, peek.family_id, true);
+    if (!live) throw fail('not_found', 'That layout was deleted');
+    if (live.id === Number(id)) return live;
+    const { rows: [row] } = await client.query('SELECT * FROM email_layouts WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
+    if (!row) throw fail('not_found', 'That layout version does not exist');
+    checkExpected(live, expectedLiveId);
+    await check({ row, templates: await wearers(client, peek.family_id), client });
+    await client.query("UPDATE email_layouts SET status = 'archived' WHERE id = $1", [live.id]);
+    const { rows: [restored] } = await client.query("UPDATE email_layouts SET status = 'live' WHERE id = $1 RETURNING *", [id]);
     return restored;
   });
 }
@@ -186,6 +302,14 @@ async function saveTranslation(pool, kind, id, locale, fields, origin) {
   if (kind !== 'template' && kind !== 'layout') throw fail('not_found', `Unknown translation kind: ${kind}`);
   if (origin !== 'machine' && origin !== 'admin') throw fail('invalid_origin', 'origin must be machine or admin');
   const f = (name) => (fields && fields[name] != null ? String(fields[name]) : '');
+  // A translation without these is not a translation of the mail, and resolve()
+  // would skip it anyway; refusing it here tells the admin why.
+  const blank = (kind === 'template' ? TEMPLATE_NEEDS : LAYOUT_NEEDS).filter((name) => !f(name).trim());
+  if (blank.length) {
+    const err = fail('invalid', 'A translation needs every part of the mail');
+    err.errors = blank.map((field) => ({ field, message: `The ${field === 'html' ? 'HTML version' : field === 'text' ? 'text version' : field} cannot be empty.` }));
+    throw err;
+  }
   const exists = kind === 'template'
     ? await pool.query('SELECT id FROM email_templates WHERE id = $1', [id])
     : await pool.query('SELECT id FROM email_layouts WHERE id = $1', [id]);
@@ -195,17 +319,81 @@ async function saveTranslation(pool, kind, id, locale, fields, origin) {
       `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (template_id, locale) DO UPDATE SET subject = EXCLUDED.subject, preheader = EXCLUDED.preheader,
-         why = EXCLUDED.why, html = EXCLUDED.html, text = EXCLUDED.text, origin = EXCLUDED.origin, updated_at = NOW()
+         why = EXCLUDED.why, html = EXCLUDED.html, text = EXCLUDED.text, origin = EXCLUDED.origin, unusable = NULL, updated_at = NOW()
        RETURNING *`,
       [id, locale, f('subject'), f('preheader'), f('why'), f('html'), f('text'), origin])
     : await pool.query(
       `INSERT INTO email_layout_translations (layout_id, locale, html, text, origin)
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (layout_id, locale) DO UPDATE SET html = EXCLUDED.html, text = EXCLUDED.text,
-         origin = EXCLUDED.origin, updated_at = NOW()
+         origin = EXCLUDED.origin, unusable = NULL, updated_at = NOW()
        RETURNING *`,
       [id, locale, f('html'), f('text'), origin]);
   return row;
+}
+
+/**
+ * Saves one language of one version after `check` passes, inside a transaction
+ * that holds what the check reads still: for a template, its live layout FOR
+ * SHARE (a layout save waits, and then checks this translation); for a layout,
+ * its family's lock, as a layout save takes. `check({ client, row, layout,
+ * layoutTranslation, templates })` gets the version, and for a template the
+ * live layout it wears with that layout's usable translation in `locale` (or
+ * null); for a layout, the live templates it frames when it is the live
+ * version. A check that throws saves nothing.
+ *
+ * `keepAdmin`: a machine translation does not replace an admin's; null is
+ * returned instead. The statements are written out for the SQL inventory.
+ */
+// `requireLive`: an admin's correction is to what readers get, so it is
+// refused (conflict) when the version is no longer the live one. The live
+// row is held FOR SHARE, so a save that would archive it waits for this.
+async function saveCheckedTranslation(pool, kind, id, locale, fields, origin, { check = noCheck, keepAdmin = false, requireLive = false } = {}) {
+  if (kind !== 'template' && kind !== 'layout') throw fail('not_found', `Unknown translation kind: ${kind}`);
+  if (origin !== 'machine' && origin !== 'admin') throw fail('invalid_origin', 'origin must be machine or admin');
+  const f = (name) => (fields && fields[name] != null ? String(fields[name]) : '');
+  return inTransaction(pool, async (client) => {
+    if (kind === 'template') {
+      const { rows: [row] } = requireLive
+        ? await client.query('SELECT * FROM email_templates WHERE id = $1 AND deleted_at IS NULL FOR SHARE', [id])
+        : await client.query('SELECT * FROM email_templates WHERE id = $1 AND deleted_at IS NULL', [id]);
+      if (!row) throw fail('not_found', 'That version does not exist');
+      if (requireLive && row.status !== 'live') throw fail('conflict', 'That version is no longer live');
+      const layout = row.layout_family_id == null ? null : await liveLayout(client, row.layout_family_id);
+      // Its layout was replaced while this waited: the new one has not been read.
+      if (row.layout_family_id != null && !layout) throw fail('retry', 'The layout changed while this was saved');
+      const { rows: [layoutTranslation] } = layout
+        ? await client.query('SELECT * FROM email_layout_translations WHERE layout_id = $1 AND locale = $2 AND unusable IS NULL', [layout.id, locale])
+        : { rows: [] };
+      await check({ client, row, layout, layoutTranslation: layoutTranslation || null });
+      const { rows: [saved] } = await client.query(
+        `INSERT INTO email_template_translations (template_id, locale, subject, preheader, why, html, text, origin)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (template_id, locale) DO UPDATE SET subject = EXCLUDED.subject, preheader = EXCLUDED.preheader,
+           why = EXCLUDED.why, html = EXCLUDED.html, text = EXCLUDED.text, origin = EXCLUDED.origin, unusable = NULL, updated_at = NOW()
+         WHERE NOT $9 OR email_template_translations.origin = 'machine'
+         RETURNING *`,
+        [id, locale, f('subject'), f('preheader'), f('why'), f('html'), f('text'), origin, !!keepAdmin]);
+      return saved || null;
+    }
+    const { rows: [peek] } = await client.query('SELECT family_id FROM email_layouts WHERE id = $1 AND deleted_at IS NULL', [id]);
+    if (!peek) throw fail('not_found', 'That version does not exist');
+    await lock(client, 'email_layouts', peek.family_id);
+    const { rows: [row] } = await client.query('SELECT * FROM email_layouts WHERE id = $1 AND deleted_at IS NULL', [id]);
+    if (!row) throw fail('not_found', 'That version does not exist');
+    if (requireLive && row.status !== 'live') throw fail('conflict', 'That version is no longer live');
+    const templates = row.status === 'live' ? await wearers(client, row.family_id) : [];
+    await check({ client, row, templates });
+    const { rows: [saved] } = await client.query(
+      `INSERT INTO email_layout_translations (layout_id, locale, html, text, origin)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (layout_id, locale) DO UPDATE SET html = EXCLUDED.html, text = EXCLUDED.text,
+         origin = EXCLUDED.origin, unusable = NULL, updated_at = NOW()
+       WHERE NOT $6 OR email_layout_translations.origin = 'machine'
+       RETURNING *`,
+      [id, locale, f('html'), f('text'), origin, !!keepAdmin]);
+    return saved || null;
+  });
 }
 
 // What the sender reads: each action's live template and each layout family's
@@ -255,10 +443,19 @@ function inLanguage(row, language, fields, needs) {
   const translations = row.translations;
   const own = language && translations && typeof translations === 'object' && Object.hasOwn(translations, language)
     ? translations[language] : null;
-  if (!own || !needs.every((field) => typeof own[field] === 'string' && own[field].trim())) return row;
+  // A translation marked unusable (template-translate.js) is skipped: English
+  // goes for this part.
+  if (!own || own.unusable || !needs.every((field) => typeof own[field] === 'string' && own[field].trim())) return row;
   const out = { ...row };
   for (const field of fields) out[field] = typeof own[field] === 'string' ? own[field] : '';
   return out;
+}
+
+/** A template or layout row as a send in `language` would use it. */
+function inReaderLanguage(row, language, part) {
+  return part === 'layout'
+    ? inLanguage(row, language, LAYOUT_FIELDS, LAYOUT_NEEDS)
+    : inLanguage(row, language, TEMPLATE_FIELDS, TEMPLATE_NEEDS);
 }
 
 /**
@@ -439,10 +636,11 @@ async function listAll(pool) {
 module.exports = {
   snapshot,
   resolve,
+  inReaderLanguage,
   getSnapshot,
   seededSnapshot,
   settled,
   SNAPSHOT_FRESH_MS,
   INCOMPLETE_RETRY_MS,
   LOAD_LIMIT_MS,
-  saveTemplate, saveLayout, deleteTemplate, deleteLayout, restoreTemplate, saveTranslation, listAll };
+  saveTemplate, saveLayout, deleteTemplate, deleteLayout, restoreTemplate, restoreLayout, saveTranslation, saveCheckedTranslation, listAll };

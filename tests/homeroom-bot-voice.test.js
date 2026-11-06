@@ -383,6 +383,20 @@ test('#6263: a reply never says what a description contains unless it read it th
   assert.equal(voice.stripUnreadClaims(`It says a lot. ${said}`, [{ kind: 'unread_description' }]), 'It says a lot.');
 });
 
+test('#6376: the thread voice keeps a sentence about Monday', async () => {
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  const text = 'I tried to start it, and it did not start: the building time for this week is used up. It will start this request on Monday when it resets.';
+  const problems = await mayor.claimProblems({ query: async () => ({ rows: [] }) }, { user: { id: 1 }, appIds: new Set(), offer: null }, text);
+  assert.deepEqual(problems, [], 'Monday is a day, not a project');
+  assert.equal(voice.stripUnreadClaims(mayor.stripClaims(text, problems), problems), text);
+  // A made-up project is still cut; the sentence about when it starts stays.
+  const madeUp = 'The draft for Community Components is ready. It will start this request on Monday when it resets.';
+  const found = await mayor.claimProblems({ query: async () => ({ rows: [] }) }, { user: { id: 1 }, appIds: new Set(), offer: null }, madeUp);
+  assert.deepEqual(found.map((p) => p.kind), ['unknown_project']);
+  assert.equal(voice.stripUnreadClaims(mayor.stripClaims(madeUp, found), found),
+    'It will start this request on Monday when it resets.\n\n(I can\'t find a project called "Community Components".)');
+});
+
 test('the prompt says where it is, lists only what it can do, and holds it to what it did', () => {
   const tools = voice.toolsFor({ type: 'chat', ref: null }, { openChangeCount: 0 });
   const prompt = voice.systemPrompt({ app: { slug: 'todo', name: 'Todo' }, place: { type: 'chat', ref: null }, tools, today: new Date('2026-10-10T00:00:00Z') });

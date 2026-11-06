@@ -137,7 +137,7 @@ test('an app\'s About, in the design\'s order', () => {
   assert.doesNotMatch(html, /\/app\/notes-ab12</, 'no address under the name');
   assert.match(html, /id="app-about-open"[^>]*href="\/app\/notes-ab12"[^>]*>Open</,
     'Open is an address, so a modified click still opens a tab');
-  assert.match(html, /id="app-about-add"[^>]*data-added="false"[^>]*>(?:<[^>]+>)*Add to My apps/);
+  assert.match(html, /id="app-about-add"[^>]*data-added="false"[^>]*>(?:<[^>]+>)*Pin to Home/);
   assert.match(html, /Loading contributors…/, 'the roster loads after the pane opens, never in a render');
 });
 

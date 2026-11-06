@@ -47,6 +47,8 @@ const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const { featuredAppsAdminRoutes } = require('./admin-featured-apps');
+const { emailTemplateAdminRoutes } = require('./admin-email-templates');
+const { emailImageAdminRoutes } = require('./email-images');
 const appStorageCap = require('../services/app-storage-cap');
 const appLimit = require('../services/app-limit');
 const previewProjectsSetting = require('../services/preview-projects-setting');
@@ -2062,6 +2064,16 @@ function adminRoutes(config) {
   // adminMiddleware above, and also behind a full admin's connector doors
   // (routes/featured-admin.js).
   router.use(featuredAppsAdminRoutes(pool));
+
+  // ── Email templates ────────────────────────────────────────
+  //
+  // The templates and layouts every platform email is written from
+  // (routes/admin-email-templates.js), behind the router-level
+  // adminMiddleware above; writes and test sends need a full admin.
+  router.use(emailTemplateAdminRoutes(pool, config));
+  // The images those templates show (routes/email-images.js): the upload
+  // needs a full admin; the bytes are served publicly from server.js.
+  router.use(emailImageAdminRoutes(pool));
 
   // ── Anthropic credits (#555) ───────────────────────────────
   //

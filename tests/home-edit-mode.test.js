@@ -125,7 +125,7 @@ test('while editing the grid shows EVERY tile and no expander', () => {
   assert.equal(state.editing, true);
   assert.equal(state.items.length, 11, 'edit mode shows every tile, so all are reachable');
   assert.equal(moreCount(), 0, 'and nothing is held back');
-  assert.ok(state.create, 'the trailing Create tile keeps its place in edit mode');
+  assert.equal(state.create, null, 'One Home (#6361): the grid ends on no Create tile; New community is Pinned communities\'');
   // ...and leaving puts the collapse back.
   Home._editing = false;
   Home.render();
@@ -133,7 +133,7 @@ test('while editing the grid shows EVERY tile and no expander', () => {
   assert.ok(moreCount() > 0);
 });
 
-test('while editing the trailing tile keeps its at-rest presence, private members included', () => {
+test('One Home (#6361): no trailing Create tile at rest or editing, for anyone', () => {
   const { Home, model, sandbox } = makeHome();
   sandbox.App.user.privateMember = true;
   Home._apps = mine(2);
@@ -142,12 +142,15 @@ test('while editing the trailing tile keeps its at-rest presence, private member
   Home._editing = true;
   Home.render();
   assert.equal(model().create, null, 'and none in edit mode: Add apps is the heading button now');
-  // ...and a normal account keeps its Create tile's facts.
+  // ...and a normal account draws none either: making something new is
+  // Pinned communities' New community tile.
   const { Home: H2, model: m2 } = makeHome();
   H2._apps = mine(2);
+  H2.render();
+  assert.equal(m2().create, null, 'none at rest');
   H2._editing = true;
   H2.render();
-  assert.equal(m2().create.enabled, true, 'the Create view fields are still filled');
+  assert.equal(m2().create, null, 'none editing');
 });
 
 // ── the remove button's action ────────────────────────────────────────
@@ -267,7 +270,7 @@ test('the menu of an own tile on My apps ends with "Edit My apps", which starts 
   Home.openCardMenu('app-0', tile());
   const items = seen[0].items;
   const last = items[items.length - 1];
-  assert.equal(last.label, 'Edit My apps');
+  assert.equal(last.label, 'Edit Pinned apps');
   assert.equal(Home._editing, false, 'opening the menu starts nothing');
   last.handler(null);
   assert.equal(Home._editing, true);
@@ -284,15 +287,15 @@ test('"Edit My apps" is offered only where there is something to start', () => {
   const labels = () => seen[seen.length - 1].items.map((i) => i.label);
   // A search result, a demo tile, and a plain rect (no tile at all).
   Home.openCardMenu('app-0', tile({ yours: false }));
-  assert.ok(!labels().includes('Edit My apps'), 'not on a search result');
+  assert.ok(!labels().includes('Edit Pinned apps'), 'not on a search result');
   Home.openCardMenu('app-0', tile({ demo: true }));
-  assert.ok(!labels().includes('Edit My apps'), 'not on a demo tile');
+  assert.ok(!labels().includes('Edit Pinned apps'), 'not on a demo tile');
   Home.openCardMenu('app-0', { left: 0, top: 0, width: 1, height: 1 });
-  assert.ok(!labels().includes('Edit My apps'), 'not without a tile');
+  assert.ok(!labels().includes('Edit Pinned apps'), 'not without a tile');
   // Already editing: nothing to start.
   Home._editing = true;
   Home.openCardMenu('app-0', tile());
-  assert.ok(!labels().includes('Edit My apps'), 'not while edit mode is on');
+  assert.ok(!labels().includes('Edit Pinned apps'), 'not while edit mode is on');
   // And never on the app's own page, which reads menuItemsFor directly: the
   // item is added by openCardMenu, not by the shared list.
   const list = HOME_SRC.slice(HOME_SRC.indexOf('  menuItemsFor(app) {'), HOME_SRC.indexOf('  renderMenuHeaderHtml(app) {'));

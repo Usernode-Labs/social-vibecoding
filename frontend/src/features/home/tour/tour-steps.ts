@@ -129,18 +129,17 @@ export interface TourStep {
  */
 export const TOUR_STEPS: readonly TourStep[] = [
   {
-    // The Communities tab: the bottom bar on a phone, the rail from 768px
-    // up. Its key and id are still `workshop` (../../nav/tab-bar.tsx); the
-    // word on it is Communities wherever it is (#3709), and its glyph is the
-    // community it is on, which is why the copy says "here" rather than
-    // describing what the tab shows.
+    // One Home (#6361): no Communities tab. Home's Pinned communities is
+    // where the ones you are in live (joining pins them), and Communities to
+    // join is the fallback while nothing is pinned, so the copy's "here" is
+    // still a place on screen.
     id: 'communities',
     title: 'onboarding:tour.step.communities.title',
     body: 'onboarding:tour.step.communities.body',
-    targets: ['#platform-tab-workshop'],
+    targets: ['#home-communities-section', '#home-join-section'],
   },
   {
-    // The My apps section, heading and grid together, so the card never
+    // The Pinned apps section, heading and grid together, so the card never
     // sits on the heading the step is about. `#app-list` is the fallback
     // for a section that has not rendered its box yet.
     id: 'apps',

@@ -193,8 +193,10 @@ test('the endpoint lists yours then more, one row per app, never an app the view
     'membership is one way in');
   assert.match(ROUTE, /LEFT JOIN app_favorites fav ON fav\.app_id = a\.id AND fav\.user_id = \$1/,
     'a favorite (or a hidden-from-Your-apps opt-out) is read per viewer');
-  assert.match(ROUTE, /WHEN \(member\.app_id IS NOT NULL AND NOT COALESCE\(fav\.hidden, FALSE\)\)\s+OR \(fav\.app_id IS NOT NULL AND NOT fav\.hidden\)\s+THEN 'yours'/,
-    'yours = Home.isYours: a visible membership, or a favorite');
+  assert.match(ROUTE, /WHEN \(member\.app_id IS NOT NULL AND NOT COALESCE\(fav\.hidden, FALSE\)\)\s+OR \(fav\.app_id IS NOT NULL AND NOT fav\.hidden\)\s+OR home_pin\.community_id IS NOT NULL\s+THEN 'yours'/,
+    'yours = Home.isYours: a visible membership, or a favorite, or (One Home, #6361) its community pinned to Home');
+  assert.match(ROUTE, /LEFT JOIN home_community_pins home_pin ON home_pin\.community_id = a\.community_id AND home_pin\.user_id = \$1/,
+    'the Home pin is read per viewer, by the app\'s community');
   for (const [source, why] of [
     [/FROM chat_messages posted\s+WHERE posted\.user_id = \$1/, 'posted in its chat'],
     [/FROM message_reactions reaction/, 'reacted in its chat'],

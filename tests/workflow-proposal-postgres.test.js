@@ -220,6 +220,10 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     const voter = await user();
     const s = await session({ status: 'paused', head: SHA('b') });
     await pool.query('INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)', [s.app_id, voter.id]);
+    // One Home (#6361): a pin no longer joins by itself; the stake is a member's.
+    await pool.query(
+      "INSERT INTO community_members (community_id, user_id, source) SELECT community_id, $2, 'joined' FROM apps WHERE id = $1 ON CONFLICT DO NOTHING",
+      [s.app_id, voter.id]);
     await pool.query(`INSERT INTO notification_preferences (user_id, app_id, category, enabled) VALUES ($1, NULL, 'new_proposals', TRUE)`, [voter.id]);
     // A vote of an earlier review on another head goes.
     await vote(s, voter, 'yes');

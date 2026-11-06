@@ -7,10 +7,9 @@
 // English, a `sample` payload for previews and test sends, and `values()`,
 // which turns a send's payload into the named values a template renders with.
 //
-// `values()` returns everything today's template functions in templates.js
-// compute or branch on, named after the catalog's own parameters where one
-// exists ({{code}}, {{url}}, {{app}}, {{inviter}}, {{project}}), so a template
-// written in the template language can say what the code says. A placeholder
+// `values()` returns everything a template may print or branch on, named as the
+// mails' own words name them ({{code}}, {{url}}, {{app}}, {{inviter}},
+// {{project}}). A placeholder
 // marked `fromCode` holds wording that is built in code from the payload (an
 // activity mail's line, the bot's subject), not words an admin edits.
 //
@@ -34,7 +33,7 @@ const { destination } = require('./tracking');
 const { englishFrom, englishTexts } = require('../push-text');
 
 // The email catalog's English, for the wording a value builds in code. Read when
-// asked, like templates.js does, so a catalog edit is seen on the next send.
+// asked, so a catalog edit is seen on the next send.
 const english = (id, values) => englishFrom(englishTexts(undefined, 'email'))(id, values);
 
 const url = (value) => destination(value) || '';
@@ -43,7 +42,14 @@ const clip = (value, max) => str(value).slice(0, max);
 
 const text = (description, extra) => ({ description, kind: 'text', ...extra });
 const link = (description) => ({ description, kind: 'url' });
-const flag = (description) => ({ description, kind: 'flag' });
+// A value that is a one-time secret by itself (a sign-in or verification
+// code): template-validation.js keeps it, as it keeps every link, from being
+// joined to an address a reader's mail app could follow.
+const SECRET = { secret: true };
+// `presenceOf` names the value a flag is the presence of: true exactly when
+// that value prints something, so `{{#if hasCode}}{{code}}{{/if}}` still always
+// prints the code whenever there is one (template-validation.js).
+const flag = (description, presenceOf) => ({ description, kind: 'flag', ...(presenceOf ? { presenceOf } : {}) });
 
 // A sender's apostrophes are held as this private-use character (one character
 // for one, so a clip to a length cuts in the same place) while their sentence is
@@ -73,7 +79,7 @@ const REPORT_TYPE_LABELS = {
 const ACTIVITY_PLACEHOLDERS = {
   url: link('Where the button goes'),
   unsubscribeUrl: link('One-click link that stops these emails'),
-  hasUnsubscribeUrl: flag('True when the unsubscribe link is present'),
+  hasUnsubscribeUrl: flag('True when the unsubscribe link is present', 'unsubscribeUrl'),
 };
 function activityValues(payload) {
   const unsubscribeUrl = url(payload.unsubscribeUrl);
@@ -119,7 +125,7 @@ function inviteLine(payload, t, sender = asIs) {
 
 const codeAction = (label, expiry) => ({
   label,
-  placeholders: { code: text(`The six-digit code, valid ${expiry}`) },
+  placeholders: { code: text(`The six-digit code, valid ${expiry}`, SECRET) },
   required: BOTH('code'),
   englishOnly: false,
   sample: { code: '123456' },
@@ -136,10 +142,10 @@ const ACTIONS = {
   waitlist_joined: {
     label: 'Waitlist welcome',
     placeholders: {
-      code: text('Six-digit verification code, valid for 15 minutes'),
-      hasCode: flag('True when the mail carries a verification code'),
+      code: text('Six-digit verification code, valid for 15 minutes', SECRET),
+      hasCode: flag('True when the mail carries a verification code', 'code'),
       confirmUrl: link('One-click link that confirms the address'),
-      hasConfirmUrl: flag('True when the confirmation link is present'),
+      hasConfirmUrl: flag('True when the confirmation link is present', 'confirmUrl'),
     },
     required: BOTH('code'),
     englishOnly: false,
@@ -155,13 +161,13 @@ const ACTIONS = {
   waitlist_code: {
     label: 'Waitlist confirmation or status code',
     placeholders: {
-      code: text('Six-digit code, valid for 15 minutes'),
-      hasCode: flag('False when no code could be made and the mail only points to the status page'),
+      code: text('Six-digit code, valid for 15 minutes', SECRET),
+      hasCode: flag('False when no code could be made and the mail only points to the status page', 'code'),
       isConfirmed: flag('True when the address is already confirmed, so the code is a status code'),
       confirmUrl: link('One-click link that confirms the address'),
-      hasConfirmUrl: flag('True when the confirmation link is present'),
+      hasConfirmUrl: flag('True when the confirmation link is present', 'confirmUrl'),
       statusUrl: link('Where the waitlist status is checked'),
-      hasStatusUrl: flag('True when the status link is present'),
+      hasStatusUrl: flag('True when the status link is present', 'statusUrl'),
     },
     required: BOTH('code'),
     englishOnly: false,
@@ -184,9 +190,9 @@ const ACTIONS = {
       hasAccount: flag('True when the person already has an account'),
       hasSignInLink: flag('True when the link signs them in at once'),
       needsCodeNote: flag('True when opening the link sends a sign-in code, so the mail says to expect it'),
-      hasIos: flag('True when the iOS app has a published listing'),
+      hasIos: flag('True when the iOS app has a published listing', 'iosLink'),
       iosLink: link('The iOS app listing'),
-      hasAndroid: flag('True when the Android app has a published listing'),
+      hasAndroid: flag('True when the Android app has a published listing', 'androidLink'),
       androidLink: link('The Android app listing'),
       hasMobile: flag('True when at least one app listing is published'),
     },
@@ -281,7 +287,7 @@ const ACTIONS = {
       project: text('The project they were invited to, when known'),
       hasProject: flag('True when the project is known'),
       url: link('Joins the waitlist with this address'),
-      hasUrl: flag('True when the link is present'),
+      hasUrl: flag('True when the link is present', 'url'),
     },
     required: BOTH('url'),
     englishOnly: false,

@@ -167,9 +167,19 @@
       "schemaSha256": "b8e25565f3e006e56c19a0abb3683eb99e3c95a4da21e64fae850d21cf877b19"
     },
     {
+      "id": "one-home-pins",
+      "sha256": "4972486faed76f44db09cf052f038c7909c3f033305dddaaee0deb1c7ecb339f",
+      "schemaSha256": "ca01f012df67f90516ca95dfe527cb8abe250afaedd2f085c96f5043e568b72f"
+    },
+    {
+      "id": "email-translation-jobs",
+      "sha256": "5d7edda2d64f1509c1a56f1b822cef3a60e2186cc53652300d5bb92e4d83787e",
+      "schemaSha256": "1eeda40e135285bf2ee6749e452e5f3db1168a8a16022e824fbc5fcfa1e7b18e"
+    },
+    {
       "id": "production-app-sleep",
       "sha256": "ec7a043e2e2298faa72c07424eb2b9b6bd48fbdb4bc84c0386490dca291c4df1",
-      "schemaSha256": "b9644717dc881f962e7cf26457fd8fd711b3bb4dee2efaf5dabe408de495ff2d"
+      "schemaSha256": "ad0bbf0363c00f2ce651549d69bf9ab947a68a430734afa788e2b4d83e46b7a6"
     }
   ]
 }

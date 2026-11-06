@@ -359,9 +359,13 @@ test('nothing on the home screen is an innerHTML host any more', () => {
   // empty <section> left for a module to find by id and fill.
   const island = read('frontend/src/features/home/index.tsx');
   for (const tag of ['<AppGrid />', '<AppsMore />', '<WidgetStrip />',
-    '<DiscoverSection />', '<ChallengesSection />']) {
+    '<PinnedCommunities />', '<ChallengesSection />', '<HomeJoin />']) {
     assert.ok(island.includes(tag), `the island mounts ${tag}`);
   }
+  // One Home (#6361): Discover's lane and the continue card left Home; its
+  // Communities to join is the directory now.
+  assert.ok(!island.includes('<DiscoverSection />'), 'no Discover lane on Home');
+  assert.ok(!island.includes('<ContinueCard />'), 'no continue card on Home');
   // Create is no host of its own: it is #app-list's trailing tile, rendered by
   // AppGrid from the grid model (tests/home-create-tile.test.js).
   assert.ok(!island.includes('<CreateSection />'), 'the Create section is retired');
@@ -399,5 +403,5 @@ test('the panel sections publish through a store, on one paint', () => {
   // grid's trailing tile, and it arrives on the grid model in the same paint.
   assert.equal('create' in state, false, 'no create block in the panels model');
   const grid = JSON.parse(JSON.stringify(sandbox.gridStore.get()));
-  assert.equal(grid.create.enabled, false, 'no App.user quota in this harness');
+  assert.equal(grid.create, null, 'One Home (#6361): no trailing tile; New community is Pinned communities\' own');
 });
