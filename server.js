@@ -39,6 +39,7 @@ const { mobileAppLinkRoutes } = require('./src/routes/mobile-app-links');
 const { authRoutes } = require('./src/routes/auth');
 const { illustrationRoutes, illustrationImageRoutes } = require('./src/routes/app-illustrations');
 const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/challenge-illustrations');
+const { emailImageRoutes } = require('./src/routes/email-images');
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
 const { conversationRoutes } = require('./src/routes/conversations');
@@ -646,6 +647,10 @@ app.use(illustrationImageRoutes(config));
 // unguessable 32-hex id; the admin list/upload/archive routes live in
 // topochainAdminRoutes behind the admin gates.
 app.use(challengeIllustrationImageRoutes(config));
+// Images in admin-edited email templates (src/routes/email-images.js), public
+// because the reader's mail client loads them with no session. Access control
+// is the unguessable 32-hex id; the upload lives behind the admin gates.
+app.use(emailImageRoutes(getPool(config)));
 
 // Publicly shared locked report snapshots (report-lock-share). Mounted
 // before authMiddleware like visuals: access control is the unguessable
