@@ -5987,6 +5987,10 @@
     "text": "Change {{letter}} · {{by}}",
     "description": "Small-caps line over one of several competing changes on a request's page, under the request: its changes and its vote to close. {{letter}} is the change's letter (A, B, C), {{by}} who built it."
   },
+  "topic.thread.page.changeLoading": {
+    "text": "Loading the change",
+    "description": "Read by a screen reader while a request's page loads the section about the change built for it: its status pill, its title and its Votes and Testing cards, drawn as a grey outline until they arrive."
+  },
   "topic.thread.page.underway": {
     "text": "Being built. Its votes open once it is up for a vote.",
     "description": "Line under a change on a request's page, under the request: its changes and its vote to close that is still being built, where its Votes and Testing cards will be."

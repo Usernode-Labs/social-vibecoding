@@ -102,6 +102,28 @@ test('its first render is nothing; the thread is read in an effect', () => {
     'drawn from the shell\'s own list');
 });
 
+// #6387: "still loading" and "nothing to show" stop looking the same, so the
+// request's page can hold the change section's place instead of drawing a
+// status card it will swap out. A failed read settles too.
+test('#6387 the thread read says when it is loading, and settles on success or failure', () => {
+  const src = read(ITEMS);
+  assert.match(src, /const loading = !!path && !data && settledPath !== path;/);
+  assert.match(src, /\.then\(\(json\) => \{\s+if \(!live\) return;\s+setSettledPath\(path\);/);
+  assert.match(src, /\.catch\(\(\) => \{\s+if \(!live\) return;\s+setSettledPath\(path\);/);
+  assert.match(src, /return \{ data, setData, reread: \(\) => setRevision\(\(n\) => n \+ 1\), loading \};/);
+  assert.match(src, /const again = !!path && readPath\.current === path;/, 'a re-read of the same path keeps data, so it is never loading');
+});
+
+// #6387: the Votes and Testing cards keep their place while a change's own
+// read lands, so they fill in rather than pushing the page down.
+test('#6387 a change\'s cards keep their place until its own read lands', () => {
+  const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
+  assert.match(src, /\) : view \? \(\s+<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} \/>\s+\) : \([\s\S]*?<ChangeGatesSkeleton \/>/);
+  assert.match(src, /export function ChangeSectionSkeleton\(\): ReactNode/);
+  assert.match(src, /data-thread-change-skeleton=""/);
+  assert.match(src, /label=\{t\('project:topic\.thread\.page\.changeLoading'\)\}/);
+});
+
 test('the request, change and decision pages draw it', () => {
   // A request's page reads its thread once, draws its changes and its vote
   // to close under the request (thread-changes.tsx), and lists the rest.
