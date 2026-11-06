@@ -4887,6 +4887,18 @@
     "text": "Done",
     "description": "The AI tab's main view: button at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; closes it. Picks apply as they are made."
   },
+  "ai.search.open": {
+    "text": "Search your threads",
+    "description": "The Homeroom bot tab, beside the round plus at the top: the name and tooltip of the round search button, which opens a box that narrows every list on the page to the threads whose title, number or project matches what is typed."
+  },
+  "ai.search.label": {
+    "text": "Search your threads",
+    "description": "The Homeroom bot tab: placeholder and accessible name of the search box under the heading, which narrows every list on the page to the threads whose title, number or project matches what is typed."
+  },
+  "ai.search.none": {
+    "text": "No threads match “{{query}}”",
+    "description": "The Homeroom bot tab: shown in place of the lists when the search box's text matches no thread on the page. {{query}} is what the person typed."
+  },
   "ai.live.number": {
     "text": "#{{number}}",
     "description": "The AI tab's main view, Live this week: the number at the end of a one-line row for a change that went live this week."
