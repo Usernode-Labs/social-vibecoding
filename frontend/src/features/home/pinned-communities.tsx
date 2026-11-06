@@ -43,17 +43,15 @@ const NAME = 'max-w-full line-clamp-2 break-words text-[12.5px] font-semibold le
 const VOTES = 'absolute -top-1.5 -end-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-violet-600 text-white text-xs font-extrabold tabular-nums flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)]';
 // The corner discs the grid's edit mode draws (app-grid.tsx .app-card-remove):
 // a dark − to unpin; a white + in the accent ink to pin (Discover's add pill's
-// treatment), never a primary button's fill on a 24px badge. z-[1] (#6372):
-// the tile's own hit area (un-touch-target's ::after) paints after its
-// children and covered the disc, so a press on − or + reached the tile, which
-// does nothing while editing, instead of the disc.
-const CORNER = 'absolute z-[1] -top-1.5 w-6 h-6 rounded-full flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)]';
+// treatment), never a primary button's fill on a 24px badge.
+const CORNER = 'absolute -top-1.5 w-6 h-6 rounded-full flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)]';
 export const CORNER_UNPIN = 'bg-zinc-700 text-white dark:bg-zinc-500';
 export const CORNER_PIN = 'bg-white text-violet-700 dark:bg-zinc-800 dark:text-violet-400';
 /** No MinusIcon in the kit's set: the glyph is the minus itself, as app-grid.tsx draws it. */
 export function MinusGlyph() {
   return <span aria-hidden="true" className="text-[15px] leading-none font-semibold">&minus;</span>;
 }
+const FACE_WRAP = 'relative z-[1] inline-flex';
 const WIGGLE = 'animate-[home-wiggle_260ms_ease-in-out_infinite_alternate] motion-reduce:animate-none';
 const ACTION_FACE = 'flex h-[62px] w-[62px] shrink-0 items-center justify-center rounded-[18px]';
 
@@ -98,7 +96,12 @@ function PinTile({ pin, votes, editing, faded = false, onUnpin, onPin }: {
       data-home-community-pinned={faded ? undefined : ''}
       onClick={(event) => { if (editing) { event.preventDefault(); return; } openHub(event, pin.slug); }}
     >
-      <span className={editing ? `relative inline-flex ${WIGGLE}` : 'relative inline-flex'}>
+      {/* z-[1] (#6372): the tile's own hit area (un-touch-target's ::after)
+          paints after its children and covered the corner discs, so a press
+          on − or + reached the tile, a no-op while editing. The lift is on
+          this wrapper, not the discs: the wiggle's transform makes it a
+          stacking context a disc's own z-index cannot leave. */}
+      <span className={editing ? `${FACE_WRAP} ${WIGGLE}` : FACE_WRAP}>
         <CommunityTileFace slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} iconColor={pin.iconColor} />
         {votes > 0 && !editing ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{votes > 99 ? '99+' : votes}</span> : null}
         {editing && onUnpin ? (
