@@ -16730,23 +16730,24 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 
 /* Votes, then Testing: two cards in the Messages surface. */
 .dev-change-pair { margin-top: 12px; display: grid; gap: 8px; }
-/* #5725: the Votes card repeated at the top of a change's thread, in the
-   scroller's pin host (#gc-thread-pin, group-chat/thread-shell.tsx). The
-   host is a child of the scroller, so sticky gives the card the whole
-   transcript to travel: it pins to the reading area's top edge while the
-   replies pass under it, and where the vote stands and its button stay on
-   screen at any scroll position (evan asked for it to stick as you scroll,
-   not only sit at the bottom). `--dc-sheet-solid` is the plane colour for a
-   surface content passes behind, so nothing shows through the card's
-   padding. It sits in the transcript's column, with a message's own side
-   padding, and is hidden while the card under the description is on screen,
-   so a short page shows one card and not two. */
-/* `-4px` is `.messages-thread-scroll`'s own top padding: at `top: 0` the
-   card stopped 4px below the reading area's edge, and the sliver of the
-   reply scrolling behind it showed through. */
-#gc-thread-pin { position: sticky; top: -4px; z-index: 10; }
-.dev-change-gate-repeat { padding: 8px 16px 12px; background-color: var(--dc-sheet-solid); }
-.dev-change-gate-repeat[hidden] { display: none; }
+/* 6 Nov 2026 (#6419): on the change's own page the pair sticks under the
+   sheet's header instead of a second Votes card appearing above the replies
+   (#5725, removed). A sticky box travels only within its parent, so it is
+   the pair, not the Votes card alone, that sticks: the pair's parent is the
+   article's content column, which ends with the change's own content, above
+   the replies, so the pair lets go there by itself. The mark is the 1px
+   sentinel above it that says when the pair has left the top of the
+   scroller: it has an area to observe and its -1px margin moves nothing.
+   `-4px` is `.messages-thread-scroll`'s own top padding, as the old pin had.
+   `--dc-sheet-solid` is the plane colour for a surface content passes
+   behind, so nothing shows through the card's padding or the pair's gap. */
+.dev-change-pair-mark { display: block; height: 1px; margin-bottom: -1px; }
+.dev-change-pair[data-stick] { position: sticky; top: -4px; z-index: 10; }
+.dev-change-pair[data-stuck] { gap: 4px; padding-block: 8px; background-color: var(--dc-sheet-solid); }
+.dev-change-pair[data-stuck] .dev-change-gate { padding: 8px 12px; }
+.dev-change-pair[data-stuck] :is(.dev-change-bar, .dev-change-gate-facts, .dev-change-gate-note,
+  .dev-change-gate-why, .dev-change-gate-fix, .dev-change-gate-refused) { display: none; }
+.dev-change-pair[data-stuck] [data-change-gate="testing"] .dev-change-gate-act { display: none; }
 .dev-change-gate {
   min-width: 0;
   display: grid;
@@ -16993,12 +16994,12 @@ p.dev-change-issue-pointer {
   .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
   .dev-change-gate-name { min-width: 0; }
   .dev-change-gate-figure { white-space: nowrap; }
-  /* #5991: the pinned repeat keeps only the heading, the figure, the bar
-     and the vote; its note stays on the full card in the thread. */
-  .dev-change-gate-repeat { padding: 4px 12px 8px; }
-  .dev-change-gate-repeat .dev-change-gate { padding: 10px 12px; }
-  .dev-change-gate-repeat .dev-change-gate-act { margin-top: 8px; }
-  .dev-change-gate-repeat .dev-change-gate-note { display: none; }
+  /* #6419: the stuck pair keeps only the heading, the figure and the vote,
+     a little tighter; its note stays on the full card in the thread. The
+     Vote button goes back on the card's own line, so the card stays one
+     line on a phone as it does on a computer. */
+  .dev-change-pair[data-stuck] .dev-change-gate { grid-template-columns: minmax(0, 1fr) auto; padding: 8px 12px; }
+  .dev-change-pair[data-stuck] .dev-change-gate-act { order: 0; margin-top: 0; flex-wrap: nowrap; }
 }
 
 /* ── The Workshop ──────────────────────────────────────────────────

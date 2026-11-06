@@ -14,7 +14,11 @@
 //   split: `input.items` leave for a thread of their own: the first
 //          request's own thread when it had one (the one a merge closed,
 //          reopened), else a new one led by it, or by the first change. A
-//          request takes the changes built for it along.
+//          request takes the changes built for it along, and the stored
+//          Notify me / Mute choices of the people who move with it are
+//          copied to the thread they land in (a choice they made there
+//          already is kept). The thread they left keeps its own rows, since
+//          it still holds the others.
 //   breakup: decided here, and nothing moves: its parts are filed as
 //          requests in this same thread once it is applied, by the moves'
 //          own service (services/thread-moves.js fileBreakup: at once on
@@ -118,6 +122,37 @@ export async function applySplit(db: Db, move: { app_id: number | string; thread
       [from, target, decisions]
     );
   }
+  // What people chose for the thread they are leaving holds for the one they
+  // move into: for each person the moved rows make a follower of the target,
+  // copy their Notify me / Mute row across, unless they already chose there.
+  // The "moved" set is the participant half of FOLLOWERS_SQL without its
+  // EXCEPT, so a muted participant comes too and keeps their Mute. The rows
+  // on the thread left behind are kept: it still holds the others.
+  await db.query(
+    `WITH numbers AS (
+       SELECT number FROM threads WHERE id = $2 AND number IS NOT NULL
+       UNION SELECT number FROM requests WHERE thread_id = $2
+       UNION SELECT github_issue_number FROM issues
+              WHERE thread_id = $2 AND kind = 'general' AND github_issue_number IS NOT NULL
+     ), moved AS (
+       SELECT created_by AS user_id FROM requests WHERE thread_id = $2
+       UNION SELECT created_by FROM issues WHERE thread_id = $2
+       UNION SELECT b.user_id FROM homeroom_bot_requesters b
+              WHERE b.app_id = $3 AND b.issue_number IN (SELECT number FROM numbers)
+       UNION SELECT user_id FROM chat_sessions WHERE thread_id = $2
+       UNION SELECT v.user_id FROM pr_votes v
+              JOIN chat_sessions s ON s.id = v.session_id WHERE s.thread_id = $2
+       UNION SELECT v.user_id FROM issue_votes v
+              JOIN issues i ON i.id = v.issue_id WHERE i.thread_id = $2
+       UNION SELECT user_id FROM chat_messages
+              WHERE thread_id = $2 AND msg_type = 'message' AND deleted_at IS NULL
+     )
+     INSERT INTO thread_followers (thread_id, user_id, muted_at)
+     SELECT $2, f.user_id, f.muted_at FROM thread_followers f
+      WHERE f.thread_id = $1 AND f.user_id IN (SELECT user_id FROM moved WHERE user_id IS NOT NULL)
+     ON CONFLICT (thread_id, user_id) DO NOTHING`,
+    [from, target, appId]
+  );
   return target;
 }
 

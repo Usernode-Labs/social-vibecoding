@@ -755,6 +755,14 @@
     "text": "Number {{place}} in line",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: its place in Homeroom bot's line on its project. {{place}} is a number, 1 for next."
   },
+  "work.line.overlapWait": {
+    "text": "Waiting for PR #{{pr}}, which changes the same files",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Building: the build waits for another change touching the same code before it starts. {{pr}} is that change's pull request number."
+  },
+  "work.line.overlapWaitBuild": {
+    "text": "Waiting for another build that changes the same files",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Building: the build waits for another build touching the same code, which has no pull request yet."
+  },
   "work.line.heldBuilds": {
     "text": "Waiting for one of the project's builds to finish",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: ready to build, but the project's builds are all under way."

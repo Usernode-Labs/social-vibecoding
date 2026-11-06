@@ -636,6 +636,39 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
     items.push(item);
   }
   const number = thread.number == null ? null : Number(thread.number);
+  // #6406: a change whose plan has a newer version on the request says so
+  // beside its plan line ("Built from v1 ... v2 is newer"). Read once.
+  const builtChanges = items.filter((i) => i.type === 'change' && i.builtFrom);
+  if (builtChanges.length && number != null) {
+    let newest = null;
+    try {
+      newest = await require('./request-specs').personPlanOf(db, { appId: thread.app_id, issueNumber: number });
+    } catch (err) {
+      log.warn('threads', 'Could not read a request\'s newest plan', { appId: thread.app_id, number, err: err.message });
+    }
+    if (newest) {
+      const authorOf = new Map();
+      for (const item of builtChanges) {
+        const built = item.builtFrom;
+        if (Number(newest.sessionId) === Number(built.sessionId) && Number(newest.version) === Number(built.version)) continue;
+        const sid = Number(built.sessionId);
+        if (!authorOf.has(sid)) {
+          try {
+            const { rows: [r] = [] } = await db.query('SELECT user_id FROM chat_sessions WHERE id = $1', [sid]);
+            authorOf.set(sid, r && r.user_id != null ? Number(r.user_id) : null);
+          } catch {
+            authorOf.set(sid, null);
+          }
+        }
+        const builtAuthorId = authorOf.get(sid);
+        built.newer = {
+          version: newest.version,
+          author: newest.author || null,
+          sameAuthor: builtAuthorId != null && newest.authorId != null && Number(builtAuthorId) === Number(newest.authorId),
+        };
+      }
+    }
+  }
   const leadsChange = number != null
     && items.some((i) => i.type === 'change' && i.number === number)
     && !items.some((i) => i.type === 'request' && i.number === number);

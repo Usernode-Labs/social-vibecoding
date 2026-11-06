@@ -18,6 +18,9 @@
 //   4. 24 hours with nobody objecting: the sweep applies it.
 //   5. What a move may not do: take a thread's lead, merge a decision, or be
 //      proposed by someone who has not joined.
+//   6. A split carries the people who move with it, and the Notify me / Mute
+//      they chose on the merged thread; a choice already made on the thread
+//      they land in is kept, and the thread they left keeps its own rows.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/thread-moves-postgres.test.js
 
@@ -405,6 +408,62 @@ test('thread moves against the full schema', { timeout: 120000 }, async (t) => {
     await moves.sweep(pool, { deps });
     assert.equal((await pool.query('SELECT state FROM thread_moves WHERE id = $1', [late.id])).rows[0].state, 'pending');
     assert.equal(await threadOf(57), t57, 'nothing moved on the clock');
+  });
+
+  // #6422: a split carries its followers with it, and the Notify me / Mute
+  // they chose on the merged thread comes too.
+  await t.test('a split carries its followers\' Notify me and Mute to the thread they land in', async () => {
+    const cal = await user('tm_cal');
+    const t10 = await request(10, ada, 'Seed trays');
+    const t11 = await request(11, bob, 'Potting bench');
+    await reply(eve, 11, 'Mine is by the shed');
+    const { rows: [bench] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, pr_number) VALUES ($1, $2, 'promoted', '{11}', 60) RETURNING id`,
+      [app.id, bob.id]
+    );
+    await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [bench.id, ada.id]);
+    const merge = async () => {
+      const out = await moves.propose(pool, { app, user: bob, thread: await thread(t11), kind: 'merge', into: 10, deps });
+      assert.equal(out.ok, true, out.error);
+      // #10 is Ada's, so the merge waits for her; she agrees.
+      if (out.move.state === 'pending') {
+        assert.equal((await moves.agree(pool, { app, user: ada, moveId: out.move.id, deps })).move.state, 'applied');
+      }
+      assert.equal(await threadOf(11), t10);
+    };
+    const splitOut = async () => {
+      const out = await moves.propose(pool, { app, user: bob, thread: await thread(t10), kind: 'split', items: [{ type: 'request', number: 11 }], deps });
+      assert.equal(out.ok, true, out.error);
+      if (out.move.state === 'pending') {
+        assert.equal((await moves.agree(pool, { app, user: ada, moveId: out.move.id, deps })).move.state, 'applied');
+      }
+      assert.equal(await threadOf(11), t11, 'back in its own thread, reopened');
+    };
+    const rows = async (id) => Object.fromEntries((await pool.query(
+      'SELECT user_id, muted_at FROM thread_followers WHERE thread_id = $1', [id])).rows
+      .map((r) => [Number(r.user_id), r.muted_at ? 'muted' : 'notify']));
+
+    await merge();
+    // On the merged thread: Eve muted it, Bob pressed Notify me, Cal (no part
+    // in #11) pressed Notify me too.
+    await threads.setFollow(pool, { threadId: t10, userId: eve.id, notify: false });
+    await threads.setFollow(pool, { threadId: t10, userId: bob.id, notify: true });
+    await threads.setFollow(pool, { threadId: t10, userId: cal.id, notify: true });
+    await splitOut();
+    assert.deepEqual(await rows(t11), { [bob.id]: 'notify', [eve.id]: 'muted' }, 'each keeps the choice they made');
+    assert.equal((await rows(t11))[cal.id], undefined, 'a Notify me with no part in #11 stays on the thread it left');
+    const ids = await threads.followerIds(pool, { threadId: t11, appId: app.id });
+    assert.ok(ids.includes(bob.id), 'the restored thread lists #11\'s requester');
+    assert.ok(!ids.includes(eve.id), 'and not the one who muted it');
+    assert.deepEqual(await rows(t10), { [eve.id]: 'muted', [bob.id]: 'notify', [cal.id]: 'notify' },
+      'the thread they left keeps its own rows');
+
+    // A choice already made on the thread they land in is kept as it is.
+    await merge();
+    await pool.query(`INSERT INTO thread_followers (thread_id, user_id, muted_at) VALUES ($1, $2, NOW())`, [t11, bob.id]);
+    await splitOut();
+    assert.equal((await rows(t11))[bob.id], 'muted', 'their own choice on the target is not overwritten');
+    assert.equal((await rows(t10))[bob.id], 'notify', 'and what they chose on the merged thread is kept there too');
   });
 
   await t.test('the route is for members: someone who has not joined is asked to', async () => {

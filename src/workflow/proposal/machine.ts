@@ -956,13 +956,15 @@ function askRefusal(s: Live, f: Facts): string | null {
   return null;
 }
 
-// Why an import is not merged while its pull request is based where it is:
+// Why a change is not merged while its pull request is based where it is:
 // it waits for the change whose branch that is, or its base is no change's.
-// A force does not reach past it: "merged" means "in main".
-// One whose parent is no longer open (merged and not moved onto main yet, or
-// closed) waits for nothing: its base is just not main.
+// A force does not reach past it: "merged" means "in main". One whose parent
+// is no longer open (merged and not moved onto main yet, or closed) waits
+// for nothing: its base is just not main.
+// #6423: this is every change with a base other than main, not only an
+// imported one: a bot change built on top of another has one too.
 function baseRefusal(r: Row): string | null {
-  if (!r.imported || onMain(r.baseRef)) return null;
+  if (onMain(r.baseRef)) return null;
   return r.waitsFor && r.waitsForStatus && OPEN_STATUSES.includes(r.waitsForStatus) ? 'waits_for_parent' : 'base_not_main';
 }
 

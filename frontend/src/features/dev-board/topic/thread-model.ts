@@ -60,7 +60,12 @@ export interface ThreadItem {
    * session and version (a person's plan on the request, or the bot's own
    * its requester approved: src/services/threads.js builtFrom).
    */
-  builtFrom?: { sessionId: number; version: number | null } | null;
+  builtFrom?: {
+    sessionId: number;
+    version: number | null;
+    /** #6406: a newer plan on the request than the one this change follows. */
+    newer?: { version: number; author: string | null; sameAuthor: boolean } | null;
+  } | null;
 }
 
 export interface ThreadFollow {

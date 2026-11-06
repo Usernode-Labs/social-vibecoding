@@ -446,6 +446,7 @@ async function ensureSessionBranch({ pool, sessionId, username = null, label = n
   return require('../db/session-locks').withSessionLock(pool, [SESSION_BRANCH_LOCK, Number(sessionId)], async () => {
     const { rows } = await pool.query(
       `SELECT cs.id, cs.app_id, cs.branch_name, cs.user_id, cs.session_title, cs.rebuilt_from_session_id,
+              cs.waits_for_session_id,
               u.username, a.repo_url
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
@@ -467,7 +468,12 @@ async function ensureSessionBranch({ pool, sessionId, username = null, label = n
     const [owner, repo] = ownerRepo(row.repo_url);
     // #6389: a version of another change starts from that change's branch.
     // Read once, here: its branch has to be the same app's and still there.
-    let fromSessionId = row.rebuilt_from_session_id ? Number(row.rebuilt_from_session_id) : null;
+    // #6423: a build stacked on a change touching the same files starts from
+    // that change's branch the same way (its waits_for_session_id), with no
+    // "own version" meaning (that is rebuilt_from_session_id's alone).
+    let fromSessionId = row.rebuilt_from_session_id
+      ? Number(row.rebuilt_from_session_id)
+      : (row.waits_for_session_id ? Number(row.waits_for_session_id) : null);
     let fromBranch = null;
     if (fromSessionId) {
       const { rows: [src] } = await pool.query(
