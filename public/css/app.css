@@ -567,6 +567,11 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    `.messages-layout` around it (project-discussion.tsx). */
 .messages-layout,
 .dev-ws-discussion,
+/* #6431: the column's heading beside the bot page is the same kind of row as
+   Main's, and its ⋯ menu is Messages' own (.messages-thread-menu). Those
+   tokens are only declared where they are drawn, so the menu's fill resolved
+   to nothing there and the page showed through it. */
+.side-panel-head,
 #ai-screen .ai-askbar {
   /* The OPAQUE surfaces drawn on the two planes: a bubble from the other
      side, a shared-item card, a floating disc, the composer. White on the
@@ -590,6 +595,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .dark .messages-layout,
 .dark .dev-ws-discussion,
+.dark .side-panel-head,
 .dark #ai-screen .ai-askbar {
   --messages-surface: var(--dc-raised);
   --messages-surface-2: #3a3a3c;
@@ -18426,13 +18432,17 @@ body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-ai-close, .side-pa
    controller BESIDE_AI_CLASS). */
 html.in-side-panel.side-panel-beside-ai :is(.dev-topic-backs, .dev-topic-back) { display: none; }
 /* AND THE COLUMN IS ONE SHEET (30 Oct 2026), as Main is: the page lies flat
-   under the column's heading rather than lifting its own sheets off it. The
-   heading names what is open and its number, so a request's or a change's own
-   bar keeps only its status, its category and its ⋯ here, and goes when it
-   has none of them. */
+   under the column's heading rather than lifting its own sheets off it.
+   AND, SINCE #6431, ONE HEADER: the column's heading names what is open, its
+   number, where it stands (the page's own status pill) and everything its ⋯
+   holds, so the page's bar is not drawn here at all — a request's or a
+   change's, its number included. Two rows and two ⋯ buttons, with the
+   actions split between them, were what Evan reported (6 Nov 2026). The page
+   itself, everywhere else (the full page, the Workshop's side panel), keeps
+   its bar exactly as it was. */
 html.in-side-panel.side-panel-beside-ai .dc-lift { border-radius: 0; border-top: 0; box-shadow: none; }
-html.in-side-panel.side-panel-beside-ai .dev-request-bar :is([data-request-kicker], .dev-request-bar-title) { display: none; }
-html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu-btn, [data-request-status], [data-request-category])) { display: none; }
+html.in-side-panel.side-panel-beside-ai .dev-request-bar :is([data-request-kicker], .dev-request-bar-title, [data-request-category], [data-change-category]) { display: none; }
+html.in-side-panel.side-panel-beside-ai .dev-request-bar { display: none; }
 /* AND THE PAGE ITSELF REACHES THE COLUMN'S EDGES (3 Nov 2026). The 30 Oct
    rule above took the sheet's radius, top edge and shadow, but three things
    still drew a second box inside the column: #dev-topic-thread's 12px
@@ -25656,8 +25666,23 @@ html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-i
 .side-panel-head > .side-panel-ai-close { margin: 0; align-self: center; }
 /* The ⋯ beside the column's heading (3 Nov 2026), at the row's end: Copy
    link, the item's own page address. It is a sibling of the heading, so it
-   stays put when the heading's words are long. */
-.side-panel-more { margin-inline-start: auto; align-self: center; }
+   stays put when the heading's words are long.
+   #6431: and it is a LAYER ABOVE THE PAGE, solidly (Evan, 6 Nov 2026: the
+   menu "is overlapping weirdly? Maybe because it is fully transparent?").
+   Its surface tokens come from .side-panel-head, which is in the lists that
+   declare Messages' (above), and the wrapper stacks above the panel's body
+   so no page content paints over it. */
+.side-panel-more {
+  position: relative;
+  z-index: 2;
+  margin-inline-start: auto;
+  align-self: center;
+}
+/* The menu's own hairline, on top of the lift its base rule already draws, so
+   it reads as a sheet lying over the page rather than a hole in it. */
+.side-panel-more .messages-thread-menu {
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .18), inset 0 0 0 1px var(--messages-hair);
+}
 /* The column's heading, as Main's header reads (30 Oct 2026): the project's
    tile, then what is open over where it is, the rows' 15 over 13. The
    project's name is the door to it, underlined under the pointer. */
@@ -25674,9 +25699,24 @@ html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-i
   color: var(--text-primary);
 }
 .side-panel-place-where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 13px;
   line-height: 18px;
   color: var(--text-faint);
+}
+/* The project and the number truncate; the pill after them never does
+   (#6431 — it is the page's own, at the size the page's bar drew it). */
+.side-panel-place-where-text { min-width: 0; }
+.side-panel-place-status { flex: none; display: inline-flex; }
+/* The thin divider between the column's own two rows and the page's (#6431):
+   Copy link and Open in workshop, then everything the page's ⋯ holds. */
+.side-panel-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--app-sheet-line);
 }
 .side-panel-place-link { color: inherit; text-decoration: none; border-radius: 4px; }
 .side-panel-place-link:hover { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }

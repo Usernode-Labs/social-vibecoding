@@ -1671,7 +1671,7 @@ test('beside the bot page the column\'s heading links the item to its own page, 
   // The ⋯ is in the row only beside the bot page, and at its end.
   assert.match(CSS, /\.side-panel-head > :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/);
   assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
-  assert.match(CSS, /\.side-panel-more \{ margin-inline-start: auto; align-self: center; \}/);
+  assert.match(CSS, /\.side-panel-more \{[^}]*margin-inline-start: auto;[^}]*align-self: center;/);
   // The item's page link is what the heading draws; a page with none is plain words.
   api._resetForTests();
   api.sidePanelStore.set({
@@ -1681,6 +1681,194 @@ test('beside the bot page the column\'s heading links the item to its own page, 
   const html = renderToHtml(createElement(api.SidePanelIsland, {}));
   assert.match(html, /href="\/app\/x\/dev\/issues\/6214">Request #6214<\/a>/);
   assert.match(html, /aria-haspopup="menu" aria-expanded="false"/, 'the ⋯ opens a menu, closed at first');
+  api._resetForTests();
+});
+
+// ── #6431: one header beside the bot page — the page's pill and its rows ──
+
+const PILL_BUILDING = {
+  tier: 2, key: 'building', label: 'Being built', tone: 'progress',
+  yes: 0, no: 0, majority: 1, advisory: 0, lock: false,
+};
+
+/** A panel open on `route`, booted, publishing `head`. */
+function besideBot(route, head) {
+  api._resetForTests();
+  api.sidePanelStore.set({ open: true, frameSrc: `/?panel=1#${route}`, frameKey: 1, loading: false });
+  api.embeddedApi.ready(route, 'Notes');
+  if (head) api.embeddedApi.head(route, head);
+}
+
+test('the head store starts empty and takes, and clears, a page\'s head (#6431)', () => {
+  // The panel document's head store starts null, and the first thing that
+  // ever happens to it is the page publishing an object. createStore's
+  // change detection read the key off that null state and threw, so the
+  // pill and the page's rows never reached the column: running the app with
+  // a request in the panel logged "Cannot read properties of null (reading
+  // 'kind')" at the store's set, and the page's bar had already gone.
+  api.panelHeadStore.set(null);
+  assert.equal(api.panelHeadStore.get(), null);
+  api.panelHeadStore.set({ kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6431' });
+  assert.equal(api.panelHeadStore.get().kind, 'request');
+  assert.equal(api.panelHeadStore.get().pill.key, 'building');
+  assert.equal(api.panelHeadStore.get().menuKey, 'request:6431');
+  // And it is cleared the same way: null REPLACES the state rather than
+  // merging into a no-op copy of it, or the page's pill would outlive it.
+  api.panelHeadStore.set(null);
+  assert.equal(api.panelHeadStore.get(), null);
+  // A store with an object state keeps the merge contract every other
+  // plain-store user relies on.
+  api.panelHeadStore.set({ kind: 'change', pill: null, menuKey: 'detail:proposal:9' });
+  assert.equal(api.panelHeadStore.get().kind, 'change');
+  api.panelHeadStore.set(null);
+});
+
+test('beside the bot page the column\'s heading carries the page\'s own status pill (#6431)', () => {
+  const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
+  const HEAD = read('frontend/src/features/side-panel/head-store.ts');
+  // The page publishes it from its bar, and only inside a panel's own
+  // document: the full page and the Workshop's side panel are the top
+  // document, where the page keeps its own bar and publishes nothing.
+  assert.match(HEAD, /if \(!isEmbeddedPanel\(\)\) return undefined;/);
+  assert.match(HEAD, /panelHeadStore\.set\(\{ kind: head\.kind, pill, menuKey: head\.menuKey \}\);/);
+  assert.match(HEAD, /return \(\) => \{ panelHeadStore\.set\(null\); \};/, 'and takes it back when the page goes');
+  // The heading draws the page's own pill, only while it is THAT page's.
+  assert.match(SRC, /const pill = head && head\.pill && samePage\(head\.route, route\) \? head\.pill : null;/);
+  assert.match(SRC, /data-side-panel-status=\{pill\.key\}/);
+  assert.match(SRC, /<StatusPill s=\{pill\} inline \/>/, 'the page\'s own pill, at its own size');
+
+  // A request open beside it: its pill follows "Request #6431".
+  besideBot('app/x/dev/issues/6431', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6431' });
+  let html = renderToHtml(createElement(api.SidePanelIsland, {}));
+  assert.match(html, /data-side-panel-status="building"/);
+  assert.match(html, />Being built</);
+  assert.ok(html.indexOf('Request #6431') < html.indexOf('data-side-panel-status="building"'),
+    'after the number, on the heading\'s second line');
+
+  // The work moves on: the page publishes the new pill and the heading draws it.
+  api.embeddedApi.head('app/x/dev/issues/6431', {
+    kind: 'request', pill: { ...PILL_BUILDING, key: 'checks', label: 'Checking' }, menuKey: 'request:6431',
+  });
+  html = renderToHtml(createElement(api.SidePanelIsland, {}));
+  assert.match(html, /data-side-panel-status="checks"/);
+  assert.match(html, />Checking</);
+  assert.doesNotMatch(html, /data-side-panel-status="building"/, 'the old one is gone, not added to');
+
+  // A change's page the same way.
+  api.embeddedApi.head('app/x/dev/issues/6431', {
+    kind: 'change', pill: { ...PILL_BUILDING, key: 'voting', label: 'Vote · 1/2' }, menuKey: 'detail:proposal:9',
+  });
+  assert.match(renderToHtml(createElement(api.SidePanelIsland, {})), /data-side-panel-status="voting"/);
+
+  // A page with no status, and a head that is not this page's, draw no pill.
+  api.embeddedApi.head('app/x/dev/issues/6431', { kind: 'change', pill: null, menuKey: 'detail:proposal:9' });
+  assert.doesNotMatch(renderToHtml(createElement(api.SidePanelIsland, {})), /data-side-panel-status/);
+  api.embeddedApi.head('app/x/dev/changes/6430', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6430' });
+  assert.doesNotMatch(renderToHtml(createElement(api.SidePanelIsland, {})), /data-side-panel-status/,
+    'one page\'s pill never shows on the next');
+  api._resetForTests();
+});
+
+test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in the page (#6431)', () => {
+  const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
+  // Copy link, Open in workshop, a divider, then the page's rows — read when
+  // the menu opens, and run in the panel's document.
+  const menu = SRC.slice(SRC.indexOf('data-side-panel-copy-link=""'), SRC.indexOf('\n      ) : null}\n    </div>'));
+  assert.ok(menu.indexOf('data-side-panel-copy-link') < menu.indexOf('side-panel-menu-sep'),
+    'the divider comes after Copy link');
+  assert.ok(menu.indexOf('data-side-panel-open-workshop') < menu.indexOf('side-panel-menu-sep'),
+    'and after Open in workshop');
+  assert.match(menu, /data-side-panel-page-row=\{i\}/);
+  assert.match(menu, /controller\.runPanelMenuRow\(i, row\.label, e\.nativeEvent\)/);
+  assert.match(SRC, /setRows\(controller\.panelMenuRows\(\)\);/, 'read from the page as the menu opens');
+
+  // The page's own ⋯ list, read off its AppView: a row that changed since the
+  // menu opened (Notify me become Mute) says so the next time it opens.
+  let following = false;
+  const list = () => [
+    { label: 'Build it with your own Claude Code', icon: 'generate', act: () => {} },
+    { label: following ? 'Mute' : 'Notify me', title: 'Follow this thread', act: () => { following = true; } },
+    { label: 'Details', act: null },
+  ];
+  const av = {
+    _cardMenuItems: () => list(),
+    _cardMenuRowItem: (all, idx, label) => {
+      const at = all[idx];
+      if (label == null || (at && at.label === label)) return at;
+      return all.find((x) => x.label === label) || at;
+    },
+  };
+  besideBot('app/x/dev/issues/6431', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6431' });
+  api.sidePanelRefs.frame = { contentWindow: { AppView: av } };
+  assert.deepEqual(api.SidePanel.panelMenuRows().map((r) => r.label),
+    ['Build it with your own Claude Code', 'Notify me', 'Details'], 'the rows the page\'s ⋯ would show');
+  assert.equal(api.SidePanel.panelMenuRows()[2].disabled, true, 'a row with no action is unavailable here too');
+  assert.equal(api.SidePanel.panelMenuRows()[1].title, 'Follow this thread', 'its tooltip comes with it');
+  api.SidePanel.runPanelMenuRow(1, 'Notify me');
+  assert.equal(following, true, 'the row ran in the page');
+  assert.equal(api.SidePanel.panelMenuRows()[1].label, 'Mute', 'and the next opening says Mute');
+  // A page with no ⋯ key of its own, and one whose head is another page's,
+  // list nothing.
+  api.embeddedApi.head('app/x/dev/issues/6431', { kind: 'change', pill: null, menuKey: null });
+  assert.deepEqual(api.SidePanel.panelMenuRows(), []);
+  api.embeddedApi.head('app/x/dev/changes/6430', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6430' });
+  assert.deepEqual(api.SidePanel.panelMenuRows(), [], 'a head for another page lists nothing here');
+  api.sidePanelRefs.frame = null;
+  api._resetForTests();
+});
+
+test('the column\'s ⋯ menu is a solid sheet above the page, in both looks (#6431)', () => {
+  // The menu is drawn in the shell's own document, where Messages' surface
+  // tokens are not declared (they live on .messages-layout,
+  // .dev-ws-discussion, .dev-request and #ai-screen .ai-askbar). Its fill and
+  // hover resolved to nothing, so the page's rows showed straight through it
+  // under its shadow (Evan, 6 Nov 2026: "overlapping weirdly... fully
+  // transparent"). The wrapper declares the same pair, opaque in each look,
+  // and stacks above the panel's body.
+  const rule = (sel) => {
+    const at = CSS.indexOf(`${sel} {`);
+    assert.ok(at >= 0, `${sel} is drawn`);
+    return CSS.slice(at, CSS.indexOf('}', at) + 1);
+  };
+  const more = rule('.side-panel-more');
+  assert.match(more, /position: relative;/, 'the wrapper is the menu\'s anchor');
+  assert.match(more, /z-index: 2;/, 'and its layer, above the panel\'s body');
+  // The heading is in the lists that declare Messages' tokens, so the menu's
+  // fill (and the ⋯ button's hover step) is the opaque one Messages draws.
+  const tokens = (start) => CSS.slice(CSS.indexOf(start), CSS.indexOf('}', CSS.indexOf(start)));
+  const light = tokens('.messages-layout,');
+  assert.match(light, /\.side-panel-head,/);
+  assert.match(light, /--messages-surface: #ffffff;/, 'the menu\'s fill, light');
+  assert.match(light, /--messages-surface-2: var\(--bg-secondary\);/, 'and its hover step');
+  const dark = tokens('.dark .messages-layout,');
+  assert.match(dark, /\.dark \.side-panel-head,/);
+  assert.match(dark, /--messages-surface: var\(--dc-raised\);/, 'the menu\'s fill, dark');
+  assert.match(dark, /--messages-surface-2: #3a3a3c;/, 'and its hover step');
+  // A hairline on top of the base rule's lift, so it reads as a sheet over the
+  // page rather than a hole in it. The menu itself is still Messages' absolute
+  // layer, and its base rule still paints the surface declared above.
+  assert.match(rule('.side-panel-more .messages-thread-menu'),
+    /box-shadow: 0 12px 30px rgba\(0, 0, 0, \.18\), inset 0 0 0 1px var\(--messages-hair\);/);
+  const base = rule('.messages-thread-menu');
+  assert.match(base, /position: absolute;/);
+  assert.match(base, /z-index: 30;/);
+  assert.match(base, /background: var\(--messages-surface\);/);
+});
+
+test('a new page, a new frame and leaving drop the head with the title (#6431)', () => {
+  besideBot('app/x/dev/issues/6431', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6431' });
+  assert.equal(api.sidePanelStore.get().head.pill.key, 'building');
+
+  api.open('app/x/dev/issues/6432', null);
+  assert.equal(api.sidePanelStore.get().head, null, 'a new page is a new heading');
+
+  api.embeddedApi.head('app/x/dev/issues/6432', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6432' });
+  api.open('app/x/dev/issues/6432', null);
+  assert.equal(api.sidePanelStore.get().head.pill.key, 'building', "the same page settling keeps it");
+
+  api.drop();
+  assert.equal(api.sidePanelStore.get().head, null, 'and leaving drops it with the frame');
+  assert.equal(api.INITIAL.head, null, 'the prerender has none');
   api._resetForTests();
 });
 
