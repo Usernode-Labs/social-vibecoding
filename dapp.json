@@ -891,10 +891,10 @@
       ]
     },
     {
-      "name": "Me: Your work's rows open the Homeroom bot tab's History on Changes, Requests and Votes",
+      "name": "Me: Your work's rows open the Homeroom bot tab's History on Changes and Requests, the Your feedback sheet, and History on Votes",
       "path": "/?demo=1#profile",
       "expectText": "Your work",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#homeroom-bot/history?kind=change\"] + #profile-row-feedback[href=\"#homeroom-bot/history?kind=request\"] + #profile-row-votes[href=\"#homeroom-bot/history?kind=vote\"]"
+      "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#homeroom-bot/history?kind=change\"] + #profile-row-feedback[href=\"#homeroom-bot/history?kind=request\"] + #profile-row-feedback-history[href=\"#profile?feedback\"] + #profile-row-votes[href=\"#homeroom-bot/history?kind=vote\"]"
     },
     {
       "name": "The retired History address opens the Challenges tab, and the tabs are Challenges and Standings",

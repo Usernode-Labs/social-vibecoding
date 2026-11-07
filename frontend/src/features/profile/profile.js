@@ -641,7 +641,9 @@ const Profile = {
   // It has an address, `#profile?feedback`, because two places outside Me
   // open it: the confirmation after sending feedback
   // (features/dialogs/feedback-controller.js) and the feedback challenge's
-  // page (features/leaderboard/topochain-challenges.js). open() takes the
+  // page (features/leaderboard/topochain-challenges.js). It also has a row of
+  // its own on Me, in Your work (#6452), so its history is reachable from the
+  // Profile at any time. open() takes the
   // query, puts the address back to plain `#profile` so a reload or a later
   // Back does not reopen a list the viewer closed, and opens the list as
   // soon as the viewer's own profile is on screen.
