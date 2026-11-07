@@ -133,6 +133,12 @@ test("every declared selector fits the cap the reader and the capture clip at", 
   // which is how five checks of one proposal failed 6 of 6 runs while the
   // page they described was right. The cap is asserted here, on the
   // manifest as written, so the cut never happens silently again.
+  //
+  // The offenders go in the message itself: the platform's failure excerpt
+  // keeps only the first line, and node's deepEqual diff (where they used
+  // to be) starts on the second, so a bare "shorten these selectors" named
+  // nothing and looked like the check's own fault rather than the
+  // manifest's.
   const tests = require('../dapp.json').tests;
   const over = tests.filter((t) => typeof t.expectSelector === 'string'
     && t.expectSelector.length > appManifest.MAX_TEST_SELECTOR_LEN)
