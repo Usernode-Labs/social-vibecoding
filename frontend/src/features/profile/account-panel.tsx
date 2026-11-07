@@ -15,6 +15,9 @@
  *   Your requests   "2 open · 1 done": what you asked for, from the Ask for a
  *                   change dialog or a board. It was "Your feedback" (#3186),
  *                   a card over this screen that listed only the dialog's.
+ *   Your feedback   "6 sent · 4 counted": the sheet the feedback challenge's
+ *                   "See your feedback" link opens, reachable from here at any
+ *                   time (#6452).
  *   Your votes      "Latest: …": what you voted on. It was a filter of Kudos ›
  *                   My history.
  *
@@ -79,9 +82,9 @@
  *
  * Real anchors, not buttons: cmd/ctrl-click, middle-click, "open in new tab",
  * the context menu and drag-to-bookmark are the browser's to give, and only an
- * anchor with an href gets them. Friends is the one row with a handler: a
- * plain click opens its card in place, and every modified click keeps the
- * browser's behaviour on its address.
+ * anchor with an href gets them. Friends, Your feedback and the Edit profile
+ * row have a handler: a plain click opens their card in place, and every
+ * modified click keeps the browser's behaviour on its address.
  *
  * Nothing here is in the prerendered shell: ProfileRoot returns null until its
  * store has data, so the admin flag read below cannot disagree with a first
@@ -93,7 +96,7 @@ import { type ReactNode } from 'react';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import { Skeleton } from '@/components/ui/skeleton';
-import { AppWindowIcon, BallotIcon, BellIcon, ChatIcon, CogIcon, HandRaisedIcon, ShieldCheckIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon, UserPenIcon } from '@/components/ui/icons';
+import { AppWindowIcon, BallotIcon, BellIcon, ChatIcon, CogIcon, HandRaisedIcon, LightBulbIcon, ShieldCheckIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon, UserPenIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
@@ -112,6 +115,7 @@ type ProfileRows = {
   changes?: string | null;
   requests?: string | null;
   requestsPending?: boolean;
+  feedback?: string | null;
   votes?: string | null;
   friends?: string | null;
 };
@@ -167,6 +171,21 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
             || (rows.requestsPending
               ? <PendingLine label={t('profile:work.requests.counting')} />
               : t('profile:work.requests.hint'))}
+          subtitleClassName={SUBTITLE}
+        />
+        <ListRow
+          as="a"
+          id="profile-row-feedback-history"
+          href="#profile?feedback"
+          onClick={(event) => {
+            if (!plainClick(event)) return;
+            event.preventDefault();
+            Profile.showFeedback();
+          }}
+          leading={<IconTile size="sm"><LightBulbIcon /></IconTile>}
+          title={t('profile:work.feedback.title')}
+          titleClassName={TITLE}
+          subtitle={rows.feedback || t('profile:work.feedback.hint')}
           subtitleClassName={SUBTITLE}
         />
         <ListRow

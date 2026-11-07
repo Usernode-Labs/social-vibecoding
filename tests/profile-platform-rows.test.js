@@ -1,7 +1,8 @@
 'use strict';
 
 // The Me tab's lists of rows (UI overhaul, regrouped by the navigation
-// review): "Your work" (Your changes, Your requests, Your votes), "Rewards"
+// review): "Your work" (Your changes, Your requests, Your feedback, Your
+// votes), "Rewards"
 // (Challenges & standings, Kudos) and "Account" (Friends, App slots), each
 // row with a line under it that says what is behind it (`scrMe` in the
 // prototype), and a Settings card at the foot shown at every width (#5557).
@@ -47,6 +48,7 @@ const ROWS = [
   // username can have (a username has no hyphen).
   ['profile-row-proposals', '#homeroom-bot/history?kind=change'],
   ['profile-row-feedback', '#homeroom-bot/history?kind=request'],
+  ['profile-row-feedback-history', '#profile?feedback'],
   ['profile-row-votes', '#homeroom-bot/history?kind=vote'],
   // Rewards.
   ['profile-row-challenges', '#leaderboard/challenges'],
@@ -77,7 +79,7 @@ test('the rows are anchors to their destinations', () => {
   }
 });
 
-test('in order: Your changes, requests, votes; then Challenges & standings, Kudos; Friends, App slots; Profile, Notifications, Settings', () => {
+test('in order: Your changes, requests, feedback, votes; then Challenges & standings, Kudos; Friends, App slots; Profile, Notifications, Settings', () => {
   const order = ROWS.map(([id]) => CODE.indexOf(`id="${id}"`));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
   // The regrouped panels: Your work, then Rewards, then Account, then the
@@ -90,8 +92,11 @@ test('in order: Your changes, requests, votes; then Challenges & standings, Kudo
   assert.ok(!CODE.includes('id="profile-more"'), 'the "More" list is gone');
   // Friends opens its card in place on a plain click; the browser keeps the rest.
   assert.match(rowSource(CODE, 'profile-row-friends'), /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showFriends\(\);/);
+  // Your feedback opens its sheet the same way (#6452).
+  assert.match(rowSource(CODE, 'profile-row-feedback-history'), /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showFeedback\(\);/);
   const { validateUsername } = require('../src/services/usernames');
-  for (const [, href] of ROWS.filter(([id]) => /proposals|feedback|votes/.test(id))) {
+  const historyRows = ['profile-row-proposals', 'profile-row-feedback', 'profile-row-votes'];
+  for (const [, href] of ROWS.filter(([id]) => historyRows.includes(id))) {
     const tail = href.split('/')[1];
     assert.equal(validateUsername(tail).ok, false, `${tail} can never be somebody's username`);
   }
@@ -217,15 +222,15 @@ test('it renders the data\'s lines, and quiet fallbacks without them', () => {
   assert.match(quietAccount, /How many apps you can create/, 'no allowance yet, no invented count');
 
   const work = renderToHtml(createElement(mod.WorkPanel, {
-    rows: { changes: '9 merged · 2 in progress', requests: '2 open · 1 done', votes: 'Latest: Timer sounds' },
+    rows: { changes: '9 merged · 2 in progress', requests: '2 open · 1 done', feedback: '3 sent · 1 counted', votes: 'Latest: Timer sounds' },
   }));
   assert.match(work, /id="profile-work"/);
   assert.match(work, /Your work<\/h2>/);
-  for (const line of ['Your changes', '9 merged · 2 in progress', 'Your requests', '2 open · 1 done', 'Your votes', 'Latest: Timer sounds']) {
+  for (const line of ['Your changes', '9 merged · 2 in progress', 'Your requests', '2 open · 1 done', 'Your feedback', '3 sent · 1 counted', 'Your votes', 'Latest: Timer sounds']) {
     assert.ok(work.includes(line), line);
   }
   const quiet = renderToHtml(createElement(mod.WorkPanel, { rows: {} }));
-  for (const line of ['Everything you have started', 'What you asked for, and where it stands', 'The changes and decisions you voted on']) {
+  for (const line of ['Everything you have started', 'What you asked for, and where it stands', 'What you sent, and whether it counted', 'The changes and decisions you voted on']) {
     assert.ok(quiet.includes(line), line);
   }
 });
