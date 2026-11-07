@@ -156,7 +156,9 @@ test('opens are counted from the page\'s own reads, once per person, never from 
   assert.match(routes, /token: req\.params\.token, user: req\.user, browser: inviteActivity\.browserFrom\(req\),/);
   const service = read('src/services/community-invites.js');
   assert.match(service, /void require\('\.\/invite-activity'\)\.noteJoined\(pool, \{ inviteId: invite\.id, user, browser \}\);/);
-  assert.match(service, /const browser = require\('\.\/invite-activity'\)\.browserFrom\(req\);\s*const result = await redeem\(pool, \{ token, user, browser, requirePhone \}\);/);
+  // Signing up carrying the link first claims the open that browser made
+  // (Admin › Journey's "Opened the invite"), then redeems with it.
+  assert.match(service, /const browser = require\('\.\/invite-activity'\)\.browserFrom\(req\);\s*\/\/ [^\n]*\n\s*await require\('\.\/invite-activity'\)\.claimOpen\(pool, \{ token, userId: user\.id, browser \}\);\s*const result = await redeem\(pool, \{ token, user, browser, requirePhone \}\);/);
   // Not awaited where it starts: the small-group discussion ring waits for it
   // later, so the maker is not told about the same message twice
   // (services/group-channel-notify.js).

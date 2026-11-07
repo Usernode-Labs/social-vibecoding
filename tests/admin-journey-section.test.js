@@ -97,7 +97,8 @@ test('eight chart cards, every mark counted, no percentage printed, no links fro
   assert.match(src, /const UNIT_MAX = 24;/, 'small totals are drawn as countable units');
   assert.match(src, /<Ring label="The change loop, turns at each step"/, 'the change loop is drawn as a ring');
   assert.match(src, /<Ring label="The invite loop, people at each step"/, 'and so is the invite loop, on a card of its own');
-  assert.match(src, /className=\{JUI\.mileGrid\}/, 'the first-mile staircase and tracks share one grid');
+  assert.match(src, /className=\{scope\.cohort === 'invited' \? JUI\.mileGridInvited : JUI\.mileGrid\}/,
+    'the first-mile staircase and tracks share one grid, the invited cohort\'s with its own columns');
   assert.ok(!/<canvas|from '[^']*chart/i.test(src), 'no chart library: plain elements and one SVG');
   assert.ok(!/<a[\s>]|href=/.test(src), 'nothing is rendered as an anchor');
   assert.match(src, /location\.hash = `#admin\/support\/\$\{p\.userId\}`/,
@@ -106,7 +107,8 @@ test('eight chart cards, every mark counted, no percentage printed, no links fro
 });
 
 test('every first-mile column says what it counts on a tap, and onboard follows act', () => {
-  const keys = ['admitted', 'mail_sent', 'code_asked', 'account', 'access', 'opened', 'username', 'join', 'first_act', 'onboard'];
+  const keys = ['admitted', 'mail_sent', 'mail_page', 'code_asked', 'account', 'access', 'opened', 'username', 'join', 'first_act', 'onboard',
+    'invite_opened', 'signed_up', 'joined', 'let_in'];
   const help = src.match(/const MILE_HELP: Record<string, string> = \{([\s\S]*?)\n\};/);
   assert.ok(help, 'one table of column notes');
   for (const key of keys) assert.match(help[1], new RegExp(`\\n  ${key}: '`), `${key} has a note`);
@@ -119,7 +121,8 @@ test('every first-mile column says what it counts on a tap, and onboard follows 
   assert.match(src, /e\.key === 'Escape'/, 'Escape closes it');
   assert.match(src, /\{labelFor\('onboard', 'onboard'\)\}/, 'onboard is labelled like the steps');
   assert.match(src, /<OnboardCell onboard=\{p\.onboard\} \/>/, 'every track ends in its onboard cell');
-  assert.match(src, /repeat\(10,minmax\(0,1fr\)\)/, 'the grid has the tenth column');
+  assert.match(src, /repeat\(11,minmax\(0,1fr\)\)/, 'the grid has the eleventh column: the mail\'s page and onboard');
+  assert.match(src, /repeat\(7,minmax\(0,1fr\)\)/, 'and the invited cohort\'s six steps and onboard');
 });
 
 test('the mail column tells opened from sent but not opened, and each cohort says its count (#6138)', () => {
@@ -127,7 +130,8 @@ test('the mail column tells opened from sent but not opened, and each cohort say
   assert.ok(fills, 'one table of mail shades');
   for (const part of ['opened', 'unopened', 'untracked']) assert.match(fills[1], new RegExp(`\\n  ${part}: '`), `${part} has a shade`);
   assert.match(fills[1], /untracked: 'bg-\[repeating-linear-gradient\(/, 'a mail sent before tracking is striped');
-  assert.match(src, /key === 'mail_sent' \? mailFill\(p, st\.state\)/, 'each track\'s mail cell takes its shade');
+  assert.match(src, /if \(st && key === 'mail_sent'\) fill = mailFill\(p, st\.state\);/, 'each track\'s mail cell takes its shade');
+  assert.match(src, /else if \(st && st\.unrecorded\) fill = MAIL_FILL\.untracked;/, 'and a step not recorded then is striped too');
   assert.match(src, /\{mailParts\.opened\}\/\{mailTracked\}/, 'the mail bar counts opened of tracked');
   assert.match(src, /\{label\(m\.cohort\)\} · \{m\.people\.length\}\{cohortMail\(m\.people, nowMs\)\}/,
     'the cohort line carries its mail');

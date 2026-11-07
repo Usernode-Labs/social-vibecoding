@@ -768,8 +768,8 @@ async function sendRelease(pool, body, { actorId, config = {} } = {}) {
         // Confirmed and released, the state of a signup an admin admits.
         // more_token is the capability the mail's link carries, as Admit's.
         ({ rows: [row] } = await client.query(
-          `INSERT INTO waitlist_signups (email, confirmed_at, released_at, more_token)
-           VALUES ($1, NOW(), NOW(), $2)
+          `INSERT INTO waitlist_signups (email, confirmed_at, released_at, more_token, source)
+           VALUES ($1, NOW(), NOW(), $2, 'test')
            RETURNING id, more_token`,
           [email, crypto.randomBytes(24).toString('hex')]
         ));

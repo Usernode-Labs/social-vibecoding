@@ -1121,6 +1121,8 @@ async function redeemCarried(pool, req, res, userId, { requirePhone = false } = 
     // throws (journey-events.js).
     await require('./journey-events').noteInviteSignedIn(pool, { token, userId: user.id, carried: true });
     const browser = require('./invite-activity').browserFrom(req);
+    // The open this browser made signed out is theirs now, joined or queued.
+    await require('./invite-activity').claimOpen(pool, { token, userId: user.id, browser });
     const result = await redeem(pool, { token, user, browser, requirePhone });
     if (!result.ok) return null;
     return {
@@ -1149,6 +1151,7 @@ async function dropCarried(pool, req, res, userId) {
   clearInviteCookie(res);
   if (!token || !isToken(token) || !userId) return null;
   await require('./journey-events').noteInviteSignedIn(pool, { token, userId, carried: true });
+  await require('./invite-activity').claimOpen(pool, { token, userId, browser: require('./invite-activity').browserFrom(req) });
   return null;
 }
 

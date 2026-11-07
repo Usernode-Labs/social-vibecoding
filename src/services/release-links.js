@@ -106,6 +106,40 @@ const FOLLOWED_SQL = `UPDATE waitlist_signups
     SET release_link_followed_at = NOW()
   WHERE id = $1::bigint AND release_link_followed_at IS NULL`;
 
+// The mail's own page (Admin › Journey's "Opened the mail's page"): first
+// opened at, and what happened there (src/db/migrations/
+// waitlist-first-mile-facts.sql). An outcome never undoes a sign-in.
+const PAGE_OPENED_SQL = `UPDATE waitlist_signups
+    SET release_page_opened_at = COALESCE(release_page_opened_at, NOW()),
+        release_page_outcome = COALESCE(release_page_outcome, 'opened')
+  WHERE id = $1::bigint AND released_at IS NOT NULL`;
+const PAGE_OUTCOME_SQL = `UPDATE waitlist_signups
+    SET release_page_outcome = $2::varchar,
+        release_page_opened_at = COALESCE(release_page_opened_at, NOW())
+  WHERE id = $1::bigint AND released_at IS NOT NULL
+    AND release_page_outcome IS DISTINCT FROM 'signed_in'`;
+const PAGE_OUTCOMES = new Set(['signed_in', 'welcome', 'link_expired', 'link_used']);
+
+/** The mail's page opened (the page's own read, not a scanner's fetch). Never throws. */
+async function notePageOpened(pool, signupId) {
+  if (signupId == null) return;
+  try {
+    await pool.query(PAGE_OPENED_SQL, [signupId]);
+  } catch (error) {
+    log.warn('release-links', 'Could not record the mail\'s page opened', { message: error.message });
+  }
+}
+
+/** What happened on the mail's page. Never throws. */
+async function notePageOutcome(pool, signupId, outcome) {
+  if (signupId == null || !PAGE_OUTCOMES.has(outcome)) return;
+  try {
+    await pool.query(PAGE_OUTCOME_SQL, [signupId, outcome]);
+  } catch (error) {
+    log.warn('release-links', 'Could not record what happened on the mail\'s page', { message: error.message });
+  }
+}
+
 /** A record beside the spend, never part of it: a failure is a warning. */
 async function noteFollowed(pool, signupId) {
   if (signupId == null) return;
@@ -135,50 +169,62 @@ async function spend(pool, rawToken, { createSession, newAccountOnly = false } =
   }
   let email = null;
   let signupId = null;
-  const result = await emailSignup.withTransaction(pool, async (client) => {
-    const { rows } = await client.query(
-      `SELECT l.token_hash, l.signup_id, l.email, l.expires_at, l.consumed_at,
-              w.email AS signup_email, w.released_at,
-              EXISTS (SELECT 1 FROM waitlist_release_links n
-                       WHERE n.signup_id = l.signup_id AND n.created_at > l.created_at) AS superseded
-         FROM waitlist_release_links l
-         JOIN waitlist_signups w ON w.id = l.signup_id
-        WHERE l.token_hash = $1
-        FOR UPDATE OF l`,
-      [hashToken(token)]
-    );
-    const link = rows[0];
-    if (!link || new Date(link.expires_at) <= new Date()
-        || !link.released_at
-        || emailSignup.normalizeEmail(link.signup_email) !== link.email) {
-      return { invalid: true };
-    }
-    if (link.consumed_at) {
-      // Spent already: again only while it is the row's newest link and the
-      // account it started is unfinished (no username chosen, no password).
-      if (link.superseded) return { invalid: true };
-      const { rows: [account] } = await client.query(
-        `SELECT needs_username_choice, password_set FROM users
-          WHERE lower(email) = lower($1)`,
-        [link.email]
+  let result;
+  try {
+    result = await emailSignup.withTransaction(pool, async (client) => {
+      const { rows } = await client.query(
+        `SELECT l.token_hash, l.signup_id, l.email, l.expires_at, l.consumed_at,
+                w.email AS signup_email, w.released_at,
+                EXISTS (SELECT 1 FROM waitlist_release_links n
+                         WHERE n.signup_id = l.signup_id AND n.created_at > l.created_at) AS superseded
+           FROM waitlist_release_links l
+           JOIN waitlist_signups w ON w.id = l.signup_id
+          WHERE l.token_hash = $1
+          FOR UPDATE OF l`,
+        [hashToken(token)]
       );
-      if (!account || account.needs_username_choice !== true || account.password_set) {
+      const link = rows[0];
+      if (!link || !link.released_at
+          || emailSignup.normalizeEmail(link.signup_email) !== link.email) {
         return { invalid: true };
       }
-    } else {
-      await client.query(
-        'UPDATE waitlist_release_links SET consumed_at = NOW() WHERE token_hash = $1',
-        [link.token_hash]
-      );
-    }
-    email = link.email;
-    signupId = link.signup_id;
-    return emailSignup.continueProvenEmail(client, email, { createSession, newAccountOnly });
-  });
+      if (new Date(link.expires_at) <= new Date()) {
+        return { invalid: true, signupId: link.signup_id, outcome: 'link_expired' };
+      }
+      if (link.consumed_at) {
+        // Spent already: again only while it is the row's newest link and the
+        // account it started is unfinished (no username chosen, no password).
+        if (link.superseded) return { invalid: true, signupId: link.signup_id, outcome: 'link_used' };
+        const { rows: [account] } = await client.query(
+          `SELECT needs_username_choice, password_set FROM users
+            WHERE lower(email) = lower($1)`,
+          [link.email]
+        );
+        if (!account || account.needs_username_choice !== true || account.password_set) {
+          return { invalid: true, signupId: link.signup_id, outcome: 'link_used' };
+        }
+      } else {
+        await client.query(
+          'UPDATE waitlist_release_links SET consumed_at = NOW() WHERE token_hash = $1',
+          [link.token_hash]
+        );
+      }
+      email = link.email;
+      signupId = link.signup_id;
+      return emailSignup.continueProvenEmail(client, email, { createSession, newAccountOnly });
+    });
+  } catch (error) {
+    // The page's spend as it opens, for an account already set up: the
+    // welcome shows and waits for Get started.
+    if (error && error.code === 'account_set_up') await notePageOutcome(pool, signupId, 'welcome');
+    throw error;
+  }
   if (result.invalid) {
+    await notePageOutcome(pool, result.signupId, result.outcome);
     throw new emailSignup.EmailSignupError('invalid_release_link', INVALID_MESSAGE);
   }
   await noteFollowed(pool, signupId);
+  await notePageOutcome(pool, signupId, 'signed_in');
   const finished = await emailSignup.finishProvenEmail(pool, email, result);
   return { ...finished, email };
 }
@@ -202,4 +248,7 @@ async function isNewAccount(pool, signup) {
   }
 }
 
-module.exports = { RELEASE_LINK_TTL_MS, TOKEN_RE, FOLLOWED_SQL, mint, spend, hashToken, isNewAccount };
+module.exports = {
+  RELEASE_LINK_TTL_MS, TOKEN_RE, FOLLOWED_SQL, PAGE_OPENED_SQL, PAGE_OUTCOME_SQL,
+  mint, spend, hashToken, isNewAccount, notePageOpened, notePageOutcome,
+};

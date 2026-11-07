@@ -262,7 +262,7 @@ function bellChanged(userId) {
  * their row, with their account, so opening the link again stays quiet.
  * Never throws. Resolves the ids of the notices it changed.
  */
-async function settleOpen(pool, { makerId, appId, userId, browser = null }) {
+async function settleOpen(pool, { makerId, appId, userId, browser = null, keepNotice = false }) {
   const touched = new Set();
   let client = null;
   try {
@@ -272,7 +272,7 @@ async function settleOpen(pool, { makerId, appId, userId, browser = null }) {
     const rows = await openersOf(client, { makerId, appId, userId, browser });
     if (rows.length) {
       for (const id of await mergeOpeners(client, rows, { userId, browser })) touched.add(id);
-      if (rows[0].notification_id != null) {
+      if (!keepNotice && rows[0].notification_id != null) {
         touched.add(Number(rows[0].notification_id));
         await client.query('UPDATE community_invite_opens SET notification_id = NULL WHERE id = $1', [rows[0].id]);
       }
@@ -288,6 +288,26 @@ async function settleOpen(pool, { makerId, appId, userId, browser = null }) {
   }
   if (touched.size) bellChanged(makerId);
   return [...touched];
+}
+
+/**
+ * `userId` signed up or in carrying link `token` (community-invites.js
+ * redeemCarried / dropCarried): the open this browser made signed out
+ * becomes theirs, so Admin › Journey can say when they opened the link. Not
+ * a join, so the open stays on the maker's notice as it was; a join through
+ * the link settles it later (noteJoined). Never throws.
+ */
+async function claimOpen(pool, { token, userId, browser = null }) {
+  if (!userId || !browser || typeof token !== 'string' || !token) return [];
+  try {
+    const { rows } = await pool.query('SELECT created_by, app_id FROM community_invites WHERE token = $1', [token]);
+    const invite = rows[0];
+    if (!invite || invite.created_by == null || Number(invite.created_by) === Number(userId)) return [];
+    return await settleOpen(pool, { makerId: invite.created_by, appId: invite.app_id, userId, browser, keepNotice: true });
+  } catch (err) {
+    log.warn('invite-activity', 'Could not claim an open on a sign-in', { err: err.message });
+    return [];
+  }
 }
 
 /**
@@ -487,6 +507,7 @@ module.exports = {
   OPEN_PUSH_DELAY_MINUTES,
   BROWSER_COOKIE,
   browserFrom,
+  claimOpen,
   ensureBrowser,
   countedBefore,
   ring,
