@@ -46,7 +46,7 @@ test('one breakpoint constant, read through matchMedia, in step with the md: cla
   // with where the sidebar actually appears. Those two class strings are on
   // the React-owned chassis since #1082 chunk E — same classes, and the
   // disagreement they guard against is exactly as easy to introduce there.
-  assert.match(islandTsx, /hidden md:block md:w-64/,
+  assert.match(islandTsx, /hidden md:block md:w-72/,
     'the sidebar still switches at md — the constant must match it');
   assert.match(islandTsx, /md:flex md:items-start md:gap-6/,
     'the shell row still switches at md');

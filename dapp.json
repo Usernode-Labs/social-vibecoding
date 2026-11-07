@@ -3314,14 +3314,15 @@
       "expectText": "Operations"
     },
     {
-      "name": "Admin console menu groups are collapsible (#1152)",
+      "name": "Admin console opens on the control room: Overview lit on the rail of groups, and the dashboard's Needs attention list (#6454)",
       "path": "/#admin",
-      "expectSelector": "#admin-nav-desktop [data-admin-group-toggle=\"Operations\"][aria-expanded=\"true\"]"
+      "expectSelector": "#admin-root:has(#admin-nav-desktop [data-admin-rail][role=\"group\"] [data-admin-rail-group=\"Overview\"][aria-current=\"true\"] ~ [data-admin-rail-group=\"Operations\"]) #admin-section-content #admin-overview-dashboard #admin-overview-attention",
+      "expectText": "Needs attention"
     },
     {
-      "name": "Admin console menu groups ship expanded, including the active section's (#1152)",
+      "name": "Admin console deep link selects its group on the rail, and the panel lists that group's sections (#6454)",
       "path": "/#admin/users",
-      "expectSelector": "#admin-nav-desktop [data-admin-group=\"People\"]:not(.hidden) [data-admin-section=\"users\"]"
+      "expectSelector": "#admin-nav-desktop:has([data-admin-rail-group=\"People\"][aria-current=\"true\"]) [data-admin-panel=\"People\"] [data-admin-section=\"users\"][aria-current=\"page\"]"
     },
     {
       "name": "Admin console deep-links Overview by its explicit segment",

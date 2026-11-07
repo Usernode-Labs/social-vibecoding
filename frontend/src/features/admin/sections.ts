@@ -21,6 +21,9 @@
  * before it was opened; now its CODE is not either.
  */
 import './admin-overview.tsx';
+// Search or jump (#6454): not a section, the console's command palette. It
+// rides in this chunk because only an open console ever needs it.
+import './admin-palette.tsx';
 import './admin-codes.tsx';
 import './admin-featured-apps.tsx';
 import './admin-db-export.tsx';

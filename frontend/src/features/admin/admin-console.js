@@ -569,6 +569,13 @@ const AdminConsole = {
     AdminConsole._returnTo = AdminConsole._lastOutside;
     AdminConsole._ensureMediaListener();
     section = AdminConsole._canonicalSection(section);
+    // A deep link selects its own group on the rail (#6454). Search or jump
+    // listens only while the console is open; the band's environment word
+    // and the rail's attention count are read once per open.
+    AdminConsole._railGroup = null;
+    AdminConsole._bindShortcut();
+    AdminConsole._loadEnv();
+    AdminConsole._loadAttention();
     const visible = AdminConsole._visibleSections();
     const valid = visible.some((s) => s.key === section);
     // In public mode, fall back to the first PUBLIC section rather than
@@ -615,6 +622,8 @@ const AdminConsole = {
     // must not leave a 5s /api/status or 2s /api/node-status poll running
     // for the life of the tab (see _teardownActiveSection).
     AdminConsole._teardownActiveSection();
+    // And the ⌘K / Ctrl+K listener, with the palette if it is up (#6454).
+    AdminConsole._unbindShortcut();
   },
 
   // Re-entry while the console is ALREADY mounted (app.js routes here
@@ -652,7 +661,9 @@ const AdminConsole = {
       return;
     }
     if (!mobile) {
-      // Desktop: bare #admin is Overview, as it has always been.
+      // Desktop: bare #admin is Overview, as it has always been. An address
+      // that names a section selects its group on the rail (#6454).
+      AdminConsole._railGroup = null;
       AdminConsole.setSection(targetSection, { writeHash: false });
       AdminConsole._level = 2;
       AdminConsole._syncChrome();
@@ -1004,40 +1015,287 @@ const AdminConsole = {
     return groups;
   },
 
-  // Desktop sidebar rows, grouped under headings. Nineteen flat rows is a
-  // lot to scan; the headings are the mitigation, and since #1152 each one
-  // is a collapse/expand button whose state persists per browser.
+  // ── Desktop: the control-room rail and its panel (#6454) ──────────────
+  //
+  // From md up the nav is two columns inside #admin-nav-desktop: a narrow
+  // RAIL with one icon button per group (Overview, then the SECTIONS groups,
+  // then "All sections" at the foot), and beside it a PANEL listing the
+  // selected group's sections. It replaced the single grouped sidebar whose
+  // headings collapsed (#1152): forty rows under five headings was a list to
+  // scroll, where a rail is one glance. Phones keep the two-level menu, and
+  // its collapsible headings, exactly as they were (_mobileMenuHtml).
+  //
+  // Which group the panel shows is `_railGroup`: null means "the group of
+  // the section on screen", so a deep link, the palette or a jump from the
+  // dashboard selects its group by arriving. Picking a group on the rail
+  // opens its first section; "All" shows every group and stays selected
+  // until another group is picked.
+  _railGroup: null,
+  // Stuck apps + orphan workers, from /api/admin/overview and nothing else.
+  // Drawn as a count on the Overview and Operations rail buttons; zero says
+  // nothing.
+  _attention: 0,
+
+  RAIL_ALL: 'All',
+
+  // The rail's own glyphs, one per group. Four reuse a section's icon (the
+  // group's first or most typical section); Operations and All have their
+  // own. Complete literals, like NAV_ICONS.
+  RAIL_ICONS: Object.freeze({
+    'Operations': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l3-3 3 3 4.5-6 3 4.5 3-1.5M3.75 19.5h16.5"/></svg>',
+    'All': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/></svg>',
+  }),
+
+  _railIcon(name) {
+    if (name === 'Overview') return AdminConsole.NAV_ICONS.overview;
+    if (name === 'Programme') return AdminConsole.NAV_ICONS.seasons;
+    if (name === 'People') return AdminConsole.NAV_ICONS.users;
+    if (name === 'Insights') return AdminConsole.NAV_ICONS.analytics;
+    if (name === 'Platform') return AdminConsole.NAV_ICONS.settings;
+    return AdminConsole.RAIL_ICONS[name] || AdminConsole.RAIL_ICONS.All;
+  },
+
+  // The rail's groups: Overview on its own, then _groupedSections() without
+  // it. Built from the shared helper, so public mode (Health & status and
+  // Node & chain only) narrows the rail exactly as it narrows the phone menu.
+  _railGroups() {
+    const groups = [];
+    let overview = null;
+    for (const g of AdminConsole._groupedSections()) {
+      const items = g.items.filter((s) => {
+        if (s.key !== 'overview') return true;
+        overview = s;
+        return false;
+      });
+      if (items.length) groups.push({ name: g.name, items });
+    }
+    if (overview) groups.unshift({ name: 'Overview', items: [overview] });
+    return groups;
+  },
+
+  _railGroupOf(key) {
+    if (key === 'overview') return 'Overview';
+    const s = AdminConsole.SECTIONS.find((x) => x.key === key);
+    return (s && s.group) || 'Other';
+  },
+
+  // The group the panel shows now: the picked one, if it is still on the
+  // rail, else the group of the section on screen.
+  _currentRailGroup() {
+    const picked = AdminConsole._railGroup;
+    if (picked === AdminConsole.RAIL_ALL) return picked;
+    const groups = AdminConsole._railGroups();
+    if (picked && groups.some((g) => g.name === picked)) return picked;
+    return AdminConsole._railGroupOf(AdminConsole._section);
+  },
+
+  _railLabel(name, count) {
+    const base = name === AdminConsole.RAIL_ALL ? 'All sections' : name;
+    return count > 0 ? `${base}, ${count} need attention` : base;
+  },
+
+  // Only Overview and Operations carry the attention count.
+  _railCounts(name) {
+    return name === 'Overview' || name === 'Operations';
+  },
+
+  _railButtonHtml(name, current) {
+    const isActive = name === current;
+    const counts = AdminConsole._railCounts(name);
+    const n = counts ? AdminConsole._attention : 0;
+    const cls = isActive
+      ? 'flex flex-col items-center gap-1 w-full rounded-lg px-1 py-2 bg-zinc-200 text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100 transition-colors'
+      : 'flex flex-col items-center gap-1 w-full rounded-lg px-1 py-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 transition-colors';
+    const badge = counts
+      ? `<span data-admin-rail-badge aria-hidden="true" class="absolute -top-1.5 -right-2.5 min-w-[18px] rounded-full bg-red-600 px-1 text-center text-[10px] font-semibold leading-[18px] text-white${n > 0 ? '' : ' hidden'}">${n}</span>`
+      : '';
+    const short = name === AdminConsole.RAIL_ALL ? 'All' : name;
+    const label = AdminConsole.esc(AdminConsole._railLabel(name, n));
+    return `<button type="button" data-admin-rail-group="${AdminConsole.esc(name)}"${isActive ? ' aria-current="true"' : ''}
+        aria-label="${label}" title="${label}" class="${cls}"><span class="relative">${AdminConsole._railIcon(name)}${badge}</span><span class="block w-full truncate text-center text-[10px] font-medium leading-tight">${AdminConsole.esc(short)}</span></button>`;
+  },
+
+  // Desktop nav: the rail and the panel. Still `_navItemsHtml`, still written
+  // into #admin-nav-desktop by _renderShell, and the section rows still carry
+  // data-admin-section, so _wireSectionButtons and every check that selects a
+  // row work unchanged.
   _navItemsHtml() {
     const active = AdminConsole._section;
+    const current = AdminConsole._currentRailGroup();
+    const groups = AdminConsole._railGroups();
+    // Sanity anchor for the shared grouping: _railGroups() reads
+    // _groupedSections(), the helper the phone menu reads too.
     const itemHtml = (s) => {
       const isActive = s.key === active;
-      const cls = 'admin-nav-item flex items-center gap-3 w-full text-start rounded-md px-3 py-2.5 text-sm font-medium transition-colors '
-        + (isActive
-          ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
-          : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/60');
-      // Section links of the sidebar's <nav>, the current one marked
-      // aria-current (QA 2026-09-24 Q20). They used to be tabs with no
-      // tablist around them, and a tablist may not hold the group headings.
+      const cls = isActive
+        ? 'admin-nav-item flex items-center gap-2.5 w-full text-start rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
+        : 'admin-nav-item flex items-center gap-2.5 w-full text-start rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/60';
+      // Section links of the panel, the current one marked aria-current
+      // (QA 2026-09-24 Q20: never tabs, there is no tablist around them).
       return `<button type="button"${isActive ? ' aria-current="page"' : ''}
         data-admin-section="${s.key}" class="${cls}">${AdminConsole.NAV_ICONS[s.key] || ''}<span class="flex-1 min-w-0 truncate">${AdminConsole.esc(s.label)}</span></button>`;
     };
-    return AdminConsole._groupedSections().map((g, i) => {
-      // Rendered from the persisted set, never from the DOM — so this
-      // wholesale repaint (it runs on every section switch) reproduces
-      // whatever the viewer collapsed.
-      const collapsed = AdminConsole._isGroupCollapsed(g.name);
-      const domId = AdminConsole._groupDomId('admin-nav-group', g.name);
-      // No spacing utility on the items wrapper: the rows were adjacent
-      // before this became a wrapped group, and they stay adjacent.
-      return `
-      <div class="${i === 0 ? '' : 'mt-6'}">
-        ${AdminConsole._groupToggleHtml(g.name, domId, collapsed,
-          'flex items-center gap-1.5 w-full text-start px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors')}
-        <div id="${domId}" data-admin-group="${AdminConsole.esc(g.name)}"${collapsed ? ' class="hidden"' : ''}>
-          ${g.items.map(itemHtml).join('')}
+    const heading = (text) => `<p class="px-2.5 pb-1 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">${AdminConsole.esc(text)}</p>`;
+    const shown = current === AdminConsole.RAIL_ALL
+      ? groups
+      : groups.filter((g) => g.name === current);
+    const panel = shown.map((g, i) => `
+      <div class="${i === 0 ? '' : 'mt-4'}" data-admin-group="${AdminConsole.esc(g.name)}">
+        ${current === AdminConsole.RAIL_ALL || i > 0 ? heading(g.name) : ''}
+        ${g.items.map(itemHtml).join('')}
+      </div>`).join('');
+    const rail = groups.map((g) => AdminConsole._railButtonHtml(g.name, current)).join('');
+    return `
+      <div class="flex items-start gap-2">
+        <div data-admin-rail role="group" aria-label="Section groups" class="flex w-16 shrink-0 flex-col gap-1">
+          ${rail}
+          <div class="mt-1 border-t border-zinc-200 pt-2 dark:border-zinc-800">${AdminConsole._railButtonHtml(AdminConsole.RAIL_ALL, current)}</div>
+        </div>
+        <div data-admin-panel="${AdminConsole.esc(current)}" class="flex-1 min-w-0 border-s border-zinc-200 ps-2 dark:border-zinc-800">
+          ${heading(current === AdminConsole.RAIL_ALL ? 'All sections' : current)}
+          ${panel}
         </div>
       </div>`;
-    }).join('');
+  },
+
+  // A rail press. "All" only changes the panel; any other group opens its
+  // first section, which (by arriving) selects that group. Focus goes back to
+  // the pressed button, because the repaint replaced it.
+  _wireRail(root) {
+    if (!root) return;
+    root.querySelectorAll('[data-admin-rail-group]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const name = btn.getAttribute('data-admin-rail-group');
+        if (name === AdminConsole.RAIL_ALL) {
+          AdminConsole._railGroup = name;
+          AdminConsole._renderShell();
+        } else {
+          const group = AdminConsole._railGroups().find((g) => g.name === name);
+          if (!group) return;
+          // Arriving at the group's first section selects the group.
+          AdminConsole._railGroup = null;
+          AdminConsole.setSection(group.items[0].key);
+        }
+        const again = document.querySelector(`#admin-nav-desktop [data-admin-rail-group="${name}"]`);
+        if (again && typeof again.focus === 'function') again.focus();
+      });
+    });
+  },
+
+  // The attention count, from whoever last read /api/admin/overview (the
+  // Overview dashboard on every refresh, or _loadAttention on open). Updated
+  // IN PLACE, so a refresh never steals focus from the rail.
+  setAttention(n) {
+    AdminConsole._attention = Math.max(0, Number(n) || 0);
+    if (typeof document === 'undefined') return;
+    document.querySelectorAll('#admin-nav-desktop [data-admin-rail-group]').forEach((btn) => {
+      const name = btn.getAttribute('data-admin-rail-group');
+      if (!AdminConsole._railCounts(name)) return;
+      const count = AdminConsole._attention;
+      const badge = btn.querySelector('[data-admin-rail-badge]');
+      if (badge) {
+        badge.textContent = String(count);
+        badge.classList.toggle('hidden', count === 0);
+      }
+      const label = AdminConsole._railLabel(name, count);
+      btn.setAttribute('aria-label', label);
+      btn.setAttribute('title', label);
+    });
+  },
+
+  async _loadAttention() {
+    if (AdminConsole._publicMode()) return;
+    const { data } = await AdminConsole.fetchJson('/api/admin/overview');
+    if (!AdminConsole._open || !data || typeof data !== 'object') return;
+    const stuck = Array.isArray(data.stuckApps) ? data.stuckApps.length : 0;
+    const orphans = Array.isArray(data.orphanWorkers) ? data.orphanWorkers.length : 0;
+    AdminConsole.setAttention(stuck + orphans);
+  },
+
+  // ── Production label (#6454) ──────────────────────────────────────────
+  // The band names the environment from GET /api/version's `env`, the field
+  // the drawer's version row reads (public/js/app.js). A label only: nothing
+  // here changes what the console offers. Unknown hides both words.
+  _env: undefined,
+
+  _loadEnv() {
+    if (AdminConsole._publicMode()) return;
+    const known = window.App && App._lastVersionInfo;
+    if (known && typeof known === 'object' && 'env' in known) {
+      AdminConsole._env = known.env ? String(known.env) : null;
+      AdminConsole._paintEnv();
+      return;
+    }
+    if (AdminConsole._env !== undefined) { AdminConsole._paintEnv(); return; }
+    AdminConsole.fetchJson('/api/version').then(({ data }) => {
+      AdminConsole._env = data && data.env ? String(data.env) : null;
+      AdminConsole._paintEnv();
+    });
+  },
+
+  // Two static words in the band, toggled through classList (the chassis
+  // contract): the one naming this build shows, the other stays hidden.
+  _paintEnv() {
+    if (typeof document === 'undefined') return;
+    const env = AdminConsole._env;
+    document.querySelectorAll('#admin-console-bar [data-admin-env]').forEach((el) => {
+      el.classList.toggle('hidden', el.getAttribute('data-admin-env') !== env);
+    });
+  },
+
+  // ── Search or jump (#6454) ────────────────────────────────────────────
+  // ⌘K / Ctrl+K, and the band's "Search or jump…" button, open a dialog
+  // listing the sections this viewer may see (features/admin/admin-palette.tsx).
+  // The key listener lives only while the console is open: bound in open(),
+  // removed in close().
+  _onKeydown: null,
+
+  _bindShortcut() {
+    if (AdminConsole._onKeydown || typeof document === 'undefined') return;
+    AdminConsole._onKeydown = (e) => {
+      if (!AdminConsole._open) return;
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      if (String(e.key || '').toLowerCase() !== 'k') return;
+      e.preventDefault();
+      const palette = window.AdminPalette;
+      if (palette && palette.isOpen()) palette.close();
+      else AdminConsole.openPalette();
+    };
+    document.addEventListener('keydown', AdminConsole._onKeydown);
+  },
+
+  _unbindShortcut() {
+    if (AdminConsole._onKeydown) {
+      document.removeEventListener('keydown', AdminConsole._onKeydown);
+      AdminConsole._onKeydown = null;
+    }
+    window.AdminPalette?.close?.();
+  },
+
+  openPalette() {
+    if (!AdminConsole._open) return;
+    const palette = window.AdminPalette;
+    if (!palette) {
+      // The palette arrives with the lazy section chunk; a press before it
+      // lands opens it once it has.
+      const pending = AdminConsole._ensureSections();
+      if (pending) pending.then(() => { if (window.AdminPalette) AdminConsole.openPalette(); });
+      return;
+    }
+    if (palette.isOpen()) return;
+    const sections = AdminConsole._visibleSections()
+      .map((s) => ({ key: s.key, label: s.label, group: AdminConsole._railGroupOf(s.key) }));
+    palette.open(sections, (key) => AdminConsole.jumpTo(key));
+  },
+
+  // Open a section the way the chassis would: a drill-in on a phone (a real
+  // hash navigation), the in-place switch on a desktop. Used by the palette
+  // and by the Overview dashboard's links. Only visible sections.
+  jumpTo(key) {
+    if (!AdminConsole._visibleSections().some((s) => s.key === key)) return;
+    AdminConsole._railGroup = null;
+    if (AdminConsole._isMobile()) AdminConsole._openSection(key);
+    else AdminConsole.setSection(key);
   },
 
   // Mobile level 1: the section menu. A list, not a tab set — so plain
@@ -1098,8 +1356,9 @@ const AdminConsole = {
       // producers wire their own output — _renderMobileMenu right after its
       // innerHTML write, and each section module for its own controls.
       AdminConsole._wireSectionButtons(sideHost);
-      AdminConsole._wireGroupToggles(sideHost);
+      AdminConsole._wireRail(sideHost);
     }
+    AdminConsole._paintEnv();
     // In public mode the viewer isn't an admin at all, so the view-only
     // ADMIN banner would be nonsense — suppress it rather than showing an
     // amber "you can't make changes" strip to a regular member.

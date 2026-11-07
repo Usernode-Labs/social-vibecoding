@@ -142,6 +142,11 @@ function onExit(e: { preventDefault(): void }) {
   location.hash = target;
 }
 
+// The band's "Search or jump…" button: the chassis opens the palette (#6454).
+function onSearch() {
+  (window as any).AdminConsole?.openPalette?.();
+}
+
 export function AdminScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
 
@@ -184,9 +189,37 @@ export function AdminScreen() {
           <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
             <span className="h-8 w-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400" aria-hidden="true"></span>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold">Admin console</p>
+              <p className="text-sm font-semibold">
+                <span>Admin console</span>
+                {/*
+                    Which build this is (#6454), read from GET /api/version's
+                    `env` by AdminConsole._loadEnv. Both words ship hidden and
+                    the one naming this build is revealed through classList
+                    (AdminConsole._paintEnv); an unknown environment shows
+                    neither.
+                */}
+                <span data-admin-env="production" className="hidden ms-2 rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white align-middle">Production</span>
+                <span data-admin-env="staging" className="hidden ms-2 rounded-full bg-amber-900/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-900 align-middle dark:bg-amber-100/10 dark:text-amber-100">Staging</span>
+              </p>
               <p className="text-xs text-amber-800 dark:text-amber-200">{"Platform-wide tools. These are not your settings but the settings of the platform. Be careful before changing anything."}</p>
             </div>
+            {/*
+                Search or jump (#6454): the visible way to the palette that
+                ⌘K / Ctrl+K also opens. A static button whose press is handed
+                to the chassis; the dialog renders into #admin-palette-host.
+            */}
+            <button
+              id="admin-search-open"
+              type="button"
+              onClick={onSearch}
+              aria-label="Search or jump"
+              aria-keyshortcuts="Control+K Meta+K"
+              className="inline-flex items-center gap-2 min-h-[36px] shrink-0 rounded-lg bg-amber-900/10 px-3 text-sm font-medium text-amber-900 transition-colors hover:bg-amber-900/20 dark:bg-amber-100/10 dark:text-amber-100 dark:hover:bg-amber-100/20"
+            >
+              <span className="md:hidden">Search</span>
+              <span className="hidden md:inline">{"Search or jump…"}</span>
+              <kbd className="hidden md:inline rounded bg-amber-900/10 px-1.5 font-mono text-xs dark:bg-amber-100/10">Ctrl K</kbd>
+            </button>
             <a
               id="admin-exit"
               href="#profile"
@@ -199,15 +232,16 @@ export function AdminScreen() {
         </div>
         <div className="md:flex md:items-start md:gap-6">
           {/*
-              Desktop sidebar menu. Below md there is no nav here at all:
-              phones get the two-level hierarchy instead (the level-1 menu
-              renders INTO #admin-section-content). Empty on arrival —
-              AdminConsole._renderShell() fills it.
+              Desktop nav: the control room's rail of groups beside the panel
+              of the selected group's sections (#6454). Below md there is no
+              nav here at all: phones get the two-level hierarchy instead
+              (the level-1 menu renders INTO #admin-section-content). Empty
+              on arrival — AdminConsole._renderShell() fills it.
           */}
           <nav
             id="admin-nav-desktop"
             aria-label="Admin sections"
-            className="hidden md:block md:w-64 shrink-0 space-y-1"
+            className="hidden md:block md:w-72 shrink-0"
           >
           </nav>
           <div className="flex-1 min-w-0">
@@ -239,6 +273,12 @@ export function AdminScreen() {
             <div id="admin-section-content" className="pb-8"></div>
           </div>
         </div>
+        {/*
+            Search or jump's dialog (#6454). Ships EMPTY: admin-palette.tsx
+            portals the dialog in while it is open and unmounts it on close,
+            the same seam the sections use for #admin-section-content.
+        */}
+        <div id="admin-palette-host"></div>
         {/*
             Temporary password modal (issue #282): the reset response is the
             only time the plaintext exists — shown once, never persisted.

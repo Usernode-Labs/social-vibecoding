@@ -155,7 +155,10 @@ test('the console island imports every admin module, console first', () => {
     // estimates are kept honest against what changes actually cost.
     'admin-model-costs',
     'admin-node',
-    'admin-overview', 'admin-push', 'admin-reports', 'admin-rollover',
+    'admin-overview',
+    // #6454: Search or jump, the console's palette (not a section).
+    'admin-palette',
+    'admin-push', 'admin-reports', 'admin-rollover',
     // Sign-in providers: Continue with Apple / Google, set up with each one's keys.
     'admin-sign-in',
     // The watch-only small-change tag's verdicts.
@@ -261,17 +264,19 @@ test('the menu carries every section, grouped, with no external tools left', () 
   const menuHtml = consoleJs.slice(consoleJs.indexOf('_mobileMenuHtml()'));
   assert.match(menuHtml.slice(0, 1600), /_groupedSections\(\)/,
     'the mobile menu groups via the shared helper');
+  // The desktop rail (#6454) groups through _railGroups(), which is built on
+  // the same helper, so the rail and the phone menu cannot drift either.
   const sideHtml = consoleJs.slice(consoleJs.indexOf('  _navItemsHtml()'));
-  assert.match(sideHtml.slice(0, 1200), /_groupedSections\(\)/,
-    'the sidebar groups via the shared helper');
-  // #1152 made each heading a collapse toggle. Both builders must key that
-  // state off the group NAME the shared helper emits — keying off the map
-  // index would silently mis-pair the moment _visibleSections() narrows the
-  // menu and a group drops out, collapsing the wrong heading's rows.
-  for (const [label, html] of [['sidebar', sideHtml], ['mobile menu', menuHtml]]) {
-    assert.match(html.slice(0, 2400), /_isGroupCollapsed\(g\.name\)/,
-      `the ${label}'s collapse state is keyed by group name, not by index`);
-  }
+  assert.match(sideHtml.slice(0, 1200), /_railGroups\(\)/,
+    'the desktop panel groups via the rail helper');
+  const railGroups = consoleJs.slice(consoleJs.indexOf('  _railGroups() {'));
+  assert.match(railGroups.slice(0, 600), /_groupedSections\(\)/,
+    'and the rail helper reads the shared grouping');
+  // #1152 made each phone heading a collapse toggle, keyed off the group NAME
+  // the shared helper emits — keying off the map index would silently
+  // mis-pair the moment _visibleSections() narrows the menu.
+  assert.match(menuHtml.slice(0, 2400), /_isGroupCollapsed\(g\.name\)/,
+    "the mobile menu's collapse state is keyed by group name, not by index");
 });
 
 // #860: the six folded-in sections each live in their own module. They were

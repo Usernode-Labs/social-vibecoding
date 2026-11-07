@@ -428,6 +428,8 @@ const ADDED_IDS = {
   // ── #5286: the admin console marks itself ─────────────────────────
   'admin-console-bar': '#5286: the admin console\'s own band at the top of #admin-root, ships hidden and is revealed through classList by AdminConsole._renderShell for an admin (never in public mode).',
   'admin-exit': '#5286: the band\'s Exit link, href #profile, which goes back to the address the console was entered from when one is known.',
+  'admin-search-open': '#6454: the band\'s "Search or jump…" button, static chassis markup whose press hands to AdminConsole.openPalette (the same palette ⌘K / Ctrl+K opens while the console is open).',
+  'admin-palette-host': '#6454: the Search or jump dialog\'s host in #admin-root, shipped EMPTY; admin-palette.tsx portals the dialog into it while it is open and unmounts it on close.',
   // ── #5405: search over the loaded notifications ───────────────────
   'notifications-search': '#5405: the search field\'s block between the notifications sheet\'s title and the Unread | All tabs.',
   'notifications-search-input': '#5405: the field itself (type="search"). Filters the tab that is open, over the rows already loaded, by project, kind and subject; Escape with text empties it.',

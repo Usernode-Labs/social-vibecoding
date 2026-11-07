@@ -1,10 +1,12 @@
 // Collapsible admin menu groups (#1152) — Operations, People, Insights,
 // Platform fold away, and the fold persists per browser.
 //
-// Both admin menu surfaces (the desktop sidebar written into
-// #admin-nav-desktop, and the phone level-1 menu written into
-// #admin-section-content) render from ONE grouping helper, so this is one
-// feature with two renderers. Contract pinned here:
+// ON PHONES ONLY since #6454. The desktop sidebar's collapsible headings were
+// replaced by the control room's rail of groups and its panel
+// (tests/admin-control-room.test.js pins those); the phone level-1 menu,
+// written into #admin-section-content, keeps its collapsible headings
+// exactly as they were. Both still render from ONE grouping helper. Contract
+// pinned here:
 //
 //  - the collapse state is a versioned localStorage key holding the
 //    COLLAPSED group names — not the expanded ones, which is what makes
@@ -97,7 +99,7 @@ test('the collapse state is a versioned key holding the COLLAPSED groups', () =>
     'a group is collapsed only when its name is IN the set — absent means expanded');
 });
 
-test('both menus render group headings as real toggle buttons', () => {
+test('the phone menu renders group headings as real toggle buttons', () => {
   const toggle = sliceFn('_groupToggleHtml(name, domId, collapsed, cls) {', 1200);
   assert.match(toggle, /<button type="button" data-admin-group-toggle="/,
     'a real <button>, so Tab + Enter/Space work with no keydown handler');
@@ -115,25 +117,12 @@ test('both menus render group headings as real toggle buttons', () => {
   assert.match(sliceFn('_groupDomId(prefix, name) {', 300), /\$\{prefix\}-/,
     'the container id is prefixed per surface');
 
-  const side = sliceFn('_navItemsHtml() {', 2200);
-  assert.match(side, /_groupToggleHtml\(g\.name, domId, collapsed,/,
-    'the sidebar heading is the shared toggle');
-  assert.match(side, /_groupDomId\('admin-nav-group', g\.name\)/,
-    "the sidebar's container ids are admin-nav-group-*");
-  assert.match(side, /data-admin-group="\$\{AdminConsole\.esc\(g\.name\)\}"/,
-    'the sidebar items container is addressable by group name');
-  assert.match(side, /collapsed \? ' class="hidden"' : ''/,
-    'and is hidden when the group is collapsed');
-  // The rows are the <nav>'s section links, the active one announced as the
-  // current page. QA 2026-09-24 Q20: they were `role="tab"` with no tablist
-  // parent (axe aria-required-parent), so the tab-set contract is retired.
-  // (This member only: the phone menu's comment after it names the same two
-  // attributes in prose.)
-  const sideOnly = side.slice(0, side.indexOf('\n  },\n'));
-  assert.ok(sideOnly.length > 200, 'sliced to the end of _navItemsHtml');
-  assert.doesNotMatch(sideOnly, /role="tab"/, 'sidebar rows are not orphan tabs');
-  assert.doesNotMatch(sideOnly, /aria-selected=/, 'and carry no tab selection state');
-  assert.match(side, /isActive \? ' aria-current="page"' : ''/, 'the active row is announced as the current page');
+  // The desktop nav is the control room's rail and panel since #6454: no
+  // heading there collapses any more, and no desktop surface writes the
+  // collapse state. tests/admin-control-room.test.js pins what replaced it.
+  const side = bodyOf('_navItemsHtml() {');
+  assert.doesNotMatch(side, /_groupToggleHtml\(/, 'the desktop panel has no collapse toggles');
+  assert.doesNotMatch(side, /_isGroupCollapsed\(/, 'and reads no collapse state');
 
   const mobile = sliceFn('_mobileMenuHtml() {', 2400);
   assert.match(mobile, /_groupToggleHtml\(g\.name, domId, collapsed,/,
@@ -147,15 +136,13 @@ test('both menus render group headings as real toggle buttons', () => {
     'the card hides when collapsed, and the toggle stays outside it so '
     + '[&>button:last-child] still means "the last section row"');
 
-  // One grouping helper, keyed by NAME on both surfaces — an index-keyed
-  // toggle would desync the moment public mode narrows the menu.
-  for (const body of [side, mobile]) {
-    assert.match(body, /_isGroupCollapsed\(g\.name\)/,
-      'collapse is looked up by group name, from the shared helper output');
-  }
+  // Keyed by NAME — an index-keyed toggle would desync the moment public
+  // mode narrows the menu.
+  assert.match(mobile, /_isGroupCollapsed\(g\.name\)/,
+    'collapse is looked up by group name, from the shared helper output');
 });
 
-test('a heading press is a menu-only action, wired on both hosts', () => {
+test('a heading press is a menu-only action, wired on the phone menu', () => {
   const wire = bodyOf('_wireGroupToggles(root) {');
   assert.match(wire, /querySelectorAll\('\[data-admin-group-toggle\]'\)/,
     'scoped to the host just written, like _wireSectionButtons');
@@ -170,8 +157,8 @@ test('a heading press is a menu-only action, wired on both hosts', () => {
   }
 
   const shell = bodyOf('_renderShell() {');
-  assert.match(shell, /_wireGroupToggles\(sideHost\)/,
-    'the sidebar repaint wires its own toggles');
+  assert.doesNotMatch(shell, /_wireGroupToggles\(/,
+    'the desktop rail has no toggles to wire (#6454)');
   const menu = sliceFn('_renderMobileMenu(host) {', 300);
   assert.match(menu, /_wireGroupToggles\(host\)/,
     'the phone menu repaint wires its own toggles');
@@ -207,22 +194,14 @@ test('arriving at a section expands its group, before the repaint', () => {
     'the rule is arrival-only — a deliberate collapse of the current group sticks');
 });
 
-test('dapp.json checks the /#admin menu ships expanded and collapsible', () => {
+test('dapp.json no longer pins the desktop collapse toggles (#6454)', () => {
+  // The two #1152 checks selected the desktop sidebar's toggles, which the
+  // control room's rail replaced. They were rewritten, not dropped:
+  // tests/admin-control-room.test.js pins their replacements.
   const declared = Array.isArray(dapp.tests) ? dapp.tests : [];
-  const bySel = (sel) => declared.find((t) => t.expectSelector === sel);
-
-  const collapsible = bySel(
-    '#admin-nav-desktop [data-admin-group-toggle="Operations"][aria-expanded="true"]');
-  assert.ok(collapsible, 'a check asserts the heading renders as an expanded toggle');
-  assert.equal(collapsible.path, '/#admin');
-
-  const active = bySel(
-    '#admin-nav-desktop [data-admin-group="People"]:not(.hidden) [data-admin-section="users"]');
-  assert.ok(active, "a check asserts the active section's group is visible on arrival");
-  assert.equal(active.path, '/#admin/users');
-
-  // #860's grouping check is the neighbour these two sit beside, not a
-  // thing they replace.
+  assert.ok(!declared.some((t) => /#admin-nav-desktop \[data-admin-group-toggle/.test(t.expectSelector || '')),
+    'no declared check still asserts a desktop collapse toggle');
+  // #860's grouping check is still there.
   assert.ok(declared.some((t) => t.path === '/#admin' && t.expectText === 'Operations'),
     'the original grouped-headings check still stands');
 });

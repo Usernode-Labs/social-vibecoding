@@ -8,10 +8,11 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // Operations overview — the console's landing section (#admin, #admin/overview).
 //
 // Three tiles over one /api/admin/overview read: apps wedged in a non-terminal
-// creation state, today's platform LLM spend, and workers whose session is
-// gone. Below them, the detail for whichever of the three is non-empty. An
-// all-clear renders as a sentence rather than three empty lists, because "no
-// stuck apps" is the answer an operator opened this page for.
+// creation state, workers whose session is gone, and today's platform LLM
+// spend. Below them, what needs attention and who spent the most today
+// (#6454, see the dashboard note below). An all-clear renders as a sentence
+// rather than an empty list, because "no stuck apps" is the answer an
+// operator opened this page for.
 //
 // PERMISSIONS: any admin, full or view-only. Pure read surface — no mutating
 // controls, so no canAdminWrite gate.
@@ -40,14 +41,70 @@ interface OverviewData {
   llmToday?: { totalSpendCents: number; users?: Array<{ username: string; costCents: number }> };
 }
 
-const TILE = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3';
+// ── The control room's dashboard (#6454) ───────────────────────────────
+//
+// The same one read, drawn for somebody who keeps it open all day: three
+// headline tiles, then ONE "Needs attention" list that puts stuck apps and
+// orphan workers side by side, each with a severity stripe and a jump to the
+// section where it is dealt with (Apps & usage for an app, Health & status for
+// a worker); nothing here writes. Then today's top spenders with a bar each,
+// proportional to the top one, and a jump to Model costs.
+//
+// It refreshes itself every 30 seconds while it is mounted AND the tab is
+// visible (a hidden tab skips the tick and catches up when it is shown
+// again). destroy() clears the timer, as does the component's own cleanup:
+// leaving Overview must not leave /api/admin/overview polled for the life of
+// the tab. Every load also hands the attention count to the desktop rail
+// (AdminConsole.setAttention), the only other reader of it.
+
+const REFRESH_MS = 30000;
+
+const TILE = 'rounded-xl bg-zinc-100 dark:bg-zinc-800 p-3';
 const TILE_LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400';
-const GROUP_LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-1';
-const ROW = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2 rounded bg-zinc-100 dark:bg-zinc-800';
+const GROUP_LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-2';
 const MUTED_SM = 'text-xs text-zinc-500 dark:text-zinc-400';
+const ROW = 'flex items-stretch gap-3 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 overflow-hidden';
+const FIGURE_CALM = 'text-2xl font-bold mt-1 text-zinc-900 dark:text-zinc-100';
+const FIGURE_ALERT = 'text-2xl font-bold mt-1 text-red-700 dark:text-red-300';
+
+// The stripe: red for an app whose creation failed, amber for one still
+// "creating" and for a worker with no session behind it.
+const STRIPE_RED = 'w-1 shrink-0 bg-red-500 dark:bg-red-400';
+const STRIPE_AMBER = 'w-1 shrink-0 bg-amber-500 dark:bg-amber-400';
+
+let timer: ReturnType<typeof setInterval> | null = null;
+
+function stopTimer() {
+  if (timer) { clearInterval(timer); timer = null; }
+}
+
+function jump(key: string) {
+  (window as any).AdminConsole?.jumpTo?.(key);
+}
+
+function age(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '';
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 48) return `${hours}h ${mins % 60}m`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+function uptime(seconds?: number): string {
+  const mins = Math.round((seconds || 0) / 60);
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+function dollars(cents: number): string {
+  return `$${((Number(cents) || 0) / 100).toFixed(2)}`;
+}
 
 function OverviewSection() {
   const [data, setData] = useState<OverviewData | null>(null);
+  const [updated, setUpdated] = useState<Date | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -57,91 +114,151 @@ function OverviewSection() {
     const { data: payload } = await (window as any).AdminConsole.fetchJson('/api/admin/overview');
     if (!alive.current || !payload || typeof payload !== 'object') return;
     setData(payload);
+    setUpdated(new Date());
+    const n = (payload.stuckApps || []).length + (payload.orphanWorkers || []).length;
+    (window as any).AdminConsole?.setAttention?.(n);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    stopTimer();
+    timer = setInterval(() => {
+      if (document.visibilityState === 'visible') load();
+    }, REFRESH_MS);
+    // A tab shown again after a hidden stretch catches up at once.
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      stopTimer();
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [load]);
 
   const stuck = data?.stuckApps || [];
   const orphans = data?.orphanWorkers || [];
   const llm = data?.llmToday || { totalSpendCents: 0, users: [] };
-  const spenders = (llm.users || []).slice(0, 5);
-  const anyDetail = stuck.length || orphans.length || spenders.length;
+  const spenders = [...(llm.users || [])]
+    .sort((a, b) => (b.costCents || 0) - (a.costCents || 0))
+    .slice(0, 5);
+  const topCents = spenders.length ? Math.max(1, spenders[0].costCents || 0) : 1;
+  const attention = stuck.length + orphans.length;
 
   return (
-    <div className={`${AdminUI.card} p-4`}>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className={AdminUI.cardTitle}>Operations</h2>
-        <button id="admin-refresh-overview" type="button" className={`${AdminUI.btn.link} text-xs`}
-          onClick={load}>Refresh</button>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-        <div className={TILE}>
-          <div className={TILE_LABEL}>Stuck apps</div>
-          <div id="admin-overview-stuck" className="text-2xl font-bold mt-1">{data ? stuck.length : '—'}</div>
-        </div>
-        <div className={TILE}>
-          <div className={TILE_LABEL}>LLM spend today</div>
-          <div id="admin-overview-llm" className="text-2xl font-bold mt-1">
-            {data ? `$${(llm.totalSpendCents / 100).toFixed(2)}` : '—'}
+    <div id="admin-overview-dashboard" className="space-y-4">
+      <div className={`${AdminUI.card} p-4`}>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h2 className={AdminUI.cardTitle}>Operations</h2>
+          <div className="flex items-center gap-3">
+            <span id="admin-overview-updated" className={MUTED_SM}>
+              {updated ? `Updated ${updated.toLocaleTimeString()} · refreshes every 30 s` : 'Refreshes every 30 s'}
+            </span>
+            <button id="admin-refresh-overview" type="button" className={`${AdminUI.btn.link} text-xs`}
+              onClick={load}>Refresh</button>
           </div>
         </div>
-        <div className={TILE}>
-          <div className={TILE_LABEL}>Orphan workers</div>
-          <div id="admin-overview-orphan" className="text-2xl font-bold mt-1">{data ? orphans.length : '—'}</div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className={TILE}>
+            <div className={TILE_LABEL}>Stuck apps</div>
+            <div id="admin-overview-stuck" className={data && stuck.length ? FIGURE_ALERT : FIGURE_CALM}>
+              {data ? stuck.length : '—'}
+            </div>
+          </div>
+          <div className={TILE}>
+            <div className={TILE_LABEL}>Orphan workers</div>
+            <div id="admin-overview-orphan" className={data && orphans.length ? FIGURE_ALERT : FIGURE_CALM}>
+              {data ? orphans.length : '—'}
+            </div>
+          </div>
+          <div className={TILE}>
+            <div className={TILE_LABEL}>LLM spend today</div>
+            <div id="admin-overview-llm" className={FIGURE_CALM}>
+              {data ? dollars(llm.totalSpendCents) : '—'}
+            </div>
+          </div>
         </div>
       </div>
-      <div id="admin-overview-details" className="space-y-3 text-sm">
-        {!data ? <p className={AdminUI.loading}>Loading…</p> : null}
-        {stuck.length ? (
-          <div>
-            <div className={GROUP_LABEL}>Stuck apps</div>
-            <ul className="space-y-1">
+
+      <div id="admin-overview-details" className="grid grid-cols-1 xl:grid-cols-2 gap-4 text-sm">
+        <section id="admin-overview-attention" className={`${AdminUI.card} p-4`}>
+          <div className={GROUP_LABEL}>{attention ? `Needs attention · ${attention}` : 'Needs attention'}</div>
+          {!data ? <p className={AdminUI.loading}>Loading…</p> : null}
+          {data && !attention ? (
+            <p id="admin-overview-all-clear" className={AdminUI.muted}>
+              All clear: no stuck apps and no orphan workers right now.
+            </p>
+          ) : null}
+          {attention ? (
+            <ul className="space-y-1.5">
               {stuck.map((a) => (
-                <li key={a.slug} className={ROW}>
-                  <span>
-                    <span className="font-mono">{a.slug}</span>
-                    <span className={MUTED_SM}>{` (${a.dbStatus}, by ${a.createdBy || '—'})`}</span>
+                <li key={`app-${a.slug}`} className={ROW} data-attention="app">
+                  <span className={a.dbStatus === 'error' ? STRIPE_RED : STRIPE_AMBER} aria-hidden="true"></span>
+                  <span className="flex-1 min-w-0 py-2">
+                    <span className="block truncate">
+                      <span className="font-mono">{a.slug}</span>
+                      <span className={MUTED_SM}>{` · app ${a.dbStatus}`}</span>
+                    </span>
+                    <span className={`block ${MUTED_SM}`}>
+                      {`by ${a.createdBy || '—'} · ${age(a.createdAt)} ago`}
+                    </span>
                   </span>
-                  <span className={MUTED_SM}>{new Date(a.createdAt).toLocaleString()}</span>
+                  <span className="flex items-center pe-3">
+                    <button type="button" className={`${AdminUI.btn.link} text-xs`} onClick={() => jump('apps')}>
+                      Apps & usage
+                    </button>
+                  </span>
                 </li>
               ))}
-            </ul>
-          </div>
-        ) : null}
-        {orphans.length ? (
-          <div>
-            <div className={GROUP_LABEL}>Orphan workers</div>
-            <ul className="space-y-1">
               {orphans.map((w) => (
-                <li key={w.name} className={ROW}>
-                  <span>
-                    <span className="font-mono">{w.name}</span>
-                    <span className={MUTED_SM}>
-                      {` ${w.appSlug ? `app ${w.appSlug}` : 'no app'} · up ${Math.round((w.uptimeSeconds || 0) / 60)}m${
+                <li key={`worker-${w.name}`} className={ROW} data-attention="worker">
+                  <span className={STRIPE_AMBER} aria-hidden="true"></span>
+                  <span className="flex-1 min-w-0 py-2">
+                    <span className="block truncate">
+                      <span className="font-mono">{w.name}</span>
+                      <span className={MUTED_SM}>{' · orphan worker'}</span>
+                    </span>
+                    <span className={`block ${MUTED_SM}`}>
+                      {`${w.appSlug ? `app ${w.appSlug}` : 'no app'} · up ${uptime(w.uptimeSeconds)}${
                         w.sessionArchived ? ' · session archived' : ''}`}
                     </span>
                   </span>
+                  <span className="flex items-center pe-3">
+                    <button type="button" className={`${AdminUI.btn.link} text-xs`} onClick={() => jump('status')}>
+                      Health & status
+                    </button>
+                  </span>
                 </li>
               ))}
             </ul>
+          ) : null}
+        </section>
+
+        <section id="admin-overview-spenders" className={`${AdminUI.card} p-4`}>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className={TILE_LABEL}>{"Today's top spenders"}</div>
+            <button type="button" className={`${AdminUI.btn.link} text-xs`} onClick={() => jump('model-costs')}>
+              Model costs
+            </button>
           </div>
-        ) : null}
-        {spenders.length ? (
-          <div>
-            <div className={GROUP_LABEL}>Top LLM spenders today</div>
-            <ul className="space-y-1">
+          {data && !spenders.length ? (
+            <p className={AdminUI.muted}>No LLM spend recorded today.</p>
+          ) : null}
+          {spenders.length ? (
+            <ul className="space-y-2">
               {spenders.map((u) => (
-                <li key={u.username} className="flex items-center justify-between gap-3 p-2 rounded bg-zinc-100 dark:bg-zinc-800">
-                  <span>{u.username}</span>
-                  <span className="text-xs font-mono text-zinc-500 dark:text-zinc-400">{`$${(u.costCents / 100).toFixed(2)}`}</span>
+                <li key={u.username}>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="truncate">{u.username}</span>
+                    <span className="text-xs font-mono text-zinc-500 dark:text-zinc-400">{dollars(u.costCents)}</span>
+                  </div>
+                  <div className="mt-1 h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800" aria-hidden="true">
+                    <div className="h-1.5 rounded-full bg-violet-500"
+                      style={{ width: `${Math.max(2, Math.round(((u.costCents || 0) / topCents) * 100))}%` }}></div>
+                  </div>
                 </li>
               ))}
             </ul>
-          </div>
-        ) : null}
-        {data && !anyDetail ? (
-          <p className={MUTED_SM}>All clear: no stuck apps, no orphan workers, no LLM spend recorded today.</p>
-        ) : null}
+          ) : null}
+        </section>
       </div>
     </div>
   );
@@ -156,6 +273,8 @@ const AdminOverview = {
   },
 
   destroy() {
+    // The 30-second refresh stops here, before the portal goes.
+    stopTimer();
     unmountLegacyPortal(host);
     host = null;
   },
