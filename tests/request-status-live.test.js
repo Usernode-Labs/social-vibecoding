@@ -102,7 +102,7 @@ test('#6390: a reading track says the bot is on it, with no Ask button', () => {
   assert.equal(status.ownAgent, false, 'no "Build it with your own Claude Code" either');
 });
 
-test('#6390: once the row carries the bot, the card offers See progress as it does fresh', () => {
+test('#6390: once the row carries the bot, the card reads it as a fresh page does', () => {
   const { AppView } = makeAppView();
   AppView._ghIssuesMeta = { myRemaining: 5, homeroomBot: { enabled: true } };
   const status = plain(AppView._requestStatusView(baseIssue({
@@ -110,8 +110,10 @@ test('#6390: once the row carries the bot, the card offers See progress as it do
     track: readingTrack,
   })));
   assert.equal(status.lead, 'Homeroom bot is reading this.');
-  assert.equal(status.action.label, 'See progress');
-  assert.deepEqual(status.action.act, { fn: 'openBotChatFromRequest', args: [3] });
+  // #6401/#6403 (merged after this request): the progress card under this
+  // one already says where Homeroom bot is, so the request's own page offers
+  // no button that scrolls to it. What matters here is no Ask button.
+  assert.equal(status.action, null, 'no Ask button once the row carries the bot');
 });
 
 test('#6390: someone else\'s bot gets the greyed reading button, never Ask', () => {
@@ -147,7 +149,8 @@ test('#6390: a work event re-reads the request open beside the bot tab', async (
   assert.equal(AppView._ghIssues[0].bot.what, 'reading', 'the open row in the board list is replaced');
   assert.equal(AppView._ghIssues[1].number, 5, 'other rows are left alone');
   assert.equal(renders.length, 1, 'the head repaints from the fresh row');
-  assert.equal(AppView._requestStatusView(AppView._ghIssues[0]).action.label, 'See progress');
+  assert.equal(AppView._requestStatusView(AppView._ghIssues[0]).lead, 'Homeroom bot is reading this.');
+  assert.equal(AppView._requestStatusView(AppView._ghIssues[0]).action, null, 'no Ask button once the row is re-read');
   // Another work event with nothing new for this request: one GET, no repaint.
   listeners['homeroom-bot-work-changed'][0](new sandbox.CustomEvent('homeroom-bot-work-changed'));
   await AppView._requestRowRefresh.done;
