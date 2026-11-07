@@ -119,8 +119,15 @@ test('Profile opens the Edit profile sheet in place on a plain click', () => {
 });
 
 test('App slots says the allowance in words, and opens the create dialog in place', () => {
-  assert.match(rowSource(CODE, 'profile-row-app-slots'),
-    /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*\(window[^;]*\.App\?\.showCreateModal\?\.\(\);/);
+  // #6446: a plain click opens the make screen while a slot is free, and the
+  // App allowance card (Profile.showAppSlots) once none is, so a viewer at
+  // the limit is told why instead of being sent to a Make it they cannot use.
+  const slotsRow = rowSource(CODE, 'profile-row-app-slots');
+  assert.match(slotsRow,
+    /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);/);
+  assert.match(slotsRow,
+    /allowance\.blocked[\s\S]*?Profile\.showAppSlots\(\)[\s\S]*?\.App\?\.showCreateModal\?\.\(\);/,
+    'a blocked allowance opens the allowance card; otherwise the make screen');
   const { appSlotsLine } = loadTsx('frontend/src/features/dialogs/app-allowance.tsx');
   assert.equal(appSlotsLine(null, null), null, 'no allowance yet, no invented count');
   assert.equal(appSlotsLine({ used: 1, limit: 2, remaining: 1 }, null), '1 of 2 app slots used');
@@ -141,6 +148,41 @@ test('App slots says the allowance in words, and opens the create dialog in plac
   assert.match(html, /id="profile-row-app-slots"[\s\S]*?App slots[\s\S]*?1 of 2 app slots used/);
   assert.match(html, /id="profile-account"/);
   assert.match(html, /id="profile-row-friends"/, 'Friends sits in the Account group with it');
+});
+
+test('with no slot free the App allowance card says so, and offers Request more (#6446)', () => {
+  const store = loadTsx('frontend/src/features/dialogs/app-allowance-store.js');
+  const allowance = loadTsx('frontend/src/features/dialogs/app-allowance.tsx', {
+    stubs: { './app-allowance-store.js': store },
+  });
+  const sheet = loadTsx('frontend/src/features/profile/app-slots-sheet.tsx', {
+    stubs: { '../dialogs/app-allowance': allowance },
+  });
+
+  store.seedAppAllowance({ appCreationQuota: { used: 2, limit: 2, remaining: 0 } });
+  const spent = renderToHtml(createElement(sheet.AppSlotsSheet, {}));
+  assert.match(spent, /id="profile-app-slots-sheet"/);
+  assert.match(spent, /id="profile-app-slots-close"/);
+  assert.match(spent, /App allowance/);
+  assert.match(spent, /data-quota-state="spent"/);
+  assert.match(spent, /2 of 2 app slots used/);
+  assert.match(spent, /Request more/);
+
+  // A full server is a no-slot state too, and more slots would not help, so
+  // the card says so and offers no request.
+  store.seedAppAllowance({
+    appCreationQuota: { used: 0, limit: 2, remaining: 2 },
+    appServerCapacity: { used: 50, limit: 50, remaining: 0 },
+  });
+  const full = renderToHtml(createElement(sheet.AppSlotsSheet, {}));
+  assert.match(full, /data-quota-state="server-full"/);
+  assert.match(full, /Server is full/);
+  assert.doesNotMatch(full, /Request more/);
+
+  // The card renders only while it is asked for: the store starts closed.
+  const STORE = fs.readFileSync(
+    path.join(ROOT, 'frontend/src/features/profile/profile-store.js'), 'utf8');
+  assert.match(STORE, /appSlotsOpen: false/);
 });
 
 test('the rows that moved to Settings are not on Me any more', () => {

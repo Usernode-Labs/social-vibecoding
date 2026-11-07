@@ -96,6 +96,14 @@ export function useAppAllowance() {
       quota = { used: 0, limit: 2, remaining: 2 };
       server = { used: 50, limit: 50, remaining: 0, full: true };
     }
+    // #6446: Me's App slots row opens the allowance card instead of the make
+    // screen when no slot is free. A fresh staging account always has one,
+    // so the state is pinned here for the before/after shots. Display only,
+    // as above.
+    if (quota && shot === 'app-slots-spent') {
+      quota = { used: 2, limit: 2, remaining: 0 };
+      server = null;
+    }
   } catch { /* prerender */ }
   const spent = !!quota && quota.limit !== null && quota.used !== null && quota.used >= quota.limit;
   // QA 2026-09-24 Q33b: a full server blocks creation exactly as a spent

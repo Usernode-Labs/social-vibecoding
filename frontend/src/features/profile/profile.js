@@ -248,6 +248,7 @@ const Profile = {
     Profile._dismissSheet();
     Profile._dismissFeedback();
     Profile._dismissFriends();
+    Profile._dismissAppSlots();
     Profile._render();
   },
 
@@ -738,6 +739,34 @@ const Profile = {
     Profile._friendsRequested = false;
     if (d.signedOut || d.error || d.publicProfile || d.publicNotFound) return;
     Profile.showFriends();
+  },
+
+  // ── App slots, as a card over Me (#6446) ────────────────────────────
+  //
+  // With no slot free (or a full server) Me's "App slots" row opens this
+  // instead of the make screen: the same AppAllowance box the make screen
+  // shows, with its "Request more". A free slot keeps the make screen, and
+  // so does a modified click on the row, which goes to `#create`. It has no
+  // address of its own, and its claim on Back is the Friends card's.
+  _releaseAppSlots: null,
+
+  showAppSlots() {
+    if (profileStore.get().appSlotsOpen) return;
+    profileStore.set({ appSlotsOpen: true });
+    Profile._releaseAppSlots = pushDismissible(() => {
+      Profile._releaseAppSlots = null;
+      Profile._dismissAppSlots();
+      return true;
+    });
+  },
+
+  _dismissAppSlots() {
+    // Navigating, as _dismissFriends is: leaving the screen closes the card
+    // too.
+    const release = Profile._releaseAppSlots;
+    Profile._releaseAppSlots = null;
+    if (release) release({ navigating: true });
+    if (profileStore.get().appSlotsOpen) profileStore.set({ appSlotsOpen: false });
   },
 
   // `#profile?edit` — the Edit profile sheet, asked for from outside Me.

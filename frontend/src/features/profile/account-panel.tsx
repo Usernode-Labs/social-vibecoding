@@ -31,12 +31,13 @@
  * is the one place the allowance shows outside the create dialog, so a "your
  * app quota changed" notice has somewhere to point: "1 of 2 app slots used",
  * from the session's allowance store. A plain click opens the create dialog in
- * place, whose allowance card offers "Request more" once one slot or none is
- * left (#23); a modified click keeps `#create`. Friends was a section of its
- * own under these rows (#2386); it is a row now, with the one number it is
- * allowed ("1 request waiting": friends themselves are never counted), and it
- * opens the same section as a card over this screen (./friends-sheet.tsx), at
- * its own address, `#profile?friends`. "Your contributions", the newest
+ * place while a slot is free, and the App allowance card instead once none is
+ * (or the server is full), so the row says why and offers "Request more"
+ * (#6446, ./app-slots-sheet.tsx); a modified click keeps `#create`. Friends
+ * was a section of its own under these rows (#2386); it is a row now, with
+ * the one number it is allowed ("1 request waiting": friends themselves are
+ * never counted), and it opens the same section as a card over this screen
+ * (./friends-sheet.tsx), at its own address, `#profile?friends`. "Your contributions", the newest
  * merged changes under everything, is gone: Your changes lists them all.
  *
  * ── Settings ───────────────────────────────────────────────────────────
@@ -253,6 +254,13 @@ export function AccountPanel({ rows }: {
           onClick={(event) => {
             if (!plainClick(event)) return;
             event.preventDefault();
+            // No slot free (or a full server): the make screen could only
+            // say so and pale its Make it, so the row opens the allowance
+            // card, which offers "Request more" (#6446).
+            if (allowance.blocked) {
+              Profile.showAppSlots();
+              return;
+            }
             (window as unknown as { App?: { showCreateModal?: () => void } }).App?.showCreateModal?.();
           }}
           leading={<IconTile size="sm"><AppWindowIcon /></IconTile>}
