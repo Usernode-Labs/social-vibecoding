@@ -171,7 +171,7 @@ const SEEDS = {
         + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:0px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)"><tr><td width="34" height="34" bgcolor="#8bd669" style="width:34px;height:34px;background:#8bd669">&nbsp;</td><td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Use and improve apps together</td></tr></table>`
         + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:0px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)"><tr><td width="34" height="34" bgcolor="#fc5750" style="width:34px;height:34px;background:#fc5750">&nbsp;</td><td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Suggest, preview and vote on changes</td></tr></table>`
         + `{{#if hasMobile}}<p style="margin:24px 0 8px;font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#68686c">Try it on mobile</p>`
-        + `{{#if hasIos}}<p style="margin:0 0 8px"><strong>iPhone</strong>: Install TestFlight, then <a href="{{iosLink}}" style="color:#0a6ee0">open the Homeroom invite</a>.</p>{{/if}}`
+        + `{{#if hasIos}}<p style="margin:0 0 8px"><strong>iPhone</strong>: <a href="{{iosLink}}" style="color:#0a6ee0">Get Homeroom on the App Store</a>.</p>{{/if}}`
         + `{{#if hasAndroid}}<p style="margin:0 0 8px"><strong>Android</strong>: <a href="{{androidLink}}" style="color:#0a6ee0">Open the Homeroom testing link</a> while signed into Google Play with your waitlist email.</p>{{/if}}{{/if}}`
         + `<p>See you there,<br>Evan from Homeroom</p>`,
       text: `You're in.\nMake and share apps with groups and friends.\n\n`
@@ -182,7 +182,7 @@ const SEEDS = {
         + `- Make an app for your group\n- Use and improve apps together\n- Suggest, preview and vote on changes`
         + `{{#if hasMobile}}\n\n`
         + `Try it on mobile`
-        + `{{#if hasIos}}\niPhone: Install TestFlight, then open the Homeroom invite ({{iosLink}}).{{/if}}`
+        + `{{#if hasIos}}\niPhone: Get Homeroom on the App Store ({{iosLink}}).{{/if}}`
         + `{{#if hasAndroid}}\nAndroid: Open the Homeroom testing link ({{androidLink}}) while signed into Google Play with your waitlist email.{{/if}}{{/if}}\n\n`
         + `See you there,\nEvan from Homeroom`,
     },
