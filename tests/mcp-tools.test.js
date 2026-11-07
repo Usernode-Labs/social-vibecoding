@@ -2912,6 +2912,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // uploads its counterpart takes.
     'get_featured_illustration',
     'get_homeroom_bot',
+    // Admin › Journey, the waitlist and first-mile funnel, read from
+    // services/journey.js: registered only for a full platform admin, and
+    // refused in every handler for anybody else (tests/mcp-journey-tools.test.js).
+    'get_journey_cohorts', 'get_journey_first_mile', 'get_journey_person', 'get_journey_readings',
     // #4884. One discussion message whole, when the page cut the thread.
     'get_message',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
