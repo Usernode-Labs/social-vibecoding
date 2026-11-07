@@ -42,18 +42,18 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   assert.match(html, /id="platform-tabs-badge"/, 'the tab is what can carry a count');
   // The bar's order, pinned as a declared check. `+` rather than `~`: the
   // tabs are adjacent siblings. The markup is the desktop rail's order
-  // (#6019, 29 Oct 2026; One Home #6361 put AI above Messages): Home,
-  // Discover, AI, Messages, Communities (key `workshop`), you; app.css draws
-  // neither Discover nor Communities, on either bar, and lays the phone's
-  // four out as Home, AI, Messages, you. v3: Messages' nested conversations
-  // follow it, an empty element when shut. D (18 Oct 2026): Recents (the
+  // (#6019, 29 Oct 2026; One Home #6361 put AI above Messages and retired
+  // Discover's tab): Home, AI, Messages, Communities (key `workshop`), you;
+  // app.css draws no Communities, on either bar, and lays the phone's four
+  // out as Home, AI, Messages, you. D (18 Oct 2026): Recents (the
   // communities pinned to its top, then your others) sits after them, drawn
   // only on a desktop.
-  // Most hrefs are left out: the runner clips a selector at 256 characters
-  // (tests/proposal-tests-manifest.test.js), and the render tests pin them.
+  // Most hrefs are left out: the runner's selector cap
+  // (`MAX_TEST_SELECTOR_LEN`, tests/proposal-tests-manifest.test.js) would
+  // clip them, and the render tests pin them.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-ai[href="#homeroom-bot"]'
-      + ' + #platform-tab-messages + #platform-rail-conversations + #platform-rail-pinned'
+    === '#platform-tabs #platform-tab-home + #platform-tab-ai[href="#homeroom-bot"]'
+      + ' + #platform-tab-messages + #platform-rail-pinned'
       + ' + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me'),
   'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);

@@ -131,6 +131,12 @@
       "description": "The Content rules check on every proposal (#2722): a model reads the proposal's diff against the conventions' Content rules section. off: no row. advisory (default): a flag shows on the checks but does not stop the merge. blocking: a flag fails the checks, so the proposal cannot merge until the content is fixed. Fails open on any error."
     },
     {
+      "key": "TOKEN_ORDER_CHECK_MODE",
+      "group": "Platform",
+      "default": "advisory",
+      "description": "The 'Sign-in token read after the bridge' check on app proposals: flags a script the change adds above the bridge tag that reads the token from the address (the app then opens signed out in Homeroom). Reads already on main are never flagged. off: no row. advisory (default): a flag shows but does not stop the merge. blocking: a flag fails the checks. Fails open."
+    },
+    {
       "key": "SMALL_CHANGE_TAG_MODE",
       "group": "Platform",
       "default": "on",
@@ -502,7 +508,7 @@
       "key": "PLATFORM_MAIL_PROVIDER",
       "group": "Platform mail",
       "default": "auto",
-      "description": "Which transport sends platform mail: auto (default), gmail, http, brevo, or log. auto tries Gmail, then the generic HTTP API, and in production sends nothing rather than logging login codes. Brevo is used only when named here, because BREVO_API_KEY also sends SMS. A named provider with a missing key is reported as broken, not downgraded. A staging preview ALWAYS logs instead of delivering."
+      "description": "Which transport sends platform mail until an admin saves one in Admin → Email delivery: auto (default), gmail, http, brevo, or log. auto tries Gmail, then the generic HTTP API, and in production sends nothing rather than logging login codes. Brevo is used only when named, because BREVO_API_KEY also sends SMS. A named provider with a missing key is broken, not downgraded. Staging ALWAYS logs."
     },
     {
       "key": "PLATFORM_MAIL_FROM",
@@ -885,10 +891,10 @@
       ]
     },
     {
-      "name": "Me: Your work's rows open the Homeroom bot tab's History on Changes, Requests and Votes",
+      "name": "Me: Your work's rows open the Homeroom bot tab's History on Changes and Requests, the Your feedback sheet, and History on Votes",
       "path": "/?demo=1#profile",
       "expectText": "Your work",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#homeroom-bot/history?kind=change\"] + #profile-row-feedback[href=\"#homeroom-bot/history?kind=request\"] + #profile-row-votes[href=\"#homeroom-bot/history?kind=vote\"]"
+      "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#homeroom-bot/history?kind=change\"] + #profile-row-feedback[href=\"#homeroom-bot/history?kind=request\"] + #profile-row-feedback-history[href=\"#profile?feedback\"] + #profile-row-votes[href=\"#homeroom-bot/history?kind=vote\"]"
     },
     {
       "name": "The retired History address opens the Challenges tab, and the tabs are Challenges and Standings",
@@ -1472,35 +1478,6 @@
       "expectText": "Staging demo light app"
     },
     {
-      "name": "The app detail page opens from a browse row (?shot=browse-detail)",
-      "path": "/?shot=browse-detail#apps",
-      "expectText": "Your own version to change",
-      "expectSelector": "#browse-detail #browse-detail-open"
-    },
-    {
-      "name": "App details shows the ranked Contributors section (?demo=1)",
-      "path": "/?demo=1&shot=browse-detail#apps",
-      "expectSelector": "#browse-detail-contributors .browse-contrib-row",
-      "expectText": "staging-demo-lead"
-    },
-    {
-      "name": "Discover leads with the For you / Browse / Joined switch and a Filters button that shows no count by default",
-      "path": "/#apps",
-      "expectSelector": "#browse-screen:not(.hidden):has(#browse-view-switch > [data-view=\"foryou\"][aria-current=\"page\"] + [data-view=\"browse\"] + [data-view=\"joined\"]):has(#browse-type-row #browse-filters-btn:not([data-active-count]))",
-      "expectText": "For you"
-    },
-    {
-      "name": "The Featured switch narrows Discover to the admin's featured apps (?filter=featured)",
-      "path": "/?demo=1&filter=featured#apps",
-      "expectSelector": "#browse-screen:has(#browse-filters-btn[data-active-count=\"1\"]) #browse-list[data-filter=\"featured\"]:not(:has(.browse-row[data-slug=\"staging-demo-popular-1\"])) .browse-row[data-slug=\"staging-demo-featured\"]"
-    },
-    {
-      "name": "A stored sample without a live runtime does not offer a nonexistent Share link",
-      "path": "/#apps/staging-demo-forkable",
-      "expectSelector": "#browse-detail:has(h2):not(:has(#browse-detail-share))",
-      "expectText": "Staging demo forkable app"
-    },
-    {
       "name": "Bare #leaderboard renders all three tabs and opens on Challenges (#962, #2374)",
       "path": "/#leaderboard",
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"] ~ [data-standings-tab=\"topochain\"]) #challenges-root:not(.hidden) #tc-se-grid"
@@ -1522,23 +1499,6 @@
       "path": "/?demo=1",
       "expectSelector": "#home-body:not(:has(#home-discover-section)):not(:has(#home-continue-card)) #home-apps-section ~ #home-communities-section ~ #home-join-section:not([hidden]) > h2.home-area-label",
       "expectText": "Communities to join"
-    },
-    {
-      "name": "Directory leads with Featured and leaves a flagged app out (#1523, #5267, #5928)",
-      "path": "/?demo=1&curation=1&sort=recommended#apps",
-      "expectSelector": "#browse-list:has(h2 ~ [data-slug=\"directory-sample-listed\"][data-directory-state=\"listed\"]):not(:has(.browse-row[data-slug=\"directory-sample-flagged\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]",
-      "expectText": "Featured"
-    },
-    {
-      "name": "Show more is on every sort, not just Recommended (#1912)",
-      "path": "/?demo=1&curation=1&sort=users#apps",
-      "expectSelector": "#browse-list[data-sort=\"users\"]:not(:has(h2)):not(:has(.browse-row[data-slug=\"directory-sample-flagged\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]"
-    },
-    {
-      "name": "Show more holds an app with no icon, and a flagged app is in neither list (#1523)",
-      "path": "/?demo=1&curation=1&sort=recommended&shot=browse-more#apps",
-      "expectSelector": "#browse-list:not(:has([data-slug=\"directory-sample-flagged\"])) #browse-more-apps [data-slug=\"directory-sample-no-icon\"][data-directory-state=\"missing_icon\"]",
-      "expectText": "Show less"
     },
     {
       "name": "The launcher grid shows two rows by default, with a way to the rest",
@@ -1574,16 +1534,10 @@
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
     },
     {
-      "name": "#apps still opens Discover's app-store rows with a Join button, under a bar with no back slot (#2639, #2718); no tab draws it since One Home (#6361), whose Communities to join is the directory",
+      "name": "#apps, Discover's old address, opens Home on its Communities to join (One Home, #6361: the directory is Home's)",
       "path": "/#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list .browse-row .browse-add-btn",
-      "expectText": "Discover"
-    },
-    {
-      "name": "Browse rows carry a compact Join pill whose accessible name says what is joined (communities; QA 2026-09-24 Q10)",
-      "path": "/#apps",
-      "expectSelector": "#browse-list .browse-row .browse-add-btn[data-added=\"false\"][aria-label^=\"Join \"][title^=\"Join \"]",
-      "expectText": "Join"
+      "expectSelector": "#home-screen:not(.hidden) #home-body #home-join-section:not([hidden]) > h2.home-area-label",
+      "expectText": "Communities to join"
     },
     {
       "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
@@ -2183,9 +2137,10 @@
       "expectSelector": "#pu-l4"
     },
     {
-      "name": "Email delivery section renders the configuration status",
+      "name": "Email delivery section renders the configuration status and who sends email",
       "path": "/#admin/mail",
-      "expectSelector": "#admin-mail-status"
+      "expectSelector": "#admin-mail-status ~ #admin-mail-provider input[type=radio]",
+      "expectText": "Email is sent by"
     },
     {
       "name": "Email delivery section offers a test send, ledger and engagement reports",
@@ -2250,10 +2205,10 @@
       "expectText": "Your work"
     },
     {
-      "name": "Hub: For you's Your work row opens Homeroom bot narrowed to this project",
+      "name": "Hub: For you's Workshop row opens the project's Workshop",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > a[data-ws-mine-card][data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"]",
-      "expectText": "Your work"
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-workshop-row]",
+      "expectText": "Workshop"
     },
     {
       "name": "Foreign proposal: Explore in a coding agent is a row of the sheet’s ⋯ (#827, #4455); the Votes step names who voted, with How voting works as the ? at the line’s end",
@@ -2304,9 +2259,10 @@
       "expectText": "Close pending, will retry automatically"
     },
     {
-      "name": "The closing state also renders on the proposal's own discussion page (#1010)",
+      "name": "A vote to close opens the request's page, not the old governance view (#6439)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100074",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100074'] .gc-merging-badge .dc-status-spinner-arc"
+      "expectSelector": "#gc-thread-head .dev-request-root",
+      "expectText": "Request #900011"
     },
     {
       "name": "An illustration proposal card previews the proposed image beside the current one (#2086)",
@@ -2317,19 +2273,20 @@
     {
       "name": "An illustration proposal's discussion page carries the same preview (#2086)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100077",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100077'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
+      "expectSelector": "#gc-thread-head [data-gov-root='9100077'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
       "expectText": "Change the featured illustration"
     },
     {
-      "name": "An applied close proposal opens its discussion, not the board (#1115)",
+      "name": "An applied close vote's address opens the request it closed (#1115)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100060",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100060']"
+      "expectSelector": "#gc-thread-head .dev-request-root",
+      "expectText": "Request #900003"
     },
     {
-      "name": "An applied close proposal reachable only by id still opens (#1115)",
+      "name": "An applied close vote reachable only by id still opens the request (#1115)",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100062",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100062']",
-      "expectText": "closed by vote"
+      "expectSelector": "#gc-thread-head .dev-request-root",
+      "expectText": "Request #900003"
     },
     {
       "name": "#2603: a governance card's vote is the same picker a change's is, so the reason box opens with it",
@@ -2338,10 +2295,10 @@
       "expectText": "Vote"
     },
     {
-      "name": "#2603: a close proposal's page lists the votes cast on it, each in the voter's own words",
+      "name": "#2603: a close vote opens the request's page, where it is discussed",
       "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100072",
-      "expectSelector": "#gc-thread-head .dev-topic-about .dev-topic-roster .dev-ledger-reason[data-vote=\"yes\"]",
-      "expectText": "Checked it myself, nothing left to fix."
+      "expectSelector": "#gc-thread-head .dev-request-root",
+      "expectText": "Request #900001"
     },
     {
       "name": "App-admins section ships in the Members modal (#788)",
@@ -2576,9 +2533,9 @@
       "expectText": "Nothing here matches the current search and filters."
     },
     {
-      "name": "Workshop: the Workshop is the place named on the place bar, with the bar's button to the places beside it, and All items' search leaves the Overview whole, with no 'nothing matches' note (#2915, #4417; One Home #6361 put the places behind that button on a wide window too)",
+      "name": "Workshop: the Workshop is the place lit, a dot on its row says All items' search is still on, and the search leaves the Overview whole, with no 'nothing matches' note (#2915, #4417)",
       "path": "/?demo=1&ws=workshop&q=nothing-matches-this#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-place-bar=\"workshop\"] .dev-ws-places-btn + [data-place-title]) [data-ws-part=\"overview\"] + [data-ws-dashboard]",
+      "expectSelector": "body:has([data-places] [data-place=\"workshop\"][aria-current=\"page\"] [data-ws-filtered]) #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-place-bar=\"workshop\"]) [data-ws-part=\"overview\"] + [data-ws-dashboard]",
       "expectText": "All items"
     },
     {
@@ -2609,7 +2566,7 @@
       "expectSelector": "#dev-workshop [data-rf-project=\"usernode-2d5619\"] [data-review-flow]"
     },
     {
-      "name": "Needs you draws the review flow's change page in place in the pane, not over the shell, with its own Back (#6276)",
+      "name": "Needs you draws the review flow's change page in place in the pane, not over the shell, with its own Back (#6276); the old #workshop?ws=needs address lands on it (One Home, #6361)",
       "path": "/?demo=1&ws=needs#workshop",
       "expectSelector": "body:not(:has(> [data-rf-page])) #workshop-screen:not(.hidden) [data-workshop-pane=\"needs\"] [data-rf-page] [data-rf-back]"
     },
@@ -2664,10 +2621,10 @@
       "expectText": "Recently live"
     },
     {
-      "name": "On a wide window a project page's place bar names the Hub and carries the button to its places (Hub, Needs you, Workshop, #general and its topics), now that the sidebar nests none (#4417; One Home, #6361)",
+      "name": "A project page's places are Hub, Needs you and Workshop, a line, then #general under Channels and its topics under Topics, in the column beside the strip (#4417)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > [data-place-bar=\"status\"] .dev-ws-places-btn[aria-expanded=\"false\"] + h2[data-place-title]",
-      "expectText": "Hub"
+      "expectSelector": "[data-places=\"usernode-2d5619\"] > nav > [data-place=\"status\"][aria-current=\"page\"] + [data-place=\"needs\"] + [data-place=\"workshop\"] + [role=\"separator\"] + [data-places-group=\"channels\"] + [data-places-group=\"topics\"] > [data-place=\"c:onboarding\"]",
+      "expectText": "general"
     },
     {
       "name": "On a wide window the sidebar's Recents lists your communities with the one you are on lit, each row carrying its pin after the link (#3709, D; One Home #6361)",
@@ -3045,20 +3002,14 @@
       "expectText": "Homeroom news by email"
     },
     {
-      "name": "View on GitHub is an action on the app's own page, not a drawer row",
-      "path": "/#apps/staging-demo-dormant-approvers",
-      "expectSelector": "#browse-detail .browse-detail-action",
-      "expectText": "View on GitHub"
-    },
-    {
       "name": "The header carries the mark and the bell, and no second alerting glyph (#2718)",
       "path": "/",
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages and its conversations, then Recents (the pinned group, then the rest), then you (One Home, #6361; the Discover and Communities nodes stay in the markup, drawn on neither bar, for the routes that name them)",
+      "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages, then Recents (the pinned group, then the rest), then you (One Home, #6361; the Communities node stays in the markup, drawn on neither bar, for the routes that name it)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-tab-messages + #platform-rail-conversations + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-tab-messages + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -3087,9 +3038,9 @@
       "expectText": "[Mock] Did the notifications change land yet?"
     },
     {
-      "name": "The Messages strip leads with a search box, not a second copy of the screen's name (#2718 review); on a desktop the list is the page, All messages, lit under Messages in the sidebar (v3)",
+      "name": "The Messages strip leads with a search box, not a second copy of the screen's name (#2718 review); on a desktop with nothing open the list is the page, All messages",
       "path": "/?demo=1#messages",
-      "expectSelector": "body:has(#platform-rail-conversations a[data-rail-all-messages][aria-current=\"page\"]) #messages-screen:not(.hidden) .messages-layout.dc-lift-strip.messages-list-page .messages-list-pane:not(:has(.messages-list-toolbar)) .messages-search input"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.dc-lift-strip.messages-list-page .messages-list-pane:not(:has(.messages-list-toolbar)) .messages-search input"
     },
     {
       "name": "...and a styled empty pane where the conversation goes",
@@ -3282,40 +3233,14 @@
       "expectText": "Go to community"
     },
     {
-      "id": "workshop.all-apps",
-      "name": "Workshop links joined communities to their actual app Workshop",
-      "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-rows=\"all\"] a[data-workshop-app][data-workshop-audience=\"open\"][href$=\"/workshop\"]",
-      "expectText": "Public",
-      "visual": true,
-      "impact": [
-        "frontend/src/features/workshop/**",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
-        "src/routes/workshop-overview.js",
-        "public/js/app.js",
-        "public/js/app-view.js"
-      ]
+      "name": "#communities, the old Communities screen, opens Home: beside the sidebar's search glyph, Pinned communities offers Needs you with the votes waiting (One Home, #6361; #3051, D)",
+      "path": "/?demo=1#communities",
+      "expectSelector": "body:has(#platform-rail-search) #home-screen:not(.hidden) #home-communities-section:not([hidden]) a#home-needs-tile[href=\"#needs\"][data-home-needs]",
+      "expectText": "Needs you"
     },
     {
-      "name": "Workshop rows carry both counts from their stored app data",
-      "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list a[data-workshop-app]:has([data-workshop-working] + [data-workshop-needs])"
-    },
-    {
-      "name": "All communities is one list under audience chips, All pressed, then Public, Private and Just you in that order, with every community out and no Show more (#5296)",
-      "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):not(:has([data-workshop-more])) [data-workshop-chips] [data-workshop-chip=\"all\"][aria-pressed=\"true\"] ~ [data-workshop-chip=\"open\"][aria-pressed=\"false\"] ~ [data-workshop-chip=\"invited\"] ~ [data-workshop-chip=\"solo\"]",
-      "expectText": "Public"
-    },
-    {
-      "name": "The Communities screen draws no empty-state line while it has rows; beside the sidebar, whose Communities heading holds its search, it is one page of your communities under a search, nothing beside it; no scope chip on the page, and the page bounces (#3051, #852, #3566, D, v3)",
-      "path": "/?demo=1#workshop",
-      "expectSelector": "body:has(#platform-rail-search) #workshop-screen[data-page-bounce]:not(.hidden):has(#workshop-search):not(:has([data-workshop-pane=\"needs\"])):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden",
-      "expectText": "Join a community"
-    },
-    {
-      "name": "Communities: Needs you is the review flow, one change's page in the pane with its vote bar (#6276)",
-      "path": "/?demo=1&ws=needs&shot=needs-approve#workshop",
+      "name": "Needs you (#needs) is the review flow, one change's page in the pane with its vote bar (#6276; One Home, #6361)",
+      "path": "/?demo=1&shot=needs-approve#needs",
       "expectSelector": "#workshop-screen:not(.hidden) [data-workshop-pane=\"needs\"] [data-rf-page] [data-rf-back]",
       "expectText": "Skip"
     },
@@ -3664,16 +3589,6 @@
       "name": "Home fork-lineage tag renders on forked tiles",
       "path": "/",
       "expectSelector": ".fork-tag"
-    },
-    {
-      "name": "The app's own page shows the Made-from label",
-      "path": "/#apps/staging-demo-fork",
-      "expectText": "Made from"
-    },
-    {
-      "name": "Fork lineage renders under the version it qualifies",
-      "path": "/#apps/staging-demo-fork",
-      "expectSelector": "#browse-detail #browse-detail-fork a[href=\"#app/staging-demo-forkable\"]"
     },
     {
       "name": "Home feed renders the seeded errored app tile",
@@ -4318,9 +4233,14 @@
       "expectSelector": "#platform-header:not(:has(#improve-btn)) #platform-mark-btn:has(#feedback-queue-dot):has(#improve-working-dot)"
     },
     {
-      "name": "Inside an app's detail page the header arrow links back to the list (#1036)",
+      "name": "A level under a tab names its own way up: the header arrow on Challenges links to Me (#1036; Discover's details carried it until One Home, #6361)",
+      "path": "/#leaderboard",
+      "expectSelector": "a#back-btn[href=\"#profile\"]"
+    },
+    {
+      "name": "#apps/<slug>, an app's old details address, opens its project's hub (One Home, #6361)",
       "path": "/#apps/usernode-2d5619",
-      "expectSelector": "a#back-btn[href=\"#apps\"]"
+      "expectSelector": "#app-view:not(.hidden) #dev-workshop .dev-ws[data-ws-tab=\"status\"]"
     },
     {
       "name": "A connector-imported proposal names the coding agent that built it (#967)",
@@ -4342,30 +4262,6 @@
       ],
       "path": "/?un-platform=android&un-native-webview=1",
       "expectSelector": "html.un-android.in-native-webview:not(.web-browser-chrome) #platform-header.un-safe-top-extend"
-    },
-    {
-      "name": "Browse draws the image icon tile for a seeded app (#1120)",
-      "path": "/#apps",
-      "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"image\"] img",
-      "expectText": "Staging demo app — image icon"
-    },
-    {
-      "name": "Browse draws the emoji icon tile for a seeded app (#1120)",
-      "path": "/#apps",
-      "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"emoji\"]",
-      "expectText": "Staging demo app — emoji icon"
-    },
-    {
-      "name": "Browse draws the first-letter fallback tile for a seeded app (#1120)",
-      "path": "/?sort=recommended&shot=browse-more#apps",
-      "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"letter\"]",
-      "expectText": "Staging demo app — letter tile"
-    },
-    {
-      "name": "Discover's search and filters sit over the list's card, with the rows inside the card (communities prototype; #1919)",
-      "path": "/#apps",
-      "expectSelector": "#browse-screen > #browse-search-bar.browse-pane-head:not(.hidden) + #browse-list-level > #browse-list.browse-pane-body .browse-row",
-      "expectText": "Filters"
     },
     {
       "name": "Shared report link serves the report document without a session",
@@ -4459,23 +4355,6 @@
       "name": "Real sessions still render beside it in Messages (#1417, #5289)",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden):has([data-improve-row=\"task\"]) [data-inbox-session] a[data-improve-row=\"session\"][href^=\"#messages/session/\"]"
-    },
-    {
-      "name": "The all-apps directory offers its Sort order inside the Filters sheet, defaulting to Recommended (#1383)",
-      "path": "/#apps",
-      "expectSelector": "#browse-screen:has(#browse-search-bar #browse-filters-btn) #browse-list[data-sort=\"recommended\"]",
-      "expectText": "Filters"
-    },
-    {
-      "name": "?sort= orders the touch directory, under a bar with no back slot on the desktop rail, where Discover is a tab of its own (#1383, #2718; #6019)",
-      "path": "/?sort=new&un-platform=ios#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list[data-sort=\"new\"] .browse-row"
-    },
-    {
-      "name": "Sorting by activity shows what it sorted on (#1383), in live words (B10d)",
-      "path": "/?demo=1&sort=active#apps",
-      "expectSelector": "#browse-list[data-sort=\"active\"] .browse-row",
-      "expectText": "live in 30d"
     },
     {
       "name": "Dark mode pins by deep link and paints the launcher on the inverted ground",
@@ -4858,9 +4737,9 @@
       "expectSelector": "body:has(#platform-tabs[aria-label=\"Sections\"]:not(.platform-tabs-folded)):not(:has(#platform-rail-peek)) #platform-header .platform-header-left > #sidebar-toggle[aria-controls=\"platform-tabs\"][aria-pressed=\"true\"]"
     },
     {
-      "name": "Side panel beside a running app: its host ships hidden and frameless right after the app view, its header row carrying Expand and Close",
+      "name": "Side panel beside a running app: hidden and frameless after the app view, Expand and Close, no page pill (#6431)",
       "path": "/?demo=1",
-      "expectSelector": "html:not([data-side-panel]) #app-view + #platform-side-panel.hidden:not(:has(iframe)) > .side-panel-head > #side-panel-expand[aria-label=\"Open full width, leaving the app\"] + #side-panel-close[aria-label=\"Close panel\"]"
+      "expectSelector": "html:not([data-side-panel]) #app-view + #platform-side-panel.hidden:not(:has(iframe,[data-side-panel-status])) > .side-panel-head > #side-panel-expand[aria-label=\"Open full width, leaving the app\"] + #side-panel-close[aria-label=\"Close panel\"]"
     },
     {
       "name": "#2886: the divider between a running app and its side panel is a focusable vertical separator on the panel's left edge, shipping with no width chosen",
@@ -4881,6 +4760,12 @@
       "name": "#2800: you are the sidebar's foot, with your Settings beside you (#6019; One Home #6361 draws no Communities row above you, its node kept for #communities)",
       "path": "/?demo=1",
       "expectSelector": "#platform-tabs > #platform-tab-workshop + a#platform-tab-me + a#platform-rail-settings:last-child"
+    },
+    {
+      "name": "#4417, v3: on a desktop a project's places are nested under its row in the sidebar, the place on show lit there (Needs you), with no column beside it",
+      "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
+      "expectSelector": "body:not(:has(#platform-section-column)) #platform-rail-communities > [data-rail-row=\"usernode-2d5619\"]:has(> [aria-current=\"page\"][data-rail-open]) + .platform-rail-nest [data-place=\"needs\"][aria-current=\"page\"]",
+      "expectText": "Needs you"
     },
     {
       "name": "#2798: the sidebar toggle and the bell show their blue disc on hover only, not at rest",
@@ -5063,9 +4948,9 @@
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
     },
     {
-      "name": "Homeroom bot: your own change whose checks failed is Needs you's, with Fix it, not Waiting for checks",
+      "name": "Homeroom bot: your own change whose checks failed is Needs you's, with Fix it, not Waiting for checks, and a search button beside the plus (#6398)",
       "path": "/?demo=1#homeroom-bot",
-      "expectSelector": "#ai-screen [data-ai-sheet=\"open\"] [data-ai-line=\"fix_yours\"]",
+      "expectSelector": "#ai-screen:has([data-ai-hero] button[data-ai-search-toggle] svg) [data-ai-sheet=\"open\"] [data-ai-line=\"fix_yours\"]",
       "expectText": "Fix it"
     },
     {
@@ -5123,11 +5008,11 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards, each with Pin then Join (One Home, #6361), and not \"could not load\" (#6003, #6015)",
+      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards led by Featured's row, with no Pin or Join on a card (#6433), and not \"could not load\" (#6003, #6015)",
       "path": "/?shot=anon#landing",
       "repeat": 3,
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-guest-discover] [data-guest-card-footer] > [data-home-pin][aria-pressed=\"false\"] + [data-home-join]):not(:has([data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-home-join-featured] [data-guest-featured]):not(:has([data-home-pin],[data-home-join],[data-guest-card-footer],[data-guest-suggested-app],[data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
       "allowConsoleErrors": true
     },
     {

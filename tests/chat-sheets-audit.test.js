@@ -40,7 +40,9 @@ test('C06: an empty reply box on a request or a channel shows Send faded, as Mes
 });
 
 test('C04: a desktop conversation with nothing beside it keeps a reading width', () => {
-  assert.match(CSS, /\.messages-layout\.messages-list-in-rail > \.messages-thread-pane:last-child \{\s*max-width: 960px;\s*margin-inline: auto;\s*\}/);
+  // The list sits beside a conversation again (7 Nov 2026), so "nothing
+  // beside it" is a conversation set to Full width.
+  assert.match(CSS, /\.messages-layout\.messages-list-collapsed > \.messages-thread-pane:last-child \{\s*max-width: 960px;\s*margin-inline: auto;\s*\}/);
 });
 
 test('D13: the hover bar on somebody else\'s bubble hangs off its name line, beside the message', () => {
@@ -76,15 +78,4 @@ test('D07: the waiting decisions sit under "Go to community", and an Invite open
   assert.match(sheet, /\{back === 'none' \? null : \(\n\s*<button\n\s*id="app-about-back"/);
   const controller = read('frontend/src/features/app-context/app-context-controller.js');
   assert.match(controller, /appContextStore\.set\(\{ back: opts\.back === 'about' \? 'about' : 'none' \}\);/);
-});
-
-test('D01: a touch action sheet and Discover\'s Filters close when Back or a link moves the page', () => {
-  const kit = read('public/usernode-native/v1/native.js');
-  const sheet = kit.slice(kit.indexOf('  function actionSheet(options) {'), kit.indexOf('   * Anchored popover / dropdown menu'));
-  assert.match(sheet, /var openedAt = currentHref\(\);\n\s*function onNav\(\) \{ if \(currentHref\(\) !== openedAt\) settle\(null\); \}/);
-  assert.match(sheet, /window\.addEventListener\('popstate', onNav\);\n\s*window\.addEventListener\('hashchange', onNav\);/);
-  assert.match(sheet, /function finishSettle\(\) \{\n\s*if \(unwatch\) unwatch\(\);\n\s*stopNavWatch\(\);/, 'and stops listening once it is gone');
-  const filters = read('frontend/src/features/apps/browse-filter-sheet.tsx');
-  assert.match(filters, /const onNav = \(\) => \{ if \(window\.location\.href !== openedAt\) leave\(\); \};/);
-  assert.match(filters, /window\.removeEventListener\('hashchange', onNav\);/);
 });

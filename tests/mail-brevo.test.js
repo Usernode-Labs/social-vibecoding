@@ -162,7 +162,7 @@ test('a staging preview never reaches Brevo', () => {
 test('the admin card is told Brevo\'s readiness and, once it is named, what it lacks; never the key', () => {
   const missing = select.describe({ PLATFORM_MAIL_PROVIDER: 'brevo', USERNODE_ENV: 'production' });
   assert.deepEqual(missing.providers.find((p) => p.name === 'brevo'),
-    { name: 'brevo', label: 'Brevo email API', configured: false, missing: ['BREVO_API_KEY'] });
+    { name: 'brevo', label: 'Brevo email API', configured: false, ready: false, missing: ['BREVO_API_KEY'] });
   assert.deepEqual(missing.missing, ['BREVO_API_KEY']);
 
   const ready = select.describe({ PLATFORM_MAIL_PROVIDER: 'brevo', BREVO_API_KEY: 'secret-key-value', USERNODE_ENV: 'production' });

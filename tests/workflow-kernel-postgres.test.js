@@ -35,8 +35,16 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
     decode: (row) => ({ name: row.state, data: row.data }),
     async facts(tx, state, event, ctx) {
       if (event.payload?.sleepMs) await tx.query('SELECT pg_sleep($1::float8 / 1000)', [event.payload.sleepMs]);
+      // A key with a kt_busy row is exclusive when this transaction can hold
+      // that row. It is a row lock, so it is released with the instance lock
+      // at commit: a slot woken by the instance release can never see the
+      // previous holder's probe still held, as it could with an advisory
+      // xact lock (released after the instance lock, in a later step of
+      // commit, and so sometimes still held once the next slot was awake).
       const { rows: [f] } = await tx.query(
-        `SELECT pg_try_advisory_xact_lock(hashtext($1)) AS exclusive,
+        `WITH probe AS (SELECT key FROM kt_busy WHERE key = $1 FOR UPDATE SKIP LOCKED)
+         SELECT NOT EXISTS (SELECT 1 FROM kt_busy WHERE key = $1)
+                OR EXISTS (SELECT 1 FROM probe) AS exclusive,
                 COALESCE((SELECT on_off FROM kt_flags WHERE name = 'admission'), TRUE) AS admission`, [ctx.key]);
       return f;
     },
@@ -162,6 +170,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 180000 }, 
   await pool.query(`
     CREATE TABLE kt_log (id BIGSERIAL PRIMARY KEY, key TEXT NOT NULL, n INT NOT NULL);
     CREATE TABLE kt_flags (name TEXT PRIMARY KEY, on_off BOOLEAN NOT NULL);
+    CREATE TABLE kt_busy (key TEXT PRIMARY KEY);
     CREATE TABLE kt_rows (id INT PRIMARY KEY, v INT NOT NULL DEFAULT 0);
     INSERT INTO kt_rows (id) VALUES (1);
     CREATE TABLE kt_legacy (id BIGSERIAL, key TEXT PRIMARY KEY, status TEXT, payload JSONB NOT NULL DEFAULT '{}', note TEXT);
@@ -1234,6 +1243,11 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 180000 }, 
     const a = make({ slots: 4 });
     const b = make({ pool: other, slots: 4 });
     const keys = Array.from({ length: 6 }, (_, i) => `k15-${i}`);
+    // Each key is probed through a row lock the applying slot holds: a second
+    // slot applying the same key at the same time gets no row, so an overlap
+    // is counted. A slot woken by the instance lock takes it, because the two
+    // locks are released together at commit.
+    for (const key of keys) await pool.query('INSERT INTO kt_busy (key) VALUES ($1)', [key]);
     for (const key of keys) await route(key, 'Create');
     for (let i = 0; i < 6; i++) for (const key of keys) await route(key, 'Add', { n: i + 1, sleepMs: 10 });
     await a.start({ loops: true });
@@ -1257,10 +1271,63 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 180000 }, 
       const row = await inst(key);
       assert.deepEqual(row.data.log, [1, 2, 3, 4, 5, 6], `${key}: applied in stream order`);
       assert.equal(row.data.overlaps, 0, `${key}: never processed by two slots at once`);
+      assert.equal(Number(row.version), 7, `${key}: Create plus six Adds, one version each`);
+      const accepted = (await pool.query(
+        `SELECT version_after FROM wf_events WHERE machine = 'kt-counter' AND key = $1 AND result = 'accepted' ORDER BY id`,
+        [key])).rows.map((e) => Number(e.version_after));
+      assert.deepEqual(accepted, [1, 2, 3, 4, 5, 6, 7], `${key}: every accepted event its own version`);
     }
     const { rows } = await pool.query(
       `SELECT DISTINCT machine_version FROM wf_events WHERE key LIKE 'k15-%'`);
     assert.deepEqual(rows, [{ machine_version: 1 }]);
+  });
+
+  await t.test('K15 probe: a real overlap is counted, a lock handover is not', async () => {
+    // The detector is not vacuous: a slot applying a key while another holds
+    // its kt_busy row is an overlap, and the transition counts it.
+    await create('k15-probe');
+    await pool.query(`INSERT INTO kt_busy (key) VALUES ('k15-probe')`);
+    const holder = await other.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(`SELECT 1 FROM kt_busy WHERE key = 'k15-probe' FOR UPDATE`);
+      await route('k15-probe', 'Add', { n: 1 });
+      await rt.drain();
+      assert.equal((await inst('k15-probe')).data.overlaps, 1,
+        'a second slot applying the same key at the same time is an overlap');
+    } finally {
+      await holder.query('ROLLBACK');
+    }
+
+    // The handover that used to flake: the slot wakes from the instance lock
+    // the moment the holder commits, which is the moment its probe's row is
+    // free too. With an advisory xact lock the old probe could still be held
+    // here, and report an overlap that never happened.
+    await create('k15-hand');
+    await pool.query(`INSERT INTO kt_busy (key) VALUES ('k15-hand')`);
+    try {
+      const { rows: [{ pid }] } = await holder.query('SELECT pg_backend_pid()::int AS pid');
+      await holder.query('BEGIN');
+      await holder.query(`SELECT 1 FROM wf_instances WHERE machine = 'kt-counter' AND key = 'k15-hand' FOR UPDATE`);
+      await holder.query(`SELECT 1 FROM kt_busy WHERE key = 'k15-hand' FOR UPDATE`);
+      const id = await route('k15-hand', 'Add', { n: 1 });
+      // A lock budget long enough that the wait for the block below cannot
+      // turn into a retry of its own on a loaded machine.
+      const patient = make({ lockTimeoutMs: 15000, statementTimeoutMs: 15000 });
+      const processing = patient.processNext();
+      await waitFor(async () => (await pool.query(
+        `SELECT 1 FROM pg_stat_activity
+          WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND $1::int = ANY(pg_blocking_pids(pid))`, [pid]
+      )).rows.length > 0, { label: 'the slot to be blocked by the held instance and probe locks', timeoutMs: BUSY_MS });
+      await holder.query('COMMIT');
+      await processing;
+      assert.equal((await event(id)).result, 'accepted');
+      assert.equal((await inst('k15-hand')).data.overlaps, 0,
+        'a wake-up from the instance lock is not a second slot working on the same key');
+    } finally {
+      await holder.query('ROLLBACK').catch(() => {});
+      holder.release();
+    }
   });
 
   await t.test('K20 a kind\'s concurrency holds across processes, a draining one\'s work included', async () => {

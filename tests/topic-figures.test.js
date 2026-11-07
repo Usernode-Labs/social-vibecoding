@@ -336,7 +336,8 @@ test('the channel mounts the strip between the topic\'s line and its room, and t
   const channel = manifest.tests.find((t) => t.path === '/?demo=1#app/usernode-2d5619/dev/c/onboarding');
   // The strip draws only on a live topic, so it stands for the topic's state.
   assert.match(channel.expectSelector, /\[data-ws-topic="onboarding"\]:has\(> \.dev-ws-topic-head \+ \[data-topic-figures\] \.dev-ws-fig-info\) > \.dev-ws-discussion-host \.gc-msg-more-action$/);
-  assert.ok(channel.expectSelector.length <= 256, 'the runner clips a selector at 256 characters');
+  assert.ok(channel.expectSelector.length <= appManifest.MAX_TEST_SELECTOR_LEN,
+    `the selector fits the runner's cap (${appManifest.MAX_TEST_SELECTOR_LEN} characters)`);
 });
 
 // ── 3. The strip, rendered ───────────────────────────────────────────────

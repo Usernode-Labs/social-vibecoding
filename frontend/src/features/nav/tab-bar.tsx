@@ -68,7 +68,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ChatIcon,
   CogIcon,
-  CompassIcon,
   HomeIcon,
   HomeroomBotIcon,
   Squares2X2Icon,
@@ -93,7 +92,6 @@ import { navStore } from './nav-store.js';
 import { runningAppStore } from './parked-store.js';
 import { SideApps } from './side-apps';
 import { RAIL_COMMUNITIES, RailCommunities, useRailCommunities } from './rail-communities';
-import { RailConversations } from './rail-conversations';
 import { RailPinned } from './rail-pinned';
 import { useSidebarRows } from './sidebar-rows';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
@@ -131,11 +129,8 @@ import { schedulePress, type PendingPress } from './tab-press';
  * own projects"). Inside a project, "Workshop" is the build tab beside its
  * hub — the one place that word is shown now.
  *
- * Discover is a compass (v3, 18 Oct 2026), on every bar alike, where it
- * kept the magnifier the app menu's `#switcher-row-discover` drew: it is
- * where you go to find something new, and a magnifier says "search", which
- * the sidebar's Communities heading and the inbox already offer. One glyph
- * a destination, whatever bar it is on.
+ * Discover was a compass tab until One Home (#6361) retired its screen:
+ * Home's Communities to join is the directory now.
  */
 // `label` is a message id (frontend/locales/en/core.json), read when the bar
 // renders so the words follow the language on screen.
@@ -151,10 +146,6 @@ const TABS = [
     href: '/',
     Icon: HomeIcon,
   },
-  // ONE HOME (#6361): Discover's directory is Home's Communities to join,
-  // so its tab is drawn nowhere (app.css hides it on both bars). The node
-  // stays for the routes and links that still name #apps.
-  { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: CompassIcon },
   // #6019: the Homeroom bot's chat, which left the Messages list for a tab
   // of its own. `#homeroom-bot` opens it (app.js; `#ai`, its old address,
   // still does), and the tab is lit while it is the
@@ -1291,11 +1282,10 @@ export function PlatformTabs() {
             </span>
           ) : null}
         </a>,
-        // v3 (18 Oct 2026): THE CONVERSATIONS, nested under Messages while
-        // its screen is up in the sidebar of rows (./rail-conversations.tsx).
-        // The element is there at every width and on every screen, empty
-        // when shut, so the bar's sibling order is one order.
-        key === 'messages' ? <RailConversations key="conversations" /> : null,
+        // Messages nested its five most recent conversations under its row
+        // here (v3, 18 Oct 2026) until the sidebar kept its nesting for
+        // communities alone (7 Nov 2026): the inbox draws its own list
+        // beside an open conversation.
       ])}
       {/*
           SETTINGS, ONE CLICK FROM THE RAIL'S FOOT (#3120). A cog beside the

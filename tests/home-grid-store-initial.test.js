@@ -132,8 +132,8 @@ test('the harness mirrors INITIAL_PANELS exactly', () => {
     'tests/helpers/home-grid-store.js has drifted from panels-store.ts');
 });
 
-test('the initial panels render the two EMPTY, UN-hidden hosts', () => {
-  // The other two stores ship their hosts hidden; these two do not, and the
+test('the initial panels render the EMPTY, UN-hidden Challenges host', () => {
+  // The other two stores ship their hosts hidden; this one does not, and the
   // difference is real rather than an oversight. The hand-written shell shipped
   // `<section class="px-3 pb-3">` with no `hidden`, so that is what the
   // prerendered document contains and what the first client render has to
@@ -141,7 +141,8 @@ test('the initial panels render the two EMPTY, UN-hidden hosts', () => {
   // render has happened yet" from "this render decided there is nothing to
   // show", and without it the very first paint would add `hidden` and mismatch.
   assert.equal(INITIAL_PANELS.painted, false);
-  assert.equal(INITIAL_PANELS.discover, null);
+  // Discover's host went with Home's Discover lane (One Home, #6361).
+  assert.equal('discover' in INITIAL_PANELS, false);
   assert.equal(INITIAL_PANELS.challenges, null);
   // Create left this store with its section: it is the grid's trailing tile,
   // and its model rides INITIAL_GRID.create above.

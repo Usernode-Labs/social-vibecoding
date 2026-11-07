@@ -248,6 +248,7 @@ const Profile = {
     Profile._dismissSheet();
     Profile._dismissFeedback();
     Profile._dismissFriends();
+    Profile._dismissAppSlots();
     Profile._render();
   },
 
@@ -641,7 +642,9 @@ const Profile = {
   // It has an address, `#profile?feedback`, because two places outside Me
   // open it: the confirmation after sending feedback
   // (features/dialogs/feedback-controller.js) and the feedback challenge's
-  // page (features/leaderboard/topochain-challenges.js). open() takes the
+  // page (features/leaderboard/topochain-challenges.js). It also has a row of
+  // its own on Me, in Your work (#6452), so its history is reachable from the
+  // Profile at any time. open() takes the
   // query, puts the address back to plain `#profile` so a reload or a later
   // Back does not reopen a list the viewer closed, and opens the list as
   // soon as the viewer's own profile is on screen.
@@ -738,6 +741,34 @@ const Profile = {
     Profile._friendsRequested = false;
     if (d.signedOut || d.error || d.publicProfile || d.publicNotFound) return;
     Profile.showFriends();
+  },
+
+  // ── App slots, as a card over Me (#6446) ────────────────────────────
+  //
+  // With no slot free (or a full server) Me's "App slots" row opens this
+  // instead of the make screen: the same AppAllowance box the make screen
+  // shows, with its "Request more". A free slot keeps the make screen, and
+  // so does a modified click on the row, which goes to `#create`. It has no
+  // address of its own, and its claim on Back is the Friends card's.
+  _releaseAppSlots: null,
+
+  showAppSlots() {
+    if (profileStore.get().appSlotsOpen) return;
+    profileStore.set({ appSlotsOpen: true });
+    Profile._releaseAppSlots = pushDismissible(() => {
+      Profile._releaseAppSlots = null;
+      Profile._dismissAppSlots();
+      return true;
+    });
+  },
+
+  _dismissAppSlots() {
+    // Navigating, as _dismissFriends is: leaving the screen closes the card
+    // too.
+    const release = Profile._releaseAppSlots;
+    Profile._releaseAppSlots = null;
+    if (release) release({ navigating: true });
+    if (profileStore.get().appSlotsOpen) profileStore.set({ appSlotsOpen: false });
   },
 
   // `#profile?edit` — the Edit profile sheet, asked for from outside Me.

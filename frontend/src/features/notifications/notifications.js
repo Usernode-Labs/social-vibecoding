@@ -1046,12 +1046,16 @@ const Notifications = {
   // delegated card click) through `window.Notifications`. Skipped when
   // nothing is unread, so the common click costs no request; the server
   // scopes the clear to pr_proposed rows for this one session.
+  // #6441: opening a change's page (which for most changes is its request's
+  // page) or its before-and-after also answers its "ready to try", so the
+  // same call clears that too.
   async markProposalSeen(sessionId) {
     const id = Number(sessionId);
     if (!Number.isSafeInteger(id) || id <= 0 || Notifications.unread === 0) return;
     const now = new Date().toISOString();
     for (const n of Notifications.items) {
-      if (n && !n.readAt && n.kind === 'pr_proposed' && Number(n.sessionId) === id) n.readAt = now;
+      if (n && !n.readAt && (n.kind === 'pr_proposed' || n.kind === 'build_ready')
+        && Number(n.sessionId) === id) n.readAt = now;
     }
     try {
       const res = await fetch('/api/notifications/read', {
@@ -1382,8 +1386,9 @@ const Notifications = {
     }
     if (item.kind === 'vote_digest' && !item.appSlug) {
       Notifications._dismissSheetForNav();
-      window.UsernodeReact?.workshop?.setTab?.('needs');
-      window.location.hash = '#communities';
+      // Needs you, the page of every vote owed across your projects (One
+      // Home, #6361: the Communities screen's list is gone).
+      window.location.hash = '#needs';
       return;
     }
     // #5404: the Monday count of the changes you voted on that were decided

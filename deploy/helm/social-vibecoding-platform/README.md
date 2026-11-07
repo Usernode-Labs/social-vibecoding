@@ -155,8 +155,11 @@ tracking; Gmail does not supply delivery, bounce or complaint callbacks.
 To send platform mail through Brevo instead, set `secrets.platformMailProvider`
 to `brevo` and supply `secrets.brevoMailWebhookToken` through SOPS, beside the
 `secrets.brevoApiKey` SMS already uses. Supplying the key alone does not move
-mail, and an empty provider stays on Gmail. Brevo only delivers: the words come
-from the console's email templates. See `docs/mail-brevo.md`.
+mail, and an empty provider stays on Gmail. A full admin can also make the
+switch in Admin → Email delivery, with no chart change: that saved choice wins
+over `secrets.platformMailProvider`, and the webhook token still comes from
+here. Brevo only delivers: the words come from the console's email templates.
+See `docs/mail-brevo.md`.
 
 The media store (screenshots, videos and other files kept out of PostgreSQL)
 is off until `config.mediaStorage.endpoint` is set. The chart passes the
@@ -499,7 +502,9 @@ and [CloudNativePG labels](https://cloudnative-pg.io/docs/1.28/labels_annotation
 
 Platform upgrades use a Kubernetes-native blue/green equivalent: a
 `RollingUpdate` Deployment creates a new ReplicaSet beside the live one,
-requires two consecutive readiness successes plus `minReadySeconds`, and keeps
+requires two consecutive readiness successes plus 10 seconds of
+`minReadySeconds` for a web Pod (the conductor keeps one answer and 5 seconds),
+and keeps
 `maxUnavailable: 0`. The stable Service starts routing to the new Pod only
 after it is Ready; Kubernetes removes and terminates the old Pod after the new
 ReplicaSet is Available.

@@ -3626,9 +3626,9 @@ export function DevWorkshop(): ReactNode {
      #4417: the four tabs are gone; the project's places are one list (Hub,
      Needs you, Workshop, then its channels: ./project-places.tsx). On a
      phone it is a tray behind the place bar's button, the bar naming where
-     you are (./place-bar.tsx); on a wide window the bar is the page's title
-     row, with the same button (One Home, #6361: the sidebar nests no places
-     any more). Under the bar, All items leads with its way back to
+     you are (./place-bar.tsx); on a wide window it is nested under the
+     community's row in the sidebar (../../nav/rail-communities.tsx) and the
+     bar is the page's title row. Under the bar, All items leads with its way back to
      the Workshop it is a page of.
 
      THE BAR IS THE BAND'S BOX, ON EVERY PAGE (#3651). It is what pins, and
@@ -3897,10 +3897,11 @@ export function DevWorkshop(): ReactNode {
       {/* ── The hub, top to bottom: for you, then what went live ──
           One column at every width, each part under its small-caps label.
           FOR YOU is one card of doors: Needs you (the first vote you owe, a
-          quiet line when none is, #3408), Your work (the first of yours and
-          how many, or "No work in progress.") and the Discussion (its last
-          line, or "No messages yet."), each opening its place, the same
-          from a project's first day. RECENTLY LIVE is the last three
+          quiet line when none is, #3408), the Workshop (6 Nov 2026: it took
+          Your work's place there, and opens where what happened and every
+          item are) and the Discussion (its last line, or "No messages
+          yet."), each opening its place, the same from a project's first
+          day. RECENTLY LIVE is the last three
           changes that went live, as pictures, and its door is the Workshop,
           where what landed since your last visit, your work in full and
           "live this week" are; before any has, it is the app itself
@@ -3923,7 +3924,6 @@ export function DevWorkshop(): ReactNode {
           onNeeds={() => openTab('needs')}
           onWork={() => openTab('workshop')}
           onDiscussion={() => openTab('discussion')}
-          places={drawerOn}
         />
       ) : null}
       {/* TOPICS, on a phone (3 Nov 2026): the Hub is the way to every place

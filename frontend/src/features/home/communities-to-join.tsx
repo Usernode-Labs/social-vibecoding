@@ -6,10 +6,15 @@
  *
  *   signed in    "N up for a vote" and Join (Home.setMembership, which joins
  *                and pins the community; the card leaves this list then).
- *   signed out   Pin (kept on the device) and Join (which asks to sign up).
+ *   signed out   nothing: a visitor's card is its picture, name and sentence
+ *                (#6433), and the page behind it has Try it, Join and Pin.
  *
- * Kind chips over the cards; featured first, then the most used; more load
- * as the reader reaches the end (an IntersectionObserver on the last card's
+ * Kind chips over the cards. Then FEATURED, the communities an admin
+ * featured, in their order (featured_order), in the same wrapping grid as
+ * the rest (#6434): the first group of the section, of the chosen kind, and
+ * left out while a search is typed (its matches are the grid, featured
+ * first). Then the rest under "More communities", the most used first; more load as the reader reaches the
+ * end (an IntersectionObserver on the last card's
  * sentinel, inside Home's own scroller), with two placeholder cards while
  * they come. The directory is GET /api/public/apps, which answers every
  * public project at once today, so "more" pages through it here.
@@ -20,7 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Chip, ChipRail } from '@/components/ui/chip';
 
 import { useMessages } from '../../lib/i18n/react';
-import { CARD_GRID, Card } from '../guest/guest-discover';
+import { CARD_GRID, Card, SMALL_CAPS_LABEL } from '../guest/guest-discover';
 import { featuredApps, presentCategories, sortApps, type GuestApp } from '../guest/guest-data';
 import { SectionHeading } from './panels/ui';
 import { matchesQuery } from './use-home-query';
@@ -34,7 +39,7 @@ export function joinOrder(apps: readonly GuestApp[]): GuestApp[] {
   return [...featured, ...sortApps(apps, 'trending').filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPin, pinned }: {
+export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** Communities already on this Home (joined or pinned), left out of the list. */
@@ -42,10 +47,6 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
   signedIn: boolean;
   query: string;
   onJoin: (app: GuestApp) => void;
-  /** Signed out only: pin to this device's Home. */
-  onPin?: (app: GuestApp) => void;
-  /** Signed out only: what this device has pinned already. */
-  pinned?: ReadonlySet<string>;
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
@@ -56,16 +57,25 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
 
   const pool = useMemo(() => (apps || []).filter((a) => !exclude.has(a.slug)), [apps, exclude]);
   const kinds = useMemo(() => presentCategories(pool), [pool]);
-  const list = useMemo(() => joinOrder(pool)
-    .filter((a) => !kind || a.category === kind)
-    .filter((a) => matchesQuery(query, a.name, a.slug, a.description)), [pool, kind, query]);
+  const featured = useMemo(() => (query ? [] : featuredApps(pool).filter((a) => !kind || a.category === kind)), [pool, kind, query]);
+  const list = useMemo(() => {
+    const lead = new Set(featured.map((a) => a.slug));
+    return joinOrder(pool)
+      .filter((a) => !lead.has(a.slug))
+      .filter((a) => !kind || a.category === kind)
+      .filter((a) => matchesQuery(query, a.name, a.slug, a.description));
+  }, [pool, featured, kind, query]);
   useEffect(() => { setShown(JOIN_PAGE); }, [kind, query]);
   const more = list.length > shown;
 
   useEffect(() => {
     const el = sentinel.current;
     if (!el || !more || typeof IntersectionObserver === 'undefined') return undefined;
-    const root = document.getElementById('home-screen');
+    // The scroller the list is in: Home's own signed in, the landing's
+    // (#auth-landing-scroll) signed out. An observer rooted on a box that
+    // does not hold the cards never fires, which left a visitor with the
+    // first page alone, the featured ones.
+    const root = scrollParent(el);
     let timer = 0;
     const io = new IntersectionObserver((entries) => {
       if (!entries.some((e) => e.isIntersecting) || timer) return;
@@ -78,6 +88,22 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
   }, [more, shown]);
 
   if (query && !list.length) return null;
+  // Signed out, a card has no footer at all (#6433): the row is the
+  // signed-in one's, with the votes or members line and Join.
+  const footerFor = (app: GuestApp) => (signedIn ? (
+      <>
+        <span className="min-w-0 flex-1 truncate text-[12.5px] text-zinc-500 dark:text-zinc-400">
+          {app.open_votes
+            ? t('home:join.votes', { count: app.open_votes })
+            : t('home:join.members', { count: app.member_count || 0 })}
+        </span>
+        <Button type="button" variant="pillAccent" size="sm" ink="solid" className="min-h-11 py-0 un-touch-target" data-home-join={app.slug}
+          aria-label={t('home:join.buttonNamed', { community: app.name })}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onJoin(app); }}>
+          {t('home:join.button')}
+        </Button>
+      </>
+    ) : null);
   const heading = signedIn ? t('home:join.heading') : t('home:join.headingSignedOut');
   return (
     // The id is the signed-in Home's (the tours and the declared checks find
@@ -97,49 +123,44 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
           ))}
         </ChipRail>
       ) : null}
+      {featured.length ? (
+        <div data-home-join-featured="" className="pb-4">
+          <h3 id={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'} className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>{t('home:join.featured')}</h3>
+          <div
+            role="list"
+            aria-labelledby={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'}
+            className={`${CARD_GRID} px-1`}
+          >
+            {featured.map((app, i) => (
+              <div key={app.slug} role="listitem" className="flex [&>article]:flex-1">
+                <Card app={app} eager={i < 3} featured footer={footerFor(app)} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {!apps ? (
         <div className={`${CARD_GRID} px-1`} aria-label={ta('auth:guest.loading')}>
           {[0, 1, 2, 3].map((i) => <span key={i} className="aspect-[16/10] rounded-[20px] bg-black/5 dark:bg-white/10" />)}
         </div>
       ) : list.length ? (
+        <>
+        {/* Featured above, so the rest get a heading of their own: without
+            it they read as more of Featured (#6434). A search leaves
+            Featured out, and then there is one grid and no second heading. */}
+        {featured.length ? <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`} data-home-join-rest="">{t('home:join.more')}</h3> : null}
         <div className={`${CARD_GRID} px-1`}>
           {list.slice(0, shown).map((app, i) => (
             <Card
               key={app.slug}
               app={app}
               eager={i < 4}
-              footer={signedIn ? (
-                <>
-                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-zinc-500 dark:text-zinc-400">
-                    {app.open_votes
-                      ? t('home:join.votes', { count: app.open_votes })
-                      : t('home:join.members', { count: app.member_count || 0 })}
-                  </span>
-                  <Button type="button" variant="pillAccent" size="sm" ink="solid" className="h-8 py-0" data-home-join={app.slug}
-                    aria-label={t('home:join.buttonNamed', { community: app.name })}
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onJoin(app); }}>
-                    {t('home:join.button')}
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button type="button" variant="pillNeutral" size="sm" ink="neutral" className="h-8 flex-1 py-0" data-home-pin={app.slug}
-                    aria-pressed={!!pinned?.has(app.slug)}
-                    aria-label={t('home:join.pinNamed', { community: app.name })}
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onPin?.(app); }}>
-                    {pinned?.has(app.slug) ? t('home:join.pinned') : t('home:join.pin')}
-                  </Button>
-                  <Button type="button" variant="pillAccent" size="sm" ink="solid" className="h-8 py-0" data-home-join={app.slug}
-                    aria-label={t('home:join.buttonNamed', { community: app.name })}
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onJoin(app); }}>
-                    {t('home:join.button')}
-                  </Button>
-                </>
-              )}
+              footer={footerFor(app)}
             />
           ))}
         </div>
-      ) : (
+        </>
+      ) : featured.length ? null : (
         <p className="px-2 py-4 text-[14px] text-zinc-500 dark:text-zinc-400">{t('home:join.allJoined')}</p>
       )}
       {more ? (
@@ -158,6 +179,15 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
       ) : null}
     </section>
   );
+}
+
+/** The nearest ancestor that scrolls, or null (the viewport). */
+export function scrollParent(el: Element | null): Element | null {
+  for (let node = el?.parentElement || null; node; node = node.parentElement) {
+    const y = getComputedStyle(node).overflowY;
+    if (y === 'auto' || y === 'scroll') return node;
+  }
+  return null;
 }
 
 /** The public directory, read once per page load (GET /api/public/apps). */

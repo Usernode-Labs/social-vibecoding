@@ -109,7 +109,7 @@
   },
   "work.heading": {
     "text": "Your work",
-    "description": "Heading over the first list of rows on the viewer's own profile: their changes, requests and votes."
+    "description": "Heading over the first list of rows on the viewer's own profile: their changes, requests, feedback and votes."
   },
   "work.changes.title": {
     "text": "Your changes",
@@ -130,6 +130,14 @@
   "work.requests.counting": {
     "text": "Counting your requests",
     "description": "Read by screen readers only, under \"Your requests\" on the viewer's profile, while the counts of their open and done requests are still loading; on screen a grey placeholder bar stands in for the line."
+  },
+  "work.feedback.title": {
+    "text": "Your feedback",
+    "description": "Row on the viewer's own profile that opens the Your feedback sheet: the history of the feedback they sent and whether it counted."
+  },
+  "work.feedback.hint": {
+    "text": "What you sent, and whether it counted",
+    "description": "Small line under \"Your feedback\" on the viewer's profile when the sent and counted tally could not be loaded."
   },
   "work.votes.title": {
     "text": "Your votes",
@@ -185,7 +193,7 @@
   },
   "more.appSlots.title": {
     "text": "App slots",
-    "description": "Row on the viewer's own profile: opens the dialog for creating an app, which says how many apps they may have. A \"slot\" is room for one app."
+    "description": "Row on the viewer's own profile: opens the dialog for creating an app, which says how many apps they may have, or the App allowance card when no slot is free. A \"slot\" is room for one app."
   },
   "more.appSlots.hint": {
     "text": "How many apps you can create",

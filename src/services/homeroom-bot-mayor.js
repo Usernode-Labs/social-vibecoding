@@ -88,6 +88,7 @@ const botTools = require('./bot-tools');
 const log = require('./logger');
 const crypto = require('node:crypto');
 const { withoutEmDashes } = require('./em-dashes');
+const replyHtml = require('./homeroom-bot-html');
 const progressSvc = require('./homeroom-bot-progress');
 const repoRef = require('./repo-ref');
 const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./homeroom-bot-reply-guards');
@@ -642,7 +643,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Add their words to a request that already exists when they ask you to (comment_on_request): drafted for its',
     '  public discussion under their name; once they tap Post it, you look at the request again. Say so.',
     '- Start one of their requests now when they ask you to (start_request): it goes to the front of your queue,',
-    '  and the result says whether you are on it or what it still waits for. Say exactly that.',
+    '  and the result says whether you are on it or what it still waits for. Say exactly that. When its result has',
+    '  `said`, say that and nothing else.',
     '- Withdraw one of your own changes that is still open when the person who asked for its request, or the',
     '  project\'s owner, asks you to (withdraw_proposal). It is withdrawn only once they tap Withdraw it under your',
     '  message, so ask them to. The one exception: a second change for a request that already has one approved',
@@ -723,6 +725,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Keep small talk and quick answers short: a few sentences. When they ask for analysis, options, a plan, a',
     '  comparison or detail, take the room it needs: a longer answer laid out with short headings, lists or a',
     '  table (Markdown), still in plain words, and lead with the answer itself.',
+    '- Any reply longer than two short lines also goes in the reply tool\'s html field, laid out as its description',
+    '  says, beside the same words in text.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
     '- From this chat you cannot build, merge, vote, close requests yourself or change settings, or change anybody else\'s',
     '  change. Changes come from requests, and your own changes are updated through',
@@ -750,6 +754,9 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     platformRules(),
   ].join('\n');
 }
+
+// Task 2020: how the reply's `html` is written, shared with the thread voice.
+const { REPLY_HTML_DESCRIPTION } = replyHtml;
 
 const TOOLS = [
   {
@@ -1067,6 +1074,8 @@ const TOOLS = [
         type: 'object',
         properties: {
           text: { type: 'string', description: 'Your reply in plain words: short for small talk, longer and laid out when they ask for analysis, options or detail. Under a draft, one short line about it at most: the card shows the draft\'s title and words, so never write them here.' },
+          // Task 2020: the same answer, laid out (homeroom-bot-html.js).
+          html: { type: 'string', description: REPLY_HTML_DESCRIPTION },
           cards: {
             type: 'array',
             maxItems: MAX_CARDS,
@@ -2189,7 +2198,15 @@ function sayDoing(pool, ctx, name, args = {}) {
       project = ctx.projectNames.get(asked);
     }
     const what = doingFor(name, args, { project });
-    if (what !== undefined) await doing(what);
+    if (what === undefined) return;
+    // #6405: once the turn has named a step, a tool with no name of its own
+    // leaves that step up, rather than dropping the card back to "Thinking".
+    if (what === null) {
+      if (ctx.doingNamed) return;
+    } else {
+      ctx.doingNamed = true;
+    }
+    await doing(what);
   };
   ctx.saying = (ctx.saying || Promise.resolve()).then(say).catch((err) => {
     log.warn('homeroom-bot-mayor', 'Could not say what the bot is doing', { tool: clip(name, 40), err: clip(err?.message, 200) });
@@ -2265,7 +2282,7 @@ function draftOf({ content = '', toolCalls = [] } = {}) {
 
 /**
  * What shows the answer as it is written, for one turn: `onDelta` for the
- * transport, `clear()` before a pass that writes it again, `close()` once
+ * transport, `restart()` before a pass that writes it again, `close()` once
  * the turn's own message is on its way. Null when nothing can show it (no
  * working card: deps.doing). Never rejects.
  */
@@ -2274,6 +2291,10 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
   if (typeof doing !== 'function') return null;
   let latest = '';
   let shown = '';
+  // #6405: after `restart()`, the words already on the card stay until the
+  // rewritten answer has caught up with them, so it never shrinks or streams
+  // again from its first word.
+  let floor = 0;
   let queued = false;
   let closed = false;
   let lastAt = 0;
@@ -2281,13 +2302,22 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
     const gap = lastAt + every - Date.now();
     if (gap > 0) await wait(gap);
     queued = false;
-    if (closed || latest === shown) return;
+    // A round that calls another tool writes no answer: say nothing and keep
+    // the words on the card, instead of dropping it back to "Thinking".
+    if (closed || !latest || latest === shown) return;
     shown = latest;
     lastAt = Date.now();
-    await doing(shown ? { kind: 'writing', text: shown } : null);
+    ctx.doingNamed = true;
+    await doing({ kind: 'writing', text: shown });
   };
   const set = (text) => {
     if (closed) return;
+    if (floor) {
+      // A rewritten answer shows only once it is at least as long as what is
+      // already on the card.
+      if (!text || text.length < floor) return;
+      floor = 0;
+    }
     latest = text;
     if (queued || latest === shown) return;
     queued = true;
@@ -2301,7 +2331,10 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
       // 2 Nov 2026: the words already kept from earlier rounds stay on the card (answerText).
       if (text !== null) set(text && ctx.besides?.length ? answerText(ctx.besides, text) : text);
     },
-    clear() { set(''); },
+    // #6405: the correction pass writes the answer again. What is shown stays,
+    // and the rewrite takes over only once it has caught up with it (or with
+    // the longer update still on its way to the card).
+    restart() { floor = Math.max(shown.length, latest.length); },
     // `clear`: what was shown goes too (the turn found no answer to send).
     close({ clear = false } = {}) {
       if (closed) return;
@@ -2358,6 +2391,28 @@ function answerText(besides = [], text = '') {
   }
   const inside = said && squashWords(kept.join(' ')).includes(said);
   return [...kept, ...(reply && !inside ? [reply] : [])].join('\n\n');
+}
+
+/**
+ * Pure (task 2020): the words a turn's answer is checked by (claimProblems):
+ * the answer's text, and the words its laid-out copy shows, which the chat
+ * draws in the text's place.
+ */
+function checkedWords(ctx, finalText = '') {
+  return replyHtml.withHtmlWords(answerText(ctx?.besides, ctx?.reply?.text ?? finalText), ctx?.reply?.html);
+}
+
+/**
+ * Pure (task 2020): the laid-out copy a reply is sent with, or null. Only
+ * beside the words exactly as the reply wrote them: not when words written
+ * beside a call lead the answer (the copy would leave them out), when a
+ * repeat or a draft's echo was taken out, or when a claim was cut, since the
+ * copy would still say what the words no longer do.
+ */
+function replyHtmlFor(ctx, text) {
+  const html = ctx?.reply?.html;
+  if (!html || !text || ctx.checkedProblems?.length) return null;
+  return text === clip(cleanReply(ctx.reply.text), MAX_REPLY_CHARS) ? html : null;
 }
 
 /**
@@ -3469,7 +3524,14 @@ async function runTool(pool, ctx, name, args) {
           if (ctx.standIns > 1) { ctx.gaveUp = true; return { ok: false }; }
           return { error: CHAT_STAND_IN_NOTE };
         }
-        ctx.reply = { text: clip(lifted.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: lifted.suggestions };
+        // Task 2020: the same answer laid out, when it wrote one (homeroom-bot-html.js).
+        // A list moved out of the words leaves the fragment out: it would
+        // still show that list beside the buttons.
+        const html = lifted.moved ? null : replyHtml.cleanReplyHtml(args.html);
+        ctx.reply = {
+          text: clip(lifted.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: lifted.suggestions,
+          ...(html ? { html } : {}),
+        };
         return { ok: true };
       }
       default: {
@@ -3987,6 +4049,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // (homeroom-bot-thread-tools/), between its own and the platform's.
       ctx.platformTools = platformTools.length > 0;
       const threadTools = threadToolsOf(deps);
+      // #6427: what a module reads before it says what it offers (admin.js:
+      // whether this is a full admin's own chat with the bot).
+      if (typeof threadTools.beforeTurn === 'function') await threadTools.beforeTurn(pool, ctx);
       const extraTools = threadTools.toolsFor(ctx);
       const tools = [...TOOLS, ...extraTools, ...platformTools];
       // #3733: the conversation could not be read: their message alone is
@@ -4151,7 +4216,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // this turn's tools did, and every request number it names against the
       // requests that exist. One more pass to put it right; whatever is still
       // claimed with nothing behind it is cut before it is sent (answer()).
-      const said = answerText(ctx.besides, ctx.reply?.text ?? finalText);
+      const said = checkedWords(ctx, finalText);
       // A screen handed to the designer is answered by it, not checked here.
       const problems = said && !ctx.drawScreen && !ctx.gaveUp ? await claimProblems(pool, ctx, said) : [];
       if (problems.length) {
@@ -4161,8 +4226,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         });
         const first = ctx.reply ? { ...ctx.reply } : { text: finalText, cards: [] };
         messages.push({ role: 'user', content: checkNote(problems) });
-        // P1: the answer shown as it was written goes; the next pass writes it again.
-        draft?.clear();
+        // P1: the next pass writes the answer again; what is already shown
+        // stays until the rewrite has caught up with it (#6405).
+        draft?.restart();
         ctx.reply = null;
         finalText = '';
         // #6307: the first pass's words beside its calls go too, so the second
@@ -4183,7 +4249,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           log.info('homeroom-bot-mayor', 'The second pass failed; sending the first answer, checked', { userId: user.id, code: codeOf(err) });
         }
         if (!ctx.reply && !finalText) ctx.reply = first;
-        ctx.checkedProblems = await claimProblems(pool, ctx, answerText(ctx.besides, ctx.reply?.text ?? finalText));
+        ctx.checkedProblems = await claimProblems(pool, ctx, checkedWords(ctx, finalText));
       }
     } catch (err) {
       error = codeOf(err);
@@ -4208,6 +4274,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     });
     text = stripClaims(text, ctx.checkedProblems);
   }
+  const html = replyHtmlFor(ctx, text);
   let cards = [];
   let fallback = null;
   let defer = false;
@@ -4273,8 +4340,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   cards = [...ctx.cards, ...replyCards];
   const unique = [...new Map(cards.map((c) => [JSON.stringify(c), c])).values()].slice(0, MAX_CARDS);
   // What they might say next, as buttons to tap (dm.retireSuggestions
-  // closes them once the bot says something newer).
-  const next = suggestionLabels(ctx.reply?.suggestions);
+  // closes them once the bot says something newer). #4046, #6404: one set of
+  // answers at a time: a Questions card under this reply is the answer set,
+  // so the reply's suggestions are dropped rather than stored beside it.
+  const next = toolCard?.type === 'questions' ? [] : suggestionLabels(ctx.reply?.suggestions);
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
   const actions = prompts.slice(0, 3);
   const project = named.project ? { appSlug: named.project } : {};
@@ -4284,6 +4353,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       kind: 'chat', ...project,
       ...(actions.length ? { actions, status: 'open' } : {}),
       ...extra,
+      // Task 2020: the answer laid out, drawn in place of the words.
+      ...(html ? { html } : {}),
     },
     // C2.4: a new project's thread opened this turn: the answer is its first reply.
     ...(ctx.projectThread ? { replyToId: null, threadRootId: ctx.projectThread.rootId } : {}),
@@ -4563,8 +4634,26 @@ async function notePrivateDraft(pool, { userId, messageId, state, ref = null }) 
   ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not note where a draft\'s private thread went', { err: err.message }));
 }
 
+// #6427: a card that posts somewhere public, offered in a thread of a
+// person's chat with the bot where a database read (query_prod_db) happened,
+// says so: its words were drafted by a turn that could have read those rows
+// (frontend bot-question.tsx draws the line). Only an admin can have run one,
+// so nobody else's offer pays for the look. `roots` are the threads the
+// offer came from (null for Main). Never throws.
+async function dbReadMark(pool, { user, conversationId, roots }) {
+  if (user?.isAdmin !== true) return {};
+  const read = await require('./homeroom-bot-thread-tools/admin').dbReadIn(pool, {
+    userId: user.id, conversationId, threadRootIds: roots,
+  });
+  return read ? { dbRead: true } : {};
+}
+
 async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps, extra = null, keySuffix = '' }) {
   const dm = dmModule(deps);
+  const dbRead = await dbReadMark(pool, {
+    user, conversationId,
+    roots: [message?.threadRootId || message?.thread_root_id || null, deps?.threadRequest?.rootId || deps?.threadRootId || null],
+  });
   // #6305: one request on several projects. It has no one project, no
   // dm_actions row and nothing to settle: its card is the whole offer, and
   // its File on all is decided by homeroom-bot-cards/file-many.js.
@@ -4587,6 +4676,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       metadata: {
         ...(extra || {}),
         ...(o.extras ? { draftExtras: o.extras } : {}),
+        ...dbRead,
       },
     });
     if (sent?.messageId) {
@@ -4688,6 +4778,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       // requests, where, Done when), kept on the message it was said in, so
       // File it can file the same. Read back by settleOffer.
       ...(o.extras ? { draftExtras: o.extras } : {}),
+      ...dbRead,
     },
   });
   if (sent?.messageId && sent.duplicate) {
@@ -4917,6 +5008,12 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
       ...designPlanActions(n).map((a) => (a.id === 'yes' ? { ...a, style: 'secondary' } : a)),
     ]
     : designPlanActions(n);
+  // #6427: a plan is posted publicly: the line a database read in its thread,
+  // or in the one that asked for the screen, puts on the card.
+  const dbRead = await dbReadMark(pool, {
+    user, conversationId,
+    roots: [message?.threadRootId || message?.thread_root_id || null, deps?.threadRootId || null],
+  });
   const sent = await dm.sendDm(pool, {
     bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
     content: [
@@ -4928,7 +5025,7 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
     metadata: {
       kind: 'confirm', appSlug: app.slug, appName: name, actionId: action.id,
       question: n ? `Post version ${v} as a plan on #${n}?` : `Post version ${v} as a plan on ${name}?`,
-      answers: designPlanAnswers(n), actions, status: 'open', mirrors: false,
+      answers: designPlanAnswers(n), actions, status: 'open', mirrors: false, ...dbRead,
     },
   });
   if (sent?.messageId && sent.duplicate) {
@@ -5814,6 +5911,23 @@ async function startRequest(pool, ctx, args) {
   if (await dm.overWeeklyAllowance(pool, settings, payer)) {
     return { ok: false, error: 'Their building time for this week is used up, so it cannot start this week. Nothing was started. It resets on Monday; someone else in the project can ask for it before then.' };
   }
+  // #6389: the person asked the bot to make its own version of their change
+  // (homeroom-bot-voice.js makeOwnVersion). The look builds from the
+  // original change's branch, which the ask records; its own pending and
+  // cap checks still decide whether there is room.
+  if (Number.isInteger(Number(args.ownVersionOf)) && Number(args.ownVersionOf) > 0) {
+    const queuedOwn = await botModule(deps).enqueueFront(pool, {
+      appId: app.id, issueNumber: n, userId: user.id, reason: 'dm_own_version', payerId: user.id,
+    });
+    ctx.started = name;
+    ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
+    require('./bot-work-changed').noteWorkChanged(user.id, deps);
+    return {
+      ok: true,
+      ...(queuedOwn ? {} : { already: 'A look on it is running now; this one follows it.' }),
+      built: 'Your own version starts as soon as a builder is free. It begins from their change, fixes what fails and brings it up to date with main.',
+    };
+  }
   const open = await liveModule(deps).openBotProposal(pool, ctx.bot.id, app.id, n);
   if (open?.status === 'promoted') {
     return { ok: false, code: 'already_built', error: 'You already built it: its proposal is up for the group\'s vote. To change it, use revise_proposal. Nothing was started.' };
@@ -5839,10 +5953,22 @@ async function startRequest(pool, ctx, args) {
   // named who. A go-ahead from that person is the decision the note asked
   // for, so the queued look records it rather than asking again.
   const { rows: lastLook } = await pool.query(
-    `SELECT verdict, reason FROM homeroom_bot_runs
+    `SELECT verdict, reason, go_ahead_decides, first_step FROM homeroom_bot_runs
       WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
     [app.id, n],
   );
+  // 6 Nov 2026 (#6395): the last look left it for a person, and its read says
+  // a go-ahead cannot settle it (credentials, auth, billing, permissions,
+  // operator work outside the app, a non-append-only database change, or too
+  // big for one build). Queueing would only read it to the same answer.
+  if (lastLook[0]?.verdict === 'person' && lastLook[0].go_ahead_decides === false) {
+    return {
+      ok: false,
+      code: 'go_ahead_cannot',
+      said: liveModule(deps).goAheadCannotText({ reason: lastLook[0].reason, firstStep: lastLook[0].first_step, reader: user.username }),
+      next: 'Say exactly this. Do not say you are on it, and do not offer tell_me_when.',
+    };
+  }
   const goAhead = lastLook[0]?.verdict === 'person'
     && await botModule(deps).goAheadCounts(pool, app, requester, user.id);
   const queued = await botModule(deps).enqueueFront(pool, {
@@ -6841,6 +6967,9 @@ module.exports = {
   checkProjectOffer,
   cardSentence,
   sendDesignOffer,
+  // #6427: an offer's card, and the line a database read in its thread puts on it.
+  offer,
+  dbReadMark,
   decidePostDesign,
   noteProjectMade,
   MAKE_PROJECT,
@@ -6975,6 +7104,9 @@ module.exports = {
   draftWriter,
   besideWords,
   answerText,
+  checkedWords,
+  replyHtmlFor,
+  REPLY_HTML_DESCRIPTION,
   BESIDE_NOTE,
   noteLookup,
   lookedItems,

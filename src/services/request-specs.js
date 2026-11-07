@@ -36,6 +36,16 @@ const log = require('./logger');
 const specHtml = require('./spec-html');
 
 const SPEC_SOURCE = 'request_spec';
+
+// A posted plan's record: a session with the spec source and no branch.
+// No agent runs in it; once a build gives it a branch it is real work.
+// One definition of "is a plan record", so every list that reads sessions
+// can share it (#6410).
+function planRecordSql(alias = 'cs') {
+  const p = alias ? `${alias}.` : '';
+  return `(${p}source IS NOT DISTINCT FROM '${SPEC_SOURCE}' AND ${p}branch_name IS NULL)`;
+}
+
 // A markdown spec has no viewer cap of its own; this keeps it within what
 // a GitHub comment could carry whole.
 const MAX_SPEC_MARKDOWN_CHARS = 60000;
@@ -297,6 +307,17 @@ async function postRequestSpec(pool, { app, repo, issueNumber, issueTitle = null
   } catch (err) {
     log.warn('request-specs', 'Could not lift the bot\'s wait for a plan', { appId: app.id, issueNumber, err: err.message });
   }
+  // #6406: a newer version must reach the bot while it builds, or after the
+  // change is up, not only when somebody asks. The post never fails on it.
+  try {
+    await (deps.planUpdates || require('./homeroom-bot-plan-updates')).noticeNewerPlan(pool, {
+      app, issueNumber, posted: { sessionId, version, user },
+    }, deps);
+  } catch (err) {
+    log.warn('request-specs', 'Could not tell the bot about a newer plan', {
+      appId: app.id, issueNumber, sessionId, version, err: err.message,
+    });
+  }
   return {
     sessionId: Number(sessionId),
     version: Number(version),
@@ -419,6 +440,7 @@ async function listRequestSpecs(pool, { appId, issueNumber, viewerId }) {
 
 module.exports = {
   SPEC_SOURCE,
+  planRecordSql,
   MAX_SPEC_MARKDOWN_CHARS,
   MAX_SPEC_HTML_CHARS,
   MAX_COMMENT_SPEC_CHARS,

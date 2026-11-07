@@ -185,6 +185,41 @@
       "id": "production-app-sleep",
       "sha256": "ec7a043e2e2298faa72c07424eb2b9b6bd48fbdb4bc84c0386490dca291c4df1",
       "schemaSha256": "1c4c9809d3c5a4a594ef3c8960cd28724b7b0e6371350c9819e89206eb552574"
+    },
+    {
+      "id": "app-offline-cache-refusals",
+      "sha256": "a3b88252c75232bdb5062d09a02643059224f1b5bebdba4e38efb5847fac9423",
+      "schemaSha256": "1317962c70dc4876fb1c82f293646f62756cc3d8b776eac37e31b338d1620456"
+    },
+    {
+      "id": "homeroom-bot-run-go-ahead",
+      "sha256": "2fc7cc09a279f15a72d26a69e5ef9aa158ceda71ebcb63535f44b1dfca577ae5",
+      "schemaSha256": "d62c285f7764aa1dd26d5ddbdbe166f2beefb1f91cf7dab59b50773a112806ef"
+    },
+    {
+      "id": "bot-own-version",
+      "sha256": "79cb1bd427bbdbd282572d4e0d1b9298e3e2f968d37058a118fe422b3596f586",
+      "schemaSha256": "7d75320c371d7ca9a400176a55079a83556e06e443ad3b4f5126893b8b031562"
+    },
+    {
+      "id": "work-state-marks-check-phase",
+      "sha256": "bc864215c9d5528939e79ec8037f49844543a2b5153e979611e66fe086c585ee",
+      "schemaSha256": "54bcbe575d8c2c2ca50072f0ec50c1d0312c0d857c06374761736b09d55d70f2"
+    },
+    {
+      "id": "thread-moves-for-change",
+      "sha256": "b413627722015a31b6570a751b46b306b24116071290953def94edd01fc7d102",
+      "schemaSha256": "cb982ba1e3e21fb9be39458133a4c19c4e3a3ebd6214b6902b6f75c830a5019d"
+    },
+    {
+      "id": "conversation-members-last-visit",
+      "sha256": "a830dfd155d9a11ffa9d2512f9b949e014d439e4b4f0d63c31655199c0d7424d",
+      "schemaSha256": "9690fd969c07b70f74ae472f51a9033551fc5206ff9f9d98f6690d9bba3efff9"
+    },
+    {
+      "id": "homeroom-bot-overlap-offers",
+      "sha256": "2426b42ac74e1b2cf8b3a04ab1f84f53f7e59898fe6e131411e5951b26a04f2f",
+      "schemaSha256": "79aa7fdde06ea699fd1eda4a58de8ab7b5ed4bedd3ac065a953e885d1215e2ca"
     }
   ]
 }

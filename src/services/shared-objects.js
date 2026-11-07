@@ -278,7 +278,7 @@ async function hydrateOne(pool, user, ref) {
     }
     if (ref.object_type === 'governance_proposal') {
       const { rows } = await pool.query(
-        `SELECT i.id, i.title, i.status, u.username
+        `SELECT i.id, i.title, i.status, i.kind, i.payload->>'issueNumber' AS issue_number, u.username
            FROM issues i LEFT JOIN users u ON u.id = i.created_by
           WHERE i.id = $1 AND i.app_id = $2
             AND i.kind IN ('secret_change', 'rename', 'close_issue', 'reopen_issue', 'maintenance_campaign',
@@ -287,9 +287,15 @@ async function hydrateOne(pool, user, ref) {
       );
       if (!rows.length) return unavailable(ref);
       const row = rows[0];
+      // #6439: a vote to close a request is read on the request's page.
+      const closing = row.kind === 'close_issue' ? Number(row.issue_number) : 0;
+      const closeHome = Number.isInteger(closing) && closing > 0 ? closing : null;
       return {
         ...base, proposalId: row.id, title: row.title, state: row.status, author: row.username,
-        href: `#app/${encodeURIComponent(app.slug)}/dev/governance/${row.id}`,
+        ...(closeHome ? { issueNumber: closeHome } : {}),
+        href: closeHome
+          ? `#app/${encodeURIComponent(app.slug)}/dev/issues/${closeHome}`
+          : `#app/${encodeURIComponent(app.slug)}/dev/governance/${row.id}`,
       };
     }
     if (ref.object_type === 'spec') {

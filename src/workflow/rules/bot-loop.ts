@@ -7,6 +7,8 @@
 //
 // workflow-foundation's design-bot-loop.md is the design.
 
+import { isAppendOnly } from './append-only-files.ts';
+
 export const BOT_REQUEST = 'bot-request';
 export const BOT_LANE = 'bot-lane';
 export const LANE_KEY = 'bot';
@@ -375,7 +377,9 @@ export const READ_CANDIDATES_SQL = `
 // The live builds waiting for a slot, oldest first: requests in
 // `building` whose build was not granted yet, on apps the bot acts on
 // ($1: paused slugs), not held by their project's first version nor by
-// their requester's plan (planHoldSql).
+// their requester's plan (planHoldSql). A hold stored for an overlap with
+// another change (#6423) holds nothing since builds stopped waiting for one
+// (#6428): such a build is granted on the next pass.
 export const BUILD_CANDIDATES_SQL = `
   SELECT w.app_id, (w.data->>'issueNumber')::int AS issue_number, (w.data->'build'->>'runId')::int AS run_id,
          COALESCE(rq.user_id, i.created_by) AS person_id
@@ -388,7 +392,8 @@ export const BUILD_CANDIDATES_SQL = `
        ORDER BY id LIMIT 1
     ) i ON TRUE
    WHERE w.machine = '${BOT_REQUEST}' AND w.state = 'building' AND w.data->'build'->>'phase' = 'waiting' AND w.flag IS NULL
-     AND (w.data->'build'->>'heldUntil' IS NULL OR (w.data->'build'->>'heldUntil')::timestamptz <= NOW())
+     AND (w.data->'build'->>'heldUntil' IS NULL OR (w.data->'build'->>'heldUntil')::timestamptz <= NOW()
+          OR w.data->'build'->>'heldFor' = 'overlap')
      AND NOT (a.slug = ANY($1::text[]))
      AND NOT ${GRANT_PENDING('w.key')}
      AND NOT EXISTS (
@@ -422,6 +427,103 @@ export const NEXT_ELIGIBLE_SQL = `
                                      AND cs.status = 'promoted')))
      WHERE q.started_at IS NULL AND m.created_at > NOW() - make_interval(secs => ${SETTLE_MS / 1000})
   ) n`;
+
+// ── Overlap with other changes (#6423, #6428) ───────────────────────────
+//
+// Before a build uses its building slot, the files its plan names are
+// compared with the files the project's other open changes and its running
+// builds really change (their diffs). An overlap never holds a build: it
+// goes ahead in parallel and says what it shares in its request's thread,
+// and whichever change merges second gets the merge's automatic sync with
+// main. A build goes on top of another change only when its request
+// depends on that change's request.
+
+// The most file names one plan is read for.
+export const NAMED_FILES_CAP = 200;
+
+// The repository paths a plan names: a token with a slash and an extension
+// (`src/features/ai/lists.tsx`, `tests/x.test.js`), backticks and the
+// punctuation around it stripped. Plans quote them in prose, tables and
+// lists alike; what they never do is name a path without a slash.
+export function filesNamed(text: unknown): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const re = /[A-Za-z0-9_.@+-]+(?:\/[A-Za-z0-9_.@+-]+)+\.[A-Za-z0-9]+/g;
+  for (const m of String(text ?? '').matchAll(re)) {
+    const path = m[0].replace(/^[.]+/, '').replace(/[.,;:]+$/, '');
+    if (seen.has(path)) continue;
+    seen.add(path);
+    out.push(path);
+    if (out.length >= NAMED_FILES_CAP) break;
+  }
+  return out;
+}
+
+export interface OverlapOther {
+  sessionId: number | null;
+  runId: number | null;
+  issueNumber: number | null;
+  prNumber: number | null;
+  status: string | null;
+  branch: string | null;
+  // The requests its change is for (its session's linked requests), which a
+  // dependent request names; `issueNumber` alone when absent.
+  requests?: number[];
+  // Built on top of another change itself: never built on again.
+  stacked?: boolean;
+  files: string[];
+}
+
+export interface OverlapDecision {
+  strategy: 'none' | 'parallel' | 'stack';
+  with: OverlapOther | null;
+  files: string[];
+}
+
+const EMPTY: OverlapDecision = Object.freeze({ strategy: 'none', with: null, files: [] });
+
+const requestsOf = (o: OverlapOther): number[] => (o.requests?.length ? o.requests : (o.issueNumber ? [o.issueNumber] : []));
+
+// A change that can be built on: up for a vote, with a pull request and a
+// branch, and not on top of another change itself.
+const canBuildOn = (o: OverlapOther) => o.status === 'promoted' && !!o.prNumber && !!o.branch && !o.stacked;
+
+// Pure: what this build does about the project's other work. `files` are
+// the paths its own plan names; `others` the open changes and running
+// builds of the same project, each with the files its diff changes;
+// `dependsOn` the requests this one is to be built after (a "build first"
+// link, #6211). Nothing passes `dependsOn` yet, so nothing stacks today.
+//
+// `stack`: its request depends on another change's request, and that change
+// can be built on. `parallel`: it shares a file with another change, and
+// builds now beside it. A shared file that really may conflict is named
+// before one on the append-only list, which the merge sync combines on its
+// own. `none`: nothing shared.
+export function decideOverlap(p: {
+  files: readonly string[];
+  others: readonly OverlapOther[];
+  dependsOn?: readonly number[];
+}): OverlapDecision {
+  const mine = new Set((p.files || []).map((f) => String(f)));
+  const sharedWith = (o: OverlapOther) => [...new Set((o.files || []).map((f) => String(f)))].filter((f) => mine.has(f)).sort();
+  const after = new Set((p.dependsOn || []).map(Number).filter((n) => Number.isInteger(n) && n > 0));
+  if (after.size) {
+    const parent = (p.others || []).find((o) => canBuildOn(o) && requestsOf(o).some((n) => after.has(n)));
+    if (parent) return { strategy: 'stack', with: parent, files: sharedWith(parent).filter((f) => !isAppendOnly(f)) };
+  }
+  if (!mine.size) return { ...EMPTY };
+  let real: { other: OverlapOther; shared: string[] } | null = null;
+  let plain: { other: OverlapOther; shared: string[] } | null = null;
+  for (const other of p.others || []) {
+    const shared = sharedWith(other);
+    if (!shared.length) continue;
+    const conflicting = shared.filter((f) => !isAppendOnly(f));
+    if (conflicting.length) real = real || { other, shared: conflicting };
+    else plain = plain || { other, shared };
+  }
+  const pick = real || plain;
+  return pick ? { strategy: 'parallel', with: pick.other, files: pick.shared } : { ...EMPTY };
+}
 
 // ── Picks ───────────────────────────────────────────────────────────────
 

@@ -228,6 +228,25 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     await ws.drainDirty(pool);
   });
 
+  await t.test('a change\'s phase or a merge conflict marks its work state', async () => {
+    // #6402: deferred checks and a recorded conflict change how a checking
+    // change is worded, so each moves the stored row.
+    const marks = async () => (await pool.query(
+      'SELECT session_id FROM work_state_dirty ORDER BY id')).rows.map((r) => Number(r.session_id));
+    await pool.query('DELETE FROM work_state_dirty');
+    await pool.query("UPDATE chat_sessions SET check_phase = 'deferred' WHERE id = $1", [own.id]);
+    assert.deepEqual(await marks(), [Number(own.id)]);
+    await pool.query('DELETE FROM work_state_dirty');
+    await pool.query("UPDATE chat_sessions SET merge_conflict_state = 'conflict' WHERE id = $1", [own.id]);
+    assert.deepEqual(await marks(), [Number(own.id)]);
+    await pool.query('DELETE FROM work_state_dirty');
+    await pool.query('UPDATE chat_sessions SET integration_merges_clean = FALSE WHERE id = $1', [own.id]);
+    assert.deepEqual(await marks(), [Number(own.id)], 'a measured conflict moves it too');
+    await pool.query('DELETE FROM work_state_dirty');
+    await pool.query("UPDATE chat_sessions SET check_phase = 'deferred' WHERE id = $1", [own.id]);
+    assert.deepEqual(await marks(), [], 'writing the same value again marks nothing');
+  });
+
   await t.test('readers: a person\'s own rows, and a project\'s by number', async () => {
     const hers = await ws.forRequester(pool, ada.id);
     assert.deepEqual(hers.map((r) => r.ref).sort((a, b) => a - b), [1, 2, 3, 4, 8]);
@@ -307,4 +326,54 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     await ws.pushesOf(pool, await ws.refresh(pool, [req(22)]));
     assert.deepEqual(await rows(bob), []);
   });
+
+  // #6441: "Ready to try" outlives the change being ready. A change that
+  // goes back to building withdraws its unread one; a stage that only moves
+  // its line does not; being ready again rings a new one.
+  await t.test('#6441: a change back in building withdraws its unread "ready to try"', async () => {
+    await ask(30, ada, 'A swap calendar page');
+    const up = await change(bot, 530, [30], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await run(30, 'ready', { buildOk: true, proposalSessionId: up.id });
+    const rang = await ws.refresh(pool, [req(30)]);
+    assert.deepEqual([rang[0].state.stage, rang[0].bell], ['up_for_vote', 'ready']);
+    await ws.pushesOf(pool, rang);
+    const readyRows = async () => (await pool.query(
+      `SELECT id, read_at, mailed_at FROM notifications
+        WHERE session_id = $1 AND kind = 'build_ready' ORDER BY id`, [up.id])).rows;
+    assert.equal((await readyRows())[0].read_at, null, 'ready to try waits unread');
+
+    // An update queued moves only its line: the stage is still up_for_vote,
+    // so the row somebody has not acted on (#6438's) stays unread.
+    const ask30 = await one(
+      `INSERT INTO homeroom_bot_change_asks (app_id, session_id, issue_number, asker_id, instruction, status)
+       VALUES ($1, $2, 30, $3, 'Make it bigger', 'queued') RETURNING id`,
+      [app.id, up.id, ada.id]);
+    const queued = await ws.refresh(pool, [req(30)]);
+    assert.deepEqual([queued[0].state.stage, queued[0].state.line.code], ['up_for_vote', 'update_queued']);
+    assert.deepEqual((await ws.pushesOf(pool, queued)).map((p) => p.data.type), ['work_state'], 'no bell, no withdraw');
+    assert.equal((await readyRows())[0].read_at, null, 'only its line moved');
+
+    // Taken, it goes back to building: the unread row is withdrawn, its
+    // email with it, and the open tab hears its bell moved.
+    await pool.query("UPDATE homeroom_bot_change_asks SET status = 'taken', taken_at = NOW() WHERE id = $1", [ask30.id]);
+    const back = await ws.refresh(pool, [req(30)]);
+    assert.deepEqual([back[0].state.stage, back[0].bell], ['building', null]);
+    const backPushes = await ws.pushesOf(pool, back);
+    assert.deepEqual(backPushes.map((p) => p.data.type).sort(), ['notifications_changed', 'work_state']);
+    assert.deepEqual(backPushes.find((p) => p.data.type === 'notifications_changed').routing, { userId: ada.id });
+    const [withdrawn] = await readyRows();
+    assert.ok(withdrawn.read_at, 'withdrawn, not deleted');
+    assert.ok(withdrawn.mailed_at, 'and its email no longer goes');
+    assert.equal((await readyRows()).length, 1, 'the row stays in All');
+
+    // Ready again when the update lands: a new, unread one.
+    await pool.query("UPDATE homeroom_bot_change_asks SET status = 'done', done_at = NOW() WHERE id = $1", [ask30.id]);
+    const again = await ws.refresh(pool, [req(30)]);
+    assert.deepEqual([again[0].state.stage, again[0].bell], ['up_for_vote', 'ready']);
+    await ws.pushesOf(pool, again);
+    const after = await readyRows();
+    assert.equal(after.length, 2);
+    assert.equal(after[1].read_at, null, 'the new one rings');
+  });
 });
+

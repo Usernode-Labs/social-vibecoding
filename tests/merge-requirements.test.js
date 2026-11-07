@@ -869,3 +869,94 @@ test('the recording is descriptive only — a failed write never blocks a merge'
     restore();
   }
 });
+
+// ── An admin's force merge ──────────────────────────────────────────────
+//
+// The force skips the vote gates, says which step it is actually on, and
+// says so on the card. It skips checks only for the commit it was given on,
+// and an authored push that ends it leaves a record of what it was.
+
+const FORCE_HEAD = 'a'.repeat(40);
+const forceGates = () => ([
+  { key: 'approvals', label: 'Votes', actor: 'group', state: 'waiting', detail: { note: '0 of 2' } },
+  { key: 'explicit', label: 'A Yes from another member', actor: 'group', state: 'waiting', detail: null },
+  { key: 'admin_yes', label: 'Admin approval', actor: 'admin', state: 'pending', detail: null },
+  { key: 'integration', label: 'No conflicts with main', actor: 'auto', state: 'done', detail: null },
+  { key: 'checks', label: 'Checks', actor: 'author', state: 'blocked', detail: { note: 'some checks are failing' } },
+  { key: 'main_healthy', label: 'Main is healthy', actor: 'admin', state: 'active', detail: null },
+  { key: 'github', label: 'Merge', actor: 'auto', state: 'pending', detail: null },
+]);
+const forceSession = (patch = {}) => ({
+  merge_force: { by: 'evan', userId: 3, at: '2026-11-06T12:00:00Z', head: FORCE_HEAD },
+  reviewed_head_sha: FORCE_HEAD,
+  ...patch,
+});
+
+test('a force merge skips the vote gates and says so, on the commit it was given', () => {
+  const block = requirements.withForceBlock({ gates: forceGates() }, forceSession());
+  for (const key of ['approvals', 'explicit', 'admin_yes', 'checks']) {
+    const g = block.gates.find((x) => x.key === key);
+    assert.equal(g.state, 'done', `${key} is done under a force`);
+    assert.equal(g.detail.skipped, 'force', `${key} says the force skipped it`);
+    assert.equal(g.detail.by, 'evan');
+  }
+  // main is still active and integration is done, so it waits on main.
+  assert.equal(block.forced.by, 'evan');
+  assert.equal(block.forced.head, FORCE_HEAD);
+  assert.equal(block.forced.step, 'main');
+  assert.equal(block.forced.stoppedOn, null);
+});
+
+test('checks are skipped only on the force\'s own commit, never a later one', () => {
+  const block = requirements.withForceBlock({ gates: forceGates() },
+    forceSession({ reviewed_head_sha: 'b'.repeat(40) }));
+  assert.equal(block.gates.find((g) => g.key === 'checks').state, 'blocked');
+  // The checks it did not skip are blocked, so that is where the force stopped.
+  assert.equal(block.forced.step, 'stopped');
+  assert.equal(block.forced.stoppedOn, 'checks');
+});
+
+test('a force still waiting on main, a conflict, or the merge says which', () => {
+  const gate = (key, state) => ({ key, label: key, actor: 'auto', state, detail: null });
+
+  const conflict = requirements.withForceBlock({ gates: forceGates() },
+    forceSession({ reviewed_head_sha: 'b'.repeat(40), check_state: 'passing' }));
+  // Checks are blocked on this head, which stops it first.
+  assert.equal(conflict.forced.step, 'stopped');
+
+  const waitingConflict = requirements.withForceBlock({
+    gates: [gate('approvals', 'waiting'), gate('integration', 'active'), gate('checks', 'done'), gate('github', 'pending')],
+  }, forceSession({ reviewed_head_sha: 'b'.repeat(40) }));
+  assert.equal(waitingConflict.forced.step, 'conflict');
+
+  const merging = requirements.withForceBlock({
+    gates: [gate('approvals', 'waiting'), gate('integration', 'done'), gate('checks', 'done'), gate('github', 'pending')],
+  }, forceSession({ reviewed_head_sha: 'b'.repeat(40) }));
+  assert.equal(merging.forced.step, 'merging');
+});
+
+test('the provisional list carries the force too', () => {
+  const block = requirements.readRequirements({
+    votes_required: 3, yes_count: 0, check_state: 'passing',
+    integration_behind_by: 0, integration_merges_clean: true,
+    reviewed_head_sha: FORCE_HEAD, merge_force: { by: 'evan', head: FORCE_HEAD },
+  });
+  assert.equal(block.provisional, true);
+  assert.equal(block.gates.find((g) => g.key === 'approvals').state, 'done');
+  assert.equal(block.gates.find((g) => g.key === 'approvals').detail.skipped, 'force');
+  assert.equal(block.forced.by, 'evan');
+});
+
+test('a dropped force is passed through when none is held now', () => {
+  const dropped = { by: 'evan', head: 'abc1234', to: 'def5678', droppedAt: '2026-11-06T12:10:00Z' };
+  const block = requirements.readRequirements({
+    votes_required: 1, yes_count: 1, merge_force_dropped: dropped,
+  });
+  assert.deepEqual(block.forceDropped, dropped);
+  assert.equal(block.forced, undefined);
+
+  const held = requirements.readRequirements({
+    votes_required: 1, yes_count: 1, merge_force: { by: 'evan', head: FORCE_HEAD }, merge_force_dropped: dropped,
+  });
+  assert.equal(held.forceDropped, undefined, 'a held force is not described as dropped');
+});

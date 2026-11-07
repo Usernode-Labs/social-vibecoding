@@ -584,3 +584,39 @@ test('the app conventions say what an app needs for it', () => {
   assert.match(doc, /"offline": false/);
   assert.match(doc, /On iPhone at most\s+two apps can have one/);
 });
+
+// ── A page that never opens, learned per build (offline-cache-refusals.js) ─
+
+const LIVE = '1'.repeat(40);
+
+test('two people\'s reports on the live build switch the cacheable address off until the next deploy', () => {
+  const on = { APP_OFFLINE_CACHE: 'on' };
+  const app = { manifest_snapshot: {}, main_sha: LIVE };
+  assert.equal(offlineCache.forApp({ ...app, offline_cache_off_sha: LIVE }, on), false, 'off on that build');
+  assert.equal(offlineCache.forApp({ ...app, offline_cache_off_sha: '2'.repeat(40) }, on), true, 'a later deploy clears it');
+  assert.equal(offlineCache.forApp({ ...app, offline_cache_off_sha: null }, on), true);
+  assert.equal(offlineCache.forApp({ manifest_snapshot: {}, offline_cache_off_sha: LIVE }, on), true, 'no live build on the row: says nothing');
+});
+
+test('the online fallback reports the build it saw; offline, or with no full sha, it does not', async (t) => {
+  const posted = [];
+  const fetchWas = global.fetch;
+  global.fetch = (url, init) => { posted.push({ url, body: JSON.parse(init.body), method: init.method }); return Promise.resolve({ ok: true }); };
+  t.after(() => { if (fetchWas === undefined) delete global.fetch; else global.fetch = fetchWas; });
+
+  shell(t, { builds: { chores: LIVE, short: 'b1' } });
+  AppView._offlineCacheDidNotOpen('chores', false);
+  assert.deepEqual(posted, [{ url: '/api/apps/chores/offline-cache/did-not-open', body: { build: LIVE }, method: 'POST' }]);
+
+  AppView._offlineCacheDidNotOpen('chores', true);
+  AppView._offlineCacheDidNotOpen('short', false);
+  assert.equal(posted.length, 1, 'offline, and a build that is not a commit, are not reported');
+});
+
+test('the report has its route, behind the app detail\'s own visibility guard', () => {
+  const routes = read('src/routes/apps.js');
+  assert.match(routes, /router\.post\('\/api\/apps\/:slug\/offline-cache\/did-not-open', sameOriginBrowserOnly,/);
+  assert.match(routes, /offlineCacheRefusals\.recordRefusal\(pool, \{ app: appRow, userId: req\.user\.id, build \}\)/);
+  assert.ok(require('../src/services/app-access').nonSecretAppColumnList().includes('offline_cache_off_sha'),
+    'the apps list carries the column forApp reads');
+});

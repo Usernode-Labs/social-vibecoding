@@ -225,7 +225,7 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 20 appended mocks (900008 joined in #556, 900009 in
+    // 5 live issues + 21 appended mocks (900008 joined in #556, 900009 in
     // #617, 900010 in #683, 900011/900012 in #1010 as the targets of the
     // applying / retry-pending mock close proposals, 900013 with the
     // card-as-pointer revision — the deliberately BARE row, which the
@@ -240,8 +240,20 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     // the request the bot handed back to a person whose discussion carries
     // the seeded note and its suggested replies, and 9107 for #6264, the
     // request whose discussion carries the bot's promise to tell someone
-    // when the update was in and the line it posted when it was).
-    assert.strictEqual(body.issues.length, 25);
+    // when the update was in and the line it posted when it was, and 9112
+    // for #6399, the request whose hand-back reason a later release lifted,
+    // and 9114/9115 for #6211, the pair whose discussions show the overlap
+    // note, its three choices and the line saying what was chosen).
+    assert.strictEqual(body.issues.length, 28);
+
+    // #6399: and opened by its address, as the shots do, the request whose
+    // hand-back reason a later release lifted is there without ?demo=1.
+    const lifted = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/9112`);
+    assert.strictEqual(lifted.status, 200);
+    assert.strictEqual(
+      (await lifted.json()).issue.title,
+      'Staging demo: a request handed back over a plan the bot could not read',
+    );
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');

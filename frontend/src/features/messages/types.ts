@@ -66,6 +66,8 @@ export interface HomeroomBotMeta {
   card?: HomeroomBotCard;
   /** Homeroom bot parity, P1: what the reply looked at (./bot-looked.tsx). */
   looked?: HomeroomBotLooked;
+  /** Task 2020: a chat answer laid out as an HTML fragment, drawn in place of its words (./bot-html.tsx). */
+  html?: string;
   /** #6071: a design thread's version this message says (kind 'design_version'). */
   designVersion?: number;
   /** #6071: the screen a design thread is of (kind 'opened_design', and 1 Nov 2026 a version's and a drawn thread's line). */
@@ -86,6 +88,12 @@ export interface HomeroomBotMeta {
   issueTitle?: string;
   firstVersion?: boolean;
   mirrors?: boolean;
+  /**
+   * #6427: an offer that posts somewhere public, made in a thread where a
+   * database read happened (an admin's query_prod_db), says so before the
+   * tap (./bot-question.tsx DbReadNote).
+   */
+  dbRead?: boolean;
   question?: string;
   answers?: string[];
   status?: 'open' | 'answered' | 'closed';
@@ -787,6 +795,13 @@ export interface ConversationSummary {
    * invitation, whose unread state is hidden, and from an older server.
    */
   lastReadMessageId?: number | null;
+  /**
+   * #6426: when the viewer last looked at this conversation, as the server
+   * records it (its read state). Main Chat's "Welcome back" card shows after
+   * eight hours away. Absent from an older server, and hidden on an
+   * invitation like the read cursor.
+   */
+  lastVisitAt?: string | null;
   /**
    * QA 2026-09-24 Q2: the viewer asked for this direct conversation and the
    * other person has not accepted yet. One opening message is allowed; after

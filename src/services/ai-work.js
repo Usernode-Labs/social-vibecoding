@@ -55,6 +55,7 @@ const log = require('./logger');
 const repoRef = require('./repo-ref');
 const workState = require('./work-state');
 const { updateComingSql, updateAskSql } = require('./homeroom-bot-progress');
+const { planRecordSql } = require('./request-specs');
 
 const THREADS_MAX = 80;
 const PRIVATE_MAX = 30;
@@ -112,6 +113,8 @@ const THREADS_SQL = `
 WITH mine AS (${threadsInSql('$1')})
 SELECT * FROM (
 SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.created_at, t.closed_at,
+       -- #6421: a merged thread holds several requests; its row says how many.
+       (SELECT COUNT(*) FROM requests r WHERE r.thread_id = t.id)::int AS request_count,
        a.slug, a.name, a.icon_emoji, a.icon_image_id, a.repo_url,
        req.id AS request_id, req.title AS request_title, req.state AS request_state, req.updated_at AS request_at,
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
@@ -170,7 +173,7 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
       FROM chat_sessions cs
      WHERE cs.thread_id = t.id AND cs.is_headless = FALSE
        -- A posted plan is no change (threads.js ITEMS_SQL says the same).
-       AND NOT (cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)
+       AND NOT ${planRecordSql('cs')}
        AND cs.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
        AND (cs.status NOT IN ('active', 'paused') OR cs.shared_at IS NOT NULL OR cs.user_id = $1)
      ORDER BY CASE cs.status WHEN 'merged' THEN 0 WHEN 'merging' THEN 1 WHEN 'promoted' THEN 2 ELSE 3 END,
@@ -390,6 +393,12 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   if (status === 'promoted' && theirs && row.needs_fix === true && !updating && state.stage !== 'building') {
     return { group: 'needs', work: stored, at: iso(row.last_activity_at || row.promoted_at) || at, fixYours: true };
   }
+  // #6402: a change still being checked asks nobody for a vote yet. Someone
+  // who would have been asked, but is not its author or a follower, sees it
+  // under Waiting while it checks rather than losing it from every list.
+  if (state.stage === 'checking' && status === 'promoted' && wouldVote && !own && !updating) {
+    return { group: 'waiting', work: stored, at };
+  }
   // One they only voted or wrote in is listed while no change of it is in
   // flight, as Waiting: it asks nothing of them, and nobody is building it.
   const place = updating
@@ -491,10 +500,17 @@ function shapeThread(row, viewerId, now, botId, states, viewers) {
   // A change's own thread with no number (its PR number is a request's) is
   // named by its change.
   const number = row.number != null ? Number(row.number) : row.pr_number != null ? Number(row.pr_number) : null;
-  const title = row.request_title || row.change_title || row.thread_title || null;
+  const requests = Number(row.request_count) || 0;
+  // #6421: a merged thread is called by its change's title while a change
+  // lives there; otherwise its first request's title (the lateral read).
+  const title = (requests > 1 && row.change_id && row.change_status !== 'merged' && row.change_title)
+    ? row.change_title
+    : row.request_title || row.change_title || row.thread_title || null;
   return {
     threadId: Number(row.id),
     number,
+    // #6421: how many requests it holds, for "· 10 requests" on its row.
+    requests,
     // A thread with a change and no request of its own is led by the change:
     // its number is the PR's, which on GitHub reads "PR 12", never "#12"
     // (frontend/src/features/ai/model.ts changeOnGithub). A change built for

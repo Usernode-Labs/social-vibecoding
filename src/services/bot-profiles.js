@@ -22,8 +22,13 @@ const PLACE_KIND = Object.freeze({ issue: 'request', session: 'change', chat: 'c
 const CHAT_LIMITS = Object.freeze({
   rounds: 16,
   readsPerTurn: 8,
-  outputTokens: 4000,
-  retryOutputTokens: 8000,
+  // Task 2020: a long answer's reply carries its words and the same answer
+  // laid out as HTML (homeroom-bot-html.js), so a round has twice the room
+  // it had (4000, retried at 8000). Every provider of the bot's model takes
+  // far more (OpenRouter's endpoints list 131,072 and up, 6 Nov 2026), and
+  // room that is not written is not paid for.
+  outputTokens: 8000,
+  retryOutputTokens: 16000,
   requestTimeoutMs: 90_000,
   turnsPerHour: 120,
   history: 24,
@@ -37,7 +42,10 @@ const CHAT_LIMITS = Object.freeze({
 const THREAD_LIMITS = Object.freeze({
   rounds: 8,
   readsPerTurn: 4,
-  outputTokens: 900,
+  // Task 2020 follow-up: a reply longer than two short lines carries its
+  // laid-out copy beside its words (homeroom-bot-html.js), so a round has
+  // room for both (it was 900). Room that is not written is not paid for.
+  outputTokens: 4000,
   requestTimeoutMs: 45_000,
   turnsPerHour: 30,
   replyChars: 2000,
@@ -100,11 +108,14 @@ const PROFILES = Object.freeze({
     // up for a vote answers anyone; the requester or an admin straight after
     // a post of the bot's is answering it; else only a mention or a reply,
     // and never one that answers its question (the build reads that).
-    speaks: Object.freeze([...THREAD_CHECKS, 'not_queued_as_ask', 'own_change_up', 'followed_a_post', 'addressed_or_stop', 'not_an_answer', 'speak_addressed']),
+    speaks: Object.freeze([...THREAD_CHECKS, 'not_queued_as_ask', 'own_change_up', 'followed_a_post', 'go_ahead_reply', 'addressed_or_stop', 'not_an_answer', 'speak_addressed']),
   }),
   change: profile('change', {
     surface: 'thread', scope: 'thread', prompt: 'change', places: ['session'], limits: THREAD_LIMITS,
-    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'offer_withdraw']),
+    // #6389: the change's author (or its request's requester, once it is
+    // abandoned) may ask the bot to make its own version of a change made
+    // outside Homeroom.
+    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'offer_withdraw', 'make_own_version']),
     speaks: Object.freeze([...THREAD_CHECKS, 'not_queued_as_ask', 'own_change', 'addressed']),
   }),
   channel: profile('channel', {

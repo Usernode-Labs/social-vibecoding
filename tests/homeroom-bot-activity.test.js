@@ -321,7 +321,7 @@ test('the live loop starts a card where it tells the request it is looking: neve
   assert.match(body.slice(looking, reading),
     /if \(item\.reason !== RESTART_REASON && item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\s+&& item\.reason !== BACKLOG_REASON\) \{\s*await activity\(\)\.startCard\(pool, \{[\s\S]*?app, issueNumber, requester, bot, settings, inDm: DM_REASONS\.has\(item\.reason\), reason: item\.reason,[\s\S]*?payerUserId: billing\.charged \? payerId : null,[\s\S]*?jobKey: item\.reason === 'new' \? cardKeyOf\(app\.id, issueNumber\)\s*: \(look\.n \? loopRules\.lookCardKey\(app\.id, issueNumber, look\.n\) : item\.id\),\s*deps: \{ dm: deps\.dm \},\s*\}\);/);
   // Work asked for in the DM says so in its thread ("Filed from our chat.").
-  assert.match(source, /const DM_REASONS = new Set\(\['dm_request', 'dm_start', 'dm_go_ahead', 'dm_answer', 'dm_comment', 'dm_revise', 'plan_change'\]\);/);
+  assert.match(source, /const DM_REASONS = new Set\(\['dm_request', 'dm_start', 'dm_go_ahead', 'dm_answer', 'dm_comment', 'dm_revise', 'plan_change', 'dm_own_version'\]\);/);
   // Inside the live branch: shadow triage has no card.
   const live = body.lastIndexOf('if (liveMode) {', looking);
   assert.ok(live > -1 && body.indexOf('const open = await live.openBotProposal', live) < looking);
@@ -760,7 +760,8 @@ test('the row draws a bot\'s activity message as the card, in place of its words
   const row = read('frontend/src/features/messages/message-row.tsx');
   // #3770: handed the words a message is drawn with, for a card with nothing on record.
   // #4097: led by the card of what they are about when they open with its line.
-  assert.match(row, /const words = !message\.content \? null : head\s*\? <BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} \/>\s*: <MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} \/>;/);
+  // Task 2020: or a chat answer laid out, with the words as its fallback (./bot-html.tsx).
+  assert.match(row, /const markdown = <MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} \/>;\s*const words = !message\.content \? null : head\s*\? <BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} \/>\s*: richHtml \? <BotHtmlReply html=\{richHtml\} fallback=\{markdown\} \/> : markdown;/);
   // B5: led by the bot's hello, on the first card it sends somebody.
   // B6: then a plan and two questions at once, which stand in place of their words too.
   assert.match(row, /\) : isActivityMessage\(message\) \? \([\s\S]{0,600}homeroomBot\?\.hello \? <p className="messages-bot-hello">[\s\S]{0,120}<BotCardOrTrack message=\{message\} words=\{words\} \/>\s*<\/>\s*\) : isPlanMessage\(message\) \? \(/);

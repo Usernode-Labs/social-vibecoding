@@ -980,6 +980,141 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     );
     assert.deepEqual(replied, { outcome: 'replied', error: null });
   });
+
+  // 6 Nov 2026 (#6395): a plain "Go ahead" on a request, from the person the
+  // bot's last note named, is answered with no @ needed, however long after
+  // the note it comes. Anybody else's stays unanswered.
+  await t.test('#6395: a plain Go ahead from the person the last note named is heard on a request', async () => {
+    await pool.query(
+      'INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 6400, $2, $3)',
+      [app.id, evan.id, 'Note board'],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, kind, created_at)
+       VALUES ($1, 6400, 'person', NOW() - INTERVAL '1 day')`,
+      [app.id],
+    );
+    const settings = { mode: 'live', voiceSession: true, voiceIssue: true, voiceChat: true, pausedApps: [] };
+    const someone = { id: sam.id, username: sam.username, isSynthetic: false, hasPlatformAccess: true };
+    const named = { id: evan.id, username: evan.username, isSynthetic: false, hasPlatformAccess: true };
+    const heard = async (who, content) => {
+      const id = await say(who, content, { type: 'issue', ref: 6400 });
+      const { rows: [row] } = await pool.query(
+        'SELECT id, user_id, content, msg_type, metadata, created_at FROM chat_messages WHERE id = $1', [id],
+      );
+      return voice.gate(pool, {
+        app, place: { type: 'issue', ref: 6400 }, row,
+        bot: { id: homeroomBot.id, username: 'homeroom_bot' }, settings,
+        speaker: who.id === evan.id ? named : someone,
+        deps: {},
+      });
+    };
+    assert.deepEqual(await heard(evan, 'Go ahead'), { speak: true, why: 'go_ahead' });
+    assert.deepEqual(await heard(evan, 'go ahead!'), { speak: true, why: 'go_ahead' });
+    assert.deepEqual(await heard(sam, 'Go ahead'), { speak: false, why: 'not_addressed' });
+    assert.deepEqual(await heard(evan, `Go ahead ${'x'.repeat(60)}`), { speak: false, why: 'not_addressed' });
+  });
+
+  // 6 Nov 2026 (#6430): a go-ahead typed in the request's own discussion,
+  // when the last live read left it for a person and said a go-ahead cannot
+  // settle it, gets the chat's one plain answer: the model never writes "I'm
+  // on it" or offers to tell them later.
+  await t.test('#6430: a go-ahead in a request\'s discussion gets the one plain answer, without the model', async () => {
+    const number = 6430;
+    await pool.query(
+      'INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, $2, $3, $4)',
+      [app.id, number, evan.id, 'Read-only production debugging'],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, kind, created_at)
+       VALUES ($1, $2, 'person', NOW() - INTERVAL '1 hour')`,
+      [app.id, number],
+    );
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, go_ahead_decides, first_step)
+       VALUES ($1, $2, 'live', 'person',
+               'it changes permissions and production database access', FALSE,
+               'Just the three missing read tools') RETURNING id`,
+      [app.id, number],
+    );
+    const trigger = await say(evan, 'go ahead, with the full version', { type: 'issue', ref: number });
+    sent.length = 0;
+    const model = scripted([{ text: 'I am on it now.' }]);
+    const out = await turn({ type: 'issue', ref: number }, model, {
+      key: 'go-ahead-cannot-1',
+      deps: { chat: async () => { throw new Error('the model must not answer a go-ahead that cannot settle it'); } },
+    });
+    assert.equal(out.outcome, 'replied');
+    assert.equal(model.seen.length, 0, 'the model was never called');
+    assert.equal(sent.length, 1, 'one reply, not a promise and a refusal');
+    const answer = sent[0];
+    assert.equal(answer.content, require('../src/services/homeroom-bot-live').goAheadCannotText({
+      reason: 'it changes permissions and production database access',
+      firstStep: 'Just the three missing read tools',
+      reader: evan.username,
+    }));
+    assert.doesNotMatch(answer.content, /I'm on it|I am on it|about to read/i);
+    assert.doesNotMatch(answer.content, /tell you/i);
+    assert.match(answer.content, /A person has to build it, for example you with a coding agent/);
+    assert.equal(answer.metadata.homeroomBot.goAheadCannot.messageId, Number(trigger));
+    assert.deepEqual(answer.metadata.homeroomBot.actions.map((a) => a.id), ['smaller', 'not_now']);
+    assert.deepEqual(answer.metadata.homeroomBot.actions.map((a) => a.label),
+      ['Just the three missing read tools', 'Not now']);
+    assert.deepEqual(answer.metadata.homeroomBot.actions.map((a) => a.style), ['primary', 'secondary']);
+    assert.ok(answer.metadata.homeroomBot.actions.every((a) => a.id !== 'go_ahead'));
+    const { rows: [record] } = await pool.query(
+      'SELECT outcome FROM homeroom_bot_voice_turns ORDER BY id DESC LIMIT 1',
+    );
+    assert.equal(record.outcome, 'replied');
+
+    // Somebody the note did not name is not answered this way.
+    const other = await say(sam, 'go ahead', { type: 'issue', ref: number });
+    sent.length = 0;
+    const second = await turn({ type: 'issue', ref: number }, model, { key: 'go-ahead-cannot-2', through: out.throughId });
+    assert.equal(second.outcome, 'quiet');
+    assert.equal(sent.length, 0);
+    await pool.query('DELETE FROM chat_messages WHERE id = $1', [other]);
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [run.id]);
+  });
+
+  // 6 Nov 2026 (#6430): the re-read reads a go-ahead typed in the request's
+  // discussion after its last live read, from the person that read named.
+  await t.test('#6430: a go-ahead in the discussion is read after the last live read', async () => {
+    const bot = require('../src/services/homeroom-bot');
+    const number = 6431;
+    const requester = { userId: evan.id, username: evan.username };
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, created_at)
+       VALUES ($1, $2, 'live', 'person', 'it changes permissions', NOW() - INTERVAL '1 minute') RETURNING id`,
+      [app.id, number],
+    );
+    const { rows: [older] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+       VALUES ($1, $2, 'go ahead', 'message', 'issue', $3, NOW() - INTERVAL '5 minutes') RETURNING id`,
+      [app.id, evan.id, number],
+    );
+    assert.equal(await bot.threadGoAhead(pool, { app, issueNumber: number, botId: homeroomBot.id, requester }), null,
+      'said before the last read, so it is not its news');
+    const { rows: [newer] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+       VALUES ($1, $2, 'go ahead, with the full version', 'message', 'issue', $3) RETURNING id`,
+      [app.id, evan.id, number],
+    );
+    const { rows: [sams] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+       VALUES ($1, $2, 'go ahead', 'message', 'issue', $3) RETURNING id`,
+      [app.id, sam.id, number],
+    );
+    assert.equal(await bot.threadGoAhead(pool, { app, issueNumber: number, botId: homeroomBot.id, requester }), null,
+      'the newest is somebody the note did not name');
+    await pool.query('DELETE FROM chat_messages WHERE id = $1', [sams.id]);
+    assert.deepEqual(
+      await bot.threadGoAhead(pool, { app, issueNumber: number, botId: homeroomBot.id, requester }),
+      { by: evan.username, where: 'thread', messageId: Number(newer.id) },
+    );
+    await pool.query('DELETE FROM chat_messages WHERE id = ANY($1::int[])', [[older.id, newer.id]]);
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [run.id]);
+  });
 });
 
 // 3 Nov 2026 (#6213): one live set of suggested replies per thread. A newer

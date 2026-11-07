@@ -200,7 +200,12 @@ test('the staging mock row is served under ?demo=1 and is what the declared chec
   assert.equal(checks.length, 2);
   for (const t of checks) {
     assert.match(t.path, /demo=1/);
-    assert.match(t.expectSelector, /\[data-gov-row='9100077'\] \[data-illustration-preview\]/);
+    // #6440: the discussion page is the thread layout now, so the vote is
+    // the page's root post (`data-gov-root`) rather than a card row. The
+    // board card's own check is unchanged (`data-gov-row`).
+    assert.match(t.expectSelector, /dev\/governance\//.test(t.path)
+      ? /\[data-gov-root='9100077'\] \[data-illustration-preview\]/
+      : /\[data-gov-row='9100077'\] \[data-illustration-preview\]/);
     assert.match(t.expectSelector, /img\[alt\]$/);
   }
 });

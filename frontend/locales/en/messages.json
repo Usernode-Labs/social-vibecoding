@@ -1715,6 +1715,10 @@
     "text": "No longer needed.",
     "description": "Line under a question from Homeroom bot once it no longer applies."
   },
+  "bot.dbRead.note": {
+    "text": "A database read happened in this thread. Check this holds nothing private before you post it.",
+    "description": "Line under a card in a platform admin's private chat with Homeroom bot that would post something publicly (a request to file, a reply, a plan), shown when the bot read the production database in that thread, so the admin checks the draft quotes nothing private."
+  },
   "bot.actions.questionsYouCanAsk": {
     "text": "Questions you can ask",
     "description": "Accessible name of the group of buttons under a message from Homeroom bot when each button is a question the person can ask it."
@@ -2126,10 +2130,6 @@
   "object.fromProject": {
     "text": "From {{project}}",
     "description": "On a card for a request, change or other item shared in a project's channel, when the item belongs to a different project than the channel's: says which project it comes from. {{project}} is that project's name. Joined to the item's status with a middle dot, for example \"From KasirKU · open\"."
-  },
-  "channel.backCommunities": {
-    "text": "Communities",
-    "description": "Label of the back control on the #general channel when it leads to the Communities screen."
   },
   "thread.jumpToLatest": {
     "text": "Jump to latest",
@@ -2995,6 +2995,10 @@
     "text": "AI",
     "description": "Small badge beside a message author's name when the author is an AI assistant rather than a person."
   },
+  "row.botHtml.frameTitle": {
+    "text": "Homeroom bot's answer, laid out",
+    "description": "Accessible name of the frame that shows the Homeroom bot's longer answer formatted with headings, lists or tables, in place of its plain words."
+  },
   "row.edited": {
     "text": "edited",
     "description": "Small note beside a message's time when the message was changed after it was sent. Lower case."
@@ -3030,14 +3034,6 @@
   "inbox.noMessages": {
     "text": "No messages yet",
     "description": "Second line of a row in the conversation list for a conversation or channel in which nothing has been written."
-  },
-  "inbox.unread_one": {
-    "text": "{{count}} unread",
-    "description": "Accessible name of the number badge on a row of the conversation list: how many unread messages that conversation or channel has. {{count}} is that number."
-  },
-  "inbox.unread_other": {
-    "text": "{{count}} unread",
-    "description": "Accessible name of the number badge on a row of the conversation list: how many unread messages that conversation or channel has. {{count}} is that number."
   },
   "inbox.memberCount_one": {
     "text": "{{count}} member",
@@ -4189,11 +4185,7 @@
   },
   "replies.close": {
     "text": "Close thread",
-    "description": "Accessible name and tooltip of the X button on the thread side pane: closes the thread and returns to the conversation."
-  },
-  "replies.backToMain": {
-    "text": "Back to Main Chat",
-    "description": "Accessible name and tooltip of the back arrow at the start of a private thread opened in Main Chat's place on the Homeroom bot tab (from 768px): closes the thread and shows Main Chat again. \"Main Chat\" is that chat's name; keep it the same as its title."
+    "description": "Accessible name and tooltip of the X button on the thread side pane: closes the thread and returns to the conversation. On the Homeroom bot tab it closes the private thread opened beside the lists, which leaves the lists alone, or Main Chat when it was open just before."
   },
   "replies.resize": {
     "text": "Resize the thread",
@@ -4651,6 +4643,14 @@
     "text": "Show {{count}} more",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Row at the end of a list showing only its first rows: shows the rest. {{count}} is how many more."
   },
+  "ai.work.showMoreFresh_one": {
+    "text": "Show {{count}} more · {{fresh}} new",
+    "description": "The AI tab's Live this week list: the button under a project's first rows when some of the folded rows have something new. {{count}} is how many more rows it shows, {{fresh}} how many of them are new."
+  },
+  "ai.work.showMoreFresh_other": {
+    "text": "Show {{count}} more · {{fresh}} new",
+    "description": "The AI tab's Live this week list: the button under a project's first rows when some of the folded rows have something new. {{count}} is how many more rows it shows, {{fresh}} how many of them are new."
+  },
   "ai.work.showLess": {
     "text": "Show less",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Row at the end of a list showing all its rows: shows only the first ones again."
@@ -4662,6 +4662,18 @@
   "ai.row.fixYours": {
     "text": "{{project}} · #{{number}} · Your change needs a fix",
     "description": "The AI tab's main view, Needs you: tooltip of the row of a change the person made themselves that waits on them: its checks failed, its preview did not build, or merging it hit a conflict a person has to resolve."
+  },
+  "ai.row.waitsOnFixTests": {
+    "text": "{{project}} · #{{number}} · It has its votes; its tests fail, so you fix it",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change, made through a coding agent, whose votes are in but whose tests fail. {{project}} is the project's name and {{number}} the request or change number."
+  },
+  "ai.row.waitsOnFixConflict": {
+    "text": "{{project}} · #{{number}} · It has its votes; it conflicts with main, so you fix it",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change, made through a coding agent, whose votes are in but which conflicts with main. {{project}} is the project's name and {{number}} the request or change number."
+  },
+  "ai.row.waitsOnFixBoth": {
+    "text": "{{project}} · #{{number}} · It has its votes; its tests fail and it conflicts with main, so you fix it",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change, made through a coding agent, whose votes are in but whose tests fail and which conflicts with main. {{project}} is the project's name and {{number}} the request or change number."
   },
   "ai.row.fixYoursPr": {
     "text": "{{project}} · PR {{number}} · Your change needs a fix",
@@ -4695,6 +4707,14 @@
     "text": "Only you · Not in a community yet",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a private thread's row (its whole line; read by a screen reader too) with an idea that is for no project yet: only the person can see it."
   },
+  "ai.row.requests_one": {
+    "text": "· {{count}} request",
+    "description": "After the title of a row in the Homeroom bot tab's lists, when its thread holds one request and several were merged: how many requests the thread holds."
+  },
+  "ai.row.requests_other": {
+    "text": "· {{count}} requests",
+    "description": "After the title of a row in the Homeroom bot tab's lists, when its thread holds several requests: how many requests the thread holds."
+  },
   "ai.row.privateAbout": {
     "text": "Only you · {{project}} · About #{{number}}",
     "description": "Tooltip (and phone second line) of a row in the Homeroom bot tab's Needs you list for a private thread opened from a request's page: only the person sees it, the project, and the request it is about."
@@ -4706,6 +4726,14 @@
   "ai.pill.vote": {
     "text": "Vote",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: the person owes a vote on it."
+  },
+  "ai.pill.testsFailing": {
+    "text": "Tests failing",
+    "description": "The AI tab's main view, Needs you: pill at the end of the row of the person's own change, made through a coding agent, whose votes are in but whose tests fail. It says what the change waits on instead of Vote."
+  },
+  "ai.pill.conflicts": {
+    "text": "Conflicts with main",
+    "description": "The AI tab's main view, Needs you: pill at the end of the row of the person's own change, made through a coding agent, whose votes are in but which conflicts with main. It says what the change waits on instead of Vote."
   },
   "ai.pill.approve": {
     "text": "Approve",
@@ -4871,6 +4899,18 @@
     "text": "Done",
     "description": "The AI tab's main view: button at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; closes it. Picks apply as they are made."
   },
+  "ai.search.open": {
+    "text": "Search your threads",
+    "description": "The Homeroom bot tab, beside the round plus at the top: the name and tooltip of the round search button, which opens a box that narrows every list on the page to the threads whose title, number or project matches what is typed."
+  },
+  "ai.search.label": {
+    "text": "Search your threads",
+    "description": "The Homeroom bot tab: placeholder and accessible name of the search box under the heading, which narrows every list on the page to the threads whose title, number or project matches what is typed."
+  },
+  "ai.search.none": {
+    "text": "No threads match “{{query}}”",
+    "description": "The Homeroom bot tab: shown in place of the lists when the search box's text matches no thread on the page. {{query}} is what the person typed."
+  },
   "ai.live.number": {
     "text": "#{{number}}",
     "description": "The AI tab's main view, Live this week: the number at the end of a one-line row for a change that went live this week."
@@ -4910,6 +4950,18 @@
   "ai.why.fixYours": {
     "text": "Checks failed, its preview did not build, or it conflicts",
     "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for a change the person made themselves that waits on their fix."
+  },
+  "ai.why.fixTests": {
+    "text": "Tests failing",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change, made through a coding agent, whose votes are in but whose tests fail."
+  },
+  "ai.why.fixConflict": {
+    "text": "Conflicts with main",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change, made through a coding agent, whose votes are in but which conflicts with main."
+  },
+  "ai.why.fixBoth": {
+    "text": "Tests failing · conflicts with main",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change, made through a coding agent, whose votes are in but whose tests fail and which conflicts with main."
   },
   "ai.history.title": {
     "text": "History",
@@ -5054,6 +5106,10 @@
   "ai.main.sub": {
     "text": "Only you can see this chat",
     "description": "The AI tab on a wide window: the line under the title \"Main\" over the person's private chat with Homeroom bot, docked beside their list of work, after a lock glyph. Says that nobody else can read it."
+  },
+  "ai.main.close": {
+    "text": "Close Main Chat",
+    "description": "Accessible name and tooltip of the X button at the end of Main Chat's header on the AI tab (a wide window): closes it and leaves the person's list of work alone, taking no room beside it."
   },
   "ai.main.new_one": {
     "text": "{{count}} new",
@@ -5610,5 +5666,77 @@
   "ai.why.youBuilding": {
     "text": "You're building it",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line: the person is making the change themselves."
+  },
+  "welcome.title": {
+    "text": "Welcome back",
+    "description": "Main Chat: the heading of the small card shown above the message box the first time somebody opens the chat after eight hours away."
+  },
+  "welcome.dismiss": {
+    "text": "Dismiss",
+    "description": "Main Chat's Welcome back card: the accessible name of its × button, which hides the card until the next return."
+  },
+  "welcome.since": {
+    "text": "Since {{day}}: {{news}}",
+    "description": "Main Chat's Welcome back card: the line under the heading when something happened since the last visit. {{day}} is when that visit was (Tuesday, yesterday, this morning); {{news}} is the list of counts joined by dots."
+  },
+  "welcome.quiet": {
+    "text": "Nothing new since {{day}}. Things you can ask me:",
+    "description": "Main Chat's Welcome back card: the line under the heading when nothing happened since the last visit. {{day}} is when that visit was (Tuesday, yesterday, this morning)."
+  },
+  "welcome.live_one": {
+    "text": "{{count}} change went live",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for one change that went live. {{count}} is 1."
+  },
+  "welcome.live_other": {
+    "text": "{{count}} changes went live",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for changes that went live. {{count}} is a number above 1."
+  },
+  "welcome.votes_one": {
+    "text": "{{count}} waits for your vote",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for one change or decision waiting for the person's vote. {{count}} is 1."
+  },
+  "welcome.votes_other": {
+    "text": "{{count}} wait for your vote",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for changes or decisions waiting for the person's vote. {{count}} is a number above 1."
+  },
+  "welcome.build_one": {
+    "text": "{{count}} plan waits for your Build it",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for one plan waiting for the person to press Build it. {{count}} is 1."
+  },
+  "welcome.build_other": {
+    "text": "{{count}} plans wait for your Build it",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for plans waiting for the person to press Build it. {{count}} is a number above 1."
+  },
+  "welcome.day.thisMorning": {
+    "text": "this morning",
+    "description": "Main Chat's Welcome back card: the day of the last visit, when it was earlier today before noon. It fills {{day}} in the card's line and in the What went live chip."
+  },
+  "welcome.day.earlierToday": {
+    "text": "earlier today",
+    "description": "Main Chat's Welcome back card: the day of the last visit, when it was today after noon. It fills {{day}} in the card's line and in the What went live chip."
+  },
+  "welcome.day.yesterday": {
+    "text": "yesterday",
+    "description": "Main Chat's Welcome back card: the day of the last visit, when it was the day before. It fills {{day}} in the card's line and in the What went live chip."
+  },
+  "welcome.chip.waiting": {
+    "text": "What's waiting on me?",
+    "description": "Main Chat's Welcome back card: the first chip, a question the person can send to Homeroom bot."
+  },
+  "welcome.chip.live": {
+    "text": "What went live since {{day}}?",
+    "description": "Main Chat's Welcome back card: the second chip, a question the person can send to Homeroom bot. {{day}} is the day of their last visit (Tuesday, yesterday, this morning)."
+  },
+  "welcome.chip.project": {
+    "text": "Catch me up on {{project}}",
+    "description": "Main Chat's Welcome back card: the third chip, a question the person can send to Homeroom bot. {{project}} is the name of the project with the most activity since their last visit."
+  },
+  "welcome.chip.newProject": {
+    "text": "Let's start a new project",
+    "description": "Main Chat's Welcome back card: the fourth chip, a message the person can send to Homeroom bot."
+  },
+  "welcome.separator": {
+    "text": "·",
+    "description": "Main Chat's Welcome back card: the dot between the parts of the line under the heading, for example between '3 changes went live' and '2 wait for your vote'."
   }
 }

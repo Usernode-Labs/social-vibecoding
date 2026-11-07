@@ -26,6 +26,7 @@ const repoRef = require('../services/repo-ref');
 // reports as `busy`, so an issue's work-state chip and the session card it
 // points at can never disagree about whether an agent is actually running.
 const { isSessionBusy } = require('../services/active-workers');
+const { planRecordSql } = require('../services/request-specs');
 const { workedOnSql } = require('../workflow/session-work.ts');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -41,6 +42,61 @@ const { isGovernanceKind } = require('../services/governance-kinds');
 // browser only ever intersects it with the cards it already holds.
 const BOARD_SEARCH_MIN_CHARS = 2;
 const BOARD_SEARCH_MAX_HITS = 200;
+
+// #6440: where a governance vote belongs, when it is about one request or
+// thread rather than the project. `reopen_issue` is about the request it
+// would bring back; `thread_move` is about the thread it would merge or
+// split. Both are drawn on that page, and `dev/governance/<id>` forwards
+// there. Every other kind (and a row whose target cannot be resolved) is
+// `null`: the vote has a page of its own.
+async function governanceHome(pool, proposal) {
+  const payload = (proposal && proposal.payload) || {};
+  if (proposal.kind === 'reopen_issue') {
+    const n = Number(payload.issueNumber);
+    return Number.isInteger(n) && n > 0 ? { kind: 'request', number: n } : null;
+  }
+  if (proposal.kind === 'thread_move') {
+    // The thread the move is about, through any merges, and its number: a
+    // request's and a change's numbers are one sequence (app-numbers), so
+    // the client opens the page that number names.
+    let thread = null;
+    if (payload.moveId != null && pool) {
+      try {
+        const { rows } = await pool.query('SELECT thread_id FROM thread_moves WHERE id = $1', [Number(payload.moveId)]);
+        const threadId = rows[0] && rows[0].thread_id;
+        if (threadId != null) thread = await require('../services/threads').threadById(pool, threadId);
+      } catch (err) {
+        log.warn('issues', 'Could not resolve a thread move\'s thread', { message: err.message });
+      }
+    }
+    const n = Number(thread && thread.number != null ? thread.number : payload.threadNumber);
+    return Number.isInteger(n) && n > 0 ? { kind: 'request', number: n } : null;
+  }
+  return null;
+}
+
+// #6440: how a governance vote stands or ended, in one word the decision
+// page reads: `open`, `applying` (passed, being carried out), `applied`,
+// `refused`, `withdrawn` or `superseded`. The same facts `_govApplyState`
+// reads on the client, so the page never says "waiting for votes" once the
+// vote has ended.
+function governanceOutcome(proposal) {
+  if (!proposal) return 'open';
+  const p = proposal.payload || {};
+  if (p.appliedAt) {
+    return String(p.appliedBy || '').startsWith('refused:') ? 'refused' : 'applied';
+  }
+  if (p.withdrawnAt || proposal.status === 'withdrawn') return 'withdrawn';
+  if (p.supersededAt) return 'superseded';
+  if (proposal.status && proposal.status !== 'open') return 'applied';
+  const yes = Number(proposal.qualified_yes_count != null ? proposal.qualified_yes_count : proposal.up_count) || 0;
+  const need = Number(proposal.approvals_required != null ? proposal.approvals_required : proposal.votes_required) || 0;
+  const ends = proposal.merge_window_ends_at ? Date.parse(proposal.merge_window_ends_at) : NaN;
+  if (need > 0 && yes >= need && !proposal.contested && Number.isFinite(ends) && ends <= Date.now()) {
+    return 'applying';
+  }
+  return 'open';
+}
 
 // An issue id from the path, or null when it is not a positive integer that
 // fits `issues.id` (SERIAL). Answered as 404 rather than handed to Postgres
@@ -395,6 +451,28 @@ function stagingMockIssues(repoUrl) {
       'Staging demo: obviously fake. An update to this request was asked '
       + 'for, and the bot said it would tell the person when it was in.\n\n'
       + '**Source:** Homeroom user (usernode-capture)', 46),
+    // #6399: the request whose hand-back reason a later release lifted. Its
+    // track (seedStagingBotOutdatedReason in src/db/migrate.js) is
+    // waiting_for_you/decide with a reason given before 6 Nov 2026 13:05 UTC,
+    // so its status card says the reason may be out of date and offers
+    // "Ask Homeroom bot to read this again". A staging copy has no GitHub to
+    // read the request from, so its page's own fetch finds it here.
+    mk(9112, 'Staging demo: a request handed back over a plan the bot could not read',
+      'Staging demo: obviously fake. The bot handed this back because it '
+      + 'could not read a plan a person posted, and Homeroom can read one now.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 26),
+    // #6211: the pair whose discussions show an overlap note. 9115 is the
+    // smaller request the bot read as part of 9114: its thread carries the
+    // note and the three choices (seedStagingBotOverlap in src/db/migrate.js
+    // stores them), and 9114's thread carries the line saying what was
+    // chosen. A staging copy has no GitHub to read either request from, so
+    // each page's own fetch finds it here.
+    mk(9114, 'Staging demo: Main Chat keeps only what you said there',
+      'Staging demo: obviously fake. A request a smaller one was found to '
+      + 'be part of.\n\n**Source:** Homeroom user (usernode-capture)', 30),
+    mk(9115, 'Staging demo: a plan row opens Main Chat',
+      'Staging demo: obviously fake. One piece of the larger request.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 30),
   ];
 }
 
@@ -1222,6 +1300,13 @@ function issueRoutes(config) {
       }
 
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+      // #6440: where this vote belongs. A vote about one request or thread is
+      // drawn on that page, not on a page of its own: the client forwards
+      // `dev/governance/<id>` there. Every other kind stays here (`null`).
+      proposal.home = await governanceHome(pool, proposal);
+      // #6440: how it ended, in one word the page's Votes card reads, so it
+      // never says "waiting for votes" after the vote ended.
+      proposal.outcome = governanceOutcome(proposal);
       res.json({ proposal });
     } catch (err) {
       log.error('issues', 'Failed to get governance proposal by id', { message: err.message });
@@ -1299,7 +1384,9 @@ function issueRoutes(config) {
           pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`,
         );
         if (!app) return res.status(404).json({ error: 'App not found' });
-        const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, { app, user: req.user, issueNumber: n });
+        const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, {
+          app, user: req.user, issueNumber: n, readAgain: req.body?.readAgain === true,
+        });
         if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
         return res.json(out);
       } catch (err) {
@@ -2235,7 +2322,7 @@ function issueRoutes(config) {
           WHERE app_id = $1 AND user_id = $2
             AND created_from_issue_number IS NOT NULL
             AND status <> 'archived'
-            AND NOT (source IS NOT DISTINCT FROM 'request_spec' AND branch_name IS NULL)
+            AND NOT ${planRecordSql('')}
           ORDER BY created_from_issue_number, created_at DESC`,
         [app.id, req.user.id]
       );
@@ -2263,7 +2350,7 @@ function issueRoutes(config) {
           WHERE cs.app_id = $1 AND cs.is_headless = FALSE
             AND cardinality(cs.linked_issues) > 0
             AND u.is_synthetic IS NOT TRUE
-            AND NOT (cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)
+            AND NOT ${planRecordSql('cs')}
             AND (cs.status IN ('active','promoted','merging')
                  OR (cs.status = 'paused'
                      AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,

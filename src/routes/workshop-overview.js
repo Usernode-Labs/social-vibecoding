@@ -84,6 +84,7 @@ const { firstVersionSql } = require('../services/first-version-rule');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const { threadsInSql } = require('../services/ai-work');
 const { updateComingSql } = require('../services/homeroom-bot-progress');
+const { voteReadySql } = require('../services/vote-ready');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
 const codeMissing = require('../services/code-missing');
@@ -198,10 +199,22 @@ const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
        -- while any of its changes has an update coming, so nobody picks a
        -- change that is about to change.
        AND ${updateComingSql('cs')} IS NULL
+       -- #6402 (6 Nov 2026): a vote is asked only once the change is ready:
+       -- its checks passed (or it had nothing to test) and it merges cleanly
+       -- with main. Until then it waits under Waiting & in progress, worded
+       -- by services/work-state.js. Voting early stays possible on the
+       -- change's own page.
+       AND ${voteReadySql('cs')}
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
              SELECT 1 FROM chat_sessions ru
               WHERE ${RIVAL_SQL('cs', 'ru')}
                 AND ${updateComingSql('ru')} IS NOT NULL))
+       -- A ballot waits too while any of its changes is not ready, so nobody
+       -- picks between changes that are still being checked.
+       AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
+             SELECT 1 FROM chat_sessions rr
+              WHERE ${RIVAL_SQL('cs', 'rr')}
+                AND NOT ${voteReadySql('rr')}))
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND (
              EXISTS (SELECT 1 FROM chat_sessions rv
                       WHERE ${RIVAL_SQL('cs', 'rv')}
@@ -503,6 +516,21 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'no'
                AND ${countedVotePredicateSql('pv', 'cs')})::int AS no,
+           -- #6389: the facts a row the viewer made through a coding agent
+           -- needs to say what it waits on instead of Vote: who its author
+           -- is, which tool made it, and whether its checks fail or it
+           -- conflicts with main. other_yes is the Yes votes from anyone
+           -- but its author, which an explicit approval needs one of.
+           cs.user_id AS author_id,
+           cs.external_agent::text AS external_agent,
+           cs.check_state::text AS check_state,
+           cs.mergeability::text AS mergeability,
+           cs.integration_merges_clean,
+           cs.merge_conflict_state::text AS merge_conflict_state,
+           (SELECT COUNT(*) FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+               AND ${countedVotePredicateSql('pv', 'cs')}
+               AND pv.user_id IS DISTINCT FROM cs.user_id)::int AS other_yes,
            -- #4490: the card's picture, as a project's Needs you draws it:
            -- the shots run and the heads its serializer checks, the legacy
            -- capture pair, the author's diagram and "What it touches".
@@ -537,6 +565,7 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
            LEFT(COALESCE(i.description, ''), ${NEEDS_FEED_SUMMARY_MAX})::text,
            u.username::text, NULL::int, NULL::int, i.created_at,
            NULL::int, NULL::int,
+           NULL::int, NULL::text, NULL::text, NULL::text, NULL::boolean, NULL::text, NULL::int,
            NULL::text, NULL::jsonb, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
            NULL::jsonb, NULL::text, NULL::jsonb, NULL::text, NULL::jsonb,
            i.kind::text, i.payload,
@@ -551,6 +580,7 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
            q.question::text, NULL::text,
            qu.username::text, q.issue_number, NULL::int, q.created_at,
            NULL::int, NULL::int,
+           NULL::int, NULL::text, NULL::text, NULL::text, NULL::boolean, NULL::text, NULL::int,
            NULL::text, NULL::jsonb, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
            NULL::jsonb, NULL::text, NULL::jsonb, NULL::text, NULL::jsonb,
            NULL::text, NULL::jsonb,
@@ -567,6 +597,8 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
   SELECT a.id AS app_id, a.slug, a.name, a.icon_image_id, a.icon_emoji,
          o.kind, o.id, o.title, o.summary, o.author, o.number, o.epoch,
          o.at, o.yes, o.no, a.repo_url,
+         o.author_id, o.external_agent, o.check_state, o.mergeability,
+         o.integration_merges_clean, o.merge_conflict_state, o.other_yes,
          o.shots_run_id, o.shots_detail, o.status, o.source, o.imported_pr_head_sha,
          o.reviewed_head_sha, o.checks_commit_sha, o.handoff_head_sha,
          o.pr_diagram, o.pr_diagram_source, o.pr_touches, o.pr_touches_sha, o.visuals_agg,
@@ -697,10 +729,14 @@ async function owedByCommunity(pool, userId, { showSelfHosted = false, isAdmin =
  * project, and only for those rows; a project whose read fails is left
  * without one. Resolves the rows. Exported for tests.
  */
-async function withVotesRequired(pool, rows) {
+async function withVotesRequired(pool, rows, viewerId = null) {
   const byApp = new Map();
   for (const row of rows) {
-    if (row.solo !== true) continue;
+    // #6389: a row the viewer made through a coding agent needs the same
+    // count, so a met vote can be told from one still owed.
+    const authorsAgent = viewerId != null && row.external_agent
+      && Number(row.author_id) === Number(viewerId);
+    if (row.solo !== true && !authorsAgent) continue;
     if (!byApp.has(row.app_id)) byApp.set(row.app_id, []);
     byApp.get(row.app_id).push(row);
   }
@@ -716,6 +752,39 @@ async function withVotesRequired(pool, rows) {
     }
   }));
   return rows;
+}
+
+/**
+ * #6389: whether a change the viewer made through a coding agent has the
+ * votes it needs, so the row is waiting on their fix rather than on a Vote.
+ * The same facts the change's Votes card reads: the gate's Yes count, and,
+ * where an explicit approval is flagged, a Yes from another member.
+ */
+function authorAgentGateMet(row, viewerId) {
+  if (row.kind !== 'proposal' || !row.external_agent) return false;
+  if (viewerId == null || Number(row.author_id) !== Number(viewerId)) return false;
+  const needed = parseInt(row.votes_required, 10);
+  if (!Number.isFinite(needed)) return false;
+  if ((Number(row.yes) || 0) < needed) return false;
+  if (row.requires_explicit_approval && (Number(row.other_yes) || 0) < 1) return false;
+  return true;
+}
+
+/**
+ * #6389: what a change the viewer made through a coding agent waits on once
+ * its vote is in, in the order the page says it: `'checks'`, then
+ * `'conflict'`. Null while the gate is not met (the row stays a Vote) and
+ * when nothing is left for them to fix.
+ */
+function waitingOnFix(row, viewerId) {
+  if (!authorAgentGateMet(row, viewerId)) return null;
+  const reasons = [];
+  if (row.check_state === 'failing') reasons.push('checks');
+  if (row.mergeability === 'conflict'
+      || row.integration_merges_clean === false
+      || row.merge_conflict_state === 'failed'
+      || row.merge_conflict_state === 'conflict') reasons.push('conflict');
+  return reasons.length ? reasons : null;
 }
 
 /**
@@ -960,6 +1029,11 @@ function shapeNeedsFeed(rows, { inThreads = false } = {}) {
     yes: row.yes == null ? null : Number(row.yes),
     no: row.no == null ? null : Number(row.no),
     ...(approvedAlone(row) ? { approve: true } : {}),
+    // #6389: the viewer's own change, made through a coding agent, whose
+    // votes are in and which waits on their fix. The row says what it waits
+    // on instead of Vote, and names the tool it was made in.
+    ...(row.kind === 'proposal' && Array.isArray(row.waiting_on) && row.waiting_on.length
+      ? { waitingOn: row.waiting_on, agent: row.external_agent || null } : {}),
     // #5365: only when set — an unmarked row carries no flag at all, so the
     // card keeps its usual place and wording.
     ...(row.uncounted ? { uncounted: true } : {}),
@@ -999,7 +1073,13 @@ async function needsFeedFor(pool, { user, showSelfHosted = false, inThreads = fa
   await withCodeMissing(pool, rows);
   await withPictures(pool, rows, { shotsPresent, viewer: user });
   await withViewerDecides(pool, rows, user.id);
-  const items = decidingFirst(shapeNeedsFeed(await withVotesRequired(pool, rows), { inThreads }));
+  const voted = await withVotesRequired(pool, rows, user.id);
+  // #6389: a row that is the viewer's own change made through a coding
+  // agent says what it waits on once its vote is in, and leaves Needs you
+  // when nothing is left for them to fix (only testing is running).
+  for (const row of voted) row.waiting_on = waitingOnFix(row, user.id);
+  const kept = voted.filter((row) => !(authorAgentGateMet(row, user.id) && !row.waiting_on));
+  const items = decidingFirst(shapeNeedsFeed(kept, { inThreads }));
   if (!inThreads) return items;
   // #6262: how many messages in each item's thread are new to the viewer.
   const unread = await require('../services/thread-reads')
@@ -1296,7 +1376,7 @@ function workshopOverviewRoutes(config) {
 module.exports = {
   workshopOverviewRoutes, demoNeedsVoteRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
-  NEEDS_FEED_SQL, NEEDS_FEED_IN_THREADS_SQL, NEEDS_FEED_MAX, needsFeedFor, BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX, shapeNeedsFeed, withVotesRequired, withViewerDecides, decidingFirst,
+  NEEDS_FEED_SQL, NEEDS_FEED_IN_THREADS_SQL, NEEDS_FEED_MAX, needsFeedFor, BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX, shapeNeedsFeed, withVotesRequired, waitingOnFix, authorAgentGateMet, withViewerDecides, decidingFirst,
   withPictures, withCodeMissing, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,

@@ -125,6 +125,14 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
   };
 
   return {
+    [WORK.wake]: {
+      maxAttempts: 2, leaseMs: 60000, concurrency: 2,
+      async run({ input }): Promise<Json> {
+        return legacy('services/preview-sleep').wake(config, pool, Number(input.sessionId), {
+          reason: String(input.reason), repairRoute: input.repairRoute === true,
+        });
+      },
+    },
     // Build attempt n of the head into its own checkout, database and env
     // Secret, then update the session's runtime to it (fenced by attempt,
     // the serving template restored on a failed rollout). A build or boot

@@ -92,6 +92,12 @@ export type ReviewItem = {
   approve: boolean;
   advisory: boolean;
   uncounted: boolean;
+  /**
+   * #6439: on a group decision that is a vote to close a request, the
+   * request's number: the page its vote is read and decided on. Null for
+   * every other item.
+   */
+  request: number | null;
 };
 
 /**
@@ -222,6 +228,17 @@ function pairUrl(value: string | null | undefined, isProtected: boolean): string
 }
 
 /**
+ * #6439: the request a group decision would close, when it is a vote to
+ * close one (routes/workshop-overview.js `decisionFacts`). The request's
+ * page is where that vote is read and decided; null for every other item.
+ */
+export function closeRequestOf(item: NeedsFeedItem): number | null {
+  const decision = item.decision as { kind?: string; issueNumber?: number } | undefined;
+  const n = decision && decision.kind === 'close_issue' ? Number(decision.issueNumber) : 0;
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
  * The feed's items as the flow draws them. `shape` is
  * `AppView._workshopVisuals` (passed in so this stays testable).
  */
@@ -230,8 +247,12 @@ export function toReviewItems(
   shape: (visuals: unknown, shots: unknown) => Visuals,
 ): ReviewItem[] {
   // #6019: a ballot and the bot's question are decided on their request's
-  // page; this flow draws the changes and decisions it knows.
-  return items.filter((item) => item.kind === 'proposal' || item.kind === 'governance').map((item) => {
+  // page; this flow draws the changes and decisions it knows. #6389: a
+  // change waiting on its author's fix has nothing to vote on, so it is
+  // left out of this flow too.
+  return items
+    .filter((item) => !(item.waitingOn && item.waitingOn.length))
+    .filter((item) => item.kind === 'proposal' || item.kind === 'governance').map((item) => {
     const change = item.kind !== 'governance';
     const v = change && (item.shots || item.visuals) ? shape(item.visuals || null, item.shots || null) : null;
     const screens = pickScreens(Array.isArray(v?.screens) ? v!.screens! : []);
@@ -299,6 +320,7 @@ export function toReviewItems(
       approve: !!item.approve,
       advisory: !!item.advisory,
       uncounted: !!item.uncounted,
+      request: closeRequestOf(item),
     };
   });
 }
@@ -342,8 +364,11 @@ export function pageItems(
         : t('communities:reel.fallbackTitle.question'));
     // A group decision has its own page; competing changes and the bot's
     // question are decided on their request's. With no request, the Workshop.
+    // #6439: a vote to close a request opens the request's page, where the
+    // vote already draws; every other decision keeps its own page.
+    const closing = kind === 'governance' ? closeRequestOf(item) : null;
     const href = kind === 'governance'
-      ? `#app/${app}/dev/governance/${Number(item.id)}`
+      ? (closing ? `#app/${app}/dev/issues/${closing}` : `#app/${app}/dev/governance/${Number(item.id)}`)
       : number ? `#app/${app}/dev/issues/${Number(number)}` : `#app/${app}/workshop`;
     out.push({ key: `${kind}:${item.id}`, kind, id: item.id, title, app: item.app, href });
   }

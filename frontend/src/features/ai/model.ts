@@ -72,6 +72,12 @@ export interface AiThread {
   title: string | null;
   app: AiApp | null;
   change: { id: number; number: number | null } | null;
+  /**
+   * #6421: how many requests the thread holds (a change for several requests
+   * gathers their threads into one). Absent from an older server, which reads
+   * as one.
+   */
+  requests?: number;
   href: string;
   group: 'needs' | 'next' | 'waiting' | 'live';
   /**
@@ -138,6 +144,11 @@ export interface NeedItem {
   ballot?: { number?: number | null; title?: string | null } | null;
   /** A change for a request: the request it closes (absent from an older server). */
   request?: { number?: number | null; title?: string | null } | null;
+  /**
+   * A group decision's facts (routes/workshop-overview.js decisionFacts): what
+   * kind it is, and for a vote to close a request, the request's number.
+   */
+  decision?: { kind?: string | null; issueNumber?: number | null } | null;
   /** Who proposed it, by username: Homeroom bot's own changes hold its slots. */
   author?: string | null;
   /**
@@ -146,9 +157,19 @@ export interface NeedItem {
    * Approve, as its card and the project's own Needs you do; Vote elsewhere.
    */
   approve?: boolean;
+  /**
+   * #6389: a change the viewer made through a coding agent whose votes are
+   * in but which waits on their fix (`checks` and/or `conflict`). Its row
+   * says what it waits on instead of Vote.
+   */
+  waitingOn?: string[];
+  /** #6389: the coding tool the change was made in, such as `claude-code`. */
+  agent?: string | null;
   /** #6262: the thread its page is, and how many messages in it are new. */
   threadId?: number | null;
   unread?: number;
+  /** When it started needing the viewer: the day its row is grouped under. */
+  at?: string | null;
 }
 
 /** Homeroom bot's account: its changes up for a vote hold a project's build slots. */
@@ -215,6 +236,12 @@ export interface WorkRow {
    */
   threadId: number | null;
   unread: number;
+  /**
+   * When it first needed the viewer: the day its row is grouped under (6 Nov
+   * 2026, Needs you and Waiting & in progress split each project's rows by
+   * day). A private thread's last activity; absent from an older server.
+   */
+  at: string | null;
 }
 
 /**
@@ -235,6 +262,37 @@ export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: Ai
     groups[at.get(key)!].items.push(row);
   }
   return groups;
+}
+
+/**
+ * Pure (6 Nov 2026): the reader's own calendar day a row belongs to, as
+ * `YYYY-MM-DD`, or '' when its moment is missing or unreadable. Needs you and
+ * Waiting & in progress split each project's rows by it (./lists.tsx), so a
+ * row joins the day it first needed the viewer, read in their own time zone.
+ */
+export function dayKey(at: string | null | undefined): string {
+  const d = new Date(String(at || ''));
+  if (!Number.isFinite(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Pure (6 Nov 2026): rows by their day, the newest day first and each day's
+ * rows in the order they came in, so a project's day headings are one run
+ * each rather than Today, Yesterday, Today. A row with no day goes last.
+ */
+export function byDay<T extends { at?: string | null }>(rows: readonly T[]): T[] {
+  return rows
+    .map((row, i) => ({ row, i, key: dayKey(row.at) }))
+    .sort((a, b) => {
+      if (!a.key || !b.key) {
+        if (a.key) return -1;
+        if (b.key) return 1;
+        return a.i - b.i;
+      }
+      return a.key === b.key ? a.i - b.i : (a.key < b.key ? 1 : -1);
+    })
+    .map(({ row }) => row);
 }
 
 /**
@@ -259,16 +317,20 @@ export function holdOrder<T extends { key: string }>(rows: T[], drawn: readonly 
  *
  * #6262: a row with something new is never folded either. Show more is for
  * what you have already seen; hiding a new row behind it is what the dot was
- * meant to stop.
+ * meant to stop. That fits Needs you, where new means it wants you.
+ *
+ * #6408: Live this week calls it with `liftFresh` false. There, new only
+ * means a change went live since the viewer last looked, which is most of the
+ * list on a busy day, so it folds after its first few whatever is new.
  */
-export function groupRows<T extends { lit?: boolean; fresh?: boolean }>(items: T[], first: number, open: boolean): { items: T[]; shown: number; hidden: number } {
+export function groupRows<T extends { lit?: boolean; fresh?: boolean }>(items: T[], first: number, open: boolean, liftFresh = true): { items: T[]; shown: number; hidden: number } {
   const litAt = open ? -1 : items.findIndex((row) => row.lit);
   // Which rows past the first few must still be shown: the fresh ones and
   // the one you are on. They keep their order; the rest folds away.
   const lifted = new Set<number>();
   if (!open) {
     if (litAt >= first) lifted.add(litAt);
-    items.forEach((row, i) => { if (row.fresh && i >= first) lifted.add(i); });
+    if (liftFresh) items.forEach((row, i) => { if (row.fresh && i >= first) lifted.add(i); });
   }
   const rest = items.slice(first);
   const drawn = open
@@ -377,6 +439,24 @@ const PILLS: Record<string, string> = {
 };
 
 /**
+ * #6389: what a change the viewer made through a coding agent waits on once
+ * its votes are in: its pill, its tooltip, and the phone's second line. The
+ * pill says one reason (tests first); the tooltip and second line say both
+ * when both are true, so the row still fits on a phone.
+ */
+function waitingRow(reasons: string[]) {
+  const checks = reasons.includes('checks');
+  const conflict = reasons.includes('conflict');
+  if (checks) {
+    return {
+      pill: 'messages:ai.pill.testsFailing',
+      sub: conflict ? 'messages:ai.row.waitsOnFixBoth' : 'messages:ai.row.waitsOnFixTests',
+    };
+  }
+  return { pill: 'messages:ai.pill.conflicts', sub: 'messages:ai.row.waitsOnFixConflict' };
+}
+
+/**
  * Pure: which hand-back a Needs you row of the bot's is, by its stage: the
  * row's key and pill. A plan waits for Build it; a decision, for a person;
  * #6306: one already there only needs closing; a stopped build, for a
@@ -412,7 +492,15 @@ export function needHref(item: NeedItem): string | null {
   const slug = item.app?.slug;
   if (!slug) return null;
   const app = encodeURIComponent(slug);
-  if (item.kind === 'governance') return `#app/${app}/dev/governance/${Number(item.id)}`;
+  if (item.kind === 'governance') {
+    // 6 Nov 2026 (#6439): a vote to close a request is decided on the
+    // request's page, where it already draws, not on the old governance
+    // page. Every other decision keeps its own page.
+    const closing = item.decision && item.decision.kind === 'close_issue'
+      ? Number(item.decision.issueNumber) : 0;
+    if (closing > 0) return `#app/${app}/dev/issues/${closing}`;
+    return `#app/${app}/dev/governance/${Number(item.id)}`;
+  }
   const closes = item.kind === 'proposal' ? Number(item.request?.number) : 0;
   if (closes > 0) return `#app/${app}/dev/issues/${closes}`;
   const number = needNumber(item);
@@ -509,6 +597,10 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
   const listed = listedKeys(needs, work);
   for (const item of needs || []) {
     const app = item.app || null;
+    // #6389: your own change made through a coding agent, its votes in and
+    // its fix still owed. It keeps its row because you are the one to act,
+    // and says what it waits on in place of Vote.
+    const waiting = item.waitingOn && item.waitingOn.length ? waitingRow(item.waitingOn) : null;
     rows.push({
       key: `need:${item.kind}:${item.id}`,
       title: (item.kind === 'ballot' && item.ballot?.title) || item.title || '',
@@ -516,17 +608,22 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       who: 'all',
       // A vote on a change of Homeroom bot's, where a request of yours waits
       // for one of its slots: deciding it lets that request be built.
-      sub: app && held.has(app.slug) && holdsSlot(item)
-        ? { id: 'messages:ai.row.voteFreesSlot', values: where(app, shownNumber(item)) }
-        : whereLine(app, shownNumber(item)),
-      pill: item.kind === 'proposal' && item.approve === true
-        ? { id: 'messages:ai.pill.approve' }
-        : { id: PILLS[item.kind] || 'messages:ai.pill.needsYou' },
+      sub: waiting
+        ? { id: waiting.sub, values: where(app, shownNumber(item)) }
+        : app && held.has(app.slug) && holdsSlot(item)
+          ? { id: 'messages:ai.row.voteFreesSlot', values: where(app, shownNumber(item)) }
+          : whereLine(app, shownNumber(item)),
+      pill: waiting
+        ? { id: waiting.pill }
+        : item.kind === 'proposal' && item.approve === true
+          ? { id: 'messages:ai.pill.approve' }
+          : { id: PILLS[item.kind] || 'messages:ai.pill.needsYou' },
       href: needHref(item),
       rootId: null,
       // #6262: a feed item's thread, and what is new in it.
       threadId: item.threadId ?? null,
       unread: Math.max(0, Number(item.unread) || 0),
+      at: item.at || null,
     });
   }
   for (const t of work?.needs || []) {
@@ -555,6 +652,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       rootId: null,
       threadId: t.threadId,
       unread: Math.max(0, Number(t.unread) || 0),
+      at: t.at,
     });
   }
   for (const p of work?.private || []) {
@@ -600,6 +698,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       // A private thread is not a `threads` row: Main Chat's "N new" counts it.
       threadId: null,
       unread: 0,
+      at: p.at || null,
     });
   }
   return rows;
@@ -613,6 +712,10 @@ export function owedCount(rows: WorkRow[]): number {
 /** The phone's second line for a Needs you row, by the reason its tooltip gives. */
 const WHY: Record<string, string> = {
   'messages:ai.row.voteFreesSlot': 'messages:ai.why.voteFreesSlot',
+  // #6389: the phone's second line for a change waiting on its author's fix.
+  'messages:ai.row.waitsOnFixTests': 'messages:ai.why.fixTests',
+  'messages:ai.row.waitsOnFixConflict': 'messages:ai.why.fixConflict',
+  'messages:ai.row.waitsOnFixBoth': 'messages:ai.why.fixBoth',
 };
 
 /**

@@ -227,6 +227,28 @@ test('on a phone the keyboard is not the page moving, and the sheet stays under 
   assert.match(css, /#comment-pin-box\.comment-sheet \.comment-sheet-actions \{\s*position: sticky;\s*bottom: calc\(-1 \* var\(--comment-sheet-pb\)\);/);
 });
 
+test('the picture stays still while the comment box has the keyboard (#6448)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // While the person is typing, a chat that scrolls a reply in must not
+  // rewrite the picture under their words. The retake is skipped, and the
+  // move is remembered.
+  assert.match(src, /const shotPending = useRef\(false\);/);
+  assert.match(src, /if \(textFocused\(document\)\) \{ shotPending\.current = true; return; \}\s*const timer = setTimeout\(\(\) => \{/,
+    'the tick effect skips the retake while a text field has the keyboard');
+  // And again when the timer fires: focusing the box during the 250ms wait
+  // freezes the picture too.
+  assert.match(src, /const timer = setTimeout\(\(\) => \{\s*if \(textFocused\(document\)\) \{ shotPending\.current = true; return; \}\s*takeViewShot\(\);\s*\}, 250\);/);
+  // Leaving the box catches up, once, and only when the page moved while it
+  // was frozen. `activeElement` has not moved when focusout fires, so the
+  // check waits a frame.
+  assert.match(src, /host\.addEventListener\('focusout', onFocusOut\);/);
+  assert.match(src, /frame = requestAnimationFrame\(\(\) => \{\s*frame = 0;\s*if \(!shotPending\.current \|\| textFocused\(document\)\) return;\s*shotPending\.current = false;\s*takeViewShot\(\);\s*\}\);/);
+  assert.match(src, /host\.removeEventListener\('focusout', onFocusOut\);\s*if \(frame\) cancelAnimationFrame\(frame\);/,
+    'the listener and its frame go with the mode');
+  // The first picture is still taken as it always was: only the redraws after it freeze.
+  assert.match(src, /const ahead = takeAhead\(sizeRef\.current\);\s*void Promise\.all\(\[ahead, overlaysGone\(\)\]\)\.then\(\(\[got\]\) => \{\s*if \(!live\) return;\s*if \(!got\) \{ takeViewShot\(\); return; \}/);
+});
+
 test('on a phone a tap leaves a small comment, and only its field opens the sheet', () => {
   // Evan, 14 Oct 2026: a tap opened the whole sheet with the keyboard over
   // the page he was still looking at, the sheet's ✕ was hard to find and to

@@ -1395,3 +1395,20 @@ test('the Testing card on a request\'s page offers the preview its row says it h
   assert.doesNotMatch(testing(av, { staging_url: null, can_preview: true }), open);
   assert.match(testing(av, { staging_url: 'https://preview.example', can_preview: true }), open);
 });
+
+// #6389: the Votes card says who has to fix a change that has its votes and
+// fails its checks: the viewer, in the tool they made it in; or whoever made
+// it, by name. A change Homeroom bot built keeps today's sentence.
+test('#6389: the Votes card names who fixes a failing change that has its votes', () => {
+  const av = context({ id: 42, username: 'evan' });
+  const card = { pill: { state: { yes: 1, majority: 1 } } };
+  const row = { ...PR, status: 'promoted', check_state: 'failing', user_id: 42, username: 'evan', external_agent: 'claude-code' };
+  const note = (over) => av._changeVotesView({ ...row, ...over }, card).note.join(' ');
+  assert.match(note({}), new RegExp(message('changes:page.votes.note.liveOnceYouFixIn', { agent: 'Claude Code' }).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(note({ external_agent: 'other-agent' }), /once you fix it where you made it/);
+  assert.match(note({ external_agent: null }), /once you fix it and the fix passes testing/);
+  assert.match(note({ user_id: 7, username: 'snait' }), /once snait fixes it/);
+  assert.match(note({ user_id: 7, username: 'homeroom_bot' }), /once a fix passes testing/);
+  // Passing checks still say testing passes, not a fix.
+  assert.match(note({ check_state: 'pending' }), /once testing passes/);
+});

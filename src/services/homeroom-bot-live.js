@@ -191,8 +191,18 @@ function questionText({ question, plan = null }) {
 }
 
 // A reason the model wrote, as a whole sentence: it ends with a full stop.
-function reasonSentence(reason) {
-  const text = clipText(plainWords(reason));
+// 6 Nov 2026 (#6430): in a reply to the person who said go ahead, `reader`
+// (their username) becomes "your" or "you", so the note never talks about the
+// reader in the third person ("evan's go-ahead").
+function reasonSentence(reason, { reader = null } = {}) {
+  let text = clipText(plainWords(reason));
+  const name = typeof reader === 'string' ? reader.trim() : '';
+  if (text && name) {
+    const at = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    text = text
+      .replace(new RegExp(`@?${at}'s\\b`, 'gi'), 'your')
+      .replace(new RegExp(`@?${at}\\b`, 'gi'), 'you');
+  }
   if (!text) return 'No reason given.';
   return /[.!?…)"']$/.test(text) ? text : `${text}.`;
 }
@@ -206,7 +216,7 @@ function decidersPhrase(names) {
   return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
 }
 
-function personText({ reason, platform = false, project = null, done = false }) {
+function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null }) {
   // #4239: about Homeroom itself. The requester is offered the move in their
   // DM; the project's creator and admins, who see only this note, are told
   // they can move it too (homeroom-bot-move.js moveGate).
@@ -221,6 +231,21 @@ function personText({ reason, platform = false, project = null, done = false }) 
     return `Homeroom bot found this already works: ${reasonSentence(reason)}\n\n`
       + 'Anyone in the project can propose to close it, or reply here if something is missing.';
   }
+  // #6413: its requester or a decider asked to close it, so it waits for the
+  // same vote, not for a Go ahead.
+  if (withdrawn) {
+    return `Homeroom bot was asked to close this: ${reasonSentence(reason)}\n\n`
+      + 'Anyone in the project can propose to close it, or reply here to keep it going.';
+  }
+  // 6 Nov 2026 (#6395): a go-ahead cannot settle this one (credentials,
+  // auth, billing, permissions, operator work outside the app, a database
+  // change that is not append-only, or too big for one build), so the copy
+  // names no Go ahead and leads with the part it can build.
+  if (goAheadDecides === false) {
+    return `I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason)} `
+      + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
+      + canBuildPart(firstStep);
+  }
   // GitHub never carries a platform username (#723): its copy names nobody.
   // Homeroom's names who can say Go ahead (personHomeroomText).
   return `Homeroom bot thinks a person needs to decide this one: ${reasonSentence(reason)} `
@@ -228,11 +253,21 @@ function personText({ reason, platform = false, project = null, done = false }) 
 }
 
 /**
+ * 6 Nov 2026 (#6395): the part of a request the bot can still build, as the
+ * sentence that follows "I can't build all of this one: ...". `firstStep` is
+ * the smaller step the read named, if any. Pure.
+ */
+function canBuildPart(firstStep) {
+  const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
+  return step ? `I can build this part now: ${step}.` : 'Reply here if a smaller part would help.';
+}
+
+/**
  * The Homeroom copy of a note for a person: who can say Go ahead, by name.
  * `deciders` are the people who decide on the project when the requester
  * does not (homeroom-bot.js whoDecides); else the requester. Pure.
  */
-function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false }) {
+function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false, goAheadDecides = null, firstStep = null }) {
   // #4239, #6311: about Homeroom itself. The requester is offered the copy
   // in the thread and the move in their DM. Plain words, in the first
   // person: no checkout, no head commit, no build agent.
@@ -245,9 +280,25 @@ function personHomeroomText({ reason, platform = false, project = null, requeste
   if (done) {
     return `Already works: ${reasonSentence(reason)} Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.`;
   }
+  // 6 Nov 2026 (#6395): no Go ahead can settle this one, and nobody is named
+  // as able to say it. It says what it can build here instead.
+  if (goAheadDecides === false) {
+    return firstPerson(`I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason)} `
+      + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
+      + canBuildPart(firstStep));
+  }
   const named = (Array.isArray(deciders) && deciders.length ? deciders : [requester]).filter(Boolean);
   const who = named.length ? decidersPhrase(named) : 'The person who asked for it';
   return firstPerson(`I think a person needs to decide this one: ${reasonSentence(reason)} ${who} can say Go ahead in a chat with me, or reply here.`);
+}
+
+/**
+ * #6413: the note for a request its requester (or a decider) asked to close.
+ * It offers the close vote the finished-request note does, not a Go ahead.
+ * Pure.
+ */
+function withdrawnHomeroomText({ reason }) {
+  return `Asked to close: ${reasonSentence(reason)} Tap Propose to close below to start a vote. It stays open until the group votes for it, or reply here to keep it going.`;
 }
 
 // The note's fixed replies, beside its own sentence: words the bot offers for
@@ -258,18 +309,22 @@ const NOT_NOW_LABEL = 'Not now';
 
 /**
  * Pure: the replies offered under a person note, as prompt actions, or []
- * when the note is about Homeroom itself or says the request is done (Go
- * ahead applies to neither). `firstStep` is the smaller step the bot would
- * build, when it named one; the fixed label stands in when it did not.
+ * when the note is about Homeroom itself, says the request is done, or says
+ * it was asked to close (Go ahead applies to none). `firstStep` is the
+ * smaller step the bot would build, when it named one; the fixed label stands
+ * in when it did not.
+ * 6 Nov 2026 (#6395): when `goAheadDecides` is false a go-ahead cannot settle
+ * the request, so Go ahead is not offered and the smaller step is primary.
  */
-function personSuggestions({ firstStep = null, platform = false, done = false } = {}) {
-  if (platform || done) return [];
+function personSuggestions({ firstStep = null, platform = false, done = false, withdrawn = false, goAheadDecides = null } = {}) {
+  if (platform || done || withdrawn) return [];
+  const cannot = goAheadDecides === false;
   const mayor = require('./homeroom-bot-mayor');
   const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
   const usableStep = step && step.length <= mayor.MAX_SUGGESTION_CHARS ? step : '';
   const candidates = [
-    { id: 'go_ahead', label: GO_AHEAD_LABEL, style: 'primary' },
-    { id: 'smaller', label: usableStep || SMALLER_STEP_LABEL, style: 'secondary' },
+    ...(cannot ? [] : [{ id: 'go_ahead', label: GO_AHEAD_LABEL, style: 'primary' }]),
+    { id: 'smaller', label: usableStep || SMALLER_STEP_LABEL, style: cannot ? 'primary' : 'secondary' },
     { id: 'not_now', label: NOT_NOW_LABEL, style: 'secondary' },
   ];
   const labels = mayor.suggestionLabels(candidates.map((c) => c.label));
@@ -280,6 +335,28 @@ function personSuggestions({ firstStep = null, platform = false, done = false } 
     out.push({ ...candidate, type: 'prompt' });
   }
   return out;
+}
+
+/**
+ * 6 Nov 2026 (#6395): the one plain reply to a go-ahead that cannot settle a
+ * request, instead of the note again. It says what a go-ahead cannot change,
+ * then the part the bot can still build. Server text, like the labels.
+ */
+function goAheadCannotText({ reason, firstStep = null, reader = null } = {}) {
+  return `I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason, { reader })} `
+    + 'A person has to build it, for example you with a coding agent, and the group votes on it as usual. '
+    + canBuildPart(firstStep);
+}
+
+// 6 Nov 2026 (#6430): a plain reply that starts with "go ahead" and is no
+// longer than this is a go-ahead, when the bot's last note named the speaker.
+const GO_AHEAD_REPLY_MAX_CHARS = 60;
+
+/** Pure: whether a message's words are a plain go-ahead. */
+function saysGoAhead(text) {
+  const words = typeof text === 'string' ? text.trim() : '';
+  return !!words && words.length <= GO_AHEAD_REPLY_MAX_CHARS
+    && words.slice(0, 8).toLowerCase() === 'go ahead';
 }
 
 function emptyText({ reason }) {
@@ -4640,6 +4717,14 @@ async function buildAndPropose({
   // its merge deploys over its container, so it waits for the project to
   // run. Every other build passes none.
   setupCheck = null,
+  // #6389: the change this build makes its own version of, so its branch
+  // starts from that change's head (session-lifecycle.ensureSessionBranch)
+  // and the request's page links them.
+  fromSessionId = null,
+  // #6423: the change touching the same files this one is built on top of
+  // (`{ sessionId, branch }`): its branch is this change's base, and it
+  // waits for it the way a stacked import does.
+  stackOn = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle } = deps;
   // Each step below is a durable step of the build's work item when the
@@ -4677,14 +4762,21 @@ async function buildAndPropose({
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless,
                                   created_from_issue_number, linked_issues, issue_link_seeded,
                                   session_title, agent_backend, agent_provider, agent_model,
-                                  agent_reasoning_effort, workflow_owner, workflow_step)
+                                  agent_reasoning_effort, workflow_owner, workflow_step, rebuilt_from_session_id,
+                                  waits_for_session_id, imported_pr_base_ref)
        VALUES ($1, $2, NULL, 'active', FALSE, $3,
                CASE WHEN $3::int IS NULL THEN '{}'::int[] ELSE ARRAY[$3::int] END, TRUE, $4,
-               'codex_openrouter', 'openrouter', $5, $6, $7, $8)
+               'codex_openrouter', 'openrouter', $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [app.id, bot.id, propose ? issueNumber : null,
         sessionTitle || `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
-        model, config.openrouterDefaultCodexReasoning || 'low', owner, step],
+        model, config.openrouterDefaultCodexReasoning || 'low', owner, step,
+        Number.isInteger(Number(fromSessionId)) && Number(fromSessionId) > 0 ? Number(fromSessionId) : null,
+        // #6423: a build on top of another change waits for it, as a
+        // stacked import does (rules/pr-base.ts). Never rebuilt_from: that
+        // would close the parent as an "own version".
+        Number.isInteger(Number(stackOn?.sessionId)) && Number(stackOn.sessionId) > 0 ? Number(stackOn.sessionId) : null,
+        stackOn?.branch ? String(stackOn.branch).slice(0, 255) : null],
     );
     openedRow = rows[0];
     return { id: Number(openedRow.id) };
@@ -5702,6 +5794,23 @@ async function unlinkDocOnlyProposals(pool, deps = {}) {
   return { unlinked };
 }
 
+/**
+ * #6389: the two lines on the changes' threads once the bot's own version of
+ * somebody's change is proposed: on the original, that a version exists and
+ * the votes do not carry over; on the new one, who it was made from. Each
+ * names its change's own thread, as AGENTS.md requires.
+ */
+async function sayOwnVersionProposed(pool, { app, ws, originalId, originalNumber, newId, newNumber, author }) {
+  const send = (ws && ws.sendSystemMessage) || require('./ws').sendSystemMessage;
+  const from = author ? `@${author}'s change` : 'a person\'s change';
+  await send(pool, app.id,
+    `Homeroom bot made its own version of this change${newNumber ? `, change #${newNumber}` : ''}. Votes on this one do not carry over to it. This one closes if that one goes live.`,
+    'system', null, { type: 'session', ref: Number(originalId) }).catch(() => {});
+  await send(pool, app.id,
+    `Made from ${from}${originalNumber ? ` #${originalNumber}` : ''}. Votes on that one do not carry over.`,
+    'system', null, { type: 'session', ref: Number(newId) }).catch(() => {});
+}
+
 module.exports = {
   FAILURE_KINDS,
   THREAD_KINDS,
@@ -5727,7 +5836,12 @@ module.exports = {
   questionText,
   personText,
   personHomeroomText,
+  withdrawnHomeroomText,
   personSuggestions,
+  goAheadCannotText,
+  canBuildPart,
+  saysGoAhead,
+  GO_AHEAD_REPLY_MAX_CHARS,
   GO_AHEAD_LABEL,
   SMALLER_STEP_LABEL,
   NOT_NOW_LABEL,
@@ -5884,4 +5998,5 @@ module.exports = {
   publishSpec,
   specShaped,
   MAX_SPEC_COMMENT_CHARS,
+  sayOwnVersionProposed,
 };

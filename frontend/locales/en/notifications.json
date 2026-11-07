@@ -451,6 +451,22 @@
     "text": "{{count}} sessions finished",
     "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. The viewer's coding sessions finished their work."
   },
+  "row.group.live_one": {
+    "text": "{{count}} of your requests went live",
+    "description": "Subject of one notification row in the bell that stands for several requests of one project which went live close together, each listed under it. {{count}} is how many; it is at least 1. 'Live' is the app's word for a change that is now part of the app."
+  },
+  "row.group.live_other": {
+    "text": "{{count}} of your requests went live",
+    "description": "Subject of one notification row in the bell that stands for several requests of one project which went live close together, each listed under it. {{count}} is how many. 'Live' is the app's word for a change that is now part of the app."
+  },
+  "row.group.liveItem": {
+    "text": "#{{number}} · {{title}}",
+    "description": "One request listed under a notification row that folds several requests which went live together. {{number}} is the request's number, kept with its # before it, and {{title}} is what the request asked for."
+  },
+  "row.group.liveItemUnnumbered": {
+    "text": "{{title}}",
+    "description": "One request listed under a notification row that folds several requests which went live together, for a request that has no number to show. {{title}} is what the request asked for."
+  },
   "row.sending": {
     "text": "Sending…",
     "description": "Shown on a notification's \"Still yes\" button while the vote is being sent."

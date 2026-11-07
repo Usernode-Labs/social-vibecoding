@@ -101,7 +101,10 @@ const EVAN = { id: 2, username: 'evan', isSynthetic: false, hasPlatformAccess: t
 const msg = (over = {}) => ({ id: 50, user_id: 2, content: 'hello', msg_type: 'message', metadata: {}, created_at: new Date(), ...over });
 const deps = (over = {}) => ({
   dmSvc: { hasBot: (s, p) => !!p && !p.isSynthetic, ...over.dmSvc },
-  liveSvc: { async openBotProposal() { return over.open || null; }, isLiveFor: () => true },
+  liveSvc: {
+    async openBotProposal() { return over.open || null; }, isLiveFor: () => true,
+    saysGoAhead: require('../src/services/homeroom-bot-live').saysGoAhead,
+  },
 });
 
 test('the gate: on the bot\'s own change any person\'s message; on anybody else\'s, a mention or a reply', async () => {
@@ -267,6 +270,37 @@ test('#6311: the requester or an admin writing after the bot\'s post in a reques
     { speak: false, why: 'answers_question' });
 });
 
+// 6 Nov 2026 (#6395): a plain "Go ahead" on a request, from the person the
+// bot's last note named, is answered with no @ and no Reply, a day after the
+// note. Anybody else's, a long message, or one after a question note is not.
+test('#6395: a plain Go ahead from the person the last note named is answered', async () => {
+  const place = { type: 'issue', ref: 24 };
+  const personNote = { kind: 'person', created_at: new Date(Date.now() - 24 * 60 * 60 * 1000) };
+  const requester = { userId: EVAN.id, username: 'evan' };
+  const g = (over = {}) => voice.gate(gatePool({ posts: [personNote], ...over.pool }), {
+    app: APP, place, row: msg({ content: over.content || 'Go ahead' }), bot: BOT, settings: LIVE,
+    speaker: over.speaker || EVAN,
+    deps: {
+      dmSvc: { hasBot: () => true, requesterOf: async () => requester },
+      liveSvc: {
+        async openBotProposal() { return null; },
+        saysGoAhead: require('../src/services/homeroom-bot-live').saysGoAhead,
+      },
+      botSvc: { goAheadCounts: async (_pool, _app, _requester, id) => Number(id) === EVAN.id },
+    },
+  });
+  assert.deepEqual(await g(), { speak: true, why: 'go_ahead' });
+  assert.deepEqual(await g({ content: 'go ahead!' }), { speak: true, why: 'go_ahead' }, 'case does not matter');
+  // Somebody the note did not name: silent, as today.
+  assert.deepEqual(await g({ speaker: { ...EVAN, id: 5 } }), { speak: false, why: 'not_addressed' });
+  // A message that begins with it but is long is not a go-ahead reply.
+  assert.deepEqual(await g({ content: `Go ahead ${'x'.repeat(60)}` }), { speak: false, why: 'not_addressed' });
+  // After a question note it is still the build's answer.
+  assert.deepEqual(await g({ pool: { posts: [{ kind: 'question' }] } }), { speak: false, why: 'not_addressed' });
+  // A message that does not start with it stays unanswered.
+  assert.deepEqual(await g({ content: 'looks good' }), { speak: false, why: 'not_addressed' });
+});
+
 // ── Tools, prompt, words ─────────────────────────────────────────────────
 
 const names = (tools) => tools.map((t) => t.function.name);
@@ -303,6 +337,13 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   assert.ok(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })).includes('offer_copy_request'));
   assert.ok(!names(voice.toolsFor({ type: 'chat', ref: null }, {})).includes('offer_copy_request'));
   assert.deepEqual(voice.OFFER_WORDS.copy_request, { yes: 'Put it on Homeroom\'s board', no: 'Keep it here only' });
+});
+
+test('#6413: a close or withdraw ask in a request gets the close vote, and an ask it cannot do is answered', () => {
+  const tools = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false });
+  const prompt = voice.systemPrompt({ app: { slug: 'todo', name: 'Todo' }, place: { type: 'issue', ref: 1 }, tools });
+  assert.match(prompt, /When the person who asked for this request, or somebody who decides on the project, asks to close or withdraw it, offer the close vote with their words as why, and never start_request\./);
+  assert.match(prompt, /When somebody asks for something none of your tools can do, say so plainly and say what you can do instead, rather than reading the request again\./);
 });
 
 test('#6270: a stand-in word is not an answer, and a short real one is', () => {
@@ -474,11 +515,20 @@ test('the prompt says where it is, lists only what it can do, and holds it to wh
 
 test('a transcript line says who wrote it, what it replied to, and the bot as "you"', () => {
   const at = new Date('2026-10-09T12:30:00Z');
+  // #6406: the date only. A UTC clock time read as the reader's own.
   assert.equal(voice.transcriptLine({ id: 5, user_id: 2, username: 'evan', content: 'Make it\nblue', msg_type: 'message', created_at: at, metadata: {} }, 1),
-    '#5 [10-09 12:30] @evan: Make it blue');
+    '#5 [2026-10-09] @evan: Make it blue');
+  assert.doesNotMatch(voice.transcriptLine({ id: 5, user_id: 2, username: 'evan', content: 'x', msg_type: 'message', created_at: at, metadata: {} }, 1), /\d{1,2}:\d{2}/);
   assert.match(voice.transcriptLine({ id: 6, user_id: 1, content: 'Done', msg_type: 'message', created_at: at, metadata: {} }, 1), /you \(Homeroom bot\): Done/);
   assert.match(voice.transcriptLine({ id: 7, user_id: 2, username: 'evan', content: 'thanks', msg_type: 'message', created_at: at, metadata: { quote: { refMsgId: 6, author: 'homeroom_bot', snippet: 'Done' } } }, 1),
     /replying to #6 by @homeroom_bot: "Done"/);
+});
+
+test('#6406: a change is named the way the screen does, never by its internal id', () => {
+  assert.deepEqual(voice.changeRef({ id: 12758, pr_number: 178, title: 'Design: Recipe home' }),
+    { change: 12758, name: 'Change #178', pr: 178, title: 'Design: Recipe home' });
+  assert.deepEqual(voice.changeRef({ id: 12758, pr_number: null, title: null }),
+    { change: 12758, name: 'the change', pr: null, title: null });
 });
 
 test('a long message is marked where it was cut, and read whole when it is the one answered', () => {
@@ -650,7 +700,8 @@ test('a tap under an offer is the person\'s own, from their browser, and members
   assert.ok(at > 0);
   const route = routes.slice(at, at + 1400);
   assert.match(route, /groupChatWriteLimiter, sameOriginBrowserOnly,\s*communities\.requireAppMembership\(pool\)/);
-  assert.match(route, /if \(choice !== 'yes' && choice !== 'no'\)/);
+  // #6211: an overlap note's third choice (build this one first) is accepted too.
+  assert.match(route, /if \(choice !== 'yes' && choice !== 'no' && choice !== 'first'\)/);
   assert.match(route, /appAccess\.getAppForUser\(pool, req\.params\.slug, req\.user, 'collab'/);
   assert.match(route, /decideOffer\(pool, config, \{/);
 });

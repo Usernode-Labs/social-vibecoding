@@ -132,7 +132,7 @@ export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share' | 'github
 export interface BotOfferView {
   status: 'open' | 'deciding' | 'done' | 'declined' | 'failed';
   forMe: boolean;
-  actions: { id: 'yes' | 'no'; label: string; primary: boolean }[];
+  actions: { id: 'yes' | 'no' | 'first'; label: string; primary: boolean }[];
   /** #6305: 'file_many' when one request is offered on several projects. */
   kind?: string;
   rows?: BotOfferRow[] | null;
@@ -357,6 +357,8 @@ export interface TranscriptMessage {
   at?: string | null;
   /** Sanitized markdown for an ordinary message; plain text for a system row. */
   bodyHtml: string;
+  /** Task 2020 follow-up: Homeroom bot's reply laid out (group-chat.js _botHtmlOf), drawn in place of `bodyHtml` by ./long-body.tsx. */
+  botHtml?: string | null;
   systemText: string;
   /** Set by transcript.tsx's foldRepeats: how many identical lines this one stands for. */
   repeat?: number;
@@ -443,6 +445,11 @@ export interface TranscriptMessage {
    * that change. Absent on every other row.
    */
   changeOf?: { sessionId: number | null };
+  /**
+   * #6421: on a request's page, a message written on another request of a
+   * merged thread, tagged with that request's number ("on #6212").
+   */
+  requestOf?: { number: number | null };
   /** Spec-share rows only — see SpecShareView. Null on every other kind. */
   specShare: SpecShareView | null;
   /**

@@ -334,8 +334,15 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       ...(normalizeBotLooked(pick(bot, 'looked')) ? { looked: normalizeBotLooked(pick(bot, 'looked'))! } : {}),
       // #6151: what happens to a design filed as a request (./bot-track.tsx filedNextLine).
       ...(normalizeFiledNext(pick(bot, 'filedNext')) ? { filedNext: normalizeFiledNext(pick(bot, 'filedNext'))! } : {}),
+      // Task 2020: a chat answer laid out, drawn in place of its words (./bot-html.tsx).
+      ...(replyHtmlOf(pick(bot, 'html')) ? { html: replyHtmlOf(pick(bot, 'html'))! } : {}),
     },
   };
+}
+
+/** Task 2020: a reply's laid-out copy as stored (homeroom-bot-html.js bounds it to 30000), or null. */
+function replyHtmlOf(input: unknown): string | null {
+  return typeof input === 'string' && input.trim() && input.length <= 60000 ? input : null;
 }
 
 const FILED_LIMITS: ReadonlySet<string> = new Set(['builds', 'slots', 'bot_wide', 'allowance']);
@@ -600,6 +607,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     lastActivityAt: dateText(pick(row, 'lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at')),
     unreadCount: Number(pick(row, 'unreadCount', 'unread_count')) || 0,
     lastReadMessageId: readCursor(pick(row, 'lastReadMessageId', 'last_read_message_id')),
+    lastVisitAt: text(pick(row, 'lastVisitAt', 'last_visit_at')) || null,
     awaitingAcceptance: kind === 'direct' && pick(row, 'awaitingAcceptance', 'awaiting_acceptance') === true,
     canSend: typeof canSendValue === 'boolean' ? canSendValue : membershipStatus !== 'invited',
     canInvite: bool(pick(row, 'canInvite', 'can_invite'), kind === 'group' && membershipStatus !== 'invited'),

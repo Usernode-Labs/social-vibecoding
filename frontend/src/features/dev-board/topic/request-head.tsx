@@ -66,6 +66,7 @@ import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
 import { OwnAgentLink } from './own-agent-link';
 import { requestMenuKey, useThreadMenu } from './thread-menu';
+import { usePanelHead } from '../../side-panel/head-store';
 
 function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -118,6 +119,11 @@ export function RequestBar({ r, pill = null, threadMenu = false }: {
     : r.status.stage === 'voted'
       ? t('project:topic.request.bar.kickerDone', { number: r.number })
       : t('project:topic.request.bar.title', { number: r.number });
+  // #6431: beside the Homeroom bot page this bar is not drawn at all (app.css),
+  // and the column's heading carries its pill and its rows instead. Publishing
+  // them is all this does there; nowhere else does it publish anything.
+  const menuKey = r.menuKey || threadMenu ? requestMenuKey(r.menuKey, r.number) : null;
+  usePanelHead({ kind: 'request', pill, menuKey });
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
@@ -130,11 +136,11 @@ export function RequestBar({ r, pill = null, threadMenu = false }: {
         <div className="messages-thread-name line-clamp-2 dev-request-bar-title">{r.title}</div>
         {r.category ? <div className="messages-thread-sub" data-request-category="">{r.category}</div> : null}
       </div>
-      {r.menuKey || threadMenu ? (
+      {menuKey ? (
         <button
           type="button"
           className="messages-thread-action dev-card-menu-btn"
-          data-card-menu={requestMenuKey(r.menuKey, r.number)}
+          data-card-menu={menuKey}
           aria-haspopup="true"
           aria-label={t('project:topic.request.bar.more')}
           title={t('project:topic.request.bar.more')}
@@ -534,7 +540,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // give way to them; a closed request still says how it ended. A change
   // section held open while the thread loads counts the same way: its own
   // outline already says where things stand.
-  const working = layout.changes.length > 0 || !!layout.close || holding;
+  const working = layout.changes.length > 0 || (!!layout.close && layout.close.status === 'open') || holding;
   const pill = requestPill(layout, r.status.closed ? 'closed' : track ? track.work.stage : null, (id) => translate(id));
   // A plan a change in the thread was built from goes with that change.
   const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
@@ -589,6 +595,28 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           <h1 className="dev-request-title" data-issue-title={r.number}>
             <TitleContent t={{ text: shownTitle, title: r.title, editing: r.titleEditing || undefined }} />
           </h1>
+          {/* #6421: a request in a merged thread says which thread it is one of
+              and opens its lead's page. */}
+          {(() => {
+            const held = threadRead.data?.thread;
+            if (!slug || !held || Number(held.requests) <= 1 || held.number == null || held.number === r.number) return null;
+            return (
+              <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-part-of={held.number}>
+                <RichMessage
+                  id="project:topic.thread.page.partOf"
+                  values={{ count: Number(held.requests), name: held.name || `#${held.number}` }}
+                  components={[(
+                    <a
+                      key="lead"
+                      href={`#app/${encodeURIComponent(slug)}/dev/issues/${held.number}`}
+                      className="font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                      data-thread-part-of-link={held.number}
+                    />
+                  )]}
+                />
+              </p>
+            );
+          })()}
           {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : (
             <RequestWords
               html={bodyHtml}

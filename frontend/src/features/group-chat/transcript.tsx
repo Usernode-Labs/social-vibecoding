@@ -124,7 +124,8 @@ function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView
   if (id == null) return null;
   const many = offer.kind === 'file_many' && rows.length > 0;
   const picks = many ? picksOf(rows, ticked, chosen) : [];
-  const decide = async (choice: 'yes' | 'no') => {
+  // #6211: an overlap note's three choices include `first` (this one first).
+  const decide = async (choice: 'yes' | 'no' | 'first') => {
     if (busy) return;
     setBusy(true);
     try {
@@ -848,6 +849,10 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       grouped={grouped}
       gutter={grouped ? <span className="gc-msg-gutter-time" title={msg.timeTitle}>{timeOfDay(msg.at) || msg.time}</span> : undefined}
       data-msg-id={msg.id ?? ''}
+      // #6441: a dotted message on screen has been seen. The transcript's
+      // observer (TranscriptRows) reads these rows back by this attribute and
+      // clears the dot without waiting for a click.
+      data-gc-unread={msg.unread ? '' : undefined}
       data-username={msg.username}
       data-username-missing={msg.usernameMissing ? '' : undefined}
       // #2236: only when set, so an ordinary row's attribute set is exactly
@@ -879,7 +884,11 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       timestamp={(
         <>
           <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
-          {tag ? <span className="gc-msg-on-change" data-msg-on-change={msg.changeOf?.sessionId ?? ''}>{tag}</span> : null}
+          {tag ? <span
+            className="gc-msg-on-change"
+            data-msg-on-change={msg.changeOf ? (msg.changeOf.sessionId ?? '') : undefined}
+            data-msg-on-request={msg.requestOf ? (msg.requestOf.number ?? '') : undefined}
+          >{tag}</span> : null}
           {msg.editedTitle && !msg.deleted ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>{t('chat:group.row.edited')}</span>
           ) : null}
@@ -890,7 +899,8 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       {msg.deleted ? <p className="gc-msg-deleted-text">{t('chat:group.row.deleted')}</p> : (
         <>
           {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
-          <Body html={msg.bodyHtml} />
+          {/* Task 2020 follow-up: Homeroom bot's reply laid out, in place of its words (./long-body.tsx). */}
+          <Body html={msg.bodyHtml} rich={msg.botHtml} />
           {/*
               #6268: a message posted for somebody by their own coding agent
               that Homeroom bot will not answer says so under it, quietly, so
@@ -1218,6 +1228,10 @@ export function RequestRows({ view }: { view: TranscriptView }) {
   const drawn: ReactNode[] = [];
   let previous: TranscriptMessage | null = null;
   const tagOf = (msg: TranscriptMessage): string | null => {
+    // #6421: a message written on another request of a merged thread says so.
+    if (msg.requestOf && Number(msg.requestOf.number)) {
+      return t('project:topic.request.stream.onRequest', { number: msg.requestOf.number });
+    }
     const id = msg.changeOf ? Number(msg.changeOf.sessionId) : 0;
     if (!id) return null;
     const n = changes.numbers[id];
@@ -1553,6 +1567,46 @@ export function TranscriptRows({ view, source }: {
   const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message' && !m.openApp)
     ? view.lead.quiet
     : null;
+  // #6441: SEEING IT READS IT. A message with an unread dot that is (mostly)
+  // on screen while the tab is in front has been seen, so its dot clears and
+  // the bell drops by one without a click. One observer per transcript,
+  // over the rows already drawn with `data-gc-unread`; it is re-armed when
+  // the message list changes, which is how a reply that arrives while the
+  // thread is open is read too. A row scrolled out of view, or a background
+  // tab, reads nothing: the visibility check is repeated when the tab comes
+  // back, in case the observer's own callback did not fire again.
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof IntersectionObserver !== 'function') return undefined;
+    const nodes = Array.from(document.querySelectorAll('[data-gc-unread]'));
+    if (!nodes.length) return undefined;
+    const seen = new Set<number>();
+    const showing = new Set<Element>();
+    const read = (el: Element) => {
+      showing.delete(el);
+      observer.unobserve(el);
+      const id = Number(el.getAttribute('data-msg-id'));
+      if (!Number.isSafeInteger(id) || id <= 0 || seen.has(id)) return;
+      seen.add(id);
+      controller()?._clearMessageDot?.(id);
+    };
+    const flush = () => {
+      if (document.visibilityState === 'hidden') return;
+      for (const el of [...showing]) read(el);
+    };
+    const observer = new IntersectionObserver((records) => {
+      for (const record of records) {
+        if (record.isIntersecting && record.intersectionRatio >= 0.6) showing.add(record.target);
+        else showing.delete(record.target);
+      }
+      flush();
+    }, { threshold: 0.6 });
+    for (const node of nodes) observer.observe(node);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', flush);
+      observer.disconnect();
+    };
+  }, [view.messages]);
   // The general chat's "New" line: above the first message after where
   // reading stood when the channel opened (`lead.unread`), or above the
   // first row drawn after it when that message is not drawn itself. The

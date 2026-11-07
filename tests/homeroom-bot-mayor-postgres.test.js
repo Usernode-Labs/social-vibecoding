@@ -1964,6 +1964,30 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await forgetRequests(notes.id, 6);
   });
 
+  await t.test('#6395: a go-ahead that cannot settle it queues nothing and says why', async () => {
+    await forgetRequests(notes.id, 6);
+    const ctx = (extra = {}) => ({ bot, user: ada, settings, config: CONFIG, deps: { domain: 'app.test' }, cards: [], appIds: new Set(), ...extra });
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, go_ahead_decides, first_step)
+       VALUES ($1, 6, 'live', 'person',
+               'moving App secrets and deleting a GitHub Actions secret are operator work outside this app',
+               FALSE, 'Remove the dead bot token line from the deploy workflow') RETURNING id`,
+      [notes.id],
+    );
+    const out = await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 6 });
+    assert.equal(out.ok, false);
+    assert.equal(out.code, 'go_ahead_cannot');
+    assert.match(out.said, /^I don't build changes like this myself, even with a go-ahead: moving App secrets and deleting a GitHub Actions secret are operator work outside this app\./);
+    assert.match(out.said, /I can build this part now: Remove the dead bot token line from the deploy workflow\.$/);
+    assert.match(out.next, /Do not say you are on it/);
+    const { rows: queued } = await pool.query(
+      'SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id],
+    );
+    assert.equal(queued.length, 0, 'nothing was queued: a new look would only read the same answer');
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [run.id]);
+    await forgetRequests(notes.id, 6);
+  });
+
   await t.test('B2: whoever asks pays: a member can start her held request on his own building time', async () => {
     await forgetRequests(notes.id, 6);
     // Ada's week is used up, and her request waits for Monday.
@@ -2405,6 +2429,26 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const quiet = await turn('ok thanks', scripted([[['reply', { text: 'Any time.' }]]]));
     assert.equal((await read(quiet)).metadata.homeroomBot.actions, undefined, 'none offered, none drawn');
     assert.equal((await read(sent)).metadata.homeroomBot.status, 'closed', 'the earlier ones went when it answered again');
+  });
+
+  await t.test('#6404: a Questions card is the one set of answers, so its reply stores no suggested replies beside it', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const asked = await turn('which of my projects should you look at?', scripted([
+      [['ask_questions', { questions: [{ question: 'Which project?', answers: ['Bread Bot', 'Sheep countrr'], guess: 0 }] }]],
+      [['reply', { text: 'Pick one, or say another.', suggestions: ['Bread Bot', 'Sheep countrr'] }]],
+    ]));
+    const meta = (await read(asked)).metadata.homeroomBot;
+    assert.equal(meta.card.type, 'questions');
+    assert.equal(meta.actions, undefined, 'the card is the one set of answers');
+    assert.equal(meta.status, undefined, 'nothing else is offered to tap beside it');
+
+    const plain = await turn('anything new?', scripted([
+      [['reply', { text: 'Nothing new.', suggestions: ['Show my requests', 'What is left?'] }]],
+    ]));
+    const flat = (await read(plain)).metadata.homeroomBot;
+    assert.deepEqual(flat.actions.map((a) => a.label), ['Show my requests', 'What is left?'],
+      'a reply with no card keeps its suggestions');
+    assert.equal(flat.status, 'open');
   });
 
   await t.test('1 Nov 2026: draw_screen ends the turn and hands it to the designer, for the project it names', async () => {

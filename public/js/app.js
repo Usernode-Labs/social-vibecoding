@@ -83,8 +83,7 @@ const App = {
   _inSettings: false,
   // Same for the #apps browse screen (home-screen split: home is "Your
   // apps" only, every other app lives there) — set by
-  // navigateToBrowse() / _exitBrowse() / navigateHome().
-  _inBrowse: false,
+  // navigateHome().
   // Platform-wide direct and group conversations (#488). The screen itself
   // is React-owned; this flag only coordinates the classic shell router.
   _inMessages: false,
@@ -174,6 +173,27 @@ const App = {
   // before using this session's display-only snapshot; the worker never
   // supplies a cached /me. A later live answer still reconciles the viewer.
   BOOT_SESSION_TIMEOUT_MS: 2000,
+
+  // The boot stops WAITING at the deadline above, but the read itself is
+  // not aborted there (#6429): a server answering the identity check in
+  // 2.049 s used to leave the tab on the snapshot — and therefore with no
+  // events socket, frozen lists and no bell — until the next reload, even
+  // though the connectivity probe said online the whole time. A read that
+  // lands late settles the check. This is how long a stalled one is
+  // allowed to stay out, so it cannot hold the next read forever.
+  BOOT_SESSION_LATE_LIMIT_MS: 30000,
+
+  // How often a check that ran out of time is asked again while the probe
+  // says online: after 2 s, 5 s, 15 s, then every 30 s (#6429). A tab that
+  // stays online used to hear nothing from `usernode:offline-change`, which
+  // fires only when the probe's answer CHANGES, so a slow boot's check was
+  // never retried at all.
+  SESSION_RETRY_DELAYS_MS: [2000, 5000, 15000, 30000],
+  _sessionRetryStep: 0,
+  _sessionRetryTimer: null,
+  // One reconcile read at a time: the retry ladder, the foreground hook and
+  // a network handover can now coincide.
+  _reconcileInFlight: null,
 
   saveSessionSnapshot(user) {
     if (!user || !user.id) return;
@@ -621,15 +641,21 @@ const App = {
   // The header stays empty and the option is read from the first argument:
   // suites that pin this chain slice its source between the exact headers
   // `_fetchSession()` and `_fetchWebSession()`.
+  //
+  // `late` says the read belongs to a snapshot boot that has stopped
+  // WAITING at BOOT_SESSION_TIMEOUT_MS but not stopped reading (#6429), so
+  // it gets the longer deadline in _fetchWebSession. The no-snapshot boot
+  // keeps the short one.
   async _fetchSession() {
     const optional = !!(arguments[0] && arguments[0].optional);
-    let response = await App._fetchWebSession({ optional });
+    const late = !!(arguments[0] && arguments[0].late);
+    let response = await App._fetchWebSession({ optional, late });
     if (optional) response = await App._settleOptionalSession(response);
     if (window.NativeChrome && typeof NativeChrome.restoreWebSession === 'function') {
       try {
         const restored = await App._withinNativeRestoreLimit(
           NativeChrome.restoreWebSession({ force: response.status === 401 }));
-        if (restored) return App._fetchWebSession();
+        if (restored) return App._fetchWebSession({ late });
       } catch (error) {
         // Native uncertainty must not erase a display snapshot. A valid web
         // response can still be used while native recovery is unavailable.
@@ -680,9 +706,15 @@ const App = {
   // first argument, for the same reason.
   async _fetchWebSession() {
     const optional = !!(arguments[0] && arguments[0].optional);
+    const late = !!(arguments[0] && arguments[0].late);
     let timer = null;
     const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
-    if (ctrl) timer = setTimeout(() => ctrl.abort(), App.BOOT_SESSION_TIMEOUT_MS);
+    if (ctrl) {
+      // A late read is one the boot has already stopped waiting for: it may
+      // land whenever it lands, and its answer still settles the check.
+      timer = setTimeout(() => ctrl.abort(),
+        late ? App.BOOT_SESSION_LATE_LIMIT_MS : App.BOOT_SESSION_TIMEOUT_MS);
+    }
     try {
       if (optional) return await fetch('/api/auth/me?optional=1', ctrl ? { signal: ctrl.signal } : undefined);
       return await fetch('/api/auth/me', ctrl ? { signal: ctrl.signal } : undefined);
@@ -694,7 +726,78 @@ const App = {
   // Replace the snapshot-derived session with a verified one. This runs on
   // EVERY boot that started from a snapshot — which, since the shell boots
   // optimistically, is every boot on a device that has been signed in here
-  // — and again from the reconnect path when the network returns.
+  // — and again from the reconnect path when the network returns, from the
+  // foreground hook, and from the retry ladder below.
+  //
+  // It stops WAITING at BOOT_SESSION_TIMEOUT_MS, but the read is not
+  // aborted there (#6429): a server that answered /api/auth/me in 2.049 s
+  // left the tab unverified — no events socket, so Needs you, the bot's
+  // lists and the bell froze — for as long as the probe kept saying online,
+  // because `usernode:offline-change` fires only when the probe's answer
+  // CHANGES. Now the late answer settles the check, and a check that did
+  // not answer at all is retried while online.
+  //
+  // One read at a time: two answers settling together would start the held
+  // work twice.
+  async _reconcileSession({ fromBoot = false } = {}) {
+    if (!App._sessionFromSnapshot) return;
+    if (App._reconcileInFlight) return App._reconcileInFlight;
+    const attempt = App._runSessionReconcile({ fromBoot });
+    App._reconcileInFlight = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (App._reconcileInFlight === attempt) App._reconcileInFlight = null;
+    }
+  },
+
+  async _runSessionReconcile({ fromBoot = false } = {}) {
+    const read = App._fetchSession({ late: true }).catch(() => null);
+    let timer = null;
+    let reloading = false;
+    let settled = null;
+    const settle = async (res) => {
+      const outcome = await App._settleSnapshotSession(res, { fromBoot });
+      settled = outcome;
+      if (outcome === 'reloading') reloading = true;
+      return outcome;
+    };
+    const deadline = new Promise((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), App.BOOT_SESSION_TIMEOUT_MS);
+    });
+    try {
+      const first = await Promise.race([read, deadline]);
+      clearTimeout(timer);
+      timer = null;
+      if (first === 'timeout') {
+        // Still no answer — stay on the snapshot and say so on screen. This
+        // is where the offline strip belongs: the shell is up and READABLE,
+        // and the thing the viewer needs to know is that it is not live.
+        await settle(null);
+        // The read is still out. Ask again on the ladder meanwhile; a retry
+        // that finds it still out joins it rather than starting a second.
+        App._scheduleSessionRetry();
+        const late = await read;
+        if (late && App._sessionFromSnapshot) await settle(late);
+        return;
+      }
+      await settle(first);
+    } finally {
+      if (timer) clearTimeout(timer);
+      // Still unverified: keep the ladder going. Offline this schedules
+      // nothing — `usernode:offline-change` asks again as it always has. A
+      // reload takes the document away, and a 200 with no `user` said
+      // nothing to ask about, so neither keeps asking.
+      if (!reloading && settled !== 'empty' && App._sessionFromSnapshot) {
+        App._scheduleSessionRetry();
+      }
+    }
+  },
+
+  // What an answer to the check means. Shared by the answer that arrives
+  // inside the boot's deadline, the one that lands after it, and each
+  // retry, so all three settle the check the same way — and only the first
+  // of them does.
   //
   // Four outcomes, and each matters:
   //   401/403     → the session really did end. Drop every cached trace and
@@ -703,27 +806,14 @@ const App = {
   //                 rebuild a shell that was painted for someone else.
   //   same id     → promote to a live session: start everything the
   //                 unverified guards held back, and resync the screen.
-  //   no answer   → offline. Raise the strip and stay on the snapshot; the
-  //                 reconnect path calls this again.
-  //
-  // Uses the same deadline'd read as the boot (_fetchSession): an
-  // open-but-stalled socket must not hold this open forever either, and on
-  // the boot path this IS the boot's read.
-  async _reconcileSession({ fromBoot = false } = {}) {
-    if (!App._sessionFromSnapshot) return;
-    let res;
-    try {
-      res = await App._fetchSession();
-    } catch (err) {
-      res = null;
-    }
+  //   no answer   → offline, or answered but not about the session. Raise
+  //                 the strip and stay on the snapshot; the ladder retries.
+  async _settleSnapshotSession(res, { fromBoot = false } = {}) {
+    if (!App._sessionFromSnapshot) return null;
     if (!res) {
-      // Still unreachable — stay on the snapshot and say so on screen. This
-      // is where the offline strip belongs: the shell is up and READABLE,
-      // and the thing the viewer needs to know is that it is not live.
       try { window.Offline?.nudge(); } catch (e) { /* ignore */ }
       App._publishBootSession({ unknown: true });
-      return;
+      return 'unknown';
     }
     if (!res.ok && !App._answeredSignedOut(res)) {
       // Answered, but not ABOUT the session (#1608). A signed-in reload that
@@ -733,22 +823,27 @@ const App = {
       // answer at all, because that is exactly what this is.
       try { window.Offline?.nudge(); } catch (e) { /* ignore */ }
       App._publishBootSession({ unknown: true });
-      return;
+      return 'unknown';
     }
+    // A definitive answer: nothing more is retried. Every path that reloads
+    // passes through here first, so the timer never survives a reload.
+    App._clearSessionRetry();
     if (!res.ok) {
       App._dropCachedSession();
       App._sessionFromSnapshot = false;
       App._publishBootSession({ signedOut: true });
       location.reload();
-      return;
+      return 'reloading';
     }
     let user = null;
     try { user = (await res.json()).user; } catch (err) { user = null; }
-    if (!user) return;
+    // A 200 with no `user` says nothing about the session: no action, and no
+    // further attempts either — asking again would get the same empty answer.
+    if (!user) return 'empty';
     if (String(user.id) !== String(App.user?.id)) {
       App._dropCachedSession();
       location.reload();
-      return;
+      return 'reloading';
     }
     // Platform access is the one field whose value decides which SHELL is
     // on screen rather than what is inside it — enterAuthed sends a viewer
@@ -758,7 +853,7 @@ const App = {
     if (!!user.hasPlatformAccess !== !!App.user?.hasPlatformAccess) {
       App.saveSessionSnapshot(user);
       location.reload();
-      return;
+      return 'reloading';
     }
     // So is being a private member, for the same reason: it decides the mark
     // menu, Home's sections and the app's ✕. Being let in off the waitlist
@@ -766,7 +861,7 @@ const App = {
     if (!!user.privateMember !== !!App.user?.privateMember) {
       App.saveSessionSnapshot(user);
       location.reload();
-      return;
+      return 'reloading';
     }
     App._sessionFromSnapshot = false;
     if (window.NativeChrome &&
@@ -823,6 +918,33 @@ const App = {
     if (!fromBoot) {
       try { App.resyncCurrentView(); } catch (err) { /* ignore */ }
     }
+  },
+
+  // Ask again while the check has not settled (#6429). Deliberately not a
+  // poll: once /api/auth/me answers, the events socket takes over and this
+  // stops. While the probe says offline it schedules nothing — coming back
+  // online already asks (usernode:offline-change), and a timer would only
+  // spend requests on a network that carries none.
+  _scheduleSessionRetry() {
+    if (App._sessionRetryTimer) return;
+    if (!App._sessionFromSnapshot) return;
+    if (window.Offline?.isOffline?.() === true) return;
+    const delays = App.SESSION_RETRY_DELAYS_MS;
+    const last = delays.length - 1;
+    const delay = delays[Math.min(App._sessionRetryStep, last)];
+    App._sessionRetryStep = Math.min(App._sessionRetryStep + 1, last);
+    App._sessionRetryTimer = setTimeout(() => {
+      App._sessionRetryTimer = null;
+      App._reconcileSession().catch(() => {});
+    }, delay);
+  },
+
+  // The check settled (or the document is going away): forget where the
+  // ladder was, so a later boot asks again after 2 s rather than at 30.
+  _clearSessionRetry() {
+    if (App._sessionRetryTimer) clearTimeout(App._sessionRetryTimer);
+    App._sessionRetryTimer = null;
+    App._sessionRetryStep = 0;
   },
 
   // ── Staged boot (fold-auth-pages-into-SPA) ──────────────────────────
@@ -2773,7 +2895,6 @@ const App = {
         AppView.refreshDevData('api-update');
         return;
       }
-      if (visible('browse-screen') && window.Browse) { Browse._load(); return; }
       if (visible('leaderboard-screen')) { App._refreshLeaderboard(); return; }
       if (visible('home-screen') && window.Home) { Home.load(); }
     } catch (err) {
@@ -3216,11 +3337,20 @@ const App = {
     App._eventsLost();
   },
 
-  _eventsLost() {
+  _eventsLost(code) {
     // A dropped global-events socket is the strongest early signal that
     // we've gone offline: nudge the connectivity probe so the offline
     // banner appears without waiting for a browser `offline` event.
-    if (window.Offline) Offline.nudge();
+    //
+    // 1012 is not a drop: the server sends it to every socket when a release
+    // replaces the Pod (src/services/ws.js closeAllForRelease), so the tab is
+    // told Homeroom is updating instead of being probed as unreachable
+    // (issue #6403).
+    if (code === 1012) {
+      if (window.Offline) Offline.restartNotice();
+    } else if (window.Offline) {
+      Offline.nudge();
+    }
     App._eventsFailures += 1;
     const step = Math.min(App.EVENTS_RETRY_MAX_MS,
       App.EVENTS_RETRY_MIN_MS * 2 ** (App._eventsFailures - 1));
@@ -3311,6 +3441,8 @@ const App = {
       console.log(`[ws] Global events ${isReconnect ? 'reconnected' : 'connected'}`);
       // A (re)opened socket proves we're online — clear the offline
       // banner immediately instead of waiting for the slow re-probe loop.
+      // A planned-restart notice goes too: the release is over.
+      if (window.Offline) Offline.restartDone();
       if (window.Offline) Offline.nudge();
       // #4318: a new socket watches nothing until told; tell it every
       // session still on screen before anything else can be missed.
@@ -3457,7 +3589,6 @@ const App = {
             window.dispatchEvent(new CustomEvent('app-blocks-changed', { detail: data }));
             if (data.blocked && window.AppView?.appData?.slug === data.slug) App.navigateHome();
             window.Home?.load?.();
-            window.Browse?._load?.();
             break;
           case 'user_blocks_changed':
             window.UsernodeReact?.messages?.refreshBlockedView?.(data.userId, data.blocked);
@@ -3524,11 +3655,12 @@ const App = {
       } catch {}
     };
 
-    App.eventsWs.onclose = () => {
-      // Nudges the probe and retries with backoff (_eventsLost). A socket
-      // already replaced or given up is detached and never gets here.
+    App.eventsWs.onclose = (ev) => {
+      // Nudges the probe and retries with backoff (_eventsLost), or, for a
+      // release's 1012, shows the update notice. A socket already replaced
+      // or given up is detached and never gets here.
       if (App.eventsWs !== socket) return;
-      App._eventsLost();
+      App._eventsLost(ev && ev.code);
     };
   },
 
@@ -4562,13 +4694,6 @@ const App = {
           Home.load(),
         ])));
     }
-    // The #apps browse screen (home-screen split). Its own scroller and
-    // its own fetch, so it must not be routed through Home.load().
-    const browse = document.getElementById('browse-screen');
-    if (browse) {
-      PlatformUI.pullToRefresh(browse,
-        () => App._refreshOrReload(() => (window.Browse ? Browse._load() : Promise.resolve())));
-    }
     // The Leaderboard screen hosts three panes; refresh whichever is
     // active. The two Topochain panes keep their own event/page state and
     // their own fetches, so they must NOT be routed through
@@ -4629,9 +4754,6 @@ const App = {
       e.preventDefault();
       if (App._inAdmin && window.AdminConsole?.handleBack?.()) return;
       if (App._inSettings && window.Settings?.handleBack?.()) return;
-      // Browse's detail level (#apps/<slug>) claims the button as "up to
-      // the list"; on the list itself it declines and we leave the screen.
-      if (App._inBrowse && window.Browse?.handleBack?.()) return;
       // A challenge's detail page claims it as "up to the grid".
       if (App._inLeaderboard && window.TopochainChallenges?.handleBack?.()) return;
       // A running app's ✕: back to the page it was opened from (closeApp).
@@ -5410,7 +5532,6 @@ const App = {
         else if (App._inProfile) App.navigateHome();
         else if (App._inAdmin) App.navigateHome();
         else if (App._inSettings) App.navigateHome();
-        else if (App._inBrowse) App.navigateHome();
         else if (App._inAgentSession) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
         else if (App._inWorkshop) App.navigateHome();
@@ -5440,7 +5561,7 @@ const App = {
         App.setChromeless(false);
         // The same list as the `!hash` branch above (QA 2026-09-24 Q1).
         if (App.currentApp || App._inLeaderboard || App._inProfile
-          || App._inAdmin || App._inSettings || App._inBrowse
+          || App._inAdmin || App._inSettings
           || App._inAgentSession
           || App._inMessages || App._inWorkshop) {
           App.navigateHome();
@@ -5537,38 +5658,55 @@ const App = {
         App.navigateToProfile(parts[1] ? decodeURIComponent(parts[1]) : null);
         return;
       }
-      if (parts[0] === 'communities' || parts[0] === 'workshop') {
-        // The Communities screen (#communities; #workshop is its old name and
-        // still lands here): the viewer's communities with their two
-        // Workshop numbers. No gate beyond the anonymous-shell branch above —
-        // the counts endpoint is me-scoped server-side and answers 401 to a
-        // caller with no session. No second segment: the drill-in is the
-        // app's own /app/<slug>/workshop route, not a level of this screen.
+      if (parts[0] === 'needs') {
+        // Needs you (#needs): every decision owed by you across your
+        // projects, one page (features/workshop/index.tsx). No gate beyond
+        // the anonymous-shell branch above — the feed and the counts are
+        // me-scoped server-side and answer 401 to a caller with no session.
         App.setChromeless(false);
         App.navigateToWorkshop();
         return;
       }
-      if (parts[0] === 'discover') {
-        // Discover's OLD NAME (UX audit, 20 Oct 2026): its own address is
-        // `#apps`, so this is an ALIAS, as `#workshop` is for `#communities`.
-        // Rewrite the address in place before handing off — replaceState
-        // fires no hashchange, so it neither re-routes nor adds a Back step
-        // — and a shared link settles on the canonical address.
-        try {
-          history.replaceState(null, '', '#apps' + (parts[1] ? '/' + parts[1] : ''));
-        } catch (err) { /* non-fatal: navigation below still works */ }
+      if (parts[0] === 'communities' || parts[0] === 'workshop') {
+        // ONE HOME (#6361): the Communities screen's list is retired. Home
+        // holds your communities (Pinned communities and its All
+        // communities), and Needs you, the feed the list's top row opened,
+        // is its own page. Both addresses still arrive (a shared link, an
+        // older notification, a bookmark), so they are rewritten in place,
+        // which adds no Back step: with `?ws=needs` (in the query or the
+        // fragment's) to #needs, else to Home.
         App.setChromeless(false);
-        App.navigateToBrowse(parts[1] ? decodeURIComponent(parts[1]) : null);
+        let toNeeds = false;
+        try {
+          toNeeds = new URLSearchParams(location.search).get('ws') === 'needs'
+            || new URLSearchParams(fragQuery).get('ws') === 'needs';
+        } catch (_) { toNeeds = false; }
+        if (toNeeds) {
+          try { history.replaceState(null, '', App._rootUrl('#needs')); } catch (err) { /* non-fatal */ }
+          App.navigateToWorkshop();
+          return;
+        }
+        try { history.replaceState(null, '', App._rootUrl('')); } catch (err) { /* non-fatal */ }
+        App.navigateHome();
         return;
       }
-      if (parts[0] === 'apps') {
-        // Browse-all-apps screen (home-screen split). No gate: the list
-        // is the visibility-filtered /api/apps payload, and the
-        // anonymous-shell branch above already handled a signed-out
-        // visitor. An optional second segment (#apps/<slug>) deep-links
-        // that app's detail page — the screen's level 2.
+      if (parts[0] === 'apps' || parts[0] === 'discover') {
+        // ONE HOME (#6361): Discover's screen is retired. Its directory is
+        // Home's Communities to join, and an app's details page is its
+        // project's hub. Both addresses still arrive (shared links, the
+        // first-run challenges, an old bookmark), so they are rewritten in
+        // place, which adds no Back step: `#apps` and `#discover` to Home,
+        // `#apps/<slug>` to that project's hub.
         App.setChromeless(false);
-        App.navigateToBrowse(parts[1] ? decodeURIComponent(parts[1]) : null);
+        const slug = parts[1] ? decodeURIComponent(parts[1]) : '';
+        if (slug) {
+          try { history.replaceState(null, '', App._rootUrl(App._hubHref(slug))); } catch (err) { /* non-fatal */ }
+          try { window.AppView?._landOnHub?.(slug); } catch (err) { /* the page opens on what it remembers */ }
+          App.restoreFromHash();
+          return;
+        }
+        try { history.replaceState(null, '', App._rootUrl('')); } catch (err) { /* non-fatal */ }
+        App.navigateHome();
         return;
       }
       if (parts[0] === 'admin') {
@@ -5772,6 +5910,13 @@ const App = {
         // not fit.
         App.setChromeless(false);
         App.navigateToAi();
+        // 6 Nov 2026 (#6425): on a desktop the tab's own page is its lists
+        // alone. The bare address closes whatever was open beside them — the
+        // tab pressed, or Back to `#homeroom-bot` — and the page takes it
+        // once, as it takes every ask.
+        if (parts.length === 1) {
+          window.UsernodeReact?.ai?.closeColumn?.();
+        }
         if (parts[1] === 'request' || parts[1] === 'change' || parts[1] === 'decision') {
           window.UsernodeReact?.ai?.openItem?.('#' + parts.join('/'));
         }
@@ -5948,6 +6093,9 @@ const App = {
             subTab = 'topic'; // #4367: by PR number; the topic view finds the session
             ref = { kind: 'proposal', id: null, pr: App._changeNumber(parts[4]) };
           } else if (sec === 'governance' && parts[4]) {
+            // #6439: a vote to close a request forwards to the request's
+            // page (`AppView._renderTopicSubView` and `openTopicInPanel`);
+            // every other decision keeps this page.
             subTab = 'topic';
             ref = { kind: 'gov', id: parseInt(parts[4]) || null };
           } else if (sec === 'shared' && parts[4]) {
@@ -6039,7 +6187,6 @@ const App = {
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
-            if (App._inBrowse) App._exitBrowse();
             if (App._inWorkshop) App._exitWorkshop();
         App._showOnlyScreen('home-screen');
         App.setHeaderTitle('Homeroom');
@@ -6257,18 +6404,10 @@ const App = {
   _TAB_REVEAL_WAIT_MS: 250,
 
   // The rail's own places: the roots its tabs navigate to. #6019: AI is the
-  // Messages screen's bot chat. Discover is one of them: the rail keeps its
-  // tab (29 Oct 2026), and this list is only read at the rail's width.
-  _RAIL_ROOTS: ['home-screen', 'browse-screen', 'messages-screen',
-    'workshop-screen', 'profile-screen', 'ai-screen'],
-
-  // Whether Discover is a tab of its own: on the desktop rail, from 768px,
-  // it is (lit, a root, no back arrow); on a phone it is a page of Home's,
-  // with an arrow back to Home (#6019). nav-store.js RAIL_TAB_FOR_SCREEN
-  // lights the tab by the same width, and browse.js asks this too.
-  _discoverIsTab() {
-    return !App._isPhoneLayout();
-  },
+  // Messages screen's bot chat. This list is only read at the rail's width.
+  // Needs you (#workshop-screen) is a page under Home since One Home
+  // (#6361), reached from it, not a place of the rail's.
+  _RAIL_ROOTS: ['home-screen', 'messages-screen', 'profile-screen', 'ai-screen'],
 
   // Whether entering `screenEl` with `preferred` is a switch between places
   // on the desktop rail. The rail has to be on screen now (not hidden inside
@@ -6298,7 +6437,7 @@ const App = {
   // visible at a time (they are `flex-1` siblings in the body column, so
   // two visible roots split the viewport 50/50 — see the #764 note on
   // the zoom transition).
-  SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
+  SCREEN_IDS: ['app-view', 'home-screen',
     'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
     'settings-screen', 'messages-screen',
     'agent-session-screen', 'ai-screen'],
@@ -6729,7 +6868,7 @@ const App = {
   _abandonWorkshopResume() {
     if (!App._resumingWorkshop || App._resumingWorkshop !== location.pathname) return false;
     App._forgetWorkshopView();
-    try { history.replaceState(null, '', App._rootUrl('#communities')); } catch (_) { return false; }
+    try { history.replaceState(null, '', App._rootUrl('')); } catch (_) { return false; }
     App.restoreFromHash();
     return true;
   },
@@ -6896,8 +7035,7 @@ const App = {
   // is reported then.
   _NAV_CODE_FOR_SCREEN: Object.freeze({
     'home-screen': 'home',
-    'browse-screen': 'discover',
-    'workshop-screen': 'communities',
+    'workshop-screen': 'needs',
     'leaderboard-screen': 'challenges',
     'profile-screen': 'profile',
     'settings-screen': 'settings',
@@ -7121,7 +7259,8 @@ const App = {
   },
 
   _hubHref(slug) {
-    return slug ? `#app/${encodeURIComponent(slug)}/dev/hub` : '#communities';
+    // With no project, Home: the communities are Home's (One Home, #6361).
+    return slug ? `#app/${encodeURIComponent(slug)}/dev/hub` : '/';
   },
 
   // ── A discussion is its project page's Discussion tab (#3653) ─────────
@@ -7351,8 +7490,8 @@ const App = {
     'auth-more-screen',
     // #1082 chunk E — the Admin & moderation console.
     'admin-screen',
-    // #1083 chunk F — the four app/community screens, converted in order.
-    'browse-screen',
+    // #1083 chunk F — the four app/community screens, converted in order
+    // (the first, #browse-screen, retired with One Home, #6361).
     'profile-screen',
     'leaderboard-screen',
     // ...and home last. This is the first converted root that ships
@@ -7527,7 +7666,7 @@ const App = {
     // Already mounted: an in-screen change (a tab, the deep-linked
     // section, a user drill-in), not a screen entry — hand it to the
     // module instead of replaying the whole swap. Same idiom as
-    // navigateToBrowse / navigateToAdminConsole / navigateToSettings,
+    // navigateToAdminConsole / navigateToSettings,
     // and load-bearing for the entry animation (#979): a fragment
     // navigation fires BOTH popstate and hashchange, so restoreFromHash
     // runs twice in one tick, and without this guard the second run's
@@ -7552,7 +7691,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     // Screen reveal + chrome, all inside the transition callback so the
     // outgoing page is snapshotted as it actually looked (#979).
@@ -7708,7 +7846,6 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('profile-screen');
     App._inProfile = true;
@@ -7774,58 +7911,6 @@ const App = {
     return kind ? `#homeroom-bot/history?kind=${kind}` : '#homeroom-bot/history';
   },
 
-  // Show the browse-all-apps screen (#apps). Sibling to
-  // navigateToProfile — hides home + app, reveals #browse-screen, lets
-  // the Browse module (public/js/browse.js) render into #browse-list.
-  //
-  // No permission gate: the grid is built from GET /api/apps, which is
-  // already visibility-filtered per viewer, and restoreFromHash's
-  // anonymous-shell branch bounced a signed-out visitor to login before
-  // this can run. The top-level header matches Home, which stays accessible
-  // through the navigation menu. Browser/OS back returns here from an app
-  // opened out of this grid, because the screen has its own hash entry.
-  navigateToBrowse(slug) {
-    // Already mounted: this is an in-screen level change (#apps ↔
-    // #apps/<slug>, the back button, a hand-typed hash), not a screen
-    // entry. Hand it to the module — re-running the screen swap below
-    // would re-hide every sibling and replay the entry animation on what
-    // is really a level change. Same idiom as navigateToAdminConsole.
-    if (App._inBrowse && window.Browse?.isOpen?.()) {
-      Browse.route(slug || null);
-      return;
-    }
-    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    const leavingApp = !!App.currentApp;
-    App.currentApp = null;
-    if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inProfile) App._exitProfile();
-    if (App._inAdmin) App._exitAdminConsole();
-    if (App._inSettings) App._exitSettings();
-    if (App._inWorkshop) App._exitWorkshop();
-    const screen = document.getElementById('browse-screen');
-    App._inBrowse = true;
-    // Renders into the still-hidden screen; `chrome: false` holds back its
-    // level-dependent title/back-icon so the header only changes inside
-    // the transition callback below (#979).
-    if (window.Browse?.open) Browse.open(slug || null, { chrome: false });
-    PlatformUI.transition(() => {
-      if (leavingApp) AppView.close();
-      App._showOnlyScreen('browse-screen');
-      App._enterScreenChrome();
-      App.setHeaderTitle(PlatformI18n.t('shell:title.allApps'));
-      // Browse owns the header title / back icon for whichever level the
-      // slug selected, so its sync runs after setHeaderTitle above.
-      if (window.Browse?.syncChrome) Browse.syncChrome();
-    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
-  },
-
-  // State-only (#979) — see _exitLeaderboard. The back chevron the detail
-  // level borrowed is handed back by the next screen's _showOnlyScreen.
-  _exitBrowse() {
-    App._inBrowse = false;
-    if (window.Browse?.close) Browse.close();
-  },
-
   // The Workshop screen (#workshop): every app you have, with how much of its
   // own Workshop page is addressed to you.
   //
@@ -7865,7 +7950,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inMessages) App._exitMessages();
     const screen = document.getElementById('workshop-screen');
     App._inWorkshop = true;
@@ -7877,10 +7961,9 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('workshop-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle(PlatformI18n.t('shell:title.communities'));
-      // Nothing in the left slot: the Workshop is a tab root, and its tab is
-      // on screen beside it. _showOnlyScreen publishes that from App._BACK_SLOT
-      // — see the table for why a root shows no glyph at all.
+      App.setHeaderTitle(PlatformI18n.t('shell:title.needs'));
+      // An arrow up to Home in the left slot: Needs you is a page under it
+      // (One Home, #6361). _showOnlyScreen publishes that from App._BACK_SLOT.
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -7898,7 +7981,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inMessages) App._exitMessages();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('ai-screen');
@@ -8186,7 +8268,6 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('admin-screen');
     App._inAdmin = true;
@@ -8237,7 +8318,6 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('settings-screen');
     App._inSettings = true;
@@ -8298,7 +8378,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('messages-screen');
     App._inMessages = true;
@@ -8471,7 +8550,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     if (App._inMessages) App._exitMessages();
     const screen = document.getElementById('agent-session-screen');
@@ -8725,9 +8803,8 @@ const App = {
   // #app-list (home's "Your apps") and #home-featured-list (home's
   // featured row). NOT the anonymous landing directory (#landing-apps),
   // which renders `.app-card[data-slug]` tiles too and lives in this same
-  // document after a reload-free login; and NOT #browse-list, which
-  // renders app-store `.browse-row` rows rather than tiles, so there is no
-  // tile rect to zoom out of there (the kit falls back to a push).
+  // document after a reload-free login. (Discover's #browse-list, rows
+  // rather than tiles, went with One Home, #6361.)
   //
   // Whichever grid the tap came from is the one whose tile is on screen,
   // so a single query across both lands on the right rect.
@@ -8908,7 +8985,6 @@ const App = {
     // hidden detail page intercepts the app's Home button, and returning to
     // #apps takes the in-screen shortcut without revealing the directory.
     // This exit is state-only; `departing` stays painted for the transition.
-    if (App._inBrowse) App._exitBrowse();
     // Real screen navigation. From a launcher grid (home's "Your apps" /
     // featured row, or the #apps browse screen) the app view expands out
     // of the clicked tile (kit 'zoom-in'); from anywhere else (deep link,
@@ -9137,7 +9213,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
@@ -9267,13 +9342,10 @@ const App = {
   // a tab it is not the root of is listed here with that tab's address.
   _BACK_SLOT: {
     'home-screen': ['none'],
-    // #6019: on a phone Discover is a page of Home's (its Discover block
-    // opens it), so its list level has an arrow back to Home. On the desktop
-    // rail it is a tab, a root, and _backSlotFor answers 'none' there.
-    // browse.js publishes the same.
-    'browse-screen': ['arrow', '/'],
     'messages-screen': ['none'],
-    'workshop-screen': ['none'],
+    // One Home (#6361): Needs you is a page under Home (its tile opens it),
+    // so it has an arrow up to Home, as Challenges has one up to Me.
+    'workshop-screen': ['arrow', '/'],
     // #6019 follow-up: the AI tab's page is a tab root; Main is a level
     // under it (the Messages store's syncChrome points its arrow here).
     'ai-screen': ['none'],
@@ -9372,9 +9444,6 @@ const App = {
   _backSlotFor(revealId) {
     const slot = App._BACK_SLOT[revealId];
     if (!slot) return ['home'];
-    // The table says the phone's answer for Discover, a page of Home's. On
-    // the desktop rail it is a tab of its own, a root: nothing in the slot.
-    if (revealId === 'browse-screen' && App._discoverIsTab()) return ['none'];
     if (revealId === 'app-view') {
       // THE DISCUSSION IS A LEVEL INSIDE MESSAGES, not a program to step out
       // of (#2718 review, twice). `/app/<slug>/dev/chat` is a ROW IN THE
@@ -9896,6 +9965,12 @@ window.App = App;
 App._foregroundResync = () => {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
   if (window.SessionState) SessionState.syncIfStale?.();
+  // #6429: coming back to the tab is also a reason to ask who is signed in,
+  // when the boot's check ran out of time. A slow server used to leave the
+  // tab unverified — no socket, frozen lists, no bell — until a reload.
+  if (App._sessionFromSnapshot && !(window.Offline?.isOffline?.() === true)) {
+    App._reconcileSession().catch(() => {});
+  }
 };
 // Guarded: app.js is loaded into bare vm sandboxes by several unit tests,
 // which stub `document` / `window` with only the members they need.
@@ -10029,8 +10104,11 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
 
   switch (head) {
     case '': return null;                    // home: the prerender is right
-    case 'apps': return 'browse-screen';
-    case 'discover': return 'browse-screen'; // its old name (see restoreFromHash)
+    // One Home (#6361): #apps and #discover rewrite to Home, #apps/<slug>
+    // to its project's hub (restoreFromHash).
+    case 'apps': return frag.split('/')[1] ? 'app-view' : null;
+    case 'discover': return frag.split('/')[1] ? 'app-view' : null;
+    case 'needs': return 'workshop-screen';  // Needs you (One Home, #6361)
     case 'profile': return 'profile-screen';
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';

@@ -156,12 +156,12 @@
     "description": "Line in the header of an app tile's menu: when the app's latest version went live. {{when}} is a short relative time such as \"3d ago\" or \"just now\"."
   },
   "menu.details.label": {
-    "text": "App details",
-    "description": "Item in an app tile's menu on Home: opens the app's page in Discover."
+    "text": "Go to community",
+    "description": "Item in an app tile's menu on Home: opens the hub of the app's community, its project page."
   },
   "menu.details.tip": {
-    "text": "Version, status and everything you can do with this app",
-    "description": "Tooltip of the \"App details\" item in an app tile's menu."
+    "text": "Who it is for, what is changing, and how to join",
+    "description": "Tooltip of the \"Go to community\" item in an app tile's menu: what the community's hub shows."
   },
   "menu.editMyApps.label": {
     "text": "Edit Pinned apps",
@@ -879,6 +879,18 @@
     "text": "Couldn't update your Home: {{reason}}",
     "description": "Brief notice when pinning or unpinning a community on Home failed. {{reason}} is the server's explanation."
   },
+  "communities.needs": {
+    "text": "Needs you",
+    "description": "Name under the tile in Home's Pinned communities that opens Needs you, the page of every vote and decision waiting on the viewer across their projects. Shown only while something waits."
+  },
+  "communities.needsNamed_one": {
+    "text": "Needs you: {{count}} vote waiting on you",
+    "description": "Accessible name of the Needs you tile on Home, with how many votes wait on the viewer across their projects. Singular."
+  },
+  "communities.needsNamed_other": {
+    "text": "Needs you: {{count}} votes waiting on you",
+    "description": "Accessible name of the Needs you tile on Home, with how many votes wait on the viewer across their projects. Plural."
+  },
   "join.heading": {
     "text": "Communities to join",
     "description": "Heading over the cards of public communities at the bottom of Home that the viewer has not joined."
@@ -886,6 +898,14 @@
   "join.headingSignedOut": {
     "text": "Communities",
     "description": "Heading over the cards of public communities at the bottom of Home for a visitor who is not signed in."
+  },
+  "join.featured": {
+    "text": "Featured",
+    "description": "Small heading over the communities the platform features, the first group of cards in Communities to join on Home (signed in or out)."
+  },
+  "join.more": {
+    "text": "More communities",
+    "description": "Small heading over the rest of the community cards, after the Featured ones, in Communities to join on Home (signed in or out). Shown only when Featured is shown above it."
   },
   "join.votes_one": {
     "text": "{{count}} up for a vote",
@@ -910,18 +930,6 @@
   "join.buttonNamed": {
     "text": "Join {{community}}",
     "description": "Accessible name of the Join button on a community's card. {{community}} is the project's name."
-  },
-  "join.pin": {
-    "text": "Pin",
-    "description": "Button on a community's card for a visitor who is not signed in: keeps the community on this device's Home."
-  },
-  "join.pinned": {
-    "text": "Pinned",
-    "description": "The same button once the community is on this device's Home; pressing it again unpins it."
-  },
-  "join.pinNamed": {
-    "text": "Pin {{community}} to Home",
-    "description": "Accessible name of the Pin button on a community's card for a visitor who is not signed in. {{community}} is the project's name."
   },
   "join.allJoined": {
     "text": "You're in every community of this kind.",
@@ -955,17 +963,9 @@
     "text": "{{count}} pins from this device moved to your account",
     "description": "Brief notice after signing in, when apps or communities pinned on this device while signed out were moved to the account. Plural."
   },
-  "guest.pinApp": {
-    "text": "Pin {{app}} to Home",
-    "description": "Accessible name of the + on a suggested app on Home for a visitor who is not signed in: keeps it on this device's Home. {{app}} is the app's name."
-  },
   "guest.unpinApp": {
     "text": "Unpin {{app}} from Home",
     "description": "Accessible name of the remove badge on an app a visitor pinned on this device. {{app}} is the app's name."
-  },
-  "guest.appsHint": {
-    "text": "Tap + to pin an app. Pins stay on this device until you sign in.",
-    "description": "Line under Pinned apps on Home for a visitor who is not signed in, before they have pinned one."
   },
   "guest.pinCommunity": {
     "text": "Pin",

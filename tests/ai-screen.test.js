@@ -185,12 +185,15 @@ test('each section groups its rows by project, and a project shows its first few
   // #6262: Needs you orders its rows with the new ones first, before the
   // drawn order is held, then folds through the same pure rule (which never
   // hides a fresh row either).
-  assert.match(lists, /const ordered = freshStyle \? freshFirst\(lines\) : lines;/);
+  assert.match(lists, /const ordered = freshStyle \|\| foldFresh \? freshFirst\(lines\) : lines;/);
   assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
     'the new first, then the drawn order held');
-  assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(g\.items, first, open\);/,
+  assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(dayHeads \? byDay\(g\.items\) : g\.items, first, open, !foldFresh\);/,
     'the group draws through the pure order rule');
-  assert.match(lists, /\{\(hidden \? items\.slice\(0, shown\) : items\)\.map\(/);
+  // 6 Nov 2026: the drawn rows carry their day divider, and the fold splits
+  // the same drawn list (a day past the fold stays inside it).
+  assert.match(lists, /const visible = hidden \? drawn\.slice\(0, shown\) : drawn;/);
+  assert.match(lists, /const folded = hidden \? drawn\.slice\(shown\) : \[\];/);
   assert.match(lists, /aria-hidden=\{open \? undefined : true\}\s+inert=\{!open\}/, 'the folded rest is out of reach until it opens');
   assert.match(lists, /\{g\.app \? <SmallTile app=\{g\.app\} size="head" \/> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" \/>\}/);
   assert.equal(message('messages:ai.short.private'), 'Only you', 'the heading over private ideas in no project');
@@ -331,6 +334,62 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   assert.ok(!quiet.includes('data-ai-fresh'), 'and no count at all');
 });
 
+// #6408 (6 Nov 2026, Evan): Live this week showed 50 of a project's 76 rows
+// before Show more, because every "it's live" row was new and #6262 never
+// folds a fresh row. New in Live only means a change went live since the
+// viewer last looked, so Live folds after its first few whatever is new: its
+// rows put the new ones first, and the fold says how many of them it holds.
+// Needs you and Waiting & in progress keep the never-fold rule.
+test('#6408: Live this week folds after its first few rows whatever is new', () => {
+  const { groupRows, GROUP_FIRST } = loadTsx(MODEL);
+  // Eight rows, six of them new. Folded to Live's first three, five fold.
+  const many = Array.from({ length: 8 }, (_, i) => ({ key: `r${i + 1}`, fresh: i < 6 }));
+  const folded = groupRows(many, GROUP_FIRST.live, false, false);
+  assert.deepEqual(folded.items.map((r) => r.key), many.map((r) => r.key), 'the order is the one the section gave');
+  assert.deepEqual([folded.shown, folded.hidden], [3, 5], 'the first three show; the new rows fold with the rest');
+  // The row you are on is still lifted out of the fold, folded.
+  const lit = many.map((r, i) => ({ ...r, lit: i === 6 }));
+  const withLit = groupRows(lit, GROUP_FIRST.live, false, false);
+  assert.deepEqual([withLit.shown, withLit.hidden], [4, 4], 'where you are is never hidden');
+  assert.equal(withLit.items[3].key, 'r7');
+  // By default #6262 holds: a new row past the first few is never folded
+  // away, which is what Needs you and Waiting & in progress draw.
+  const held = groupRows(many, GROUP_FIRST.live, false);
+  assert.deepEqual([held.shown, held.hidden], [6, 2], 'a fresh row is lifted by default');
+
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /const freshHidden = foldFresh \? items\.slice\(shown\)\.filter\(\(line\) => line\.fresh\)\.length : 0;/,
+    'the fold counts the new rows it holds');
+  assert.match(lists, /<Section list="live" quiet head=\{t\('messages:ai\.live\.title', \{ count: liveLines\.length \}\)\} lines=\{liveLines\}[^>]*foldFresh \/>/,
+    'Live this week is the section that folds what is new');
+  assert.equal(message('messages:ai.work.showMoreFresh', { count: 73, fresh: 44 }), 'Show 73 more · 44 new');
+
+  // Rendered: a project's eight live rows, six new, show three rows and the
+  // fold that holds the other three new ones.
+  const live = Array.from({ length: 8 }, (_, i) => thread(30 + i, 410 + i, 'going_live', {
+    group: 'live', at: '2026-11-06T10:00:00Z', unread: i < 6 ? 1 : 0,
+  }));
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: [], lit: null, progress: [], waiting: [], live, openRow() {}, openThread() {},
+  });
+  const sheet = html.slice(html.indexOf('data-ai-sheet="live"'));
+  const shown = sheet.slice(0, sheet.indexOf('data-ai-group-rest'));
+  assert.equal((shown.match(/data-ai-line=/g) || []).length, 3, 'three rows before the fold');
+  assert.match(sheet, /Show 5 more · 3 new/, 'the fold says how many new rows it holds');
+  // None of the folded rows new: the plain words, as every other list says them.
+  const older = live.map((t) => ({ ...t, unread: 0 }));
+  const calm = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: [], lit: null, progress: [], waiting: [], live: older, openRow() {}, openThread() {},
+  });
+  const calmSheet = calm.slice(calm.indexOf('data-ai-sheet="live"'));
+  assert.match(calmSheet, /Show 5 more/, 'nothing new in the fold says only how many');
+  assert.ok(!/Show 5 more ·/.test(calmSheet), 'and does not mention new ones');
+});
+
+
 // #6312 (4 Nov 2026, Evan): "Show 11 more" made two rows' blue dots disappear
 // the instant it was pressed. Folded, a new row is lifted above the fold, so
 // its dot shows. Opened, every row keeps its own order, so a new row past the
@@ -391,6 +450,81 @@ test('#6312: the fold\'s box keeps the room a new row\'s dot stands in, folded o
   const at = Number(/const DOT = '[^']*-start-(\d+)/.exec(src)[1]);
   const room = Number(/ps-(\d+)/.exec(groupClip[1])[1]);
   assert.ok(room >= at, `the fold keeps ${room * 4}px for a dot ${at * 4}px outside its row`);
+});
+
+// 6 Nov 2026 (Evan): "in Needs you and Waiting & in progress, keep the
+// project groups, and inside each group split the rows by day with the small
+// caps dividers and a thin rule ... Leave History's month headings as they
+// are." A project's rows are split by the reader's own calendar day: Today,
+// Yesterday, then the weekday and date. Nothing else grows a day heading.
+test('6 Nov 2026: Needs you and Waiting & in progress split each project by day, History keeps its months', () => {
+  const { dayKey, byDay } = loadTsx(MODEL);
+  // Noon, so the test's own clock cannot turn a day into its neighbour.
+  const at = (daysAgo) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - daysAgo); return d.toISOString(); };
+  const today = at(0);
+  const yesterday = at(1);
+  const older = at(9);
+  assert.notEqual(dayKey(today), dayKey(yesterday), 'a day apart is a different day');
+  assert.equal(dayKey(null), '', 'no moment, no day');
+  assert.deepEqual([dayKey(today).length, dayKey(today).split('-').length], [10, 3], 'the key is YYYY-MM-DD');
+  // A day's rows are one run: newest day first, the order within a day kept.
+  assert.deepEqual(byDay([{ k: 'a', at: today }, { k: 'b', at: yesterday }, { k: 'c', at: today }, { k: 'd', at: null }])
+    .map((r) => r.k), ['a', 'c', 'b', 'd'], 'Today, then Yesterday, then the undated row');
+
+  const { renderComponent } = require('./lib/render-tsx');
+  const LISTS = 'frontend/src/features/ai/lists.tsx';
+  const line = (key, title, when) => ({
+    key, title, app, who: 'all', at: when, unread: 0, threadId: null,
+    sub: { id: 'messages:ai.row.where', values: { project: app.name, number: 1 } },
+    pill: { id: 'messages:ai.pill.vote' }, href: '#app/garden/dev/issues/1', rootId: null,
+  });
+  const html = renderComponent(LISTS, 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 3,
+    rows: [line('need:proposal:1', 'Today one', today), line('need:proposal:3', 'Yesterday one', yesterday),
+      line('need:proposal:2', 'Today two', today), line('need:proposal:4', 'Older one', older)],
+    lit: null,
+    progress: [thread(1, 71, 'vote', { at: today, group: 'next' }), thread(2, 72, 'building', { at: yesterday, group: 'next' })],
+    waiting: [], live: [],
+    openRow() {}, openThread() {},
+  });
+  const sheet = (name) => html.slice(html.indexOf(`data-ai-sheet="${name}"`), html.indexOf('data-ai-sheet="', html.indexOf(`data-ai-sheet="${name}"`) + 1));
+  const needs = sheet('open');
+  const busy = sheet('busy');
+  // Inside the project group, one divider each day, in the order the rows come.
+  assert.ok(needs.indexOf('data-ai-group="garden"') < needs.indexOf('data-ai-day='), 'the day sits inside the project group');
+  assert.equal((needs.match(/data-ai-day="/g) || []).length, 3, 'Today, Yesterday and the older day, once each');
+  assert.ok(needs.indexOf(message('messages:ai.short.today')) < needs.indexOf('Today one'));
+  assert.ok(needs.indexOf('Today one') < needs.indexOf('Today two'), 'the day\'s rows are one run, whatever order they came in');
+  assert.ok(needs.indexOf('Today two') < needs.indexOf(message('messages:ai.short.yesterday')), 'a second row of the same day adds no divider');
+  assert.ok(needs.indexOf(message('messages:ai.short.yesterday')) < needs.indexOf('Yesterday one'));
+  assert.ok(needs.indexOf('Yesterday one') < needs.indexOf('Older one'));
+  const label = (key) => {
+    const found = new RegExp(`data-ai-day="${key}"><span[^>]*>([^<]+)</span>`).exec(needs);
+    return found ? found[1] : '';
+  };
+  assert.equal(label(dayKey(today)), message('messages:ai.short.today'));
+  assert.equal(label(dayKey(yesterday)), message('messages:ai.short.yesterday'));
+  assert.match(label(dayKey(older)), /\d/, 'an older day says its date');
+  // Waiting & in progress splits the same way, under its own project group.
+  assert.match(busy, /data-ai-group="garden"/);
+  assert.equal((busy.match(/data-ai-day="/g) || []).length, 2);
+  assert.ok(busy.indexOf(message('messages:ai.short.today')) < busy.indexOf(message('messages:ai.short.yesterday')));
+
+  // History keeps its month headings, and Live this week keeps none of these.
+  const history = {
+    rows: [{ key: 'thread:9', threadId: 9, number: 392, title: 'Watering reminders', app, href: '#app/garden/dev/issues/392', at: older, kind: 'change', outcome: 'live', by: 'bot' }],
+    next: null, ready: true, loading: false, failed: false, more() {}, retry() {},
+  };
+  const withHistory = renderComponent(LISTS, 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: [], progress: [], waiting: [], live: [thread(3, 73, 'live', { at: today })],
+    history, openRow() {}, openThread() {}, openHistory() {},
+  });
+  const historySheet = withHistory.slice(withHistory.indexOf('data-ai-sheet="history"'));
+  assert.match(historySheet, /data-ai-history-month="/, 'History still groups by month');
+  assert.doesNotMatch(historySheet, /data-ai-day=/, 'and grows no day divider');
+  const liveSheet = withHistory.slice(withHistory.indexOf('data-ai-sheet="live"'), withHistory.indexOf('data-ai-sheet="history"'));
+  assert.doesNotMatch(liveSheet, /data-ai-day=/, 'Live this week keeps its day on the right');
 });
 
 test('the filter: the three projects that need you most as chips, then any picked past them, and More for every project', () => {
@@ -903,7 +1037,12 @@ test('the first render is the prerender: hidden, the bot\'s name, no rows; lists
   // Main docked beside it only on a wide window, after mount.
   assert.match(src, /const \[wide, setWide\] = useState\(false\);/);
   assert.match(src, /\{docked \? \(\s*<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"/);
-  assert.match(src, /<EmbeddedConversation conversationId=\{botId!\} active=\{visible\} at=\{at\} mainChat \/>/);
+  // #6425: nothing is drawn beside the lists; the chat is mounted only when
+  // the column is open, or a thread asked for is still to be put there.
+  assert.match(src, /const columnOpen = docked && !!column;/);
+  assert.match(src, /const conversationUp = columnOpen \|\| !!at\?\.threadRootId;/);
+  assert.match(src, /<EmbeddedConversation conversationId=\{botId!\} active=\{visible && columnOpen\} at=\{at\} mainChat \/>/);
+  assert.match(src, /void loadConversations\(\);/, 'and the list is read, so Main\'s row says what is new while it is closed');
   // Ask Homeroom bot opens Main; a private thread opens in the column, and
   // before the page knows its width, by its address.
   assert.match(src, /<a\s+href="#homeroom-bot\/main"\s+className="messages-composer-card ai-askbar-card"/);
@@ -931,7 +1070,7 @@ test('a page drawn before sign-in is confirmed asks again once it is, and its As
 test('#homeroom-bot is the page; /main and /thread/<id> are Main and a thread in its column; #ai lands there', () => {
   const app = read('public/js/app.js');
   // 1 Nov 2026: every address is the page's, and says where in its chat.
-  assert.match(app, /if \(parts\[0\] === 'homeroom-bot'\) \{[\s\S]*?App\.setChromeless\(false\);\s+App\.navigateToAi\(\);\s+if \(parts\[1\] === 'request' \|\| parts\[1\] === 'change' \|\| parts\[1\] === 'decision'\) \{\s+window\.UsernodeReact\?\.ai\?\.openItem\?\.\('#' \+ parts\.join\('\/'\)\);\s+\}\s+if \(parts\[1\] === 'main' \|\| parts\[1\] === 'thread' \|\| parts\[1\] === 'm'\) \{\s+const at = App\._messagesExtras\(parts\[1\] === 'main' \? parts\.slice\(2\) : parts\.slice\(1\)\);\s+window\.UsernodeReact\?\.ai\?\.openAt\?\.\(\{/);
+  assert.match(app, /if \(parts\[0\] === 'homeroom-bot'\) \{[\s\S]*?App\.setChromeless\(false\);\s+App\.navigateToAi\(\);\s+(?:\/\/[^\n]*\n\s+)*if \(parts\.length === 1\) \{\s+window\.UsernodeReact\?\.ai\?\.closeColumn\?\.\(\);\s+\}\s+if \(parts\[1\] === 'request' \|\| parts\[1\] === 'change' \|\| parts\[1\] === 'decision'\) \{\s+window\.UsernodeReact\?\.ai\?\.openItem\?\.\('#' \+ parts\.join\('\/'\)\);\s+\}\s+if \(parts\[1\] === 'main' \|\| parts\[1\] === 'thread' \|\| parts\[1\] === 'm'\) \{\s+const at = App\._messagesExtras\(parts\[1\] === 'main' \? parts\.slice\(2\) : parts\.slice\(1\)\);\s+window\.UsernodeReact\?\.ai\?\.openAt\?\.\(\{/);
   assert.doesNotMatch(app, /messages\.openBotThread\(root\)/, 'never the Messages screen');
   assert.match(app, /case 'homeroom-bot':[^\n]*\n\s+case 'ai': return 'ai-screen';/);
   // The old address is an alias: rewritten in place, then routed as the new one.
@@ -973,7 +1112,7 @@ test('the way into the bot\'s chat: each address and each door names a place in 
   }
   // The page takes the router's ask once, in its column.
   const src = read('frontend/src/features/ai/index.tsx');
-  assert.match(src, /if \(!ask \|\| ask\.seq === askTaken\.current \|\| !visible \|\| !\(wide \|\| phone\)\) return;\s+askTaken\.current = ask\.seq;\s+how\.current = 'row';\s+if \(ask\.item\) openItem\(ask\.item\);\s+else if \(ask\.at\) showAt\(ask\.at\);/);
+  assert.match(src, /if \(!ask \|\| ask\.seq === askTaken\.current \|\| !visible \|\| !\(wide \|\| phone\)\) return;\s+askTaken\.current = ask\.seq;\s+how\.current = 'row';\s+if \(ask\.close\) closeColumn\(\);\s+else if \(ask\.item\) openItem\(ask\.item\);\s+else if \(ask\.at\) showAt\(ask\.at\);/);
   assert.match(read('frontend/src/features/ai/door.ts'), /host\.ai = \{ \.\.\.\(host\.ai \|\| \{\}\), openAt: askBotTab,/);
 });
 
@@ -1041,6 +1180,15 @@ test('Main Chat is the list\'s first row: the bot\'s mark, its name, what is new
   // The thread in the column is the lit row, where you are, and only it.
   assert.equal((quiet.match(/data-ai-lit=""/g) || []).length, 1);
   assert.match(quiet, /data-ai-line="private" data-ai-lit="" aria-current="true"><span[^>]*>[\s\S]*?A darker header/);
+  // #6424: the lit card itself is tinted, and the row inside it draws no
+  // smaller box with its own corners, so no uneven ring shows round the blue.
+  const litSheet = lit.match(/<div class="([^"]*)" data-ai-sheet="main"><button type="button" class="([^"]*)"/);
+  assert.ok(litSheet, 'Main Chat\'s card is first');
+  assert.match(litSheet[1], /bg-\[color:var\(--lit-tint\)\]/, 'the open chat\'s card takes the lit tint');
+  assert.doesNotMatch(litSheet[2], /rounded-md|--lit-tint/, 'and its row draws no tinted box of its own');
+  const quietSheet = quiet.match(/<div class="([^"]*)" data-ai-sheet="main"/);
+  assert.ok(quietSheet, 'Main Chat\'s card');
+  assert.match(quietSheet[1], /bg-\[color:var\(--dc-sheet-solid\)\]/, 'unlit, the card is the plane fill as before');
   const src = read(LISTS);
   assert.match(src, /const LIT_ROW = '[^']*bg-\[color:var\(--lit-tint\)\] text-\[color:var\(--lit-ink\)\]';/, 'the lit tint and ink, as the rail\'s rows are');
   // The page lights what the column shows (./column.ts): Main, a thread, a
@@ -1268,10 +1416,10 @@ test('the column from 768px: Main, or one thread alone under its own head; a pag
   assert.match(src, /const WIDE = '\(min-width: 768px\)';/);
   // Main's bar only over Main; a thread or a blank one has its own head.
   assert.match(src, /\{threadUp \? null : \(\s*<header className="ai-main-head" data-ai-main-head="">/);
-  assert.match(src, /data-ai-column=\{threadUp \? 'thread' : 'main'\}/);
+  assert.match(src, /data-ai-column=\{columnOpen \? \(threadUp \? 'thread' : 'main'\) : undefined\}/);
   // A place in the chat: the panel gives the column back, a blank thread goes, Main closes a thread.
   // 1 Nov 2026 (C1): and a design's preview goes, unless it is that thread's.
-  assert.match(src, /const showAt = \(next: BotAt\) => \{\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(!detail \|\| detail\.kind === 'design'\) \{\s+if \(!next\.threadRootId \|\| next\.threadRootId !== detail\?\.ref\.rootId\) closeDetail\(\);\s+\}\s+if \(!next\.threadRootId && openRoot\) closeThread\(\);\s+setAt\(\{ \.\.\.next \}\);\s+if \(phone\) setLevel\(1\);\s+\};/);
+  assert.match(src, /const showAt = \(next: BotAt\) => \{\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(!detail \|\| detail\.kind === 'design'\) \{\s+if \(!next\.threadRootId \|\| next\.threadRootId !== detail\?\.ref\.rootId\) closeDetail\(\);\s+\}\s+if \(!next\.threadRootId && openRoot\) closeThread\(\);\s+setAt\(\{ \.\.\.next \}\);\s+(?:\/\/[^\n]*\n\s+)*if \(botId && next\.threadRootId\) embed\(botId, next\);\s+(?:\/\/[^\n]*\n\s+)*setMainOpen\(!next\.threadRootId \|\| column\?\.at === 'main'\);\s+if \(phone\) setLevel\(1\);\s+\};/);
   assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);/);
   assert.match(src, /if \(openPublic\(href, app, title\)\) underPanel\(\);/);
   // 3 Nov 2026: the address is the column's, written by one effect (#6215).
@@ -1283,6 +1431,19 @@ test('the column from 768px: Main, or one thread alone under its own head; a pag
   const css = read('public/css/app.css');
   assert.match(css, /@media \(max-width: 1023\.98px\) \{[^}]*?\*\/\s+body:not\(:has\(#ai-screen:not\(\.hidden\)\)\) #platform-side-panel \{\s+display: none;\s+\}\s+\}\s+@media \(max-width: 767\.98px\) \{\s+#platform-side-panel \{\s+display: none;\s+\}\s+\}/);
   assert.match(css, /@media \(max-width: 1023\.98px\) \{\s+body:has\(#ai-screen:not\(\.hidden\)\) \{ --ai-list-min: 280px; \}\s+\}/);
+});
+
+test('the tab\'s bare address closes what is open beside the lists (#6425)', () => {
+  // Pressing the tab, or Back to `#homeroom-bot`, asks the page to close the
+  // column; a link to Main, a thread or an item still opens it.
+  const app = read('public/js/app.js');
+  assert.match(app, /if \(parts\.length === 1\) \{\s+window\.UsernodeReact\?\.ai\?\.closeColumn\?\.\(\);\s+\}/);
+  const door = read('frontend/src/features/ai/door.ts');
+  assert.match(door, /export function askBotClose\(\): void \{\s+seq \+= 1;\s+asked = \{ at: null, item: null, close: true, seq \};/);
+  assert.match(door, /closeColumn: askBotClose/);
+  const src = read('frontend/src/features/ai/index.tsx');
+  assert.match(src, /if \(ask\.close\) closeColumn\(\);/);
+  assert.match(src, /if \(ask\.item\) openItem\(ask\.item\);\s+else if \(ask\.at\) showAt\(ask\.at\);/);
 });
 
 test('a thread opens on this page: beside the list in Main\'s place, or on its page with a way back here', () => {
@@ -1333,7 +1494,7 @@ test('on a phone the list and Main Chat are one drawer, as Messages\' are; a req
   assert.ok(!drawer.includes('ai-drawer-peek'), 'nothing peeks beside the list (3 Nov 2026)');
   // Only Main Chat: no page in a frame (Evan, 30 Oct: "the Messages approach").
   assert.ok(!drawer.includes('<iframe'), 'a request is never drawn in the drawer');
-  assert.match(src, /setAt\(\{ \.\.\.next \}\);\s+if \(phone\) setLevel\(1\);/, 'a row slides the column in, at it');
+  assert.match(src, /setAt\(\{ \.\.\.next \}\);\s+(?:\/\/[^\n]*\n\s+)*if \(botId && next\.threadRootId\) embed\(botId, next\);[\s\S]{0,220}?setMainOpen\([^;]*\);\s+if \(phone\) setLevel\(1\);/, 'a row slides the column in, at it');
   assert.match(src, /onClick=\{\(e\) => \{ if \(phone\) \{ e\.preventDefault\(\); openMain\(\); \} \}\}/, 'and so does the Ask bar');
   // Main Chat draws no bar of its own: the platform header names it (3 Nov 2026).
   assert.ok(!drawer.includes('ai-drawer-head'), 'one header: the platform\'s');
@@ -1384,27 +1545,33 @@ test('what a row opens rides along in Main Chat\'s composer, and only there', ()
   assert.equal(aboutRow({ href: '#app/garden/workshop', title: 'x', app }), null, 'a Workshop is no item');
 });
 
-test('beside this page the panel is the page\'s own column: ‹ Main and the project, no Expand, Close or Back', () => {
+test('beside this page the panel is the page\'s own column: its × and the project, no Expand, Close or Back', () => {
   const panel = read('frontend/src/features/side-panel/side-panel.tsx');
-  // #6352 (5 Nov 2026): the chip names where it goes — the private thread
-  // behind the page, or Main.
-  assert.match(panel, /const toThread = s\.backTo === 'thread';/);
-  assert.match(panel, /<button\s+type="button"\s+className="side-panel-main dev-topic-back un-touch-target"\s+aria-label=\{toThread \? t\('agent:sidePanel\.threadLabel'\) : t\('agent:sidePanel\.mainLabel'\)\}\s+onClick=\{\(\) => controller\.close\(\)\}\s+>/,
-    '‹ Main gives Main its place back, in the topic\'s own chip; a thread behind the page is named instead');
-  assert.match(panel, /<span>\{toThread \? t\('agent:sidePanel\.thread'\) : t\('agent:sidePanel\.main'\)\}<\/span>/,
-    'the chip says Thread when a private thread is behind the page');
-  assert.match(panel, /<PanelHeading route=\{s\.route\} place=\{s\.place\} reported=\{s\.reported\} label=\{s\.label\} \/>/);
+  // #6431: the heading takes the page's own head too — its status pill.
+  // 6 Nov 2026 (#6425): the × closes the page, in the place the "‹ Main Chat"
+  // chip held: the round disc the panel's own Close draws, after the heading
+  // and its ⋯.
+  assert.match(panel, /className=\{`side-panel-ai-close \$\{DISC\}`\}/);
+  assert.match(panel, /aria-label=\{t\('agent:sidePanel\.close'\)\}\s+title=\{t\('agent:sidePanel\.close'\)\}\s+onClick=\{\(\) => controller\.close\(\)\}/);
+  assert.doesNotMatch(panel, /side-panel-main|sidePanel\.mainLabel|sidePanel\.threadLabel/,
+    'the ‹ Main Chat / ‹ Thread chip is gone');
+  assert.ok(panel.indexOf('<PanelMore route={s.route} />') < panel.indexOf('side-panel-ai-close'),
+    'at the row\'s end, after ⋯');
+  assert.match(panel, /<PanelHeading route=\{s\.route\} place=\{s\.place\} reported=\{s\.reported\} label=\{s\.label\} head=\{s\.head\} \/>/);
   assert.match(panel, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`\}/, 'the project, as a door to its page');
   assert.match(panel, /\(window as any\)\.AppView\?\._landOnHub\?\.\(slug\)/, 'which opens on its Hub');
-  assert.equal(message('agent:sidePanel.main'), 'Main Chat', 'the chat\'s name, as its title says it');
-  assert.equal(message('agent:sidePanel.mainLabel'), 'Back to Main Chat');
-  assert.equal(message('agent:sidePanel.thread'), 'Thread', 'the word the app already uses for a private thread');
-  assert.equal(message('agent:sidePanel.threadLabel'), 'Back to the thread');
+  assert.equal(message('agent:sidePanel.close'), 'Close panel');
   const index = read('frontend/src/features/ai/index.tsx');
-  assert.match(index, /const backTo = docked && openRoot \? 'thread' : 'main';/,
-    'the AI page publishes what the column goes back to');
-  assert.match(index, /if \(sidePanelStore\.get\(\)\.backTo !== backTo\) sidePanelStore\.set\(\{ backTo \}\);/);
-  assert.match(index, /\}, \[docked, openRoot, panel\.open, panel\.frameKey\]\);/, 'and again after the controller resets the store');
+  // The page starts on the lists alone; Main Chat's row, or a link to it,
+  // opens it, and × puts it away again.
+  assert.match(index, /const \[mainOpen, setMainOpen\] = useState\(false\);/);
+  assert.match(index, /: mainOpen \? \{ at: 'main' \} : null;/);
+  assert.match(index, /const columnOpen = docked && !!column;/);
+  assert.match(index, /const closeColumn = \(\) => \{\s+if \(!docked\) return;\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(openRoot\) closeThread\(\);\s+closeDetail\(\);\s+setMainOpen\(false\);\s+setAt\(null\);\s+\};/);
+  assert.doesNotMatch(index, /backTo/, 'no chip to name what the page goes back to');
+  assert.match(index, /data-ai-open=\{columnOpen \? '' : undefined\}/);
+  assert.match(index, /data-ai-main-close=""/);
+  assert.equal(message('messages:ai.main.close'), 'Close Main Chat');
   const controller = read('frontend/src/features/side-panel/controller.ts');
   assert.match(controller, /export const BESIDE_AI_CLASS = 'side-panel-beside-ai';/);
   assert.match(controller, /classList\.toggle\(BESIDE_AI_CLASS, isBesideAi\(\)\)/);
@@ -1412,8 +1579,8 @@ test('beside this page the panel is the page\'s own column: ‹ Main and the pro
   const css = read('public/css/app.css');
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(#side-panel-back, #side-panel-title, #side-panel-expand, #side-panel-close\) \{\s+display: none;\s+\}/,
     'the panel\'s controls go, but not its left edge, the handle Main\'s edge is too');
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
-  assert.match(css, /\.side-panel-head > :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/, 'and beside an app, as it was');
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
+  assert.match(css, /\.side-panel-head > :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/, 'and beside an app, as it was');
   assert.match(css, /html\.in-side-panel\.side-panel-beside-ai :is\(\.dev-topic-backs, \.dev-topic-back\) \{ display: none; \}/,
     'and the page in it leaves out its own "‹ Workshop"');
 });
@@ -1435,6 +1602,49 @@ test('a request opened beside the bot list fills the column, not a box inside it
     'the 12px the wrapper gave the content stays on the bar and the transcript');
 });
 
+test('beside the bot page a request or a change lies on Main Chat\'s surface (#6432)', () => {
+  const css = read('public/css/app.css');
+  // The column is one sheet as Main is (30 Oct 2026), but the panel document
+  // still painted the route wallpaper on its body, sized to the column: a
+  // second star and grain showed through the request (6 Nov 2026). The page
+  // now lies on the same plane colour as Main's pane and the list's cards,
+  // and the intended declaration is the one the top document's own wallpaper
+  // rule and the brand skin cannot outrank.
+  assert.match(css, /html\.in-side-panel\.side-panel-beside-ai body \{\s+background: var\(--dc-sheet-solid\) !important;\s+\}/,
+    'the beside-ai body paints the plane colour, which clears the wallpaper image too');
+  assert.match(css, /html\.in-side-panel\.side-panel-beside-ai body::before \{\s+background: none !important;\s+\}/,
+    'and the phone browser\'s fixed wallpaper layer is gone behind it');
+  // The claim that the colour matches Main in both themes: the token is the
+  // one composite, and Main's pane is the ground the thread pane sits over.
+  assert.match(css, /--dc-sheet-solid: #faf9f2;/, 'light: the list\'s card colour');
+  assert.match(css, /--dc-sheet-solid: #17181d;/, 'dark: the same composite over the dark ground');
+  assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*background: var\(--home-ground\);/,
+    'the surface it must match is Main\'s pane');
+  // Everywhere else the wallpaper stays: the full page (the top document has
+  // no `in-side-panel`) and the Workshop's own panel are not named here.
+  assert.match(css, /\n  background: var\(--home-wallpaper\);\n\}/,
+    'the route wallpaper is still painted on the plain page');
+  assert.doesNotMatch(css, /(?:^|\n)(?:body|\.dev-ws-side[^\n]*body) \{[^}]*--dc-sheet-solid/,
+    'no plain body rule, and nothing in the Workshop\'s panel, paints the plane colour');
+});
+
+test('beside the bot page a request or a change has one header, so its own bar is not drawn (#6431)', () => {
+  const css = read('public/css/app.css');
+  // The column's heading carries the page's status pill and everything its ⋯
+  // holds (side-panel.tsx), so the page's own bar — which repeated the number,
+  // the pill, a category and a second ⋯ — is hidden outright.
+  assert.match(css, /html\.in-side-panel\.side-panel-beside-ai \.dev-request-bar \{ display: none; \}/,
+    'the bar goes, for a request and a change alike');
+  assert.match(css, /html\.in-side-panel\.side-panel-beside-ai \.dev-request-bar :is\(\[data-request-kicker\], \.dev-request-bar-title, \[data-request-category\], \[data-change-category\]\) \{ display: none; \}/,
+    'nothing of it is drawn through, both categories and a change\'s number included');
+  assert.doesNotMatch(css, /\.side-panel-beside-ai \.dev-request-bar:not\(:has\(/,
+    'the "only when it has nothing left" rule it replaces is gone');
+  // Everywhere else the page keeps its bar: the full page and the Workshop's
+  // own side panel are the top document, and the column's heading is not there.
+  assert.doesNotMatch(css, /:is\(html\.in-side-panel\.side-panel-beside-ai, \.dev-ws-side\) \.dev-request-bar \{ display: none; \}/,
+    'the Workshop\'s panel is untouched');
+});
+
 test('Main\'s column is held inside the window, and the panel takes its place at its width', () => {
   const css = read('public/css/app.css');
   // A width chosen beside an app on a wide monitor must not run Main under
@@ -1453,7 +1663,9 @@ test('Main\'s column is held inside the window, and the panel takes its place at
     'Main\'s transcript, status line and composer are centred inside a wide column');
   assert.match(css, /#ai-screen \.ai-main-pane \.messages-layout\[data-main-chat\] \.chat-composer-bar \{\s+padding-inline: max\(12px, calc\(\(100% - 720px\) \/ 2\)\);\s+\}/,
     'and never narrow its own 12px gutter');
-  assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-inline-end: var\(--ai-main-w\); \}/);
+  // 6 Nov 2026 (#6425): the lane is kept only while a column is open.
+  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\] \{ padding-inline-end: var\(--ai-main-w\); \}/);
+  assert.match(css, /#ai-screen:not\(\[data-ai-open\]\) \.ai-main-pane \{ display: none; \}/, 'and the column is not drawn beside the lists alone');
   // 1 Nov 2026, iPhone Duo held sideways (951px, an 84px column of system
   // chrome on the right that the body pads out): the room is beside the
   // column, so its width is not counted twice. The columns pinned to the
@@ -1484,7 +1696,7 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // the keyboard the kit measures from the screen.
   assert.match(css, /html\.un-kb body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{ bottom: var\(--un-kb-inset, 0px\); \}/);
   assert.match(css, /#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\) \.ai-main-pane \{\s+width: var\(--ai-col-w\);\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
-  assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \{\s+--ai-preview-w: max\(320px, min\(var\(--ai-preview-chosen-w, calc\(var\(--ai-room\) \/ 2\)\), calc\(var\(--ai-room\) - 320px\)\)\);\s+--ai-col-w: calc\(var\(--ai-room\) - var\(--ai-preview-w\)\);/,
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]:not\(\.hidden\)\) \{\s+--ai-preview-w: max\(320px, min\(var\(--ai-preview-chosen-w, calc\(var\(--ai-room\) \/ 2\)\), calc\(var\(--ai-room\) - 320px\)\)\);\s+--ai-col-w: calc\(var\(--ai-room\) - var\(--ai-preview-w\)\);/,
     'halves until the preview\'s edge is dragged, the thread the rest');
   const page = css.slice(css.indexOf('body:has(#ai-screen:not(.hidden)) {'), css.indexOf('/* A phone: the whole of the page, over the drawer'));
   assert.equal((page.match(/100vw/g) || []).length, 0,
@@ -1502,7 +1714,7 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /import \{ SidePanelDivider \} from '\.\.\/side-panel\/side-panel';/);
   assert.match(src, /import \{\n\s+AI_MAIN_WIDTH_KEY,\n\s+AI_PREVIEW_COLUMN_WIDTH_KEY,\n\s+AI_PREVIEW_WIDTH_KEY,[^}]*\} from '\.\.\/side-panel\/resize';/);
-  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{docked\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threeUp \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY\}\s+probe=\{threeUp \? threadProbe : undefined\}\s+watch=\{threeUp \? previewRef : undefined\}\s+\/>/);
+  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{columnOpen\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threeUp \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY\}\s+probe=\{threeUp \? threadProbe : undefined\}\s+watch=\{threeUp \? previewRef : undefined\}\s+\/>/);
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /export function SidePanelDivider\(\{\s+panelRef,\s+shown,\s+id = 'side-panel-divider',\s+controls = 'platform-side-panel',\s+widthKey,/);
 });
 
@@ -1517,11 +1729,19 @@ test('a preview beside the thread: both edges drag, each the width of the column
   // The chosen widths are honoured, held to every column's floor.
   assert.match(css, /--ai-preview-w: max\(360px, min\(var\(--ai-preview-chosen-w, var\(--ai-preview-auto\)\), calc\(var\(--ai-room\) - 800px\)\)\);/);
   assert.match(css, /--ai-col-w: max\(320px, min\(var\(--ai-col-chosen-w, /);
-  // Each handle sits on its own line.
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) #ai-screen\[data-ai-preview="three"\] #ai-main-divider \{\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);/);
+  // Each handle sits on its own line, the pane's hairline it drags (#6397).
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) #ai-screen\[data-ai-preview="three"\] #ai-main-divider \{\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(css, /#ai-preview-divider \{\s+--divider-at: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
+  // #6447: below 1024px the two sheets are close enough that the list's 16px
+  // gutter is the gap you see, so the handle is centred in it. That media
+  // block is the one edge that adds 8px; every other edge stays on its pane's
+  // hairline.
+  const mobileGutter = /@media \(max-width: 1023\.98px\) \{\s*body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\s*\}\s*\}/;
+  assert.match(css, mobileGutter, 'below 1024px the handle sits halfway across the gap');
+  assert.doesNotMatch(css.replace(mobileGutter, ''), /--divider-at:[^;]*\+ 8px/,
+    'no other edge sits in the gutter any more');
   // The preview's own divider, not drawn where the preview is the whole screen.
-  assert.match(src, /\{layout === 'full' \? null : \(\s+<SidePanelDivider\s+panelRef=\{previewRef\}\s+shown=\{docked\}\s+id="ai-preview-divider"\s+controls="ai-preview-pane"\s+widthKey=\{AI_PREVIEW_WIDTH_KEY\}\s+probe=\{previewProbe\}/);
+  assert.match(src, /\{layout === 'full' \? null : \(\s+<SidePanelDivider\s+panelRef=\{previewRef\}\s+shown=\{columnOpen\}\s+id="ai-preview-divider"\s+controls="ai-preview-pane"\s+widthKey=\{AI_PREVIEW_WIDTH_KEY\}\s+probe=\{previewProbe\}/);
   assert.match(src, /const threeUp = detailHere && layout === 'three';/);
   assert.match(src, /const endAt = inlineStartOf\(box\);/, 'the thread is measured to where the preview begins');
   assert.match(src, /neighbourMin: \(probe\.neighbourMin \?\? 0\) \+ Math\.max\(0, roomEnd - endAt\), endAt/,
@@ -1529,6 +1749,37 @@ test('a preview beside the thread: both edges drag, each the width of the column
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /new ResizeObserver\(\(\) => settle\(\)\)/,
     'read again when the preview is resized');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /probe: measure = probeLayout,/);
+});
+
+test('a plan opened from a request in the side panel is a third column, not a sheet over it (#6394)', () => {
+  const css = read('public/css/app.css');
+  // The three columns' widths are declared on body so the side panel — an
+  // island beside #ai-screen, not inside it — reads the same figures; the
+  // screen inherits them and still pads its own list.
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) \{\n\s+--ai-preview-auto:/);
+  assert.match(css, /#ai-screen\[data-ai-preview="three"\] \{\n\s+padding-inline-end: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\)\);\n\}/);
+  // While a page is in the panel, the list keeps what the two columns leave.
+  assert.match(css, /html\[data-side-panel\] #ai-screen\[data-ai-preview="three"\] \{\n\s+padding-inline-end: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\)\);\n\}/);
+  // The panel itself is the middle column: the thread's width, ending where
+  // the preview begins (in three and in halves alike).
+  assert.match(css, /body:has\(#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\):not\(\.hidden\)\) \.side-panel \{\n\s+width: var\(--ai-col-w\);\n\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
+  // Its edge is the thread's edge in three, and is not drawn in halves,
+  // where the preview's own handle is the one that drags.
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+display: none;\n\}/);
+  // The page tells the panel's own island which edge it is: the thread's
+  // width key, the thread's probe to the preview, and the preview to watch.
+  const src = read('frontend/src/features/ai/index.tsx');
+  assert.match(src, /import \{ panelEdgeStore \} from '\.\.\/side-panel\/edge-store';/);
+  assert.match(src, /const pageInColumn = column\?\.at === 'page';/);
+  assert.match(src, /slot: visible && threeUp && pageInColumn\s+\? \{ widthKey: AI_PREVIEW_COLUMN_WIDTH_KEY, probe: threadProbe, watch: previewRef \}\s+: null,/);
+  // The panel reads it, and falls back to its own defaults with no slot.
+  const panel = read('frontend/src/features/side-panel/side-panel.tsx');
+  assert.match(panel, /const edge = useStoreState\(panelEdgeStore\)\.slot;/);
+  assert.match(panel, /<SidePanelDivider\s+panelRef=\{rootRef\}\s+shown=\{s\.open && !!s\.frameSrc\}\s+widthKey=\{edge\?\.widthKey\}\s+probe=\{edge\?\.probe\}\s+watch=\{edge\?\.watch\}\s+\/>/);
+  // The prerender is the panel as it was: no slot until the page sets one.
+  const { panelEdgeStore } = loadTsx('frontend/src/features/side-panel/edge-store.ts');
+  assert.equal(panelEdgeStore.get().slot, null);
 });
 
 test('the tab says Homeroom bot: a wide seat on a phone, two lines in the Duo column', () => {
@@ -1702,7 +1953,9 @@ test('one column state: where each row goes, the row it lights, its address and 
   assert.equal(column.columnAddress({ at: 'page', route: 'app/garden/dev/changes/2151' }), '#homeroom-bot/change/garden/2151');
   assert.equal(column.columnAddress({ at: 'page', route: 'app/garden/dev/governance/7' }), '#homeroom-bot/decision/garden/7');
   assert.equal(column.columnAddress({ at: 'page', route: 'app/garden/workshop' }), '#homeroom-bot', 'a page that is no item is the tab');
-  assert.equal(column.columnAddress(null), '#homeroom-bot', 'a phone\'s list');
+  assert.equal(column.columnAddress(null), '#homeroom-bot', 'the lists alone, on a phone or a desktop');
+  // #6425: a close to nothing leaves Main's attachment as it was.
+  assert.equal(column.attachmentFor({ at: 'page', route: 'app/garden/dev/issues/6149' }, null, 'back'), 'none');
   // #6212: the attachment follows what you are looking at.
   const decide = { at: 'page', route: 'app/garden/dev/governance/5813' };
   const plan = { at: 'page', route: 'app/garden/dev/issues/6149' };
@@ -1799,4 +2052,131 @@ test('an item in the bot page\'s column has an address of its own, and its own p
   const { aboutRoute } = loadTsx('frontend/src/features/ai/index.tsx');
   assert.deepEqual(plain(aboutRoute('app/garden/dev/issues/12')), { type: 'issue', appSlug: 'garden', issueNumber: 12, title: null });
   assert.equal(aboutRoute('app/garden/dev/governance/3'), null);
+});
+
+// #6398 (6 Nov 2026, Evan: "offer a search icon here, next to the plus, to
+// search through your threads"). A round search button beside the plus opens
+// a box under the heading; every list narrows to the threads whose title,
+// number ("6011" or "#6011") or project name contains what was typed, a
+// section with no match folds away, Main Chat steps aside, and one short note
+// says when nothing matched at all.
+test('#6398: the search narrows every list by title, number or project, hides Main Chat, and says when nothing matches', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const LISTS = 'frontend/src/features/ai/lists.tsx';
+  const games = { slug: 'games', name: 'Game corner', icon_url: null, icon_emoji: null };
+  const need = (key, title, a, number) => ({
+    key, title, app: a, who: 'all', unread: 0,
+    sub: { id: 'messages:ai.row.where', values: { project: a.name, number } },
+    pill: { id: 'messages:ai.pill.vote' }, href: `#app/${a.slug}/dev/issues/${number}`, rootId: null,
+    threadId: number,
+  });
+  const at = (threadId, number, what, a, title, group = 'next') => thread(threadId, number, what, {
+    app: a, title, group, href: `#app/${a.slug}/dev/issues/${number}`,
+  });
+  const all = {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 2,
+    rows: [
+      need('need:proposal:1', 'Releases: make the migration job cheaper', app, 6010),
+      need('need:proposal:2', 'Dark mode', games, 403),
+    ],
+    progress: [at(3, 6011, 'building', app, 'Releases: reuse image scan results safely')],
+    waiting: [at(4, 6012, 'vote', games, 'Seed the garden')],
+    live: [at(5, 777, 'live', games, 'Ship the seed catalogue', 'live')],
+    openRow() {}, openThread() {},
+  };
+  const html = (extra) => renderComponent(LISTS, 'AiLists', { ...all, ...extra });
+
+  // No search: every row, Main Chat first, nothing folded away.
+  const plain = html({ query: '' });
+  assert.match(plain, /data-ai-main-row=""/, 'Main Chat is drawn with an empty search');
+  for (const title of ['make the migration', 'Dark mode', 'reuse image scan', 'Seed the garden', 'Ship the seed']) {
+    assert.ok(plain.includes(title), title);
+  }
+
+  // A title keeps only the row that says it; the sections with no match fold away.
+  const byTitle = html({ query: 'migration' });
+  assert.match(byTitle, /make the migration job cheaper/);
+  assert.doesNotMatch(byTitle, /Dark mode|reuse image scan|Seed the garden|Ship the seed/, 'only the matching row');
+  assert.doesNotMatch(byTitle, /data-ai-main-row/, 'Main Chat steps aside while you search');
+  assert.doesNotMatch(byTitle, /data-ai-list="busy"/, 'In progress & waiting has no match, so its card is gone');
+  assert.doesNotMatch(byTitle, /data-ai-list="live"/, 'nor Live this week');
+  assert.equal(message('messages:ai.work.titleCount', { count: 1 }), 'Needs you · 1');
+  assert.match(byTitle, /Needs you · 1/, 'the Needs you count over its rows is its matches');
+
+  // A number matches with or without the #, as the row shows it.
+  for (const query of ['6011', '#6011']) {
+    const byNumber = html({ query });
+    assert.match(byNumber, /reuse image scan results safely/, query);
+    assert.doesNotMatch(byNumber, /make the migration|Dark mode|Seed the garden|Ship the seed/, query);
+  }
+
+  // A project's name keeps every row of it, in whatever list.
+  const byProject = html({ query: 'game corner' });
+  assert.match(byProject, /Dark mode/);
+  assert.match(byProject, /Seed the garden/);
+  assert.match(byProject, /Ship the seed/);
+  assert.doesNotMatch(byProject, /make the migration|reuse image scan/);
+
+  // A match past a project's first few is drawn, not folded: with no search
+  // the seventh row waits behind Show more, and with one it is on the page.
+  const many = Array.from({ length: 7 }, (_, i) => need(`need:proposal:${i + 1}`, `Release note ${i + 1}`, app, 500 + i));
+  const folded = renderComponent(LISTS, 'AiLists', { ...all, rows: many, progress: [], waiting: [], live: [], owed: 7 });
+  assert.match(folded, /data-ai-group-rest=""/, 'the rest of a project folds away with no search');
+  const matched = renderComponent(LISTS, 'AiLists', { ...all, rows: many, progress: [], waiting: [], live: [], owed: 7, query: 'release note' });
+  assert.doesNotMatch(matched, /data-ai-group-rest=""/, 'every match shows, with no fold over it');
+  assert.match(matched, /Release note 7/);
+
+  // Nothing matches: one short note in place of every list.
+  const none = html({ query: 'zzz' });
+  assert.match(none, /<div class="[^"]*" data-ai-search-empty=""><p class="[^"]*">No threads match “zzz”<\/p><\/div>/);
+  assert.ok(none.includes(message('messages:ai.search.none', { query: 'zzz' })));
+  assert.doesNotMatch(none, /data-ai-list="(?:work|busy|live|history)"/, 'every card folds away');
+  assert.doesNotMatch(none, /data-ai-main-row/, 'and Main Chat is hidden');
+
+  // Before the lists are read, the skeleton stays and no note is shown.
+  const loading = html({ query: 'zzz', ready: false });
+  assert.match(loading, /data-ai-loading=""/);
+  assert.doesNotMatch(loading, /data-ai-search-empty/);
+
+  // The button and the box (index.tsx): the search button sits beside the
+  // plus, with the app's magnifying glass, and the box's text is what the
+  // lists narrow to.
+  const src = read('frontend/src/features/ai/index.tsx');
+  const toggle = src.indexOf('data-ai-search-toggle=""');
+  assert.ok(toggle > 0 && toggle < src.indexOf('<NewThreadButton'), 'the search button is beside the plus, before it');
+  const button = src.slice(src.lastIndexOf('<button', toggle), src.indexOf('</button>', toggle));
+  assert.match(button, /aria-label=\{t\('messages:ai\.search\.open'\)\}/, 'it is named for what it does');
+  assert.match(button, /<SearchIcon aria-hidden="true" \/>/);
+  assert.match(button, /h-10 w-10[^"]*rounded-full/, 'the plus\'s own round button');
+  assert.match(src, /query=\{searchOpen \? query : ''\}/, 'the box\'s text is passed to the lists');
+  assert.match(src, /data-ai-search=""/, 'the box the More projects panel has');
+  assert.equal(message('messages:ai.search.open'), 'Search your threads');
+  assert.equal(message('messages:ai.search.label'), 'Search your threads');
+  assert.equal(message('messages:ai.search.none', { query: 'releases' }), 'No threads match “releases”');
+});
+
+// #6389: the person's own change, made through a coding agent, whose votes
+// are in and whose tests fail or which conflicts with main. It says what it
+// waits on in place of Vote, and the phone's second line says both when both.
+test('#6389: Needs you says what your own change waits on instead of Vote', () => {
+  const { needsYou, whyOf } = loadTsx(MODEL);
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+  const app = { slug: 'usernode', name: 'Homeroom' };
+  const item = (waitingOn) => ({ kind: 'proposal', id: 6358, number: 6358, title: 'Guard apps', app, waitingOn, agent: 'claude-code' });
+  const [checks] = needsYou([item(['checks'])], null);
+  assert.deepEqual(plain(checks.pill), { id: 'messages:ai.pill.testsFailing' });
+  assert.equal(checks.sub.id, 'messages:ai.row.waitsOnFixTests');
+  assert.equal(whyOf(checks).id, 'messages:ai.why.fixTests');
+  const [both] = needsYou([item(['checks', 'conflict'])], null);
+  assert.deepEqual(plain(both.pill), { id: 'messages:ai.pill.testsFailing' });
+  assert.equal(both.sub.id, 'messages:ai.row.waitsOnFixBoth');
+  assert.equal(whyOf(both).id, 'messages:ai.why.fixBoth');
+  const [conflict] = needsYou([item(['conflict'])], null);
+  assert.deepEqual(plain(conflict.pill), { id: 'messages:ai.pill.conflicts' });
+  assert.equal(conflict.sub.id, 'messages:ai.row.waitsOnFixConflict');
+  assert.equal(whyOf(conflict).id, 'messages:ai.why.fixConflict');
+  // A plain change for a vote still says Vote, and says nothing more.
+  const [plainVote] = needsYou([{ kind: 'proposal', id: 2, number: 601, title: 'Plain', app }], null);
+  assert.deepEqual(plain(plainVote.pill), { id: 'messages:ai.pill.vote' });
+  assert.equal(whyOf(plainVote), null);
 });

@@ -789,6 +789,53 @@ test('each tool says what the bot is doing, in kinds the screen words', () => {
   }
 });
 
+test('#6405: once the turn has named a step, an unmapped tool does not drop the card back to "Thinking"', async () => {
+  const said = [];
+  const pool = { async query() { return { rows: [] }; } };
+  const ctx = { user: { id: 9 }, deps: { doing: async (what) => { said.push(what); } } };
+  await mayor.sayDoing(pool, ctx, 'comment_on_request', {});
+  assert.deepEqual(said, [null], 'before any step is named: "Thinking"');
+  await mayor.sayDoing(pool, ctx, 'progress', {});
+  assert.deepEqual(said.at(-1), { kind: 'progress' }, 'a step of its own is named');
+  await mayor.sayDoing(pool, ctx, 'comment_on_request', {});
+  assert.equal(said.length, 2, 'a tool with no name of its own says nothing now');
+  await mayor.sayDoing(pool, ctx, 'draw_screen', {});
+  assert.deepEqual(said.at(-1), { kind: 'drawing' }, 'a newly named step still shows');
+  // A turn that never names one keeps "Thinking", as before.
+  const quiet = [];
+  const fresh = { user: { id: 9 }, deps: { doing: async (what) => { quiet.push(what); } } };
+  await mayor.sayDoing(pool, fresh, 'comment_on_request', {});
+  await mayor.sayDoing(pool, fresh, 'list_requests', {});
+  assert.deepEqual(quiet, [null, null]);
+});
+
+test('#6405: the correction pass never shows the card a shorter answer than it already has', async () => {
+  const first = 'Refreshed. Homeroom has 80 open requests. The newest is the one about the live reply jumping, '
+    + 'and it has no votes yet.';
+  let round = 0;
+  const stream = (req, text) => req.onDelta({ content: '', toolCalls: [{ index: 0, function: { name: 'reply', arguments: JSON.stringify({ text }) } }] });
+  const chat = async (req) => {
+    round += 1;
+    if (round === 1) {
+      stream(req, first);
+      // It promises a draft it never made: the claim check asks it again.
+      return { content: '', toolCalls: [call('reply', { text: `${first} A File it button will appear under this message.` })] };
+    }
+    // The rewrite starts at its first word, as the issue's reply did.
+    stream(req, 'Ref');
+    stream(req, 'Refreshed. Homeroom has 80 open requests.');
+    return { content: '', toolCalls: [call('reply', { text: 'I have not drafted it, so there is nothing to tap.' })] };
+  };
+  const turn = mayorTurn([], { chat });
+  await turn.run;
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(round, 2, 'the claim check asked it again');
+  const writing = turn.doings.filter((d) => d?.kind === 'writing');
+  assert.equal(writing.length, 1, 'the first pass was shown, and the rewrite never replaced it with less');
+  assert.equal(writing[0].text, first);
+  assert.equal(turn.sent.length, 1, 'one reply, checked');
+});
+
 test('a project it reads is named only when the person can see it, and asked about once a turn', async () => {
   const said = [];
   const queries = [];
@@ -913,8 +960,9 @@ test('the card ends the transcript where the answer lands, in Main Chat and in a
   assert.match(screen, /\{rows\}\n\s+\{working \? <BotWorkingCard typist=\{working\} \/> : null\}\n\s+\{\/\* #2387: a message link opened the transcript part-way back\. \*\/\}/);
   assert.match(screen, /const threadWorking = workingBot\(threadTypists\);\n\s+const threadTyping = typingBesides\(threadTypists, threadWorking\);/);
   assert.match(screen, /\}\)\}\n\s+\{threadWorking \? <BotWorkingCard typist=\{threadWorking\} \/> : null\}\n\s+\{privateRoot && privateMine && root \? \(/);
-  // The foot is as #6091 left it: the status line still follows Jump to latest.
-  assert.match(screen, /<\/TranscriptOverlay>\n\s*<ChatStatusLine className="messages-typing">\{typingLine\(t, typing\)\}<\/ChatStatusLine>\n\s*<MessageComposer \/>/);
+  // The foot is as #6091 left it: the status line still follows Jump to
+  // latest, and #6426's Welcome back card sits between it and the box.
+  assert.match(screen, /<\/TranscriptOverlay>\n\s*<ChatStatusLine className="messages-typing">\{typingLine\(t, typing\)\}<\/ChatStatusLine>\n\s*(?:\{mainChat && botDm && conversationId \? <WelcomeBack[^\n]*\/> : null\}\n\s*)?<MessageComposer \/>/);
   assert.match(screen, /<ChatStatusLine className="messages-typing">\{typingLine\(t, threadTyping\)\}<\/ChatStatusLine>\n\s*<MessageComposer threadRootId=\{rootId\} \/>/);
   // An island's first render is the empty transcript: the card waits for the store.
   const card = read('frontend/src/features/messages/bot-working.tsx');

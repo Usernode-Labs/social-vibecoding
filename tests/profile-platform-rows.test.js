@@ -1,7 +1,8 @@
 'use strict';
 
 // The Me tab's lists of rows (UI overhaul, regrouped by the navigation
-// review): "Your work" (Your changes, Your requests, Your votes), "Rewards"
+// review): "Your work" (Your changes, Your requests, Your feedback, Your
+// votes), "Rewards"
 // (Challenges & standings, Kudos) and "Account" (Friends, App slots), each
 // row with a line under it that says what is behind it (`scrMe` in the
 // prototype), and a Settings card at the foot shown at every width (#5557).
@@ -47,6 +48,7 @@ const ROWS = [
   // username can have (a username has no hyphen).
   ['profile-row-proposals', '#homeroom-bot/history?kind=change'],
   ['profile-row-feedback', '#homeroom-bot/history?kind=request'],
+  ['profile-row-feedback-history', '#profile?feedback'],
   ['profile-row-votes', '#homeroom-bot/history?kind=vote'],
   // Rewards.
   ['profile-row-challenges', '#leaderboard/challenges'],
@@ -77,7 +79,7 @@ test('the rows are anchors to their destinations', () => {
   }
 });
 
-test('in order: Your changes, requests, votes; then Challenges & standings, Kudos; Friends, App slots; Profile, Notifications, Settings', () => {
+test('in order: Your changes, requests, feedback, votes; then Challenges & standings, Kudos; Friends, App slots; Profile, Notifications, Settings', () => {
   const order = ROWS.map(([id]) => CODE.indexOf(`id="${id}"`));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
   // The regrouped panels: Your work, then Rewards, then Account, then the
@@ -90,8 +92,11 @@ test('in order: Your changes, requests, votes; then Challenges & standings, Kudo
   assert.ok(!CODE.includes('id="profile-more"'), 'the "More" list is gone');
   // Friends opens its card in place on a plain click; the browser keeps the rest.
   assert.match(rowSource(CODE, 'profile-row-friends'), /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showFriends\(\);/);
+  // Your feedback opens its sheet the same way (#6452).
+  assert.match(rowSource(CODE, 'profile-row-feedback-history'), /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showFeedback\(\);/);
   const { validateUsername } = require('../src/services/usernames');
-  for (const [, href] of ROWS.filter(([id]) => /proposals|feedback|votes/.test(id))) {
+  const historyRows = ['profile-row-proposals', 'profile-row-feedback', 'profile-row-votes'];
+  for (const [, href] of ROWS.filter(([id]) => historyRows.includes(id))) {
     const tail = href.split('/')[1];
     assert.equal(validateUsername(tail).ok, false, `${tail} can never be somebody's username`);
   }
@@ -119,8 +124,15 @@ test('Profile opens the Edit profile sheet in place on a plain click', () => {
 });
 
 test('App slots says the allowance in words, and opens the create dialog in place', () => {
-  assert.match(rowSource(CODE, 'profile-row-app-slots'),
-    /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*\(window[^;]*\.App\?\.showCreateModal\?\.\(\);/);
+  // #6446: a plain click opens the make screen while a slot is free, and the
+  // App allowance card (Profile.showAppSlots) once none is, so a viewer at
+  // the limit is told why instead of being sent to a Make it they cannot use.
+  const slotsRow = rowSource(CODE, 'profile-row-app-slots');
+  assert.match(slotsRow,
+    /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);/);
+  assert.match(slotsRow,
+    /allowance\.blocked[\s\S]*?Profile\.showAppSlots\(\)[\s\S]*?\.App\?\.showCreateModal\?\.\(\);/,
+    'a blocked allowance opens the allowance card; otherwise the make screen');
   const { appSlotsLine } = loadTsx('frontend/src/features/dialogs/app-allowance.tsx');
   assert.equal(appSlotsLine(null, null), null, 'no allowance yet, no invented count');
   assert.equal(appSlotsLine({ used: 1, limit: 2, remaining: 1 }, null), '1 of 2 app slots used');
@@ -141,6 +153,41 @@ test('App slots says the allowance in words, and opens the create dialog in plac
   assert.match(html, /id="profile-row-app-slots"[\s\S]*?App slots[\s\S]*?1 of 2 app slots used/);
   assert.match(html, /id="profile-account"/);
   assert.match(html, /id="profile-row-friends"/, 'Friends sits in the Account group with it');
+});
+
+test('with no slot free the App allowance card says so, and offers Request more (#6446)', () => {
+  const store = loadTsx('frontend/src/features/dialogs/app-allowance-store.js');
+  const allowance = loadTsx('frontend/src/features/dialogs/app-allowance.tsx', {
+    stubs: { './app-allowance-store.js': store },
+  });
+  const sheet = loadTsx('frontend/src/features/profile/app-slots-sheet.tsx', {
+    stubs: { '../dialogs/app-allowance': allowance },
+  });
+
+  store.seedAppAllowance({ appCreationQuota: { used: 2, limit: 2, remaining: 0 } });
+  const spent = renderToHtml(createElement(sheet.AppSlotsSheet, {}));
+  assert.match(spent, /id="profile-app-slots-sheet"/);
+  assert.match(spent, /id="profile-app-slots-close"/);
+  assert.match(spent, /App allowance/);
+  assert.match(spent, /data-quota-state="spent"/);
+  assert.match(spent, /2 of 2 app slots used/);
+  assert.match(spent, /Request more/);
+
+  // A full server is a no-slot state too, and more slots would not help, so
+  // the card says so and offers no request.
+  store.seedAppAllowance({
+    appCreationQuota: { used: 0, limit: 2, remaining: 2 },
+    appServerCapacity: { used: 50, limit: 50, remaining: 0 },
+  });
+  const full = renderToHtml(createElement(sheet.AppSlotsSheet, {}));
+  assert.match(full, /data-quota-state="server-full"/);
+  assert.match(full, /Server is full/);
+  assert.doesNotMatch(full, /Request more/);
+
+  // The card renders only while it is asked for: the store starts closed.
+  const STORE = fs.readFileSync(
+    path.join(ROOT, 'frontend/src/features/profile/profile-store.js'), 'utf8');
+  assert.match(STORE, /appSlotsOpen: false/);
 });
 
 test('the rows that moved to Settings are not on Me any more', () => {
@@ -175,15 +222,15 @@ test('it renders the data\'s lines, and quiet fallbacks without them', () => {
   assert.match(quietAccount, /How many apps you can create/, 'no allowance yet, no invented count');
 
   const work = renderToHtml(createElement(mod.WorkPanel, {
-    rows: { changes: '9 merged · 2 in progress', requests: '2 open · 1 done', votes: 'Latest: Timer sounds' },
+    rows: { changes: '9 merged · 2 in progress', requests: '2 open · 1 done', feedback: '3 sent · 1 counted', votes: 'Latest: Timer sounds' },
   }));
   assert.match(work, /id="profile-work"/);
   assert.match(work, /Your work<\/h2>/);
-  for (const line of ['Your changes', '9 merged · 2 in progress', 'Your requests', '2 open · 1 done', 'Your votes', 'Latest: Timer sounds']) {
+  for (const line of ['Your changes', '9 merged · 2 in progress', 'Your requests', '2 open · 1 done', 'Your feedback', '3 sent · 1 counted', 'Your votes', 'Latest: Timer sounds']) {
     assert.ok(work.includes(line), line);
   }
   const quiet = renderToHtml(createElement(mod.WorkPanel, { rows: {} }));
-  for (const line of ['Everything you have started', 'What you asked for, and where it stands', 'The changes and decisions you voted on']) {
+  for (const line of ['Everything you have started', 'What you asked for, and where it stands', 'What you sent, and whether it counted', 'The changes and decisions you voted on']) {
     assert.ok(quiet.includes(line), line);
   }
 });

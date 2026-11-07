@@ -1842,8 +1842,9 @@ const AppView = {
   //   * A way back: the frame must say it opened (the bridge's
   //     `__usernode_offline_cache: 'open'`). Online, a page that never says so
   //     (one that needs the token to load, or loads no bridge) is framed the
-  //     old way on this device for a week. Offline, it gives way to the
-  //     "needs a connection" placeholder.
+  //     old way on this device for a week, and reported: two people on one
+  //     build make it the old way on every device until the app deploys
+  //     again. Offline, it gives way to the "needs a connection" placeholder.
   //
   // Per device and per viewer, like the offline-ready map: dropped with the
   // session (clearOfflineReady).
@@ -1946,9 +1947,29 @@ const AppView = {
       // The page did not open without the token in its query: the old
       // address, on this device, for a while.
       map[slug] = { at: Date.now(), oldAddressUntil: Date.now() + AppView.OFFLINE_CACHE_RETRY_MS };
+      AppView._reportOfflineCacheDidNotOpen(slug);
     }
     AppView._writeOfflineCache(map);
     if (AppView.appData && AppView.appData.slug === slug) AppView.renderAppTab();
+  },
+
+  // Online, and the page never said it opened: tell the platform as well.
+  // Once two people have seen it on the same build, every device frames the
+  // app the old way until it deploys again (`offline_cache` comes back
+  // false; services/offline-cache-refusals.js), instead of each one opening
+  // it signed out first. Best effort: the device's own fallback above
+  // stands either way.
+  _reportOfflineCacheDidNotOpen(slug) {
+    const build = String(AppView.buildFor(slug) || '');
+    if (!slug || !/^[0-9a-f]{40}$/i.test(build)) return;
+    try {
+      fetch(`/api/apps/${encodeURIComponent(slug)}/offline-cache/did-not-open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ build }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch { /* no fetch here: the device's fallback alone */ }
   },
 
   // Bridge -> shell: `{ __usernode_offline_cache: 'open', fresh }`, from the
@@ -2249,10 +2270,7 @@ const AppView = {
     const home = AppView._home();
     const fromHome = home && Array.isArray(home._apps)
       ? home._apps.find((a) => a && a.slug === slug) : null;
-    if (fromHome) return fromHome;
-    const fromBrowse = window.Browse && typeof Browse.appBySlug === 'function'
-      ? Browse.appBySlug(slug) : null;
-    return fromBrowse || null;
+    return fromHome || null;
   },
 
   // Only launch eagerly when the frame we'd mount is the same frame
@@ -4922,7 +4940,7 @@ const AppView = {
       // it (App._syncPlatformTabs, App._isChannelThread) and the hub is what
       // it hangs off. The reset above publishes 'none', which is right for
       // the hub and the board; this thread has somewhere to go up TO.
-      App.setBackIcon?.('arrow', App._hubHref?.(App.currentApp) || '#communities');
+      App.setBackIcon?.('arrow', App._hubHref?.(App.currentApp) || '/');
       AppView._renderChatSubView(content);
       return;
     }
@@ -5292,6 +5310,46 @@ const AppView = {
         return;
       }
     }
+    // 6 Nov 2026 (#6439): a vote to close a request has its home on the
+    // request's page. An old `dev/governance/<id>` address (or a
+    // notification that still carries one) forwards there in place of this
+    // page (no Back entry), with its close card in view. Every other
+    // decision draws the governance view below.
+    // #6440: a vote about ONE request or thread (a reopen, a merge or split
+    // somebody objected to) is drawn on that page, not on one of its own.
+    // Every producer of `dev/governance/<id>` keeps its address; this is
+    // where it lands, in place of this page (no Back entry).
+    if (ref.kind === 'gov' && ref.id) {
+      const asked = { kind: 'gov', id: ref.id };
+      AppView._devTopic = asked;
+      AppView._reactDevBoard()?.mountTopicSubView(content);
+      const closeHome = await AppView._closeVoteHomeOf(ref.id);
+      if (AppView._devTopic !== asked) return;
+      if (closeHome) {
+        window.UsernodeReact?.devBoard?.showClose?.(ref.id);
+        AppView.openTopic('issue', closeHome, { replaceRoute: true });
+        return;
+      }
+      // Only a reopen or a merge/split vote can belong to a page of its own.
+      // A row the lists already hold says which it is (its `kind`), so the
+      // others are drawn straight from it with no by-id read.
+      const known = AppView._findTopicItem();
+      let home = known ? known.home : undefined;
+      if (home === undefined && (!known || ['reopen_issue', 'thread_move'].includes(known.kind))) {
+        home = await AppView._govHomeOf(ref.id);
+      }
+      if (AppView._devTopic !== asked || !document.getElementById('dev-topic-thread')) return;
+      // While it counts, the vote is drawn HERE — the thread layout with its
+      // Votes card — because the request's page does not carry one yet
+      // (#6439 builds that for close votes, and the reopen path follows it).
+      // An ENDED vote is only a fact about the request or thread, so it lands
+      // on that page.
+      const open = known ? known.status === 'open' : !!(home && home.open);
+      if (home && home.number && !open) {
+        await AppView.openTopic(home.kind === 'request' ? 'issue' : 'proposal', home.number, { replaceRoute: true });
+        return;
+      }
+    }
     AppView._devTopic = ref.pr
       ? { kind: ref.kind, id: ref.id, pr: ref.pr }
       : { kind: ref.kind, id: ref.id };
@@ -5568,6 +5626,32 @@ const AppView = {
     return false;
   },
 
+  // #6440: where a governance vote belongs, when it is about one request or
+  // thread: `{ kind: 'request'|'change', number }` from the vote's own row
+  // (routes/issues.js governance/:id `home`), or null when it has a page of
+  // its own. Asked once per vote and app; a failed read is "its own page".
+  _govHomes: new Map(),
+  async _govHomeOf(id) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    const n = Number(id);
+    if (!slug || !Number.isInteger(n) || n <= 0) return null;
+    const key = `${slug}:${n}`;
+    if (!AppView._govHomes.has(key)) {
+      const read = fetch(`/api/apps/${encodeURIComponent(slug)}/governance/${n}${AppView._demoQS()}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const home = data && data.proposal && data.proposal.home;
+          const number = Number(home && home.number);
+          if (!home || !Number.isInteger(number) || number <= 0) return null;
+          return { kind: home.kind === 'request' ? 'request' : 'change', number, open: !!(data && data.proposal && data.proposal.status === 'open') };
+        })
+        .catch(() => null);
+      AppView._govHomes.set(key, read);
+      read.then((home) => { if (home == null) AppView._govHomes.delete(key); });
+    }
+    return AppView._govHomes.get(key);
+  },
+
   // 1 Nov 2026 (one page per thread): the request whose page change `id`
   // lives on, or null when it keeps its own page (routes/threads.js, the
   // change's home). Asked once per change and app; a read that fails or
@@ -5595,6 +5679,53 @@ const AppView = {
     const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), AppView.CHANGE_HOME_WAIT_MS); });
     try {
       return await Promise.race([AppView._changeHomes.get(key), late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  // 6 Nov 2026 (#6439): a vote to close a request is decided on the
+  // request's page, where its thread already draws it. This reads the one
+  // thing that decides whether a governance address has that home: the row's
+  // kind, and the request a close vote targets. Only a close_issue answers
+  // with a number; every other decision keeps its own page.
+  //
+  // A row the lists or the on-demand cache already hold answers at once,
+  // with no read: it is the same row this page would draw, and asking the
+  // server for a copy of it is the needless by-id fetch the topic page
+  // already avoids (#4524).
+  _closeVoteHomes: new Map(),
+  async _closeVoteHomeOf(id) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    const n = Number(id);
+    if (!slug || !Number.isInteger(n) || n <= 0) return null;
+    const held = AppView._findItem('gov', n);
+    if (held) {
+      if (held.kind !== 'close_issue' && held.row_type !== 'close_issue') return null;
+      const asked = Number(held.payload && held.payload.issueNumber);
+      // A close vote names the request it closes; one that somehow does not
+      // is read below rather than guessed at.
+      if (Number.isInteger(asked) && asked > 0) return asked;
+    }
+    const key = `${slug}:${n}`;
+    if (!AppView._closeVoteHomes.has(key)) {
+      const read = fetch(`/api/apps/${encodeURIComponent(slug)}/governance/${n}${AppView._demoQS()}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const p = data && data.proposal;
+          if (!p || p.kind !== 'close_issue') return null;
+          const issue = Number(p.payload && p.payload.issueNumber);
+          return Number.isInteger(issue) && issue > 0 ? issue : null;
+        })
+        .catch(() => null);
+      AppView._closeVoteHomes.set(key, read);
+      // A read that answers "its own page" is asked again next time.
+      read.then((home) => { if (home == null) AppView._closeVoteHomes.delete(key); });
+    }
+    let timer = null;
+    const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), AppView.CHANGE_HOME_WAIT_MS); });
+    try {
+      return await Promise.race([AppView._closeVoteHomes.get(key), late]);
     } finally {
       clearTimeout(timer);
     }
@@ -5976,7 +6107,12 @@ const AppView = {
       // #4455: a change's page lives in the thread's header host too, as an
       // issue's and a governance topic's do.
       react.mountTopicHead(head);
-      react.publishTopicHead({ card, body, item: t.kind === 'session' || t.kind === 'proposal' ? item : null });
+      // #6440: a governance vote's page is the thread layout a request's is,
+      // and its head draws the row itself (governance-head.tsx), so the page
+      // publishes the row and no card.
+      react.publishTopicHead(t.kind === 'gov'
+        ? { card: null, body: { decision: item }, item: null }
+        : { card, body, item: t.kind === 'session' || t.kind === 'proposal' ? item : null });
     }
     // The Explore pills read `aiEnabledStore` now, so the DOM pass that used
     // to dim them per paint is gone; this refreshes the one fact they read.
@@ -6321,6 +6457,15 @@ const AppView = {
     const readingTrack = !st && !merged && !closed && !hold
       && !waitingOnBot && !planHeld && !upForVote
       && !!(issue.track && issue.track.work && issue.track.work.stage === 'reading');
+    // #6399: the stored track's own word, the one the track card says. When
+    // Homeroom bot handed the request back to the viewer and nobody else is
+    // on it, this card says the same thing and offers what unblocks it,
+    // never "Nobody is working on this yet" with Ask.
+    const work = (issue.track && issue.track.work) || null;
+    const trackWaits = !st && !merged && !closed && !hold && !upForVote && !planHeld
+      && !(waitingOnBot && waitingOnBot.kind === 'question')
+      && !!work && work.stage === 'waiting_for_you';
+    const waitingLead = trackWaits ? AppView._requestWaitingLead(work) : null;
     let lead;
     if (merged) lead = PlatformI18n.t('changes:request.status.lead.live');
     else if (waitingOnBot && waitingOnBot.kind === 'question') lead = PlatformI18n.t('changes:request.status.lead.botQuestion');
@@ -6328,6 +6473,7 @@ const AppView = {
     else if (upForVote) lead = AppView._requestUpForVoteLead(issue);
     else if (hold) lead = hold;
     else if (readingTrack) lead = PlatformI18n.t('changes:request.status.lead.botReading');
+    else if (waitingLead) lead = waitingLead;
     else if (!st) lead = PlatformI18n.t('changes:request.status.lead.nobody');
     else if (st.key === 'in_review') {
       lead = who === 'you' ? PlatformI18n.t('changes:request.status.lead.reviewYours')
@@ -6352,7 +6498,10 @@ const AppView = {
     const refNumber = ref ? (parseInt(issue.addressed_by.prNumber, 10) || 0) : 0;
     // The sentence above already says it is live, or up for a vote.
     let note = null;
-    if (merged) {
+    if (work && work.line && work.line.outdated) {
+      // #6399: a hand-back reason a release has since removed.
+      note = PlatformI18n.t(AppView.REQUEST_OUTDATED_IDS[work.line.outdated] || 'changes:request.status.note.outdated');
+    } else if (merged) {
       note = closed
         ? (refNumber ? PlatformI18n.t('changes:request.status.note.closedByNumber', { number: refNumber }) : PlatformI18n.t('changes:request.status.note.closedByChange'))
         : null;
@@ -6408,9 +6557,46 @@ const AppView = {
     } else if (readingTrack) {
       // #6390: it is reading; the Ask button is gone, as on a fresh page.
       action = toChange;
+    } else if (trackWaits) {
+      // #6399: one step, the one that unblocks the bot's wait: Go ahead, a
+      // reply to its note, or asking it to read a reason that is out of date.
+      if (!AppView.readOnly) {
+        if (work.line && work.line.outdated) {
+          action = {
+            label: PlatformI18n.t('changes:request.status.action.readAgain'),
+            title: PlatformI18n.t('changes:request.status.action.readAgainTitle'),
+            act: { fn: 'askBotToReadAgain', args: [issue.number] },
+          };
+        } else if (work.why === 'decide') {
+          action = {
+            label: PlatformI18n.t('changes:request.status.action.goAhead'),
+            title: PlatformI18n.t('changes:request.status.action.goAheadTitle'),
+            act: {
+              fn: 'answerBotOnRequest',
+              args: [issue.number, Number(waitingOnBot && waitingOnBot.messageId) || 0, 1, 'Go ahead'],
+            },
+          };
+        } else {
+          // Waiting for an answer or more detail: reply to its note. With no
+          // note recorded here, the composer starts at @homeroom_bot.
+          const primary = waitingOnBot ? AppView._issuePrimaryActionSpec(issue, { noNav: true }) : null;
+          action = primary
+            ? { label: primary.label, title: primary.title, disabled: !!primary.disabled, act: primary.act }
+            : {
+              label: PlatformI18n.t('changes:issue.action.replyToBot'),
+              title: AppView._botWaitingHint({ kind: 'person' }),
+              act: { fn: 'answerBotOnRequest', args: [issue.number, 0, 1] },
+            };
+        }
+      }
     } else if (!AppView.readOnly) {
       const primary = AppView._issuePrimaryActionSpec(issue, { noNav: true });
-      action = primary
+      // #6401: See progress would scroll to the progress card drawn right
+      // under this card, which already says where Homeroom bot is; on the
+      // request's own page it is not offered. The Workshop list keeps it
+      // (`_issuePrimaryActionSpec` itself), where the page is not current.
+      const redundant = !!(primary && primary.act && primary.act.fn === 'openBotChatFromRequest');
+      action = redundant ? null : primary
         ? { label: primary.label, title: primary.title, disabled: !!primary.disabled, act: primary.act }
         : toChange;
       // 1 Nov 2026: Build it now moved into the ⋯, as an agent session.
@@ -6433,7 +6619,7 @@ const AppView = {
       closed: closed && !merged ? (when ? PlatformI18n.t(closedIds.when, { when }) : PlatformI18n.t(closedIds.alone)) : null,
       // The sentence is Homeroom bot's state, plan included: no "Plan v1 is
       // ready for comments." after it (request-head.tsx).
-      botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot') || planHeld || !!hold || readingTrack),
+      botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot') || planHeld || !!hold || readingTrack || trackWaits),
       // #6387: the row expects a change section (request-head.tsx), so the
       // page holds its place while the thread is still being read.
       changeExpected: !!ref,
@@ -6444,7 +6630,7 @@ const AppView = {
       // where starting work on it is still open to this viewer: an open
       // request with no change built for it, nobody's bot on it, and no
       // session of the viewer's own already working on it.
-      ownAgent: !closed && !merged && !ref && !AppView.readOnly && !bot && !waitingOnBot && !hold && !readingTrack
+      ownAgent: !closed && !merged && !ref && !AppView.readOnly && !bot && !waitingOnBot && !hold && !readingTrack && !trackWaits
         && !issue.myPrSessionId && !(st && st.key === 'in_review'),
     };
   },
@@ -6465,6 +6651,30 @@ const AppView = {
     if (id) return PlatformI18n.t(id);
     const date = track.held && track.held.until ? AppView._workDateText(Date.parse(track.held.until)) : '';
     return date ? PlatformI18n.t('changes:request.status.lead.botOnHoldUntil', { date }) : null;
+  },
+
+  // #6399: the sentence for a request Homeroom bot handed back to the viewer
+  // (services/work-state.js `why`, and the track card's own words), with the
+  // bot's stored reason when it gave one. Null when the why has no sentence.
+  REQUEST_WAITING_REASON_IDS: {
+    decide: ['changes:request.status.lead.waitingDecide', 'changes:request.status.lead.waitingDecidePlain'],
+    needs_detail: ['changes:request.status.lead.waitingDetail', 'changes:request.status.lead.waitingDetailPlain'],
+    already_works: ['changes:request.status.lead.waitingDone', 'changes:request.status.lead.waitingDonePlain'],
+  },
+  // #6399: the note under that sentence for a reason a release has lifted
+  // (work-state.js LIFTED_LIMITS), by its code.
+  REQUEST_OUTDATED_IDS: {
+    posted_plan: 'changes:request.status.note.outdatedPostedPlan',
+  },
+  _requestWaitingLead(work) {
+    if (!work) return null;
+    if (work.why === 'question') return PlatformI18n.t('changes:request.status.lead.botQuestion');
+    if (work.why === 'plan') return PlatformI18n.t('changes:request.status.lead.botWaitsPlan');
+    const ids = AppView.REQUEST_WAITING_REASON_IDS[work.why];
+    if (!ids) return null;
+    const line = work.line;
+    const reason = line && line.code === 'reason' ? String(line.text || '').trim() : '';
+    return reason ? PlatformI18n.t(ids[0], { reason }) : PlatformI18n.t(ids[1]);
   },
 
   // The status card's sentence for a change up for a vote that no person's
@@ -7004,6 +7214,7 @@ const AppView = {
       const step = {
         key: AppView.STEP_KEYS[g.key] || g.key, gate: g.key, state: g.state, label: g.label,
         line: g.note || null, actions: [],
+        ...(g.skipped ? { skipped: true, attrs: { 'data-req-skipped': 'force' } } : {}),
       };
       if (g.action) step.actions.push({ key: `req:${g.key}`, cls: 'gc-vote-btn', label: g.action.label, title: g.action.title, act: g.action.act });
       const authorsTurn = g.actor === 'author' && (g.state === 'blocked' || g.state === 'waiting');
@@ -7028,7 +7239,7 @@ const AppView = {
               act: { fn: 'swapToStagingForSession', args: [item.id, ''] } });
           }
         }
-        if (g.state === 'done' && AppView._freshnessOf(item).baseVerdict === 'superseded') {
+        if (g.state === 'done' && !g.skipped && AppView._freshnessOf(item).baseVerdict === 'superseded') {
           step.attrs = { 'data-checks-base': 'superseded' };
         }
       }
@@ -7505,6 +7716,9 @@ const AppView = {
   // Tested line).
   openTechnicalDetails(id, part = null) {
     window.dispatchEvent(new CustomEvent('change-details-open', { detail: part ? { id: Number(id), part } : Number(id) }));
+    // #6441: its before-and-after is the change being looked at, so its
+    // "ready to try" leaves the bell as opening its page does.
+    if (part === 'shots') window.Notifications?.markProposalSeen?.(Number(id));
   },
 
   // #4479: a change's plan card, in request-model.ts's RequestSpecCard
@@ -7582,7 +7796,7 @@ const AppView = {
       via,
       status: statusState && statusState.label ? statusState : null,
       votes: AppView._changeVotesView(item, card),
-      testing: { ...AppView._changeTestingView(item), spent: AppView._changeSpentView(kind, item) },
+      testing: AppView._changeTestingView(item),
       shots: AppView._changeShotsView(kind, item),
       thanks: !AppView.readOnly && AppView._kudosOffered(item) && !['active', 'paused'].includes(item.status),
       // Its code did not come across from GitHub (_codeMissing): the page
@@ -7596,23 +7810,6 @@ const AppView = {
       // change has (_stackedOn): said in a notice above Votes and Testing,
       // with a door to the change it waits for.
       ...AppView._stackedView(kind, item),
-    };
-  },
-
-  // #6116: the Testing card's quiet line for a change's author: what the
-  // change has cost so far, the dev chat meter's "this change $X" as a
-  // sentence. The server sends the figure to its author and admins only
-  // (services/session-cost.js sessionCostForViewer), and never for a change
-  // submitted from a fork. Nothing at zero or unknown, like the meter.
-  _changeSpentView(kind, item) {
-    if (kind === 'gov' || !item || item.source === 'imported') return null;
-    const cents = Number(item.cost_total_cents);
-    if (!Number.isFinite(cents) || cents < 0) return null;
-    const amount = (cents / 100).toFixed(2);
-    if (amount === '0.00') return null;
-    return {
-      text: PlatformI18n.t('changes:page.testing.spent', { amount }),
-      title: PlatformI18n.t('devchat:budget.pill.thisChangeTitle'),
     };
   },
 
@@ -7682,6 +7879,25 @@ const AppView = {
     return Array.from({ length: total }, (_, i) => ({ weight: 1, pct: i < filled ? 100 : 0, state }));
   },
 
+  // The Votes card while an admin's force merge is held: the vote is not
+  // being counted, so it names who forced it and on which commit instead of
+  // asking for another member's yes.
+  _forceVotesView(item, force, yes, maj) {
+    const by = force.by || PlatformI18n.t('changes:page.votes.note.adminMergeNoName');
+    const head = force.head ? String(force.head).slice(0, 7) : null;
+    return {
+      name: PlatformI18n.t('changes:page.votes.name'),
+      figure: PlatformI18n.t('changes:page.votes.figure.adminMerge'),
+      tone: 'muted',
+      done: false,
+      segments: [{ weight: 1, pct: 100, state: 'idle' }],
+      label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
+      note: [head
+        ? PlatformI18n.t('changes:page.votes.note.adminMerge', { by, head })
+        : PlatformI18n.t('changes:page.votes.note.adminMergeNoHead', { by })],
+    };
+  },
+
   // The Votes card: its figure ("Needs 1 more yes", in the accent when the
   // viewer can give it, or "1 of 1 yes"), one part of the bar per yes it
   // needs, and one line under it: who can give it, any yes a newer push
@@ -7715,8 +7931,22 @@ const AppView = {
     // now is cleared when it lands, so the card says so and offers no Vote
     // until then; the tally and who can vote stay as they are.
     const updateComing = item.status === 'promoted' && !!item.update_coming;
+    // A held admin force merge skips the vote, so the card says that instead
+    // of asking for another member's yes; a force an authored push ended is
+    // named under the ordinary card so nobody wonders why it stopped.
+    const force = item.merge_force && typeof item.merge_force === 'object' ? item.merge_force : null;
+    const forceDropped = !force && item.merge_force_dropped && typeof item.merge_force_dropped === 'object'
+      ? item.merge_force_dropped : null;
+    if (force && item.status !== 'merged') return AppView._forceVotesView(item, force, yes, maj);
     const note = [];
     if (updateComing) note.push(PlatformI18n.t('changes:page.votes.note.updateComing'));
+    if (forceDropped) {
+      const by = forceDropped.by || PlatformI18n.t('changes:page.votes.note.adminMergeNoName');
+      const head = forceDropped.head ? String(forceDropped.head).slice(0, 7) : null;
+      note.push(head
+        ? PlatformI18n.t('changes:page.votes.note.adminMergeDropped', { by, head })
+        : PlatformI18n.t('changes:page.votes.note.adminMergeDroppedNoHead', { by }));
+    }
     if (item.status === 'merged' || item.status === 'merging') {
       const said = ready && ready.yesNames && ready.yesNames.length
         ? AppView._saidYesLine(ready.yesNames) : null;
@@ -7793,7 +8023,27 @@ const AppView = {
     // Not for a change whose code is missing: testing is not what it waits
     // on, and the page's notice says what is (_changeThreadView codeMissing).
     if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped' && !AppView._codeMissing(item)) {
-      note.push(item.check_state === 'failing' ? PlatformI18n.t('changes:page.votes.note.liveOnceFixed') : PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
+      if (item.check_state !== 'failing') {
+        note.push(PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
+      } else if (AppView._botBuilt(item)) {
+        // Homeroom bot's own change: it is fixing it (or stopped).
+        note.push(PlatformI18n.t('changes:page.votes.note.liveOnceFixed'));
+      } else if (mine) {
+        // #6389: your own change, made outside Homeroom, waits on your fix.
+        // Name the tool it was made in where the page knows it.
+        const agent = AppView.externalAgentProduct(item.external_agent);
+        note.push(agent
+          ? PlatformI18n.t('changes:page.votes.note.liveOnceYouFixIn', { agent })
+          : item.external_agent
+            ? PlatformI18n.t('changes:page.votes.note.liveOnceYouFixThere')
+            : PlatformI18n.t('changes:page.votes.note.liveOnceYouFix'));
+      } else {
+        // Somebody else's change: name who has to act.
+        const author = item.author || item.username || null;
+        note.push(author
+          ? PlatformI18n.t('changes:page.votes.note.liveOnceAuthorFixes', { author })
+          : PlatformI18n.t('changes:page.votes.note.liveOnceFixed'));
+      }
     }
     const fill = Math.min(yes, maj);
     return {
@@ -9578,6 +9828,10 @@ const AppView = {
       // #4453: a request's page is a Messages reply thread, the request its
       // root post, with its GitHub comments in the same stream.
       ...(t.kind === 'issue' ? { language: 'request', placeholder: PlatformI18n.t('changes:page.thread.replyPlaceholder') } : {}),
+      // #6440: a governance vote's page is that same reply thread, the vote
+      // its root post (topic/governance-head.tsx), with the proposal's own
+      // governance thread as its stream.
+      ...(t.kind === 'gov' ? { language: 'decision', placeholder: PlatformI18n.t('changes:page.thread.replyPlaceholder') } : {}),
       // #363: request the in-scroll header slot so _renderTopicHead can paint
       // the topic card/body above the messages in the same scroll region.
       withHeader: true,
@@ -9650,6 +9904,18 @@ const AppView = {
       if (AppView._devTopicAsked !== asked) return;
       AppView._devTopicAsked = null;
       if (home) return AppView._openChangeOnRequest(home, id, { panel: true });
+    } else if (kind === 'gov') {
+      // #6439: a vote to close a request opens as the request's page, at it,
+      // with its close card in view; every other decision keeps this panel.
+      const asked = { kind, id };
+      AppView._devTopicAsked = asked;
+      const home = await AppView._closeVoteHomeOf(id);
+      if (AppView._devTopicAsked !== asked) return;
+      AppView._devTopicAsked = null;
+      if (home) {
+        window.UsernodeReact?.devBoard?.showClose?.(Number(id));
+        return AppView.openTopicInPanel('issue', home);
+      }
     } else {
       AppView._devTopicAsked = null;
     }
@@ -17784,6 +18050,15 @@ const AppView = {
     };
     const live = AppView._withLiveState(gates, p);
     const s = AppView._summarizeRequirements(live, viewer);
+    // A held admin force merge says where it is instead of whose turn it is:
+    // the vote steps it skips are done, and the one it waits on is named.
+    const forced = block && block.forced && typeof block.forced === 'object' ? block.forced : null;
+    const FORCE_HEADLINE = {
+      main: 'changes:step.force.headline.main',
+      conflict: 'changes:step.force.headline.conflict',
+      merging: 'changes:step.force.headline.merging',
+      stopped: 'changes:step.force.headline.stopped',
+    };
     // One short line per step, the same words on the card and on the page;
     // the collapsed line's detail IS the current step's line, so the two can
     // never describe one fact differently.
@@ -17792,16 +18067,17 @@ const AppView = {
     return {
       t: 'requirements',
       key: `req:${p.id}`,
-      headline: s.headline,
+      headline: forced ? PlatformI18n.t(FORCE_HEADLINE[forced.step] || FORCE_HEADLINE.merging) : s.headline,
       detail: at >= 0 ? lines[at] : null,
       done: s.done,
       total: s.total,
       // Shut unless the step it is stuck on is one THIS viewer can clear.
       // Not remembered per viewer: a remembered "closed" would hide the one
       // case the rule exists for.
-      open: s.needsViewer,
+      open: forced ? (forced.step === 'stopped' && s.needsViewer) : s.needsViewer,
       gates: live.map((g, i) => ({
         key: g.key, label: g.label, actor: g.actor, state: g.state,
+        skipped: !!(g.detail && g.detail.skipped === 'force'),
         note: lines[i],
         action: AppView._requirementAction(g, viewer),
       })),
@@ -17840,6 +18116,9 @@ const AppView = {
   _stepLine(g, p, opts) {
     const o = opts || {};
     const detail = (g && g.detail) || {};
+    // A gate an admin's force merge skips says so, whatever its key: it is
+    // done, but not because the group or the checks did it.
+    if (detail.skipped === 'force') return PlatformI18n.t('changes:step.force.skipped');
     const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
     const gates = o.gates || [];
     // A step not reached yet says nothing, except where the columns already
@@ -21044,6 +21323,39 @@ const AppView = {
     return true;
   },
 
+  // #6440: the ⋯ on a governance vote's own page (topic/governance-head.tsx).
+  // Everything a person can do with the vote that is not the vote itself:
+  // its link, and — for the person who proposed it, while it is open —
+  // Withdraw.
+  _govDecisionMenu(row) {
+    if (!row) return [];
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    const items = [
+      {
+        label: PlatformI18n.t('changes:governance.menu.copyLink'),
+        icon: 'link',
+        title: PlatformI18n.t('changes:governance.menu.copyLink'),
+        act: () => {
+          const url = `${window.location.origin}/#app/${slug}/dev/governance/${row.id}`;
+          Promise.resolve(PlatformUI.copyText(url)).then((ok) => {
+            if (ok && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t('changes:governance.menu.copyLinkDone'));
+          });
+        },
+      },
+    ];
+    const mine = !!(App.user && row.created_by === App.user.id);
+    if (mine && row.status === 'open') {
+      items.push({
+        label: PlatformI18n.t('changes:governance.menu.withdraw'),
+        icon: 'withdraw',
+        title: PlatformI18n.t('changes:governance.menu.withdrawTitle'),
+        danger: true,
+        act: () => AppView.withdrawGovProposal(row.id),
+      });
+    }
+    return items;
+  },
+
   // One governance card (env-var change, or a legacy rename row still open
   // from before renames moved to dapp.json PRs) as a MODEL. Up/down
   // controls post to the existing /api/issues/:id/vote.
@@ -21202,6 +21514,8 @@ const AppView = {
       || (isCloseIssue && issue.payload ? issue.payload.issueNumber : null);
     const attrs = { 'data-gov-row': String(issue.id) };
     if (refIssueN) attrs['data-ref-issue'] = String(refIssueN);
+    // #6439: a close vote's card opens the request's page, where its vote is.
+    if (isCloseIssue && refIssueN) attrs['data-close-request'] = String(refIssueN);
     if (!noNav) attrs.title = PlatformI18n.t('changes:governance.card.openTitle');
     return {
       key: `gov:${issue.id}`,
@@ -23001,7 +23315,9 @@ const AppView = {
         return {
           key: 'primary', cls: 'gc-vote-btn', label: plan ? PlatformI18n.t('changes:issue.action.seePlan') : PlatformI18n.t('changes:issue.action.seeProgress'),
           title: plan ? PlatformI18n.t('changes:issue.action.seePlanTitle') : PlatformI18n.t('changes:issue.action.seeProgressTitle'),
-          act: { fn: 'openBotChatFromRequest', args: [n] },
+          // #6401: the label names the card it lands on — the plan, or the
+          // bot's progress card under the status card.
+          act: { fn: 'openBotChatFromRequest', args: [n, plan ? 'plan' : 'progress'] },
         };
       }
       // What it is really doing: its plan waits for whoever asked for it,
@@ -23310,25 +23626,69 @@ const AppView = {
    * a moment after the page paints; when it does not (or none is
    * recorded), the box starts with @homeroom_bot, which counts the same.
    */
-  async answerBotOnRequest(issueNumber, messageId, onPage) {
+  async answerBotOnRequest(issueNumber, messageId, onPage, text) {
     const n = Number(issueNumber);
     if (!Number.isInteger(n) || n <= 0) return;
     if (!onPage) await AppView.openTopic('issue', n);
     const id = Number(messageId) || 0;
+    const want = typeof text === 'string' ? text.trim() : '';
     const chat = typeof GroupChat !== 'undefined' ? GroupChat : null;
     const staged = () => !!(chat && chat.replyDraft && Number(chat.replyDraft.refMsgId) === id);
     for (let i = 0; id > 0 && chat && typeof chat.replyToMessage === 'function' && i < 8; i += 1) {
       chat.replyToMessage(id, 'thread');
-      if (staged()) return;
+      if (staged()) {
+        // #6399: Go ahead is ready to send, after the staged Reply.
+        const input = document.getElementById('gc-thread-input');
+        if (want && input && !String(input.value || '').trim()) {
+          input.value = want;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.focus();
+        }
+        return;
+      }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     const input = document.getElementById('gc-thread-input');
     if (!input) return;
     if (!String(input.value || '').trim()) {
-      input.value = '@homeroom_bot ';
+      input.value = want ? `@homeroom_bot ${want}` : '@homeroom_bot ';
       input.dispatchEvent(new Event('input', { bubbles: true }));
     }
     input.focus();
+  },
+
+  /**
+   * #6399: "Ask Homeroom bot to read this again", for a hand-back reason a
+   * release has since lifted. One read goes first in the bot's queue, paid
+   * from the viewer's building time, and that read says what it found
+   * (homeroom-bot-dm.js askBotToBuild `readAgain`).
+   */
+  async askBotToReadAgain(issueNumber) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug || AppView._askingBot) return;
+    AppView._askingBot = true;
+    try {
+      const resp = await fetch(`/api/apps/${encodeURIComponent(slug)}/issues/${Number(issueNumber)}/homeroom-bot${AppView._demoQS()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ readAgain: true }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.bot.askFailedHttp', { status: resp.status }));
+        // A page whose reason was already read again, or a page out of date.
+        if (data.code === 'not_outdated' || data.code === 'already_building') AppView.refreshDevData('issue');
+        return;
+      }
+      PlatformUI.toast(data.mine
+        ? PlatformI18n.t('changes:issue.bot.onItMine')
+        : PlatformI18n.t('changes:issue.bot.onIt'));
+      AppView.refreshDevData('issue');
+    } catch (err) {
+      PlatformUI.toast(PlatformI18n.t('changes:issue.bot.askFailedWith', { error: err.message }));
+    } finally {
+      AppView._askingBot = false;
+    }
   },
 
   /**
@@ -23371,23 +23731,71 @@ const AppView = {
    * (`[data-request-plan]`) or at the bot's progress card
    * (`.dev-request-track`). It used to open the chat with Homeroom bot,
    * where the plan's Build it was; a request's news is on its page now.
+   *
+   * #6401 (6 Nov 2026): the label names the card, so `target` decides
+   * between them with no fallback to the other, and pressing it while the
+   * page is already open (the side panel's `/app/…?panel=1`, whose route is
+   * in the path and not the empty hash) scrolls and outlines instead of
+   * writing the hash and redrawing the page.
    */
-  openBotChatFromRequest(issueNumber) {
+  openBotChatFromRequest(issueNumber, target) {
     const slug = AppView.appData && AppView.appData.slug;
     const n = Number(issueNumber);
     if (!slug || !n) return;
+    const toPlan = target === 'plan';
+    const selector = toPlan ? '[data-request-plan]' : '.dev-request-track';
     const at = () => {
-      const el = document.querySelector('[data-request-plan]') || document.querySelector('.dev-request-track');
-      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      return !!el;
+      const el = document.querySelector(selector);
+      // Drawn from the board's older row, the card holds its place unseen
+      // (`data-request-track="pending"`): wait for the fresh row.
+      if (!el || el.getAttribute('data-request-track') === 'pending') return false;
+      AppView._scrollToLandedCard(el);
+      return true;
     };
-    const page = `#app/${slug}/dev/issues/${n}`;
-    if (location.hash === page) { at(); return; }
-    location.hash = page;
-    // Once the page has drawn: a few tries, then it is where it opened.
-    let tries = 0;
+    // The route the way the side panel's own document names it
+    // (`_canonicalizeChangeAddress`): the hash, or the path when it is empty.
+    const page = `app/${slug}/dev/issues/${n}`;
+    const route = location.hash
+      ? location.hash.replace(/^#/, '').split('?')[0]
+      : (location.pathname || '').replace(/^\/+/, '');
     const wait = () => { if (!at() && (tries += 1) < 20) setTimeout(wait, 150); };
+    let tries = 0;
+    if (route === page) { wait(); return; }
+    location.hash = `#${page}`;
+    // Once the page has drawn: a few tries, then it is where it opened.
     setTimeout(wait, 150);
+  },
+
+  /**
+   * #6401: where the eye should land — the card centred, then a brief
+   * outline in the app's "you are here" ink. It is a Web Animations
+   * animation rather than a class, because the card lives in the
+   * React-owned request page and the older script must not write into it
+   * (`scripts/audit-react-ownership.mjs`). Under reduced motion the outline
+   * holds and then goes, with no fade and no movement.
+   */
+  _scrollToLandedCard(el) {
+    if (!el) return;
+    const reduced = typeof matchMedia === 'function'
+      && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+    }
+    if (typeof el.animate !== 'function') return;
+    const root = document.documentElement;
+    const ink = (typeof getComputedStyle === 'function' && root
+      ? getComputedStyle(root).getPropertyValue('--lit-ink').trim() : '') || 'currentColor';
+    const frames = [
+      { outline: `3px solid ${ink}`, outlineOffset: '2px' },
+      { outline: `3px solid ${ink}`, outlineOffset: '2px' },
+      { outline: '3px solid transparent', outlineOffset: '2px' },
+    ];
+    try {
+      el.animate(frames, {
+        duration: reduced ? 1200 : 1600,
+        easing: reduced ? 'steps(1, end)' : 'ease-out',
+      });
+    } catch (_) { /* an engine without keyframe support simply lands */ }
   },
 
   // The issue card's SECOND action: the claim toggle, promoted out of the
@@ -23961,6 +24369,8 @@ const AppView = {
       title: PlatformI18n.t('changes:governance.done.openTitle'),
     };
     if (issueN) attrs['data-ref-issue'] = String(issueN);
+    // #6439: an applied close vote opens the request's page, not its own.
+    if (issueN) attrs['data-close-request'] = String(issueN);
     return {
       key: `close-issue:${row.id}`,
       cls: `gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}`,
@@ -27739,6 +28149,14 @@ const AppView = {
     if (!App.user?.isAdmin) return;
     const key = `admin-merge:${sessionId}`;
     if (AppView._voteInFlight.has(key)) return;
+    // One force at a time: a queued one is already what this click would ask
+    // for, so say so instead of sending a second request (the route refuses
+    // one too, in case two tabs race).
+    const row = AppView._findItem('proposal', Number(sessionId));
+    if (row && row.merge_force && typeof row.merge_force === 'object') {
+      PlatformUI.toast(PlatformI18n.t('changes:vote.forceMerge.alreadyQueued'));
+      return;
+    }
     const ok = await ConfirmModal.show({
       title: PlatformI18n.t('changes:vote.forceMerge.title'),
       message: PlatformI18n.t('changes:vote.forceMerge.message'),
@@ -27755,7 +28173,14 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.forceMerge.failedHttp', { status: resp.status }));
+        if (data.error === 'already_queued') {
+          PlatformUI.toast(PlatformI18n.t('changes:vote.forceMerge.alreadyQueued'));
+        } else {
+          PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.forceMerge.failedHttp', { status: resp.status }));
+        }
+      } else {
+        // Queued is not merged: say so, and what it waits on, straight away.
+        PlatformUI.toast(PlatformI18n.t('changes:vote.forceMerge.queued'));
       }
       AppView.refreshDevData('vote');
     } catch (err) {
