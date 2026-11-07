@@ -512,7 +512,7 @@ test('#6228: a fresh reply on a handed-back request reads as waiting to be read'
   const handed = { mode: 'live', verdict: 'person', run_at: ago(10) };
   // Not queued yet: the refresh's window.
   assert.deepEqual(stage({ ...handed, reply_at: ago(1), reply_user_id: 7 }), {
-    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'about to read the newest reply',
+    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'reading the new reply in a moment',
   });
   // handedBack still says Decide on its own; stageOf answers first.
   assert.equal(progress.handedBack({ ...handed, reply_at: ago(1) }), 'decide');
@@ -522,11 +522,11 @@ test('#6228: a fresh reply on a handed-back request reads as waiting to be read'
   // Queued, on hold: it waits for the week, not a read.
   assert.equal(stage({ ...handed, queue_id: 4, enqueued_at: ago(45), held_until: new Date(NOW.getTime() + 60 * 60 * 1000).toISOString(), reply_at: ago(30) }).stage, 'on_hold');
   assert.deepEqual(stage({ ...handed, queue_id: 4, enqueued_at: ago(2), reply_at: ago(1) }), {
-    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'about to read the newest reply',
+    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'reading the new reply in a moment',
   });
   // The read started: reading the reply, with the reading clock.
   assert.deepEqual(stage({ ...handed, started_at: ago(1), reply_at: ago(2) }), {
-    stage: 'reading', reply: true, since: ago(1), doing: 'reading the newest reply', limit: 'reading',
+    stage: 'reading', reply: true, since: ago(1), doing: 'reading the new reply', limit: 'reading',
   });
   // A reply older than the look was already read.
   assert.equal(stage({ ...handed, reply_at: ago(20), run_at: ago(10) }), null);

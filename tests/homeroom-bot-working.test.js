@@ -883,6 +883,11 @@ test('in a thread, "status?" is about that thread; a screen asked for is drawn i
   assert.ok(request.includes('- Here, "status?", "how is it going?" or "where are we?" means this request: say where it stands right now,\n'
     + '  from request_detail or progress, and what happens next. Do not list the rest of their page (my_work) unless\n'
     + '  they ask about everything.'));
+  // #6390: they are on this request's page already, so a link to it says
+  // nothing; the bot says what it is doing in words.
+  assert.match(request, /never link to this request or its page/);
+  assert.match(request, /never say "follow it\n  here"/);
+  assert.doesNotMatch(main, /never link to this request or its page/, 'a chat outside a request thread keeps neither line');
   for (const prompt of [plus, bare, main, request]) {
     assert.match(prompt, /\(draw_screen\): your designer draws it from their words/);
     assert.ok(prompt.includes('and do not reply: the designer answers them. When they have asked you to draw, render, show or mock up a\n'

@@ -563,6 +563,9 @@ function threadLines(request) {
     '- Here, "status?", "how is it going?" or "where are we?" means this request: say where it stands right now,',
     '  from request_detail or progress, and what happens next. Do not list the rest of their page (my_work) unless',
     '  they ask about everything.',
+    // #6390: they are reading this page already, so a link to it says nothing.
+    '- They are on this request\'s page already: never link to this request or its page, and never say "follow it',
+    '  here". Say what is happening in words, and link only to somewhere else, such as a change you built.',
     '',
   ];
 }
