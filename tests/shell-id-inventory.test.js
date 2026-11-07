@@ -428,6 +428,10 @@ const ADDED_IDS = {
   // ── #5286: the admin console marks itself ─────────────────────────
   'admin-console-bar': '#5286: the admin console\'s own band at the top of #admin-root, ships hidden and is revealed through classList by AdminConsole._renderShell for an admin (never in public mode).',
   'admin-exit': '#5286: the band\'s Exit link, href #profile, which goes back to the address the console was entered from when one is known.',
+  // ── #6455: the admin console as an inbox ─────────────────────────────
+  'admin-env-label': '#6455: "Production" or "Staging" in the console band, from GET /api/version\'s env. Ships hidden and empty; AdminConsole._paintEnv fills it through textContent/classList and leaves it hidden when the environment is unknown.',
+  'admin-search-open': '#6455: the band\'s Search button, which opens the console\'s search dialog (features/admin/admin-search.tsx), as ⌘K / Ctrl+K does while the console is open.',
+  'admin-search-host': '#6455: the empty host the console\'s search dialog is portalled into while it is open (features/admin/admin-search.tsx). Ships empty.',
   // ── #5405: search over the loaded notifications ───────────────────
   'notifications-search': '#5405: the search field\'s block between the notifications sheet\'s title and the Unread | All tabs.',
   'notifications-search-input': '#5405: the field itself (type="search"). Filters the tab that is open, over the rows already loaded, by project, kind and subject; Escape with text empties it.',

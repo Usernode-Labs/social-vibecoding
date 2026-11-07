@@ -194,6 +194,8 @@ export const AdminUI = Object.freeze({
   kbd: 'rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-900 dark:text-zinc-100',
 });
 
+import { QUEUES, queueCounts, queueFromHash, loadDone } from './admin-queues.ts';
+
 // Still published on the global, though nothing reads it there now: every
 // module that draws with the registry imports it (the section modules,
 // topochain/tokens.ts), nothing in public/js mentions it, and /admin is a
@@ -568,6 +570,7 @@ const AdminConsole = {
     AdminConsole._menuScrollTop = 0;
     AdminConsole._returnTo = AdminConsole._lastOutside;
     AdminConsole._ensureMediaListener();
+    AdminConsole._openInbox();
     section = AdminConsole._canonicalSection(section);
     const visible = AdminConsole._visibleSections();
     const valid = visible.some((s) => s.key === section);
@@ -615,6 +618,8 @@ const AdminConsole = {
     // must not leave a 5s /api/status or 2s /api/node-status poll running
     // for the life of the tab (see _teardownActiveSection).
     AdminConsole._teardownActiveSection();
+    // And the search key goes with it: ⌘K is "your communities" again.
+    AdminConsole._closeInbox();
   },
 
   // Re-entry while the console is ALREADY mounted (app.js routes here
@@ -1076,6 +1081,167 @@ const AdminConsole = {
     return `<nav id="admin-mobile-menu" aria-label="Admin sections" class="-mx-4">${groups}</nav>`;
   },
 
+  // ── Queues (#6455, "Inbox") ───────────────────────────────────────────
+  //
+  // Every admin duty is a queue. The sidebar opens on a Queues block (Needs
+  // you, Stuck apps, Orphan workers, Top spenders today), each row counting
+  // its items from the ONE /api/admin/overview read, then Browse: the grouped
+  // sections exactly as before (#1152's toggles and rows untouched). A queue
+  // row opens the queue view, which is the Overview section addressed one
+  // level down (#admin/overview/<queue>, owned by admin-overview.tsx the way
+  // Campaigns owns #admin/campaigns/<id>). On a phone the same counts are the
+  // Overview module's compact card at the top of level 1.
+
+  // The last payload, shared with the queue view so the two never disagree,
+  // and the read in flight, so the console's read on open and the section's
+  // read on mount are one request.
+  _queueData: null,
+  _queueFetch: null,
+
+  _fetchQueueData() {
+    if (AdminConsole._queueFetch) return AdminConsole._queueFetch;
+    AdminConsole._queueFetch = AdminConsole.fetchJson('/api/admin/overview')
+      .then(({ data }) => {
+        if (data && typeof data === 'object') AdminConsole._queueData = data;
+        AdminConsole._paintQueues();
+        return AdminConsole._queueData;
+      })
+      .finally(() => { AdminConsole._queueFetch = null; });
+    return AdminConsole._queueFetch;
+  },
+
+  // Desktop and phone alike: the queue row presses land here. On a phone it is
+  // a drill-in (a real hash navigation, so back returns to the menu); on a
+  // desktop the address is replaced and the view switches in place.
+  _openQueue(queue) {
+    const target = `#admin/overview/${queue}`;
+    if (AdminConsole._isMobile()) {
+      AdminConsole._menuScrollTop = AdminConsole._scrollTop();
+      AdminConsole._pushedFromMenu = AdminConsole._level === 1;
+      if (location.hash === target) AdminConsole.route('overview');
+      else location.hash = target;
+      return;
+    }
+    try { history.replaceState(null, '', target); } catch { /* non-fatal */ }
+    const mod = window.AdminOverview;
+    if (AdminConsole._section === 'overview' && mod && mod.setQueue && mod.setQueue(queue)) {
+      AdminConsole._markRouted();
+      AdminConsole._paintQueues();
+      return;
+    }
+    AdminConsole.setSection('overview', { writeHash: false });
+  },
+
+  // Open a section the way its own row would: a drill-in on a phone, an
+  // in-place switch on a desktop. The queue view's actions and the search
+  // dialog both navigate through here.
+  go(key) {
+    if (AdminConsole._isMobile()) AdminConsole._openSection(key);
+    else AdminConsole.setSection(key);
+  },
+
+  _queuesHtml() {
+    const counts = queueCounts(AdminConsole._queueData, loadDone());
+    const current = AdminConsole._section === 'overview' ? queueFromHash(location.hash) : null;
+    const rows = QUEUES.map((q) => {
+      const n = counts ? counts[q.key] : 0;
+      const isActive = q.key === current;
+      const cls = 'admin-nav-item flex items-center gap-3 w-full text-start rounded-md px-3 py-2.5 text-sm font-medium transition-colors '
+        + (isActive
+          ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
+          : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/60');
+      // A zero says nothing: the count is hidden, and kept in the DOM.
+      // aria-current="true", not "page": Browse's Overview row is the page.
+      return `<button type="button"${isActive ? ' aria-current="true"' : ''}
+        data-admin-queue="${q.key}" class="${cls}"><span class="flex-1 min-w-0 truncate">${AdminConsole.esc(q.label)}</span><span data-admin-queue-count="${q.key}" class="${n ? '' : 'hidden '}${q.key === 'spenders' ? AdminUI.badge.secondary : AdminUI.badge.destructive}">${n}</span></button>`;
+    }).join('');
+    return `
+      <div data-admin-queues>
+        <h2 class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">Queues</h2>
+        ${rows}
+      </div>`;
+  },
+
+  // The whole sidebar: Queues first, then Browse (the grouped sections). A
+  // non-admin on a public section gets Browse alone, which is the two
+  // sections they can open.
+  _sidebarHtml() {
+    if (AdminConsole._publicMode()) return AdminConsole._navItemsHtml();
+    return `${AdminConsole._queuesHtml()}
+      <h2 class="mt-6 px-3 py-1.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100">Browse</h2>
+      ${AdminConsole._navItemsHtml()}`;
+  },
+
+  _wireQueueButtons(root) {
+    if (!root) return;
+    root.querySelectorAll('[data-admin-queue]').forEach((btn) => {
+      btn.addEventListener('click', () => AdminConsole._openQueue(btn.dataset.adminQueue));
+    });
+  },
+
+  // Repaint the Queues block alone, in place: counts after a read, the lit
+  // row after a queue switch. Focus stays on the row that had it.
+  _paintQueues() {
+    if (typeof document === 'undefined') return;
+    const block = document.querySelector('#admin-nav-desktop [data-admin-queues]');
+    if (block && !AdminConsole._publicMode()) {
+      const focused = document.activeElement && block.contains(document.activeElement)
+        ? document.activeElement.getAttribute('data-admin-queue') : null;
+      block.outerHTML = AdminConsole._queuesHtml();
+      const fresh = document.querySelector('#admin-nav-desktop [data-admin-queues]');
+      AdminConsole._wireQueueButtons(fresh);
+      if (focused && fresh) fresh.querySelector(`[data-admin-queue="${focused}"]`)?.focus();
+    }
+    // The phone's Queues card is the Overview module's own; it reads the same
+    // payload and repaints itself.
+    window.AdminOverview?.refreshCounts?.();
+  },
+
+  // ── Search (⌘K / Ctrl+K) and the environment label ────────────────────
+  //
+  // ./admin-search.tsx registers these hooks when it evaluates; the console
+  // attaches its key listener only while it is open.
+  _searchHooks: null,
+
+  _openInbox() {
+    AdminConsole._paintEnv();
+    if (!AdminConsole._publicMode()) AdminConsole._fetchQueueData();
+    AdminConsole._searchHooks?.attach?.();
+  },
+
+  _closeInbox() {
+    AdminConsole._searchHooks?.detach?.();
+  },
+
+  // Everything search offers: the queues (admins only), then every section
+  // this viewer may open. Read by ./admin-search.tsx.
+  searchEntries() {
+    const queues = AdminConsole._publicMode() ? [] : QUEUES.map((q) => ({ kind: 'queue', key: q.key, label: q.label }));
+    return queues.concat(AdminConsole._visibleSections().map((s) => ({ kind: 'section', key: s.key, label: s.label, group: s.group })));
+  },
+
+  // "Production" or "Staging" in the console's band, from GET /api/version's
+  // `env` (the field the drawer's version row reads). Unknown hides it.
+  _env: undefined,
+
+  async _paintEnv() {
+    if (AdminConsole._env === undefined) {
+      const cached = window.App && App._lastVersionInfo;
+      let env = cached && 'env' in cached ? cached.env : undefined;
+      if (env === undefined) {
+        const { data } = await AdminConsole.fetchJson('/api/version');
+        env = data && typeof data === 'object' ? data.env : null;
+      }
+      AdminConsole._env = env || null;
+    }
+    const label = AdminConsole._env === 'production' ? 'Production'
+      : AdminConsole._env === 'staging' ? 'Staging' : '';
+    const el = document.getElementById('admin-env-label');
+    if (!el) return;
+    el.textContent = label;
+    el.classList.toggle('hidden', !label);
+  },
+
   // Repaint the chassis's two variable parts. React owns the chassis MARKUP
   // (./index.tsx), which is why this no longer touches root.innerHTML: the
   // nav host and the banner are the only things about it that depend on who
@@ -1089,7 +1255,7 @@ const AdminConsole = {
   _renderShell() {
     const sideHost = document.getElementById('admin-nav-desktop');
     if (sideHost) {
-      sideHost.innerHTML = AdminConsole._navItemsHtml();
+      sideHost.innerHTML = AdminConsole._sidebarHtml();
       // Scoped to the sidebar, where the old whole-root wire was scoped to a
       // subtree this function had just emptied. It has to be: #admin-root is
       // no longer wiped here, so wiring the whole root would ALSO re-bind the
@@ -1099,6 +1265,7 @@ const AdminConsole = {
       // innerHTML write, and each section module for its own controls.
       AdminConsole._wireSectionButtons(sideHost);
       AdminConsole._wireGroupToggles(sideHost);
+      AdminConsole._wireQueueButtons(sideHost);
     }
     // In public mode the viewer isn't an admin at all, so the view-only
     // ADMIN banner would be nonsense — suppress it rather than showing an

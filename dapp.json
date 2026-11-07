@@ -3253,7 +3253,7 @@
     {
       "name": "Admin & moderation console page renders at #admin (#818)",
       "path": "/#admin",
-      "expectSelector": "#admin-screen:not(.hidden) #admin-section-content"
+      "expectSelector": "#admin-screen:not(.hidden):has(#admin-nav-desktop [data-admin-queues] [data-admin-queue=\"all\"]) #admin-section-content"
     },
     {
       "name": "Moderation deep link opens the linked case already selected (#5072)",
@@ -3324,9 +3324,9 @@
       "expectSelector": "#admin-nav-desktop [data-admin-group=\"People\"]:not(.hidden) [data-admin-section=\"users\"]"
     },
     {
-      "name": "Admin console deep-links Overview by its explicit segment",
-      "path": "/#admin/overview",
-      "expectSelector": "#admin-section-content #admin-overview-stuck"
+      "name": "Admin console deep-links Overview's queue view by its explicit segment (#6455)",
+      "path": "/#admin/overview/all",
+      "expectSelector": "#admin-section-content #admin-queue-view[data-admin-queue-view=\"all\"] #admin-overview-stuck"
     },
     {
       "name": "Admin console renders the Database export section",

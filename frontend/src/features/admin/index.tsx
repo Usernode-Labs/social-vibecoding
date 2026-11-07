@@ -124,6 +124,9 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 // admin-console.js FIRST: it exports the AdminUI registry the others import,
 // and topochain/tokens.ts reads AdminUI.card at module-evaluation time.
 import { AdminUI } from './admin-console.js';
+// Search (⌘K / Ctrl+K, #6455) is the chassis's, not a section's: it has to
+// answer on the first open, before the lazy section chunk arrives.
+import { openSearch } from './admin-search';
 // The nineteen section modules used to be twenty bare side-effect imports
 // here. They are ./sections.ts now, dynamic-imported by
 // AdminConsole._ensureSections on the first open (and prefetched at idle for
@@ -187,6 +190,21 @@ export function AdminScreen() {
               <p className="text-sm font-semibold">Admin console</p>
               <p className="text-xs text-amber-800 dark:text-amber-200">{"Platform-wide tools. These are not your settings but the settings of the platform. Be careful before changing anything."}</p>
             </div>
+            {/*
+                #6455: which platform this is, from GET /api/version's `env`.
+                Ships hidden and empty; AdminConsole._paintEnv fills it through
+                textContent and classList, and leaves it hidden when unknown.
+            */}
+            <span id="admin-env-label" className="hidden shrink-0 rounded-full bg-amber-900/10 px-2.5 py-1 text-xs font-semibold text-amber-900 dark:bg-amber-100/10 dark:text-amber-100"></span>
+            <button
+              id="admin-search-open"
+              type="button"
+              onClick={() => openSearch()}
+              aria-keyshortcuts="Control+K Meta+K"
+              className="inline-flex items-center min-h-[36px] shrink-0 rounded-lg bg-amber-900/10 px-3 text-sm font-medium text-amber-900 transition-colors hover:bg-amber-900/20 dark:bg-amber-100/10 dark:text-amber-100 dark:hover:bg-amber-100/20"
+            >
+              Search
+            </button>
             <a
               id="admin-exit"
               href="#profile"
@@ -239,6 +257,11 @@ export function AdminScreen() {
             <div id="admin-section-content" className="pb-8"></div>
           </div>
         </div>
+        {/*
+            The search dialog's host (#6455, ./admin-search.tsx). Ships EMPTY;
+            the dialog is a portal mounted into it while it is open.
+        */}
+        <div id="admin-search-host"></div>
         {/*
             Temporary password modal (issue #282): the reset response is the
             only time the plaintext exists — shown once, never persisted.
