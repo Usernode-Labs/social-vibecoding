@@ -75,11 +75,13 @@ export const STORE_LABEL: Record<MobileOs, string> = {
 /**
  * What the strip should CALL the destination.
  *
- * Not simply `STORE_LABEL[os]`, because the URL is not always a store. The
- * value published for iOS today is a `testflight.apple.com` invite — a beta,
- * not an App Store listing — and a strip that said "Get the app on the App
- * Store" while opening TestFlight would be telling the visitor something
- * untrue about what they are about to join.
+ * Not simply `STORE_LABEL[os]`, because the URL is not always a store. Until
+ * the iOS app was approved (7 Nov 2026) the value published for iOS was a
+ * `testflight.apple.com` invite — a beta, not an App Store listing — and a
+ * strip that said "Get the app on the App Store" while opening TestFlight
+ * would have been telling the visitor something untrue about what they were
+ * about to join. The listing is `apps.apple.com` now, but the field can still
+ * hold a beta link for a future build.
  *
  * The host is the only thing that can answer this: `update_url` is one free
  * text field, and whoever fills it in is not asked which kind of link it is.
