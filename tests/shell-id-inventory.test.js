@@ -970,7 +970,7 @@ const ADDED_IDS = {
   // public/index.html because the chassis is React-owned markup now, so it is
   // prerendered instead of assembled at mount. Nothing below them moved —
   // #admin-section-content is still an innerHTML host owned by the module.
-  'admin-nav-desktop': 'Admin console desktop sidebar host, empty until AdminConsole._renderShell fills it (#1082).',
+  'admin-nav-desktop': 'Admin console desktop nav host, empty until AdminConsole._renderShell fills it (#1082); the top bar and open-section tabs since #6456, a sidebar before.',
   'admin-view-only-banner': 'Admin console view-only banner (#311), ships hidden and is toggled through classList (#1082).',
   'admin-section-content': 'Admin console section host — the phone level-1 menu and every section render into it (#1082).',
   'admin-temp-pw-modal': 'Admin console temporary-password dialog root (#282), now static React markup (#1082).',
