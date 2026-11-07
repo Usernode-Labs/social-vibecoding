@@ -131,8 +131,8 @@ export function phaseOf(state: LiveAnswer['state'] | null, drawn: boolean, ended
 }
 
 function post(slug: string, body: Record<string, unknown>): void {
-  // #5097: watching Live is usage analytics, sent only for somebody who
-  // shares it.
+  // Watching Live is screen usage data, sent only for somebody who has not
+  // chosen Leave me out.
   if (!sharesUsageAnalytics()) return;
   void fetch(`/api/apps/${encodeURIComponent(slug)}/first-version/live/seen`, {
     method: 'POST',

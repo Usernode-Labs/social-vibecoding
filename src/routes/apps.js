@@ -2251,8 +2251,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const kind = body.kind === 'opened' || body.kind === 'watched' ? body.kind : null;
       const runId = Number(body.runId);
       if (!kind || !Number.isInteger(runId) || runId <= 0) return res.status(400).json({ error: 'kind and runId are required' });
-      // #5097: analytics only, so kept only for somebody who shares them.
-      if (!(await usageAnalytics.sharesUsageAnalytics(pool, req.user.id))) return res.json({ ok: true, discarded: true });
+      // Screen usage data: dropped for somebody who chose Leave me out.
+      if (!(await usageAnalytics.recordsUsage(pool, req.user.id))) return res.json({ ok: true, discarded: true });
       await require('../services/first-version-live').recordView(pool, {
         userId: req.user.id, appId: app.id, runId, kind, seconds: body.seconds, goodFrame: body.goodFrame === true,
       });
@@ -4572,10 +4572,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!appRow) return res.status(404).json({ error: 'App not found' });
-      // #5097: usage analytics, kept only for somebody who switched "Share
-      // usage analytics" on. A 2xx all the same, so the browser's retry
-      // queue lets it go.
-      if (!(await usageAnalytics.sharesUsageAnalytics(pool, req.user.id))) {
+      // Screen usage data: dropped for somebody who chose Leave me out
+      // (services/usage-analytics.js). A 2xx all the same, so the browser's
+      // retry queue lets it go.
+      if (!(await usageAnalytics.recordsUsage(pool, req.user.id))) {
         return res.status(200).json({ ok: true, discarded: true });
       }
 

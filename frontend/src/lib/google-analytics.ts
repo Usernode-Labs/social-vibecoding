@@ -9,12 +9,11 @@
  *     is counted. No script goes into an app, whose address holds its sign-in
  *     token. In-app pages are not seen.
  *   - sign_up, once, when /api/auth/me says the account is new.
- *   - the account id, only for somebody who switched on Share usage analytics
- *     (`uiTelemetryEligible`).
  *
- * That switch does not decide whether a visit is counted, and Settings >
- * Privacy says so. `analyticsCounted` does: false for service accounts and for
- * people who objected to being recorded, who send nothing but a sign_up.
+ * Never an account number: Google counts visits, not people. Whether a
+ * visit is counted at all is `analyticsCounted`: false for service accounts,
+ * for people who chose Leave me out in Settings > Privacy, and for people who
+ * objected to being recorded, who send nothing but a sign_up.
  *
  * Only `app.onhomeroom.com` runs it, so previews, checks, shots and local
  * builds load nothing from Google.
@@ -45,7 +44,6 @@ export function analyticsPath(pathname: string, hash: string): string {
 
 type SessionUser = {
   id?: unknown;
-  uiTelemetryEligible?: unknown;
   analyticsCounted?: unknown;
   justSignedUp?: unknown;
 };
@@ -62,7 +60,6 @@ export function installGoogleAnalytics(host: any = globalThis) {
   let ready = false;
   let queue: unknown[] = [];
   let reporting = false;
-  let identified = false;
   let lastPath: string | null = null;
 
   const post = (message: unknown) => {
@@ -123,28 +120,14 @@ export function installGoogleAnalytics(host: any = globalThis) {
 
   api.setSession = (user, verified = true) => {
     if (!user) {
-      if (identified) post({ type: 'user', id: null });
-      identified = false;
       startReporting();
       return;
     }
     // A remembered session has no answer from the server yet: wait for it.
     if (!verified) return;
     if (user.justSignedUp === true) sendSignUpOnce(user.id);
-    if (user.analyticsCounted === true) {
-      const withId = user.uiTelemetryEligible === true;
-      // Switched on first: a frame that was off ignores the id.
-      ensureFrame();
-      post({ type: 'on' });
-      if (withId) post({ type: 'user', id: user.id });
-      else if (identified) post({ type: 'user', id: null });
-      identified = withId;
-      startReporting();
-    } else {
-      if (identified) post({ type: 'user', id: null });
-      identified = false;
-      stopReporting();
-    }
+    if (user.analyticsCounted === true) startReporting();
+    else stopReporting();
   };
   return api;
 }

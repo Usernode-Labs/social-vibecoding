@@ -103,37 +103,30 @@ test('signing in as somebody not counted stops what was being reported', () => {
   assert.equal(posted.length, before, 'no page view after it');
 });
 
-test('Share usage analytics off: visits are counted, with no account id', () => {
+test('a counted visit never carries an account number', () => {
   const { host, posted, ready } = fakeHost('app.onhomeroom.com');
-  installGoogleAnalytics(host).setSession({ id: 7, analyticsCounted: true, uiTelemetryEligible: false }, true);
+  installGoogleAnalytics(host).setSession({ id: 7, analyticsCounted: true, uiTelemetryEligible: true }, true);
   ready();
-  assert.deepEqual(posted.at(-1), { type: 'page', path: '/home' });
+  assert.deepEqual(posted, [{ type: 'on' }, { type: 'page', path: '/home' }]);
   assert.equal(posted.some((m) => m.type === 'user'), false);
+  assert.doesNotMatch(read('frontend/src/lib/google-analytics.ts'), /type: 'user'/, 'the shell never offers one');
+  assert.doesNotMatch(read('public/analytics-frame.html'), /user_id/, 'and the frame would not take one');
 });
 
-test('turning the switch off drops the account id and keeps counting', () => {
+test('Leave me out stops counting at once, and including again starts it, still with no id', () => {
   const { host, posted, listeners, ready } = fakeHost('app.onhomeroom.com');
   const api = installGoogleAnalytics(host);
   api.setSession({ id: 7, analyticsCounted: true, uiTelemetryEligible: true }, true);
   ready();
-  assert.ok(posted.some((m) => m.type === 'user' && m.id === 7));
-  api.setSession({ id: 7, analyticsCounted: true, uiTelemetryEligible: false }, true);
-  assert.deepEqual(posted.filter((m) => m.type === 'user').at(-1), { type: 'user', id: null });
+  api.setSession({ id: 7, analyticsCounted: false, uiTelemetryEligible: false }, true);
+  assert.deepEqual(posted.at(-1), { type: 'off' });
+  const before = posted.length;
   host.location.hash = '#settings';
   listeners.hashchange();
-  assert.deepEqual(posted.at(-1), { type: 'page', path: '/settings' });
-});
-
-test('Share usage analytics on: page views carry the account id, and signing out drops it', () => {
-  const { host, posted, ready } = fakeHost('app.onhomeroom.com');
-  const api = installGoogleAnalytics(host);
+  assert.equal(posted.length, before, 'no page view while left out');
   api.setSession({ id: 7, analyticsCounted: true, uiTelemetryEligible: true }, true);
-  ready();
-  assert.deepEqual(posted, [
-    { type: 'on' }, { type: 'user', id: 7 }, { type: 'on' }, { type: 'page', path: '/home' },
-  ]);
-  api.setSession(null);
-  assert.deepEqual(posted.at(-2), { type: 'user', id: null });
+  assert.deepEqual(posted.at(-1), { type: 'page', path: '/settings' });
+  assert.equal(posted.some((m) => m.type === 'user'), false);
 });
 
 test('a remembered session waits for the server, which decides', () => {

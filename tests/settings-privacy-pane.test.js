@@ -129,8 +129,10 @@ test('helper text is 13px in rem and lighter in the dark theme (#5926)', () => {
   // lifted. Every other small line wears the shared helper style.
   assert.doesNotMatch(html, /class="(?![^"]*\bmb-3\b)[^"]*\btext-xs text-zinc-500/, 'no helper line keeps the 12px size');
   const count = html.split(HELP).length - 1;
-  // #6044 adds two: the Email & texts block's two switches' lines.
-  assert.equal(count, 6, `both choices and the four switches wear the helper style, found ${count}`);
+  // #6044 adds two: the Email & texts block's two switches' lines. Usage
+  // analytics adds one: what is kept, recorded and never recorded, above
+  // its Leave me out switch.
+  assert.equal(count, 7, `both choices, the four switches and what usage analytics keeps wear the helper style, found ${count}`);
 });
 
 test('both switches are announced as switches and say Off before the account is read (#5926)', () => {
@@ -206,7 +208,7 @@ test('every switch\'s description is inside its label and describes it (#5926 it
     assert.ok(label.includes(`aria-describedby="${descriptionId}"`));
     assert.doesNotMatch(label, /<(p|div)\b/, 'a label holds spans');
   }
-  assert.ok(html.includes(escape(message('settings:privacy.usageAnalytics.neverRecords'))));
+  assert.ok(html.includes(escape(message('settings:privacy.usageAnalytics.leaveOut.offWhat'))));
 });
 
 test('the switch\'s name stays its label when the description joins the label (#5926 item 8)', () => {

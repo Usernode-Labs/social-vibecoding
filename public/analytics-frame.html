@@ -12,8 +12,8 @@
 // hold a sign-in link's key and names private things, so the tag must never
 // run in the shell's own page. Here its address is this file's, its title is
 // the one above, and all it ever learns is what
-// frontend/src/lib/google-analytics.ts posts: a cleaned path, a sign-up, and
-// the account id of somebody who switched on Share usage analytics.
+// frontend/src/lib/google-analytics.ts posts: a cleaned path and a sign-up.
+// Never an account number: it ignores any message that offers one.
 (function () {
   if (window.parent === window) return;
   if (location.hostname !== 'app.onhomeroom.com') return;
@@ -37,9 +37,6 @@
     else if (m.type === 'page' && /^\/[a-z0-9/-]*$/i.test(String(m.path))) {
       gtag('event', 'page_view', { page_location: location.origin + m.path, page_referrer: '' });
     } else if (m.type === 'sign_up') gtag('event', 'sign_up');
-    else if (m.type === 'user') {
-      gtag('set', { user_id: m.id == null ? null : String(m.id) });
-    }
   });
   var tag = document.createElement('script');
   tag.async = true;

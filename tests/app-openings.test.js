@@ -69,8 +69,8 @@ function routePool({ blocked = false, shares = true } = {}) {
           moderation_suspended_at: null,
         }] };
       }
-      if (/SELECT usage_analytics FROM users/.test(text)) {
-        return { rows: [{ usage_analytics: shares }] };
+      if (/SELECT usage_left_out_at FROM users/.test(text)) {
+        return { rows: [{ usage_left_out_at: shares ? null : new Date() }] };
       }
       if (/FROM user_app_blocks/.test(text)) {
         return { rows: blocked ? [{ app_id: 22 }] : [] };

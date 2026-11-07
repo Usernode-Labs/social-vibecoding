@@ -272,24 +272,26 @@ function isEligibleUser(user) {
   return !!user?.id && !usernames.isServiceIdentity(user.username);
 }
 
-// Eligible, switched "Share usage analytics" on in Settings (#5097: off
-// unless they did, services/usage-analytics.js), and has not objected to
-// being recorded (#3369: an admin adds them to the Journey page's left-out
-// list as "objected"). This is the answer /api/auth/me sends as
+// Eligible, has not chosen Leave me out in Settings › Privacy
+// (services/usage-analytics.js: recorded unless they did), and has not
+// objected to being recorded (#3369: an admin adds them to the Journey page's
+// left-out list as "objected"). This is the answer /api/auth/me sends as
 // uiTelemetryEligible and the collector enforces.
 async function isRecordable(pool, user) {
   if (!isEligibleUser(user)) return false;
-  if (!(await usageAnalytics.sharesUsageAnalytics(pool, user.id))) return false;
+  if (!(await usageAnalytics.recordsUsage(pool, user.id))) return false;
   return !(await leftOut.hasObjected(pool, user.id));
 }
 
 // Whether the live shell's Google Analytics tag counts this person's visits
-// (#6314). The Share usage analytics switch does not decide this one, but an
-// objection does, and a service account is nobody. An unreadable list answers
-// false, so a failed read never counts somebody who objected.
+// (#6314), never with their account number (frontend/src/lib/google-analytics.ts).
+// Leave me out stops it, an objection does too, and a service account is
+// nobody. An unreadable answer is false, so a failed read never counts
+// somebody who left themselves out or objected.
 async function countsInGoogleAnalytics(pool, user) {
   if (!isEligibleUser(user) || user.isSynthetic) return false;
   try {
+    if (!(await usageAnalytics.recordsUsage(pool, user.id))) return false;
     const ids = await leftOut.idsByReason(pool);
     return !!ids && !ids.objected.has(Number(user.id));
   } catch {
