@@ -13,6 +13,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Client, Pool } = require('pg');
+const { waitFor } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -97,19 +98,20 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
   // and its queries would outlive the pool this check closes. Only this
   // machine's rows and the items running now: the clock's own jobs re-arm
   // themselves, so waiting for those to stop would never end.
-  const quiet = async () => {
-    const deadline = Date.now() + 10000;
-    for (;;) {
-      const { rows } = await pool.query(
-        `SELECT machine, key, kind, work_key, status FROM wf_work
-          WHERE machine = 'governance-proposal' AND status <> 'settled'
-         UNION ALL SELECT machine, key, type, request_key, status FROM wf_events
-          WHERE machine = 'governance-proposal' AND status = 'pending'`);
-      if (platform.workflowWorkRunning() === 0 && !rows.length) return;
-      if (Date.now() >= deadline) assert.fail(`every governance decision settled; unsettled: ${JSON.stringify(rows)}`);
-      await new Promise((res) => setTimeout(res, 50));
-    }
-  };
+  let unsettled = [];
+  const quiet = async () => waitFor(async () => {
+    const { rows } = await pool.query(
+      `SELECT machine, key, kind, work_key, status FROM wf_work
+        WHERE machine = 'governance-proposal' AND status <> 'settled'
+       UNION ALL SELECT machine, key, type, request_key, status FROM wf_events
+        WHERE machine = 'governance-proposal' AND status = 'pending'`);
+    unsettled = rows;
+    return platform.workflowWorkRunning() === 0 && !rows.length;
+  }, {
+    label: 'every governance decision settled',
+    timeoutMs: 10000,
+    detail: () => `unsettled: ${JSON.stringify(unsettled)}`,
+  });
   t.after(async () => {
     try {
       await quiet();
