@@ -61,6 +61,13 @@
 // in the admin experience opens a new browser tab any more, which is why
 // the old TOOLS external-link block is gone.
 //
+// WORKSPACE (#6456): on md+ the sidebar is gone. A bar across the top holds
+// Home, one menu per group, Search (also ⌘K / Ctrl+K) and the environment;
+// a strip under it keeps a tab for every section opened, kept per browser.
+// The rules (tabs, search matching, the home page's shortcuts) are pure
+// functions in ./admin-workspace.js; this file draws them into the same
+// #admin-nav-desktop host the sidebar used. Phones keep the two-level menu.
+//
 // Permissions: the page itself is reachable for anyone with
 // App.user.isAdmin (full AND view-only admins — the navigation gate lives
 // in app.js). Write controls render only when App.user.canAdminWrite is
@@ -202,8 +209,11 @@ export const AdminUI = Object.freeze({
 // Guarded because the prerender pass evaluates this module in Node.
 if (typeof window !== 'undefined') window.AdminUI = AdminUI;
 
+import { TABS_KEY, parseStoredTabs, addTab, closeTab, searchSections } from './admin-workspace.js';
+
 // Which menu groups (Operations, Programme, People, Insights, Platform) the
-// viewer has COLLAPSED, persisted per browser (#1152). Versioned key, same
+// viewer has COLLAPSED on the phone's level-1 menu, persisted per browser
+// (#1152). The desktop sidebar that shared it became the top bar (#6456). Versioned key, same
 // shape as Notifications' notif_expanded_groups_v1.
 //
 // The set stores the COLLAPSED names, not the expanded ones, and that
@@ -569,6 +579,10 @@ const AdminConsole = {
     AdminConsole._returnTo = AdminConsole._lastOutside;
     AdminConsole._ensureMediaListener();
     section = AdminConsole._canonicalSection(section);
+    // ⌘K / Ctrl+K searches the sections only while the console is open
+    // (close() removes it), and the bar learns which environment this is.
+    AdminConsole._bindSearchKey();
+    AdminConsole._loadEnv();
     const visible = AdminConsole._visibleSections();
     const valid = visible.some((s) => s.key === section);
     // In public mode, fall back to the first PUBLIC section rather than
@@ -615,6 +629,10 @@ const AdminConsole = {
     // must not leave a 5s /api/status or 2s /api/node-status poll running
     // for the life of the tab (see _teardownActiveSection).
     AdminConsole._teardownActiveSection();
+    // The search key, the dialog and an open bar menu leave with it.
+    AdminConsole._unbindSearchKey();
+    AdminConsole.closeSearch({ refocus: false });
+    AdminConsole._closeTopMenu(false);
   },
 
   // Re-entry while the console is ALREADY mounted (app.js routes here
@@ -1004,40 +1022,404 @@ const AdminConsole = {
     return groups;
   },
 
-  // Desktop sidebar rows, grouped under headings. Nineteen flat rows is a
-  // lot to scan; the headings are the mitigation, and since #1152 each one
-  // is a collapse/expand button whose state persists per browser.
-  _navItemsHtml() {
+  // ── Desktop: the top bar, the open-section tabs, the search (#6456) ────
+  //
+  // From md up the console is a workspace: a bar across the top (Home, one
+  // menu per group, Search, and which environment this is), then a strip with
+  // a tab for every section opened, then the section, full width. It replaced
+  // the left sidebar and its collapsible group headings (#1152), which the
+  // phone's level-1 menu still has. Both are drawn into #admin-nav-desktop,
+  // the innerHTML host the sidebar used, and every section button in them
+  // carries data-admin-section, so they route through _wireSectionButtons
+  // like the phone menu does.
+
+  // The open tabs, oldest first, lazily read from storage (admin-workspace.js
+  // holds the rules). Home is not in the list: it is always the first tab.
+  _tabs: null,
+
+  _openTabs() {
+    if (!AdminConsole._tabs) AdminConsole._loadTabs();
+    return AdminConsole._tabs;
+  },
+
+  // Corrupt, foreign or unavailable storage is an empty strip, never a throw:
+  // this runs inside a render path. Unknown and retired keys are pruned.
+  _loadTabs() {
+    AdminConsole._tabs = [];
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(TABS_KEY);
+      AdminConsole._tabs = parseStoredTabs(raw,
+        AdminConsole.SECTIONS.map((s) => s.key), AdminConsole._canonicalSection);
+    } catch {
+      AdminConsole._tabs = [];
+    }
+  },
+
+  _saveTabs() {
+    // A non-admin on a public section is not in the console: their pages do
+    // not become an admin's tabs in this browser.
+    if (AdminConsole._publicMode()) return;
+    try {
+      localStorage.setItem(TABS_KEY, JSON.stringify(AdminConsole._openTabs()));
+    } catch { /* storage may be unavailable; the strip lives for the session */ }
+  },
+
+  // Opening a section opens (or keeps) its tab. Called by setSection.
+  _noteTab(key) {
+    if (AdminConsole._publicMode()) return;
+    AdminConsole._tabs = addTab(AdminConsole._openTabs(), key);
+    AdminConsole._saveTabs();
+  },
+
+  // Close a tab; closing the one on screen opens its neighbour (or Home).
+  _closeTab(key) {
+    const { tabs, next } = closeTab(AdminConsole._openTabs(), key, AdminConsole._section);
+    AdminConsole._tabs = tabs;
+    AdminConsole._saveTabs();
+    if (next) AdminConsole.setSection(next);
+    else AdminConsole._renderShell();
+    AdminConsole._focusActiveTab();
+  },
+
+  _focusActiveTab() {
+    const host = document.getElementById('admin-nav-desktop');
+    const btn = host && host.querySelector('[data-admin-tab][aria-current="page"] [data-admin-section]');
+    if (btn) btn.focus();
+  },
+
+  // One way to open a section from anywhere in the console: a drill-in on a
+  // phone, an in-place switch on a desktop. The home page's cards and the
+  // search dialog use it.
+  goTo(key) {
+    if (AdminConsole._isMobile()) AdminConsole._openSection(key);
+    else AdminConsole.setSection(key);
+  },
+
+  // Which environment this server is, from GET /api/version's `env` (the
+  // same field the drawer's version row reads). null until known; the label
+  // stays hidden for anything but staging or production.
+  _env: null,
+  _envLoading: false,
+
+  _loadEnv() {
+    if (AdminConsole._env || AdminConsole._envLoading) return;
+    const known = window.App && App._lastVersionInfo && App._lastVersionInfo.env;
+    if (known) { AdminConsole._env = known; return; }
+    AdminConsole._envLoading = true;
+    AdminConsole.fetchJson('/api/version').then(({ data }) => {
+      AdminConsole._envLoading = false;
+      if (!data || !data.env) return;
+      AdminConsole._env = data.env;
+      const label = document.querySelector('#admin-nav-desktop [data-admin-env]');
+      if (label) label.outerHTML = AdminConsole._envLabelHtml();
+    });
+  },
+
+  _envLabelHtml() {
+    const env = AdminConsole._env;
+    if (env === 'production') return `<span data-admin-env="production" class="${AdminUI.badge.destructive}">Production</span>`;
+    if (env === 'staging') return `<span data-admin-env="staging" class="${AdminUI.badge.warn}">Staging</span>`;
+    return '<span data-admin-env="" class="hidden"></span>';
+  },
+
+  _isMac() {
+    try { return /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || ''); }
+    catch { return false; }
+  },
+
+  // The bar. Home, then a menu button per group (the group of the section on
+  // screen marked aria-current), then the environment and Search. A group's
+  // menu lists its sections; Overview is Home and sits in no menu.
+  _topBarHtml() {
     const active = AdminConsole._section;
-    const itemHtml = (s) => {
-      const isActive = s.key === active;
-      const cls = 'admin-nav-item flex items-center gap-3 w-full text-start rounded-md px-3 py-2.5 text-sm font-medium transition-colors '
-        + (isActive
-          ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
-          : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/60');
-      // Section links of the sidebar's <nav>, the current one marked
-      // aria-current (QA 2026-09-24 Q20). They used to be tabs with no
-      // tablist around them, and a tablist may not hold the group headings.
-      return `<button type="button"${isActive ? ' aria-current="page"' : ''}
-        data-admin-section="${s.key}" class="${cls}">${AdminConsole.NAV_ICONS[s.key] || ''}<span class="flex-1 min-w-0 truncate">${AdminConsole.esc(s.label)}</span></button>`;
-    };
-    return AdminConsole._groupedSections().map((g, i) => {
-      // Rendered from the persisted set, never from the DOM — so this
-      // wholesale repaint (it runs on every section switch) reproduces
-      // whatever the viewer collapsed.
-      const collapsed = AdminConsole._isGroupCollapsed(g.name);
-      const domId = AdminConsole._groupDomId('admin-nav-group', g.name);
-      // No spacing utility on the items wrapper: the rows were adjacent
-      // before this became a wrapped group, and they stay adjacent.
-      return `
-      <div class="${i === 0 ? '' : 'mt-6'}">
-        ${AdminConsole._groupToggleHtml(g.name, domId, collapsed,
-          'flex items-center gap-1.5 w-full text-start px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors')}
-        <div id="${domId}" data-admin-group="${AdminConsole.esc(g.name)}"${collapsed ? ' class="hidden"' : ''}>
-          ${g.items.map(itemHtml).join('')}
-        </div>
+    const visible = AdminConsole._visibleSections();
+    const activeSection = visible.find((s) => s.key === active);
+    const activeGroup = activeSection && active !== 'overview' ? (activeSection.group || 'Other') : null;
+    const item = 'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ';
+    const lit = 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100';
+    const quiet = 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 hover:text-zinc-900 dark:hover:text-zinc-100';
+    const chevron = '<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>';
+    const home = visible.some((s) => s.key === 'overview')
+      ? `<button type="button" data-admin-section="overview" data-admin-topnav-home=""${active === 'overview' ? ' aria-current="page"' : ''}
+          class="${item}${active === 'overview' ? lit : quiet}">${AdminConsole.NAV_ICONS.overview}<span>Home</span></button>`
+      : '';
+    const groups = AdminConsole._groupedSections().map((g) => {
+      const items = g.items.filter((s) => s.key !== 'overview');
+      if (!items.length) return '';
+      const isCurrent = g.name === activeGroup;
+      const menuId = AdminConsole._groupDomId('admin-topnav-menu', g.name);
+      const rows = items.map((s) => {
+        const on = s.key === active;
+        return `<button type="button" role="menuitem" tabindex="-1" data-admin-section="${s.key}"${on ? ' aria-current="page"' : ''}
+          class="flex items-center gap-3 w-full text-start rounded-lg px-3 py-2 text-sm font-medium transition-colors focus:outline-none ${on ? lit : 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 focus:bg-zinc-100 dark:focus:bg-zinc-800/60'}">${AdminConsole.NAV_ICONS[s.key] || ''}<span class="flex-1 min-w-0 truncate">${AdminConsole.esc(s.label)}</span></button>`;
+      }).join('');
+      return `<div class="relative" data-admin-topnav-wrap="${AdminConsole.esc(g.name)}">
+        <button type="button" data-admin-topnav-group="${AdminConsole.esc(g.name)}"
+          aria-haspopup="menu" aria-expanded="false" aria-controls="${menuId}"${isCurrent ? ' aria-current="true"' : ''}
+          class="${item}${isCurrent ? lit : quiet}"><span>${AdminConsole.esc(g.name)}</span>${chevron}</button>
+        <div id="${menuId}" role="menu" aria-label="${AdminConsole.esc(g.name)}" data-admin-topnav-menu="${AdminConsole.esc(g.name)}"
+          class="hidden absolute start-0 top-full z-30 mt-2 w-72 max-h-[70vh] overflow-y-auto rounded-2xl bg-white dark:bg-zinc-900 p-2 shadow-xl ring-1 ring-zinc-200 dark:ring-zinc-800">${rows}</div>
       </div>`;
     }).join('');
+    const keys = AdminConsole._isMac() ? '⌘K' : 'Ctrl K';
+    return `<nav data-admin-topnav="" aria-label="Admin sections" class="${AdminUI.card} flex flex-wrap items-center gap-1 p-2">
+      ${home}${groups}
+      <div class="ms-auto flex items-center gap-3 ps-2">
+        ${AdminConsole._envLabelHtml()}
+        <button type="button" data-admin-search-open="" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K"
+          class="${item}${quiet}"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/></svg><span>Search</span><kbd class="${AdminUI.kbd}">${keys}</kbd></button>
+      </div>
+    </nav>`;
+  },
+
+  // The strip under the bar: Home, then a tab per opened section, oldest
+  // first. Tabs WRAP onto another line rather than scroll sideways: nothing
+  // in the console scrolls horizontally (#860), and a long label truncates.
+  _tabStripHtml() {
+    const active = AdminConsole._section;
+    const byKey = new Map(AdminConsole._visibleSections().map((s) => [s.key, s]));
+    const tab = (s, closable) => {
+      const on = s.key === active;
+      const label = s.key === 'overview' ? 'Home' : s.label;
+      const close = closable
+        ? `<button type="button" data-admin-tab-close="${s.key}" aria-label="Close ${AdminConsole.esc(label)}" title="Close (middle-click)"
+            class="flex items-center justify-center w-6 h-6 me-1.5 shrink-0 rounded-md text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg></button>`
+        : '';
+      return `<div data-admin-tab="${s.key}"${on ? ' aria-current="page"' : ''}
+          class="flex items-center max-w-[15rem] min-w-0 rounded-xl transition-colors ${on ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 ring-1 ring-zinc-200 dark:ring-zinc-700' : 'text-zinc-600 dark:text-zinc-400 hover:bg-white/60 dark:hover:bg-zinc-900/60'}">
+        <button type="button" data-admin-section="${s.key}"${on ? ' aria-current="page"' : ''}
+          class="flex items-center gap-2 min-w-0 px-3 py-2 text-sm font-medium">${AdminConsole.NAV_ICONS[s.key] || ''}<span class="truncate">${AdminConsole.esc(label)}</span></button>${close}
+      </div>`;
+    };
+    const parts = [];
+    if (byKey.has('overview')) parts.push(tab(byKey.get('overview'), false));
+    for (const key of AdminConsole._openTabs()) {
+      if (byKey.has(key)) parts.push(tab(byKey.get(key), true));
+    }
+    return `<div data-admin-tabs="" role="navigation" aria-label="Open sections" class="mt-3 flex flex-wrap items-center gap-1.5">${parts.join('')}</div>`;
+  },
+
+  // ── The bar's menus: Enter/Space or ArrowDown opens, arrows move, Esc
+  // closes and gives focus back, a press anywhere else closes. One open at a
+  // time; the outside-press listener exists only while one is.
+  _openMenu: null,
+
+  _closeTopMenu(refocus) {
+    const m = AdminConsole._openMenu;
+    if (!m) return;
+    AdminConsole._openMenu = null;
+    document.removeEventListener('pointerdown', m.onOutside, true);
+    m.menu.classList.add('hidden');
+    m.button.setAttribute('aria-expanded', 'false');
+    if (refocus && m.button.isConnected) m.button.focus();
+  },
+
+  _openTopMenu(button, focusIndex) {
+    const id = button.getAttribute('aria-controls');
+    const menu = id && document.getElementById(id);
+    if (!menu) return;
+    AdminConsole._closeTopMenu(false);
+    menu.classList.remove('hidden');
+    button.setAttribute('aria-expanded', 'true');
+    const onOutside = (e) => {
+      const wrap = button.parentElement;
+      if (wrap && wrap.contains(e.target)) return;
+      AdminConsole._closeTopMenu(false);
+    };
+    document.addEventListener('pointerdown', onOutside, true);
+    AdminConsole._openMenu = { button, menu, onOutside };
+    const items = [...menu.querySelectorAll('[role="menuitem"]')];
+    if (focusIndex != null && items.length) {
+      items[focusIndex < 0 ? items.length - 1 : Math.min(focusIndex, items.length - 1)].focus();
+    }
+  },
+
+  // Wired after every repaint of the host, scoped to it like
+  // _wireSectionButtons, so repaints cannot accumulate handlers.
+  _wireTopBar(host) {
+    if (!host) return;
+    host.querySelectorAll('[data-admin-topnav-group]').forEach((btn) => {
+      // A click toggles the menu and leaves focus on the button; the keys
+      // below open it with focus on an item.
+      btn.addEventListener('click', () => {
+        if (btn.getAttribute('aria-expanded') === 'true') AdminConsole._closeTopMenu(false);
+        else AdminConsole._openTopMenu(btn, null);
+      });
+      btn.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          AdminConsole._openTopMenu(btn, 0);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          AdminConsole._openTopMenu(btn, -1);
+        } else if (e.key === 'Escape') {
+          AdminConsole._closeTopMenu(true);
+        }
+      });
+    });
+    // Left and right walk the bar's own buttons, as in a menubar.
+    const barButtons = [...host.querySelectorAll('[data-admin-topnav-home], [data-admin-topnav-group], [data-admin-search-open]')];
+    barButtons.forEach((btn, i) => {
+      btn.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        e.preventDefault();
+        const n = barButtons.length;
+        const next = barButtons[(i + (e.key === 'ArrowRight' ? 1 : n - 1)) % n];
+        const wasOpen = !!AdminConsole._openMenu;
+        AdminConsole._closeTopMenu(false);
+        next.focus();
+        if (wasOpen && next.hasAttribute('data-admin-topnav-group')) AdminConsole._openTopMenu(next, 0);
+      });
+    });
+    host.querySelectorAll('[data-admin-topnav-menu]').forEach((menu) => {
+      menu.addEventListener('keydown', (e) => {
+        const items = [...menu.querySelectorAll('[role="menuitem"]')];
+        const at = items.indexOf(document.activeElement);
+        let to = null;
+        if (e.key === 'ArrowDown') to = (at + 1) % items.length;
+        else if (e.key === 'ArrowUp') to = (at - 1 + items.length) % items.length;
+        else if (e.key === 'Home') to = 0;
+        else if (e.key === 'End') to = items.length - 1;
+        else if (e.key === 'Escape') { e.preventDefault(); AdminConsole._closeTopMenu(true); return; }
+        else if (e.key === 'Tab') { AdminConsole._closeTopMenu(false); return; }
+        if (to == null || !items.length) return;
+        e.preventDefault();
+        items[to].focus();
+      });
+    });
+    const search = host.querySelector('[data-admin-search-open]');
+    if (search) search.addEventListener('click', () => AdminConsole.openSearch());
+    host.querySelectorAll('[data-admin-tab-close]').forEach((btn) => {
+      btn.addEventListener('click', () => AdminConsole._closeTab(btn.dataset.adminTabClose));
+    });
+    // Middle-click closes a tab, as in a browser. The mousedown is stopped so
+    // the browser does not start autoscroll first.
+    host.querySelectorAll('[data-admin-tab]').forEach((tab) => {
+      const key = tab.dataset.adminTab;
+      if (key === 'overview') return;
+      tab.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
+      tab.addEventListener('auxclick', (e) => {
+        if (e.button !== 1) return;
+        e.preventDefault();
+        AdminConsole._closeTab(key);
+      });
+    });
+  },
+
+  // ── Search: ⌘K / Ctrl+K, or the bar's Search button ──────────────────
+  //
+  // A dialog of the sections the viewer may open, matched by label and by
+  // the words people use for them (admin-workspace.js). It is appended to
+  // <body> while open and removed on close, as Analytics' #dc-tip is, so it
+  // is nobody's static markup; it works on a phone too, where the bar is not
+  // drawn. The key listener exists only while the console is open: open()
+  // binds it and close() removes it.
+  _search: null,
+  _searchKeyBound: false,
+
+  _onSearchKey(e) {
+    if (!AdminConsole._open || e.defaultPrevented || e.repeat || e.isComposing) return;
+    if (!(e.key === 'k' || e.key === 'K') || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    if (AdminConsole._search) AdminConsole.closeSearch();
+    else AdminConsole.openSearch();
+  },
+
+  _bindSearchKey() {
+    if (typeof document === 'undefined' || AdminConsole._searchKeyBound) return;
+    document.addEventListener('keydown', AdminConsole._onSearchKey);
+    AdminConsole._searchKeyBound = true;
+  },
+
+  _unbindSearchKey() {
+    if (typeof document === 'undefined' || !AdminConsole._searchKeyBound) return;
+    document.removeEventListener('keydown', AdminConsole._onSearchKey);
+    AdminConsole._searchKeyBound = false;
+  },
+
+  openSearch() {
+    if (!AdminConsole._open || AdminConsole._search) return;
+    AdminConsole._closeTopMenu(false);
+    const returnFocus = document.activeElement;
+    const root = document.createElement('div');
+    root.id = 'admin-search-dialog';
+    root.className = AdminUI.dialogOverlay;
+    root.innerHTML = `<div role="dialog" aria-modal="true" aria-labelledby="admin-search-title" class="${AdminUI.dialogPanel}">
+        <h2 id="admin-search-title" class="${AdminUI.cardTitle} mb-3">Go to a section</h2>
+        <input id="admin-search-input" type="text" autocomplete="off" spellcheck="false"
+          role="combobox" aria-expanded="true" aria-controls="admin-search-results" aria-autocomplete="list"
+          placeholder="A section, or a word like spend, bounce, errors" class="${AdminUI.input}">
+        <ul id="admin-search-results" role="listbox" aria-label="Sections" class="mt-3 max-h-[50vh] overflow-y-auto space-y-0.5"></ul>
+        <p class="${AdminUI.muted} mt-3">Arrow keys to move, Enter to open, Esc to close.</p>
+      </div>`;
+    document.body.appendChild(root);
+    const input = root.querySelector('#admin-search-input');
+    const list = root.querySelector('#admin-search-results');
+    const state = { root, returnFocus, results: [], index: 0 };
+    AdminConsole._search = state;
+
+    const paint = () => {
+      state.results = searchSections(AdminConsole._visibleSections(), input.value);
+      if (state.index >= state.results.length) state.index = Math.max(0, state.results.length - 1);
+      if (!state.results.length) {
+        list.innerHTML = `<li class="${AdminUI.muted} px-3 py-2">No section matches.</li>`;
+        input.removeAttribute('aria-activedescendant');
+        return;
+      }
+      list.innerHTML = state.results.map((s, i) => {
+        const on = i === state.index;
+        return `<li id="admin-search-opt-${s.key}" role="option" aria-selected="${on ? 'true' : 'false'}" data-admin-search-key="${s.key}"
+          class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm cursor-pointer ${on ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100' : 'text-zinc-700 dark:text-zinc-200'}">${AdminConsole.NAV_ICONS[s.key] || ''}<span class="flex-1 min-w-0 truncate font-medium">${AdminConsole.esc(s.key === 'overview' ? 'Home' : s.label)}</span><span class="text-xs text-zinc-500 dark:text-zinc-400">${AdminConsole.esc(s.group || '')}</span></li>`;
+      }).join('');
+      input.setAttribute('aria-activedescendant', `admin-search-opt-${state.results[state.index].key}`);
+      const cur = list.children[state.index];
+      if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
+    };
+
+    input.addEventListener('input', () => { state.index = 0; paint(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const n = state.results.length;
+        if (!n) return;
+        state.index = (state.index + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+        paint();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const pick = state.results[state.index];
+        if (pick) AdminConsole._pickSearch(pick.key);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        AdminConsole.closeSearch();
+      } else if (e.key === 'Tab') {
+        // The field is the dialog's one control: focus stays in it.
+        e.preventDefault();
+      }
+    });
+    list.addEventListener('click', (e) => {
+      const li = e.target.closest && e.target.closest('[data-admin-search-key]');
+      if (li) AdminConsole._pickSearch(li.dataset.adminSearchKey);
+    });
+    // A press on the backdrop, not the panel, closes.
+    root.addEventListener('pointerdown', (e) => { if (e.target === root) AdminConsole.closeSearch(); });
+    paint();
+    input.focus();
+  },
+
+  _pickSearch(key) {
+    AdminConsole.closeSearch({ refocus: false });
+    AdminConsole.goTo(key);
+    if (!AdminConsole._isMobile()) AdminConsole._focusActiveTab();
+  },
+
+  closeSearch(opts) {
+    const s = AdminConsole._search;
+    if (!s) return;
+    AdminConsole._search = null;
+    s.root.remove();
+    const refocus = !opts || opts.refocus !== false;
+    if (refocus && s.returnFocus && s.returnFocus.isConnected && s.returnFocus.focus) s.returnFocus.focus();
   },
 
   // Mobile level 1: the section menu. A list, not a tab set — so plain
@@ -1089,16 +1471,18 @@ const AdminConsole = {
   _renderShell() {
     const sideHost = document.getElementById('admin-nav-desktop');
     if (sideHost) {
-      sideHost.innerHTML = AdminConsole._navItemsHtml();
-      // Scoped to the sidebar, where the old whole-root wire was scoped to a
+      // A repaint replaces the bar, so a menu left open goes with it.
+      AdminConsole._closeTopMenu(false);
+      sideHost.innerHTML = AdminConsole._topBarHtml() + AdminConsole._tabStripHtml();
+      // Scoped to the bar, where the old whole-root wire was scoped to a
       // subtree this function had just emptied. It has to be: #admin-root is
       // no longer wiped here, so wiring the whole root would ALSO re-bind the
       // level-1 menu buttons still sitting in #admin-section-content, one
-      // extra click handler per repaint. The other two [data-admin-section]
+      // extra click handler per repaint. The other [data-admin-section]
       // producers wire their own output — _renderMobileMenu right after its
       // innerHTML write, and each section module for its own controls.
       AdminConsole._wireSectionButtons(sideHost);
-      AdminConsole._wireGroupToggles(sideHost);
+      AdminConsole._wireTopBar(sideHost);
     }
     // In public mode the viewer isn't an admin at all, so the view-only
     // ADMIN banner would be nonsense — suppress it rather than showing an
@@ -1170,6 +1554,8 @@ const AdminConsole = {
     // Arrival at a section reveals its group, before the repaint that would
     // otherwise draw the active row inside a collapsed one (#1152).
     AdminConsole._ensureActiveGroupExpanded();
+    // And opens its tab in the strip (#6456), before the strip is drawn.
+    AdminConsole._noteTab(key);
     // Repaint the sidebar's active state. This used to be the "the shell is
     // already built" half of a branch whose other half rebuilt #admin-root
     // from scratch; the chassis is React's now, so it always exists and
@@ -1194,12 +1580,15 @@ const AdminConsole = {
   // Mobile writes #admin/overview rather than bare #admin: down here a
   // bare #admin means the MENU, so Overview needs an explicit segment to
   // stay distinguishable (and deep-linkable) from level 1. Desktop keeps
-  // the historical overview → #admin mapping.
+  // the historical overview → #admin mapping. Bare #admin (desktop Home)
+  // owns no tail: every #admin/<key> "starts with" it, so without the
+  // `target !== '#admin'` guard below, a switch back to Home from a section
+  // (closing its tab, #6456) never got its address back.
   _writeHash(key) {
     const target = (key === 'overview' && !AdminConsole._isMobile())
       ? '#admin'
       : `#admin/${key}`;
-    if (location.hash.startsWith(`${target}/`)) return;
+    if (target !== '#admin' && location.hash.startsWith(`${target}/`)) return;
     if (location.hash.startsWith('#admin') && location.hash !== target) {
       history.replaceState(null, '', target);
     }
