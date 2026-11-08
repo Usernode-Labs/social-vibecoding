@@ -85,8 +85,13 @@ async function post(server, body) {
   });
 }
 
+// Frozen clock for the pure normalizeQueuedAt tests, which pass it as
+// nowMs. The route itself reads Date.now(), so the route-behaviour
+// fixtures below must be relative to the real clock: a stamp pinned to a
+// fixed date eventually crosses the 90-day "broken clock" cap and the
+// route stops printing it (that is how this suite once failed).
 const NOW = Date.parse('2026-08-11T12:00:00.000Z');
-const hoursAgo = (h) => new Date(NOW - h * 3600_000).toISOString();
+const hoursAgo = (h) => new Date(Date.now() - h * 3600_000).toISOString();
 
 // ── Pure validation ──────────────────────────────────────────────────
 
