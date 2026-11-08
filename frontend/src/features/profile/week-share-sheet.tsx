@@ -92,8 +92,9 @@ export function WeekShareSheet({ items, link }: { items: WeekShareItem[]; link: 
   const onShare = async () => {
     if (nothingChosen || !canShare) return;
     try {
-      const body = shareText(items, selected, null);
-      await navigator.share(link ? { text: body, url: link } : { text: body });
+      // Every line already carries the profile's address, so the share menu
+      // is not handed a second one.
+      await navigator.share({ text });
     } catch (err) {
       // Closing the share menu is not an error to report.
       if (err && (err as { name?: string }).name === 'AbortError') return;

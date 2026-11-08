@@ -58,24 +58,42 @@ test('a zero figure is not offered at all', () => {
   assert.deepEqual(view.items.map((item) => item.key), ['apps']);
 });
 
-test('the public profile link is added only when it is published and not hidden', () => {
+test('the address is the public profile\'s page, else the app\'s own, never a page that will not open', () => {
   assert.equal(store.shareWeekView(SUMMARY, PUBLISHED, ORIGIN).link, 'https://homeroom.example/#profile/evan');
-  assert.equal(store.shareWeekView(SUMMARY, { ...PUBLISHED, published: false }, ORIGIN).link, null,
-    'an unpublished profile has no link to add');
-  assert.equal(store.shareWeekView(SUMMARY, { ...PUBLISHED, moderationDisabled: true }, ORIGIN).link, null,
+  assert.equal(store.shareWeekView(SUMMARY, { ...PUBLISHED, published: false }, ORIGIN).link, ORIGIN,
+    'an unpublished profile never links its hidden page: the app\'s address instead');
+  assert.equal(store.shareWeekView(SUMMARY, { ...PUBLISHED, moderationDisabled: true }, ORIGIN).link, ORIGIN,
     'a hidden profile is not linked');
-  assert.equal(store.shareWeekView(SUMMARY, null, ORIGIN).link, null, 'not asked: words alone');
+  assert.equal(store.shareWeekView(SUMMARY, null, ORIGIN).link, ORIGIN, 'not asked: the app\'s own address');
+  assert.equal(store.shareWeekView(SUMMARY, PUBLISHED, '').link, null, 'with no origin there is no address');
 });
 
-test('the words are the selected figures, joined the card\'s own way', () => {
+test('every chosen figure is its own line, each carrying the profile link', () => {
   const { items, link } = store.shareWeekView(SUMMARY, PUBLISHED, ORIGIN);
   const all = store.shareText(items, items.map((item) => item.key), link);
-  assert.equal(all, 'My week on Homeroom: 3h 40m time in apps · 6 apps opened · 2 changes live · '
-    + 'Built in: Homeroom, Notes · 1 challenge done\nhttps://homeroom.example/#profile/evan');
+  assert.equal(all, 'My week on Homeroom:\n'
+    + '3h 40m time in apps https://homeroom.example/#profile/evan\n'
+    + '6 apps opened https://homeroom.example/#profile/evan\n'
+    + '2 changes live https://homeroom.example/#profile/evan\n'
+    + 'Built in: Homeroom, Notes https://homeroom.example/#profile/evan\n'
+    + '1 challenge done https://homeroom.example/#profile/evan');
+  // Not one line has the plain number on its own: each says where to see it.
+  const lines = all.split('\n').slice(1);
+  assert.equal(lines.length, items.length);
+  for (const line of lines) assert.ok(line.endsWith(` ${link}`), line);
   const some = store.shareText(items, ['time', 'merged']);
-  assert.equal(some, 'My week on Homeroom: 3h 40m time in apps · 2 changes live');
-  assert.equal(store.shareText(items, new Set(['apps'])), 'My week on Homeroom: 6 apps opened');
+  assert.equal(some, 'My week on Homeroom:\n3h 40m time in apps\n2 changes live',
+    'a pure call with no address is the words alone');
+  assert.equal(store.shareText(items, new Set(['apps'])), 'My week on Homeroom:\n6 apps opened');
   assert.equal(store.shareText(items, []), '', 'nothing selected says nothing');
+});
+
+test('with no published page every line still carries the app\'s own address', () => {
+  const { items, link } = store.shareWeekView(SUMMARY, null, ORIGIN);
+  const text = store.shareText(items, items.map((item) => item.key), link);
+  const lines = text.split('\n').slice(1);
+  assert.equal(lines.length, items.length);
+  for (const line of lines) assert.ok(line.endsWith(` ${ORIGIN}`), line);
 });
 
 test('the sheet draws a switch for every figure and the words that will leave', () => {
@@ -96,7 +114,7 @@ test('the sheet draws a switch for every figure and the words that will leave', 
   assert.equal((html.match(/id="profile-week-share-(time|apps|merged|built|challenges)"/g) || []).length, 5);
   assert.ok(html.includes('id="profile-week-share-copy"'), 'Copy is always offered');
   assert.ok(html.includes(message('profile:weekShare.preview')));
-  assert.ok(html.includes('My week on Homeroom: 3h 40m time in apps'));
+  assert.ok(html.includes('My week on Homeroom:\n3h 40m time in apps'));
 });
 
 test('sharing is local: the card sends nothing and records nothing', () => {

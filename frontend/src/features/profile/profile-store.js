@@ -389,29 +389,32 @@ export function shareWeekView(
   const owner = ownerPublicProfile || null;
   const profile = (owner && owner.profile) || {};
   const url = typeof profile.url === 'string' ? profile.url : '';
-  // The public page's link only when it actually exists and moderation has
-  // not hidden it; otherwise the share carries the words alone.
-  const link = owner && owner.published && !owner.moderationDisabled && url && origin
-    ? `${origin}${url}`
+  // The address every shared figure carries (#6464, as @alfa asked): the
+  // public profile's own page when it exists and moderation has not hidden
+  // it, otherwise the app's own address, so no line goes out as a bare
+  // number. Never a page that would not open for the reader.
+  const link = origin
+    ? (owner && owner.published && !owner.moderationDisabled && url ? `${origin}${url}` : origin)
     : null;
   return { items, link };
 }
 
 /**
- * The words the Share and Copy buttons send: the selected figures, joined
- * the way the screen joins facts, inside one whole message. With a published
- * profile the link is added on its own line. Empty when nothing is selected.
+ * The words the Share and Copy buttons send: one line per selected figure,
+ * and every line carries the page's address (#6464, as @alfa asked), so each
+ * figure says where it can be seen. The address is `shareWeekView`'s `link`:
+ * the public profile's page, or the app's own when that page is not public.
+ * Empty when nothing is selected.
  */
 export function shareText(items, selectedKeys, link = null) {
   const chosen = (items || []).filter((item) => !selectedKeys
     || (selectedKeys instanceof Set ? selectedKeys.has(item.key) : selectedKeys.includes(item.key)));
-  const facts = chosen.map((item) => item.label).filter(Boolean);
-  if (!facts.length) return '';
-  const body = facts.length === 1
-    ? facts[0]
-    : facts.reduce((first, second) => t('profile:line.factPair', { first, second }));
-  const text = t('profile:weekShare.intro', { facts: body });
-  return link ? `${text}\n${link}` : text;
+  const lines = chosen
+    .map((item) => (item.label || '').trim())
+    .filter(Boolean)
+    .map((label) => (link ? t('profile:weekShare.itemWithUrl', { fact: label, url: link }) : label));
+  if (!lines.length) return '';
+  return t('profile:weekShare.intro', { facts: lines.join('\n') });
 }
 
 /**

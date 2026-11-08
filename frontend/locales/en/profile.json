@@ -104,8 +104,12 @@
     "description": "Label above the exact text that will be shared from the \"Share your week\" card."
   },
   "weekShare.intro": {
-    "text": "My week on Homeroom: {{facts}}",
-    "description": "The opening of the text a viewer shares from their profile. {{facts}} is a list of their week's figures, such as \"3h 40m time in apps · 6 apps opened\", already separated the way this language separates short facts."
+    "text": "My week on Homeroom:\n{{facts}}",
+    "description": "The opening line of the text a viewer shares from their profile, above one line for each figure they chose. {{facts}} is those lines, one per figure, such as \"3h 40m time in apps\", each followed by the address where that week can be seen, already separated by line breaks."
+  },
+  "weekShare.itemWithUrl": {
+    "text": "{{fact}} {{url}}",
+    "description": "One line of the text a viewer shares from their profile: one figure from their week followed by the address where that week can be seen, which is the viewer's public profile page or, when that page is not public, Homeroom's own address. {{fact}} is the figure, such as \"3h 40m time in apps\"; {{url}} is the address."
   },
   "weekShare.item.time": {
     "text": "{{time}} time in apps",
