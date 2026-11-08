@@ -1,13 +1,12 @@
 /**
  * `#profile-app-slots-sheet` — the App allowance card, opened from Me's
- * "App slots" row when no slot is free (issue #6446).
+ * "App slots" row (issues #6446, #6466).
  *
- * The row has always opened the make screen in place. With every slot used
- * (or the whole server full) that screen can only say so and pale its Make
- * it, so the row opens this card instead: the same AppAllowance box the make
- * screen shows, unchanged, with its Request more. The card has one job,
- * telling the viewer why they cannot make a project and letting them ask for
- * more slots; a free slot keeps today's behaviour, the make screen.
+ * Every press of the row opens this card, and `#profile?slots` opens it
+ * directly: the same AppAllowance box the make screen shows, unchanged, with
+ * its Request more. The card has one job, telling the viewer how much room
+ * they have left and letting them ask for more slots; projects are made from
+ * Home, never from this row.
  *
  * The same presentation as ./friends-sheet.tsx, for the same reasons:
  * rendered inside #profile-root while `appSlotsOpen` is set, and handed to

@@ -53,11 +53,11 @@ const ROWS = [
   // Rewards.
   ['profile-row-challenges', '#leaderboard/challenges'],
   ['profile-row-kudos', '#leaderboard/kudos'],
-  // Account. The Friends card over Me, by the address Profile.open() honours;
-  // App slots opens the create dialog, whose allowance card offers "Request
-  // more" (#3250); `#create` is the same dialog's deep link.
+  // Account. Both cards over Me, by the addresses Profile.open() honours:
+  // Friends, and the App allowance card (#6466, where the row used to open
+  // the create dialog).
   ['profile-row-friends', '#profile?friends'],
-  ['profile-row-app-slots', '#create'],
+  ['profile-row-app-slots', '#profile?slots'],
   // Settings (#5557): Profile opens the Edit profile sheet in place; the
   // card shows at every width, so the Settings row is no longer a phone's
   // entrance only.
@@ -123,21 +123,28 @@ test('Profile opens the Edit profile sheet in place on a plain click', () => {
     /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showEditSheet\(\);/);
 });
 
-test('App slots says the allowance in words, and opens the create dialog in place', () => {
-  // #6446: a plain click opens the make screen while a slot is free, and the
-  // App allowance card (Profile.showAppSlots) once none is, so a viewer at
-  // the limit is told why instead of being sent to a Make it they cannot use.
+test('App slots says how much room is free, and always opens the allowance card', () => {
+  // #6466: the row says how many slots are FREE and always opens the App
+  // allowance card (Profile.showAppSlots); making a project is Home's job.
   const slotsRow = rowSource(CODE, 'profile-row-app-slots');
   assert.match(slotsRow,
-    /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);/);
-  assert.match(slotsRow,
-    /allowance\.blocked[\s\S]*?Profile\.showAppSlots\(\)[\s\S]*?\.App\?\.showCreateModal\?\.\(\);/,
-    'a blocked allowance opens the allowance card; otherwise the make screen');
+    /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showAppSlots\(\);/);
+  assert.doesNotMatch(slotsRow, /showCreateModal/,
+    'the row never opens the make screen');
   const { appSlotsLine } = loadTsx('frontend/src/features/dialogs/app-allowance.tsx');
   assert.equal(appSlotsLine(null, null), null, 'no allowance yet, no invented count');
-  assert.equal(appSlotsLine({ used: 1, limit: 2, remaining: 1 }, null), '1 of 2 app slots used');
+  assert.equal(appSlotsLine({ used: 1, limit: 2, remaining: 1 }, null), '1 app slot free of 2',
+    'the free count, not the used one');
+  assert.equal(appSlotsLine({ used: 2, limit: 2, remaining: 0 }, null),
+    'No app slots free · Request more');
   assert.equal(appSlotsLine({ used: 2, limit: 2, remaining: 0 }, '2026-09-07T12:00:00Z'),
-    '2 of 2 app slots used · more requested');
+    'No app slots free · more requested');
+  assert.equal(appSlotsLine({ used: 1, limit: 3, remaining: 2 }, '2026-09-07T12:00:00Z'),
+    '2 app slots free of 3 · more requested');
+  // Only the limit is known: the row keeps today's line.
+  assert.equal(appSlotsLine({ used: null, limit: 3, remaining: null }, null), '3 app slots');
+  assert.equal(appSlotsLine({ used: null, limit: 3, remaining: null }, '2026-09-07T12:00:00Z'),
+    '3 app slots · more requested');
   assert.equal(appSlotsLine({ used: 3, limit: null, remaining: null }, null), '3 apps made · no limit',
     'an admin without a slot limit is told so, not shown a fraction, and that these are the apps made');
 
@@ -150,7 +157,7 @@ test('App slots says the allowance in words, and opens the create dialog in plac
     stubs: { '../dialogs/app-allowance': allowance },
   });
   const html = renderToHtml(createElement(mod.AccountPanel, { rows: { challenges: null, kudos: null } }));
-  assert.match(html, /id="profile-row-app-slots"[\s\S]*?App slots[\s\S]*?1 of 2 app slots used/);
+  assert.match(html, /id="profile-row-app-slots"[\s\S]*?App slots[\s\S]*?1 app slot free of 2/);
   assert.match(html, /id="profile-account"/);
   assert.match(html, /id="profile-row-friends"/, 'Friends sits in the Account group with it');
 });
@@ -188,6 +195,38 @@ test('with no slot free the App allowance card says so, and offers Request more 
   const STORE = fs.readFileSync(
     path.join(ROOT, 'frontend/src/features/profile/profile-store.js'), 'utf8');
   assert.match(STORE, /appSlotsOpen: false/);
+});
+
+test('#profile?slots opens the App allowance card after load, and takes the ask off the address', (t) => {
+  t.after(() => { delete globalThis.location; delete globalThis.history; });
+  const replaced = [];
+  globalThis.location = { hash: '#profile?slots', pathname: '/', search: '' };
+  globalThis.history = { state: null, replaceState(_s, _t, url) { replaced.push(url); } };
+  const { Profile, profileStore } = loadTsx('frontend/src/features/profile/mount.ts');
+  assert.equal(Profile._takeSheetAsk('slots'), true, '#profile?slots asks for the card');
+  assert.deepEqual(replaced, ['/#profile'], 'the ask comes off the address');
+  globalThis.location.hash = '#profile';
+  assert.equal(Profile._takeSheetAsk('slots'), false, 'a reload does not reopen it');
+
+  // The card opens over the viewer's own profile only, once it has loaded.
+  Profile._open = true;
+  Profile._appSlotsRequested = true;
+  Profile._data = null;
+  Profile._maybeOpenAppSlots();
+  assert.equal(profileStore.get().appSlotsOpen, false, 'still loading: the load opens it');
+  assert.equal(Profile._appSlotsRequested, true);
+  Profile._data = { error: true };
+  Profile._maybeOpenAppSlots();
+  assert.equal(profileStore.get().appSlotsOpen, false, 'never over an error');
+  assert.equal(Profile._appSlotsRequested, false, 'and the ask is spent');
+  Profile._appSlotsRequested = true;
+  Profile._data = { ranking: {} };
+  Profile._maybeOpenAppSlots();
+  assert.equal(profileStore.get().appSlotsOpen, true);
+  Profile._appSlotsRequested = true;
+  Profile.close();
+  assert.equal(profileStore.get().appSlotsOpen, false);
+  assert.equal(Profile._appSlotsRequested, false, 'a pending ask does not outlive the screen');
 });
 
 test('the rows that moved to Settings are not on Me any more', () => {
