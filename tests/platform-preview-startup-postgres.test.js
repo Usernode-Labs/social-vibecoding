@@ -282,11 +282,21 @@ test('the security barrier precedes serving, and its clock does not wait for rel
 test('a new conductor pulls the security clock in until its proof is there, and web reports its wait', async () => {
   const platform = fs.readFileSync(require.resolve('../src/workflow/platform.ts'), 'utf8');
   const loops = platform.slice(platform.indexOf('export async function startWorkflowLoops()'), platform.indexOf('const ADOPTIONS'));
-  assert.ok(loops.indexOf('pullInSecurityClock(job, release)') > loops.indexOf('requestKey: `arm:${release}`'), 'after the boot Arm');
-  assert.ok(loops.indexOf('pullInSecurityClock(job, release)') < loops.indexOf("type: 'Booted'"), 'not after release adoption');
-  assert.match(loops, /void pullInSecurityClock\(job, release\)\.catch\(/, 'never blocks or fails boot');
+  assert.ok(loops.indexOf('pullInSecurityClock(job, release,') > loops.indexOf('requestKey: `arm:${release}`'), 'after the boot Arm');
+  assert.ok(loops.indexOf('pullInSecurityClock(job, release,') < loops.indexOf("type: 'Booted'"), 'not after release adoption');
+  assert.match(loops, /pullIn = \{ abort, done \}/, 'owned, so a stop can wait for it');
+  assert.doesNotMatch(loops, /await pullInSecurityClock\(/, 'never blocks or fails boot');
   const pull = platform.slice(platform.indexOf('async function pullInSecurityClock('));
-  assert.match(pull, /await startup\.proven\(appConfig, kernelPool\)/);
+  assert.match(pull, /await startup\.proven\(appConfig, pool\)/);
+  // The runtime and pool it started with, not the module's current ones: a
+  // restart's pull-in must not carry on against the new runtime's pool.
+  assert.match(pull, /rt\.append\(CLOCK, key/);
+  assert.match(pull, /runtime !== rt/);
+  // And a stop ends it before closing the pool it queries.
+  const stop = platform.slice(platform.indexOf('export async function stopWorkflow()'), platform.indexOf('function running()'));
+  assert.ok(stop.indexOf('pulled?.abort.abort()') >= 0);
+  assert.ok(stop.indexOf('await pulled?.done') < stop.indexOf('kernelPool?.end()'),
+    'the pull-in has stopped before its pool is closed');
   // Two Arms, the interval's own rule: due at once, then the job's interval back.
   assert.match(pull, /await arm\(PULL_IN_INTERVAL_MS, `pull-in:\$\{release\}:\$\{me\}:\$\{n\}`\)/);
   assert.match(pull, /await arm\(job\.everyMs, `pull-back:\$\{release\}:\$\{me\}:\$\{n\}`\)/);
