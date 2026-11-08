@@ -931,18 +931,38 @@ const TopochainChallenges = {
       : PlatformI18n.t('leaderboard:challenges.minutes.card', values);
   },
 
-  // The app a minutes challenge's page offers to open: the server's
-  // suggestion, as an in-app route built here from a slug that passes the
-  // shell's own slug rule, never an address from data.
+  // The apps a minutes challenge's page offers to open, up to three, in the
+  // server's order (most used, then featured): each an in-app route built
+  // here from a slug that passes the shell's own slug rule, never an address
+  // from data. Its icon is the server-built /app-icons/ path when it is one,
+  // else its emoji, else nothing (the row draws the name's first letter).
   SUGGESTED_SLUG: /^[a-z0-9][a-z0-9-]{0,127}$/,
-  _appActionOf(c) {
-    const app = c && c.suggested_app;
-    if (!app || typeof app.slug !== 'string' || !TopochainChallenges.SUGGESTED_SLUG.test(app.slug)) return null;
-    const name = TopochainChallenges.str(app.name || app.slug).trim() || app.slug;
-    return {
-      href: `#app/${app.slug}/app`,
-      label: PlatformI18n.t('leaderboard:challenges.minutes.open', { app: name }),
-    };
+  APP_ICON_PATH: /^\/app-icons\/[A-Za-z0-9_-]{1,64}$/,
+  APP_CHOICES: 3,
+  _appChoicesOf(c) {
+    const list = c && Array.isArray(c.suggested_apps) ? c.suggested_apps : [];
+    const str = TopochainChallenges.str;
+    const seen = new Set();
+    const out = [];
+    for (const app of list) {
+      if (out.length >= TopochainChallenges.APP_CHOICES) break;
+      if (!app || typeof app.slug !== 'string' || !TopochainChallenges.SUGGESTED_SLUG.test(app.slug)) continue;
+      if (seen.has(app.slug)) continue;
+      seen.add(app.slug);
+      const name = str(app.name || app.slug).trim() || app.slug;
+      const iconUrl = typeof app.icon_url === 'string' && TopochainChallenges.APP_ICON_PATH.test(app.icon_url)
+        ? app.icon_url : null;
+      const emoji = str(app.icon_emoji || '').trim().slice(0, 8) || null;
+      out.push({
+        key: app.slug,
+        href: `#app/${app.slug}/app`,
+        name,
+        label: PlatformI18n.t('leaderboard:challenges.minutes.open', { app: name }),
+        iconUrl,
+        iconEmoji: iconUrl ? null : emoji,
+      });
+    }
+    return out;
   },
 
   // A counted rail's words: "1/3 Apps tried", or for a This week challenge
@@ -1635,13 +1655,13 @@ const TopochainChallenges = {
     // offers one app to open, and once the minutes are there but the credit
     // is not, says when the points arrive.
     const minutes = TopochainChallenges._isDone(challenge) ? null : TopochainChallenges._minutesOf(challenge);
-    const appAction = minutes ? TopochainChallenges._appActionOf(challenge) : null;
+    const appChoices = minutes ? TopochainChallenges._appChoicesOf(challenge) : [];
     let minutesNote = null;
     if (minutes) {
       const every = Number(challenge.scoring && challenge.scoring.interval_minutes);
       minutesNote = {
         text: PlatformI18n.t('leaderboard:challenges.minutes.note'),
-        other: appAction ? PlatformI18n.t('leaderboard:challenges.minutes.otherApps') : null,
+        other: appChoices.length ? PlatformI18n.t('leaderboard:challenges.minutes.otherApps') : null,
         reached: minutes.reached
           ? (Number.isFinite(every) && every > 0
             ? PlatformI18n.t('leaderboard:challenges.minutes.reached', { count: every })
@@ -1699,11 +1719,11 @@ const TopochainChallenges = {
       // organiser's link, which could only ever name one destination.
       blockProduction: bpStep,
       cta: bpStep ? null : TopochainChallenges.ctaView(dm, challenge),
-      // #6463: on a minutes challenge, the plain rule and one app to open.
-      // With an app to open, it is the page's action and the organiser's
-      // link drops to the quieter line under it.
+      // #6463: on a minutes challenge, the plain rule and up to three apps
+      // to pick from. With apps to open, they are the page's action and the
+      // organiser's link drops to the quieter line under them.
       minutesNote,
-      appAction,
+      appChoices: appChoices.length ? appChoices : null,
       // #3247: the credits behind the count, newest first. Raw fields, never
       // an href: the pane builds the one address a change has.
       credits: TopochainChallenges._creditsOf(mine),

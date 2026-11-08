@@ -1,17 +1,21 @@
 'use strict';
 
-// The app the "Use apps for N minutes" challenge page offers to open (#6463).
+// The apps the "Use apps for N minutes" challenge page offers to open (#6463).
 //
-// The page's one action is "Open <app>", so it has to name an app whose
+// The page offers a choice of up to three, so each has to be an app whose
 // minutes would count: one the viewer did not make, that anybody may open,
-// that is running. The most used such app in the last seven days, by the
-// same engaged seconds the challenge counts; with no recent use anywhere, the
-// first app an admin featured on Home; else nothing, and the page keeps the
-// organiser's own link. Only a slug and a name leave here: the client builds
-// the in-app route from a validated slug, never an address from data.
-const SUGGESTED_APP_SQL = `
+// that is running. The most used such apps in the last seven days, by the
+// same engaged seconds the challenge counts, then the apps an admin featured
+// on Home to fill the rest, each app once; with neither, nothing, and the
+// page keeps the organiser's own link. Only a slug, a name and the app's
+// icon (the server-built /app-icons/ path or its emoji) leave here: the
+// client builds the in-app route from a validated slug, never an address
+// from data.
+const SUGGESTED_APPS_LIMIT = 3;
+
+const SUGGESTED_APPS_SQL = `
   WITH eligible AS (
-    SELECT a.id, a.slug, a.name
+    SELECT a.id, a.slug, a.name, a.icon_image_id, a.icon_emoji
       FROM apps a
      WHERE a.status = 'running'
        AND a.view_visibility = 'public'
@@ -24,23 +28,33 @@ const SUGGESTED_APP_SQL = `
       FROM app_activity aa
      WHERE aa.date > CURRENT_DATE - 7
      GROUP BY aa.app_id
+  ), ranked AS (
+    SELECT e.*, 0 AS rank_group, -COALESCE(u.seconds, 0) AS rank_value
+      FROM eligible e JOIN used u ON u.app_id = e.id
+     WHERE u.seconds > 0
+    UNION ALL
+    SELECT e.*, 1 AS rank_group, fa.sort_order AS rank_value
+      FROM eligible e JOIN featured_apps fa ON fa.app_id = e.id
+  ), best AS (
+    SELECT DISTINCT ON (id) * FROM ranked ORDER BY id, rank_group ASC, rank_value ASC
   )
-  SELECT e.slug, e.name, 0 AS rank_group, -COALESCE(u.seconds, 0) AS rank_value, e.id
-    FROM eligible e JOIN used u ON u.app_id = e.id
-   WHERE u.seconds > 0
-  UNION ALL
-  SELECT e.slug, e.name, 1 AS rank_group, fa.sort_order AS rank_value, e.id
-    FROM eligible e JOIN featured_apps fa ON fa.app_id = e.id
+  SELECT slug, name, icon_image_id, icon_emoji
+    FROM best
    ORDER BY rank_group ASC, rank_value ASC, id ASC
-   LIMIT 1
+   LIMIT $2
 `;
 
-async function suggestedApp(pool, userId) {
-  if (userId == null) return null;
-  const { rows } = await pool.query(SUGGESTED_APP_SQL, [userId]);
-  const row = rows[0];
-  if (!row || !row.slug) return null;
-  return { slug: String(row.slug), name: String(row.name || row.slug) };
+async function suggestedApps(pool, userId, limit = SUGGESTED_APPS_LIMIT) {
+  if (userId == null) return [];
+  const { rows } = await pool.query(SUGGESTED_APPS_SQL, [userId, limit]);
+  return rows.filter((row) => row.slug).map((row) => ({
+    slug: String(row.slug),
+    name: String(row.name || row.slug),
+    // Server-built, as GET /api/apps builds it, so the client never
+    // assembles ids into paths.
+    icon_url: row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null,
+    icon_emoji: row.icon_emoji ? String(row.icon_emoji) : null,
+  }));
 }
 
-module.exports = { suggestedApp, SUGGESTED_APP_SQL };
+module.exports = { suggestedApps, SUGGESTED_APPS_SQL, SUGGESTED_APPS_LIMIT };

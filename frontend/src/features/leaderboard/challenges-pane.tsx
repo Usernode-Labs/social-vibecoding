@@ -40,7 +40,8 @@ import type { ReactNode } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { SectionHeading } from '@/components/ui/field';
-import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { GroupedList, ListRow, SectionHeader, rowSeparator } from '@/components/ui/grouped-list';
+import { IconTile } from '@/components/ui/icon-tile';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 import { resolveIllustration } from '../../lib/challenge-illustrations';
@@ -189,7 +190,7 @@ type DetailView = {
   // under the Open button and, once the minutes are there but not yet
   // credited, when the points arrive; and the app to open, an in-app route.
   minutesNote?: { text: string; other: string | null; reached: string | null } | null;
-  appAction?: { href: string; label: string } | null;
+  appChoices?: AppChoice[] | null;
   // The organiser's requirements, under "What counts".
   requirements: string | null;
 };
@@ -393,9 +394,66 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
 
 // ── Detail page ─────────────────────────────────────────────────────────
 
+// #6463: a minutes challenge's choice of apps, up to three, built by
+// TopochainChallenges._appChoicesOf from validated slugs.
+type AppChoice = {
+  key: string;
+  href: string;
+  name: string;
+  label: string;
+  iconUrl: string | null;
+  iconEmoji: string | null;
+};
+
+// A row is the guarded route link itself (Cta), drawn as a list row: the
+// app's tile, its name and an Open pill. It opens in place, never in a new
+// tab, like any route CTA (#2893).
+const APP_ROW = 'relative flex w-full items-center gap-4 px-4 py-3 text-start '
+  + 'active:bg-zinc-50 dark:active:bg-zinc-800 ' + rowSeparator({ inset: 'tile' });
+const APP_ROW_NAME = 'min-w-0 flex-1 truncate text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100';
+const APP_ROW_OPEN = 'shrink-0 rounded-full bg-violet-600 px-3.5 py-1.5 text-[0.8125rem] font-semibold leading-4 text-white';
+
+function AppChoiceTile({ app }: { app: AppChoice }): ReactNode {
+  const [failed, setFailed] = useState(false);
+  return (
+    <IconTile size="xs" aria-hidden="true" className="overflow-hidden">
+      {app.iconUrl && !failed ? (
+        <img src={app.iconUrl} alt="" draggable={false} className="h-full w-full object-cover" onError={() => setFailed(true)} />
+      ) : (
+        <span className="text-base font-semibold leading-none">{app.iconEmoji || app.name.slice(0, 1).toUpperCase()}</span>
+      )}
+    </IconTile>
+  );
+}
+
+function AppChoices({ apps, other }: { apps: AppChoice[]; other: string | null }): ReactNode {
+  const t = useMessages('leaderboard');
+  return (
+    <section data-minutes-apps="" className="flex flex-col">
+      <SectionHeading title={t('leaderboard:challenges.minutes.pick')} />
+      <GroupedList className="mx-0">
+        {apps.map((app) => (
+          <Cta key={app.key} view={{ kind: 'route', href: app.href, label: app.label }} ariaLabel={app.label} className={APP_ROW}>
+            <AppChoiceTile app={app} />
+            <span className={APP_ROW_NAME}>{app.name}</span>
+            <span className={APP_ROW_OPEN} aria-hidden="true">{t('leaderboard:challenges.minutes.openShort')}</span>
+          </Cta>
+        ))}
+      </GroupedList>
+      {other ? <p className={`mt-2 ${NOTE}`}>{other}</p> : null}
+    </section>
+  );
+}
+
+
+
 // `quiet`: the organiser's link drawn as the quieter line under another
-// action (#6463, a minutes challenge's Open button), in the same ink.
-function Cta({ view, quiet = false }: { view: CtaView; quiet?: boolean }): ReactNode {
+// action (#6463, a minutes challenge's apps), in the same ink. `className`,
+// `ariaLabel` and `children` draw the same guarded link as something else, a
+// minutes challenge's app row: the page keeps one place that writes an href.
+function Cta({ view, quiet = false, className, ariaLabel, children }: {
+  view: CtaView; quiet?: boolean; className?: string; ariaLabel?: string; children?: ReactNode;
+}): ReactNode {
   if (view.kind === 'text') {
     return (
       <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -421,9 +479,10 @@ function Cta({ view, quiet = false }: { view: CtaView; quiet?: boolean }): React
       href={view.href}
       target={external ? '_blank' : undefined}
       rel={external ? 'noopener' : undefined}
-      className={quiet ? FEEDBACK_LINK : CTA_LINK}
+      aria-label={ariaLabel}
+      className={className || (quiet ? FEEDBACK_LINK : CTA_LINK)}
     >
-      {view.label}
+      {children ?? view.label}
     </a>
   );
 }
@@ -642,16 +701,8 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
       {view.minutesNote ? <p data-minutes-note="" className={PROSE}>{view.minutesNote.text}</p> : null}
       {view.minutesNote?.reached ? <p data-minutes-reached="" className={PROSE}>{view.minutesNote.reached}</p> : null}
       {view.blockProduction ? <BlockProductionStep view={view.blockProduction} /> : null}
-      {view.appAction ? (
-        <>
-          {/* An in-app route built from a validated slug, drawn by the same
-              guarded action as any route CTA: it stays in this document
-              (#2893), and the page keeps its one computed href. */}
-          <Cta view={{ kind: 'route', href: view.appAction.href, label: view.appAction.label }} />
-          {view.minutesNote?.other ? <p className={NOTE}>{view.minutesNote.other}</p> : null}
-        </>
-      ) : null}
-      {view.cta ? <Cta view={view.cta} quiet={!!view.appAction} /> : null}
+      {view.appChoices ? <AppChoices apps={view.appChoices} other={view.minutesNote?.other || null} /> : null}
+      {view.cta ? <Cta view={view.cta} quiet={!!view.appChoices} /> : null}
       {/* #3186: the feedback challenge's count is the viewer's own reports;
           this is where each one is listed with whether it counted, by the
           address Profile.open() honours. A constant, so it needs no guard. */}

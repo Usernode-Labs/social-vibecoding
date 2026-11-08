@@ -1078,7 +1078,7 @@ test('#3247: the page lists the credits that count, by the change title when it 
 // (`minutes` on the row, read by the scorer's own rule), its page says what
 // counts and offers one app to open, as an in-app route built from a
 // validated slug, with the organiser's link the quieter line under it.
-test('#6463: a minutes challenge counts minutes, says what counts and offers an app to open', () => {
+test('#6463: a minutes challenge counts minutes, says what counts and offers three apps to pick from', () => {
   const { pane } = loadPane({ challenges: CH, eventId: 900500 });
   const row = (minutes, extra = {}) => ({
     id: 900501,
@@ -1088,7 +1088,11 @@ test('#6463: a minutes challenge counts minutes, says what counts and offers an 
     counted_by: { measure: 'USE_APPS_MINUTES', target: 10 },
     progress: { done: false, current: null, target: null },
     scoring: { interval_minutes: 10, last_scored_at: null },
-    suggested_app: { slug: 'daily-puzzle', name: 'Daily Puzzle' },
+    suggested_apps: [
+      { slug: 'daily-puzzle', name: 'Daily Puzzle', icon_url: '/app-icons/abc123', icon_emoji: null },
+      { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: '🌱' },
+      { slug: 'chess-club', name: 'Chess club', icon_url: null, icon_emoji: null },
+    ],
     minutes,
     ...extra,
   });
@@ -1115,24 +1119,42 @@ test('#6463: a minutes challenge counts minutes, says what counts and offers an 
   assert.match(page.minutesNote.text, /someone else made/);
   assert.equal(page.minutesNote.reached, null, 'not there yet');
   // Plain copies: the pane's objects are another realm's.
-  assert.deepEqual({ ...page.appAction }, { href: '#app/daily-puzzle/app', label: 'Open Daily Puzzle' });
+  assert.deepEqual(JSON.parse(JSON.stringify(page.appChoices)), [
+    { key: 'daily-puzzle', href: '#app/daily-puzzle/app', name: 'Daily Puzzle', label: 'Open Daily Puzzle',
+      iconUrl: '/app-icons/abc123', iconEmoji: null },
+    { key: 'garden', href: '#app/garden/app', name: 'Garden', label: 'Open Garden', iconUrl: null, iconEmoji: '🌱' },
+    { key: 'chess-club', href: '#app/chess-club/app', name: 'Chess club', label: 'Open Chess club', iconUrl: null, iconEmoji: null },
+  ], 'three apps to pick from, in the server\'s order, each an in-app route');
   assert.deepEqual({ ...page.cta }, { kind: 'route', href: '#home', label: 'Explore apps' }, 'the organiser\'s link stays');
 
   pane._detailChallenge = row({ seconds: 600, target_seconds: 600 });
   assert.equal(pane.detailView().minutesNote.reached, 'Done. Your points arrive at the next count, within 10 minutes.');
   assert.equal(pane.detailView().stateLabel, '10 of 10 minutes');
 
-  pane._detailChallenge = row({ seconds: 200, target_seconds: 600 }, { suggested_app: { slug: 'javascript:alert(1)', name: 'x' } });
-  assert.equal(pane.detailView().appAction, null, 'a slug that is not one is never a link');
-  pane._detailChallenge = row({ seconds: 200, target_seconds: 600 }, { suggested_app: null });
-  assert.equal(pane.detailView().appAction, null);
+  const slugs = (apps) => {
+    pane._detailChallenge = row({ seconds: 200, target_seconds: 600 }, { suggested_apps: apps });
+    const choices = pane.detailView().appChoices;
+    return choices ? Array.from(choices, (a) => a.key) : null; // this realm's array
+  };
+  assert.deepEqual(slugs([{ slug: 'one', name: 'One' }]), ['one'], 'fewer than three: what there is');
+  assert.deepEqual(slugs([{ slug: 'a' }, { slug: 'b' }, { slug: 'c' }, { slug: 'd' }]), ['a', 'b', 'c'], 'never more than three');
+  assert.deepEqual(slugs([{ slug: 'a' }, { slug: 'a' }, { slug: 'b' }]), ['a', 'b'], 'each app once');
+  assert.deepEqual(slugs([{ slug: 'javascript:alert(1)', name: 'x' }, { slug: 'ok', name: 'Ok' }]), ['ok'],
+    'a slug that is not one is never a link');
+  pane._detailChallenge = row({ seconds: 200, target_seconds: 600 }, {
+    suggested_apps: [{ slug: 'x', name: 'X', icon_url: 'https://evil.example/i.png', icon_emoji: '🎲' }],
+  });
+  assert.equal(pane.detailView().appChoices[0].iconUrl, null, 'only a server-built /app-icons/ path is an image');
+  assert.equal(pane.detailView().appChoices[0].iconEmoji, '🎲');
+  assert.equal(slugs([]), null, 'no apps: no list');
+  assert.equal(slugs(undefined), null);
   assert.equal(pane.detailView().minutesNote.other, null, 'no "any other app" line without an app to open');
 
   pane._detailChallenge = row({ seconds: 200, target_seconds: 600 }, { progress: { done: true, current: null, target: null } });
   assert.equal(pane.detailView().minutesNote, null, 'a finished challenge keeps its ordinary page');
-  assert.equal(pane.detailView().appAction, null);
+  assert.equal(pane.detailView().appChoices, null);
   pane._detailChallenge = CH[0];
   assert.equal(pane.detailView().minutesNote, null, 'nothing on any other challenge');
-  assert.equal(pane.detailView().appAction, null);
+  assert.equal(pane.detailView().appChoices, null);
   pane._detailChallenge = null;
 });

@@ -290,10 +290,14 @@ test('#3247: a weekly challenge says the list is this week; no credits, no secti
   }
 });
 
-// #6463: a minutes challenge's page: the plain rule under the rail, the Open
-// button as an in-app route (never a new tab), the "any other app" line, and
-// the organiser's link as the quieter line under it.
-test('#6463: the minutes page draws the rule, the Open button, then the organiser\'s link quietly', () => {
+// #6463: a minutes challenge's page: the plain rule under the rail, then a
+// choice of up to three apps, each row an in-app route (never a new tab) with
+// the app's tile, its name and an Open pill, the "any other app" line, and the
+// organiser's link as the quieter line under them.
+test('#6463: the minutes page draws the rule, three apps to pick from, then the organiser\'s link quietly', () => {
+  const app = (key, name, iconUrl = null, iconEmoji = null) => ({
+    key, href: `#app/${key}/app`, name, label: `Open ${name}`, iconUrl, iconEmoji,
+  });
   const html = render({
     ...VIEW,
     goal: 'Use apps for 10 minutes',
@@ -306,21 +310,40 @@ test('#6463: the minutes page draws the rule, the Open button, then the organise
       other: message('leaderboard:challenges.minutes.otherApps'),
       reached: null,
     },
-    appAction: { href: '#app/daily-puzzle/app', label: 'Open Daily Puzzle' },
+    appChoices: [
+      app('daily-puzzle', 'Daily Puzzle', '/app-icons/abc123'),
+      app('garden', 'Garden', null, '🌱'),
+      app('chess-club', 'Chess club'),
+    ],
   });
-  const order = ['role="progressbar"', 'data-minutes-note', 'href="#app/daily-puzzle/app"', 'about every 30 seconds', 'href="#home"'];
+  const order = [
+    'role="progressbar"', 'data-minutes-note', message('leaderboard:challenges.minutes.pick'),
+    'href="#app/daily-puzzle/app"', 'href="#app/garden/app"', 'href="#app/chess-club/app"',
+    'about every 30 seconds', 'href="#home"',
+  ];
   let at = -1;
   for (const needle of order) {
     const i = html.indexOf(needle);
     assert.ok(i > at, `${needle} comes after the part before it`);
     at = i;
   }
-  const open = html.match(/<a href="#app\/daily-puzzle\/app"[^>]*>/)[0];
-  assert.doesNotMatch(open, /target=/, 'the app opens in place');
-  assert.match(open, /bg-violet-600/, 'the page\'s blue action button');
+  const rows = html.match(/<a href="#app\/[^"]+"[^>]*>.*?<\/a>/g);
+  assert.equal(rows.length, 3, 'one row per app');
+  for (const row of rows) {
+    assert.doesNotMatch(row, /target=/, 'each app opens in place');
+    assert.match(row, /aria-label="Open [^"]+"/, 'named by what it does');
+    assert.match(row, />Open<\/span>/, 'with an Open pill');
+  }
+  assert.match(rows[0], /<img src="\/app-icons\/abc123"/, 'the app\'s icon when it has one');
+  assert.match(rows[1], />🌱</, 'else its emoji');
+  assert.match(rows[2], />C</, 'else its first letter');
+  assert.match(rows[0], />Daily Puzzle</);
   const organiser = html.match(/<a href="#home"[^>]*>/)[0];
   assert.doesNotMatch(organiser, /bg-violet-600/, 'the organiser\'s link is no longer the main button');
   assert.doesNotMatch(html, /data-minutes-reached/);
+
+  const one = render({ ...VIEW, cta: null, minutesNote: { text: 'x', other: null, reached: null }, appChoices: [app('solo', 'Solo')] });
+  assert.equal((one.match(/<a href="#app\//g) || []).length, 1, 'fewer than three: what there is');
 
   const reached = render({ ...VIEW, minutesNote: { text: 'x', other: null, reached: 'Done. Your points arrive at the next count, within 10 minutes.' } });
   assert.match(reached, /data-minutes-reached="" class="[^"]*">Done\. Your points arrive at the next count, within 10 minutes\.</);

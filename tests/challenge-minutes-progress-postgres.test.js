@@ -8,9 +8,9 @@
 // reads GET /api/v4/me/minutes-challenge. Both come from minutesProgress,
 // which must count exactly what the scorer pays for: time in apps the
 // person did not make, inside the challenge's window (this week's slice of
-// it on a weekly challenge). The suggested app is a running public app the
-// viewer did not make, the most used one this week, else the first
-// featured one.
+// it on a weekly challenge). The suggested apps, up to three, are running
+// public apps the viewer did not make: the most used this week, then the
+// featured ones to fill, each app once.
 //
 // Run with: node --test tests/challenge-minutes-progress-postgres.test.js
 
@@ -23,7 +23,7 @@ const { Pool } = require('pg');
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
-test('minutes so far, the timer endpoint and the suggested app (PostgreSQL)', { timeout: 180000 }, async (t) => {
+test('minutes so far, the timer endpoint and the suggested apps (PostgreSQL)', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (error) {
     await admin.end();
@@ -46,7 +46,7 @@ test('minutes so far, the timer endpoint and the suggested app (PostgreSQL)', { 
   require('../src/db/pool').getPool = () => pool;
 
   const scorer = require('../src/services/topochain/challenge-scorer');
-  const { suggestedApp } = require('../src/services/topochain/minutes-suggestion');
+  const { suggestedApps } = require('../src/services/topochain/minutes-suggestion');
 
   const { rows: people } = await pool.query(
     `INSERT INTO users (username, password) VALUES ('mia', 'x'), ('maker', 'x'), ('other', 'x')
@@ -88,20 +88,34 @@ test('minutes so far, the timer endpoint and the suggested app (PostgreSQL)', { 
   const at4 = await scorer.loadCandidates(pool, 'USE_APPS_MINUTES', window, { target: 4 });
   assert.equal(at4.filter((c) => Number(c.userId) === Number(mia.id)).length, 0);
 
-  // ── The suggested app ──────────────────────────────────────────────
+  // ── The suggested apps: up to three ────────────────────────────────
+  const chess = await app('chess', other.id, { name: 'Chess' });
+  const cards = await app('cards', other.id, { name: 'Cards' });
+  await pool.query("UPDATE apps SET icon_emoji = '♟' WHERE id = $1", [chess.id]);
+  await pool.query("UPDATE apps SET icon_image_id = 'gardenicon' WHERE id = $1", [garden.id]);
   await time(garden.id, other.id, 2000, 2);
   await time(hidden.id, other.id, 9000, 0);
   await time(down.id, other.id, 9000, 0);
   await time(mine.id, other.id, 9000, 0);
-  assert.deepEqual(await suggestedApp(pool, maker.id), { slug: 'mias-diary', name: 'Mia diary' },
-    'for somebody else, the most used running public app they did not make');
-  assert.deepEqual(await suggestedApp(pool, mia.id), { slug: 'garden', name: 'Garden' },
-    'never her own app, a private one or one that is not running');
+  const slugsFor = async (userId) => (await suggestedApps(pool, userId)).map((a) => a.slug);
+  assert.deepEqual(await slugsFor(mia.id), ['garden', 'daily-puzzle'],
+    'most used first; never her own app, a private one or one not running; fewer than three is what there is');
+  await pool.query('INSERT INTO featured_apps (app_id, sort_order) VALUES ($1, 2), ($2, 0), ($3, 1), ($4, 3)',
+    [garden.id, chess.id, cards.id, mine.id]);
+  assert.deepEqual(await slugsFor(mia.id), ['garden', 'daily-puzzle', 'chess'],
+    'featured apps fill the rest, each app once, and never more than three');
+  assert.deepEqual(await slugsFor(maker.id), ['mias-diary', 'chess', 'cards'],
+    'for somebody else, the apps they did not make');
+  const [first] = await suggestedApps(pool, mia.id);
+  assert.deepEqual(first, { slug: 'garden', name: 'Garden', icon_url: '/app-icons/gardenicon', icon_emoji: null },
+    'the icon as a server-built path');
+  assert.deepEqual((await suggestedApps(pool, mia.id))[2],
+    { slug: 'chess', name: 'Chess', icon_url: null, icon_emoji: '♟' }, 'or its emoji');
   await pool.query('DELETE FROM app_activity WHERE date > CURRENT_DATE - 7');
-  assert.equal(await suggestedApp(pool, mia.id), null, 'nothing used and nothing featured: no suggestion');
-  await pool.query('INSERT INTO featured_apps (app_id, sort_order) VALUES ($1, 1), ($2, 0)', [garden.id, mine.id]);
-  assert.deepEqual(await suggestedApp(pool, mia.id), { slug: 'garden', name: 'Garden' },
-    'with no recent use, the first featured app she did not make');
+  assert.deepEqual(await slugsFor(mia.id), ['chess', 'cards', 'garden'],
+    'with no recent use, the featured apps in the admin\'s order, without her own');
+  await pool.query('DELETE FROM featured_apps');
+  assert.deepEqual(await suggestedApps(pool, mia.id), [], 'nothing used and nothing featured: no suggestion');
 
   // ── The routes ─────────────────────────────────────────────────────
   const { rows: [season] } = await pool.query(
@@ -158,12 +172,13 @@ test('minutes so far, the timer endpoint and the suggested app (PostgreSQL)', { 
     assert.deepEqual(row(ten).counted_by, { measure: 'USE_APPS_MINUTES', target: 10 },
       'the rule\'s minutes ride on counted_by too');
     assert.deepEqual(row(ten).minutes, { seconds: 180, target_seconds: 600, weekly: false, credited: false });
-    assert.deepEqual(row(ten).suggested_app, { slug: 'daily-puzzle', name: 'Daily Puzzle' },
+    assert.deepEqual(row(ten).suggested_apps,
+      [{ slug: 'daily-puzzle', name: 'Daily Puzzle', icon_url: null, icon_emoji: null }],
       'the most used app this week she did not make');
     assert.deepEqual(row(weekly).minutes, { seconds: 120, target_seconds: 300, weekly: true, credited: false },
       'a weekly challenge counts this week only: eight days ago is never this week');
     assert.equal(row(proposal).minutes, undefined, 'no minutes on any other challenge');
-    assert.equal(row(proposal).suggested_app, undefined);
+    assert.equal(row(proposal).suggested_apps, undefined);
   });
 
   await t.test('signed out, the list carries no minutes', async () => {

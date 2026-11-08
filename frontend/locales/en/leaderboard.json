@@ -283,9 +283,17 @@
     "text": "Time counts while an app someone else made is open on your screen and you are using it. It pauses after a minute without a tap, scroll or key press, and when you switch away. Minutes in different apps add up.",
     "description": "Under the progress bar on the \"Use apps for N minutes\" challenge's page: the plain rule for which minutes count."
   },
+  "challenges.minutes.pick": {
+    "text": "Pick an app to use",
+    "description": "Heading over the list of up to three suggested apps on the \"Use apps for N minutes\" challenge's page; each row opens its app."
+  },
+  "challenges.minutes.openShort": {
+    "text": "Open",
+    "description": "The button at the end of each suggested app's row on the \"Use apps for N minutes\" challenge's page. \"Open\" is a verb: open the app."
+  },
   "challenges.minutes.open": {
     "text": "Open {{app}}",
-    "description": "The main button on the \"Use apps for N minutes\" challenge's page: opens a suggested app. {{app}} is the app's name."
+    "description": "Accessible name of an app's row on the \"Use apps for N minutes\" challenge's page, which opens that app. {{app}} is the app's name."
   },
   "challenges.minutes.otherApps": {
     "text": "Or use any other app you didn't make. Your minutes update here about every 30 seconds.",

@@ -71,7 +71,7 @@ const {
   loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks, COUNTS_THIS_WEEK_SQL,
 } = require('../../services/topochain/challenge-onboarding');
 const { loadRuleFacts, intervalMinutes, minutesProgress } = require('../../services/topochain/challenge-scorer');
-const { suggestedApp } = require('../../services/topochain/minutes-suggestion');
+const { suggestedApps } = require('../../services/topochain/minutes-suggestion');
 const events = require('../../services/events');
 const seasonHistory = require('../../services/topochain/season-history');
 
@@ -937,11 +937,11 @@ function topochainPublicRoutes(config) {
       const { cadence, countedBy, minutes } = await loadRuleFacts(pool, id, visible, { defaultMinutes: intervalMinutes(config) });
 
       // #6463: on a challenge USE_APPS_MINUTES scores, the viewer's minutes
-      // so far in its window (the scorer's own rows and filters), and one
-      // app to open for it. Signed in only, and only when the list holds
-      // such a challenge: one small read per challenge, one for the app.
+      // so far in its window (the scorer's own rows and filters), and up
+      // to three apps to open for it. Signed in only, and only when the list holds
+      // such a challenge: one small read per challenge, one for the apps.
       const minutesById = new Map();
-      let suggested = null;
+      let suggested = [];
       if (req.user?.id && minutes && minutes.size) {
         for (const [challengeId, m] of minutes) {
           const { seconds } = await minutesProgress(pool, req.user.id, m.window);
@@ -951,7 +951,7 @@ function topochainPublicRoutes(config) {
             weekly: m.window.weekly === true,
           });
         }
-        suggested = await suggestedApp(pool, req.user.id);
+        suggested = await suggestedApps(pool, req.user.id);
       }
 
       const data = visible
@@ -975,7 +975,7 @@ function topochainPublicRoutes(config) {
             // weekly challenge), so the minutes are paid for and the card
             // goes back to the ordinary done rule.
             item.minutes = { ...mine, credited: (counts.get(Number(item.id)) || 0) > 0 };
-            item.suggested_app = suggested;
+            item.suggested_apps = suggested;
           }
           const category = challengeCategory(item.id, item.activity_type.category, onboarding);
           item.activity_type.category = category;
