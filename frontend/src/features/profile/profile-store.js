@@ -80,6 +80,7 @@ function factLine(parts) {
  * @property {boolean} feedbackOpen         — the "Your feedback" list is up (#3186)
  * @property {boolean} friendsOpen          — the Friends card is up (UI overhaul)
  * @property {boolean} appSlotsOpen         — the App allowance card is up (#6446)
+ * @property {boolean} weekShareOpen        — the "Share your week" card is up (#6464)
  */
 
 export const profileStore = createStore(/** @type {ProfileState} */ ({
@@ -98,6 +99,7 @@ export const profileStore = createStore(/** @type {ProfileState} */ ({
   feedbackOpen: false,
   friendsOpen: false,
   appSlotsOpen: false,
+  weekShareOpen: false,
 }));
 
 /** Only ever render an http(s) URL as a real anchor. Escaping alone would not
@@ -303,20 +305,36 @@ function activityDuration(seconds) {
  * opened keeps the apps figure and draws no chart, the zero saying nothing.
  * A bar's height is against the busiest day, with a floor so the shortest
  * non-zero day still reads as a bar.
+ *
+ * #6464 adds the week's accomplishments, from the same seven UTC days: the
+ * changes that went live (`week.merged`) and the challenges completed
+ * (`week.challengesDone`). An older cached summary with no `week` is zeros.
+ * The card is also what the Share action shares, so `canShare` says whether
+ * it has anything to share at all.
  */
 export function activityView(summary) {
   const activity = summary && summary.activity;
   if (!activity || !Array.isArray(activity.days)) return null;
   const total = Number(activity.totalSeconds) || 0;
   const apps = Number(activity.appsOpened) || 0;
-  if (!total && !apps) return { empty: true };
+  const week = (summary && summary.week) || {};
+  const merged = Number(week.merged) || 0;
+  const challengesDone = Number(week.challengesDone) || 0;
+  if (!total && !apps && !merged && !challengesDone) return { empty: true };
   const busiest = Math.max(...activity.days.map((day) => Number(day.seconds) || 0), 0);
   const peak = activity.days.findIndex((day) => busiest > 0 && Number(day.seconds) === busiest);
   return {
     empty: false,
+    canShare: true,
     time: total ? activityDuration(total) : null,
     apps: apps ? apps.toLocaleString() : null,
     appsLabel: t('profile:activity.appsLabel', { count: apps }),
+    merged: merged ? merged.toLocaleString() : null,
+    mergedLabel: merged ? t('profile:activity.mergedLabel', { count: merged }) : null,
+    challenges: challengesDone ? challengesDone.toLocaleString() : null,
+    challengesLabel: challengesDone
+      ? t('profile:activity.challengesLabel', { count: challengesDone })
+      : null,
     days: !total ? [] : activity.days.map((day, i) => {
       const seconds = Number(day.seconds) || 0;
       const at = new Date(`${day.date}T00:00:00Z`);
@@ -336,6 +354,64 @@ export function activityView(summary) {
       };
     }),
   };
+}
+
+/**
+ * The "Share your week" card's list (#6464): every figure the week has, each
+ * one switchable, and the public profile's link when the viewer has published
+ * it. Only non-zero figures are offered — a zero says nothing, as on the
+ * card — and `built` names the apps the viewer's own live changes were in.
+ *
+ * `origin` is a parameter so the function stays pure and testable outside a
+ * browser; on the screen it is the page's own origin.
+ */
+export function shareWeekView(
+  summary,
+  ownerPublicProfile = null,
+  origin = typeof location !== 'undefined' ? location.origin : '',
+) {
+  const activity = activityView(summary);
+  const week = (summary && summary.week) || {};
+  const items = [];
+  if (activity && !activity.empty) {
+    const apps = Number(summary && summary.activity && summary.activity.appsOpened) || 0;
+    const merged = Number(week.merged) || 0;
+    const challenges = Number(week.challengesDone) || 0;
+    if (activity.time) items.push({ key: 'time', label: t('profile:weekShare.item.time', { time: activity.time }) });
+    if (apps) items.push({ key: 'apps', label: t('profile:weekShare.item.apps', { count: apps, number: apps.toLocaleString() }) });
+    if (merged) items.push({ key: 'merged', label: t('profile:weekShare.item.merged', { count: merged, number: merged.toLocaleString() }) });
+    const appNames = (Array.isArray(week.apps) ? week.apps : [])
+      .map((app) => (app && (app.name || app.slug)) || null)
+      .filter(Boolean);
+    if (appNames.length) items.push({ key: 'built', label: t('profile:weekShare.item.built', { apps: appNames.join(', ') }) });
+    if (challenges) items.push({ key: 'challenges', label: t('profile:weekShare.item.challenges', { count: challenges, number: challenges.toLocaleString() }) });
+  }
+  const owner = ownerPublicProfile || null;
+  const profile = (owner && owner.profile) || {};
+  const url = typeof profile.url === 'string' ? profile.url : '';
+  // The public page's link only when it actually exists and moderation has
+  // not hidden it; otherwise the share carries the words alone.
+  const link = owner && owner.published && !owner.moderationDisabled && url && origin
+    ? `${origin}${url}`
+    : null;
+  return { items, link };
+}
+
+/**
+ * The words the Share and Copy buttons send: the selected figures, joined
+ * the way the screen joins facts, inside one whole message. With a published
+ * profile the link is added on its own line. Empty when nothing is selected.
+ */
+export function shareText(items, selectedKeys, link = null) {
+  const chosen = (items || []).filter((item) => !selectedKeys
+    || (selectedKeys instanceof Set ? selectedKeys.has(item.key) : selectedKeys.includes(item.key)));
+  const facts = chosen.map((item) => item.label).filter(Boolean);
+  if (!facts.length) return '';
+  const body = facts.length === 1
+    ? facts[0]
+    : facts.reduce((first, second) => t('profile:line.factPair', { first, second }));
+  const text = t('profile:weekShare.intro', { facts: body });
+  return link ? `${text}\n${link}` : text;
 }
 
 /**
@@ -686,6 +762,7 @@ export function buildProfileView(state, now = Date.now()) {
     publicControls: publicControlsView(state),
     stats: statsView(d.summary || null),
     activity: activityView(d.summary || null),
+    weekShare: shareWeekView(d.summary || null, d.ownerPublicProfile || null),
     rows: moreRowsView(d),
     friends: friendsView(d.friends || null, now),
     feedback: feedbackListView(d.feedback || null, now),
