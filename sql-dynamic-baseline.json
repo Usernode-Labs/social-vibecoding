@@ -866,6 +866,13 @@
     {
       "source": "src/routes/topochain/public.js",
       "kind": "structural-template",
+      "fingerprint": "10ce4cd7c9cadb6ff40f",
+      "count": 1,
+      "preview": "`SELECT c.id, c.season_event_id, c.challenge_template_id, c.enabled, c.completed, c.reward, c.schedule_start, c.schedule_end, c.metric_target, ${TEMPLATE_JOIN_C"
+    },
+    {
+      "source": "src/routes/topochain/public.js",
+      "kind": "structural-template",
       "fingerprint": "34540a7d410e6004fc43",
       "count": 1,
       "preview": "`SELECT ua.challenge_id, COUNT(*)::int AS credits FROM user_activities ua JOIN challenges c ON c.id = ua.challenge_id LEFT JOIN challenge_templates ct ON ct.id "
@@ -883,6 +890,13 @@
       "fingerprint": "ef2878441106ee901e25",
       "count": 1,
       "preview": "`SELECT id, name, description, starts_at, ends_at, start_epoch, end_epoch, is_active, display_activities, display_leaderboard, type, season_id FROM season_event"
+    },
+    {
+      "source": "src/routes/topochain/public.js",
+      "kind": "structural-template",
+      "fingerprint": "feca0347e7ccb708ba50",
+      "count": 1,
+      "preview": "`SELECT DISTINCT ua.challenge_id FROM user_activities ua JOIN challenges c ON c.id = ua.challenge_id LEFT JOIN challenge_templates ct ON ct.id = c.challenge_tem"
     },
     {
       "source": "src/routes/votes.js",

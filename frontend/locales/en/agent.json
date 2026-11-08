@@ -2259,6 +2259,26 @@
     "text": "Opening…",
     "description": "Note under an app's icon and name on the cover shown while the app is being opened."
   },
+  "appFrame.minutes.progress": {
+    "text": "{{elapsed}} of {{target}}",
+    "description": "The timer in the corner of a running app, for the \"Use apps for N minutes\" challenge: the viewer's minutes so far toward it, e.g. \"3:05 of 10:00\". {{elapsed}} and {{target}} are times in minutes and seconds, already formatted."
+  },
+  "appFrame.minutes.paused": {
+    "text": "Paused",
+    "description": "Beside the timer in the corner of a running app (the \"Use apps for N minutes\" challenge) while time is not counting: no tap, scroll or key press for a minute, or the app is not on screen."
+  },
+  "appFrame.minutes.done_one": {
+    "text": "{{count}} minute",
+    "description": "The timer in the corner of a running app once the \"Use apps for N minutes\" challenge's minutes are all there, beside a check mark; it links to the challenge. {{count}} is the number of minutes."
+  },
+  "appFrame.minutes.done_other": {
+    "text": "{{count}} minutes",
+    "description": "The timer in the corner of a running app once the \"Use apps for N minutes\" challenge's minutes are all there, beside a check mark; it links to the challenge. {{count}} is the number of minutes."
+  },
+  "appFrame.minutes.close": {
+    "text": "Hide the timer",
+    "description": "Accessible name of the × on the timer in the corner of a running app (the \"Use apps for N minutes\" challenge). It hides the timer until the next app is opened."
+  },
   "appFrame.cover.failed.title": {
     "text": "Couldn't open this app",
     "description": "Title of the failed card that replaces the waiting state on the cover shown while an app opens, when the app could not be opened. A \"Try again\" button follows."

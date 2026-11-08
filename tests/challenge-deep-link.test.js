@@ -1073,3 +1073,66 @@ test('#3247: the page lists the credits that count, by the change title when it 
   pane._mine = new Map();
   assert.equal(pane.detailView().credits.length, 0, 'signed out or nothing credited: no list');
 });
+
+// #6463: a minutes challenge's rail counts the viewer's minutes so far
+// (`minutes` on the row, read by the scorer's own rule), its page says what
+// counts and offers one app to open, as an in-app route built from a
+// validated slug, with the organiser's link the quieter line under it.
+test('#6463: a minutes challenge counts minutes, says what counts and offers an app to open', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const row = (minutes, extra = {}) => ({
+    id: 900501,
+    completed: false,
+    card_preview: { goal: 'Use apps for 10 minutes' },
+    detail_modal: { cta_link: '#home', cta_label: 'Explore apps' },
+    counted_by: { measure: 'USE_APPS_MINUTES', target: 10 },
+    progress: { done: false, current: null, target: null },
+    scoring: { interval_minutes: 10, last_scored_at: null },
+    suggested_app: { slug: 'daily-puzzle', name: 'Daily Puzzle' },
+    minutes,
+    ...extra,
+  });
+  const three = row({ seconds: 200, target_seconds: 600, weekly: false, credited: false });
+
+  const rail = pane._stateOf(three);
+  assert.equal(rail.stateLabel, '3/10 minutes', 'whole minutes, on the card');
+  assert.equal(rail.counted, true, 'a bar that fills');
+  assert.equal(rail.fill, 0.3);
+  assert.equal(rail.state, 'progress');
+  assert.equal(pane._stateOf(row({ seconds: 20, target_seconds: 600 })).state, 'new', 'under a minute is not started');
+  assert.equal(pane._stateOf(row({ seconds: 9999, target_seconds: 600 })).stateLabel, '10/10 minutes', 'never past the target');
+  assert.equal(pane._stateOf(row({ seconds: 200, target_seconds: 600, weekly: true })).stateLabel, '3/10 minutes this week');
+  assert.equal(pane._stateOf(row({ seconds: 200, target_seconds: 600, credited: true })).stateLabel,
+    message('leaderboard:challenges.state.notStarted'), 'credited: the ordinary rule again');
+  assert.equal(pane._stateOf(row(undefined)).stateLabel, message('leaderboard:challenges.state.notStarted'),
+    'no minutes: unchanged');
+  assert.equal(pane._countNoteOf(three), null, 'its target is minutes, not a cap on credits');
+
+  pane._detailChallenge = three;
+  const page = pane.detailView();
+  assert.equal(page.stateLabel, '3 of 10 minutes', 'the page says it in words');
+  assert.equal(page.minutesNote.text, message('leaderboard:challenges.minutes.note'));
+  assert.match(page.minutesNote.text, /someone else made/);
+  assert.equal(page.minutesNote.reached, null, 'not there yet');
+  // Plain copies: the pane's objects are another realm's.
+  assert.deepEqual({ ...page.appAction }, { href: '#app/daily-puzzle/app', label: 'Open Daily Puzzle' });
+  assert.deepEqual({ ...page.cta }, { kind: 'route', href: '#home', label: 'Explore apps' }, 'the organiser\'s link stays');
+
+  pane._detailChallenge = row({ seconds: 600, target_seconds: 600 });
+  assert.equal(pane.detailView().minutesNote.reached, 'Done. Your points arrive at the next count, within 10 minutes.');
+  assert.equal(pane.detailView().stateLabel, '10 of 10 minutes');
+
+  pane._detailChallenge = row({ seconds: 200, target_seconds: 600 }, { suggested_app: { slug: 'javascript:alert(1)', name: 'x' } });
+  assert.equal(pane.detailView().appAction, null, 'a slug that is not one is never a link');
+  pane._detailChallenge = row({ seconds: 200, target_seconds: 600 }, { suggested_app: null });
+  assert.equal(pane.detailView().appAction, null);
+  assert.equal(pane.detailView().minutesNote.other, null, 'no "any other app" line without an app to open');
+
+  pane._detailChallenge = row({ seconds: 200, target_seconds: 600 }, { progress: { done: true, current: null, target: null } });
+  assert.equal(pane.detailView().minutesNote, null, 'a finished challenge keeps its ordinary page');
+  assert.equal(pane.detailView().appAction, null);
+  pane._detailChallenge = CH[0];
+  assert.equal(pane.detailView().minutesNote, null, 'nothing on any other challenge');
+  assert.equal(pane.detailView().appAction, null);
+  pane._detailChallenge = null;
+});

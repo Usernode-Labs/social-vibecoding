@@ -70,7 +70,8 @@ const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challen
 const {
   loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks, COUNTS_THIS_WEEK_SQL,
 } = require('../../services/topochain/challenge-onboarding');
-const { loadRuleFacts, intervalMinutes } = require('../../services/topochain/challenge-scorer');
+const { loadRuleFacts, intervalMinutes, minutesProgress } = require('../../services/topochain/challenge-scorer');
+const { suggestedApp } = require('../../services/topochain/minutes-suggestion');
 const events = require('../../services/events');
 const seasonHistory = require('../../services/topochain/season-history');
 
@@ -933,7 +934,25 @@ function topochainPublicRoutes(config) {
       // The same read says what the rule counts (#3253, #3248), so the page
       // can say that a proposal counts once it is put to the vote, and that
       // a counted measure stops paying at its target.
-      const { cadence, countedBy } = await loadRuleFacts(pool, id, visible, { defaultMinutes: intervalMinutes(config) });
+      const { cadence, countedBy, minutes } = await loadRuleFacts(pool, id, visible, { defaultMinutes: intervalMinutes(config) });
+
+      // #6463: on a challenge USE_APPS_MINUTES scores, the viewer's minutes
+      // so far in its window (the scorer's own rows and filters), and one
+      // app to open for it. Signed in only, and only when the list holds
+      // such a challenge: one small read per challenge, one for the app.
+      const minutesById = new Map();
+      let suggested = null;
+      if (req.user?.id && minutes && minutes.size) {
+        for (const [challengeId, m] of minutes) {
+          const { seconds } = await minutesProgress(pool, req.user.id, m.window);
+          minutesById.set(challengeId, {
+            seconds,
+            target_seconds: Math.round(m.target * 60),
+            weekly: m.window.weekly === true,
+          });
+        }
+        suggested = await suggestedApp(pool, req.user.id);
+      }
 
       const data = visible
         .map((r) => {
@@ -950,6 +969,14 @@ function topochainPublicRoutes(config) {
           // challenge a rule scores right now, else null; always present.
           const by = countedBy.get(Number(item.id));
           item.counted_by = by ? { measure: by.measure, target: by.target } : null;
+          const mine = minutesById.get(Number(item.id));
+          if (mine) {
+            // `credited`: the window's credit has landed (this week's on a
+            // weekly challenge), so the minutes are paid for and the card
+            // goes back to the ordinary done rule.
+            item.minutes = { ...mine, credited: (counts.get(Number(item.id)) || 0) > 0 };
+            item.suggested_app = suggested;
+          }
           const category = challengeCategory(item.id, item.activity_type.category, onboarding);
           item.activity_type.category = category;
           item.card_preview.label = (category || '').toUpperCase();
@@ -977,6 +1004,78 @@ function topochainPublicRoutes(config) {
       return ok(res, { data });
     } catch (err) {
       log.error('topochain-public', 'GET /season-events/:id/challenges failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── GET /me/minutes-challenge?app=<slug> (#6463) ─────────────────────
+  // What the app frame's minutes timer needs: the viewer's open "Use apps
+  // for N minutes" challenge they have not finished (the one that ends
+  // soonest when there are several), their minutes in it so far, and whether
+  // time in the app being opened counts (not when they made it). Every
+  // active event's challenges go through loadRuleFacts, so a challenge no
+  // rule scores right now is never offered. `{ challenge: null }` when there
+  // is none; 401 signed out.
+  router.get('/api/v4/me/minutes-challenge', async (req, res) => {
+    try {
+      if (!req.user?.id) return fail(res, 401, 'Sign in to see your minutes.');
+      res.set('Cache-Control', 'private, no-store');
+      const userId = Number(req.user.id);
+      const { rows: eventRows } = await pool.query(
+        `SELECT se.id FROM season_events se
+           LEFT JOIN seasons s ON s.id = se.season_id
+          WHERE se.internal = FALSE AND se.is_active = TRUE AND COALESCE(s.is_active, FALSE) = TRUE
+          ORDER BY se.id ASC`);
+      const open = [];
+      for (const ev of eventRows) {
+        const { rows } = await pool.query(
+          `SELECT c.id, c.season_event_id, c.challenge_template_id, c.enabled, c.completed,
+                  c.reward, c.schedule_start, c.schedule_end, c.metric_target,
+                  ${TEMPLATE_JOIN_COLUMNS_SQL}
+             FROM challenges c
+             LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+            WHERE c.season_event_id = $1 AND c.enabled = TRUE`, [ev.id]);
+        const visible = rows.filter((r) => r.t_id != null);
+        const { minutes } = await loadRuleFacts(pool, ev.id, visible, { defaultMinutes: intervalMinutes(config) });
+        for (const [challengeId, m] of minutes || []) open.push({ challengeId, eventId: Number(ev.id), ...m });
+      }
+      if (!open.length) return ok(res, { challenge: null });
+
+      // Finished is a credit in the window: any on a challenge, this week's on
+      // a weekly one (the rule the list's own progress counts by).
+      const { rows: doneRows } = await pool.query(
+        `SELECT DISTINCT ua.challenge_id
+           FROM user_activities ua
+           JOIN challenges c ON c.id = ua.challenge_id
+           LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+          WHERE ua.user_id = $1 AND ua.challenge_id = ANY($2::bigint[])
+            AND ${COUNTS_THIS_WEEK_SQL}`,
+        [userId, open.map((o) => o.challengeId)]);
+      const done = new Set(doneRows.map((r) => Number(r.challenge_id)));
+      const pending = open.filter((o) => !done.has(o.challengeId))
+        .sort((a, b) => (a.window.endMs ?? Infinity) - (b.window.endMs ?? Infinity) || a.challengeId - b.challengeId);
+      const pick = pending[0];
+      if (!pick) return ok(res, { challenge: null });
+
+      const { seconds } = await minutesProgress(pool, userId, pick.window);
+      let counts = false;
+      const slug = typeof req.query.app === 'string' ? req.query.app.slice(0, 128) : '';
+      if (slug) {
+        const { rows: appRows } = await pool.query('SELECT created_by FROM apps WHERE slug = $1', [slug]);
+        counts = !!appRows[0] && (appRows[0].created_by == null || Number(appRows[0].created_by) !== userId);
+      }
+      return ok(res, {
+        challenge: {
+          challengeId: pick.challengeId,
+          eventId: pick.eventId,
+          seconds,
+          targetSeconds: Math.round(pick.target * 60),
+          weekly: pick.window.weekly === true,
+          counts,
+        },
+      });
+    } catch (err) {
+      log.error('topochain-public', 'GET /me/minutes-challenge failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });

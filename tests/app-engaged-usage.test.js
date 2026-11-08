@@ -565,3 +565,47 @@ test('malformed cached intervals do not prevent collecting or delivering valid u
     startedAt: '2026-10-01T15:00:00.000Z', endedAt: '2026-10-01T15:00:02.000Z',
   }]);
 });
+
+// #6463: the app frame's minutes timer reads the collector and never moves
+// it. `pendingMs` is this app's engaged time the server does not hold yet
+// (buffered, or staged and unanswered), `engaged` whether time is being
+// credited right now; and reading it changes nothing that is uploaded.
+test('engagement() reports unacknowledged time and the paused state, without changing what is uploaded', async () => {
+  const answers = [];
+  const h = await collectorHarness({
+    fetch: async (url, options) => {
+      answers.push(JSON.parse(options.body));
+      return answers.length === 1 ? Promise.reject(new Error('response lost')) : { ok: true, status: 200 };
+    },
+  });
+  assert.deepEqual(h.usage.engagement('notes'), { pendingMs: 0, engaged: false, active: true }, 'not ready: paused');
+  h.signal('ready');
+  assert.equal(h.usage.engagement('notes').engaged, false, 'ready but no input yet: paused');
+  h.signal('activity');
+  assert.equal(h.usage.engagement('notes').engaged, true);
+  h.advance(2_500);
+  assert.equal(h.usage.engagement('notes').pendingMs, 2_500, 'buffered time counts');
+  h.setVisible(false);
+  assert.equal(h.usage.engagement('notes').engaged, false, 'off screen: paused');
+  h.setVisible(true);
+  h.advance(61_000);
+  assert.equal(h.usage.engagement('notes').engaged, false, 'the input lease ran out: paused');
+  assert.deepEqual(h.usage.engagement('other'), { pendingMs: 0, engaged: false, active: false }, 'only this app');
+
+  const before = JSON.stringify(h.usage.debug().state);
+  const seen = [];
+  const stop = h.usage.onEngagement('notes', (e) => seen.push(e));
+  assert.equal(seen.length, 1, 'reported at once');
+  stop();
+  assert.equal(JSON.stringify(h.usage.debug().state), before, 'reading changed nothing');
+
+  assert.equal(await h.usage.flush(), false, 'the first upload loses its answer');
+  assert.equal(h.usage.debug().state.batches.length, 1);
+  // 2.5 s, then the lease's last 1.5 s credited by the tick that found it
+  // expired: 4 s in all, staged whole.
+  assert.equal(h.usage.engagement('notes').pendingMs, 4_000, 'a staged, unanswered batch still counts');
+  assert.equal(await h.usage.flush(), true);
+  assert.equal(h.usage.engagement('notes').pendingMs, 0, 'acknowledged time is the server\'s now');
+  assert.equal(answers[0].entries[0].seconds, 4);
+  assert.deepEqual(answers[1], answers[0], 'the upload is exactly what it would have been');
+});

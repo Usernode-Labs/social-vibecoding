@@ -126,6 +126,12 @@ function makeMockPool(state) {
         if (state.fillThrows) throw new Error('leaderboard exploded');
         return { rows: state.fillUsers || [] };
       }
+      // #6463: the scoring rules bound to the block's challenges
+      // (challenge-scorer CADENCE_RULES_SQL), read for a minutes challenge's
+      // count. A fixture with no `rules` has none, so no row carries minutes.
+      if (sql.includes('/* challenge scoring cadence */')) {
+        return { rows: state.rules || [] };
+      }
       // The row query.
       if (sql.includes('FROM challenges c')) {
         // Honour the real LIMIT the route passes ($3) rather than a

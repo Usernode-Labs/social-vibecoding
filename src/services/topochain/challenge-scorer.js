@@ -183,6 +183,21 @@ const USE_APPS_MINUTES_SQL = `
    LIMIT $4
 `;
 
+// One person's total in the same rows USE_APPS_MINUTES_SQL sums (#6463):
+// the challenge page's "3 of 10 minutes" and the app frame's timer. The same
+// FROM and the same filters, for one user and without the target, so what a
+// person is shown counting is exactly what the scorer will pay for.
+// tests/challenge-scoring.test.js holds the two WHERE clauses together.
+const USE_APPS_MINUTES_VIEWER_SQL = `
+  SELECT COALESCE(SUM(aa.seconds_spent), 0)::bigint AS seconds
+    FROM app_activity aa
+    JOIN apps a ON a.id = aa.app_id
+   WHERE aa.date >= $1::date AND aa.date <= $2::date
+     AND aa.user_id = $3
+     AND aa.user_id IS NOT NULL
+     AND a.created_by IS DISTINCT FROM aa.user_id
+`;
+
 // `promoted_at` is written on every promote and by a Settings proposal's insert,
 // for bots and campaigns as much as people. Credit goes to the session's owner
 // (`cs.user_id`), so a Homeroom bot build credits the bot's account and a
@@ -1102,7 +1117,10 @@ const CADENCE_RULES_SQL = `
 async function loadRuleFacts(pool, eventId, rows, { defaultMinutes, now = Date.now() } = {}) {
   const cadence = new Map();
   const countedBy = new Map();
-  const out = { cadence, countedBy };
+  // #6463: for a challenge USE_APPS_MINUTES scores, the minutes it pays at
+  // and the window a person's minutes count over right now.
+  const minutes = new Map();
+  const out = { cadence, countedBy, minutes };
   if (!(Number(defaultMinutes) > 0) || !rows || !rows.length) return out;
   const templateIds = [...new Set(rows.map((r) => r.challenge_template_id)
     .filter((v) => v != null).map(Number))];
@@ -1129,8 +1147,36 @@ async function loadRuleFacts(pool, eventId, rows, { defaultMinutes, now = Date.n
     if (c) cadence.set(Number(row.id), c);
     const by = rules.countedByOf(bound, at, { now, defaultMinutes });
     if (by) countedBy.set(Number(row.id), by);
+    if (by && by.measure === 'USE_APPS_MINUTES' && Number(by.target) > 0) {
+      minutes.set(Number(row.id), { target: Number(by.target), window: minutesWindow(at, { now }) });
+    }
   }
   return out;
+}
+
+// The window a person's minutes are counted over right now, for a challenge
+// row carrying the event's dates (#6463). The scorer's own windows: the
+// challenge's (rules.resolveWindow), or on a weekly challenge this week's
+// slice of it (rules.weeklyWindows), never last week's grace slice, because
+// the page and the timer say "this week".
+function minutesWindow(row, { now = Date.now() } = {}) {
+  const window = rules.resolveWindow(row, { now });
+  if (!rules.isWeekly(row)) return { startMs: window.startMs, endMs: window.endMs, weekly: false };
+  const week = rules.weekStartMs(now);
+  const current = rules.weeklyWindows(window, { now }).find((w) => w.weekStartMs === week);
+  return current
+    ? { startMs: current.startMs, endMs: current.endMs, weekly: true }
+    : { startMs: week, endMs: week + rules.WEEK_MS - 1, weekly: true };
+}
+
+// { seconds } in apps the person did not make inside `window`, read with the
+// scorer's bounds (loadCandidates): an open start is the epoch, an open end
+// a day from now.
+async function minutesProgress(pool, userId, window) {
+  const startIso = window && window.startMs != null ? new Date(window.startMs).toISOString() : '1970-01-01T00:00:00.000Z';
+  const endIso = window && window.endMs != null ? new Date(window.endMs).toISOString() : new Date(Date.now() + 86400000).toISOString();
+  const { rows } = await pool.query(USE_APPS_MINUTES_VIEWER_SQL, [startIso, endIso, userId]);
+  return { seconds: Number(rows[0] && rows[0].seconds) || 0 };
 }
 
 // The cadence half alone: Map of challenge id -> { intervalMinutes, lastScoredAt }.
@@ -1358,6 +1404,10 @@ module.exports = {
   dueRuleIds,
   loadCadence,
   loadRuleFacts,
+  minutesWindow,
+  minutesProgress,
+  USE_APPS_MINUTES_SQL,
+  USE_APPS_MINUTES_VIEWER_SQL,
   intervalMinutes,
   aggregateHours,
   LAST_AGGREGATE_SQL,

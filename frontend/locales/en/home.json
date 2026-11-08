@@ -711,6 +711,22 @@
     "text": "{{current}}/{{target}}",
     "description": "Progress shown on a challenge's card on Home: {{current}} done out of the {{target}} needed."
   },
+  "challenges.row.minutes_one": {
+    "text": "{{current}}/{{target}} minute",
+    "description": "Progress shown on the \"Use apps for N minutes\" challenge's card on Home: the viewer's minutes in apps so far, e.g. \"3/10 minutes\". {{current}} is whole minutes so far, {{target}} the minutes it takes; {{count}} is {{target}} again, for the plural."
+  },
+  "challenges.row.minutes_other": {
+    "text": "{{current}}/{{target}} minutes",
+    "description": "Progress shown on the \"Use apps for N minutes\" challenge's card on Home: the viewer's minutes in apps so far, e.g. \"3/10 minutes\". {{current}} is whole minutes so far, {{target}} the minutes it takes; {{count}} is {{target}} again, for the plural."
+  },
+  "challenges.row.minutesThisWeek_one": {
+    "text": "{{current}}/{{target}} minute this week",
+    "description": "Progress shown on the \"Use apps for N minutes\" challenge's card on Home: the viewer's minutes in apps so far, e.g. \"3/10 minutes\". {{current}} is whole minutes so far, {{target}} the minutes it takes; {{count}} is {{target}} again, for the plural. On a weekly challenge, whose minutes start again every Monday."
+  },
+  "challenges.row.minutesThisWeek_other": {
+    "text": "{{current}}/{{target}} minutes this week",
+    "description": "Progress shown on the \"Use apps for N minutes\" challenge's card on Home: the viewer's minutes in apps so far, e.g. \"3/10 minutes\". {{current}} is whole minutes so far, {{target}} the minutes it takes; {{count}} is {{target}} again, for the plural. On a weekly challenge, whose minutes start again every Monday."
+  },
   "challenges.row.countOfUnit": {
     "text": "{{current}}/{{target}} {{unit}}",
     "description": "Progress shown on a challenge's card on Home: {{current}} done out of the {{target}} needed. {{unit}} is the organisers' own word for what is counted, such as \"apps\"."

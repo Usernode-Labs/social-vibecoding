@@ -289,3 +289,45 @@ test('#3247: a weekly challenge says the list is this week; no credits, no secti
     assert.doesNotMatch(render({ ...VIEW, credits }), /tc-se-detail-credits/);
   }
 });
+
+// #6463: a minutes challenge's page: the plain rule under the rail, the Open
+// button as an in-app route (never a new tab), the "any other app" line, and
+// the organiser's link as the quieter line under it.
+test('#6463: the minutes page draws the rule, the Open button, then the organiser\'s link quietly', () => {
+  const html = render({
+    ...VIEW,
+    goal: 'Use apps for 10 minutes',
+    illustration: null,
+    stateLabel: '3 of 10 minutes',
+    fill: 0.3,
+    cta: { kind: 'route', href: '#home', label: 'Explore apps' },
+    minutesNote: {
+      text: message('leaderboard:challenges.minutes.note'),
+      other: message('leaderboard:challenges.minutes.otherApps'),
+      reached: null,
+    },
+    appAction: { href: '#app/daily-puzzle/app', label: 'Open Daily Puzzle' },
+  });
+  const order = ['role="progressbar"', 'data-minutes-note', 'href="#app/daily-puzzle/app"', 'about every 30 seconds', 'href="#home"'];
+  let at = -1;
+  for (const needle of order) {
+    const i = html.indexOf(needle);
+    assert.ok(i > at, `${needle} comes after the part before it`);
+    at = i;
+  }
+  const open = html.match(/<a href="#app\/daily-puzzle\/app"[^>]*>/)[0];
+  assert.doesNotMatch(open, /target=/, 'the app opens in place');
+  assert.match(open, /bg-violet-600/, 'the page\'s blue action button');
+  const organiser = html.match(/<a href="#home"[^>]*>/)[0];
+  assert.doesNotMatch(organiser, /bg-violet-600/, 'the organiser\'s link is no longer the main button');
+  assert.doesNotMatch(html, /data-minutes-reached/);
+
+  const reached = render({ ...VIEW, minutesNote: { text: 'x', other: null, reached: 'Done. Your points arrive at the next count, within 10 minutes.' } });
+  assert.match(reached, /data-minutes-reached="" class="[^"]*">Done\. Your points arrive at the next count, within 10 minutes\.</);
+});
+
+test('#6463: a page without minutes draws none of it', () => {
+  const html = render(VIEW);
+  assert.doesNotMatch(html, /data-minutes-/);
+  assert.match(html.match(/<a href="https:\/\/example\.com\/node"[^>]*>/)[0], /bg-violet-600/, 'the organiser\'s link is the action as before');
+});

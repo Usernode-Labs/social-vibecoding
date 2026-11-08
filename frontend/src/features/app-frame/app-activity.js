@@ -332,6 +332,44 @@ export class EngagedAppUsage {
     return this.flushPromise;
   }
 
+  // #6463: what the app frame's minutes timer reads, and nothing it may
+  // change. `pendingMs` is this app's engaged time not yet acknowledged by
+  // the server (still buffered, or staged in a batch awaiting its answer):
+  // the time the server's count does not hold yet. `engaged` is whether time
+  // is being credited right now (this app is the current one, its frame is
+  // ready and on screen, and the input lease is fresh); `active` whether
+  // this app is the one being measured at all.
+  engagement(slug, at = this.now()) {
+    let pendingMs = 0;
+    for (const buffer of Object.values(this.state.buffers || {})) {
+      if (buffer && buffer.slug === slug) pendingMs += Math.max(0, Number(buffer.milliseconds) || 0);
+    }
+    for (const batch of this.state.batches || []) {
+      if (!batch || batch.slug !== slug) continue;
+      for (const entry of batch.entries || []) pendingMs += Math.max(0, Number(entry.seconds) || 0) * 1_000;
+    }
+    const current = this.current && this.current.slug === slug ? this.current : null;
+    let engaged = false;
+    if (current) {
+      let visible = false;
+      try { visible = !!current.isVisible(); } catch { visible = false; }
+      const frameReady = !!(this.target && this.target.slug === slug && this.target.ready && !this.target.failed);
+      engaged = visible && frameReady && current.lastActivityAt > 0
+        && at < current.lastActivityAt + this.idleMs;
+    }
+    return { pendingMs, engaged, active: !!current };
+  }
+
+  // Calls `cb(engagement(slug))` now and every second until the returned
+  // function is called. Reads only: the accounting runs exactly as before.
+  onEngagement(slug, cb) {
+    if (!validSlug(slug) || typeof cb !== 'function') return () => {};
+    const report = () => { try { cb(this.engagement(slug)); } catch { /* the reader's trouble */ } };
+    report();
+    const timer = this.setInterval ? this.setInterval(report, 1_000) : null;
+    return () => { if (timer && this.clearInterval) this.clearInterval(timer); };
+  }
+
   debug() {
     return {
       state: clone(this.state),

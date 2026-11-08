@@ -358,6 +358,8 @@ async function migrate(config) {
   // After it: it seeds the invite challenge (900504) whose "Your invites"
   // list this fixture fills, and the viewer identities the link belongs to.
   await seedStagingInviteChallengeStatuses(pool);
+  // #6463: the minutes challenge, on the same season-type event.
+  await seedStagingMinutesChallenge(pool);
   // After it: the First challenges hang off its season-type event.
   await seedStagingFirstChallenges(pool);
   await seedStagingCountedCredit(pool, config);
@@ -17579,6 +17581,75 @@ async function seedStagingInviteChallengeStatuses(pool) {
     );
   } catch (err) {
     log.warn('db', 'Invite-challenge status seeding failed', { message: err.message });
+  }
+}
+
+// #6463: the "Use apps for 10 minutes" challenge's page and the app frame's
+// timer need an open challenge scored by USE_APPS_MINUTES (without a rule the
+// page has no minutes to count toward) and some minutes for the capture
+// viewer (usernode-capture), so the page reads "3 of 10 minutes" rather than
+// zero. Staging only, its own failure domain, fixed ids (template and
+// challenge 900740, rule 900920), ON CONFLICT DO NOTHING.
+//
+// DATA ONLY, NO SIGNAL: the minutes are the visible state itself. They are
+// written once (only while the viewer has no app time in the challenge's
+// window at all, so a reboot adds nothing) and spread over four days at 55
+// seconds a day: under the 60 seconds a day that makes anybody an active
+// user of an app (services/active-users.js), so no vote threshold moves.
+async function seedStagingMinutesChallenge(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO challenge_templates
+         (id, category, goal, task, reward, description, kind,
+          metric_type, metric_target, metric_label, illustration, created_at, updated_at)
+       VALUES (900740, 'apps', 'Use apps for 10 minutes (staging demo)',
+               'Spend 10 minutes using apps somebody else made.',
+               '200 points', 'Staging demo: the minutes challenge (#6463).',
+               'SEND_TRANSACTION_CHALLENGE', NULL, NULL, NULL, 'try-three-apps', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    // A schedule of its own, as the invite challenge has: the season event's
+    // window is refreshed to "now" on every boot.
+    await pool.query(
+      `INSERT INTO challenges
+         (id, season_event_id, challenge_template_id, goal, reward, schedule_start,
+          schedule_end, enabled, display_order, completed, created_at, updated_at)
+       VALUES (900740, 900501, 900740, 'Use apps for 10 minutes (staging demo)', '200 points',
+               NOW() - INTERVAL '45 days', NOW() + INTERVAL '45 days', TRUE, 6, FALSE, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO challenge_scoring_rules
+         (id, name, measure, challenge_template_id, challenge_id, target,
+          points, enabled, notes, created_at, updated_at)
+       VALUES (900920, 'Staging demo: use apps for 10 minutes',
+               'USE_APPS_MINUTES', NULL, 900740, 10, 200, TRUE,
+               'Staging demo: backs the minutes challenge''s page and timer.',
+               NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    const { rows: viewerRows } = await pool.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture'");
+    if (!viewerRows.length) return;
+    const VIEWER = viewerRows[0].id;
+    const { rows: had } = await pool.query(
+      `SELECT 1 FROM app_activity WHERE user_id = $1 AND date >= CURRENT_DATE - 45 LIMIT 1`, [VIEWER]);
+    if (had.length) return;
+    const { rows: appRows } = await pool.query(
+      `SELECT id FROM apps
+        WHERE status = 'running' AND view_visibility = 'public'
+          AND created_by IS DISTINCT FROM $1
+        ORDER BY id ASC LIMIT 1`, [VIEWER]);
+    if (!appRows.length) return;
+    await pool.query(
+      `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
+       SELECT $1, $2, 55, CURRENT_DATE - d FROM generate_series(0, 3) AS d
+       ON CONFLICT (app_id, user_id, date) DO NOTHING`,
+      [appRows[0].id, VIEWER]
+    );
+  } catch (err) {
+    log.warn('db', 'Minutes-challenge seeding failed', { message: err.message });
   }
 }
 

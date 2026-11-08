@@ -185,6 +185,11 @@ type DetailView = {
     people?: { key: string; name: string; word: string; reason: string }[];
   } | null;
   blockProduction?: BlockProductionView | null;
+  // #6463: on a minutes challenge, the plain rule under the rail, the line
+  // under the Open button and, once the minutes are there but not yet
+  // credited, when the points arrive; and the app to open, an in-app route.
+  minutesNote?: { text: string; other: string | null; reached: string | null } | null;
+  appAction?: { href: string; label: string } | null;
   // The organiser's requirements, under "What counts".
   requirements: string | null;
 };
@@ -388,7 +393,9 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
 
 // ── Detail page ─────────────────────────────────────────────────────────
 
-function Cta({ view }: { view: CtaView }): ReactNode {
+// `quiet`: the organiser's link drawn as the quieter line under another
+// action (#6463, a minutes challenge's Open button), in the same ink.
+function Cta({ view, quiet = false }: { view: CtaView; quiet?: boolean }): ReactNode {
   if (view.kind === 'text') {
     return (
       <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -414,7 +421,7 @@ function Cta({ view }: { view: CtaView }): ReactNode {
       href={view.href}
       target={external ? '_blank' : undefined}
       rel={external ? 'noopener' : undefined}
-      className={CTA_LINK}
+      className={quiet ? FEEDBACK_LINK : CTA_LINK}
     >
       {view.label}
     </a>
@@ -629,8 +636,22 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
       {/* #4036: the same for a feedback report, whose own project and
           scheduled, graded count are what a stuck rail is usually about. */}
       {view.feedbackNote ? <p className={PROSE}>{view.feedbackNote}</p> : null}
+      {/* #6463: the minutes challenge's rule, in plain words, under the
+          rail that counts the minutes; when they are all there, when the
+          points arrive. */}
+      {view.minutesNote ? <p data-minutes-note="" className={PROSE}>{view.minutesNote.text}</p> : null}
+      {view.minutesNote?.reached ? <p data-minutes-reached="" className={PROSE}>{view.minutesNote.reached}</p> : null}
       {view.blockProduction ? <BlockProductionStep view={view.blockProduction} /> : null}
-      {view.cta ? <Cta view={view.cta} /> : null}
+      {view.appAction ? (
+        <>
+          {/* An in-app route built from a validated slug, drawn by the same
+              guarded action as any route CTA: it stays in this document
+              (#2893), and the page keeps its one computed href. */}
+          <Cta view={{ kind: 'route', href: view.appAction.href, label: view.appAction.label }} />
+          {view.minutesNote?.other ? <p className={NOTE}>{view.minutesNote.other}</p> : null}
+        </>
+      ) : null}
+      {view.cta ? <Cta view={view.cta} quiet={!!view.appAction} /> : null}
       {/* #3186: the feedback challenge's count is the viewer's own reports;
           this is where each one is listed with whether it counted, by the
           address Profile.open() honours. A constant, so it needs no guard. */}

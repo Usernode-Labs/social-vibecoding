@@ -723,6 +723,9 @@ const TopochainChallenges = {
     if (by.measure === 'PROPOSAL_SENT') {
       return PlatformI18n.t('leaderboard:challenges.countNote.onPropose');
     }
+    // Its target is minutes, not a cap on credits: its own note says how
+    // it counts (#6463).
+    if (by.measure === 'USE_APPS_MINUTES') return null;
     const cap = Number(by.target);
     const current = c.progress ? Number(c.progress.current) : NaN;
     if (!Number.isInteger(cap) || cap < 1 || !(current >= cap)) return null;
@@ -818,6 +821,20 @@ const TopochainChallenges = {
         ? PlatformI18n.t('leaderboard:challenges.points', { count: points, points: points.toLocaleString('en-US') }) : null;
       return { state: 'done', stateLabel: PlatformI18n.t('leaderboard:challenges.state.done'), fill: 1, counted: false, earned };
     }
+    // #6463: a minutes challenge counts minutes, not credits. The row's
+    // `minutes` is the viewer's time so far in its window, read by the
+    // scorer's own rule, so the rail fills as they use apps instead of
+    // saying "Not started" until the credit lands.
+    const minutes = TopochainChallenges._minutesOf(c);
+    if (minutes) {
+      return {
+        state: minutes.current > 0 || points > 0 ? 'progress' : 'new',
+        stateLabel: TopochainChallenges._minutesLabel(minutes, 'card'),
+        fill: minutes.current / minutes.target,
+        counted: true,
+        earned: null,
+      };
+    }
     if (p) {
       const target = Number(p.target);
       const current = p.current == null ? 0 : Math.max(0, Number(p.current) || 0);
@@ -878,6 +895,54 @@ const TopochainChallenges = {
     if (points) return { state: 'progress', stateLabel: PlatformI18n.t('leaderboard:challenges.state.started'), fill: null, counted: false, earned: null };
     // Points, not rows: a zero-point ledger row is not a step taken.
     return { state: 'new', stateLabel: PlatformI18n.t('leaderboard:challenges.state.notStarted'), fill: 0, counted: false, earned: null };
+  },
+
+  // #6463: the viewer's minutes on a minutes challenge, from the row's
+  // `minutes` ({ seconds, target_seconds, weekly }), in whole minutes and
+  // never past the target; null on any other row or a malformed one.
+  _minutesOf(c) {
+    const m = c && c.minutes;
+    // Once the window's credit has landed the minutes are paid for, and the
+    // row goes back to the ordinary rule.
+    if (!m || typeof m !== 'object' || m.credited === true) return null;
+    const targetSeconds = Number(m.target_seconds);
+    const seconds = Math.max(0, Number(m.seconds) || 0);
+    if (!Number.isFinite(targetSeconds) || targetSeconds <= 0) return null;
+    const target = Math.max(1, Math.round(targetSeconds / 60));
+    return {
+      current: Math.min(Math.floor(seconds / 60), target),
+      target,
+      reached: seconds >= targetSeconds,
+      weekly: m.weekly === true,
+    };
+  },
+
+  // "3/10 minutes" on a card, "3 of 10 minutes" on the page; each with its
+  // "this week" twin on a weekly challenge.
+  _minutesLabel(minutes, where) {
+    const values = { count: minutes.target, current: minutes.current, target: minutes.target };
+    if (where === 'page') {
+      return minutes.weekly
+        ? PlatformI18n.t('leaderboard:challenges.minutes.pageThisWeek', values)
+        : PlatformI18n.t('leaderboard:challenges.minutes.page', values);
+    }
+    return minutes.weekly
+      ? PlatformI18n.t('leaderboard:challenges.minutes.cardThisWeek', values)
+      : PlatformI18n.t('leaderboard:challenges.minutes.card', values);
+  },
+
+  // The app a minutes challenge's page offers to open: the server's
+  // suggestion, as an in-app route built here from a slug that passes the
+  // shell's own slug rule, never an address from data.
+  SUGGESTED_SLUG: /^[a-z0-9][a-z0-9-]{0,127}$/,
+  _appActionOf(c) {
+    const app = c && c.suggested_app;
+    if (!app || typeof app.slug !== 'string' || !TopochainChallenges.SUGGESTED_SLUG.test(app.slug)) return null;
+    const name = TopochainChallenges.str(app.name || app.slug).trim() || app.slug;
+    return {
+      href: `#app/${app.slug}/app`,
+      label: PlatformI18n.t('leaderboard:challenges.minutes.open', { app: name }),
+    };
   },
 
   // A counted rail's words: "1/3 Apps tried", or for a This week challenge
@@ -1566,6 +1631,25 @@ const TopochainChallenges = {
     }
     else if (reward) amount = { text: reward, earned: false };
 
+    // #6463: a minutes challenge's page says what counts under its rail,
+    // offers one app to open, and once the minutes are there but the credit
+    // is not, says when the points arrive.
+    const minutes = TopochainChallenges._isDone(challenge) ? null : TopochainChallenges._minutesOf(challenge);
+    const appAction = minutes ? TopochainChallenges._appActionOf(challenge) : null;
+    let minutesNote = null;
+    if (minutes) {
+      const every = Number(challenge.scoring && challenge.scoring.interval_minutes);
+      minutesNote = {
+        text: PlatformI18n.t('leaderboard:challenges.minutes.note'),
+        other: appAction ? PlatformI18n.t('leaderboard:challenges.minutes.otherApps') : null,
+        reached: minutes.reached
+          ? (Number.isFinite(every) && every > 0
+            ? PlatformI18n.t('leaderboard:challenges.minutes.reached', { count: every })
+            : PlatformI18n.t('leaderboard:challenges.minutes.reachedSoon'))
+          : null,
+      };
+    }
+
     const bpStep = TopochainChallenges._isBlockProduction(challenge)
       ? TopochainChallenges.blockProductionStep(
         TopochainChallenges._bpState, TopochainChallenges._bpEnv(), TopochainChallenges._bpRequesting)
@@ -1586,7 +1670,7 @@ const TopochainChallenges = {
       illustration: TopochainChallenges._illustrationOf(cp),
       illustrationTone: TopochainChallenges._illustrationToneOf(cp),
       state: rail.state,
-      stateLabel: rail.stateLabel,
+      stateLabel: minutes ? TopochainChallenges._minutesLabel(minutes, 'page') : rail.stateLabel,
       fill: rail.fill,
       counted: !!rail.counted,
       // #3186: on the feedback challenge, the way to what the viewer sent
@@ -1615,6 +1699,11 @@ const TopochainChallenges = {
       // organiser's link, which could only ever name one destination.
       blockProduction: bpStep,
       cta: bpStep ? null : TopochainChallenges.ctaView(dm, challenge),
+      // #6463: on a minutes challenge, the plain rule and one app to open.
+      // With an app to open, it is the page's action and the organiser's
+      // link drops to the quieter line under it.
+      minutesNote,
+      appAction,
       // #3247: the credits behind the count, newest first. Raw fields, never
       // an href: the pane builds the one address a change has.
       credits: TopochainChallenges._creditsOf(mine),

@@ -1269,6 +1269,43 @@ test('countedByOf names the scoring rule\'s measure, and the cap a counted measu
     { measure: 'PROPOSAL_SENT', target: null }, 'the first rule that scores it');
 });
 
+// #6463: the minutes challenge's page counts toward the minutes the rule
+// pays at, so countedByOf carries that target for USE_APPS_MINUTES, which is
+// otherwise uncounted (one credit a window).
+test('countedByOf carries the minutes a USE_APPS_MINUTES rule pays at', () => {
+  const at = { now: NOW, defaultMinutes: 10 };
+  assert.deepEqual(rules.countedByOf([rule({ measure: 'USE_APPS_MINUTES', target: 10 })], challengeRow(), at),
+    { measure: 'USE_APPS_MINUTES', target: 10 });
+});
+
+// #6463: what the page and the timer count is what the scorer pays for. The
+// viewer's read is the scorer's statement for one person: the same FROM and
+// the same filters, with the person's id in place of the grouping.
+test('the minutes read for one person shares the scorer\'s rows and filters', () => {
+  const clauses = (sql) => sql.replace(/\s+/g, ' ')
+    .match(/FROM app_activity aa JOIN apps a ON a\.id = aa\.app_id WHERE (.*?)(?: GROUP BY|$)/)[1]
+    .split(' AND ').map((c) => c.trim()).filter(Boolean);
+  const scored = clauses(scorer.USE_APPS_MINUTES_SQL);
+  const viewer = clauses(scorer.USE_APPS_MINUTES_VIEWER_SQL);
+  for (const c of scored) assert.ok(viewer.includes(c), `the viewer read keeps "${c}"`);
+  assert.ok(viewer.includes('aa.user_id = $3'), 'for one person');
+  assert.ok(scored.includes('a.created_by IS DISTINCT FROM aa.user_id'), 'own apps are left out of both');
+});
+
+// #6463: the minutes window is the scorer's own: the challenge's, or this
+// week's slice of it on a weekly challenge (never last week's grace slice).
+test('minutesWindow is the challenge\'s window, or this week on a weekly one', () => {
+  const row = challengeRow({ schedule_start: iso(NOW - 20 * DAY), schedule_end: iso(NOW + 20 * DAY) });
+  assert.deepEqual(scorer.minutesWindow(row, { now: NOW }),
+    { startMs: NOW - 20 * DAY, endMs: NOW + 20 * DAY, weekly: false });
+  const weekly = scorer.minutesWindow({ ...row, t_category: 'WEEKLY', category: 'WEEKLY' }, { now: NOW });
+  const monday = rules.weekStartMs(NOW);
+  assert.deepEqual(weekly, { startMs: monday, endMs: monday + rules.WEEK_MS - 1, weekly: true });
+  // Monday 01:00, inside last week's grace: still only this week.
+  const early = scorer.minutesWindow({ ...row, category: 'WEEKLY' }, { now: monday + HOUR });
+  assert.equal(early.startMs, monday);
+});
+
 test('the list read returns the measure beside the cadence, from one query', async () => {
   const ruleRows = [
     { id: 1, measure: 'PROPOSAL_ACCEPTED', target: 2, points: null, challenge_id: 74, challenge_template_id: null,

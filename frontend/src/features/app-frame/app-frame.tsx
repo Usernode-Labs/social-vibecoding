@@ -48,6 +48,7 @@ import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js'
 import { navStore } from '../nav/nav-store.js';
 import { appFrameRefs, appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
+import { MinutesTimer } from './minutes-timer';
 import { AppsLoadError } from '../apps/load-error';
 
 // #4813: the failed card's Try again, through the same feature-detected
@@ -278,6 +279,9 @@ export function AppFrameHost(): ReactNode {
     >
       <div className="app-launch-host w-full h-full">
         {liveFrames(state).map((slug) => <AppFrame key={slug} slug={slug} />)}
+        {/* #6463: the minutes challenge's timer over the app on screen. It
+            renders nothing until its own read says it applies. */}
+        <MinutesTimer slug={state.active && state.slug ? state.slug : null} />
       </div>
     </div>
   );

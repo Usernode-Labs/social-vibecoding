@@ -647,6 +647,24 @@ test('a This week challenge says "this week" on a counted rail, and only there',
   })).stateLabel, '1/3 joined', 'any other challenge counts as before');
 });
 
+// #6463: the minutes challenge's card on Home counts the viewer's minutes
+// so far, the same words the Challenges tab's card uses, until its credit
+// lands.
+test('a minutes challenge\'s card counts minutes, and goes back to the ordinary rule once credited', () => {
+  const { HP } = makeHomePanels({ slots: [] });
+  const row = (minutes, over = {}) => HP.challengeRowView(challenge({ label: 'PERSISTENT', minutes, ...over }));
+  const three = row({ seconds: 200, target_seconds: 600, weekly: false, credited: false });
+  assert.equal(three.stateLabel, '3/10 minutes');
+  assert.equal(three.counted, true);
+  assert.equal(three.fill, 0.3);
+  assert.equal(three.state, 'progress');
+  assert.equal(row({ seconds: 30, target_seconds: 600 }).state, 'new');
+  assert.equal(row({ seconds: 200, target_seconds: 600, weekly: true }).stateLabel, '3/10 minutes this week');
+  assert.equal(row({ seconds: 200, target_seconds: 600, credited: true }).stateLabel, 'Not started');
+  assert.equal(row({ seconds: 200, target_seconds: 600 }, { progress: DONE }).stateLabel, 'Done');
+  assert.equal(row(undefined).stateLabel, 'Not started', 'no minutes: unchanged');
+});
+
 // ── Rendering ─────────────────────────────────────────────────────
 
 test('render: a yes-or-no challenge reads Not started on the shared rail, with no count', () => {

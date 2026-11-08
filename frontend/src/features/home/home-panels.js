@@ -693,6 +693,19 @@ const HomePanels = {
   // plain "Not started" of a yes-or-no one. A This week challenge counts by
   // the week, so its count says so: "2/3 apps tried this week". A yes-or-no
   // one keeps Started / Not started: it has no count to put a week on.
+  // #6463: whole minutes of `c.minutes` ({ seconds, target_seconds,
+  // weekly, credited }), never past the target; null when the row has none,
+  // a malformed one, or its credit has landed (the ordinary rule then).
+  minutesOf(c) {
+    const m = c && c.minutes;
+    if (!m || typeof m !== 'object' || m.credited === true) return null;
+    const targetSeconds = Number(m.target_seconds);
+    if (!Number.isFinite(targetSeconds) || targetSeconds <= 0) return null;
+    const target = Math.max(1, Math.round(targetSeconds / 60));
+    const seconds = Math.max(0, Number(m.seconds) || 0);
+    return { current: Math.min(Math.floor(seconds / 60), target), target, weekly: m.weekly === true };
+  },
+
   challengeRowView(c) {
     const numeric = HomePanels.hasMeter(c);
     const done = !!(c.progress && c.progress.done);
@@ -700,9 +713,22 @@ const HomePanels = {
     const current = numeric ? Math.max(0, Number(c.progress.current) || 0) : 0;
     const points = Number(c.earned_points) > 0 ? Number(c.earned_points) : 0;
     const weekly = HomePanels.groupOf(c).key === 'week';
+    // #6463: a minutes challenge's own count, the viewer's minutes so far
+    // (the row's `minutes`, read by the scorer's rule), until its credit lands.
+    const minutes = HomePanels.minutesOf(c);
     let rail;
     if (done) {
       rail = { state: 'done', stateLabel: message('home:challenges.row.done'), fill: 1, counted: false };
+    } else if (minutes) {
+      const values = { current: minutes.current, target: minutes.target, count: minutes.target };
+      rail = {
+        state: minutes.current > 0 || points ? 'progress' : 'new',
+        stateLabel: minutes.weekly
+          ? message('home:challenges.row.minutesThisWeek', values)
+          : message('home:challenges.row.minutes', values),
+        fill: minutes.current / minutes.target,
+        counted: true,
+      };
     } else if (numeric && target > 1) {
       const count = Math.min(current, target);
       let stateLabel;

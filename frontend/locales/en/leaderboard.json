@@ -151,6 +151,38 @@
     "text": "{{current}}/{{target}} this week",
     "description": "Label in the progress bar of a weekly challenge counted in steps when the organiser named no unit, e.g. \"0/2 this week\"; the count starts again each Monday. {{current}} is how many the viewer has this week, {{target}} how many it takes."
   },
+  "challenges.minutes.card_one": {
+    "text": "{{current}}/{{target}} minute",
+    "description": "Label in the progress bar of the \"Use apps for N minutes\" challenge's card on the Challenges tab: the viewer's minutes in apps so far, e.g. \"3/10 minutes\". {{current}} is whole minutes so far, {{target}} the minutes it takes; {{count}} is {{target}} again, for the plural."
+  },
+  "challenges.minutes.card_other": {
+    "text": "{{current}}/{{target}} minutes",
+    "description": "Label in the progress bar of the \"Use apps for N minutes\" challenge's card on the Challenges tab: the viewer's minutes in apps so far, e.g. \"3/10 minutes\". {{current}} is whole minutes so far, {{target}} the minutes it takes; {{count}} is {{target}} again, for the plural."
+  },
+  "challenges.minutes.cardThisWeek_one": {
+    "text": "{{current}}/{{target}} minute this week",
+    "description": "Label in the progress bar of the \"Use apps for N minutes\" challenge's card on the Challenges tab: the viewer's minutes in apps so far, e.g. \"3/10 minutes\". {{current}} is whole minutes so far, {{target}} the minutes it takes; {{count}} is {{target}} again, for the plural. On a weekly challenge, whose minutes start again every Monday."
+  },
+  "challenges.minutes.cardThisWeek_other": {
+    "text": "{{current}}/{{target}} minutes this week",
+    "description": "Label in the progress bar of the \"Use apps for N minutes\" challenge's card on the Challenges tab: the viewer's minutes in apps so far, e.g. \"3/10 minutes\". {{current}} is whole minutes so far, {{target}} the minutes it takes; {{count}} is {{target}} again, for the plural. On a weekly challenge, whose minutes start again every Monday."
+  },
+  "challenges.minutes.page_one": {
+    "text": "{{current}} of {{target}} minute",
+    "description": "Label in the progress bar on the \"Use apps for N minutes\" challenge's page: the viewer's minutes in apps so far, e.g. \"3 of 10 minutes\". {{current}} is whole minutes so far, {{target}} the minutes it takes; {{count}} is {{target}} again, for the plural."
+  },
+  "challenges.minutes.page_other": {
+    "text": "{{current}} of {{target}} minutes",
+    "description": "Label in the progress bar on the \"Use apps for N minutes\" challenge's page: the viewer's minutes in apps so far, e.g. \"3 of 10 minutes\". {{current}} is whole minutes so far, {{target}} the minutes it takes; {{count}} is {{target}} again, for the plural."
+  },
+  "challenges.minutes.pageThisWeek_one": {
+    "text": "{{current}} of {{target}} minute this week",
+    "description": "Label in the progress bar on the \"Use apps for N minutes\" challenge's page: the viewer's minutes in apps so far, e.g. \"3 of 10 minutes\". {{current}} is whole minutes so far, {{target}} the minutes it takes; {{count}} is {{target}} again, for the plural. On a weekly challenge, whose minutes start again every Monday."
+  },
+  "challenges.minutes.pageThisWeek_other": {
+    "text": "{{current}} of {{target}} minutes this week",
+    "description": "Label in the progress bar on the \"Use apps for N minutes\" challenge's page: the viewer's minutes in apps so far, e.g. \"3 of 10 minutes\". {{current}} is whole minutes so far, {{target}} the minutes it takes; {{count}} is {{target}} again, for the plural. On a weekly challenge, whose minutes start again every Monday."
+  },
   "challenges.heading.first": {
     "text": "First challenges",
     "description": "Heading over the Challenges tab's first group: the challenges a newcomer does first."
@@ -246,6 +278,30 @@
   "challenges.feedback.note": {
     "text": "A report counts when you send it while this challenge is open, about Homeroom or a project somebody else made. Feedback on a project you made, or on one only you are in, doesn't count here, and nor does a report too short to act on or a copy of one you already sent. Counts run on a schedule and each report is graded, so a new one shows here a little later.",
     "description": "Under the progress rail on the feedback challenge's page (Send useful feedback): the plain-language rule the scorer pays by."
+  },
+  "challenges.minutes.note": {
+    "text": "Time counts while an app someone else made is open on your screen and you are using it. It pauses after a minute without a tap, scroll or key press, and when you switch away. Minutes in different apps add up.",
+    "description": "Under the progress bar on the \"Use apps for N minutes\" challenge's page: the plain rule for which minutes count."
+  },
+  "challenges.minutes.open": {
+    "text": "Open {{app}}",
+    "description": "The main button on the \"Use apps for N minutes\" challenge's page: opens a suggested app. {{app}} is the app's name."
+  },
+  "challenges.minutes.otherApps": {
+    "text": "Or use any other app you didn't make. Your minutes update here about every 30 seconds.",
+    "description": "Small print under the Open button on the \"Use apps for N minutes\" challenge's page."
+  },
+  "challenges.minutes.reached_one": {
+    "text": "Done. Your points arrive at the next count, within {{count}} minute.",
+    "description": "On the \"Use apps for N minutes\" challenge's page once the viewer has the minutes but the points have not been credited yet. {{count}} is how often, in minutes, challenges are counted."
+  },
+  "challenges.minutes.reached_other": {
+    "text": "Done. Your points arrive at the next count, within {{count}} minutes.",
+    "description": "On the \"Use apps for N minutes\" challenge's page once the viewer has the minutes but the points have not been credited yet. {{count}} is how often, in minutes, challenges are counted."
+  },
+  "challenges.minutes.reachedSoon": {
+    "text": "Done. Your points arrive at the next count.",
+    "description": "On the \"Use apps for N minutes\" challenge's page once the viewer has the minutes but the points have not been credited yet, when how often challenges are counted is not known."
   },
   "challenges.invites.heading": {
     "text": "Your invites",

@@ -42,6 +42,7 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // here. One parser, because two that drift would mean a challenge whose card
 // promises a number the scorer refuses to pay.
 const { parseRewardPoints } = require('../services/topochain/challenge-rules');
+const { loadRuleFacts, intervalMinutes, minutesProgress } = require('../services/topochain/challenge-scorer');
 
 // ─── Progress resolution ─────────────────────────────────────────────
 //
@@ -284,6 +285,41 @@ function demoSeasonEndsAt() {
   return new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
 }
 
+// #6463: a challenge USE_APPS_MINUTES scores gets the viewer's minutes so
+// far, `{ seconds, target_seconds, weekly }`, the same field the Challenges
+// tab's list carries (routes/topochain/public.js), so the card on Home reads
+// "3/10 minutes" too. One loadRuleFacts per event in view, and a read per
+// such challenge; nothing at all when the block holds none.
+async function addMinutes(pool, user, rows, challenges, config) {
+  if (!user?.id || !rows.length) return;
+  const byEvent = new Map();
+  for (const r of rows) {
+    const ev = Number(r.season_event_id);
+    if (!byEvent.has(ev)) byEvent.set(ev, []);
+    // loadRuleFacts matches template rules by `challenge_template_id`, which
+    // this query reads as the joined template's `t_id`.
+    byEvent.get(ev).push({ ...r, challenge_template_id: r.t_id });
+  }
+  const byId = new Map(challenges.map((c) => [c.id, c]));
+  const credits = new Map(rows.map((r) => [Number(r.id), Number(r.my_activity_count) || 0]));
+  for (const [eventId, list] of byEvent) {
+    const { minutes } = await loadRuleFacts(pool, eventId, list, { defaultMinutes: intervalMinutes(config) });
+    for (const [challengeId, m] of minutes || []) {
+      const c = byId.get(challengeId);
+      if (!c) continue;
+      const { seconds } = await minutesProgress(pool, user.id, m.window);
+      c.minutes = {
+        seconds,
+        target_seconds: Math.round(m.target * 60),
+        weekly: m.window.weekly === true,
+        // The window's credit has landed (MY_COUNT_SQL counts this week's on
+        // a weekly challenge), as on the Challenges tab's list.
+        credited: (credits.get(challengeId) || 0) > 0,
+      };
+    }
+  }
+}
+
 async function buildChallengesPanel(pool, user, opts) {
   // `expanded` is the in-place "See all" state: same scope, but finished
   // and out-of-window challenges come too, and the client's four-row cap
@@ -429,6 +465,7 @@ async function buildChallengesPanel(pool, user, opts) {
     c.label = challengeCategory(c.id, c.label, onboarding);
     if (onboarding?.progress.has(c.id)) c.progress = onboarding.progress.get(c.id);
   }
+  await addMinutes(pool, user, rows.filter((r) => r.t_id != null), challenges, opts && opts.config);
 
   // "Points still on the table": only when EVERY open row's reward parses
   // as a plain number. One "½ of your final credits" and the whole figure
@@ -741,7 +778,7 @@ function panelRegistryPublic() {
   }));
 }
 
-function homePanelRoutes() {
+function homePanelRoutes(config) {
   const router = Router();
   const pool = getPool();
 
@@ -768,7 +805,7 @@ function homePanelRoutes() {
         try {
           const data = demo && panel.demo
             ? panel.demo({ expanded, variant, username: req.user.username })
-            : await panel.build(pool, req.user, { expanded });
+            : await panel.build(pool, req.user, { expanded, config });
           panels.push({ key: panel.key, title: panel.title, ...data });
         } catch (err) {
           // One broken panel must never blank the home screen — log it

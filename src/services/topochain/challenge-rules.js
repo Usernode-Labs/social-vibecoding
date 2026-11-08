@@ -661,7 +661,10 @@ function countedByOf(ruleList, row, { now = Date.now(), defaultMinutes } = {}) {
     if (skipReason(rule, row, { now })) continue;
     if (effectiveInterval(rule, defaultMinutes) == null) continue;
     const spec = MEASURES[rule.measure];
-    return { measure: rule.measure, target: spec.counted ? effectiveTarget(rule, row) : null };
+    // USE_APPS_MINUTES is uncounted (one credit a window) but has a target,
+    // the minutes it pays at, which the page shows its count toward (#6463).
+    const withTarget = spec.counted || rule.measure === 'USE_APPS_MINUTES';
+    return { measure: rule.measure, target: withTarget ? effectiveTarget(rule, row) : null };
   }
   return null;
 }
