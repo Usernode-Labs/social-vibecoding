@@ -92,12 +92,34 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
   const { appendEvent } = require('../src/workflow/kernel/index.ts');
   const router = issueRoutes(config);
   const adminRouter = require('../src/routes/admin-workflow').adminWorkflowRoutes(config);
+  // Every governance decision settled before the runtime stops: stopping
+  // while one runs leaves its work `running` until its lease ends (a minute),
+  // and its queries would outlive the pool this check closes. Only this
+  // machine's rows and the items running now: the clock's own jobs re-arm
+  // themselves, so waiting for those to stop would never end.
+  const quiet = async () => {
+    const deadline = Date.now() + 10000;
+    for (;;) {
+      const { rows } = await pool.query(
+        `SELECT machine, key, kind, work_key, status FROM wf_work
+          WHERE machine = 'governance-proposal' AND status <> 'settled'
+         UNION ALL SELECT machine, key, type, request_key, status FROM wf_events
+          WHERE machine = 'governance-proposal' AND status = 'pending'`);
+      if (platform.workflowWorkRunning() === 0 && !rows.length) return;
+      if (Date.now() >= deadline) assert.fail(`every governance decision settled; unsettled: ${JSON.stringify(rows)}`);
+      await new Promise((res) => setTimeout(res, 50));
+    }
+  };
   t.after(async () => {
-    await platform.stopWorkflow();
-    await listener.end();
-    await pool.end();
-    await admin.query(`DROP DATABASE ${dbName}`);
-    await admin.end();
+    try {
+      await quiet();
+    } finally {
+      await platform.stopWorkflow();
+      await listener.end();
+      await pool.end();
+      await admin.query(`DROP DATABASE ${dbName}`);
+      await admin.end();
+    }
   });
 
   let seq = 0;
@@ -320,6 +342,7 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
   });
 
   await t.test('a process that is not the leader decides votes itself, and enrolls a row it meets', async () => {
+    await quiet();
     await platform.stopWorkflow();
     await platform.startWorkflow(config, { loops: false });  // slots only: no timers, services or backfill
     await pool.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [app.id]);
