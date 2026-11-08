@@ -195,11 +195,14 @@ const Profile = {
       Profile._feedbackRequested = false;
       Profile._friendsRequested = false;
       Profile._editRequested = false;
+      Profile._appSlotsRequested = false;
       Profile._dismissFeedback();
       Profile._dismissFriends();
+      Profile._dismissAppSlots();
     } else if (Profile._takeFeedbackRoute()) Profile._feedbackRequested = true;
     else if (Profile._takeFriendsRoute()) Profile._friendsRequested = true;
     else if (Profile._takeSheetAsk('edit')) Profile._editRequested = true;
+    else if (Profile._takeSheetAsk('slots')) Profile._appSlotsRequested = true;
     // One entry into #profile reaches here TWICE: popstate and hashchange both
     // run restoreFromHash, and the second run finds the screen mounted and
     // goes through App._routeMountedProfile, which opens it again. That used
@@ -220,6 +223,7 @@ const Profile = {
     Profile._maybeOpenFeedback();
     Profile._maybeOpenFriends();
     Profile._maybeOpenEdit();
+    Profile._maybeOpenAppSlots();
     const token = ++Profile._loadToken;
     await Profile._load(token);
     if (Profile._open && token === Profile._loadToken && !Profile._targetUsername) {
@@ -227,6 +231,7 @@ const Profile = {
       Profile._maybeOpenFeedback();
       Profile._maybeOpenFriends();
       Profile._maybeOpenEdit();
+      Profile._maybeOpenAppSlots();
     }
   },
 
@@ -245,6 +250,7 @@ const Profile = {
     Profile._feedbackRequested = false;
     Profile._friendsRequested = false;
     Profile._editRequested = false;
+    Profile._appSlotsRequested = false;
     Profile._dismissSheet();
     Profile._dismissFeedback();
     Profile._dismissFriends();
@@ -744,13 +750,14 @@ const Profile = {
     Profile.showFriends();
   },
 
-  // ── App slots, as a card over Me (#6446) ────────────────────────────
+  // ── App slots, as a card over Me (#6446, #6466) ─────────────────────
   //
-  // With no slot free (or a full server) Me's "App slots" row opens this
-  // instead of the make screen: the same AppAllowance box the make screen
-  // shows, with its "Request more". A free slot keeps the make screen, and
-  // so does a modified click on the row, which goes to `#create`. It has no
-  // address of its own, and its claim on Back is the Friends card's.
+  // Every press of Me's "App slots" row opens this card: the same
+  // AppAllowance box the make screen shows, with its "Request more". The
+  // card has its own address, `#profile?slots`, taken off the address the
+  // way `?friends` is, so a modified click or a reload opens it over the
+  // profile. Its claim on Back is the Friends card's.
+  _appSlotsRequested: false,
   _releaseAppSlots: null,
 
   showAppSlots() {
@@ -795,6 +802,15 @@ const Profile = {
     Profile._releaseWeekShare = null;
     if (release) release({ navigating: true });
     if (profileStore.get().weekShareOpen) profileStore.set({ weekShareOpen: false });
+  },
+
+  _maybeOpenAppSlots() {
+    if (!Profile._appSlotsRequested || !Profile._open || Profile._targetUsername) return;
+    const d = Profile._data;
+    if (!d) return; // still loading: the post-load call opens it
+    Profile._appSlotsRequested = false;
+    if (d.signedOut || d.error || d.publicProfile || d.publicNotFound) return;
+    Profile.showAppSlots();
   },
 
   // `#profile?edit` — the Edit profile sheet, asked for from outside Me.

@@ -30,18 +30,30 @@ export function quotaHeadline(quota: AppCreationQuota): string {
 }
 
 /**
- * Profile's "App slots" row (#3250): the headline, and a pending request for
- * more when there is one. Null until the allowance is known, so the row says
- * what it is for rather than inventing a count.
+ * Profile's "App slots" row (#3250, #6466): how many slots are free, and a
+ * pending request for more when there is one. Null until the allowance is
+ * known, so the row says what it is for rather than inventing a count.
  */
 export function appSlotsLine(quota: AppCreationQuota | null, requestedAt: string | null): string | null {
   if (!quota) return null;
-  if (!requestedAt || quota.limit === null) return quotaHeadline(quota);
-  // The line with the request on it is a message of its own, not the
-  // headline with words appended.
-  return quota.used == null
-    ? translate('dialogs:allowance.headline.slotsRequested', { count: quota.limit })
-    : translate('dialogs:allowance.headline.usedRequested', { count: quota.limit, used: quota.used });
+  if (quota.limit === null) return quotaHeadline(quota);
+  // #6466: the row says how much ROOM there is, not how much is used: "1 app
+  // slot free of 2", and "No app slots free · Request more" once none is.
+  const free = quota.remaining ?? (quota.used != null ? Math.max(quota.limit - quota.used, 0) : null);
+  if (free == null) {
+    // Only the limit is known: the row says it, as it always has.
+    return requestedAt
+      ? translate('dialogs:allowance.headline.slotsRequested', { count: quota.limit })
+      : translate('dialogs:allowance.headline.slots', { count: quota.limit });
+  }
+  if (free === 0) {
+    return requestedAt
+      ? translate('dialogs:allowance.line.noneRequested')
+      : translate('dialogs:allowance.line.none');
+  }
+  return requestedAt
+    ? translate('dialogs:allowance.line.freeRequested', { count: free, limit: quota.limit })
+    : translate('dialogs:allowance.line.free', { count: free, limit: quota.limit });
 }
 
 /**

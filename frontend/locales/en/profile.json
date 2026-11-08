@@ -289,7 +289,7 @@
   },
   "more.appSlots.title": {
     "text": "App slots",
-    "description": "Row on the viewer's own profile: opens the dialog for creating an app, which says how many apps they may have, or the App allowance card when no slot is free. A \"slot\" is room for one app."
+    "description": "Row on the viewer's own profile: says how many app slots are free and opens the App allowance card, where more can be requested. A \"slot\" is room for one app."
   },
   "more.appSlots.hint": {
     "text": "How many apps you can create",
