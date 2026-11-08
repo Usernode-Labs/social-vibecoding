@@ -1759,7 +1759,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // counts, the audience chips) with it. Its page check now follows
   // #communities to Home and finds the Needs you tile there; the two Needs
   // you checks follow the page to #needs. 729 leaves 151 slots.
-  checkCap.assertPinned(DAPP.tests.length, 729);
+  // 729 → 730: +1 (#6464) Me › This week gains changes live and challenges
+  // done, and its Share button opens the card that chooses which figures to
+  // send. The profile screen is an existing route, but the card's share
+  // control has a declared check of its own because the figures it offers
+  // are the point of the request; 730 leaves 150 slots.
+  checkCap.assertPinned(DAPP.tests.length, 730);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
