@@ -1,7 +1,7 @@
 {
   "search.placeholder": {
-    "text": "Search apps and communities…",
-    "description": "Placeholder inside the search field at the top of the Home screen, which filters the viewer's pinned apps and communities and the communities they can join."
+    "text": "Search apps and communities… (Ctrl+K)",
+    "description": "Placeholder inside the search field at the top of the Home screen, which filters the viewer's pinned apps and communities and the communities they can join. Ctrl+K is the keyboard shortcut that puts the cursor in this field (Command+K on a Mac, / also works); keep the key name as written."
   },
   "search.label": {
     "text": "Search apps and communities",

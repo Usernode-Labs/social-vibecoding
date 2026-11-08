@@ -32,6 +32,7 @@ import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
 import { buildLineTileClass, buildLineTileOf, buildLineTileWordsOf, tileStageOf } from '../first-session/build-line-words.js';
+import { installHomeSearchShortcut } from './search-shortcut';
 
 
 const Home = {
@@ -2182,6 +2183,19 @@ const Home = {
         input.focus();
       });
     }
+    // / from anywhere, and Ctrl+K (⌘K) while Home shows, put the cursor in
+    // this box (./search-shortcut.ts, #6462). From another screen / opens
+    // Home first, which is what focusSearch does.
+    installHomeSearchShortcut({
+      doc: document,
+      open: (showing) => {
+        if (!showing) { Home.focusSearch(); return; }
+        try {
+          input.focus({ preventScroll: false });
+          input.select?.();
+        } catch (err) { /* nothing to focus */ }
+      },
+    });
   },
 
   // Add / remove one app from "Your apps", from anywhere: a discovery rail,
