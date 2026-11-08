@@ -85,13 +85,16 @@ async function post(server, body) {
   });
 }
 
-// Frozen clock for the pure normalizeQueuedAt tests, which pass it as
-// nowMs. The route itself reads Date.now(), so the route-behaviour
-// fixtures below must be relative to the real clock: a stamp pinned to a
-// fixed date eventually crosses the 90-day "broken clock" cap and the
-// route stops printing it (that is how this suite once failed).
+// The pure tests pass this instant in explicitly, so their edge cases stay
+// pinned; hoursAgo is anchored to it and is only for those tests. A route test
+// must use neither: the route stamps with the real wall clock and drops a
+// stamp older than 90 days, so a fixed date eventually ages out of the window.
 const NOW = Date.parse('2026-08-11T12:00:00.000Z');
 const hoursAgo = (h) => new Date(Date.now() - h * 3600_000).toISOString();
+
+// For the route tests: the server compares against Date.now(), so the sample
+// must be relative to the real clock or it will eventually be too old.
+const hoursBeforeNow = (h) => new Date(Date.now() - h * 3600_000).toISOString();
 
 // ── Pure validation ──────────────────────────────────────────────────
 
@@ -138,7 +141,7 @@ test('app-targeted feedback carries the Saved offline line above the description
       description: 'Board is broken',
       target: 'app',
       appSlug: 'demo-app',
-      queuedAt: hoursAgo(3),
+      queuedAt: hoursBeforeNow(3),
     });
     assert.equal(res.status, 200);
     const { body } = appCreates[0];
@@ -160,7 +163,7 @@ test('platform-targeted feedback carries it too', async () => {
   reset();
   const server = await startServer();
   try {
-    const res = await post(server, { description: 'Header is wrong', queuedAt: hoursAgo(26) });
+    const res = await post(server, { description: 'Header is wrong', queuedAt: hoursBeforeNow(26) });
     assert.equal(res.status, 200);
     assert.match(ghCreates[0].body, /\*\*Source:\*\* .*\n\*\*Saved offline:\*\* /);
     assert.ok(ghCreates[0].body.indexOf('**Saved offline:**') < ghCreates[0].body.indexOf('Header is wrong'));

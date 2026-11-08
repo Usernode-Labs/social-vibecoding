@@ -3314,14 +3314,14 @@
       "expectText": "Operations"
     },
     {
-      "name": "Admin console menu groups are collapsible (#1152)",
+      "name": "Admin console opens on its home: a top bar of group menus, Home lit, with Search (#6456)",
       "path": "/#admin",
-      "expectSelector": "#admin-nav-desktop [data-admin-group-toggle=\"Operations\"][aria-expanded=\"true\"]"
+      "expectSelector": "#admin-nav-desktop [data-admin-topnav]:has([data-admin-topnav-home][aria-current=\"page\"]):has([data-admin-topnav-group=\"Operations\"][aria-haspopup=\"menu\"]):has([data-admin-search-open]) ~ [data-admin-tabs] [data-admin-tab=\"overview\"]"
     },
     {
-      "name": "Admin console menu groups ship expanded, including the active section's (#1152)",
+      "name": "Admin console marks the current group in the top bar and opens the section as a tab (#6456)",
       "path": "/#admin/users",
-      "expectSelector": "#admin-nav-desktop [data-admin-group=\"People\"]:not(.hidden) [data-admin-section=\"users\"]"
+      "expectSelector": "#admin-nav-desktop:has([data-admin-topnav-group=\"People\"][aria-current=\"true\"]) [data-admin-tabs] [data-admin-tab=\"users\"][aria-current=\"page\"]"
     },
     {
       "name": "Admin console deep-links Overview by its explicit segment",
