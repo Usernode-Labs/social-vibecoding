@@ -133,7 +133,11 @@
   },
   "weekShare.item.built": {
     "text": "Built in: {{apps}}",
-    "description": "One switchable figure on the \"Share your week\" card: the names of the apps the viewer's changes went live in, such as \"Built in: Homeroom, Notes\". {{apps}} is a comma-separated list of app names."
+    "description": "One switchable figure on the \"Share your week\" card, and the line it becomes in the shared text: the names of the apps the viewer's changes went live in, such as \"Built in: Homeroom, Notes\". {{apps}} is a comma-separated list of app names, each followed by its own address in the shared text."
+  },
+  "weekShare.appWithUrl": {
+    "text": "{{name}} {{url}}",
+    "description": "One app inside the line of shared text that names the apps the viewer's changes went live in: the app's own name followed by its own address, such as \"Notes https://app.onhomeroom.com/#app/notes\", so a reader can tell which link belongs to which app. {{name}} is the app's name; {{url}} is its address."
   },
   "weekShare.item.challenges_one": {
     "text": "{{number}} challenge done",

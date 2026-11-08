@@ -380,10 +380,22 @@ export function shareWeekView(
     if (activity.time) items.push({ key: 'time', label: t('profile:weekShare.item.time', { time: activity.time }) });
     if (apps) items.push({ key: 'apps', label: t('profile:weekShare.item.apps', { count: apps, number: apps.toLocaleString() }) });
     if (merged) items.push({ key: 'merged', label: t('profile:weekShare.item.merged', { count: merged, number: merged.toLocaleString() }) });
-    const appNames = (Array.isArray(week.apps) ? week.apps : [])
-      .map((app) => (app && (app.name || app.slug)) || null)
+    const appList = (Array.isArray(week.apps) ? week.apps : [])
+      .map((app) => (app && app.slug
+        ? { slug: String(app.slug), name: String(app.name || app.slug) }
+        : null))
       .filter(Boolean);
-    if (appNames.length) items.push({ key: 'built', label: t('profile:weekShare.item.built', { apps: appNames.join(', ') }) });
+    if (appList.length) {
+      items.push({
+        key: 'built',
+        label: t('profile:weekShare.item.built', { apps: appList.map((app) => app.name).join(', ') }),
+        // Each app's own page, so the shared line can put the app's name
+        // beside its own link (#6464, as @alfa asked).
+        apps: origin
+          ? appList.map((app) => ({ name: app.name, url: `${origin}/#app/${encodeURIComponent(app.slug)}` }))
+          : null,
+      });
+    }
     if (challenges) items.push({ key: 'challenges', label: t('profile:weekShare.item.challenges', { count: challenges, number: challenges.toLocaleString() }) });
   }
   const owner = ownerPublicProfile || null;
@@ -400,19 +412,31 @@ export function shareWeekView(
 }
 
 /**
- * The words the Share and Copy buttons send: one line per selected figure,
- * and every line carries the page's address (#6464, as @alfa asked), so each
- * figure says where it can be seen. The address is `shareWeekView`'s `link`:
- * the public profile's page, or the app's own when that page is not public.
- * Empty when nothing is selected.
+ * The words the Share and Copy buttons send: one line per selected figure.
+ * A figure that names apps carries each app's own name beside its own link,
+ * so a reader can tell which link belongs to which app (#6464, as @alfa
+ * asked); every other line carries the page's address, `shareWeekView`'s
+ * `link`: the public profile's page, or the app's own when that page is not
+ * public. Empty when nothing is selected.
  */
 export function shareText(items, selectedKeys, link = null) {
   const chosen = (items || []).filter((item) => !selectedKeys
     || (selectedKeys instanceof Set ? selectedKeys.has(item.key) : selectedKeys.includes(item.key)));
   const lines = chosen
-    .map((item) => (item.label || '').trim())
-    .filter(Boolean)
-    .map((label) => (link ? t('profile:weekShare.itemWithUrl', { fact: label, url: link }) : label));
+    .map((item) => {
+      const apps = Array.isArray(item.apps) ? item.apps.filter((app) => app && app.url) : [];
+      if (apps.length) {
+        return t('profile:weekShare.item.built', {
+          apps: apps
+            .map((app) => t('profile:weekShare.appWithUrl', { name: app.name, url: app.url }))
+            .join(', '),
+        });
+      }
+      const label = (item.label || '').trim();
+      if (!label) return '';
+      return link ? t('profile:weekShare.itemWithUrl', { fact: label, url: link }) : label;
+    })
+    .filter(Boolean);
   if (!lines.length) return '';
   return t('profile:weekShare.intro', { facts: lines.join('\n') });
 }

@@ -68,19 +68,27 @@ test('the address is the public profile\'s page, else the app\'s own, never a pa
   assert.equal(store.shareWeekView(SUMMARY, PUBLISHED, '').link, null, 'with no origin there is no address');
 });
 
-test('every chosen figure is its own line, each carrying the profile link', () => {
+test('every chosen figure is its own line, each carrying an address', () => {
   const { items, link } = store.shareWeekView(SUMMARY, PUBLISHED, ORIGIN);
   const all = store.shareText(items, items.map((item) => item.key), link);
   assert.equal(all, 'My week on Homeroom:\n'
     + '3h 40m time in apps https://homeroom.example/#profile/evan\n'
     + '6 apps opened https://homeroom.example/#profile/evan\n'
     + '2 changes live https://homeroom.example/#profile/evan\n'
-    + 'Built in: Homeroom, Notes https://homeroom.example/#profile/evan\n'
+    + 'Built in: Homeroom https://homeroom.example/#app/usernode-2d5619, '
+    + 'Notes https://homeroom.example/#app/notes\n'
     + '1 challenge done https://homeroom.example/#profile/evan');
   // Not one line has the plain number on its own: each says where to see it.
   const lines = all.split('\n').slice(1);
   assert.equal(lines.length, items.length);
-  for (const line of lines) assert.ok(line.endsWith(` ${link}`), line);
+  for (const line of lines.filter((line) => !line.startsWith('Built in:'))) {
+    assert.ok(line.endsWith(` ${link}`), line);
+  }
+  const built = lines.find((line) => line.startsWith('Built in:'));
+  // Each app's own name sits beside its own link, so a reader can tell which
+  // link belongs to which app (#6464, as @alfa asked).
+  assert.ok(built.includes(`Homeroom ${ORIGIN}/#app/usernode-2d5619`), built);
+  assert.ok(built.includes(`Notes ${ORIGIN}/#app/notes`), built);
   const some = store.shareText(items, ['time', 'merged']);
   assert.equal(some, 'My week on Homeroom:\n3h 40m time in apps\n2 changes live',
     'a pure call with no address is the words alone');
@@ -88,12 +96,32 @@ test('every chosen figure is its own line, each carrying the profile link', () =
   assert.equal(store.shareText(items, []), '', 'nothing selected says nothing');
 });
 
-test('with no published page every line still carries the app\'s own address', () => {
+test('the apps line names each app beside its own link, never a bare URL', () => {
+  const { items } = store.shareWeekView(SUMMARY, PUBLISHED, ORIGIN);
+  const built = items.find((item) => item.key === 'built');
+  assert.deepEqual(built.apps, [
+    { name: 'Homeroom', url: `${ORIGIN}/#app/usernode-2d5619` },
+    { name: 'Notes', url: `${ORIGIN}/#app/notes` },
+  ]);
+  assert.equal(store.shareText(items, ['built'], 'https://homeroom.example/#profile/evan'),
+    `My week on Homeroom:\nBuilt in: Homeroom ${ORIGIN}/#app/usernode-2d5619, Notes ${ORIGIN}/#app/notes`);
+  // With no origin there is no address, so the names stand alone.
+  const offline = store.shareWeekView(SUMMARY, PUBLISHED, '');
+  assert.equal(offline.items.find((item) => item.key === 'built').apps, null);
+  assert.equal(store.shareText(offline.items, ['built']), 'My week on Homeroom:\nBuilt in: Homeroom, Notes');
+});
+
+test('with no published page every line still carries an address', () => {
   const { items, link } = store.shareWeekView(SUMMARY, null, ORIGIN);
   const text = store.shareText(items, items.map((item) => item.key), link);
   const lines = text.split('\n').slice(1);
   assert.equal(lines.length, items.length);
-  for (const line of lines) assert.ok(line.endsWith(` ${ORIGIN}`), line);
+  for (const line of lines.filter((line) => !line.startsWith('Built in:'))) {
+    assert.ok(line.endsWith(` ${ORIGIN}`), line);
+  }
+  const built = lines.find((line) => line.startsWith('Built in:'));
+  assert.ok(built.includes(`Homeroom ${ORIGIN}/#app/usernode-2d5619`), built);
+  assert.ok(built.includes(`Notes ${ORIGIN}/#app/notes`), built);
 });
 
 test('the sheet draws a switch for every figure and the words that will leave', () => {
