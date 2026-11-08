@@ -103,6 +103,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { gridStore } from './grid-store';
+import { HOME_SEARCH_SHORTCUT_KEYS } from './search-shortcut';
 
 // The three modules that fill this screen, imported in the order their
 // <script> tags had: HomeLayout (pure geometry) is read by both of the others,
@@ -187,6 +188,7 @@ export function HomeScreen() {
               autoComplete="off"
               placeholder={t('home:search.placeholder')}
               aria-label={t('home:search.label')}
+              aria-keyshortcuts={HOME_SEARCH_SHORTCUT_KEYS}
               className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
             />
             <button
