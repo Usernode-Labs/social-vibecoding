@@ -191,8 +191,18 @@ test('the required security merge gate rejects every incomplete or unsuccessful 
     }
   }
   const audit = lockfiles.steps.find((s) => s.run === 'node scripts/security-audit.js');
+  const releaseScan = workflow.jobs.build.steps.find((s) => s.name === 'Verify runtime and scan the exact image SBOM');
+  const baseline = lockfiles.steps.find((s) => s.name === 'Fetch the baseline commit');
+  const live = lockfiles.steps.find((s) => s.name === 'Read the live release');
   for (const event of ['pull_request', 'push', 'schedule', 'workflow_dispatch']) {
-    assert.equal(workflowExpression(audit.env.SECURITY_AUDIT_ONLY, { github: { event_name: event } }), event === 'pull_request' ? '0' : '1');
+    for (const ref of ['refs/heads/main', 'refs/heads/feat/k8s', 'refs/heads/other', 'refs/pull/1/merge']) {
+      const context = { github: { event_name: event, ref } };
+      const protectedRelease = event !== 'pull_request' && ref === 'refs/heads/main';
+      assert.equal(workflowExpression(audit.env.SECURITY_AUDIT_ONLY, context), protectedRelease ? '1' : '0');
+      assert.equal(workflowExpression(baseline.if, context), !protectedRelease);
+      assert.equal(workflowExpression(live.if, context), event !== 'pull_request' && ref !== 'refs/heads/main');
+      assert.equal(workflowExpression(releaseScan.env.SECURITY_AUDIT_ONLY, context), ref === 'refs/heads/main' ? '1' : '0');
+    }
   }
 });
 

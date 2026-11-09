@@ -30,7 +30,9 @@ Repo settings are separate from source control: verify the check names, GitHub
 Actions source and admin enforcement in Settings > Branches > main. The checked-in
 list is the final contract, not a claim that a workflow configures its own protection.
 
-After merge, release scans use `SECURITY_AUDIT_ONLY=1`. Findings are warnings in
+After merge to protected main, release scans use `SECURITY_AUDIT_ONLY=1`. The legacy
+`feat/k8s` trigger and dispatches on other branches retain the blocking baseline
+comparison; they do not have main's required pre-merge scans. Findings on main are warnings in
 the job log and summary, with full reports retained, and do not stop delivery.
 The independent daily audit below still opens native security requests. Scanner
 execution errors, malformed reports, runtime validation failures and the existing

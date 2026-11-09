@@ -162,18 +162,20 @@ test('what is live comes off the newest stable chart, and an unreadable chart is
 test('PR findings block against the exact base; post-merge findings are advisory', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
   const step = (job, name) => workflow.jobs[job].steps.find((s) => s.name === name);
-  // Only pull requests need a lockfile baseline.
+  // PRs and other release branches retain a lockfile baseline. Only protected
+  // main can use advisory findings after its required pre-merge scans.
   const lockfiles = workflow.jobs['security-lockfiles'];
   const baseline = step('security-lockfiles', 'Fetch the baseline commit');
-  assert.equal(baseline.if, "github.event_name == 'pull_request'");
+  assert.equal(baseline.if, "github.event_name == 'pull_request' || github.ref != 'refs/heads/main'");
+  assert.equal(step('security-lockfiles', 'Read the live release').if, "github.event_name != 'pull_request' && github.ref != 'refs/heads/main'");
   assert.equal(baseline.env.BASE_SHA, '${{ github.event.pull_request.base.sha }}');
-  assert.equal(baseline.env.LIVE_SHA, undefined);
+  assert.equal(baseline.env.LIVE_SHA, '${{ steps.live.outputs.revision }}');
   assert.match(baseline.run, /git fetch --no-tags --depth=1 origin "\$revision"/);
   const auditStep = lockfiles.steps.find((s) => s.run === 'node scripts/security-audit.js');
   assert.deepEqual(auditStep.env, {
     SECURITY_BASELINE_REVISION: '${{ steps.baseline.outputs.revision }}',
     SECURITY_BASELINE_NAME: '${{ steps.baseline.outputs.name }}',
-    SECURITY_AUDIT_ONLY: "${{ github.event_name != 'pull_request' && '1' || '0' }}",
+    SECURITY_AUDIT_ONLY: "${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && '1' || '0' }}",
   });
   // PR images use the exact PR base, including standalone and starter.
   const prScan = step('security-images', 'Build and scan the finished image');
@@ -183,7 +185,7 @@ test('PR findings block against the exact base; post-merge findings are advisory
   assert.equal(workflow.jobs['security-images'].steps.some((s) => s.uses?.startsWith('actions/cache')), false,
     'PR-written inventories cannot be persisted then reused by a later revision');
   const releaseScan = step('build', 'Verify runtime and scan the exact image SBOM');
-  assert.equal(releaseScan.env.SECURITY_AUDIT_ONLY, '1');
+  assert.equal(releaseScan.env.SECURITY_AUDIT_ONLY, "${{ github.ref == 'refs/heads/main' && '1' || '0' }}");
   assert.equal(releaseScan.env.LIVE_DIGEST, '${{ steps.live.outputs[matrix.component] }}');
   assert.match(releaseScan.run, /export BASELINE_IMAGE="ghcr\.io\/\$REGISTRY_OWNER\/social-vibecoding-\$\{\{ matrix\.component \}\}@\$LIVE_DIGEST"/);
   assert.match(releaseScan.run, /sh scripts\/check-published-image\.sh "\$IMAGE" "\$REPORT" "\$\{\{ matrix\.component \}\}"/);
