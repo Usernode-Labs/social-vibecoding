@@ -208,8 +208,9 @@ function routeApp({ app, open = null, collab = true, operation }) {
     route: require.resolve('../src/routes/versions'),
   };
   const github = require(ids.github);
-  const savedWrite = github.hasWriteAccess;
-  github.hasWriteAccess = () => true;
+  const savedEnabled = github.isEnabled, savedWrite = github.hasWriteAccess;
+  github.isEnabled = () => true;
+  github.hasWriteAccess = () => false; // Web can admit a conductor operation.
   const platformOps = require(ids.platformOps);
   const savedRequest = platformOps.request;
   const asked = [];
@@ -233,7 +234,7 @@ function routeApp({ app, open = null, collab = true, operation }) {
   server.use(express.json());
   server.use((req, _res, next) => { req.user = { id: 5, username: 'sam' }; next(); });
   server.use(versionsRoutes({}, { pool }));
-  const restore = () => { github.hasWriteAccess = savedWrite; platformOps.request = savedRequest; };
+  const restore = () => { github.isEnabled = savedEnabled; github.hasWriteAccess = savedWrite; platformOps.request = savedRequest; };
   return { server, asked, restore };
 }
 

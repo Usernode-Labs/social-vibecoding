@@ -37,6 +37,8 @@ const MAIN = {
 };
 let ghManifestOnMain = JSON.stringify(MAIN, null, 2);
 github.isEnabled = () => ghEnabled;
+// The inline operation runs as a conductor with its own writer capability.
+github.hasWriteAccess = () => ghEnabled;
 github.getFileContent = async () => ghManifestOnMain;
 github.createBranch = async (owner, repo, branch) => { ghCalls.push({ op: 'branch', branch }); };
 github.pushFiles = async (owner, repo, files, opts) => { ghCalls.push({ op: 'push', files, opts }); };

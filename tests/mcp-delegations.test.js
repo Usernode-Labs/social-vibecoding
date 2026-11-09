@@ -64,7 +64,8 @@ test('delegated tokens have their own shape and a client id no OAuth endpoint ac
   assert.equal(mcpOauth.isCanonicalSecret(token, constants.DELEGATED_TOKEN_PREFIX), true);
   assert.equal(mcpOauth.isCanonicalSecret(token, constants.TOKEN_PREFIX), false);
 
-  assert.deepEqual([...constants.DELEGATION_KINDS], ['agent_mayor', 'worker_read']);
+  // bot_admin: Homeroom bot's admin tools in an admin's own conversation with it (P7).
+  assert.deepEqual([...constants.DELEGATION_KINDS], ['agent_mayor', 'worker_read', 'bot_admin']);
   for (const kind of constants.DELEGATION_KINDS) {
     const clientId = constants.DELEGATED_CLIENT_IDS[kind];
     assert.ok(clientId, `${kind} has a synthetic client id`);
@@ -502,7 +503,8 @@ test('the /mcp handler re-checks the delegation and serves each kind its own sur
 
 test('delegated grants are not connected apps', () => {
   const SRC = read('src/routes/mcp-remote.js');
-  const list = SRC.slice(SRC.indexOf("router.get('/api/me/connectors'"), SRC.indexOf("router.delete('/api/me/connectors/:id'"));
+  const list = SRC.slice(SRC.indexOf('async function readConnectorGrants'), SRC.indexOf('// One query, grouped the way the list groups'));
+  assert.match(SRC.slice(SRC.indexOf("router.get('/api/me/connectors'"), SRC.indexOf("router.delete('/api/me/connectors/:id'")), /readConnectorGrants\(pool, req\.user\.id\)/);
   assert.match(list, /NOT EXISTS \(SELECT 1 FROM mcp_delegations d WHERE d\.grant_id = t\.grant_id\)/);
   const disconnect = SRC.slice(SRC.indexOf("router.delete('/api/me/connectors/:id'"));
   assert.match(disconnect, /NOT EXISTS \(SELECT 1 FROM mcp_delegations d WHERE d\.grant_id = t\.grant_id\)/);

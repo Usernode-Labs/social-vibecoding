@@ -22,6 +22,24 @@ export interface AgentChange {
   prNumber: number | null;
   stagingUrl?: string | null;
   checkState?: string | null;
+  /** Where a pending run stands: 'building', 'testing', 'queued', 'deferred'. */
+  checkPhase?: string | null;
+  /** When the pending run started, or null. */
+  checksCheckedAt?: string | null;
+  /** How many runs are ahead of a queued one, or null. */
+  checksQueueAhead?: number | null;
+  /**
+   * How long testing usually takes on the change's app (#6122): the median of
+   * its recent finished runs, or a rough figure from across Homeroom when it
+   * has too few, and the checks queue's slot count for a queued run's wait.
+   */
+  checksEstimate?: {
+    buildMs: number;
+    checksMs: number;
+    runs: number;
+    rough: boolean;
+    slots: number;
+  } | null;
   /** Checks that failed on the last run. */
   checkFailing?: number;
   /** Why the checks were skipped, when they were and a reason was recorded. */

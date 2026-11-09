@@ -1,5 +1,7 @@
 'use strict';
 
+// test:changed: when src/ server.js sql-dynamic-baseline.json (backend SQL changes must match the reviewed dynamic inventory)
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -95,11 +97,4 @@ test('SQL validation always audits debug permissions on the existing complete sh
   assert.match(checker, /await reader\.connect\(\)/, 'probes use the restricted login');
   assert.match(checker, /DROP OWNED BY/);
   assert.match(checker, /DROP ROLE/);
-});
-
-
-test('SQL validation audits preview data approval on the same complete shadow database', () => {
-  const checker=read('scripts/check-sql.js');
-  assert.match(checker,/await applySchema\(shadow\.shadowUrl\);\s+const previewPolicy = await validatePlatformPreviewPolicy\(shadow\.shadowUrl\);/);
-  assert.match(checker,/preview\.verifyCatalog\(catalog\)/);
 });

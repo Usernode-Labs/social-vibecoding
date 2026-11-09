@@ -581,7 +581,229 @@ function screenStats(text) {
     });
 }
 
+// ── The plan card's own text (#6220, 3 Nov 2026) ─────────────────────────
+//
+// A plan's card used to be cut out of its spec (homeroom-bot-live.js
+// specCardLines: the first sentence or bold lead of each point, clipped at
+// 120 characters), which gave broken lines ('The status line says "Your plan
+// is ready'), bare sub-headings and repeats. The plan writer now writes the
+// card's text itself, in two places the format already has: the one or two
+// sentence summary under the <h1>, and one whole sentence per change in the
+// screens' <ol data-changes>, each numbered as its screens mark it. specCard
+// reads them and checks them: whole sentences, at most CARD_LINE_MAX
+// characters a line, numbers that match the screens' marks. It never clips:
+// a part that fails is left out (#6269: one repair turn may rewrite it
+// first), good lines are kept when only the summary fails, and the card
+// falls back to its old lines only when a line itself fails.
+
+const CARD_LINE_MAX = 110;
+const CARD_SUMMARY_MAX = 280;
+const SENTENCE_END_RE = /[.!?]["'”’)]?$/;
+
+function plainText(tokens) {
+  return decodeEntities(tokens.filter((t) => t.type === 'text').map((t) => t.text).join('')).replace(/\s+/g, ' ').trim();
+}
+
+/** The change numbers a spec's screens mark (its templates' data-change). Pure. */
+function markedChanges(html) {
+  const marked = new Set();
+  for (const tok of tokenize(String(html || ''))) {
+    if (tok.type === 'raw' && tok.name === 'template') {
+      for (const m of String(tok.raw).matchAll(/\bdata-change\s*=\s*["']?(\d+)/g)) marked.add(Number(m[1]));
+    }
+  }
+  return marked;
+}
+
+/**
+ * Pure: the card a spec's HTML carries, { summary, lines: [{ n, text }],
+ * problems, summaryProblems, lineProblems, kinds }, or null when it has
+ * neither. `problems` is the union of the strings, in the order it always
+ * was; `summaryProblems` and `lineProblems` split them, and `kinds` names
+ * each one by code (summary_long, line_empty, line_long, line_not_sentence,
+ * line_unmarked). A card is used whole, its good lines are kept without a
+ * failing summary, and it is never cut to fit.
+ */
+function specCard(html) {
+  const tokens = tokenize(extractHtmlSpec(String(html || '')) || String(html || ''));
+  let summary = '';
+  const lines = [];
+  const marked = new Set();
+  let depth = 0;
+  let sawSection = false;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const tok = tokens[i];
+    if (tok.type === 'raw' && tok.name === 'template') {
+      for (const m of String(tok.raw).matchAll(/\bdata-change\s*=\s*["']?(\d+)/g)) marked.add(Number(m[1]));
+      continue;
+    }
+    if (tok.type === 'open' && tok.name === 'section') sawSection = true;
+    // The summary: the first <p> straight under the article, before its sections.
+    if (!summary && !sawSection && tok.type === 'open' && tok.name === 'p') {
+      const end = tokens.findIndex((t, j) => j > i && t.type === 'close' && t.name === 'p');
+      summary = plainText(tokens.slice(i + 1, end < 0 ? tokens.length : end));
+      continue;
+    }
+    if (tok.type === 'open' && tok.name === 'ol' && 'data-changes' in (tok.attrs || {})) { depth += 1; continue; }
+    if (depth && tok.type === 'close' && tok.name === 'ol') { depth -= 1; continue; }
+    if (depth && tok.type === 'open' && tok.name === 'li') {
+      const end = tokens.findIndex((t, j) => j > i && t.type === 'close' && t.name === 'li');
+      const n = Number(tok.attrs?.['data-change']);
+      lines.push({ n: Number.isInteger(n) && n > 0 ? n : null, text: plainText(tokens.slice(i + 1, end < 0 ? tokens.length : end)) });
+    }
+  }
+  if (!summary && !lines.length) return null;
+  const summaryProblems = [];
+  const lineProblems = [];
+  const kinds = [];
+  if (summary && summary.length > CARD_SUMMARY_MAX) {
+    summaryProblems.push(`the summary is ${summary.length} characters`);
+    kinds.push('summary_long');
+  }
+  lines.forEach((line, index) => {
+    const which = line.n || index + 1;
+    if (!line.text) { lineProblems.push(`line ${which} is empty`); kinds.push('line_empty'); }
+    else if (line.text.length > CARD_LINE_MAX) { lineProblems.push(`line ${which} is ${line.text.length} characters`); kinds.push('line_long'); }
+    else if (!SENTENCE_END_RE.test(line.text)) { lineProblems.push(`line ${which} is not a whole sentence`); kinds.push('line_not_sentence'); }
+    if (line.n && marked.size && !marked.has(line.n)) { lineProblems.push(`no screen marks change ${line.n}`); kinds.push('line_unmarked'); }
+  });
+  return { summary, lines, problems: [...summaryProblems, ...lineProblems], summaryProblems, lineProblems, kinds };
+}
+
+// ── Repairing one part of a card (#6269, 4 Nov 2026) ─────────────────────
+//
+// A card whose text failed a check is not thrown away whole: the plan writer
+// gets one repair turn, shown only the problems and asked for only the part
+// that failed. Its reply holds a replacement <p> (the summary) and/or
+// <li data-change="N"> (a line); each is taken only if it passes that part's
+// own check, and nothing is ever shortened to fit.
+
+const CARD_ESCAPES = Object.freeze({ '&': '&amp;', '<': '&lt;', '>': '&gt;' });
+
+function escapeCardText(text) {
+  return String(text).replace(/[&<>]/g, (ch) => CARD_ESCAPES[ch]);
+}
+
+/** The range of the text inside the article's first <p>, before its sections, or null. Pure. */
+function summaryRange(html) {
+  const article = /<article\b[^>]*\bdata-spec\b[^>]*>/i.exec(html);
+  const from = article ? article.index + article[0].length : 0;
+  const section = /<section\b/i.exec(html.slice(from));
+  const limit = section ? from + section.index : html.length;
+  const open = /<p\b[^>]*>/i.exec(html.slice(from));
+  if (!open) return null;
+  const start = from + open.index + open[0].length;
+  if (start > limit) return null;
+  const close = html.indexOf('</p>', start);
+  if (close === -1 || close > limit) return null;
+  return { start, end: close };
+}
+
+/** Each <ol data-changes>'s inner range. Pure. */
+function changeListRanges(html) {
+  const out = [];
+  const re = /<ol\b([^>]*)>/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    if (!/\bdata-changes\b/.test(m[1])) continue;
+    const start = m.index + m[0].length;
+    const tagRe = /<\/?ol\b[^>]*>/gi;
+    tagRe.lastIndex = start;
+    let depth = 1;
+    let c;
+    while ((c = tagRe.exec(html))) {
+      if (/^<\//.test(c[0])) depth -= 1; else depth += 1;
+      if (depth === 0) { out.push({ start, end: c.index }); break; }
+    }
+  }
+  return out;
+}
+
+/** Each <li>'s number and inner range, in the article's change lists. Pure. */
+function changeLineRanges(html) {
+  const out = [];
+  for (const list of changeListRanges(html)) {
+    const liRe = /<li\b([^>]*)>/gi;
+    liRe.lastIndex = list.start;
+    let m;
+    while ((m = liRe.exec(html)) && m.index < list.end) {
+      const start = m.index + m[0].length;
+      const close = html.indexOf('</li>', start);
+      if (close === -1 || close > list.end) break;
+      const n = Number(parseAttrs(m[1])['data-change']);
+      out.push({ n: Number.isInteger(n) && n > 0 ? n : null, start, end: close });
+    }
+  }
+  return out;
+}
+
+/** The text of the first <p> in a repair reply, or ''. Pure. */
+function replySummary(reply) {
+  const m = /<p\b[^>]*>([\s\S]*?)<\/p>/i.exec(reply);
+  return m ? plainText(tokenize(m[1])) : '';
+}
+
+/** The numbered <li> elements in a repair reply, { n, text }. Pure. */
+function replyLines(reply) {
+  const out = [];
+  const re = /<li\b([^>]*)>([\s\S]*?)<\/li>/gi;
+  let m;
+  while ((m = re.exec(reply))) {
+    const n = Number(parseAttrs(m[1])['data-change']);
+    out.push({ n: Number.isInteger(n) && n > 0 ? n : null, text: plainText(tokenize(m[2])) });
+  }
+  return out;
+}
+
+/** Why a line still fails, or null: the one code a repair replacement must clear. Pure. */
+function lineRepairProblem(text, n, marked) {
+  if (!text) return 'line_empty';
+  if (text.length > CARD_LINE_MAX) return 'line_long';
+  if (!SENTENCE_END_RE.test(text)) return 'line_not_sentence';
+  if (n && marked.size && !marked.has(n)) return 'line_unmarked';
+  return null;
+}
+
+/**
+ * Pure: `html` with the failing card text a repair turn rewrote. The reply
+ * holds a replacement <p> (the summary) and/or <li data-change="N"> (a
+ * line); each text is swapped in only if it passes that part's check, and
+ * every attribute and every other part of the document is kept. text is
+ * escaped, never shortened. Returns { html, changed }.
+ */
+function applyCardRepair(html, replyText) {
+  const source = typeof html === 'string' ? html : '';
+  const reply = typeof replyText === 'string' ? replyText : '';
+  if (!source || !reply.trim()) return { html: source, changed: false };
+  const marked = markedChanges(source);
+  const replacements = [];
+  const seen = new Set();
+  const add = (range, text) => {
+    if (!range || seen.has(range.start)) return;
+    seen.add(range.start);
+    replacements.push({ ...range, text });
+  };
+  const summary = replySummary(reply);
+  if (summary && summary.length <= CARD_SUMMARY_MAX) add(summaryRange(source), summary);
+  const ranges = changeLineRanges(source);
+  for (const line of replyLines(reply)) {
+    if (!line.n || lineRepairProblem(line.text, line.n, marked)) continue;
+    add(ranges.find((r) => r.n === line.n), line.text);
+  }
+  if (!replacements.length) return { html: source, changed: false };
+  // From the end, so a replacement before another keeps its offsets.
+  let out = source;
+  for (const r of replacements.sort((a, b) => b.start - a.start)) {
+    out = out.slice(0, r.start) + escapeCardText(r.text) + out.slice(r.end);
+  }
+  return { html: out, changed: true };
+}
+
 module.exports = {
+  specCard,
+  applyCardRepair,
+  CARD_LINE_MAX,
+  CARD_SUMMARY_MAX,
   planImageIds,
   planImageUrl,
   MAX_SPEC_HTML_CHARS,

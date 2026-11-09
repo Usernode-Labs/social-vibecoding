@@ -1,6 +1,22 @@
 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- THE BROWSER'S OWN CANVAS, BEFORE ANY STYLE IS PARSED. The critical
+       <style> below sets `color-scheme` from the RESOLVED theme, but it
+       cannot apply until it has been parsed, and the canvas the engine paints
+       between "there is a document" and "there is a style" answers to this
+       meta instead. Without it a load on a dark device starts on the browser's
+       default WHITE canvas (and, in a webview, the native window behind it),
+       then flips to the dark ground once the style lands. That is the white
+       frame #6130 reports on every page load.
+
+       The bare two-value form delegates to the OS on purpose, for these first
+       bytes only. The class-keyed `color-scheme` rules below override it the
+       moment they apply, so a viewer who picked Light on a dark device still
+       gets light scrollbars and controls on the #f4f2e4 page. Do not fold
+       them into one: a meta cannot see the class, and the rules must stay
+       class-keyed (tests/native-appearance.test.js pins that). -->
+  <meta name="color-scheme" content="light dark">
   <!-- THE PAGE OWNS THE STATUS-BAR STRIP, on an installed iOS web app (#1929).
 
        Without this, a home-screen install gets iOS's OPAQUE status bar: the
@@ -48,13 +64,20 @@
   <title>Homeroom</title>
   <!-- The browser-chrome colour, and the ground the shell paints on before
        any stylesheet has loaded. Both live UP HERE, ahead of the theme
-       module, because that module rewrites the meta from the resolved theme
+       module, because that module rewrites the metas from the resolved theme
        and the critical style has to beat the compiled Tailwind sheet (the LAST
-       stylesheet in this head, by a contract documented on its own link). The
-       value is a starting point only — a dark-mode viewer's first paint is
-       corrected by Theme.apply() below, in the same head-blocking pass that
-       adds `.dark`, so nothing flashes either way. -->
-  <meta name="theme-color" content="#f4f2e4">
+       stylesheet in this head, by a contract documented on its own link).
+
+       A MEDIA-KEYED PAIR, and only a STARTING POINT. The browser uses the one
+       whose `prefers-color-scheme` side matches the DEVICE, so a dark-OS load
+       gets a dark address bar and a dark window ground from the very first
+       byte, before the theme module parses. Theme.apply() below then
+       overwrites BOTH metas with the resolved ground in the same
+       head-blocking pass that adds `.dark`, so the viewer's own Light/Dark
+       choice wins and an explicit Light pick on a dark OS leaves no stale
+       dark value in either. -->
+  <meta name="theme-color" content="#f4f2e4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0d1b" media="(prefers-color-scheme: dark)">
   <style>
     /* WHY THIS IS INLINE AND NOT IN app.css. The page ground is a Tailwind
        utility on <body> (`bg-zinc-100 dark:bg-zinc-950`, see
@@ -224,14 +247,17 @@
         // area on iOS, and the window ground a standalone install shows
         // before the document paints — so a light-mode viewer got a black
         // band above a #eaeaea page on every load and every overscroll.
-        // Written from the RESOLVED theme rather than left to a
-        // `media="(prefers-color-scheme: …)"` pair, because the shell's own
-        // Light/Dark override is a class on <html> that no media query can
-        // see: a viewer who picks Light on a dark OS has to get the light
-        // one. This runs before first paint on load and again on every
-        // set() / OS change, so the chrome tracks the page it frames.
-        const meta = document.querySelector('meta[name="theme-color"]');
-        if (meta) meta.setAttribute('content', wantDark ? GROUND.dark : GROUND.light);
+        // Written from the RESOLVED theme, to EVERY meta: the media-keyed
+        // pair above only covers the bytes before this script runs, and from
+        // here on both carry the resolved ground so whichever one the device
+        // matches shows the viewer's choice. The shell's own Light/Dark
+        // override is a class on <html> that no media query can see, so a
+        // viewer who picks Light on a dark OS must not be left with the dark
+        // half of the pair. This runs before first paint on load and again on
+        // every set() / OS change, so the chrome tracks the page it frames.
+        document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {
+          m.setAttribute('content', wantDark ? GROUND.dark : GROUND.light);
+        });
       }
 
       function set(mode) {
@@ -445,9 +471,18 @@
     // costs a moment of English, never the page.
     (function () {
       try {
+        // The languages written right to left, by primary subtag. A literal
+        // copy of RTL_LANGUAGES in lib/i18n/direction.ts: this runs before
+        // that module loads, and tests/language-direction.test.js pins the
+        // two lists to each other. Arabic must not paint left to right.
+        var RTL = ['ar', 'he', 'fa', 'ur', 'ps', 'dv', 'ckb', 'yi', 'sd', 'ug'];
         var shown = localStorage.getItem('homeroom:language:shown');
-        if (!shown || shown === 'en') return;
+        if (!shown) return;
         var root = document.documentElement;
+        var primary = String(shown).toLowerCase().split(/[-_]/)[0];
+        root.lang = shown;
+        root.dir = RTL.indexOf(primary) === -1 ? 'ltr' : 'rtl';
+        if (shown === 'en') return;
         root.classList.add('language-pending');
         setTimeout(function () { root.classList.remove('language-pending'); }, 3000);
       } catch (e) { /* storage blocked: nothing remembered, nothing held */ }
@@ -938,8 +973,9 @@
        worker is registered by src/lib/service-worker.ts, from the React
        bundle loaded at the end of this head (#1078 retired the
        /js/offline.js module that used to do it).
-       The `theme-color` meta this block used to carry is at the TOP of this
-       head now, because the theme module rewrites it — see the note there.
+       The `theme-color` metas this block used to carry are at the TOP of
+       this head now, because the theme module rewrites them — see the note
+       there.
        The manifest's own `background_color` is the install splash's and is
        necessarily static (a manifest is fetched with no theme to read), so it
        states the light ground, which is what the majority of loads settle

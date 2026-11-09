@@ -166,7 +166,10 @@ test('the dashboard has no audience card, no DM list and no Shadow choice per ap
 test('schema.sql retires the list rows and the rename trigger, and writes the moment once', () => {
   const schema = read('src/db/schema.sql');
   assert.match(schema, /DELETE FROM platform_settings\n WHERE key IN \('homeroom_bot_live_apps', 'homeroom_bot_dm_users', 'homeroom_bot_audience', 'homeroom_bot_live_platform'\);/);
-  assert.match(schema, /INSERT INTO platform_settings \(key, value\)\nVALUES \('homeroom_bot_audience_since', to_char\(NOW\(\) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS\.MS"Z"'\)\)\nON CONFLICT \(key\) DO NOTHING;/);
+  const { REFERENCE_STATEMENTS } = require('../src/db/reference-data');
+  const audienceSeed = REFERENCE_STATEMENTS.find(sql => sql.includes("'homeroom_bot_audience_since'"));
+  assert.match(audienceSeed, /\('homeroom_bot_audience_since', to_char\(NOW\(\) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS\.MS"Z"'\)\)/);
+  assert.match(audienceSeed, /ON CONFLICT \(key\) DO NOTHING;/);
   assert.match(schema, /DROP TRIGGER IF EXISTS users_carry_homeroom_bot_dm_member ON users;\nDROP FUNCTION IF EXISTS carry_homeroom_bot_dm_member\(\);/);
   assert.doesNotMatch(schema, /\('homeroom_bot_dm_users', '\[\]'\)|\('homeroom_bot_live_apps', '\[\]'\)/, 'never seeded again');
   assert.doesNotMatch(read('src/services/account-deletion.js'), /homeroom_bot_dm_users/);

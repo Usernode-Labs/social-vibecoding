@@ -38,10 +38,13 @@ import { useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { XIcon } from '@/components/ui/icons';
+
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { pageLinkFor } from '../ai/door';
 import { useDialog } from '../dialogs/use-dialog';
 import { toast } from '../message-actions/clipboard';
 import * as api from './api';
@@ -68,6 +71,9 @@ export interface ShareDestination {
   detail: string;
   conversation?: ConversationSummary;
   slug?: string;
+  /** A discussion's app icon (#6112): the inbox's own tile, never one grey "#" for every app. */
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
 }
 
 /** What an item is called alone, and with its number: message ids. */
@@ -93,15 +99,32 @@ export function itemName(item: SharedObjectReference): string {
  * The card's page on this platform's own address, which an app's
  * discussion draws as its card. The clean path the router writes for it
  * (public/js/app.js `_appUrl`).
+ *
+ * #6110: a request or a change whose number did not come with it is NOT
+ * the app's home. `page` is the address the share was pressed on (the
+ * route: a clean path, or the fragment without its `#`); when it is an
+ * item's page of the same app, that page is the card's link, as it is the
+ * page the sharer is looking at. With neither there is no link, and the
+ * send says so, rather than handing out the app's home for a change.
+ * Only an item that IS the app shares `/app/<slug>`.
  */
-export function itemLink(item: SharedObjectReference, origin: string): string {
+export function itemLink(item: SharedObjectReference, origin: string, page?: string | null): string | null {
   const slug = encodeURIComponent(item.appSlug || '');
   const base = `${origin}/app/${slug}`;
   if (item.type === 'issue' && item.issueNumber) return `${base}/dev/issues/${item.issueNumber}`;
   if (item.type === 'proposal' && item.sessionId) return `${base}/dev/proposals/${item.sessionId}`;
+  if (item.type === 'governance' && item.issueNumber) return `${base}/dev/issues/${item.issueNumber}`;
   if (item.type === 'governance' && item.proposalId) return `${base}/dev/governance/${item.proposalId}`;
   if (item.type === 'spec' && item.sessionId) return `${base}/dev/sessions/${item.sessionId}`;
-  return base;
+  if (item.type === 'app') return base;
+  const here = pageLinkFor(page);
+  return here && slug && here.startsWith(`/app/${slug}/`) ? `${origin}${here}` : null;
+}
+
+/** The route on screen, as the router spells it: the fragment, else the clean path. */
+export function pageRoute(location: Pick<Location, 'pathname' | 'hash'>): string {
+  const hash = String(location.hash || '').replace(/^#/, '');
+  return hash || String(location.pathname || '');
 }
 
 /** The reference alone, as the server takes it: no title, nothing else. */
@@ -155,6 +178,7 @@ export function shareDestinations(
     rows.push({
       key: `d:${discussion.slug}`, kind: 'discussion', slug: discussion.slug,
       label: discussion.name, detail: translate('messages:shareTo.detail.discussion', { channel: discussion.channel || discussion.slug }),
+      iconUrl: discussion.iconUrl || null, iconEmoji: discussion.iconEmoji || null,
     });
   }
   return rows;
@@ -185,6 +209,21 @@ function DestinationTile({ row }: { row: ShareDestination }) {
     return <UserAvatar user={peer} title={row.label.replace(/^@/, '')} size="sm" shape="square" />;
   }
   if (row.kind === 'group') return <UserAvatar title={row.label} size="sm" shape="square" />;
+  // #6112: a discussion is a project, so its tile is the project's own icon
+  // (the picture, the emoji, or its initial), the way the Messages inbox draws
+  // it. Every app wearing the same grey "#" made the list a wall of lookalikes.
+  if (row.kind === 'discussion') {
+    const record = { icon_url: row.iconUrl || null, icon_emoji: row.iconEmoji || null, name: row.label };
+    return (
+      <span
+        aria-hidden="true"
+        data-icon={appIconKind(record as never)}
+        className="app-icon-tile w-7 h-7 rounded-lg overflow-hidden flex items-center justify-center shrink-0 text-xs font-bold"
+      >
+        <AppIconContent app={record as never} />
+      </span>
+    );
+  }
   return (
     <span aria-hidden="true" className="w-7 h-7 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 text-xs font-bold flex items-center justify-center shrink-0">#</span>
   );
@@ -234,7 +273,8 @@ export function ShareToDialog() {
       if (choice.conversation) {
         await shareToConversation(choice.conversation.id, reference, note);
       } else if (choice.slug) {
-        const link = itemLink(reference, window.location.origin);
+        const link = itemLink(reference, window.location.origin, pageRoute(window.location));
+        if (!link) throw new Error(translate('messages:shareTo.error.failed'));
         const words = note.trim();
         await api.postAppMessage(choice.slug, words ? `${words}\n\n${link}` : link);
       }
@@ -287,7 +327,7 @@ export function ShareToDialog() {
                 data-share-destination={row.kind}
                 disabled={sending}
                 onClick={() => { setChosen(row.key); setError(''); }}
-                className={`w-full flex items-center gap-3 rounded-lg px-2 py-2 text-left disabled:opacity-50 ${selected ? 'bg-violet-100 dark:bg-violet-950' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800'}`}
+                className={`w-full flex items-center gap-3 rounded-lg px-2 py-2 text-start disabled:opacity-50 ${selected ? 'bg-violet-100 dark:bg-violet-950' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800'}`}
               >
                 <DestinationTile row={row} />
                 <span className="min-w-0 flex-1">

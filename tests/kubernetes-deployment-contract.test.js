@@ -192,10 +192,14 @@ test('Kubernetes platform rollout preserves availability and singleton ownership
   assert.match(platform, /type: RollingUpdate/);
   assert.match(platform, /maxSurge: 1/);
   assert.match(platform, /maxUnavailable: 0/);
-  // A new color stays ready 5 s before the old one goes (28 Oct 2026: 10 s,
-  // and two readiness answers, of a rollout a web Pod waited on).
-  assert.equal((platform.match(/minReadySeconds: 5\n/g) || []).length, 2, 'both roles hold a new Pod ready before it counts');
-  assert.match(platform, /successThreshold: 1/);
+  // A web Pod stays ready 10 s before the old one goes, and needs two
+  // readiness answers in a row; the conductor keeps 5 s and one. A release on
+  // 6 Nov 2026 declared a web Pod ready one second after it failed liveness
+  // (issue #6403), so one quick answer is not proof it can serve.
+  assert.equal((platform.match(/minReadySeconds: 10\n/g) || []).length, 1, 'the web Deployment holds a new Pod ready for 10 s');
+  assert.equal((platform.match(/minReadySeconds: 5\n/g) || []).length, 1, 'the conductor keeps 5 s');
+  assert.match(platform, /successThreshold: \{\{ ternary 1 2 \(eq \.processRole "conductor"\) \}\}/,
+    'two readiness answers for web, one for the conductor');
   // The startup probe asks every second and still allows five minutes: the
   // security barrier's 180 s plus ordinary boot and drain work.
   const startup = platform.slice(platform.indexOf('startupProbe:'), platform.indexOf('readinessProbe:'));
@@ -261,7 +265,8 @@ test('Kubernetes workflow resolves all three images before publishing a release'
   assert.match(workflow, /IMAGE_DIGEST: \$\{\{ steps\.reuse\.outputs\.digest \|\| steps\.build\.outputs\.digest \}\}/);
   assert.match(workflow, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
   assert.match(workflow, /pull: true/);
-  assert.match(workflow, /needs: \[build, scheduled-image-audit\]/);
+  // The gates run beside the image builds, and publishing waits for all of them.
+  assert.match(workflow, /needs: \[build, scheduled-image-audit, security-lockfiles, security-regressions, preview-schema-compatibility\]/);
   assert.match(workflow, /schedule:[\s\S]*cron: '23 5 \* \* \*'/);
   assert.match(workflow, /npm view @anthropic-ai\/claude-code@latest version/);
   assert.equal((workflow.match(/npm view @anthropic-ai\/claude-code@latest version/g) || []).length, 1,

@@ -9,7 +9,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
 const { mergeFollowups, sessionKey, MACHINE, WORK } = require('../src/workflow/merge-followups/machine.ts');
@@ -40,9 +39,9 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     await admin.query(`DROP DATABASE ${dbName}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   // The flag, as platform.ts syncSettings records it at boot.
   await pool.query(`INSERT INTO wf_settings (key, value) VALUES ('enabled:merge-followups', '1') ON CONFLICT DO NOTHING`);
 
@@ -759,6 +758,10 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const [digested, asked, read] = [await user(), await user(), await user()];
     const s = await proposal(a, { status: 'promoted' });
     await pool.query('INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)', [a.id, digested.id]);
+    // One Home (#6361): a pin no longer joins by itself; the stake is a member's.
+    await pool.query(
+      "INSERT INTO community_members (community_id, user_id, source) SELECT community_id, $2, 'joined' FROM apps WHERE id = $1 ON CONFLICT DO NOTHING",
+      [a.id, digested.id]);
     // A one-change digest that counted only this change (no session: a digest names none).
     await pool.query(`INSERT INTO notifications (user_id, app_id, kind, detail, created_at) VALUES ($1, $2, 'vote_digest', '1', NOW() + INTERVAL '1 second')`,
       [digested.id, a.id]);

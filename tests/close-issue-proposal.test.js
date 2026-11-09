@@ -94,6 +94,13 @@ function loadIssues(pool, { gh = {}, active = 2 } = {}) {
       spies.ghCalls.push({ type: 'createIssueComment', owner, repo, issueNumber, body });
       return { id: 1 };
     },
+    getIssue: async (owner, repo, issueNumber) => {
+      spies.ghCalls.push({ type: 'getIssue', owner, repo, issueNumber });
+      if (gh.getIssue) return gh.getIssue(owner, repo, issueNumber);
+      const err = new Error('not found');
+      err.status = 404;
+      throw err;
+    },
   });
   stub(ids.appAccess, {
     ACCESS_COLUMNS: '*',
@@ -433,6 +440,88 @@ test('create: rejects a bad issueNumber (400) and an over-long reason (400)', as
     assert.equal(res.statusCode, 400);
     assert.ok(!pool.issued(/INSERT INTO issues/));
   } finally { restore(); }
+});
+
+test('create: a closed target files a vote-only reopen proposal (#6000)', async () => {
+  const pool = makePool([
+    [/kind = 'reopen_issue' AND status = 'open'/, []],
+    [/INSERT INTO issues/, (params) => [{ id: 62, app_id: 9, kind: 'reopen_issue', payload: JSON.parse(params[5]) }]],
+  ]);
+  const { router, spies, restore } = loadIssues(pool, {
+    gh: { getIssue: async () => ({ number: 42, title: 'Dark mode resets', state: 'closed' }) },
+  });
+  try {
+    const handler = routeHandler(router, '/api/apps/:slug/issues');
+    const res = mockRes();
+    await handler({
+      params: { slug: 'cool-app' },
+      user: { id: 42, username: 'maker' },
+      body: { kind: 'reopen_issue', payload: { issueNumber: 42, reason: '  Closed by mistake.  ' } },
+    }, res);
+
+    assert.equal(res.statusCode, 201);
+    const ins = pool.issued(/INSERT INTO issues/);
+    assert.equal(ins.params[1], null, 'github_issue_number stays NULL (the target lives in payload)');
+    assert.equal(ins.params[4], 'reopen_issue');
+    const payload = JSON.parse(ins.params[5]);
+    assert.equal(payload.issueNumber, 42);
+    assert.equal(payload.issueTitle, 'Dark mode resets');
+    assert.equal(payload.reason, 'Closed by mistake.', 'reason trimmed');
+    assert.match(ins.params[2], /^Reopen issue #42: "Dark mode resets"/, 'auto title');
+    assert.equal(ins.params[3], 'Closed by mistake.', 'description = reason');
+
+    assert.equal(spies.ghCalls.filter((c) => c.type === 'createIssue').length, 0, 'no twin');
+    assert.equal(spies.systemMessages.length, 2);
+    assert.match(spies.systemMessages[0][2], /proposed reopening issue #42/);
+    assert.deepEqual(spies.systemMessages[0][5], { type: 'governance', ref: 62 });
+    assert.deepEqual(spies.systemMessages[1][5], { type: 'issue', ref: 42 });
+    assert.deepEqual(spies.filed, [[62, 9]], 'enrolled with the governance machine');
+  } finally { restore(); }
+});
+
+test('create: refuses an open target (409), a missing or pull-request target (404), and a duplicate (409) (#6000)', async () => {
+  const handlerFor = (pool, gh) => {
+    const { router, restore } = loadIssues(pool, { gh });
+    return { handler: routeHandler(router, '/api/apps/:slug/issues'), restore };
+  };
+
+  // Open: refused rather than made into a vote that changes nothing.
+  let h = handlerFor(makePool([]), { getIssue: async () => ({ number: 42, title: 'x', state: 'open' }) });
+  try {
+    const res = mockRes();
+    await h.handler({ params: { slug: 'cool-app' }, user: { id: 42, username: 'maker' },
+      body: { kind: 'reopen_issue', payload: { issueNumber: 42 } } }, res);
+    assert.equal(res.statusCode, 409);
+  } finally { h.restore(); }
+
+  // Missing: the raw read throws a 404.
+  h = handlerFor(makePool([]), {});
+  try {
+    const res = mockRes();
+    await h.handler({ params: { slug: 'cool-app' }, user: { id: 42, username: 'maker' },
+      body: { kind: 'reopen_issue', payload: { issueNumber: 42 } } }, res);
+    assert.equal(res.statusCode, 404);
+  } finally { h.restore(); }
+
+  // A pull request's number is not an issue to reopen.
+  h = handlerFor(makePool([]), { getIssue: async () => ({ number: 42, title: 'x', state: 'closed', pull_request: {} }) });
+  try {
+    const res = mockRes();
+    await h.handler({ params: { slug: 'cool-app' }, user: { id: 42, username: 'maker' },
+      body: { kind: 'reopen_issue', payload: { issueNumber: 42 } } }, res);
+    assert.equal(res.statusCode, 404);
+  } finally { h.restore(); }
+
+  // One open reopen proposal per issue per app.
+  const pool = makePool([[/kind = 'reopen_issue' AND status = 'open'/, [{ id: 5 }]]]);
+  h = handlerFor(pool, { getIssue: async () => ({ number: 42, title: 'x', state: 'closed' }) });
+  try {
+    const res = mockRes();
+    await h.handler({ params: { slug: 'cool-app' }, user: { id: 42, username: 'maker' },
+      body: { kind: 'reopen_issue', payload: { issueNumber: 42 } } }, res);
+    assert.equal(res.statusCode, 409);
+    assert.ok(!pool.issued(/INSERT INTO issues/), 'nothing inserted');
+  } finally { h.restore(); }
 });
 
 // ── Admin force-apply route ───────────────────────────────────────────────

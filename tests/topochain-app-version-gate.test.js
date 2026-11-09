@@ -244,3 +244,66 @@ test('the seed leaves one OS inactive so the warning is reviewable', () => {
   assert.match(rows, /'android', 90, 95, '1\.4\.0', FALSE/,
     'Android is inactive so the "no active rule" banner renders in a preview');
 });
+
+// ─── #6152: the message in the phone's language ─────────────────────────
+
+const FORCED = [{
+  min_build_number: 100, recommended_build_number: 110,
+  must_update_message: 'Update now.', should_update_message: null,
+  update_url: 'https://example.invalid/ios',
+}];
+const RECOMMENDED = [{
+  min_build_number: 10, recommended_build_number: 100,
+  must_update_message: null, should_update_message: 'New version out.',
+  update_url: 'https://example.invalid/ios',
+}];
+const digest = (english) => require(path.join(ROOT, 'scripts/language-packs.js')).hash(english);
+
+// The running build's languages, as public/locales/.source.json gives them.
+function withLanguages(fn) {
+  const cache = require(path.join(ROOT, 'src/services/language-cache.js'));
+  const original = cache.readSource;
+  cache.readSource = () => ({ files: { 'config.json': { languages: { en: 'English', fr: 'Français' } } } });
+  return Promise.resolve(fn()).finally(() => { cache.readSource = original; });
+}
+
+function translationPool(configs, row) {
+  return poolWith(configs, async (sql) => (/FROM admin_text_translations/.test(sql) ? { rows: row ? [row] : [] } : { rows: [] }));
+}
+
+test('a phone naming its language gets the translation, in the same three keys', () => withLanguages(async () => {
+  const row = { source_digest: digest('New version out.'), text: 'Nouvelle version.', reviewed: false };
+  const res = await post(makeApp(translationPool(RECOMMENDED, row)), { ...VALID, language: 'fr-FR' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.data, { upgrade: 1, details: 'Nouvelle version.', update_url: 'https://example.invalid/ios' });
+}));
+
+test('a must-update translation waits for review, so the phone is told in English until then', () => withLanguages(async () => {
+  const waiting = { source_digest: digest('Update now.'), text: 'Mettez à jour.', reviewed: false };
+  const before = await post(makeApp(translationPool(FORCED, waiting)), { ...VALID, language: 'fr' });
+  assert.equal(before.body.data.details, 'Update now.');
+  const after = await post(makeApp(translationPool(FORCED, { ...waiting, reviewed: true })), { ...VALID, language: 'fr' });
+  assert.equal(after.body.data.details, 'Mettez à jour.');
+}));
+
+test('a phone that names no language, or a nonsense one, is answered in English as before', () => withLanguages(async () => {
+  const reads = [];
+  const query = poolWith(RECOMMENDED, async (sql) => { reads.push(sql); return { rows: [] }; });
+  for (const language of [undefined, 42, { a: 1 }, 'en', 'nonsense!!']) {
+    const res = await post(makeApp(query), { ...VALID, language });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.details, 'New version out.');
+  }
+  assert.equal(reads.filter((sql) => /admin_text_translations/.test(sql)).length, 0, 'English reads nothing');
+}));
+
+test('a translation read that fails still answers 200 in English: the gate cannot fall over on it', () => withLanguages(async () => {
+  const query = poolWith(FORCED, async (sql) => {
+    if (/admin_text_translations/.test(sql)) throw new Error('database is down');
+    return { rows: [] };
+  });
+  const res = await post(makeApp(query), { ...VALID, language: 'fr' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.data.upgrade, 2);
+  assert.equal(res.body.data.details, 'Update now.');
+}));

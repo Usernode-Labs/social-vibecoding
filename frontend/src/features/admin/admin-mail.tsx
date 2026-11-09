@@ -19,8 +19,9 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // the three questions an operator actually has, in order:
 //
 //   1. Is mail configured, and as whom?          (status card)
-//   2. Does it work RIGHT NOW?                   (send a test)
-//   3. What has it been doing?                   (activity ledger)
+//   2. Who sends it?                             (provider card, PUT /api/admin/mail/provider)
+//   3. Does it work RIGHT NOW?                   (send a test)
+//   4. What has it been doing?                   (activity ledger)
 //
 // The status and activity cards deliberately mirror the ones on
 // Admin → Settings (the programme settings screen), down to the copy and
@@ -30,10 +31,11 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // filter it needs.
 //
 // PERMISSIONS: visible to any admin (full and view-only). The two reads
-// are open to both; the test send is full-admin-only, so a view-only
-// admin gets an explanatory note where the form would be. The server
-// enforces that independently via requireAdminWrite — the hidden form is
-// a courtesy, not the control.
+// are open to both; changing the provider and the test send are
+// full-admin-only, so a view-only admin gets an explanatory note where the
+// Save button and the form would be. The server enforces that independently
+// via requireAdminWrite — the hidden controls are a courtesy, not the
+// control.
 //
 // ── React-owned (#1120 slice 12) ──────────────────────────────────────
 //
@@ -54,15 +56,28 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // bound last time. That is the shape that leaks a listener the day someone
 // repaints without re-binding, or binds twice.
 
+interface ProviderOption {
+  name: string;
+  label?: string;
+  configured?: boolean;
+  /** Can be chosen: configured, or a staging preview, which only logs. */
+  ready?: boolean;
+  missing?: string[];
+}
+
 interface MailStatus {
   configured?: boolean;
   stagingLogOnly?: boolean;
   provider?: string;
+  /** The provider that was named, or `auto` when nobody named one. */
+  requestedProvider?: string;
+  /** Who named it: an admin's saved choice, the deploy's variable, or neither. */
+  source?: 'admin' | 'env' | 'default';
   from?: string;
   usingDefaultFrom?: boolean;
   suggestedRecipient?: string;
   affectedFlows?: string[];
-  providers?: Array<{ name: string; label?: string; configured?: boolean; missing?: string[] }>;
+  providers?: ProviderOption[];
   missing?: string[];
 }
 
@@ -117,6 +132,7 @@ function statusClass(status?: string): string {
   if (status === 'failed') return 'text-rose-700 dark:text-rose-400';
   if (status === 'suppressed_rate_limit') return 'text-amber-800 dark:text-amber-400';
   if (status === 'no_transport') return 'text-amber-800 dark:text-amber-400';
+  if (status === 'no_template') return 'text-rose-700 dark:text-rose-400';
   if (status === 'skipped_staging') return 'text-sky-700 dark:text-sky-400';
   return 'text-zinc-500 dark:text-zinc-400';
 }
@@ -130,6 +146,7 @@ function outcomeHeadline(outcome: Outcome): string {
     case 'skipped_staging': return 'Rendered to the platform log. Staging never delivers mail.';
     case 'failed': return 'The provider refused the message.';
     case 'no_transport': return 'Nothing was sent: no mail transport is configured.';
+    case 'no_template': return 'Nothing was sent: no email template could be loaded or rendered.';
     case 'suppressed_bounce': return 'Nothing was sent: this address has bounced or reported spam.';
     case 'suppressed_rate_limit': return 'Held back by the outbound throttle.';
     case 'invalid_recipient': return 'Nothing was sent: that address could not be used.';
@@ -207,14 +224,14 @@ function StatusCard({ status, failed }: { status: MailStatus | null; failed: boo
       <p className="text-amber-800/80 dark:text-amber-300/80 mt-1">
         These flows still report success to the user but deliver nothing:
       </p>
-      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
+      <ul className="list-disc ms-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
         {/* eslint-disable-next-line react/no-array-index-key */}
         {(status.affectedFlows || []).map((f, i) => <li key={i}>{f}</li>)}
       </ul>
       <p className="text-amber-800/80 dark:text-amber-300/80 mt-2">Providers:</p>
       {/* Per-provider readiness, so the card says which provider needs what
           instead of a flat "mail is broken". */}
-      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
+      <ul className="list-disc ms-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
         {(status.providers || []).map((p) => (
           <li key={p.name}>
             {`${p.label || p.name}: `}
@@ -229,6 +246,127 @@ function StatusCard({ status, failed }: { status: MailStatus | null; failed: boo
         {' in the platform’s Platform variables panel, then redeploy. The mailbox behind those credentials must also be authorised to send as '}
         <Mono>{status.from || ''}</Mono>{'.'}
       </p>
+    </div>
+  );
+}
+
+const SOURCE_NOTES: Record<string, string> = {
+  admin: 'Saved by an admin. That choice wins over the deploy’s default.',
+  env: 'The deploy’s default, from PLATFORM_MAIL_PROVIDER. An admin can change it here.',
+  default: 'The deploy’s default: Gmail, or the HTTP API when Gmail is not set up. An admin can change it here.',
+};
+
+/** The option the card shows as chosen: the one that was named, else the one sending. */
+function selectedProvider(status: MailStatus): string {
+  const names = (status.providers || []).map((o) => o.name);
+  if (status.requestedProvider && names.includes(status.requestedProvider)) return status.requestedProvider;
+  if (status.provider && names.includes(status.provider)) return status.provider;
+  return '';
+}
+
+/**
+ * Who sends platform mail. The saved choice wins over PLATFORM_MAIL_PROVIDER
+ * and is read at send time, so it takes effect within seconds, with no
+ * redeploy. A provider that is not ready cannot be chosen, here or on the
+ * server (409).
+ */
+function ProviderCard({ status, write, onSaved }: {
+  status: MailStatus; write: boolean; onSaved: () => void;
+}) {
+  const options = status.providers || [];
+  const selected = selectedProvider(status);
+  const [picked, setPicked] = useState(selected);
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState<{ text: string; bad?: boolean } | null>(null);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => { setPicked(selected); }, [selected]);
+
+  const option = options.find((o) => o.name === picked);
+  const changed = picked !== selected;
+
+  const save = async () => {
+    if (!write || saving || !option || !option.ready) return;
+    setSaving(true);
+    setNote(null);
+    const res = await fetchJson('/api/admin/mail/provider', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: picked }),
+    });
+    if (!alive.current) return;
+    setSaving(false);
+    if (res.status === 0) {
+      setNote({ text: 'Could not reach the platform. The provider was not changed.', bad: true });
+      return;
+    }
+    if (!res.ok) {
+      const missing = res.data && Array.isArray(res.data.missing) ? res.data.missing : [];
+      setNote({
+        text: `${(res.data && res.data.error) || 'The platform refused the change.'}${missing.length ? ` Missing: ${missing.join(', ')}.` : ''}`,
+        bad: true,
+      });
+      return;
+    }
+    setNote({
+      text: status.stagingLogOnly
+        ? `Saved: ${option.label || option.name}. This preview still only logs.`
+        : `Saved. Email is now sent by ${option.label || option.name}. Send a test email below to check it.`,
+    });
+    onSaved();
+  };
+
+  return (
+    <div id="admin-mail-provider" className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
+      <h3 className="text-sm font-semibold mb-2">Email is sent by</h3>
+      {options.map((o) => (
+        <label key={o.name} className="flex items-start gap-2 text-sm py-1">
+          <input
+            type="radio"
+            name="admin-mail-provider"
+            value={o.name}
+            checked={picked === o.name}
+            disabled={!write || !o.ready}
+            onChange={() => setPicked(o.name)}
+            className="mt-1"
+          />
+          <span>
+            <span className="font-medium">{o.label || o.name}</span>
+            {o.ready ? (
+              <span className="text-xs text-emerald-700 dark:text-emerald-400">{' Ready'}</span>
+            ) : (
+              <span className="text-xs text-amber-700 dark:text-amber-400">
+                {' Needs '}<CodeList keys={o.missing} />
+              </span>
+            )}
+          </span>
+        </label>
+      ))}
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+        {SOURCE_NOTES[status.source || 'default'] || SOURCE_NOTES.default}
+        {' A provider that is not ready cannot be chosen.'}
+        {status.stagingLogOnly ? ' This preview saves the choice and still only logs.' : ''}
+      </p>
+      {!write ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-2">
+          Changing who sends email needs full admin access. Any admin can read this section.
+        </p>
+      ) : (
+        <button
+          id="admin-mail-provider-save"
+          type="button"
+          className={`${AdminUI.btn.primary} mt-2`}
+          disabled={saving || !changed || !option || !option.ready}
+          onClick={save}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      )}
+      {note ? (
+        <p className={`text-sm mt-2 ${note.bad ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+          {note.text}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -285,7 +423,7 @@ function TransportError() {
 }
 
 const CHIP_BTN = 'rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs';
-const TH = 'text-left font-medium pb-1 pr-3';
+const TH = 'text-start font-medium pb-1 pe-3';
 
 function ActivityCard({
   data, failed, kindFilter, onToggleFilter, onRefresh, highlightId,
@@ -323,7 +461,7 @@ function ActivityCard({
                 <th className={TH}>Recipient</th>
                 <th className={TH}>Provider</th>
                 <th className={TH}>Status</th>
-                <th className="text-left font-medium pb-1">Detail</th>
+                <th className="text-start font-medium pb-1">Detail</th>
               </tr>
             </thead>
             <tbody>
@@ -331,13 +469,13 @@ function ActivityCard({
                 <tr key={r.id}
                   className={`border-t border-zinc-100 dark:border-zinc-800${
                     highlightId && r.id === highlightId ? ' bg-violet-50 dark:bg-violet-950/40' : ''}`}>
-                  <td className="py-1.5 pr-3 whitespace-nowrap text-zinc-500 dark:text-zinc-400">
+                  <td className="py-1.5 pe-3 whitespace-nowrap text-zinc-500 dark:text-zinc-400">
                     {r.created_at ? String(r.created_at).replace('T', ' ').slice(0, 19) : ''}
                   </td>
-                  <td className="py-1.5 pr-3 whitespace-nowrap">{r.kind || ''}</td>
-                  <td className="py-1.5 pr-3">{r.recipient || ''}</td>
-                  <td className="py-1.5 pr-3 whitespace-nowrap text-zinc-500 dark:text-zinc-400">{r.provider || '—'}</td>
-                  <td className={`py-1.5 pr-3 whitespace-nowrap font-medium ${statusClass(r.status)}`}>{r.status || ''}</td>
+                  <td className="py-1.5 pe-3 whitespace-nowrap">{r.kind || ''}</td>
+                  <td className="py-1.5 pe-3">{r.recipient || ''}</td>
+                  <td className="py-1.5 pe-3 whitespace-nowrap text-zinc-500 dark:text-zinc-400">{r.provider || '—'}</td>
+                  <td className={`py-1.5 pe-3 whitespace-nowrap font-medium ${statusClass(r.status)}`}>{r.status || ''}</td>
                   <td className="py-1.5 text-zinc-500 dark:text-zinc-400">{r.error || ''}</td>
                 </tr>
               ))}
@@ -359,7 +497,7 @@ interface MailMetric {
 }
 interface MailReports {
   byKind: MailMetric[]; byDay: MailMetric[]; trackingEnabled: boolean;
-  /** False unless mail goes out through Resend with its webhook connected. */
+  /** False unless mail goes out through Resend or Brevo with its webhook connected. */
   deliveryEvents?: boolean;
   recentEvents: Array<{ id: number; type: string; kind: string; recipient: string; url?: string;
     user_agent_class?: string; created_at: string; meta?: { demo?: string; proxyOrPrefetch?: boolean } }>;
@@ -368,7 +506,7 @@ const METRICS = [
   ['sent', 'Sent'], ['delivered', 'Delivered'], ['bounced', 'Bounced'], ['complained', 'Complained'],
   ['opened', 'Opened (approx.)'], ['clicked', 'Clicked'], ['unsubscribed', 'Unsubscribed'],
 ] as const;
-// Only Resend's webhook reports these, so they are left out rather than
+// Only Resend's and Brevo's webhooks report these, so they are left out rather than
 // shown as a 0 that reads as "nothing was delivered" (reports.js).
 const DELIVERY_METRICS = new Set<string>(['delivered', 'bounced', 'complained']);
 
@@ -385,7 +523,7 @@ function TrackingReports({ reports, failed, onRefresh }: { reports: MailReports 
       User agent classes are hints and cannot identify every proxy. Open rate uses only messages sent with tracking enabled.</p>
     {failed ? <p className={`${AdminUI.muted} mt-3`}>Could not load email reports.</p> : !reports
       ? <p className={`${AdminUI.loading} mt-3`}>Loading…</p> : <>
-        {!reports.deliveryEvents ? <p id="admin-mail-delivery-off" className={`${AdminUI.muted} mt-3`}>Delivered, bounced and complained are not shown: only the Resend transport, with its webhook connected, reports them. Gmail does not.</p> : null}
+        {!reports.deliveryEvents ? <p id="admin-mail-delivery-off" className={`${AdminUI.muted} mt-3`}>Delivered, bounced and complained are not shown: only the Resend and Brevo transports, with their webhooks connected, report them. Gmail does not.</p> : null}
         {!reports.trackingEnabled ? <p className={`${AdminUI.muted} mt-3`}>Click and open tracking is off. Set PLATFORM_MAIL_TRACKING_SECRET in Platform variables to track future non-transactional mail.</p> : null}
         <div className="flex gap-2 mt-3" aria-label="Report grouping">
           <button type="button" className={group === 'byKind' ? AdminUI.btn.primarySm : AdminUI.btn.outlineSm} aria-pressed={group === 'byKind'} onClick={() => setGroup('byKind')}>By kind</button>
@@ -446,19 +584,24 @@ function MailSection() {
     setActivity(data);
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      const { ok, data } = await fetchJson('/api/admin/mail/status');
-      if (!alive.current) return;
-      if (!ok || !data) { setStatusFailed(true); return; }
-      setStatus(data);
-      // Pre-fill the test form with the admin's own address, once the status
-      // answers. Never overwrite something already typed.
-      if (data.suggestedRecipient) setTo((prev) => prev || data.suggestedRecipient);
-    })();
+  const loadStatus = useCallback(async () => {
+    const { ok, data } = await fetchJson('/api/admin/mail/status');
+    if (!alive.current) return;
+    if (!ok || !data) { setStatusFailed(true); return; }
+    setStatusFailed(false);
+    setStatus(data);
+    // Pre-fill the test form with the admin's own address, once the status
+    // answers. Never overwrite something already typed.
+    if (data.suggestedRecipient) setTo((prev) => prev || data.suggestedRecipient);
   }, []);
 
+  useEffect(() => { loadStatus(); }, [loadStatus]);
+
   useEffect(() => { loadActivity(kindFilter); }, [kindFilter, loadActivity]);
+
+  // A new provider changes the status card and what the reports can show
+  // (delivered, bounced and complained come from the provider's webhook).
+  const providerSaved = () => { loadStatus(); loadActivity(kindFilter); };
 
   const sendTest = async () => {
     if (sending) return;
@@ -509,6 +652,9 @@ function MailSection() {
       <div id="admin-mail-status" className="mb-4">
         <StatusCard status={status} failed={statusFailed} />
       </div>
+      {status && !statusFailed && (status.providers || []).length ? (
+        <ProviderCard status={status} write={write} onSaved={providerSaved} />
+      ) : null}
       <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
         <h3 className="text-sm font-semibold mb-2">Send a test email</h3>
         {write ? (
@@ -584,4 +730,8 @@ const AdminMail = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminMail = AdminMail;
 
-export { AdminMail };
+// ProviderCard is exported for tests/admin-mail-provider.test.js, which
+// renders it: which option is checked and which are disabled is decided at
+// render time, and no declared check sees a full admin's Save button (the
+// checker is a view-only admin).
+export { AdminMail, ProviderCard };

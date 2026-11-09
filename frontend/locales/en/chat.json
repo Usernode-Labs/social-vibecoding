@@ -20,11 +20,11 @@
     "description": "Line above the message box in a community chat while the person is writing a reply to an earlier message. {{name}} is whose message it is: an @username, or a label such as a proposal's name. Keep the arrow first."
   },
   "group.composer.replyingToPr": {
-    "text": "↩ Replying to PR #{{number}}",
-    "description": "Label over the message box while the person replies to a line about a pull request. PR is the abbreviation of pull request; {{number}} is its number. Keep the # before the number."
+    "text": "↩ Replying to PR {{number}}",
+    "description": "Label over the message box while the person replies to a line about a pull request. PR is the abbreviation of pull request; {{number}} is its number. Do not put a # before the number: a change's number is written PR, never #."
   },
   "group.composer.replyingToPrUnnumbered": {
-    "text": "↩ Replying to PR #",
+    "text": "↩ Replying to PR",
     "description": "Label over the message box while the person replies to a line about a pull request whose number is not known."
   },
   "group.composer.cancelReply": {
@@ -175,37 +175,21 @@
     "text": "Close plan panel",
     "description": "Accessible name of the × button in the header of the plan side panel: closes the panel. Close is a verb."
   },
-  "group.botChip.reading": {
-    "text": "Homeroom bot is looking at this",
-    "description": "Status chip under a chat message that asked Homeroom bot for something, seen by everyone in the channel: the bot has taken the message and is reading it. Homeroom bot is the product's assistant that builds changes; keep its name."
+  "group.botStatus.willRead": {
+    "text": "Homeroom bot will read this in a moment",
+    "description": "Line under the messages of a request's thread, where the typing line goes, after somebody replied to Homeroom bot: the bot has the reply and will read it shortly. Homeroom bot is the product's assistant that builds changes; keep its name."
   },
-  "group.botChip.building": {
-    "text": "Homeroom bot is building this",
-    "description": "Status chip under a chat message that asked Homeroom bot for something, seen by everyone in the channel: the bot is building the change that was asked for. Homeroom bot is the product's assistant that builds changes; keep its name."
+  "group.botStatus.readingYours": {
+    "text": "Homeroom bot is reading your reply",
+    "description": "Line under the messages of a request's thread, where the typing line goes, seen by the person who wrote the reply: Homeroom bot is reading what they just wrote. Homeroom bot is the product's assistant that builds changes; keep its name."
   },
-  "group.botChip.fixing": {
-    "text": "Homeroom bot is fixing this",
-    "description": "Status chip under a chat message that asked Homeroom bot to fix one of its changes, seen by everyone in the channel: the bot is working on the fix. Homeroom bot is the product's assistant that builds changes; keep its name."
+  "group.botStatus.reading": {
+    "text": "Homeroom bot is reading the reply",
+    "description": "Line under the messages of a request's thread, where the typing line goes, seen by everybody except the person who wrote the reply: Homeroom bot is reading what somebody else just wrote. Homeroom bot is the product's assistant that builds changes; keep its name."
   },
-  "group.botChip.hasThis": {
-    "text": "Homeroom bot has this",
-    "description": "Status chip under a chat message that asked Homeroom bot for something while the project's first version is not live yet: the bot has taken the request and has not started. Homeroom bot is the product's assistant that builds changes; keep its name."
-  },
-  "group.botChip.hasThisSaid": {
-    "text": "Homeroom bot has this, and starts on it once the first version is live",
-    "description": "What a screen reader says for the 'Homeroom bot has this' status chip under a chat message: the bot took the request and waits for the project's first version to go live. Homeroom bot is the product's assistant that builds changes; keep its name."
-  },
-  "group.botChip.live": {
-    "text": "Live",
-    "description": "Status chip under a chat message that asked Homeroom bot for something: the change that was built is now live, in use in the project. An adjective."
-  },
-  "group.botChip.liveSaid": {
-    "text": "Homeroom bot built this, and it’s live",
-    "description": "What a screen reader says for the 'Live' status chip under a chat message: the bot built what the message asked for and the change is in use. Homeroom bot is the product's assistant that builds changes; keep its name."
-  },
-  "group.botChip.tryIt": {
-    "text": "Try it",
-    "description": "Chip under a chat message that asked Homeroom bot for something, once the change is built: opens a preview of the change so anyone can try it out. 'It' is the change."
+  "group.botStatus.quiet": {
+    "text": "Homeroom bot read this and has nothing to add",
+    "description": "Line under the messages of a request's thread, where the typing line goes, after Homeroom bot read a reply addressed to it and chose not to answer. It fades after a few seconds. Homeroom bot is the product's assistant that builds changes; keep its name."
   },
   "group.botCard.label": {
     "text": "Homeroom bot, only you can see this",
@@ -216,8 +200,8 @@
     "description": "Small heading at the top of Homeroom bot's private card under the person's own chat message: nobody else in the channel sees the card."
   },
   "group.botCard.shared": {
-    "text": "Everyone here can see Homeroom bot has it.",
-    "description": "Line on Homeroom bot's private card under the person's own chat message, just after a request was taken: the status chip on their message is visible to the whole channel. 'It' is the request. Homeroom bot is the product's assistant that builds changes; keep its name."
+    "text": "Everyone here can see it in the project's requests.",
+    "description": "Line on Homeroom bot's private card under the person's own chat message, just after a request was taken: the request is on the project's list of requests, which everyone in the channel can see. 'It' is the request. Homeroom bot is the product's assistant that builds changes; keep its name."
   },
   "group.botCard.choices": {
     "text": "Choices",
@@ -871,6 +855,10 @@
     "text": "Posted {{count}} times in a row; this is the latest",
     "description": "Tooltip of the ×N mark after an automatic line that was posted several times running and is shown once, in a chat and among the replies on a request's or a change's page. {{count}} is how many times. Posted is a verb form."
   },
+  "group.row.botSkipped": {
+    "text": "Homeroom bot doesn't answer this message; @ it in your own words to ask it.",
+    "description": "Small grey line under a message a person's coding agent posted for them on a request's, a change's or a reply thread's discussion, when Homeroom bot will not answer it (so an agent and the bot cannot talk to each other forever, or its voice is off there). One line, no icon, not a button."
+  },
   "group.row.unreadMention": {
     "text": "Unread mention",
     "description": "Accessible name of the dot before the author of a chat message that mentions the person and that they have not read yet."
@@ -891,6 +879,90 @@
     "text": "Message deleted",
     "description": "Shown in place of a chat message's content after its author deleted it."
   },
+  "group.voteCard.change": {
+    "text": "Change #{{number}}",
+    "description": "How a change is named on the small vote card under a chat line about it, and on the line under Homeroom bot’s \"It’s up for a vote\" post on a request’s page, when the project’s code is on Homeroom’s own git host. {{number}} is the change’s number."
+  },
+  "group.voteCard.changePr": {
+    "text": "PR {{number}}",
+    "description": "How a change is named on the small vote card under a chat line about it, and on the line under Homeroom bot’s \"It’s up for a vote\" post on a request’s page, when the project’s code is on GitHub (a change’s number is written PR, never #). {{number}} is the pull request number."
+  },
+  "group.voteCard.changeTitled": {
+    "text": "{{name}} · {{title}}",
+    "description": "The change’s name followed by its title on the small vote card under a chat line about it, and on the line under Homeroom bot’s \"It’s up for a vote\" post on a request’s page. {{name}} is \"Change #12\" or \"PR 12\" and {{title}} the change’s title."
+  },
+  "group.voteCard.unnamed": {
+    "text": "A change",
+    "description": "What the small vote card under a chat line about a change calls the change while neither its number nor its title is known yet."
+  },
+  "group.voteCard.seeVote": {
+    "text": "See the vote",
+    "description": "Button on the line under Homeroom bot’s \"It’s up for a vote\" post on a request’s page, and on the small vote card about a change whose vote is over: scrolls to or opens that change’s Votes card. See is a verb."
+  },
+  "group.voteCard.preview": {
+    "text": "Preview",
+    "description": "Button on the small vote card under a chat line about a change: opens a running copy of the app with the change in it. A verb."
+  },
+  "group.voteCard.vote": {
+    "text": "Vote",
+    "description": "Button on the small vote card under a chat line about a change whose vote is open: opens the change’s Votes card, where the person votes. A verb."
+  },
+  "group.voteCard.needsMore_one": {
+    "text": "Needs {{count}} more yes",
+    "description": "One fact on the small vote card under a chat line about a change, while it is short of Yes votes. {{count}} is how many more Yes votes it needs. \"Yes\" is the vote, as a noun."
+  },
+  "group.voteCard.needsMore_other": {
+    "text": "Needs {{count}} more yes",
+    "description": "One fact on the small vote card under a chat line about a change, while it is short of Yes votes. {{count}} is how many more Yes votes it needs. \"Yes\" is the vote, as a noun."
+  },
+  "group.voteCard.needsOtherMember": {
+    "text": "Needs another member’s yes",
+    "description": "One fact on the small vote card under a chat line about a change that has enough Yes votes but still needs one from a member other than its author. \"Yes\" is the vote."
+  },
+  "group.voteCard.reached": {
+    "text": "{{yes}} of {{needed}} yes",
+    "description": "One fact on the small vote card under a chat line about a change, once it has the Yes votes it needs. {{yes}} is how many Yes votes it has and {{needed}} how many it needs."
+  },
+  "group.voteCard.youVotedYes": {
+    "text": "You voted yes",
+    "description": "One fact on the small vote card under a chat line about a change: the person reading has already voted Yes on it."
+  },
+  "group.voteCard.youVotedNo": {
+    "text": "You voted no",
+    "description": "One fact on the small vote card under a chat line about a change: the person reading has already voted No on it."
+  },
+  "group.voteCard.merging": {
+    "text": "Merging…",
+    "description": "One fact on the small vote card under a chat line about a change: the vote passed and the change is being merged right now."
+  },
+  "group.voteCard.merged": {
+    "text": "Merged",
+    "description": "One fact on the small vote card under a chat line about a change: the change was merged, so the vote is over."
+  },
+  "group.voteCard.checks.passed": {
+    "text": "All checks passed",
+    "description": "One fact on the small vote card under a chat line about a change: every automated check passed."
+  },
+  "group.voteCard.checks.failing": {
+    "text": "A check found a problem",
+    "description": "One fact on the small vote card under a chat line about a change: at least one automated check failed."
+  },
+  "group.voteCard.checks.running": {
+    "text": "Checks running",
+    "description": "One fact on the small vote card under a chat line about a change: its automated checks have not finished yet."
+  },
+  "group.voteCard.checks.error": {
+    "text": "Checks couldn’t run",
+    "description": "One fact on the small vote card under a chat line about a change: its automated checks could not be run."
+  },
+  "group.voteCard.previewBuilding": {
+    "text": "Preview building…",
+    "description": "One fact on the small vote card under a chat line about a change: the running copy of the app with the change in it is still being started, so there is no Preview button yet."
+  },
+  "group.voteCard.label": {
+    "text": "Vote on this change",
+    "description": "Accessible name of the small vote card under a chat line about a change, which says where its vote and checks stand and offers Preview and Vote."
+  },
   "group.specCard.sharedBy": {
     "text": "Shared by <0>{{name}}</0> · v{{version}}",
     "description": "Line on the card of a plan (the written description of a change) that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the plan's version number, and 'v' abbreviates version. Shared is a verb form."
@@ -908,20 +980,20 @@
     "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{built}} is when it was built, already formatted."
   },
   "group.specCard.sharedByPr": {
-    "text": "Shared by <0>{{name}}</0> · v{{version}} · <1>PR #{{number}}</1>",
+    "text": "Shared by <0>{{name}}</0> · v{{version}} · <1>PR {{number}}</1>",
     "description": "Line on the card of a plan that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the plan's version number, and 'v' abbreviates version; the <1> link opens the pull request, and {{number}} is its number. PR is the usual abbreviation of pull request."
   },
   "group.specCard.sharedBySomeonePr": {
-    "text": "Shared by <0>Someone</0> · v{{version}} · <1>PR #{{number}}</1>",
-    "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{number}} is the pull request's number; keep \"PR #\"."
+    "text": "Shared by <0>Someone</0> · v{{version}} · <1>PR {{number}}</1>",
+    "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{number}} is the pull request's number; keep \"PR\"."
   },
   "group.specCard.sharedByBuiltPr": {
-    "text": "Shared by <0>{{name}}</0> · v{{version}} · {{built}} · <1>PR #{{number}}</1>",
+    "text": "Shared by <0>{{name}}</0> · v{{version}} · {{built}} · <1>PR {{number}}</1>",
     "description": "Line on the card of a plan that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the plan's version number; {{built}} is the date and time the change was built, already formatted; the <1> link opens the pull request, and {{number}} is its number. PR abbreviates pull request."
   },
   "group.specCard.sharedBySomeoneBuiltPr": {
-    "text": "Shared by <0>Someone</0> · v{{version}} · {{built}} · <1>PR #{{number}}</1>",
-    "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{built}} is when it was built, already formatted. {{number}} is the pull request's number; keep \"PR #\"."
+    "text": "Shared by <0>Someone</0> · v{{version}} · {{built}} · <1>PR {{number}}</1>",
+    "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{built}} is when it was built, already formatted. {{number}} is the pull request's number; keep \"PR\"."
   },
   "group.specCard.loading": {
     "text": "Loading…",
@@ -1164,11 +1236,11 @@
     "description": "Stands in for an attached file's name when it has none, after a paperclip, in the preview of the message being replied to above the chat message box. A noun, lower case."
   },
   "group.quote.pr": {
-    "text": "PR #{{number}}",
-    "description": "Stands where an author's name would be on a quoted line that came from a pull request, and in a shared plan's subtitle. PR is the abbreviation of pull request; {{number}} is its number. Keep the # before the number."
+    "text": "PR {{number}}",
+    "description": "Stands where an author's name would be on a quoted line that came from a pull request, and in a shared plan's subtitle. PR is the abbreviation of pull request; {{number}} is its number. Do not put a # before the number: a change's number is written PR, never #."
   },
   "group.quote.prUnnumbered": {
-    "text": "PR #",
+    "text": "PR",
     "description": "Stands where an author's name would be on a quoted line that came from a pull request whose number is not known."
   },
   "group.quote.system": {

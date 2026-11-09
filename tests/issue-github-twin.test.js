@@ -22,6 +22,10 @@ test('secret_change proposals get no GitHub twin', () => {
   assert.equal(shouldCreateGithubTwin('secret_change'), false);
 });
 
+test('#6000 reopen_issue proposals get no GitHub twin', () => {
+  assert.equal(shouldCreateGithubTwin('reopen_issue'), false);
+});
+
 test('general issues keep their GitHub twin', () => {
   assert.equal(shouldCreateGithubTwin('general'), true);
 });

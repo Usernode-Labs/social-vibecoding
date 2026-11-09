@@ -68,7 +68,7 @@ import { PasswordInput } from '@/components/ui/password-input';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { t as translate } from '../../lib/i18n/runtime';
+import { t as translate, errorText } from '../../lib/i18n/runtime';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { returnKeyHandler } from '../../lib/return-to-next';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -76,6 +76,7 @@ import { AuthBackButton, backToLanding } from './back-button';
 import { CodeBoxes } from './code-boxes';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
+import { SignupOptIn } from './signup-opt-in';
 import { TermsNotice } from './waitlist-shared';
 import {
   AUTH_SCREEN_IDS,
@@ -184,8 +185,8 @@ const PILL_LINK = 'flex h-11 w-full items-center justify-center rounded-full bg-
 // it (their copy block's `gap`). Where the next thing is the card instead of a
 // sentence — board 2's password step — the form adds the other 10 of that
 // board's `margin-top: 20px`.
-const SCREEN_H1 = 'text-[28px] font-extrabold leading-[32px] tracking-tight text-left mb-2.5 text-zinc-900 dark:text-zinc-100';
-const SCREEN_H1_HIDDEN = 'text-[28px] font-extrabold leading-[32px] tracking-tight text-left mb-2.5 text-zinc-900 dark:text-zinc-100 hidden';
+const SCREEN_H1 = 'text-[28px] font-extrabold leading-[32px] tracking-tight text-start mb-2.5 text-zinc-900 dark:text-zinc-100';
+const SCREEN_H1_HIDDEN = 'text-[28px] font-extrabold leading-[32px] tracking-tight text-start mb-2.5 text-zinc-900 dark:text-zinc-100 hidden';
 
 /**
  * What the retired `BUTTON` class constant is now: the same string, spelled as
@@ -505,6 +506,8 @@ export function LoginScreen() {
   const [otpDigits, setOtpDigits] = useState('');
   const [otpSignup, setOtpSignup] = useState<OtpSignup | null>(null);
   const [otpUsernameError, setOtpUsernameError] = useState<string | null>(null);
+  // The sign-up form's "Homeroom news by email" box (#6044), unticked until ticked.
+  const [otpNewsByEmail, setOtpNewsByEmail] = useState(false);
   // The address a waitlist-release link carried, and the moment the resend
   // buttons come back. Both start empty, so the first render is still exactly
   // the markup the hand-written shell shipped.
@@ -862,7 +865,7 @@ export function LoginScreen() {
           st.otpEmail = email;
           setOtpEmailEcho(email);
           otpShowStep('code');
-          setOtpError(data.error || translate('auth:login.otp.tooMany'));
+          setOtpError(errorText(data) || translate('auth:login.otp.tooMany'));
           const retryAfter = Number(res.headers.get('Retry-After'));
           setCooldownUntil(
             Date.now() +
@@ -875,7 +878,7 @@ export function LoginScreen() {
         // Refused (an address the server will not accept, and anything else):
         // the email step, with the address still in the field.
         otpShowStep('email');
-        setOtpError(data.error || translate('auth:login.otp.sendFailed'));
+        setOtpError(errorText(data) || translate('auth:login.otp.sendFailed'));
         return;
       }
       st.otpEmail = email;
@@ -936,15 +939,15 @@ export function LoginScreen() {
         if (data.code === 'password_required') {
           showLoginBaseView();
           if (username.current) username.current.value = st.otpEmail || '';
-          setLoginError(data.error || translate(PASSWORD_ACCOUNT_MSG));
+          setLoginError(errorText(data) || translate(PASSWORD_ACCOUNT_MSG));
           return;
         }
         // NOT on a 429: the limiter's message already says exactly how long
         // to wait.
         setOtpError(
           res.status === 429
-            ? data.error || translate('auth:login.otp.tooManyAttempts')
-            : data.error || translate('auth:login.otp.codeRejected'),
+            ? errorText(data) || translate('auth:login.otp.tooManyAttempts')
+            : errorText(data) || translate('auth:login.otp.codeRejected'),
         );
         return;
       }
@@ -995,6 +998,8 @@ export function LoginScreen() {
         credentials: 'same-origin',
         body: JSON.stringify({
           ...(handle ? { username: handle } : {}),
+          // The "Homeroom news by email" box (#6044), only when ticked.
+          ...(otpSignup?.needsUsername && otpNewsByEmail ? { marketingEmail: true } : {}),
         }),
       });
       const data = await res.json();
@@ -1003,11 +1008,11 @@ export function LoginScreen() {
         // A refused name leaves the signup session unspent: fix the field,
         // submit again.
         if (data.field === 'username' && data.error) {
-          setOtpUsernameError(data.error);
+          setOtpUsernameError(errorText(data));
           otpUsername.current?.focus();
           return;
         }
-        setOtpError(data.error || translate('auth:login.signup.failed'));
+        setOtpError(errorText(data) || translate('auth:login.signup.failed'));
         return;
       }
       setOtpStatus(null);
@@ -1017,7 +1022,7 @@ export function LoginScreen() {
       setOtpError(sessionMintFailureMessage(error));
       setOtpDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
-  }, [clearConfirmation, finishLogin, otpSignup, st]);
+  }, [clearConfirmation, finishLogin, otpSignup, otpNewsByEmail, st]);
 
   // ── Wallet sign-in ───────────────────────────────────────────────────
 
@@ -1069,7 +1074,7 @@ export function LoginScreen() {
         await finishLogin();
         return;
       }
-      fail(verifyData.error || translate('auth:login.wallet.failed'));
+      fail(errorText(verifyData) || translate('auth:login.wallet.failed'));
     } catch (e) {
       st.cachedChallenge = null;
       if (e instanceof NativeLoginPreparationError) {
@@ -1129,7 +1134,7 @@ export function LoginScreen() {
       const data = await res.json();
       if (!res.ok) {
         setRecoveryStatus(null);
-        setRecoveryError(data.error || translate('auth:login.walletReset.failed'));
+        setRecoveryError(errorText(data) || translate('auth:login.walletReset.failed'));
         return;
       }
       setRecoveryStatus(null);
@@ -1169,7 +1174,7 @@ export function LoginScreen() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setEmailResetError(data.error || translate('auth:login.emailReset.sendFailed'));
+        setEmailResetError(errorText(data) || translate('auth:login.emailReset.sendFailed'));
         return;
       }
       // Anti-enumeration: the server answers the same whether or not the
@@ -1204,7 +1209,7 @@ export function LoginScreen() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setResetError(res.status === 401 ? translate(EXPIRED_MSG) : data.error || translate('auth:login.reset.failed'));
+        setResetError(res.status === 401 ? translate(EXPIRED_MSG) : errorText(data) || translate('auth:login.reset.failed'));
         return;
       }
       // The token is single-use and the reset revoked every session on
@@ -1802,6 +1807,9 @@ export function LoginScreen() {
                   <p id="otp-username-hint" className={otpUsernameError ? FIELD_HINT_ERROR : FIELD_HINT}>
                     {otpUsernameError || t('auth:login.signup.usernameRule')}
                   </p>
+                  <div className="mt-3">
+                    <SignupOptIn id="otp-news-email" kind="email" checked={otpNewsByEmail} onChange={setOtpNewsByEmail} />
+                  </div>
                 </div>
               ) : null}
               {/* No password here (#4891): how they sign in, and where a password is added. */}

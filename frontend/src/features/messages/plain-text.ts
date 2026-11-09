@@ -44,6 +44,7 @@ export function plainText(markdown: string | null | undefined): string {
   // Emphasis, strongest first, so `***both***` loses all three.
   text = text.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '$2');
   text = text.replace(/~~(?=\S)([\s\S]*?\S)~~/g, '$1');
+  text = text.replace(/\+\+(?=\S)([\s\S]*?\S)\+\+(?!\+)/g, '$1');
   text = text.replace(/(^|[^\w*])\*([^\s*](?:[^*\n]*?[^\s*])?)\*(?![\w*])/g, '$1$2');
   text = text.replace(/(^|[^\w])_([^\s_](?:[^_\n]*?[^\s_])?)_(?!\w)/g, '$1$2');
   text = text.replace(/[\uE000-\uE07F]/g, (c) => String.fromCharCode(c.charCodeAt(0) - ESCAPED));

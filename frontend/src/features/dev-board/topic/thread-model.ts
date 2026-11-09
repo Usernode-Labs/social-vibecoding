@@ -22,6 +22,19 @@ export interface FoldedReply {
   at?: string | null;
 }
 
+/**
+ * #6225: one request a change closes when it merges, as its Votes card lists
+ * it. `confirmed` is whether its requester agreed to it: the change was built
+ * for that request, or its filer made the change. A number the change claims
+ * that is not a request here has a null title and filer.
+ */
+export interface ClosesRequest {
+  number: number;
+  title: string | null;
+  by: string | null;
+  confirmed: boolean;
+}
+
 export interface ThreadItem {
   type: ThreadItemType;
   id: number;
@@ -30,6 +43,14 @@ export interface ThreadItem {
   status: string;
   /** A change's place in its life (issue-proposal-ref.js `stateOf`). */
   state?: 'underway' | 'review' | 'merged';
+  /**
+   * A change: when production first ran it (chat_sessions.live_at), the fact
+   * its own pill reads. Null from the merge until the rollout ends; a change
+   * sent without it reads as live, as merge-status.js does.
+   */
+  liveAt?: string | null;
+  /** #6139, a change underway: built, with its checks passing on its current head and nothing working on it. */
+  ready?: boolean;
   at?: string | null;
   replies: number;
   folded?: FoldedReply[];
@@ -45,8 +66,28 @@ export interface ThreadItem {
   /** A close vote: the proposer's reason, and the request it was filed on. */
   reason?: string | null;
   target?: number | null;
+  /**
+   * #6439, a close vote: how an ended vote ended, off the governance
+   * machine's audit (src/services/threads.js). `closed` it passed; `kept` it
+   * was withdrawn or could not be applied; `elsewhere` the request closed
+   * another way. Null while it is open.
+   */
+  outcome?: 'closed' | 'kept' | 'elsewhere' | null;
   /** A change: the requests it closes when it merges (its linked_issues). */
   closes?: number[];
+  /** #6225: the same requests with their titles and filers, for the Votes card. */
+  closesRequests?: ClosesRequest[];
+  /**
+   * 1 Nov 2026 (C2.3), a change: the plan it was built from, by that plan's
+   * session and version (a person's plan on the request, or the bot's own
+   * its requester approved: src/services/threads.js builtFrom).
+   */
+  builtFrom?: {
+    sessionId: number;
+    version: number | null;
+    /** #6406: a newer plan on the request than the one this change follows. */
+    newer?: { version: number; author: string | null; sameAuthor: boolean } | null;
+  } | null;
 }
 
 export interface ThreadFollow {
@@ -62,12 +103,63 @@ export interface ThreadPayload {
     lead: 'request' | 'change' | 'decision';
     title: string | null;
     state: 'open' | 'closed';
+    /** #6421: how many requests the thread holds. */
+    requests?: number;
+    /** #6421: the thread's name: its change's title while one lives there, else its first request's. */
+    name?: string | null;
   };
   items: ThreadItem[];
   /** Null signed out: there is no one to notify. */
   follow: ThreadFollow | null;
   /** Stage 6: a merge or split waiting on this thread (services/thread-moves.js). */
   moves?: ThreadMove[];
+  /**
+   * 1 Nov 2026 (one page per thread, D4): changes for one of this thread's
+   * requests that live on another request's page (services/threads.js
+   * changesElsewhere): `request` is the one of ours it closes, `on` the
+   * request whose page it is on.
+   */
+  elsewhere?: ThreadElsewhere[];
+}
+
+export interface ThreadElsewhere {
+  id: number;
+  number: number | null;
+  title: string | null;
+  on: number;
+  request: number;
+}
+
+/** D4: the changes for request `number` that live on another request's page. Pure. */
+export function elsewhereFor(payload: ThreadPayload | null, number: number): ThreadElsewhere[] {
+  const list = payload && Array.isArray(payload.elsewhere) ? payload.elsewhere : [];
+  return list.filter((e) => Number(e.request) === Number(number) && Number(e.on) !== Number(number));
+}
+
+/**
+ * #6224: the other requests a change closes besides `request`, ascending and
+ * without duplicates, read from its `closes` (its linked_issues, the set its
+ * merge closes). Empty when it does not close this request at all, so a
+ * change living on another request's page says nothing here. Pure.
+ */
+export function alsoCloses(item: ThreadItem, request: number): number[] {
+  const closes = Array.isArray(item.closes) ? item.closes.map(Number) : [];
+  const here = Number(request);
+  if (!closes.includes(here)) return [];
+  return [...new Set(closes)].filter((n) => Number.isInteger(n) && n > 0 && n !== here).sort((a, b) => a - b);
+}
+
+/**
+ * #6225: what a change's Votes card lists under its tally, while it is up for
+ * a vote: every request a yes would close, ascending. Nothing before it is
+ * proposed or after it merges, because the list describes what a yes would
+ * do, and nothing when it closes only the one request it was built for. Pure.
+ */
+export function closesList(item: ThreadItem): ClosesRequest[] {
+  const list = Array.isArray(item.closesRequests) ? item.closesRequests : [];
+  if (item.state !== 'review') return [];
+  if (list.length === 1 && list[0] && list[0].confirmed) return [];
+  return [...list].sort((a, b) => Number(a.number) - Number(b.number));
 }
 
 export interface ThreadMove {
@@ -82,6 +174,16 @@ export interface ThreadMove {
   deadline: string;
   agreed: number[];
   governanceId: number | null;
+  /**
+   * #6421: a change's consent question, asked of the request's other
+   * requesters (services/thread-moves.js gather). Yes gathers the thread
+   * into the change's; Keep separate leaves it linked where it is.
+   */
+  forChange?: { id: number | null; number: number | null };
+  /** #6421: the requesters still to answer, by username. */
+  askOf?: string[];
+  /** #6421: the viewer is one of them. */
+  canAnswer?: boolean;
 }
 
 /** The page the list is drawn on: a request by its number, the rest by id. */
@@ -125,14 +227,24 @@ function what(item: ThreadItem): Phrase {
   return { id: 'project:topic.thread.item.decision' };
 }
 
+/**
+ * A change that has merged but is not running yet: the same fact its own pill
+ * reads (merge-status.js), so the header never says Live before it does. A
+ * change sent without `liveAt` reads as live, as it always did.
+ */
+function goingLive(item: ThreadItem): boolean {
+  return item.state === 'merged' && item.liveAt === null;
+}
+
 function standing(item: ThreadItem): Phrase | null {
   if (item.type === 'request') {
     return { id: item.status === 'closed' ? 'project:topic.thread.state.closed' : 'project:topic.thread.state.open' };
   }
   if (item.type === 'change') {
-    return item.state === 'merged' ? { id: 'project:topic.thread.state.live' }
+    return item.state === 'merged'
+      ? { id: goingLive(item) ? 'project:topic.thread.state.goingLive' : 'project:topic.thread.state.live' }
       : item.state === 'review' ? { id: 'project:topic.thread.state.voting' }
-        : { id: 'project:topic.thread.state.underway' };
+        : { id: item.ready ? 'project:topic.thread.state.ready' : 'project:topic.thread.state.underway' };
   }
   return { id: item.status === 'open' ? 'project:topic.thread.state.voting' : 'project:topic.thread.state.settled' };
 }
@@ -195,6 +307,19 @@ export function followButton(follow: ThreadFollow | null): FollowButtonView | nu
  */
 export function moveLines(move: ThreadMove, now: number = Date.now()): { what: Phrase; when: Phrase } {
   const items = move.input.items || [];
+  // #6421: a change's question to a request's other askers.
+  if (move.forChange) {
+    return {
+      what: {
+        id: 'project:topic.thread.move.consentAsk',
+        values: { number: move.input.intoNumber ?? '?', change: move.forChange.number ?? '?' },
+      },
+      when: {
+        id: 'project:topic.thread.move.consentWaiting',
+        values: { names: (move.askOf || []).join(', ') },
+      },
+    };
+  }
   const what: Phrase = move.kind === 'merge'
     ? { id: 'project:topic.thread.move.merge', values: { number: move.input.intoNumber ?? '?' } }
     : move.kind === 'breakup'
@@ -226,7 +351,11 @@ export function splittable(payload: ThreadPayload | null): ThreadItem[] {
 export interface ThreadLayout {
   /** Every change in the thread, oldest first. */
   changes: ThreadItem[];
-  /** The open vote to close the thread, if there is one. */
+  /**
+   * The vote to close the thread: the open one, else the latest one that
+   * has ended (#6439: its card stays and says how it ended). Null when the
+   * thread has never had one.
+   */
   close: ThreadItem | null;
   /** The items the list under them still names. */
   listed: ThreadItem[];
@@ -236,7 +365,14 @@ export function threadLayout(payload: ThreadPayload | null, here: ThreadHere | n
   const items = payload && Array.isArray(payload.items) ? payload.items : [];
   if (!here || here.type !== 'request') return { changes: [], close: null, listed: items };
   const changes = items.filter((i) => i.type === 'change');
-  const close = items.find((i) => i.type === 'close' && i.status === 'open') || null;
+  // #6439: an open vote to close leads; once every vote has ended, the
+  // latest one keeps its card, so the request's page says how it ended.
+  // Older ended votes stay in the list below, as they always have.
+  const closes = items.filter((i) => i.type === 'close');
+  const open = closes.find((i) => i.status === 'open') || null;
+  const latest = closes.reduce<ThreadItem | null>(
+    (best, i) => (!best || Number(i.id) > Number(best.id) ? i : best), null);
+  const close = open || latest;
   const listed = items.filter((i) => i.type !== 'change' && i !== close);
   return { changes, close, listed };
 }
@@ -344,12 +480,23 @@ export function requestPill(
 ): { tier: number; key: string; label: string; tone: string; yes: number; no: number; majority: number; advisory: number; lock: boolean; spinner?: boolean } | null {
   if (stand === 'closed') return null;
   const base = { tier: 1, yes: 0, no: 0, majority: 1, advisory: 0, lock: false };
+  // #6439: an ended vote to close still draws its card, but the header only
+  // says a vote is on while one is open.
+  const close = layout.close && layout.close.status === 'open' ? layout.close : null;
   const review = layout.changes.filter((c) => c.state === 'review').length;
-  if (review >= 2 || (review >= 1 && layout.close)) return { ...base, key: 'choosing', label: say('project:topic.thread.pill.choosing'), tone: 'neutral' };
+  if (review >= 2 || (review >= 1 && close)) return { ...base, key: 'choosing', label: say('project:topic.thread.pill.choosing'), tone: 'neutral' };
   if (review === 1) return { ...base, key: 'vote', label: say('project:topic.thread.pill.vote'), tone: 'neutral' };
-  if (layout.close) return { ...base, key: 'close', label: say('project:topic.thread.pill.close'), tone: 'neutral' };
-  if (layout.changes.some((c) => c.state === 'underway') || stand === 'building') {
+  if (close) return { ...base, key: 'close', label: say('project:topic.thread.pill.close'), tone: 'neutral' };
+  const underway = layout.changes.filter((c) => c.state === 'underway');
+  if (underway.some((c) => !c.ready) || stand === 'building') {
     return { ...base, key: 'building', label: say('project:topic.thread.pill.building'), tone: 'progress', spinner: true };
+  }
+  // #6139: every change underway has finished; only putting one up is left.
+  if (underway.length) return { ...base, key: 'ready', label: say('project:topic.thread.pill.ready'), tone: 'neutral' };
+  // Merged is live only once production runs it, the fact each change's own
+  // pill reads: until then the header says Going live, never Live.
+  if (layout.changes.some(goingLive)) {
+    return { ...base, key: 'going_live', label: say('project:topic.thread.pill.goingLive'), tone: 'progress', spinner: true };
   }
   if (layout.changes.some((c) => c.state === 'merged')) return { ...base, key: 'live', label: say('project:topic.thread.pill.live'), tone: 'ok' };
   return null;

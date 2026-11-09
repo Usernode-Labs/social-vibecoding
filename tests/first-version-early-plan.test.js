@@ -173,7 +173,8 @@ test('started once, only for a first version the bot builds, and never without a
   assert.equal(await fvPlan.startEarlyPlan(pool, { app: { id: 3 }, user: { id: 7 }, brief: 'Polls' }, { llm: { isEnabled: () => false } }), false, 'no model');
   // From the made screen's doors only (routes/apps.js MAKE_ORIGINS).
   const route = read('src/routes/apps.js');
-  assert.match(route, /homeroomBotDm\.startFirstVersion\(pool, config, \{\s+app: appRow, user: req\.user, brief: req\.body\.brief,[\s\S]*?earlyPlan: MAKE_ORIGINS\.has\(req\.body\.from\),/);
+  // 1 Nov 2026 (C2.4): a design's project has its plan from the design already.
+  assert.match(route, /homeroomBotDm\.startFirstVersion\(pool, config, \{\s+app: appRow, user: req\.user, brief: req\.body\.brief,[\s\S]*?earlyPlan: MAKE_ORIGINS\.has\(req\.body\.from\) \|\| !!fromDesign,/);
   assert.match(read('src/services/homeroom-bot-dm.js'),
     /if \(bot && earlyPlan\) await require\('\.\/first-version-plan'\)\.startEarlyPlan\(pool, \{ app, user, brief: text, config, bot \}\);/);
 });
@@ -277,7 +278,7 @@ test('the bot builds from the plan at Make it with no triage turn, and goes ahea
   // Only a first version, after its card is started, and before any turn.
   const call = src.indexOf('const early = await planFromEarly(pool, config, {');
   assert.ok(call > src.indexOf('await retireWaitingPlans(pool, { appId: app.id, issueNumber, why: \'the request was read again\''));
-  assert.ok(call < src.indexOf('session = await ensureBotSession(pool, config, bot, app);'));
+  assert.ok(call < src.indexOf('session = await ensureBotSession(pool, config, bot, app, {'));
   assert.match(src, /if \(requester\?\.firstVersion\) \{\s+const early = await planFromEarly/);
   // A plan someone asked to change, a restart's read, or a request already planned is the triage's.
   assert.match(src, /if \(item\.reason === 'plan_change' \|\| item\.reason === RESTART_REASON \|\| item\.reason === READ_AGAIN_REASON\) return null;/);

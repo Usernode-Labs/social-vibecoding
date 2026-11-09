@@ -73,6 +73,33 @@ type ReapJob = {
 
 type Automatic = { intervalMs?: number | null; lastRunAt?: string | null; tornDown?: number; failed?: number };
 
+// #6157: previews asleep (scaled to no replicas, everything else kept) and
+// what their database clones still hold, which is all a sleeping preview
+// costs. `measured` is how many of them had a size recorded when they slept.
+type Asleep = { count: number; bytes: number; measured?: number };
+
+// "4.3 GB" for the asleep storage tile: decimal gigabytes, one decimal place
+// below 100.
+function gigabytes(bytes: number): string {
+  const gb = bytes / 1e9;
+  return `${gb >= 100 ? Math.round(gb) : Math.round(gb * 10) / 10} GB`;
+}
+
+// The line under the tiles that says what sleeping is. Empty before the
+// first load.
+function sleepLine(asleep: Asleep | null, sleepAfterMs: number | null, loaded: boolean): string {
+  if (!loaded) return '';
+  if (sleepAfterMs === 0) return 'Previews do not sleep here (PREVIEW_SLEEP_AFTER_MS is 0).';
+  const hours = sleepAfterMs ? Math.round((sleepAfterMs / 3600000) * 10) / 10 : null;
+  const after = hours == null ? 'a while' : `${hours} hour${hours === 1 ? '' : 's'}`;
+  const lede = `A preview nobody has opened for ${after} sleeps: its pod stops, and its image, address and database copy stay, so opening it wakes it in seconds without a rebuild.`;
+  if (!asleep) return lede;
+  if (!asleep.count) return `${lede} None is asleep now.`;
+  const unmeasured = asleep.count - (asleep.measured ?? asleep.count);
+  return `${lede} ${asleep.count} asleep, holding ${gigabytes(asleep.bytes)} of database copies`
+    + `${unmeasured > 0 ? ` (${unmeasured} not measured)` : ''}.`;
+}
+
 const NEUTRAL_CHIP = 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300';
 
 // Per-preview outcome → chip. Mirrors the outcome vocabulary in
@@ -125,7 +152,7 @@ const ReapUI = Object.freeze({
   row: 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800',
   rowMain: 'flex-1 min-w-0',
   rowSlug: 'font-mono text-sm',
-  rowSession: 'text-xs text-zinc-500 dark:text-zinc-400 ml-1',
+  rowSession: 'text-xs text-zinc-500 dark:text-zinc-400 ms-1',
   rowWhy: 'block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5',
   rowError: 'block text-xs text-red-700 mt-0.5 dark:text-red-400',
   rowRight: 'flex items-center gap-2 shrink-0',
@@ -223,6 +250,8 @@ function StalePreviewsSection() {
   const [open, setOpen] = useState<number | null>(null);
   const [due, setDue] = useState<number | null>(null);
   const [automatic, setAutomatic] = useState<Automatic | null>(null);
+  const [asleep, setAsleep] = useState<Asleep | null>(null);
+  const [sleepAfterMs, setSleepAfterMs] = useState<number | null>(null);
   const [concurrency, setConcurrency] = useState<number | null>(null);
   const [demo, setDemo] = useState(false);
   // Tracked separately from `demo`: the POST is refused in a preview whether
@@ -249,6 +278,8 @@ function StalePreviewsSection() {
       ? data.stale + (typeof data.abandoned === 'number' ? data.abandoned : 0)
       : null);
     setAutomatic(data.automatic || null);
+    setAsleep(data.asleep && typeof data.asleep.count === 'number' ? data.asleep : null);
+    setSleepAfterMs(typeof data.sleepAfterMs === 'number' ? data.sleepAfterMs : null);
     setConcurrency(data.concurrency || null);
     setDemo(!!data.demo);
     setStaging(!!data.staging);
@@ -347,8 +378,8 @@ function StalePreviewsSection() {
       </p>
       <p className={ReapUI.fine}>
         Nothing is lost that matters: clicking Preview on a proposal rebuilds
-        it automatically with current settings, the same way a preview that
-        went to sleep does. A preview&apos;s throwaway test data is discarded, and
+        it automatically with current settings, the same way a preview the
+        idle sweep gave back is rebuilt. A preview&apos;s throwaway test data is discarded, and
         rebuilding re-runs that proposal&apos;s automated checks.
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -373,6 +404,21 @@ function StalePreviewsSection() {
           value={job ? String(job.failed) : '—'}
         />
       </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+        <Tile
+          id="admin-reap-asleep"
+          label="Asleep"
+          value={asleep == null ? '—' : String(asleep.count)}
+        />
+        <Tile
+          id="admin-reap-asleep-storage"
+          label="Asleep storage"
+          value={asleep == null ? '—' : gigabytes(asleep.bytes)}
+        />
+      </div>
+      <p id="admin-reap-sleep" className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+        {sleepLine(asleep, sleepAfterMs, loaded)}
+      </p>
       <p id="admin-reap-automatic" className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
         {automaticLine(automatic, loaded)}
       </p>

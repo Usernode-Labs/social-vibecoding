@@ -18,7 +18,7 @@
  * a staging post, it is the shape the screen has to keep:
  *
  *  - #admin-nav-desktop is an innerHTML host, filled by
- *    AdminConsole._navItemsHtml() on every repaint. It ships EMPTY (React
+ *    AdminConsole._topBarHtml() and _tabStripHtml() on every repaint (#6456). It ships EMPTY (React
  *    hydrates an empty host and never looks inside it again), exactly the seam
  *    #settings-nav-desktop uses. Rendering the nav from React would mean
  *    reconciling over markup the module also writes.
@@ -161,6 +161,7 @@ export function AdminScreen() {
     <main
       ref={screenRef}
       id="admin-screen"
+      dir="ltr"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
       style={{ position: "relative" }}
       data-page-bounce=""
@@ -196,19 +197,20 @@ export function AdminScreen() {
             </a>
           </div>
         </div>
-        <div className="md:flex md:items-start md:gap-6">
+        <div className="md:flex md:flex-col md:gap-8">
           {/*
-              Desktop sidebar menu. Below md there is no nav here at all:
-              phones get the two-level hierarchy instead (the level-1 menu
-              renders INTO #admin-section-content). Empty on arrival —
-              AdminConsole._renderShell() fills it.
+              Desktop top bar and open-section tabs (#6456), stacked above
+              the content; it was a 16rem sidebar beside it. Below md there
+              is no nav here at all: phones get the two-level hierarchy
+              instead (the level-1 menu renders INTO #admin-section-content).
+              Empty on arrival — AdminConsole._renderShell() fills it, with a
+              <nav> of its own inside, so this host is a plain <div>.
           */}
-          <nav
+          <div
             id="admin-nav-desktop"
-            aria-label="Admin sections"
-            className="hidden md:block md:w-64 shrink-0 space-y-1"
+            className="hidden md:block shrink-0"
           >
-          </nav>
+          </div>
           <div className="flex-1 min-w-0">
             {/*
                 View-only admin banner (issue #311), same copy as /admin.

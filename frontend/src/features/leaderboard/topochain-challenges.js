@@ -1189,6 +1189,19 @@ const TopochainChallenges = {
     if (!dm.cta_link) return null;
     const route = TopochainChallenges._inAppRoute(dm.cta_link);
     if (route) {
+      // #6080: the Connect X and GitHub challenge sent people to Connectors,
+      // which is where AI tools are set up and has no X or GitHub row. The
+      // accounts are linked on Settings › Linked accounts, so a challenge
+      // scored by connected accounts that points at Connectors goes there.
+      // Only that section is redirected: any other link the organiser wrote,
+      // for this challenge or another one, is left as it is.
+      if (route === TopochainChallenges.CONNECTORS_ROUTE && TopochainChallenges._isConnectAccounts(challenge)) {
+        return {
+          kind: 'route',
+          href: TopochainChallenges.LINKED_ACCOUNTS_ROUTE,
+          label: PlatformI18n.t('leaderboard:challenges.detail.openLinkedAccounts'),
+        };
+      }
       const href = route === '#settings' && TopochainChallenges._isBlockProduction(challenge)
         ? TopochainChallenges.BLOCK_PRODUCTION_ROUTE : route;
       return { kind: 'route', href, label };
@@ -1201,6 +1214,11 @@ const TopochainChallenges = {
   // Settings › Homeroom app, whose "Homeroom app: block production" group is
   // where block production is asked for (sections/usernode.tsx).
   BLOCK_PRODUCTION_ROUTE: '#settings/usernode',
+
+  // #6080: Settings › Connectors is the MCP servers and AI tools page; the X
+  // and GitHub accounts are linked on Settings › Linked accounts.
+  CONNECTORS_ROUTE: '#settings/connectors',
+  LINKED_ACCOUNTS_ROUTE: '#settings/linked-accounts',
 
   // A shell hash route: a screen word, optional path segments, an optional
   // query. Nothing that could leave the document or run anything.
@@ -1261,6 +1279,14 @@ const TopochainChallenges = {
   _isInvites(c) {
     const by = c && c.counted_by;
     return !!(by && by.measure === 'INVITES_JOINED');
+  },
+
+  // Whether a list row is scored by connected accounts ("Connect X and
+  // GitHub"): the server's `counted_by` names the rule's measure, the same
+  // key _isInvites keys on.
+  _isConnectAccounts(c) {
+    const by = c && c.counted_by;
+    return !!(by && by.measure === 'CONNECT_ACCOUNTS');
   },
 
   // ── The block-production step (#2493) ───────────────────────────────
@@ -1491,6 +1517,30 @@ const TopochainChallenges = {
     TopochainChallenges._store?.set({ detail: TopochainChallenges.detailView() });
   },
 
+  // A row an older server sent has no `counts`, and it counts. A change with no
+  // usable address is a plain row under the credit's own words. A First
+  // challenge's count also holds its credits from an earlier season.
+  _creditsOf(mine) {
+    const str = TopochainChallenges.str;
+    const own = mine && Array.isArray(mine.activities) ? mine.activities : [];
+    const earlier = mine && Array.isArray(mine.earlier_activities) ? mine.earlier_activities : [];
+    const activities = earlier.length
+      ? [...own, ...earlier].sort((a, b) => Date.parse(b.activity_at) - Date.parse(a.activity_at))
+      : own;
+    return activities.filter((a) => a.counts !== false).map((a) => {
+      const c = a.change;
+      const linked = c && typeof c.app_slug === 'string' && c.app_slug
+        && Number.isInteger(c.session_id) && c.session_id > 0;
+      return {
+        text: str((linked && c.title) || a.description),
+        points: Number(a.points) || 0,
+        at: a.activity_at,
+        precision: a.activity_time_precision,
+        change: linked ? { slug: c.app_slug, sessionId: c.session_id, prNumber: c.pr_number } : null,
+      };
+    });
+  },
+
   detailView() {
     const challenge = TopochainChallenges._detailChallenge;
     if (!challenge) return null;
@@ -1565,6 +1615,10 @@ const TopochainChallenges = {
       // organiser's link, which could only ever name one destination.
       blockProduction: bpStep,
       cta: bpStep ? null : TopochainChallenges.ctaView(dm, challenge),
+      // #3247: the credits behind the count, newest first. Raw fields, never
+      // an href: the pane builds the one address a change has.
+      credits: TopochainChallenges._creditsOf(mine),
+      creditsWeekly: TopochainChallenges._isWeekly(challenge),
       requirements: dm.requirements ? str(dm.requirements) : null,
     };
   },

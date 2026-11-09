@@ -165,7 +165,14 @@ test('a moment in the main chat is the whole message under its label, which open
 
 test('a request\'s card says how many updates its thread holds, in words; rooms keep their chip', () => {
   const { MessageRow } = loadTsx('frontend/src/features/messages/message-row.tsx');
-  const card = message(BOT, 31, { content: 'Dark mode', metadata: { homeroomBot: META }, thread: THREAD });
+  // 31 Oct 2026: a card that names its project's request has no thread here:
+  // its story is the request's page (./bot-request-page.test.js).
+  const named = message(BOT, 31, { content: 'Dark mode', metadata: { homeroomBot: META }, thread: THREAD });
+  const namedHtml = renderToHtml(createElement(MessageRow, { message: named, conversationId: 42, kind: 'direct', botChat: true }));
+  assert.doesNotMatch(namedHtml, /data-bot-thread-link|msgx-thread-summary/);
+  // One from before cards named their project keeps its thread.
+  const { appSlug: _slug, ...older } = META;
+  const card = message(BOT, 31, { content: 'Dark mode', metadata: { homeroomBot: older }, thread: THREAD });
   const html = renderToHtml(createElement(MessageRow, { message: card, conversationId: 42, kind: 'direct', botChat: true }));
   assert.match(html, /data-bot-thread-link="31">3 updates in its thread ›<\/button>/);
   assert.doesNotMatch(html, /msgx-thread-summary|msgx-thread-face/);
@@ -190,9 +197,10 @@ test('the transcript draws a moment whole in the bot\'s chat, and keeps the room
   assert.match(screen, /const moment = botDm && alsoInChat\(message\);\s*if \(message\.threadRootId && !moment\) \{/);
   assert.match(screen, /rows\.push\(<ThreadActivityRow key=/, 'rooms keep ThreadActivityRow');
   assert.match(screen, /const grouped = !moment && !!previous/, 'a moment carries its own name');
-  // The thread pane names a request's thread by the request, over its project.
-  assert.match(screen, /\{request \? botThreadTitle\(request\) : t\('messages:replies\.title'\)\}/);
-  assert.match(screen, /const where = request \? request\.project :/);
+  // The thread pane names a request's thread by the request, over its project;
+  // a thread from the bot's "+" (#6071 follow-up) by what it is for.
+  assert.match(screen, /\{started \? startedThreadTitle\(t, started\.changeKind\) : request \? botThreadTitle\(request\) : t\('messages:replies\.title'\)\}/);
+  assert.match(screen, /: request \? request\.project : active \?/);
 });
 
 test('a plan in its request\'s thread hides no card and reads the card it hangs off', () => {
@@ -274,6 +282,12 @@ test('a request held back by the bot\'s limits says what it waits for', () => {
   assert.match(perApp, /data-bot-activity-eyebrow="">Waiting</);
   assert.match(perApp, /<span role="status">I’ll start when one of my changes on Plant Pal is voted in or closed<\/span>/);
   assert.match(drawCard(doneCard('held', { heldBy: 'proposals_total' })), /I’ll start when one of my changes across Homeroom is voted in or closed/);
+  // #6156: held because the project's builds are all under way, it waits for
+  // the bot's turn, never for a vote.
+  const turn = drawCard(doneCard('held', { heldBy: 'builds_per_app' }));
+  assert.match(turn, /data-bot-activity-eyebrow="">Waiting</);
+  assert.match(turn, /<span role="status">I’ll start when one of the changes I’m building on Plant Pal is done<\/span>/);
+  assert.doesNotMatch(turn, /vote/);
   const daily = drawCard(doneCard('held', { heldBy: 'questions_per_day' }));
   assert.match(daily, /data-bot-activity-eyebrow="">Waiting</);
   assert.doesNotMatch(daily, /role="status"|held back/, 'a limit it does not name: "Waiting" says it');
@@ -297,6 +311,9 @@ test('the client keeps a stop cause, a hold and an on-hold stage, and only known
     { messageId: 3, state: 'working', stage: 'on_hold', waitingOn: 'time', links: {} },
     { messageId: 4, state: 'done', outcome: 'build_failed', stopCause: 'gremlins', heldBy: 'proposals_total', links: {} },
   ] });
+  // #6156: a hold for the bot's turn is one the client knows.
+  assert.equal(normalizeBotActivity({ cards: [{ messageId: 5, state: 'done', outcome: 'held', heldBy: 'builds_per_app', links: {} }] })[0].heldBy, 'builds_per_app');
+  assert.equal('heldBy' in normalizeBotActivity({ cards: [{ messageId: 6, state: 'done', outcome: 'held', heldBy: 'nonsense', links: {} }] })[0], false);
   assert.equal(stopped.stopCause, 'time');
   assert.equal(held.heldBy, 'proposals_per_app');
   assert.deepEqual([onHold.stage, onHold.waitingOn], ['on_hold', 'time']);

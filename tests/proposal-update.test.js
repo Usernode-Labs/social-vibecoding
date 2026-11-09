@@ -2085,10 +2085,15 @@ test('a same-commit resubmit is how a title correction arrives', async () => {
   assert.equal(result.titleUpdated, true);
   assert.equal(titles.length, 1);
 
-  // And repeating the stored value is a no-op, not a rewrite.
+  // And repeating the stored value is a no-op, not a rewrite. Since #6124
+  // the stored value is BOTH columns, so a row that still has the old
+  // session_title is not "already stored" — see the heal test below.
   const log2 = {};
   const titles2 = [];
-  const session2 = sessionRow('paused', { proposed_pr_title: 'Klondike Solitaire: canvas board for mobile' });
+  const session2 = sessionRow('paused', {
+    proposed_pr_title: 'Klondike Solitaire: canvas board for mobile',
+    session_title: 'Klondike Solitaire: canvas board for mobile',
+  });
   const pool2 = fakePool([
     ['SET proposed_pr_title', (params) => { titles2.push(params); return []; }],
     ['FROM chat_sessions cs JOIN apps a', [session2]],
@@ -2100,6 +2105,92 @@ test('a same-commit resubmit is how a title correction arrives', async () => {
   assert.equal(r2.ok, true);
   assert.equal(r2.titleUpdated, false);
   assert.equal(titles2.length, 0);
+});
+
+// #6124: a correction made before the change has a pull request was saved as
+// the name that pull request would take later (proposed_pr_title), which no
+// card read — so the card kept the old session_title. kampred fixed a typo,
+// the save landed, and the old wording stayed on the card.
+test('#6124: a pre-PR title is the card\'s name too, not only the deferred one', async () => {
+  const log = {};
+  const titles = [];
+  const session = sessionRow('paused');
+  const pool = fakePool([
+    ['SET proposed_pr_title', (params) => { titles.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['UPDATE chat_sessions', [{ id: session.id }]],
+  ]);
+  const result = await runSession('paused',
+    { session, pool, gh: { getBranchSha: async () => FORK_HEAD } }, log,
+    { title: '  Add a dark mode   toggle  ' });
+  assert.equal(result.ok, true);
+  assert.equal(result.titleUpdated, true);
+  assert.equal(titles.length, 1);
+  const write = log.queries.find((q) => /SET proposed_pr_title/.test(q.sql)).sql;
+  assert.match(write, /SET proposed_pr_title = \$1::text, session_title = \$1::text WHERE id = \$2/,
+    'one UPDATE writes both, exactly as PATCH /api/sessions/:id/title already does');
+  assert.deepEqual(titles[0], ['Add a dark mode toggle', 501], 'trimmed, the shape the card and the PR carry');
+  assert.equal(session.proposed_pr_title, 'Add a dark mode toggle');
+  assert.equal(session.session_title, 'Add a dark mode toggle',
+    'the cards read session_title, so the in-memory row carries it too');
+});
+
+test('#6124: a row saved before this fix heals on the next resubmit', async () => {
+  // The field bug's rows: proposed_pr_title holds the correction, the card
+  // still holds the typo. The early return must compare against BOTH
+  // columns, or "already stored" would leave the old name on screen forever.
+  const log = {};
+  const titles = [];
+  const session = sessionRow('paused', {
+    proposed_pr_title: 'Add a dark mode toggle',
+    session_title: 'Add dark mdoe toggel',
+  });
+  const pool = fakePool([
+    ['SET proposed_pr_title', (params) => { titles.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['UPDATE chat_sessions', [{ id: session.id }]],
+  ]);
+  const result = await runSession('paused',
+    { session, pool, gh: { getBranchSha: async () => FORK_HEAD } }, log,
+    { title: 'Add a dark mode toggle' });
+  assert.equal(result.ok, true);
+  assert.equal(result.titleUpdated, true, 'a stale session_title is not "already stored"');
+  assert.equal(titles.length, 1);
+  assert.equal(session.session_title, 'Add a dark mode toggle');
+});
+
+test('#6124: every list of changes reads the chosen title before the session name', () => {
+  // A row saved before the fix carries the correction in proposed_pr_title
+  // only, so each list must fall back to it — in that order — or those rows
+  // keep the old name with no migration to fix them.
+  const files = {
+    'services/threads.js': ['cs'],            // the request page and its "elsewhere"
+    'services/agent-sessions.js': ['c'],      // the agent chat's change rows
+    'routes/workshop-overview.js': ['cs', 'rb'], // Workshop, Needs you, and a ballot's choices
+  };
+  for (const [file, aliases] of Object.entries(files)) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', file), 'utf8');
+    for (const alias of aliases) {
+      const order = new RegExp(
+        `COALESCE\\(NULLIF\\(${alias}\\.pr_title, ''\\), NULLIF\\(${alias}\\.proposed_pr_title, ''\\), NULLIF\\(${alias}\\.session_title, ''\\)`
+      );
+      assert.match(src, order, `${file}: ${alias}.proposed_pr_title sits between pr_title and session_title`);
+    }
+  }
+  // The chat's Changes ready card reads a session row from /api/sessions,
+  // which must carry the column it falls back to.
+  const sessionsRoute = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
+  assert.match(sessionsRoute, /cs\.session_title, cs\.proposed_pr_title, cs\.status, cs\.linked_issues, cs\.shared_at/,
+    'the shared-sessions list carries proposed_pr_title');
+  const devChat = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8');
+  assert.match(devChat, /title: session\?\.pr_title \|\| session\?\.proposed_pr_title \|\| session\?\.session_title \|\| ''/,
+    'the Changes ready card reads it before the session name');
+  // The Workshop's own cards and the project hub's "Your work" row are
+  // built on the client from /api/me/active-sessions rows.
+  const appView = fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8');
+  assert.match(appView,
+    /_sessionCardLabel\(s\) \{[\s\S]*?return String\(s\.pr_title \|\| s\.proposed_pr_title \|\| s\.session_title \|\| s\.branch_name/,
+    'the Workshop card label reads the chosen title before the session name');
 });
 
 test('a same-commit resubmit with a title renames an existing PR, votes untouched', async () => {
@@ -2300,7 +2391,9 @@ test('a connector-opened proposal is its author\'s own: the mirrored pull reques
   const body = patches.find((p) => p.body).body;
   assert.match(body, /The toggle now survives a reload\./);
   assert.doesNotMatch(body, /first submission/);
-  assert.match(body, /Closes #2138/, 'the managed block survives the rewrite');
+  // On GitHub the block names the request by its page, never `#2138` (GitHub's own number).
+  assert.match(body, /^Closes \[request 2138\]\(https:\/\/[^)]+\/app\/recipe-box\/dev\/issues\/2138\)$/m,
+    'the managed block survives the rewrite');
   assert.equal(mirrors[0][0], body, 'and the row mirrors it so get_proposal can report it');
   // Underneath, still the app-repo push and the import reconcile of #1196.
   assert.equal(log.push.length, 1);
@@ -2416,7 +2509,8 @@ test('an author\'s description rewrites the PR body and keeps its managed blocks
   // the before/after screenshots the group is looking at — a worse bug than
   // the one being fixed.
   assert.match(written, /<!-- usernode:visuals -->[\s\S]*BEFORE\/AFTER[\s\S]*<!-- \/usernode:visuals -->/);
-  assert.match(written, /Closes #91/);
+  assert.match(written, /^Closes \[request 91\]\([^)]+\/dev\/issues\/91\)$/m);
+  assert.doesNotMatch(written, /#91/);
   assert.equal(mirrors[0][0], written, 'and the row mirrors it so get_proposal can report it');
 });
 
@@ -2553,7 +2647,7 @@ test('applyLinkedIssues: a live PR gets the closing line appended, hand-written 
   assert.deepEqual(session.linked_issues, [7, 45]);
   // #7 is already declared by the author's own "Fixes #7" — only #45 lands,
   // via the same parser the migrate-time backfill trusts.
-  assert.deepEqual(bodies, ['Adds the thing.\n\nFixes #7\n\nCloses #45']);
+  assert.deepEqual(bodies, ['Adds the thing.\n\nFixes #7\n\nCloses request 45']);
   // But BOTH are recorded as reflected in the body, so pr-metadata's drift
   // gate does not rewrite a body that is already right.
   assert.deepEqual(session.pr_linked_issues_applied, [7, 45]);
@@ -2644,7 +2738,9 @@ test('updateLinkedIssues: removals rewrite only Usernode-managed closing lines',
     prBodyUpdated: true,
     prBodyStatus: 'updated',
   });
-  assert.deepEqual(bodies, ['Summary\n\nCloses #18\n\nFixes #99\n\nCloses #27']);
+  // A line already in the body stays as written; the one appended names the
+  // request as a pull request on GitHub must (pr-metadata.js closingLine).
+  assert.deepEqual(bodies, ['Summary\n\nCloses #18\n\nFixes #99\n\nCloses request 27']);
   assert.deepEqual(session.pr_linked_issues_applied, [18, 27]);
   assert.deepEqual(writes.map(([kind]) => kind), ['linked', 'body_mirror', 'applied']);
 });
@@ -2674,7 +2770,7 @@ test('updateLinkedIssues: repeating a DB no-op repairs a previously missed PR bo
 
   assert.equal(result.changed, false, 'the durable association was already present');
   assert.equal(result.prBodyUpdated, true, 'the same delta still repairs GitHub');
-  assert.equal(body, 'Summary\n\nCloses #27');
+  assert.equal(body, 'Summary\n\nCloses request 27');
   assert.deepEqual(writes, [[[27], 501]]);
   assert.ok(!pool.queries.some(({ sql }) => sql.includes('SET linked_issues')),
     'a retry does not rewrite the source-of-truth column');
@@ -2733,7 +2829,7 @@ test('updateLinkedIssues: a pull request the platform opened for its author take
   });
   assert.equal(result.prBodyStatus, 'updated');
   assert.equal(result.prBodyUpdated, true);
-  assert.deepEqual(bodies, ['Built with Claude Code.\n\nCloses #2138']);
+  assert.deepEqual(bodies, ['Built with Claude Code.\n\nCloses request 2138']);
   assert.deepEqual(mirrored.pr_linked_issues_applied, [2138]);
 
   // A collaborator's own branch in the same repository, imported from the
@@ -2778,7 +2874,8 @@ test('an update that carries linkedIssues stores them before the tails, on every
   assert.deepEqual(session.linked_issues, [45]);
   assert.deepEqual(order.map((o) => o[0]), ['linked', 'body', 'reconcile'],
     'stored, then the live body patched, then the tail — never the other way round');
-  assert.equal(order[1][1], 'Dev session by evan via Homeroom\n\nCloses #45');
+  assert.equal(order[1][1], 'Dev session by evan via Homeroom\n\n'
+    + `Closes [request 45](https://${require('../src/services/caddy').USERNODE_DOMAIN}/app/recipe-box/dev/issues/45)`);
 
   // Source half, for the ORDER on the paths the stubs above do not read
   // (same reasoning as the testing-metadata order test).

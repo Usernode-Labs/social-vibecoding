@@ -49,7 +49,7 @@ test('the fingerprint is the request as people wrote it, the bot\'s own posts le
 
 test('the console and the connector show a reused run', () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  assert.match(tsx, /\{run\.reused_run_id \? <span className=\{`\$\{AdminUI\.badge\.outline\} ml-1`\} data-homeroom-bot-reused=\{run\.reused_run_id\}>reused<\/span> : null\}/);
+  assert.match(tsx, /\{run\.reused_run_id \? <span className=\{`\$\{AdminUI\.badge\.outline\} ms-1`\} data-homeroom-bot-reused=\{run\.reused_run_id\}>reused<\/span> : null\}/);
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /r\.read_reason, r\.reused_run_id,/);
   assert.ok(bot.EXPORT_COLUMNS.includes('reused_run_id'));
@@ -97,9 +97,10 @@ test('a held ready verdict is reused while its request is unchanged, and read ag
     `INSERT INTO apps (name, slug, status, repo_url) VALUES ('RSS', 'rss', 'running', 'https://github.com/o/rss')
      RETURNING id, slug, name, repo_url`,
   )).rows[0];
-  // The bot's proposals up for a vote on this app: the per-app cap, full.
+  // The bot's proposals up for a vote on this app: the per-app cap on
+  // changes waiting for votes (#6156: WAITING_PER_APP), full.
   const capped = [];
-  for (let i = 0; i < 5; i += 1) {
+  for (let i = 0; i < bot.WAITING_PER_APP; i += 1) {
     capped.push((await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues)
        VALUES ($1, $2, $3, 'promoted', FALSE, '{99}') RETURNING id`,

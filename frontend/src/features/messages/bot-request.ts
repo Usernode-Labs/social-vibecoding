@@ -47,6 +47,35 @@ export function isBotNews(message: ConversationMessage): boolean {
 }
 
 /**
+ * Pure (#6207, 3 Nov 2026): whether a message is a request's news, which
+ * Main Chat no longer draws. Main holds what you said there and the bot's
+ * replies to it; a request's news is on that request's page, where its row
+ * goes (its plan with Build it, the bot's posts, its progress). A first
+ * version's news stays: it has no request page yet. The server leaves the
+ * same messages out of Main's stream (services/conversations.js
+ * REQUEST_NEWS); this is for one that arrives live.
+ */
+export function isRequestNews(message: ConversationMessage): boolean {
+  return isBotNews(message) && !message.metadata?.homeroomBot?.firstVersion;
+}
+
+/**
+ * Pure (#6250, 4 Nov 2026): the bot's line that opens a private thread from
+ * its "+", which Main Chat does not draw. A private thread's origin decides
+ * (Evan, 4 Nov): only one started from the "+" stays out of Main Chat. One
+ * the bot opened from Main quotes the message it answered, so its line
+ * carries a reply (`message.reply`) and stays, as the way to its row in the
+ * list; one opened from a request's page or a captured screen has its own
+ * kind (`opened_about`, `opened_design`) and stays too. The server leaves the
+ * same lines out (services/conversations.js PLUS_THREAD_OPENER); this is for
+ * one that arrives live.
+ */
+export function isPlusThreadOpener(message: ConversationMessage): boolean {
+  const meta = message.sender.bot ? message.metadata?.homeroomBot : null;
+  return !!meta && meta.kind === 'opened_thread' && !message.reply;
+}
+
+/**
  * Pure: the message a request's story opens on, read from the main stream:
  * its thread's root, else (news from before threads) its oldest piece, which
  * the story pane draws with the pieces after it. Null when the chat holds

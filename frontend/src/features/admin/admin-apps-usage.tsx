@@ -87,7 +87,7 @@ const UsageUI = Object.freeze({
   tileLabel: 'text-xs text-zinc-500 dark:text-zinc-400',
   tileSplit: 'mt-1 text-xs text-zinc-500 dark:text-zinc-400 tabular-nums',
   row: 'rounded-xl bg-zinc-100 dark:bg-zinc-800',
-  rowButton: 'w-full text-left p-3 rounded-xl hover:bg-zinc-200/60 dark:hover:bg-zinc-700/50 transition-colors',
+  rowButton: 'w-full text-start p-3 rounded-xl hover:bg-zinc-200/60 dark:hover:bg-zinc-700/50 transition-colors',
   rowHead: 'flex flex-wrap items-center justify-between gap-2',
   rowName: 'text-sm font-semibold text-zinc-900 dark:text-zinc-100',
   rowSlug: 'text-xs font-mono text-zinc-500 dark:text-zinc-400',

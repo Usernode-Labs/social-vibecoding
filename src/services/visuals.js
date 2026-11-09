@@ -6,8 +6,8 @@
 // commit range plausibly affects the UI (changed-file heuristic), spawns
 // the one-shot headless-Chromium capture container (capture/) to shoot
 // the production app ("before") and the staging container ("after") over
-// the internal docker network, stores the artifacts in Postgres
-// (session_visuals, latest set per session only), patches the GitHub PR
+// the internal docker network, uploads the artifacts and stores their keys
+// in Postgres (session_visuals, latest set per session only), patches the GitHub PR
 // body's marker-delimited "Before / after" block when a PR exists, and
 // emits a `visuals_ready` event so open dev-chat cards upgrade in place.
 //
@@ -19,6 +19,8 @@
 // contract as the #183 non-fatal staging build).
 
 const crypto = require('crypto');
+const mediaStore = require('./media-store');
+const visualMedia = require('./check-visual-media');
 const path = require('path');
 const log = require('./logger');
 const checkStore = require('../workflow/rules/check-store.ts');
@@ -36,6 +38,7 @@ const checkSignals = require('./check-signals');
 const unitSuite = require('./unit-suite');
 const unitSuiteRow = require('./unit-suite-row');
 const contentReview = require('./content-review');
+const tokenOrderCheck = require('./token-order-check');
 const smallChange = require('./small-change');
 const assetRouteCheck = require('./asset-route-check');
 const renderHealth = require('./render-health');
@@ -275,7 +278,8 @@ function mintCaptureToken(user, appId, { previewOnly = false } = {}) {
   return platformJwt.signAppIdentityToken({
     appId,
     user: {
-      id: user.id,
+      // A platform preview knows the personas by their fixed ids (SEC-06).
+      id: previewOnly ? require('./preview-personas').previewPersonaId(user) : user.id,
       username: user.username,
       usernode_pubkey: user.usernode_pubkey || null,
       locale: user.locale ?? null,
@@ -1495,7 +1499,8 @@ function groupRows(rows, expectedCommit = null) {
 // `hold` ({ runId }, the preview machine's checks run): the media go to
 // check_run_media under the run's id instead, and the transition that
 // settles the run publishes them to session_visuals with its verdict.
-async function storeArtifacts(pool, sessionId, commitHash, targets, shots, dropped = null, hold = null) {
+async function storeArtifacts(pool, sessionId, commitHash, targets, shots, dropped = null, hold = null,
+  { store = mediaStore.getStore() } = {}) {
   const pathByIndex = new Map();
   const viewportByIndex = new Map();
   const scenarioByIndex = new Map();
@@ -1542,24 +1547,33 @@ async function storeArtifacts(pool, sessionId, commitHash, targets, shots, dropp
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // Serializes replacement sets for a session, while keeping uploads and
+    // their references in the existing transaction. Deletes lock old rows
+    // before shared registry keys, keeping concurrent replacements ordered.
+    await client.query('SELECT id FROM chat_sessions WHERE id = $1 FOR UPDATE', [sessionId]);
     if (hold) await client.query('DELETE FROM check_run_media WHERE run_id = $1', [hold.runId]);
     else await client.query('DELETE FROM session_visuals WHERE session_id = $1', [sessionId]);
-    for (const r of (hasAfter ? rows : [])) {
-      const values = [r.id, sessionId, commitHash || null, r.kind, r.media, CONTENT_TYPES[r.media], r.buf, r.capturedPath || null, r.index, r.capturedViewport,
+    const kept = hasAfter ? rows : [];
+    const keys = await mediaStore.putMany(client, store, kept.map((r) => ({ data: r.buf, contentType: CONTENT_TYPES[r.media] })));
+    for (const [i, r] of kept.entries()) {
+      const meta = visualMedia.metadata(r.buf);
+      const values = [r.id, sessionId, commitHash || null, r.kind, r.media, CONTENT_TYPES[r.media], r.capturedPath || null, r.index, r.capturedViewport,
         Number.isInteger(r.status) && r.status > 0 ? r.status : null,
         r.kind === 'before' && !!r.fellBack,
         r.scenarioId, r.scenarioFingerprint];
       if (hold) {
         await client.query(
-          `INSERT INTO check_run_media (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index, captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint, run_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-          [...values, hold.runId]
+          `INSERT INTO check_run_media (id, session_id, commit_hash, kind, media, content_type, captured_path, capture_index, captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint, run_id,
+            object_key, sha256, bytes, legacy_etag)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+          [...values, hold.runId, keys[i], meta.sha256, meta.bytes, meta.legacyEtag]
         );
       } else {
         await client.query(
-          `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index, captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-          values
+          `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, captured_path, capture_index, captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint,
+            object_key, sha256, bytes, legacy_etag)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+          [...values, keys[i], meta.sha256, meta.bytes, meta.legacyEtag]
         );
       }
     }
@@ -2880,6 +2894,14 @@ async function settleCaptureRun(config, pool, run) {
     pool, sessionId: session.id, appId: app.id, repoOwner, repoName, commitHash,
   }).catch(() => null);
   if (contentOutcome) extraRows.push(contentOutcome.row);
+  // The sign-in token read after the bridge: a script this change adds
+  // above the bridge tag that reads the token from the address opens the
+  // app signed out inside Homeroom. Deterministic, cached per head, at
+  // settlement for the same reason as the review above. Never throws.
+  const tokenOrderOutcome = shotsOnly ? null : await tokenOrderCheck.maybeRunTokenOrderCheck({
+    config, pool, sessionId: session.id, appSlug: app.slug, repoOwner, repoName, commitHash,
+  }).catch(() => null);
+  if (tokenOrderOutcome) extraRows.push(tokenOrderOutcome.row);
   // The small-change tag, watch only: a row for admins, never a check row,
   // so it is not awaited and nothing below reads it. Cached per head like
   // the review above. Never rejects.

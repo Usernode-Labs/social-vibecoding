@@ -81,7 +81,7 @@ function AppVersionRow() {
       </span>
       <span
         id="about-app-version-slot"
-        className="drawer-ver drawer-ver-value ml-auto min-w-0 justify-end font-mono truncate"
+        className="drawer-ver drawer-ver-value ms-auto min-w-0 justify-end font-mono truncate"
       >{deploying ? t('settings:about.appVersion.deploying') : version || t('settings:about.appVersion.unknown')}</span>
     </div>
   );
@@ -119,26 +119,27 @@ function PlatformVersionRow() {
       </span>
       <span
         id="platform-version-pill-slot"
-        className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
+        className="drawer-ver-value ms-auto inline-flex min-w-0 justify-end"
       >
       </span>
     </div>
   );
 }
 
-/** Both rows read as links; the accent, because each is something to do. */
+/** Every row reads as a link; the accent, because each is something to do. */
 const LEGAL_LINK = 'text-sm font-medium text-violet-700 hover:underline dark:text-violet-400';
 
 /**
  * The terms and Homeroom's privacy notice (#5094, #5106), under the versions:
  * the sign-in screens name both, and this is where a signed-in person finds
  * them again, on the web and inside the Homeroom app (which shows this same
- * screen).
+ * screen). Then the two other legal pages the terms name: the Child Safety
+ * Standards and how to delete your account and data (#6043).
  *
  * Terms opens the terms sheet settings.js owns (`showTermsSheet`, the one the
  * Homeroom app's "about & legal" block opens too): the current version, its
- * full text link, and whether you accepted it. The privacy notice is a page
- * on the marketing site, so it is a plain new-tab link to the address
+ * full text link, and whether you accepted it. The other three are pages on
+ * the marketing site, so each is a plain new-tab link to the address
  * GET /api/public/waitlist/options serves (src/services/marketing-links.js);
  * inside the Homeroom app, public/js/nav-link.js hands a target="_blank"
  * link to another origin to the bridge's openExternal. The address arrives
@@ -147,6 +148,8 @@ const LEGAL_LINK = 'text-sm font-medium text-violet-700 hover:underline dark:tex
 function LegalLinks() {
   const t = useMessages('settings');
   const privacy = useWaitlistOptions()?.privacy_link || undefined;
+  const childSafety = useWaitlistOptions()?.child_safety_link || undefined;
+  const accountDeletion = useWaitlistOptions()?.account_deletion_link || undefined;
   const openTerms = () => {
     const settings = window.Settings;
     const show = settings?.showTermsSheet;
@@ -166,6 +169,20 @@ function LegalLinks() {
           rel="noopener noreferrer"
           className={LEGAL_LINK}
         >{t('settings:about.legal.privacy')}</a>
+        <a
+          id="settings-about-child-safety"
+          href={childSafety}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={LEGAL_LINK}
+        >{t('settings:about.legal.childSafety')}</a>
+        <a
+          id="settings-about-account-deletion"
+          href={accountDeletion}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={LEGAL_LINK}
+        >{t('settings:about.legal.accountDeletion')}</a>
       </div>
     </div>
   );

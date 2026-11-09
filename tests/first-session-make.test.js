@@ -785,8 +785,9 @@ test('the maker\'s way on after Make it: the app itself once it runs, Home and t
   // Review the plan while one waits, else a quiet Open Homeroom bot.
   assert.match(read('public/js/app-view.js'),
     /label: thumb\.buildLine === 'plan' \? PlatformI18n\.t\('changes:firstVersion\.reviewPlan'\) : PlatformI18n\.t\('changes:firstVersion\.openBot'\),/);
-  // Create's Go to chat still opens the chat by address.
-  assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
+  // Create's Go to chat still opens the chat by address: on the Homeroom bot
+  // tab, as Main Chat (1 Nov 2026: the chat's only place).
+  assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = '#homeroom-bot\/main';/);
 });
 
 test('the admin Journey page says which first session answered the join screen', () => {
@@ -833,6 +834,39 @@ test('a waitlist answer opens the make screen on Your own idea, filled in, with 
   assert.equal(make.missingAnswer(idea, 'Run Club'), null);
   assert.equal(make.missingAnswer(idea, ''), 'name');
   assert.match(read(`${DIR}/make.tsx`), /const text = templated && said \? said\.text : brief;/);
+});
+
+test('#5928: an idea from a Discover search says so, not that it came from the waitlist', () => {
+  const make = loadTsx(`${DIR}/make.tsx`);
+  assert.equal(message(make.SEARCH_IDEA_LINE), 'Filled in from your search.');
+  const idea = 'plant swap';
+  const base = { who: 'Jordan', onMade() {}, onLookAround() {}, idea };
+
+  // The waitlist answer, by default and by name: exactly as before.
+  const waitlist = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', base);
+  assert.equal(renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, ideaSource: 'waitlist' }), waitlist);
+  assert.match(waitlist, /<p data-make-waitlist-idea="" class="[^"]*">Filled in from your waitlist answer\.<\/p>/);
+  assert.doesNotMatch(waitlist, /data-make-search-idea/);
+
+  // From Create's door with a search: the box is filled the same way, and
+  // the line under it names the search.
+  const search = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, entry: 'create', ideaSource: 'search' });
+  assert.match(search, new RegExp(`<textarea[^>]*id="first-session-brief"[^>]*>${idea}</textarea>`));
+  const line = /<p data-make-search-idea="" class="([^"]*)">([^<]*)<\/p>/.exec(search);
+  assert.ok(line, 'the search line is drawn');
+  assert.equal(line[2], message(make.SEARCH_IDEA_LINE));
+  assert.doesNotMatch(search, /data-make-waitlist-idea|waitlist answer/);
+
+  // A private thread's words: filled in, and no line credits anything.
+  const thread = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, entry: 'create', ideaSource: 'thread' });
+  assert.match(thread, new RegExp(`<textarea[^>]*id="first-session-brief"[^>]*>${idea}</textarea>`));
+  assert.doesNotMatch(thread, /data-make-waitlist-idea|data-make-search-idea/);
+
+  // Create's door never claims the waitlist: a search says search, anything
+  // else says nothing, and the first session's own screen keeps the default.
+  const index = read(`${DIR}/index.tsx`);
+  assert.match(index, /const ideaSource: IdeaSource = opts\?\.ideaSource === 'search' \? 'search' : 'thread';/);
+  assert.match(index, /ideaSource=\{mode\.ideaSource \?\? 'thread'\}/);
 });
 
 test('the line goes once the words are changed, and a template can still be picked', () => {

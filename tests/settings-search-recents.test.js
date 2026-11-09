@@ -257,7 +257,12 @@ test('a search is remembered when a result is chosen, never for Sign out', () =>
     // Enter goes through the same choose().
     calls.length = 0;
     const fieldEl = find(desktop, (n) => n.props.id === 'settings-filter-desktop')[0];
-    const input = fieldEl.type(fieldEl.props);
+    // The shell's search pill (overnight audit W05): a glyph and the input in
+    // `.messages-search`, so the input is the wrapper's child, not the root.
+    const pill = fieldEl.type(fieldEl.props);
+    assert.match(pill.props.className, /\bmessages-search\b/);
+    const input = find(pill, (n) => n.type === 'input')[0];
+    assert.equal(input.props.className, 'messages-search-input');
     assert.equal(input.props['aria-keyshortcuts'], 'Control+K Meta+K /', 'the box announces the shortcut');
     input.props.onKeyDown({ key: 'Enter', preventDefault() {} });
     assert.deepEqual(calls[0], ['remember', 'pass']);
@@ -273,7 +278,7 @@ test('a search is remembered when a result is chosen, never for Sign out', () =>
 });
 
 test('the prerendered hosts are still empty until settings.js publishes', () => {
-  assert.equal(renderComponent(NAV, 'SettingsMobileMenu', {}), '<div id="settings-mobile-menu-host" class="md:hidden"></div>');
+  assert.equal(renderComponent(NAV, 'SettingsMobileMenu', {}), '<div id="settings-mobile-menu-host" class="lg:hidden"></div>');
   assert.equal(renderComponent(NAV, 'SettingsNavDesktop', {}),
     '<nav id="settings-nav-desktop" aria-label="Settings sections" class="space-y-1"></nav>');
 });
@@ -407,4 +412,25 @@ test('the new text is in the catalog', () => {
   assert.equal(message('settings:nav.filter.recent.clear'), 'Clear');
   assert.equal(message('settings:nav.filter.recent.clearAria'), 'Clear recent searches');
   assert.equal(message('settings:nav.filter.recent.again', { query: 'theme' }), 'Search again for “theme”');
+});
+
+// Overnight audit W05 (1 Nov 2026): Account opened under "Profile", "Sign-in"
+// and "Delete account" at one large size while "Account" was lit in the list.
+test('the pane names the lit page once, from the nav descriptor, and nothing before it', () => {
+  const { nav } = hostsWith('', []);
+  const title = nav.SettingsPageTitle();
+  assert.equal(title.type, 'h2');
+  assert.equal(title.props.className, 'settings-page-title');
+  assert.equal(title.props.children, 'Account', 'the lit row\'s own label');
+  assert.equal(renderComponent(NAV, 'SettingsPageTitle', {}), '', 'the prerender draws nothing');
+  const css = read('public/css/app.css');
+  assert.match(css, /\n\.settings-page-title \{ display: none; \}/, 'hidden unless the page has several parts');
+  // A nested :has() is invalid and drops the whole rule, which is how the
+  // first cut of this shipped nothing at all.
+  const block = css.slice(css.indexOf('ONE LARGE HEADING A PAGE'), css.indexOf('.messages-search.settings-filter'));
+  assert.equal((block.match(/:has\(/g) || []).length, 2, 'one :has per selector, never one inside another');
+  assert.match(block, /@media \(min-width: 1024px\) \{\s*\.settings-sheet:has\([^{]*\) > \.settings-page-title \{\s*display: block;\s*font-size: 22px;/);
+  assert.match(block, /\) h3 \{\s*font-size: 17px;/, 'the parts\' headings step down under it');
+  assert.match(read('frontend/src/features/settings/index.tsx'),
+    /<div id="settings-section-content" className="settings-sheet dc-lift dc-lift-session">\s*<SettingsPageTitle \/>/);
 });

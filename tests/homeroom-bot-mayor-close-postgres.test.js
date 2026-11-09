@@ -14,7 +14,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
@@ -103,9 +102,9 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   let seq = 0;
   async function user(prefix, { synthetic = false } = {}) {
@@ -174,7 +173,7 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
     return conversations.getMessage(pool, ada, opened.conversationId, sent.messageId);
   }
   const actionOf = async (messageId) => (await pool.query(
-    'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1', [messageId],
+    'SELECT * FROM bot_cards WHERE message_id = $1', [messageId],
   )).rows[0];
   const closeVotes = () => pool.query(
     `SELECT payload, created_by, status FROM issues WHERE app_id = $1 AND kind = 'close_issue' ORDER BY id`, [ears.id],
@@ -222,10 +221,10 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
       && /proposed closing issue #6/.test(m.content)), 'a line on the project\'s vote list');
     assert.ok(systemMessages.some((m) => m.thread?.type === 'issue' && m.thread.ref === 6
       && /proposed closing issue #6/.test(m.content)), 'a line on the request\'s discussion');
-    const decided = await pool.query('SELECT status FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    const decided = await pool.query('SELECT status FROM bot_cards WHERE id = $1', [action.id]);
     assert.equal(decided.rows[0].status, 'done');
     const ack = await lastAck();
-    assert.match(ack.rows[0].content, /^Done\. I opened a vote on closing request #6 on Ear trainer\. It closes if its group votes for it\.$/);
+    assert.match(ack.rows[0].content, /^Done\. I opened a vote on closing request \[#6\]\(https:\/\/app\.test\/#app\/ear-trainer\/dev\/issues\/6\) on Ear trainer\. It closes if its group votes for it\.$/);
     assert.equal((await tap(action, 'yes')).status, 409, 'decided once');
     assert.equal((await closeVotes()).rows.length, 1, 'no second vote');
   });
@@ -275,7 +274,7 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
         userId: ada.id, actionId: action.id, choice: 'yes', key: `action:${action.id}`, deps: { bot, workflow, domain: 'app.test' } });
       await assert.rejects(act(), /ECONNRESET/, 'thrown to the work');
       await assert.rejects(act(), /secondary rate limit/, 'a rate limit too, though GitHub says 403');
-      const { rows: [kept] } = await pool.query('SELECT status, decided_key FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+      const { rows: [kept] } = await pool.query('SELECT status, decided_key FROM bot_cards WHERE id = $1', [action.id]);
       assert.deepEqual([kept.status, kept.decided_key], ['done', `action:${action.id}`], 'its claim kept, not failed');
       assert.deepEqual(await act(), { done: true, why: null });
       assert.equal((await closeVotes()).rows.length, before + 1, 'one vote opened');

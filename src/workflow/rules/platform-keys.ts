@@ -111,6 +111,10 @@ export const PLATFORM_ENV_UNWRITABLE = new Set([
   'USERNODE_DB_PASSWORD',
   'GITHUB_APP_ID',
   'GITHUB_PRIVATE_KEY',
+  // Code-host credentials are deploy-owned; their process roles are set
+  // by the chart, never by a value applied from the platform console.
+  'GIT_HOST_TOKEN',
+  'GIT_HOST_READ_TOKEN',
   // Retired with the bot account GitHub suspended (25 Oct 2026): nothing
   // reads it, and it stays refused so it cannot come back from the console.
   'GITHUB_BOT_TOKEN',

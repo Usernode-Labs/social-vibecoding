@@ -767,18 +767,24 @@ test('the BYOK dot went with the row it marked', () => {
 
 // ── Two-level layout ───────────────────────────────────────────────────
 
-test('one breakpoint constant, read through matchMedia, in step with md:', () => {
-  assert.match(settingsJs, /DESKTOP_MEDIA: '\(min-width: 768px\)'/,
-    'the sidebar breakpoint is declared once, as 768px (Tailwind md)');
+// Overnight audit W01 (1 Nov 2026): lg, not md. From 768 the app's 212px rail
+// is open too, and at 800 the pane beside the section list was ~260px wide.
+test('one breakpoint constant, read through matchMedia, in step with lg:', () => {
+  assert.match(settingsJs, /DESKTOP_MEDIA: '\(min-width: 1024px\)'/,
+    'the sidebar breakpoint is declared once, as 1024px (Tailwind lg)');
   const isMobile = settingsJs.slice(settingsJs.indexOf('    _isMobile() {'));
   assert.match(isMobile.slice(0, 300), /matchMedia\(Settings\.DESKTOP_MEDIA\)/,
     '_isMobile reads the constant, never a hardcoded width');
   assert.match(isMobile.slice(0, 300), /catch \{ return false; \}/,
     'no matchMedia degrades to the desktop layout, not a phone layout');
-  assert.match(html, /id="settings-sidebar-col" class="hidden md:block md:w-56/,
-    'the sidebar still switches at md — the constant must match it');
-  assert.match(html, /<div class="md:flex md:items-start md:gap-6">[\s\S]{0,400}settings-sidebar-col/,
-    'the shell row still switches at md');
+  assert.match(html, /id="settings-sidebar-col" class="hidden lg:block lg:w-56/,
+    'the sidebar switches at lg — the constant must match it');
+  assert.match(html, /<div class="lg:flex lg:items-start lg:gap-6">[\s\S]{0,400}settings-sidebar-col/,
+    'the shell row switches at lg');
+  const css = read('public/css/app.css');
+  assert.match(css, /@media \(min-width: 1024px\) \{\s*#settings-sidebar-col \{/,
+    'and so do the sidebar sheet\'s own rules in app.css');
+  assert.doesNotMatch(css, /@media \(min-width: 768px\) \{\s*#settings-(sidebar-col|root|content-col)/);
 });
 
 test('level state and the viewport listener exist', () => {
@@ -926,7 +932,7 @@ test('the nav hosts still ship EMPTY, so the prerender is unchanged', () => {
   // console.errors and the proposal checks fail.
   assert.match(html, /id="settings-nav-desktop" aria-label="Settings sections" class="space-y-1"><\/nav>/,
     '#settings-nav-desktop prerenders empty');
-  assert.match(html, /id="settings-mobile-menu-host" class="md:hidden"><\/div>/,
+  assert.match(html, /id="settings-mobile-menu-host" class="lg:hidden"><\/div>/,
     '#settings-mobile-menu-host prerenders empty');
   assert.match(navStoreJs, /desktop: null/, 'both descriptors start null');
   assert.match(navStoreJs, /mobile: null/);
@@ -936,7 +942,7 @@ test('UX audit: the section list is the pane\'s sheet, and scrolls on its own', 
   // It was drawn on the strip while the pane rose beside it, and scrolled
   // away with the screen (20 Oct 2026).
   assert.match(html,
-    /id="settings-sidebar-col" class="hidden md:block md:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet"/,
+    /id="settings-sidebar-col" class="hidden lg:block lg:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet"/,
     'the column wears the pane\'s own lift, after the width classes the breakpoint test reads');
   assert.match(navTsx,
     /className="sticky top-0 z-10 -mt-2\.5 pt-2\.5 pb-3 bg-\[color:var\(--dc-sheet-solid\)\]"/,
@@ -2105,7 +2111,7 @@ test('the local-agent setup guide is always-visible section markup', () => {
   assert.equal(new Set(copyLabels).size, 4, 'every Copy control has a distinct accessible name');
   assert.equal((guide.match(/items-stretch overflow-hidden rounded-md border/g) || []).length, 4,
     'each command and its Copy control share one clipped, bordered field');
-  assert.equal((guide.match(/border-l border-zinc-200/g) || []).length, 4,
+  assert.equal((guide.match(/border-s border-zinc-200/g) || []).length, 4,
     'each integrated Copy control is separated from its code by one divider');
   const source = read(CLI_GUIDE);
   assert.match(source, /PlatformUI/);
@@ -2241,32 +2247,45 @@ test('Re-enable re-grants by slug with the cap and BYOK choice the row carries (
 // ── The connector cards (#1191) ───────────────────────────────────────
 
 const CONNECTORS_LIST = 'frontend/src/features/settings/connectors-list.tsx';
-const connectorRows = (state) => renderComponent(CONNECTORS_LIST, 'ConnectorsListView', state);
+const toolStatus = (status) => renderComponent(CONNECTORS_LIST, 'ToolStatusView', { status });
+const toolRows = (connections) => renderComponent(CONNECTORS_LIST, 'ToolConnectionsView', { connections });
 
-test('the connections list renders its three host states', () => {
-  assert.equal(connectorRows({ phase: 'idle', connectors: [] }), '');
-  assert.equal(
-    shellMarkup().includes('<div id="connectors-list" class="space-y-2"></div>'),
-    true, 'and the prerendered document agrees');
-  assert.match(connectorRows({ phase: 'loading', connectors: [] }), /Loading connections…/);
-  assert.match(connectorRows({ phase: 'ready', connectors: [] }),
-    /No chat products connected yet\./);
+test('the cards ship their state hosts empty, so the prerender draws no status', () => {
+  const shell = shellMarkup();
+  for (const tool of ['claude', 'chatgpt', 'codex', 'generic']) {
+    assert.ok(shell.includes(`id="connector-tool-${tool}"`), `${tool} has its card`);
+    assert.match(shell, new RegExp(`<span data-connector-status="${tool}"[^>]*></span>`),
+      `${tool}'s status word waits for the list`);
+    assert.match(shell, new RegExp(`<div data-connector-connections="${tool}"[^>]*></div>`),
+      `${tool}'s connections wait for the list`);
+  }
+  assert.ok(shell.includes('<div id="connectors-list" class="space-y-3">'),
+    'the cards stack inside the host the id stayed on');
+});
+
+test('a status is a plain word, and only Needs attention carries a dot', () => {
+  assert.match(toolStatus('working'), new RegExp(message('settings:connectors.tool.status.working')));
+  assert.match(toolStatus('unused'), new RegExp(message('settings:connectors.tool.status.unused')));
+  assert.match(toolStatus('none'), new RegExp(message('settings:connectors.tool.status.none')));
+  assert.match(toolStatus('attention'), new RegExp(message('settings:connectors.tool.status.attention')));
+  for (const status of ['working', 'unused', 'none']) {
+    assert.doesNotMatch(toolStatus(status), /bg-amber-500/, `${status} has no dot`);
+  }
+  assert.match(toolStatus('attention'), /bg-amber-500/);
 });
 
 test('every connection is disconnectable, and names itself', () => {
-  const html2 = connectorRows({
-    phase: 'ready',
-    connectors: [
-      { id: '1', title: 'Claude', detail: 'connected 1 Jan · last used 2 Jan' },
-      { id: '2', title: 'Connected client', detail: 'connected 1 Jan · never used' },
-    ],
-  });
+  const html2 = toolRows([
+    { id: '1', title: 'Claude', detail: 'Last active 2 Jan', capabilities: 'Can read your apps' },
+    { id: '2', title: 'Connected client', detail: 'Connected 1 Jan · not used yet', capabilities: null },
+  ]);
   assert.equal((html2.match(/>Disconnect</g) || []).length, 2,
     'unlike a credential, a connection is always revocable');
   assert.match(html2, />Claude</);
   // The fallback title, for a client that registered without a name.
   assert.match(html2, />Connected client</);
-  assert.match(html2, /never used/);
+  assert.match(html2, /not used yet/);
+  assert.match(html2, /Can read your apps/);
 });
 
 test('settings.js publishes the connector cards rather than building them', () => {

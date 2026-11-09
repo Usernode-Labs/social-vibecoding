@@ -52,7 +52,35 @@ export function isNearTop(el: ScrollBox, slack: number = LOAD_OLDER_SLACK_PX): b
   return el.scrollTop <= slack;
 }
 
-/** Whether the content drawn is shorter than the scroller needs to scroll. */
+/**
+ * #6148: how close to the foot of a window a message link opened part-way
+ * back (#2387) still counts as at its foot: the same allowance as the top.
+ */
+export const LOAD_NEWER_SLACK_PX = LOAD_OLDER_SLACK_PX;
+
+/** Anything with a box on screen, as far as `isNearStart` reads one. */
+export interface EdgeBox {
+  getBoundingClientRect(): { top: number };
+}
+
+/**
+ * #6148: whether the reader is at, or within `slack` of, the start of a list
+ * that begins part-way down its scroller. A thread's replies start under the
+ * message the thread hangs off, which can be taller than the allowance on
+ * its own, so the top of the scroller is the wrong place to measure from.
+ * `start` is the list's first row: the reader is near it while it is no more
+ * than `slack` above the scroller's top edge, or anywhere below it.
+ */
+export function isNearStart(el: EdgeBox, start: EdgeBox, slack: number = LOAD_OLDER_SLACK_PX): boolean {
+  return el.getBoundingClientRect().top - start.getBoundingClientRect().top <= slack;
+}
+
+/**
+ * Whether the content drawn is shorter than the scroller needs to scroll:
+ * nothing the reader can do reaches either end, so the next page is read in
+ * without them (#5019 at a conversation's top; #6148 at a linked window's
+ * foot and at the top of a thread's replies).
+ */
 export function needsMoreHistory(el: ScrollBox, slack: number = LOAD_OLDER_SLACK_PX): boolean {
   return el.scrollHeight - el.clientHeight <= slack;
 }
@@ -100,7 +128,9 @@ export interface ObserverEnv extends HoldEnv {
  * step with where the reader scrolls. `atPresent` says whether the bottom of
  * what is drawn is the newest message: at the bottom of a window a message
  * link opened part-way back (#2387), the reader is not following anything,
- * and "Load newer messages" must not jump past what it just loaded.
+ * and the newer page scrolling down reads in there (#6148) must not jump
+ * past what it just loaded: `pinned` waits until that window reaches the
+ * present.
  * Returns the detach.
  */
 export function attachStickToBottom(
@@ -109,7 +139,15 @@ export function attachStickToBottom(
   atPresent: { current: boolean } = { current: true },
   env: ObserverEnv = globalThis as unknown as ObserverEnv,
 ): () => void {
-  const follow = () => { if (pinned.current) el.scrollTop = el.scrollHeight; };
+  // #6405: where our own follow last put the scroller. Its scroll event can
+  // be measured after the card grew past that point; that is not the reader
+  // leaving the bottom, and it used to stop the following for good.
+  let followedAt: number | null = null;
+  const follow = () => {
+    if (!pinned.current) return;
+    el.scrollTop = el.scrollHeight;
+    followedAt = el.scrollTop;
+  };
   // The keyboard arriving for the composer beside this transcript.
   const hold = attachKeyboardHold(el, {
     pinned: () => pinned.current && atPresent.current,
@@ -122,6 +160,11 @@ export function attachStickToBottom(
       return;
     }
     pinned.current = atPresent.current && isNearBottom(el);
+    // Our own follow, delivered after the content grew past where it put the
+    // reader: not the reader leaving the bottom, so it stays pinned. This
+    // runs after the assignment above so the reader's own scroll, which is
+    // always above that point, keeps un-pinning exactly as it did.
+    if (!pinned.current && atPresent.current && followedAt !== null && el.scrollTop >= followedAt) pinned.current = true;
   };
   el.addEventListener('scroll', onScroll, { passive: true });
   const Sizes = env.ResizeObserver;

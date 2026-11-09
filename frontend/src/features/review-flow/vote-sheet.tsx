@@ -46,7 +46,11 @@ import type { ReviewItem } from './model';
  * another.
  */
 function ThreadTalk({ item }: { item: ReviewItem }): ReactNode {
-  const own = item.kind === 'governance' ? { type: 'governance', ref: item.id } : { type: 'session', ref: item.id };
+  // #6439: a vote to close a request talks on the request, as everything
+  // else about the request does; every other decision talks on its own row.
+  const own = item.kind === 'governance'
+    ? (item.request ? { type: 'issue', ref: item.request } : { type: 'governance', ref: item.id })
+    : { type: 'session', ref: item.id };
   const asks = item.kind === 'proposal' && !!item.number;
   const [anchor, setAnchor] = useState<{ type: string; ref: number } | null>(asks ? null : own);
   useEffect(() => {
@@ -116,9 +120,20 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   const [shared, setShared] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [asks, setAsks] = useState<AskMsg[]>([]);
+  // #6098: bumped once a No with its reason has gone, so the pair takes focus
+  // back after the sheet has redrawn on that vote.
+  const [refocus, setRefocus] = useState(0);
 
   // A new change starts with an empty line, no answer and no questions.
   useEffect(() => { setLine(''); setChoice(null); setShared(null); setAsks([]); }, [item.key]);
+
+  // #6098: the reason sheet's Send unmounts with the vote, which would drop
+  // focus to the page. It comes back to No as the cause of the sheet, so the
+  // next Tab carries on from the answer just given.
+  useEffect(() => {
+    if (!refocus) return;
+    ref.current?.querySelector<HTMLElement>('[data-rf-vote="no"]')?.focus({ preventScroll: true });
+  }, [refocus]);
 
   const whyChoices: { key: NoChoice; text: string }[] = [
     { key: 'notWorking', text: t('communities:review.why.notWorking') },
@@ -164,7 +179,12 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   // Ask for changes does). The questions asked here before stay readable.
   const askInAi = () => {
     void openBot(item.kind === 'governance'
-      ? { type: 'governance', proposalId: item.id, appSlug: item.app.slug, title: item.title }
+      ? {
+        type: 'governance', proposalId: item.id, appSlug: item.app.slug, title: item.title,
+        // #6439: a vote to close a request is about the request, so the
+        // reference carries its number and the bot's answer names the request.
+        ...(item.request ? { issueNumber: item.request } : {}),
+      }
       : { type: 'proposal', sessionId: item.id, appSlug: item.app.slug, title: item.title });
   };
 
@@ -183,6 +203,9 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   // Your own answer again takes the vote back; the other one changes it. A
   // No asks why first: the vote is cast only when the reason sheet is sent.
   const tap = (v: Vote) => {
+    // #6098: `aria-disabled` (below) keeps the button focusable while a vote
+    // is on its way, so the press itself has to be refused here.
+    if (busy) return;
     if (vote === v) { void undo(); return; }
     if (v === 'yes') { setShared(null); void cast(v); return; }
     setChoice(null);
@@ -195,7 +218,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
     const text = (detail
       ? t('communities:review.why.withDetail', { choice: choiceText, detail })
       : choiceText).slice(0, NO_LINE_MAX);
-    if (await cast('no', text)) setShared(text);
+    if (await cast('no', text)) { setShared(text); setRefocus((n) => n + 1); }
   };
   const rest = vote ? 'voted' : 'ask';
 
@@ -210,12 +233,12 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   const pair = () => (
     <div className="rf-pair" role="radiogroup" aria-label={t('communities:review.sheet.label')} data-rf-voted={vote || undefined}>
       <span className="rf-pair-thumb" aria-hidden="true" />
-      <button type="button" role="radio" aria-checked={vote === 'yes'} className="rf-pair-btn" data-rf-vote="yes" disabled={busy} onClick={() => tap('yes')}>
+      <button type="button" role="radio" aria-checked={vote === 'yes'} className="rf-pair-btn" data-rf-vote="yes" aria-disabled={busy || undefined} onClick={() => tap('yes')}>
         <span className="rf-pair-mark">{Icon.check}</span>
         <span>{item.approve ? t('communities:review.vote.approve') : t('communities:review.vote.yes')}</span>
       </button>
       <span className="rf-pair-div" aria-hidden="true" />
-      <button type="button" role="radio" aria-checked={vote === 'no'} className="rf-pair-btn" data-rf-vote="no" disabled={busy} onClick={() => tap('no')}>
+      <button type="button" role="radio" aria-checked={vote === 'no'} className="rf-pair-btn" data-rf-vote="no" aria-disabled={busy || undefined} onClick={() => tap('no')}>
         <span className="rf-pair-mark">{Icon.x}</span>
         <span>{item.approve ? t('communities:review.vote.dontApprove') : t('communities:review.vote.no')}</span>
       </button>

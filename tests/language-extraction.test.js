@@ -280,8 +280,6 @@ test('the Workshop\'s counted words read with a plural form for each count, and 
   // message of its own.
   for (const n of [1, 2, 21]) {
     assert.equal(message('project:workRow.replies', { count: n }), `${n} ${n === 1 ? 'comment' : 'comments'}`);
-    assert.equal(message('project:workshop.mine.open', { count: n }), `${n} open`);
-    assert.equal(message('project:workshop.fresh.count', { count: n }), `${n} since your last visit`);
     assert.equal(message('project:workshop.dash.onYou', { count: n }), `${n} on you`);
     assert.equal(message('project:workshop.dash.fromLastWeek', { count: n }), `from ${n}`);
     for (const total of [2, 5, 21]) {
@@ -359,7 +357,6 @@ test('a stand-in for a missing name never reaches a sentence as the name, wherev
     ['leaderboard:standings.openDetails', 'leaderboard:standings.openDetailsAnonymous', { name: message('leaderboard:standings.anonymous') }],
     ['leaderboard:kudos.row.by', 'leaderboard:kudos.row.byUnknown', { username: message('leaderboard:kudos.unknownUser') }],
     ['session:transcript.attachment.title', 'session:transcript.attachment.titleUnnamed', { filename: message('session:transcript.attachment.unnamed') }],
-    ['discover:detail.contributor.viewChanges', 'discover:detail.contributor.viewChangesUnnamed', { username: 'unknown' }],
   ]) {
     assert.equal(message(unnamed, rest), message(named, { ...rest, ...standIn }), unnamed);
   }
@@ -396,9 +393,6 @@ test('a stand-in for a missing name never reaches a sentence as the name, wherev
   assert.match(read('frontend/src/features/leaderboard/leaderboard.js'), /authorUnknown: !row\.author_username,/);
   assert.match(read('frontend/src/features/leaderboard/kudos-pane.tsx'), /row\.authorUnknown \? t\('leaderboard:kudos\.row\.byUnknown'\)/);
   assert.match(read('public/js/session-transcript.js'), /htmlText\('session:transcript\.attachment\.titleUnnamed'\)/);
-  assert.match(read('frontend/src/features/apps/browse-detail.tsx'), /row\.unnamed \? t\('discover:detail\.contributor\.viewChangesUnnamed'\)/);
-  assert.equal(message('discover:detail.contributor.unknownHandle'), '@unknown', 'the row shows what it always showed');
-  assert.match(read('frontend/src/features/apps/browse-detail.tsx'), /row\.unnamed \? t\('discover:detail\.contributor\.unknownHandle'\) : `@\$\{row\.who\}`/);
 });
 
 test('a normalizer says whether the name it gives is real, and the sentence downstream uses that', async (t) => {
@@ -414,26 +408,27 @@ test('a normalizer says whether the name it gives is real, and the sentence down
   const { module: api } = await loadInSpanish(t, 'frontend/src/features/messages/api.ts', es);
   const { module: bot } = await loadInSpanish(t, 'frontend/src/features/messages/bot-shared.ts', es);
 
-  // The Homeroom bot's tray: Now, Needs you and History all come through here.
+  // The viewer's requests (GET /api/ai/tracks): every track, whatever its
+  // stage, comes through here (5 Nov 2026: the tray's Now, Needs you and
+  // History are gone).
   const work = api.normalizeBotWork({
-    now: [{ firstVersion: true, phase: 'building' }, { appSlug: 'recetas', issueNumber: 7, phase: 'building' },
-      { appName: 'A project', firstVersion: true, phase: 'building' }],
-    needsYou: [{ firstVersion: true, doing: 'Waiting for your answer' }],
-    history: [{ firstVersion: true, outcome: 'merged' }],
+    tracks: [{ firstVersion: true, work: { stage: 'building' } }, { appSlug: 'recetas', issueNumber: 7, work: { stage: 'building' } },
+      { appName: 'A project', firstVersion: true, work: { stage: 'building' } },
+      { firstVersion: true, work: { stage: 'waiting_for_you', why: 'question' } }, { firstVersion: true, work: { stage: 'live' } }],
   });
-  const [nameless, slugged, calledAProject] = work.now;
+  const [nameless, slugged, calledAProject, ...others] = work.tracks;
   assert.equal(nameless.appUnnamed, true);
   assert.equal(nameless.appName, 'Un proyecto', 'alone, the stand-in is the catalog\'s label');
   assert.equal(bot.jobName(nameless), 'Primera versión de un proyecto');
   assert.doesNotMatch(bot.jobName(nameless), /A project|de Un proyecto/);
-  assert.equal(slugged.appUnnamed, false, 'a slug names the project');
+  assert.ok(!slugged.appUnnamed, 'a slug names the project');
   assert.equal(bot.jobName(slugged), 'recetas n.º 7');
-  assert.equal(calledAProject.appUnnamed, false, 'a project really called "A project" is named');
+  assert.ok(!calledAProject.appUnnamed, 'a project really called "A project" is named');
   assert.equal(bot.jobName(calledAProject), 'Primera versión de A project');
-  for (const [name, section] of [['needsYou', work.needsYou], ['history', work.history]]) {
-    assert.equal(section.length, 1, `${name} is read from the payload`);
-    assert.equal(section[0].appUnnamed, true, name);
-    assert.equal(bot.jobName(section[0]), 'Primera versión de un proyecto', name);
+  assert.equal(others.length, 2, 'a track in any stage is read from the payload');
+  for (const track of others) {
+    assert.equal(track.appUnnamed, true, track.work.stage);
+    assert.equal(bot.jobName(track), 'Primera versión de un proyecto', track.work.stage);
   }
 
   // A conversation nobody named, and one that is really called "Conversation".
@@ -466,8 +461,6 @@ test('every unnamed wording added for a stand-in reads as the named one did with
     ['messages:members.leave.title', 'messages:members.leave.titleUntitled', { group: 'Conversation' }],
     ['messages:shareTo.sharedTo', 'messages:shareTo.sharedToUntitled', { destination: 'Conversation' }],
     ['messages:members.remove.title', 'messages:members.remove.titleUnknown', { username: 'unknown' }],
-    ['messages:create.block.title', 'messages:create.block.titleUnknown', { username: 'unknown' }],
-    ['messages:create.result.blockNamed', 'messages:create.result.blockUnknown', { username: 'unknown' }],
     ['messages:invitation.invitedBy', 'messages:invitation.invitedByUnknown', { username: 'unknown' }],
     ['messages:invitation.declineAndBlock', 'messages:invitation.declineAndBlockUnknown', { username: 'unknown' }],
     ['messages:attachments.removeNamed', 'messages:attachments.removeUnnamed', { file: 'file' }],
@@ -478,14 +471,12 @@ test('every unnamed wording added for a stand-in reads as the named one did with
     ['chat:group.menu.block', 'chat:group.menu.blockUnknown', { username: 'System' }],
     ['chat:group.blockConfirm.title', 'chat:group.blockConfirm.titleUnknown', { username: 'System' }],
     ['chat:group.report.label', 'chat:group.report.labelUnknown', { username: 'System' }],
-    ['chat:group.composer.replyingTo', 'chat:group.composer.replyingToPr', { name: 'PR #12', number: 12 }],
-    ['chat:group.composer.replyingTo', 'chat:group.composer.replyingToPrUnnumbered', { name: 'PR #' }],
+    ['chat:group.composer.replyingTo', 'chat:group.composer.replyingToPr', { name: 'PR 12', number: 12 }],
+    ['chat:group.composer.replyingTo', 'chat:group.composer.replyingToPrUnnumbered', { name: 'PR' }],
     ['devchat:transcript.attachment.openFullSize', 'devchat:transcript.attachment.openFullSizeUnnamed', { name: 'file' }],
     ['devchat:transcript.attachment.download', 'devchat:transcript.attachment.downloadUnnamed', { name: 'file' }],
     ['agent:appContext.about.lineage.linkTitle', 'agent:appContext.about.lineage.linkTitleDeleted', { app: '<deleted>' }],
     ['agent:appContext.about.lineage.remixedFrom', 'agent:appContext.about.lineage.remixedFromDeleted', { app: '<deleted>' }],
-    ['discover:detail.remixedFrom.line', 'discover:detail.remixedFrom.lineDeleted', { app: '<deleted>' }],
-    ['discover:detail.remixedFrom.openOriginal', 'discover:detail.remixedFrom.openOriginalDeleted', { app: '<deleted>' }],
     ['home:grid.tile.remixedFrom', 'home:grid.tile.remixedFromDeleted', { app: '<deleted>' }],
     ['project:communityCard.inviteCard.join', 'project:communityCard.inviteCard.joinUnnamed', { project: 'this community' }],
   ];
@@ -609,8 +600,9 @@ test('the flag survives every copy between the normalizer and the sentence', asy
     ['messages:thread.typingTwo', 'messages:thread.typingTwoUnknown', { first: 'unknown', second: 'unknown' }],
     ['messages:thread.typingTwo', 'messages:thread.typingTwoFirstUnknown', { first: 'unknown', second: 'ada' }],
     ['messages:thread.typingTwo', 'messages:thread.typingTwoSecondUnknown', { first: 'ada', second: 'unknown' }],
-    // One request, one story: the tray's status line (bot.tray.*) is gone;
-    // the strip that replaced it names a first version this way.
+    // One request, one story: the tray's status line (bot.tray.*) and the
+    // strip that replaced it are gone; a request's name (bot-shared.ts
+    // jobName) and the chat's line for a first version say it this way.
     ['messages:bot.job.firstVersion', 'messages:bot.job.firstVersionUnnamed', { project: 'A project' }],
     ['chat:group.file.loadFailedStatus', 'chat:group.file.loadFailedStatusUnnamed', { file: 'file', status: 404 }],
     ['project:topic.request.spec.by', 'project:topic.request.spec.bySystem', { author: 'System' }],
@@ -630,23 +622,24 @@ test('the flag survives every copy between the normalizer and the sentence', asy
   assert.match(read('frontend/src/features/group-chat/transcript.tsx'), /\.\.\.\(msg\.thread\.lastReply\.unnamed \? \{ unnamed: 'someone' as const \} : \{\}\),/);
   assert.match(read('frontend/src/features/messages/index.tsx'), /peer\.unnamed \? \(peer\.id \? t\('messages:header\.menu\.blockUnnamedHandle'\) : t\('messages:header\.menu\.blockUnnamed'\)\)/);
   assert.match(read('frontend/src/features/messages/composer.tsx'), /waitingUnknown \? t\('messages:composer\.requestSent\.waitingUnknown'\)/);
-  // One request, one story: the strip that replaced the tray's status line keeps the flag.
-  assert.match(read('frontend/src/features/messages/bot-strip.tsx'), /job\.appUnnamed \? translate\('messages:bot\.job\.firstVersionUnnamed'\)/);
+  // A request's track keeps the flag its job was read with, and its name reads it.
+  assert.match(read('frontend/src/features/messages/api.ts'), /\.\.\.\(job\.appUnnamed \? \{ appUnnamed: true \} : \{\}\),/);
+  assert.match(read('frontend/src/features/messages/bot-shared.ts'), /if \(job\.appUnnamed\) \{\n\s*if \(job\.firstVersion\) return t\('messages:bot\.job\.firstVersionUnnamed'\);/);
 });
 
-test('the bot\'s strip never takes the unnamed project\'s stand-in as a project\'s name', async (t) => {
+test('the bot\'s news line never takes the unnamed project\'s stand-in as a project\'s name', async (t) => {
   // One request, one story: the header's status line, which this test held
-  // to the rule, is gone; the "Your requests" strip that replaced it names
-  // each request, and holds to the same rule.
+  // to the rule, is gone, and so is the "Your requests" drawer that replaced
+  // it (5 Nov 2026). Each request's line in the chat names it
+  // (bot-news-line.tsx newsTitle), and holds to the same rule.
   const es = {
     'messages:bot.job.unnamedProject': 'Un proyecto',
     'messages:bot.job.firstVersionUnnamed': 'La primera versión de un proyecto',
     'messages:bot.strip.firstVersion': '{{project}}, primera versión',
     'messages:bot.strip.requestNumber': 'Solicitud n.º {{number}}',
   };
-  const { module: api } = await loadInSpanish(t, 'frontend/src/features/messages/api.ts', es);
-  const { module: strip } = await loadInSpanish(t, 'frontend/src/features/messages/bot-strip.tsx', es);
-  const title = (row) => strip.stripTitle(api.normalizeBotWork({ history: [{ outcome: 'live', at: '2026-10-09T11:00:00Z', ...row }] }).history[0]);
+  const { module: news } = await loadInSpanish(t, 'frontend/src/features/messages/bot-news-line.tsx', es);
+  const title = (meta) => news.newsTitle({ kind: 'merged', appName: null, appSlug: null, ...meta });
   assert.equal(title({ firstVersion: true }), 'La primera versión de un proyecto', 'the stand-in is not placed as a name');
   assert.equal(message('messages:bot.job.firstVersionUnnamed') === message('messages:bot.strip.firstVersion', { project: 'Un proyecto' }), false);
   // A project really called "A project", and one known by its slug, stay on the named path.
@@ -654,7 +647,9 @@ test('the bot\'s strip never takes the unnamed project\'s stand-in as a project\
   assert.equal(title({ firstVersion: true, appSlug: 'recetas' }), 'recetas, primera versión');
   // A request is named by itself, never by its project.
   assert.equal(title({ issueNumber: 12 }), 'Solicitud n.º 12');
-  assert.equal(title({ issueNumber: 12, title: 'Recetas' }), 'Recetas');
+  assert.equal(title({ issueNumber: 12, requestTitle: 'Recetas' }), 'Recetas');
+  // Nothing else to name it by: the stand-in alone, as a label.
+  assert.equal(title({}), 'Un proyecto');
 });
 
 test('the reply strip words a nameless row in its own sentence', async (t) => {

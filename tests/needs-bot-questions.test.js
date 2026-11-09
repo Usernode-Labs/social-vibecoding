@@ -8,7 +8,11 @@
 // What this pins:
 //   1. GET /api/workshop/bot-questions still answers the viewer's own open
 //      questions (kept for a client still loading the block it fed), newest
-//      first, on projects not suspended; signed out, a 401.
+//      first, on projects not suspended; signed out, a 401. 5 Nov 2026
+//      (docs/plans/bot-one-model.md, step 4): an open question is one the
+//      bot posted on the request while its stored work state waits for the
+//      requester's answer, or one still open in their chat with the bot
+//      from before; needs-bot-questions-postgres.test.js runs both.
 //   2. The questions are an arm of the Needs you feed itself and of its
 //      counts (workshop-overview.js), so a badge and the feed agree, and a
 //      feed card opens its request's page.
@@ -32,7 +36,7 @@ require('../src/db/pool').getPool = () => ({
   async query(sql, params) {
     calls.push({ sql, params });
     return {
-      rows: /homeroom_bot_dm_messages q/.test(sql)
+      rows: /AS message_id, q\.issue_number/.test(sql)
         ? [{ message_id: 9, issue_number: 7, created_at: '2026-10-29T10:00:00Z', slug: 'seed-swap', name: 'Seed swap', question: 'Newest first?' }]
         : [],
     };
@@ -45,9 +49,11 @@ const REEL = 'frontend/src/features/workshop/needs-reel.tsx';
 
 test('the read is the viewer\'s own open questions, newest first, on projects not suspended', () => {
   const { BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX } = require('../src/routes/workshop-overview');
-  assert.match(BOT_QUESTIONS_SQL, /WHERE q\.user_id = \$1 AND q\.question_status = 'open'/);
+  assert.match(BOT_QUESTIONS_SQL, /WHERE dq\.user_id = \$1 AND dq\.question_status = 'open'/);
+  assert.match(BOT_QUESTIONS_SQL, /WHERE ws\.requester_id = \$1 AND ws\.item_kind = 'request'\s+AND ws\.stage = 'waiting_for_you' AND ws\.why = 'question'/);
   assert.match(BOT_QUESTIONS_SQL, /a\.moderation_suspended_at IS NULL/);
-  assert.match(BOT_QUESTIONS_SQL, /m\.deleted_at IS NULL/);
+  assert.match(BOT_QUESTIONS_SQL, /dqm\.deleted_at IS NULL/);
+  assert.match(BOT_QUESTIONS_SQL, /qpm\.deleted_at IS NULL/);
   assert.match(BOT_QUESTIONS_SQL, /ORDER BY q\.created_at DESC\s+LIMIT \$2/);
   assert.equal(BOT_QUESTIONS_MAX, 20);
 });
@@ -67,7 +73,7 @@ test('the route answers in the list\'s shape, and 401 signed out', async () => {
     assert.deepEqual(await res.json(), {
       questions: [{ messageId: 9, appSlug: 'seed-swap', appName: 'Seed swap', issueNumber: 7, question: 'Newest first?', at: '2026-10-29T10:00:00Z' }],
     });
-    assert.deepEqual(calls.find((c) => /homeroom_bot_dm_messages q/.test(c.sql)).params, [4, 20]);
+    assert.deepEqual(calls.find((c) => /AS message_id, q\.issue_number/.test(c.sql)).params, [4, 20]);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
   }
@@ -75,13 +81,14 @@ test('the route answers in the list\'s shape, and 401 signed out', async () => {
 
 test('the questions are an arm of the feed and of its counts', () => {
   const overview = require('../src/routes/workshop-overview');
-  assert.match(overview.NEEDS_FEED_SQL, /SELECT 'question', q\.app_id, q\.message_id,/);
-  assert.match(overview.NEEDS_FEED_SQL, /WHERE q\.user_id = \$1 AND q\.question_status = 'open'/);
+  assert.match(overview.NEEDS_FEED_SQL, /SELECT 'question', q\.app_id, q\.id,/);
+  assert.match(overview.NEEDS_FEED_SQL, /WHERE dq\.user_id = \$1 AND dq\.question_status = 'open'/);
+  assert.match(overview.NEEDS_FEED_SQL, /AND ws\.stage = 'waiting_for_you' AND ws\.why = 'question'/);
   const src = read('src/routes/workshop-overview.js');
-  assert.match(src, /owed_questions AS \(\s+SELECT q\.app_id, COUNT\(\*\)::int AS n,\s+array_agg\('question:' \|\| q\.message_id\) AS keys/,
+  assert.match(src, /owed_questions AS \(\s+SELECT q\.app_id, COUNT\(\*\)::int AS n,\s+array_agg\('question:' \|\| q\.id\) AS keys/,
     'counted where the votes are, under keys the seen record takes');
   assert.match(src, /\(COALESCE\(op\.n, 0\) \+ COALESCE\(og\.n, 0\) \+ COALESCE\(oq\.n, 0\)\) AS needs/);
-  assert.match(src, /SELECT 'needs', 'question', q\.app_id, q\.message_id,/, 'and listed with the rows behind the counts');
+  assert.match(src, /SELECT 'needs', 'question', q\.app_id, q\.id,/, 'and listed with the rows behind the counts');
   const [item] = overview.shapeNeedsFeed([{
     kind: 'question', id: 9, title: 'Newest first?', author: 'homeroom_bot', number: 7,
     at: '2026-10-29T10:00:00Z', slug: 'seed-swap', name: 'Seed swap',

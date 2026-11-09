@@ -41,6 +41,9 @@
 
 'use strict';
 
+// Materialize the ignored SQL input even for direct node --test invocations.
+require('../../src/db/schema-source').ensureSchema();
+
 const net = require('net');
 
 // ── Patch 1 ─────────────────────────────────────────────────────────────

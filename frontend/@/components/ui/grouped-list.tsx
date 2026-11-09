@@ -33,7 +33,7 @@ import { ChevronRightIcon } from './icons';
  *   * `[&:not(:last-child)]:after:*` on the row — no caller knowledge needed,
  *     survives conditional rows, and insets to wherever we say.
  *
- * The inset (`left-[4.75rem]`) is the row's padding (1rem) + the icon tile
+ * The inset (`start-[4.75rem]`) is the row's padding (1rem) + the icon tile
  * (2.75rem) + the gap (1rem). It is a literal rather than a computed value
  * because Tailwind's extractor is a regex over source text — see the note in
  * tailwind.config.js. A row rendered WITHOUT a leading tile passes
@@ -105,8 +105,8 @@ export const rowSeparator = cva('', {
   variants: {
     inset: {
       // The three inset depths the deck uses, as complete literals.
-      tile: "[&:not(:last-child)]:after:absolute [&:not(:last-child)]:after:bottom-0 [&:not(:last-child)]:after:left-[4.75rem] [&:not(:last-child)]:after:right-0 [&:not(:last-child)]:after:h-px [&:not(:last-child)]:after:bg-zinc-200 dark:[&:not(:last-child)]:after:bg-zinc-800 [&:not(:last-child)]:after:content-['']",
-      text: "[&:not(:last-child)]:after:absolute [&:not(:last-child)]:after:bottom-0 [&:not(:last-child)]:after:left-4 [&:not(:last-child)]:after:right-0 [&:not(:last-child)]:after:h-px [&:not(:last-child)]:after:bg-zinc-200 dark:[&:not(:last-child)]:after:bg-zinc-800 [&:not(:last-child)]:after:content-['']",
+      tile: "[&:not(:last-child)]:after:absolute [&:not(:last-child)]:after:bottom-0 [&:not(:last-child)]:after:start-[4.75rem] [&:not(:last-child)]:after:end-0 [&:not(:last-child)]:after:h-px [&:not(:last-child)]:after:bg-zinc-200 dark:[&:not(:last-child)]:after:bg-zinc-800 [&:not(:last-child)]:after:content-['']",
+      text: "[&:not(:last-child)]:after:absolute [&:not(:last-child)]:after:bottom-0 [&:not(:last-child)]:after:start-4 [&:not(:last-child)]:after:end-0 [&:not(:last-child)]:after:h-px [&:not(:last-child)]:after:bg-zinc-200 dark:[&:not(:last-child)]:after:bg-zinc-800 [&:not(:last-child)]:after:content-['']",
       none: '',
     },
   },
@@ -159,6 +159,11 @@ export interface ListRowProps
    * label has no other way to ask for one — and dropping the hint was the last
    * thing keeping the app detail page's rows hand-rolled (#2446). Rendered as
    * the attribute, so `undefined` writes nothing at all.
+   *
+   * #6118: a caller whose title can be ellipsised passes the same string here,
+   * as `bot-slots.tsx` and `thread-items.tsx` do. It is opt-in rather than
+   * implied by a string title: a fixed label ("Your work") truncates nothing,
+   * and a hint on it is noise.
    */
   tooltip?: string;
   /** The leading rounded-square glyph tile. */
@@ -206,14 +211,14 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
   return (
     <Tag
       ref={ref as React.Ref<HTMLDivElement & HTMLButtonElement & HTMLAnchorElement>}
-      // `text-left w-full` only matter on a button — a button centres its
+      // `text-start w-full` only matter on a button — a button centres its
       // content and shrinks to it, which would break the row's layout the
       // moment `as` changed. Harmless on a div, so they are unconditional
       // rather than a second branch to keep in step. An anchor needs neither
       // (`flex` blockifies it) and takes no `type`.
       {...(as === 'button' ? { type: 'button' as const } : null)}
       className={cn(
-        'relative flex w-full items-center gap-4 px-4 py-3.5 text-left',
+        'relative flex w-full items-center gap-4 px-4 py-3.5 text-start',
         (props.onClick || as === 'button' || as === 'a') && 'cursor-pointer active:bg-zinc-50 dark:active:bg-zinc-800',
         rowSeparator({ inset: depth }),
         className,

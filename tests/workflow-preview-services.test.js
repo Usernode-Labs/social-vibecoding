@@ -17,7 +17,7 @@ const stub = (path, exports) => {
 };
 
 const calls = [];
-const state = { build: null, present: [], exists: new Set(), serving: new Set() };
+const state = { build: null, present: [], exists: new Set(), serving: new Set(), newestRelease: '' };
 const realStaging = require('../src/services/staging');
 stub('../src/services/staging', {
   ...realStaging,
@@ -79,10 +79,66 @@ stub('../src/services/visuals', {
   },
 });
 
+// #6157: a sleeping preview is woken before its checks run. `sleeping.next`
+// is what the wake answers ({ ok: true } unless a test says otherwise), and
+// `sleeping.order` records the wake and the capture in the order they came.
+const sleeping = { next: null, asked: [], order: [] };
+stub('../src/services/preview-sleep', {
+  ...require('../src/services/preview-sleep'),
+  async wake(config, pool, sessionId, options) {
+    sleeping.asked.push({ sessionId, options });
+    return sleeping.next || { status: 'woke', url: 'https://shop--s5.apps.test' };
+  },
+  async wakeForRun(config, pool, sessionId) {
+    sleeping.asked.push(sessionId);
+    sleeping.order.push('wake');
+    return sleeping.next || { ok: true, woke: false };
+  },
+});
+const realCapture = require('../src/services/visuals').captureForSession;
+require('../src/services/visuals').captureForSession = async (...args) => {
+  sleeping.order.push('capture');
+  return realCapture(...args);
+};
+
 const captured = [];
 const { previewServices } = require('../src/workflow/preview/services.ts');
 const { WORK } = require('../src/workflow/preview/machine.ts');
 const { LeaseLost } = require('../src/workflow/kernel/index.ts');
+
+test('the web wake receipt waits for conductor work, preserves failures and times out without a false success', async () => {
+  const { requestWake } = require('../src/workflow/preview/wake.ts');
+  const asked = [];
+  const rt = { async appendAndWait(...args) { asked.push(args); return { status: 'accepted', eventId: 42 }; } };
+  const request = { sessionId: 5, appId: 2, reason: 'link', repairRoute: true };
+  const receipts = [
+    { status: 'queued', result: { outcome: 'retry' } },
+    { status: 'running', result: null },
+    { status: 'reported', result: { outcome: 'succeeded', value: { status: 'woke', ms: 10 } } },
+  ];
+  const db = { async query(sql, params) {
+    assert.deepEqual(params, ['preview', 'session:5', 'preview.wake', 'wake:42']);
+    return { rows: [receipts.shift()] };
+  } };
+  assert.deepEqual(await requestWake(rt, db, request, { pollMs: 1 }), { status: 'woke', ms: 10 });
+  assert.deepEqual(asked[0].slice(0, 3), ['preview', 'session:5', { type: 'WakeRequested', payload: request }]);
+  receipts.push({ status: 'settled', result: { outcome: 'succeeded', value: { status: 'failed', detail: 'Route failed' } } });
+  assert.deepEqual(await requestWake(rt, db, request), { status: 'failed', detail: 'Route failed' });
+  receipts.push({ status: 'settled', result: { outcome: 'exhausted' }, last_error: { message: 'Lease lost' } });
+  assert.deepEqual(await requestWake(rt, db, request), { status: 'failed', detail: 'Lease lost' });
+  assert.equal((await requestWake(rt, db, request, { waitMs: 0 })).status, 'timeout');
+  const refused = { async appendAndWait() { return { status: 'ignored', eventId: 43 }; } };
+  assert.equal((await requestWake(refused, { query() { throw new Error('Refused requests have no work'); } }, request)).status, 'failed');
+});
+
+test('request-triggered wakes use bounded conductor work and preserve its result', async () => {
+  const handler = previewServices({ config: {}, pool })[WORK.wake];
+  assert.equal(handler.concurrency, 2);
+  const input = { sessionId: 5, reason: 'link', repairRoute: true };
+  const out = await handler.run({ input });
+  assert.deepEqual(out, { status: 'woke', url: 'https://shop--s5.apps.test' });
+  assert.deepEqual(sleeping.asked.pop(), { sessionId: 5, options: { reason: 'link', repairRoute: true } });
+});
 
 const work = { cancelled: true };
 const runs = { rows: [] };
@@ -93,6 +149,7 @@ const pool = { async query(text) {
   if (/FROM check_runs WHERE session_id/.test(text)) return { rows: runs.rows };
   if (/FROM chat_sessions cs JOIN apps/.test(text)) return { rows: [{ id: 5, app_id: 2, app_slug: 'shop', repo_url: '' }] };
   if (/FROM apps WHERE id/.test(text)) return { rows: [{ id: 2, slug: 'shop', repo_url: 'https://github.com/acme/shop' }] };
+  if (/FROM platform_processes/.test(text)) return { rows: state.newestRelease ? [{ release: state.newestRelease }] : [] };
   return { rows: [] };
 } };
 const handlers = previewServices({ config: { captureRuntime: 'kubernetes', kubernetes: {} }, pool });
@@ -118,6 +175,42 @@ test('a built attempt returns its receipt; a failed one returns why, for the mac
   assert.equal(failed.ok, false);
   assert.equal(typeof failed.detail, 'string');
   assert.equal(failed.aboutMain, 'Main changed the schema.');
+});
+
+test('a database made by another build while a newer one serves is a platform fault, in plain words (#6149)', async () => {
+  const { ROLLOUT_DETAIL } = require('../src/services/platform-preview-data-policy');
+  const saved = process.env.GIT_SHA;
+  process.env.GIT_SHA = 'a'.repeat(40);
+  const input = { sessionId: 5, appId: 2, n: 6, head, db: 'app_shop_staging_s5_666666' };
+  state.build = Object.assign(new Error('Platform preview data policy: database was made by another policy'),
+    { noFallback: true, platformPreviewPolicy: true, policySkew: true });
+  try {
+    state.newestRelease = 'b'.repeat(40);   // newer than this build: the release window
+    syncs.length = 0;
+    const rollout = await handlers[WORK.prepare].run(ctx(input));
+    assert.equal(rollout.ok, false);
+    assert.equal(rollout.detail, ROLLOUT_DETAIL, 'the raw policy line is never shown for this case');
+    assert.equal(rollout.infrastructure, true);
+    assert.equal(rollout.platformFault, true, 'the error lane retries it, and a boot retries it again');
+    assert.equal(state.build.platformRollout, true, 'the refusal itself reads as the platform\'s fault');
+    assert.equal(state.build.noFallback, undefined, 'never an appCaused refusal');
+    assert.equal(syncs.length, 0, 'no sync with main: Homeroom itself was updating');
+
+    // No newer build: an unreviewed change, refuse at once. A build throws its
+    // own error, so this one is not the rollout-marked object above.
+    state.newestRelease = '';
+    state.build = Object.assign(new Error('Platform preview data policy: database was made by another policy'),
+      { noFallback: true, platformPreviewPolicy: true, policySkew: true });
+    const refused = await handlers[WORK.prepare].run(ctx(input));
+    assert.equal(refused.platformFault, false);
+    assert.notEqual(refused.detail, ROLLOUT_DETAIL);
+    assert.match(refused.detail, /another policy/);
+    assert.equal(syncs.length, 1);
+  } finally {
+    state.newestRelease = '';
+    state.build = null;
+    if (saved === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = saved;
+  }
 });
 
 test('a build failure seen by a claim that is no longer live sets nothing off (no sync with main, no report)', async () => {
@@ -288,6 +381,24 @@ test('the unit suite starts with the build, under the attempt\'s own id, unless 
   assert.ok(calls.some((c) => c[0] === 'delete-jobs' && c[1] === id), 'and with the whole preview');
 });
 
+test('required batch mode cannot launch speculative early suites even with the legacy switch enabled', async (t) => {
+  const k8s = require('../src/services/kubernetes');
+  const prior = process.env.EARLY_UNIT_SUITE;
+  process.env.EARLY_UNIT_SUITE = '1';
+  t.after(() => {
+    if (prior === undefined) delete process.env.EARLY_UNIT_SUITE;
+    else process.env.EARLY_UNIT_SUITE = prior;
+  });
+  t.mock.method(k8s, 'countRunningUnitSuiteJobs', async () => assert.fail('count-then-launch must not decide admission'));
+  const workers = previewServices({ config: { workerRuntime: 'kubernetes',
+    kubernetes: { checkNodePoolRequired: true } }, pool });
+  suites.launched.length = 0;
+  const results = await Promise.all(Array.from({ length: 10 }, (_, i) =>
+    workers[WORK.unitEarly].run(ctx({ sessionId: 5 + i, appId: 2, n: 3, head }))));
+  assert.ok(results.every((r) => r.started === false && r.why === 'off'));
+  assert.equal(suites.launched.length, 0, 'unit suites run later inside the admitted checks run');
+});
+
 // services/unit-suite-reuse.js: a head whose suite already passed under the
 // same conditions, when nobody asked for a fresh run, has its pass copied by
 // the checks run, so no early Jobs are started for it.
@@ -325,4 +436,31 @@ test('a run claimed again asks for its checks slot as of the place the earlier c
   await handlers[WORK.run].run(ctx(input));
   assert.equal(captured[0].queuedSince, null, 'a first claim joins the back of the line');
   delete runs.queuedAt;
+});
+
+test('#6157 a checks run on a sleeping proposal wakes its preview before it starts', async () => {
+  const input = { sessionId: 5, appId: 2, n: 1, head, runId: 'run-1-9', trigger: 'promote-kick',
+    runtimeName: 'sv-preview-2-s5', runtimeKind: 'kubernetes', url: 'https://shop--s5.apps' };
+  sleeping.asked.length = 0; sleeping.order.length = 0;
+  sleeping.next = { ok: true, woke: true };
+  assert.deepEqual(await handlers[WORK.run].run(ctx(input)), { outcome: 'verdict', state: 'passing' });
+  assert.deepEqual(sleeping.asked, [5]);
+  assert.deepEqual(sleeping.order, ['wake', 'capture'], 'woken, then checked: same image, nothing rebuilt');
+  sleeping.next = null;
+});
+
+test('#6157 a preview that does not wake in time is the platform\'s fault, never the change\'s', async () => {
+  const input = { sessionId: 5, appId: 2, n: 1, head, runId: 'run-1-10', trigger: 'promote-kick',
+    runtimeName: 'sv-preview-2-s5', runtimeKind: 'kubernetes', url: 'https://shop--s5.apps' };
+  sleeping.order.length = 0;
+  sleeping.next = { ok: false, detail: 'The preview was asleep and did not wake in time' };
+  assert.deepEqual(await handlers[WORK.run].run(ctx(input)), {
+    outcome: 'blocked', reason: 'The preview was asleep and did not wake in time', platformFault: true,
+  });
+  assert.deepEqual(sleeping.order, ['wake'], 'nothing is captured against a preview that is not up');
+  sleeping.next = null;
+  // The machine reads a blocked run that says so as the platform's fault: an
+  // 'error' its error lane runs again, with the platform's own allowance.
+  const machine = require('node:fs').readFileSync(require.resolve('../src/workflow/preview/machine.ts'), 'utf8');
+  assert.match(machine, /const platformFault = state === 'error' && \(!!r\?\.platformFault/);
 });

@@ -1,4 +1,6 @@
 'use strict';
+require('./lib/media-store').useMemoryMedia(require('node:test'));
+const { fixtureKey } = require('./lib/media-store');
 
 // The preview machine (src/workflow/preview/) against the full PostgreSQL
 // schema: admission, supersession, publication, settlement, the error lane,
@@ -19,6 +21,39 @@ const { PROCESS_PRESENCE_LOCK } = require('../src/workflow/rules/presence.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SHA = (c) => c.repeat(40).slice(0, 40);
+
+test('a web wake queues conductor work only for an open serving preview without rebuilding', () => {
+  const machine = preview({ maxRetries: 6 });
+  assert.ok(machine.web.has('WakeRequested'));
+  const entry = machine.entryFor('settled', 'WakeRequested');
+  const state = { name: 'settled', data: { sessionId: 7, serving: { n: 3 }, verdict: 'passing' } };
+  const event = { id: 42, payload: { sessionId: 7, reason: 'preview-click', repairRoute: false } };
+  assert.equal(entry.guard(state, event, { session: { status: 'promoted' } }), true);
+  assert.deepEqual(entry.guard(state, event, { session: { status: 'archived' } }), { reject: 'not_serving' });
+  const out = entry.to(state, event, { session: { status: 'promoted' } }, { now: new Date(), version: 1 });
+  assert.deepEqual(out.next, state);
+  assert.deepEqual(out.work, [{ kind: WORK.wake, key: 'wake:42', input: { sessionId: 7, reason: 'preview-click', repairRoute: false } }]);
+  assert.equal(out.writes, undefined);
+});
+
+test('a queued leftover retirement cannot close a session reopened since inventory', () => {
+  const machine = preview({ maxRetries: 6 });
+  const event = { type: 'RetireRequested', payload: { reason: 'leftover', terminal: true, sessionId: 1 } };
+  const ctx = { key: 'session:1', appId: 1, now: new Date(), version: 1 };
+  for (const name of ['idle', 'preparing', 'checking', 'settled', 'failed', 'retiring', '(none)', 'detached']) {
+    const state = { name, data: { exit: { terminal: false } } };
+    const guard = machine.entryFor(name, 'RetireRequested').guard;
+    for (const status of ['active', 'paused', 'promoted', 'merging']) {
+      assert.deepEqual(guard(state, event, { session: { status }, app: { id: 1 } }, ctx), { reject: 'session_open' },
+        `${name}: ${status} was reopened before the retirement applied`);
+    }
+    if (!['(none)', 'detached'].includes(name)) {
+      for (const session of [null, { status: 'merged' }, { status: 'archived' }]) {
+        assert.equal(guard(state, event, { session }, ctx), true, `${name}: a terminal leftover can retire`);
+      }
+    }
+  }
+});
 
 test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
@@ -126,6 +161,7 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
   work.answer.set(WORK.prepare, prepareOk);
   work.answer.set(WORK.run, verdict('passing'));
   work.answer.set(WORK.retire, { closed: true });
+  work.answer.set(WORK.wake, { status: 'woke', ms: 10 });
 
   const machine = preview({ maxRetries: 6, retireAfterMs: 0 });
   const rt = createRuntime({
@@ -191,6 +227,27 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const { rows: told } = await pool.query(
       `SELECT type, payload FROM wf_events WHERE machine = 'shots' AND key = $1 ORDER BY id`, [sessionKey(s.id)]);
     assert.deepEqual(told.map((e) => [e.type, e.payload.head]), [['HeadReady', SHA('a')], ['HeadReady', SHA('a')]]);
+  });
+
+  await t.test('a requested wake returns the durable conductor receipt and preserves the serving attempt and verdict', async () => {
+    const s = await proposal(await app(), { pin: SHA('a') });
+    await submit(s, SHA('a'));
+    await settle();
+    const before = await instance(s);
+    const { requestWake } = require('../src/workflow/preview/wake.ts');
+    let finished = false;
+    const result = requestWake(rt, pool, { sessionId: s.id, appId: s.app_id, reason: 'preview-click', repairRoute: false },
+      { waitMs: 2000, pollMs: 5 }).finally(() => { finished = true; });
+    for (let n = 0; n < 100 && !finished; n++) {
+      await settle();
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.deepEqual(await result, { status: 'woke', ms: 10 });
+    const after = await instance(s);
+    assert.deepEqual(after.data.serving, before.data.serving);
+    assert.equal(after.data.verdict, before.data.verdict);
+    assert.equal((await workOf(s, WORK.prepare)).length, 1, 'a wake creates no build');
+    assert.equal((await workOf(s, WORK.wake)).length, 1);
   });
 
   await t.test('P2 the same head joins; a stale producer is refused; a newer head cancels the attempt and retires it', async () => {
@@ -663,9 +720,15 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
   });
   await t.test('P14 a run\'s media is published with its verdict, and a stale run\'s never is', async () => {
     const s = await proposal(await app(), { status: 'active', bot: true });
-    const media = async (runId, id) => pool.query(
-      `INSERT INTO check_run_media (id, run_id, session_id, commit_hash, kind, media, content_type, data)
-       VALUES ($1, $2, $3, $4, 'after', 'png', 'image/png', decode('00', 'hex'))`, [id, runId, s.id, SHA('a')]);
+    const media = async (runId, id) => {
+      const data = Buffer.from([0]);
+      const key = await fixtureKey(pool, data);
+      const meta = require('../src/services/check-visual-media').metadata(data);
+      return pool.query(
+        `INSERT INTO check_run_media (id, run_id, session_id, commit_hash, kind, media, content_type, object_key, sha256, bytes, legacy_etag)
+         VALUES ($1, $2, $3, $4, 'after', 'png', 'image/png', $5, $6, $7, $8)`,
+        [id, runId, s.id, SHA('a'), key, meta.sha256, meta.bytes, meta.legacyEtag]);
+    };
     work.answer.set(WORK.run, async (input) => {
       await media(input.runId, `m-${input.runId}`.slice(0, 32));
       return verdict('passing', { visuals: { captures: [{ index: 0 }] } })();

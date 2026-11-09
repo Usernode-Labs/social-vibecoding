@@ -167,7 +167,7 @@ test('there is ONE badge in the header, and the Improve corner is a dot', () => 
   // equality — a count is a badge on the bell, a live state is a dot.
   const bellBadge = header.match(/<span id="notifications-badge"[^>]*>/);
   assert.ok(bellBadge, '#notifications-badge is on the bell');
-  assert.match(bellBadge[0], /-top-1 -right-1/, 'the bell badge is top-right');
+  assert.match(bellBadge[0], /-top-1 -end-1/, 'the bell badge is at the top end corner');
   // red-600, not red-500 (QA 2026-09-24 Q20): white 10.4px bold on red-500 is
   // 3.76:1, one step darker is 4.83 and reads as the same red.
   assert.match(bellBadge[0], /bg-red-600/, 'the bell badge stays red, at a shade white text passes on');
@@ -178,7 +178,7 @@ test('there is ONE badge in the header, and the Improve corner is a dot', () => 
 
   const dot = header.match(/<span id="improve-working-dot"[^>]*>[\s\S]*?<\/span>/);
   assert.ok(dot, '#improve-working-dot is in the bar — on the mark since #2718');
-  assert.match(dot[0], /-top-1\.5 -right-1\.5/, 'same corner the count used to hold');
+  assert.match(dot[0], /-top-1\.5 -end-1\.5/, 'same corner the count used to hold');
   // #2779 follow-up: the 8px emerald pulse became a small blue spinner, on a
   // disc of the bar's own ground so it reads as cut out of the tile's corner.
   assert.match(dot[0], /w-\[15px\] h-\[15px\] rounded-full bg-zinc-200 text-violet-600 dark:bg-zinc-900 dark:text-violet-400/,
@@ -314,24 +314,6 @@ test('version information contains no particular dApp version', () => {
     'the platform build row carries the #1211 "Platform version" label');
   assert.match(html, /Mobile app version/,
     'the semantic version/build is labelled as the installed mobile app');
-});
-
-test('fork lineage renders from the app page descriptor, not a written slot', () => {
-  const browseJs = fs.readFileSync(
-    path.join(root, 'frontend/src/features/apps/browse.js'), 'utf8');
-  const detailTsx = fs.readFileSync(
-    path.join(root, 'frontend/src/features/apps/browse-detail.tsx'), 'utf8');
-  // The two states the badge had, now derived rather than written: a linkable
-  // source becomes an href, a deleted one ("<deleted>") stays inert text.
-  assert.match(browseJs, /const forkedFrom = /, 'the detail descriptor carries lineage');
-  assert.match(browseJs, /forkRef\.linkable && forkRef\.slug/,
-    'linkable sources get a href, deleted ones do not');
-  assert.match(detailTsx, /id="browse-detail-fork"/, 'and the page renders it');
-  // Never markup: the source name is user-supplied and React escapes text
-  // children, which is why the imperative version needed escapeHtml at all.
-  const forkBlock = detailTsx.slice(detailTsx.indexOf('id="browse-detail-fork"'));
-  assert.ok(!forkBlock.slice(0, 900).includes('dangerouslySetInnerHTML'),
-    'the source name is a text child, never markup');
 });
 
 // ─── Status-pane rows are not clickable containers ───────────────────────

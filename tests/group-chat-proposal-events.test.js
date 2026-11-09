@@ -22,8 +22,9 @@
 //     three facts group-chat.js supplies on the transcript lead.
 //
 // And the module's seams that feed them: `_messageView` writes `event`,
-// `eventHref` and `votePhase`, `refreshVoteControls` patches the phase and the
-// link when the vote snapshot lands, and `render()` publishes the quiet lead.
+// `eventHref` and `votePhase`, `refreshVoteControls` patches the phase, the
+// link and (#6236) the vote card's facts when the vote snapshot lands, and
+// `render()` publishes the quiet lead.
 //
 // Run with: node --test tests/group-chat-proposal-events.test.js
 
@@ -96,9 +97,9 @@ test('a submission is a message from its proposer: their avatar, name and stamp 
   // Name and stamp on the header line, where a person's message puts them.
   assert.match(html, /<span class="truncate text-\[1\.0625rem\] font-bold text-zinc-900 dark:text-zinc-100"><span data-event-sender="">evan<\/span><\/span><span class="shrink-0 text-\[0\.9375rem\] text-zinc-500 dark:text-zinc-500"><span class="gc-msg-time" title="Sep 16, 2026, 09:05 AM">09:05 AM<\/span><\/span>/);
   // One box: the bare glyph, one line of text, the door's chevron.
-  assert.match(html, /<a class="gc-event-box" href="\/app\/recipe-app\/dev\/proposals\/5" title="Open this change"><span class="w-7 h-7 rounded-lg dev-card-icon bg-sky-500\/15 [^"]*">[\s\S]*?<\/span><span class="gc-event-text">Asked for approval: Custom tier colors<\/span><svg class="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0"/);
+  assert.match(html, /<a class="gc-event-box" href="\/app\/recipe-app\/dev\/proposals\/5" title="Open this change"><span class="w-7 h-7 rounded-lg dev-card-icon bg-sky-500\/15 [^"]*">[\s\S]*?<\/span><span class="gc-event-text">Asked for approval: Custom tier colors<\/span><svg class="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0[^"]*"/);
   // Nothing else: no controls host, no bookmark, no react button, no reactions.
-  assert.doesNotMatch(html, /data-vote-controls|gc-msg-save|gc-react-add|gc-reactions|gc-msg-system|gc-msg[" ]/);
+  assert.doesNotMatch(html, /data-vote-session|gc-vote-card|gc-msg-save|gc-react-add|gc-reactions|gc-msg-system|gc-msg[" ]/);
 });
 
 test('a merge is a message from the app, its box saying how the change landed, with no door until its proposal is known', () => {
@@ -126,11 +127,16 @@ test('the swatch is the transcript\'s own hash, so a proposer\'s event avatar ma
   assert.match(transcript, /import \{ swatchFor \} from '\.\/swatch';/);
   assert.doesNotMatch(transcript, /const SWATCHES/, 'one copy, not two');
   assert.match(read(EVENT), /import \{ swatchFor \} from '\.\/swatch';/);
-  // The legacy hash, unchanged: h = h * 31 + code.
+  // Audit Y06: the one pick every surface uses for a person, so a face on a
+  // request's page is the colour it is in Messages and on the hub.
   assert.equal(swatchFor('alice'), swatchFor('alice'));
-  let h = 0;
-  for (const ch of 'cyrcle_0') h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  assert.equal(swatchFor('cyrcle_0'), ['#5b7553', '#c0532f', '#6fb3a8', '#4a6fa5', '#8a5a83', '#b08344'][h % 6]);
+  const people = loadTsx('frontend/src/lib/community-color.ts');
+  const messages = loadTsx('frontend/src/features/messages/format.tsx');
+  for (const name of ['cyrcle_0', 'audit_ada', 'pat_parrot', 'Launch crew']) {
+    assert.equal(swatchFor(name), people.swatchFor(name), name);
+    assert.equal(swatchFor(name), messages.swatchFor(name), name);
+  }
+  assert.match(read(SWATCH), /export \{ swatchFor \} from '\.\.\/\.\.\/lib\/community-color';/);
 });
 
 test('the box is the Current status tab\'s surface: frosted fill, hairline, bare glyph, simple text', () => {
@@ -253,7 +259,7 @@ test('the general chat draws every event in order, hides the other notices, and 
   assert.equal(events[4][1], String(open.id));
   assert.ok(html.indexOf('class="gc-quiet') > html.lastIndexOf('gc-event-box'), 'the card comes last');
   assert.doesNotMatch(html, /closed by group vote|reached the vote threshold|gc-msg-system|gc-activity/, 'a notice of another kind is not drawn at all, and nothing folds');
-  assert.doesNotMatch(html, /data-vote-controls/, 'no controls host anywhere in the general chat');
+  assert.doesNotMatch(html, /gc-vote-card|data-vote-session/, 'no vote card anywhere in the general chat: its event rows open the page');
 });
 
 test('a message from a person sits among the events in the same grid, and dismisses the card', () => {
@@ -285,8 +291,10 @@ test('the thread transcript keeps every row, in the centred form, draws no event
   const html = renderRows({ messages, lead: quietLead }, 'thread');
   assert.doesNotMatch(html, /gc-quiet|gc-event|dev-card-icon|gc-bubble|flex-row-reverse/);
   for (const text of ['one', 'two', 'three']) assert.match(html, new RegExp(`>${text}<`));
-  assert.match(html, /class="gc-msg-system gc-msg-vote" data-msg-id="\d+"/, 'a vote row with its controls host, as it always was');
-  assert.match(html, /data-vote-controls=""/);
+  assert.match(html, /class="gc-msg-system gc-msg-vote" data-msg-id="\d+" data-vote-session="5" data-vote-pr="12"/, 'a vote row, carrying what refreshVoteControls reads back');
+  // #6236: under it the vote card, not a module-filled host.
+  assert.match(html, /<div class="gc-vote-card" role="group"/);
+  assert.doesNotMatch(html, /data-vote-controls/);
 });
 
 // ── The module's half ─────────────────────────────────────────────────
@@ -443,8 +451,12 @@ test('_votePhase: unknown until the snapshot lands, open while promoted, settled
 test('refreshVoteControls patches the phase with the tint on hosts, and the phase and link on event rows; render() supplies the quiet lead', () => {
   const refresh = stripped.match(/refreshVoteControls\(\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(refresh, 'refreshVoteControls() found');
-  assert.match(refresh[1], /votePhase: GroupChat\._votePhase\(pr\)/);
-  assert.match(refresh[1], /voteRowClass: GroupChat\._rowVoteClass\(pr\)/);
+  // #6236: on a vote row the phase and the tint ride in the one patch with
+  // the card's facts (`vote`), after the row is read, never written.
+  assert.match(refresh[1], /patch\.votePhase = GroupChat\._votePhase\(pr\);/);
+  assert.match(refresh[1], /patch\.voteRowClass = GroupChat\._rowVoteClass\(pr\);/);
+  assert.match(refresh[1], /const patch = \{ vote: GroupChat\._voteView\(pr\) \};/);
+  assert.doesNotMatch(refresh[1], /innerHTML|classList\.(add|remove|toggle)/);
   assert.match(refresh[1], /querySelectorAll\('#gc-messages \.gc-event\[data-msg-id\]'\)/);
   assert.match(refresh[1], /eventHref: GroupChat\._eventHref\(sid, pr\)/);
   assert.match(refresh[1], /if \(el\.dataset\.event === 'submitted'\) patch\.votePhase = GroupChat\._votePhase\(pr\);/);

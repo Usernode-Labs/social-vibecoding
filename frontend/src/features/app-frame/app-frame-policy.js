@@ -10,6 +10,11 @@
  * switches the SAME element to APP_FRAME_SANDBOX. Sandbox changes apply to the
  * next navigation, so the app keeps its origin-backed storage and APIs without
  * granting those permissions to the pending blank document.
+ *
+ * One exception, in WebKit: whether a navigation may go to the app's own
+ * service worker is read from the sandbox of the document the frame holds.
+ * So a new frame's first navigation passes through an empty, opaque `data:`
+ * document under APP_FRAME_SANDBOX (`prime` in ./app-frame-bridge.js).
  */
 
 export const PENDING_FRAME_SANDBOX = '';
@@ -133,6 +138,7 @@ export function isSafeAppFrameSrc(src, platformOrigin) {
  * runs both against one table.
  */
 export const FRAME_THEME_PARAM = 'un-theme';
+export const FRAME_REFRESH_PARAM = 'un-refresh';
 
 export function sameFrameSrc(a, b) {
   if (a === b) return true;
@@ -141,6 +147,15 @@ export function sameFrameSrc(a, b) {
     try {
       const url = new URL(src);
       url.searchParams.delete(FRAME_THEME_PARAM);
+      // An offline app's address (src/services/offline-cache.js) carries the
+      // platform's parameters after `#`: its theme is ignored like the
+      // query's, and so is the one-off refresh flag.
+      if (url.hash.startsWith('#un-')) {
+        const own = new URLSearchParams(url.hash.slice(1));
+        own.delete(FRAME_THEME_PARAM);
+        own.delete(FRAME_REFRESH_PARAM);
+        url.hash = own.toString();
+      }
       return url.toString();
     } catch {
       return src;

@@ -50,11 +50,20 @@ const waitlist = require('../services/waitlist');
 const releaseLinks = require('../services/release-links');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
-const { inviteUrl, privacyNoticeUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
+const mailLanguage = require('../services/mail/language');
+const {
+  accountDeletionUrl,
+  childSafetyUrl,
+  inviteUrl,
+  privacyNoticeUrl,
+  siteUrl,
+  waitlistUrl,
+} = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
 const { listPublicApps, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
 const { loadProjectOverview } = require('../services/public-project');
 const { publicStillBytes } = require('../services/shots-public');
+const mediaStore = require('../services/media-store');
 
 // The guest project page's overview, kept for a short while per project: it
 // is the same for everyone who asks, and a shared link can bring a crowd.
@@ -213,9 +222,18 @@ function publicApiRoutes(config) {
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Cache-Control', 'public, max-age=300');
       if (still.sha256) res.setHeader('ETag', `"${still.sha256}"`);
-      res.send(still.data);
+      res.setHeader('Content-Length', String(still.sizeBytes));
+      // res.send previously handled conditional still reads. Keep its 304
+      // behavior while streaming the body, without opening S3 for a match.
+      if (req.fresh) {
+        res.removeHeader('Content-Type');
+        res.removeHeader('Content-Length');
+        return res.status(304).end();
+      }
+      await mediaStore.respond(res, mediaStore.getStore(), { object_key: still.objectKey });
     } catch (err) {
       log.error('public-api', 'change still failed', { slug, changeId, message: err.message });
+      if (res.headersSent || res.destroyed) return res.destroy();
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -282,6 +300,10 @@ function publicApiRoutes(config) {
   // `privacy_link` is Homeroom's privacy notice on the marketing site
   // (services/marketing-links.js), which the same notice names beside the
   // terms and Settings › About links to (#5094, #5106). Never null.
+  //
+  // `child_safety_link` and `account_deletion_link` are the two other legal
+  // pages the terms name, which Settings › About lists beside them (#6043).
+  // Never null either.
   async function currentTermsLink() {
     try {
       const { rows } = await pool.query(
@@ -308,6 +330,8 @@ function publicApiRoutes(config) {
       phone_sign_in: phoneAuth.offered(config),
       terms_link: await currentTermsLink(),
       privacy_link: privacyNoticeUrl(config),
+      child_safety_link: childSafetyUrl(config),
+      account_deletion_link: accountDeletionUrl(config),
       // The same, from the Homeroom app's own sheets (the bridge's
       // signInWithProvider), once the app's client IDs are saved.
       native_sign_in_providers: await signInProviders.offeredNativeProviders(pool, config),
@@ -391,7 +415,10 @@ function publicApiRoutes(config) {
         // Best-effort like the mail itself: a code that cannot be minted
         // must not fail the join, and the one-click link still confirms.
         const code = await waitlist.issueVerificationCode(pool, email).catch(() => null);
-        sendWaitlistJoinMail(config, email, { moreToken, code }); // fire-and-forget, never throws
+        // fire-and-forget, never throws; the address has no account, so the words
+        // follow the browser that asked.
+        const locale = mailLanguage.requestLanguage(req);
+        sendWaitlistJoinMail(config, email, { moreToken, code, ...(locale ? { locale } : {}) });
         return res.json({
           ok: true,
           message: "You're on the waitlist. We'll email you when access opens up.",
@@ -444,7 +471,7 @@ function publicApiRoutes(config) {
       // waitlist_joined's one-per-day rule would drop this send anyway.
       // Fire-and-forget, and the mail throttle plus the reuse window in
       // resendConfirmation are what bound how often it actually sends.
-      await resendConfirmation(email).catch(() => {});
+      await resendConfirmation(email, mailLanguage.requestLanguage(req)).catch(() => {});
       return res.json({
         ok: true,
         message: "You're already on the waitlist. We've sent a fresh six-digit "
@@ -476,7 +503,7 @@ function publicApiRoutes(config) {
   // including "not on the list", because the only way a caller could learn
   // which branch ran is if a response differed. Failures are swallowed the
   // same way the mail itself is best-effort.
-  async function resendConfirmation(email) {
+  async function resendConfirmation(email, locale = null) {
     const row = await waitlist.getSignupByEmail(pool, email);
     // Not on the list. No row to confirm, so no code and no mail — sending
     // one would tell a stranger's inbox that somebody typed it here.
@@ -507,7 +534,7 @@ function publicApiRoutes(config) {
       // true thing to say — there is nothing to type — so it stays as the
       // degradation rather than leaving the address with silence.
       if (confirmed) {
-        sendWaitlistCodeMail(config, email, { code: null, moreToken: row.more_token || null });
+        sendWaitlistCodeMail(config, email, { code: null, moreToken: row.more_token || null, ...(locale ? { locale } : {}) });
       }
       return;
     }
@@ -518,6 +545,7 @@ function publicApiRoutes(config) {
       // and carries no capability token, a confirmation code leads to
       // "confirm my email".
       confirmed,
+      ...(locale ? { locale } : {}),
     });
   }
 
@@ -559,7 +587,7 @@ function publicApiRoutes(config) {
       return res.status(422).json({ error: 'A valid email address is required.' });
     }
     try {
-      await resendConfirmation(email);
+      await resendConfirmation(email, mailLanguage.requestLanguage(req));
     } catch (err) {
       // Deliberately NOT a 500. A failure here is ours, and letting it
       // change the status code would separate "something went wrong for

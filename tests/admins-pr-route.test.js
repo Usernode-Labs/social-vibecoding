@@ -31,6 +31,8 @@ const ghManifestOnMain = JSON.stringify({
   visibility: { build: 'public', view: 'public' },
 });
 github.isEnabled = () => ghEnabled;
+// The inline operation runs as a conductor with its own writer capability.
+github.hasWriteAccess = () => ghEnabled;
 github.getFileContent = async () => ghManifestOnMain;
 github.createBranch = async (owner, repo, branch) => { ghCalls.push({ op: 'branch', branch }); };
 github.pushFiles = async (owner, repo, files, opts) => { ghCalls.push({ op: 'push', files, opts }); };
@@ -284,4 +286,24 @@ test('GET /admins returns openProposal when an admins PR is up for vote, null ot
   body = await res.json();
   assert.deepEqual(body.openProposal,
     { sessionId: 88, prNumber: 654, prUrl: 'https://github.com/o/r/pull/654' });
+});
+
+
+test('a configured web route admits a settings operation without writer access', async () => {
+  const operations = require('../src/services/platform-operations');
+  const saved = github.hasWriteAccess;
+  github.hasWriteAccess = () => false;
+  const asked = [];
+  const prior = operations._setTransportForTests(async (request) => {
+    asked.push(request);
+    return { status: 'done', requestId: 'test-admission', result: { ok: true, sessionId: 5151, prNumber: 777 } };
+  });
+  try {
+    const res = await propose({ admins: ['bob'] });
+    assert.equal(res.status, 201);
+    assert.equal((await res.json()).prNumber, 777);
+    assert.equal(asked.length, 1);
+    assert.equal(asked[0].op, 'manifest.propose');
+    assert.equal(ghCalls.length, 0, 'the route makes no code-host write');
+  } finally { operations._setTransportForTests(prior); github.hasWriteAccess = saved; }
 });

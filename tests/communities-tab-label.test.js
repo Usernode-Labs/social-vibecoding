@@ -106,13 +106,12 @@ test('on All communities the tab is unchanged: the glyph, the word, and the ship
 
 test('nothing in the tab bar puts a community\'s name in a label any more', () => {
   assert.doesNotMatch(TAB_BAR, /shortName\(/, 'the cut-down name is gone from the bar');
-  // The declared check on a community's page asks for the same thing. The
-  // checks run at 1280px, where the tab is the sidebar's All row (D, 18 Oct
-  // 2026) and named by its words, so it pins that the label is gone there
-  // and the community's own row is lit; the phone's "Communities, on …" is
-  // communitiesAriaLabel's, pinned above.
-  const check = DAPP.tests.find((t) => /^On a wide window the sidebar lists your communities/.test(t.name));
-  assert.ok(check, 'the declared check for the tab on a community is still there');
-  assert.match(check.expectSelector, /#platform-tab-workshop\[aria-current="page"\]:not\(\[aria-label\]\)/);
-  assert.match(check.expectSelector, /a\.platform-rail-community\[data-rail-community="usernode-2d5619"\]\[aria-current="page"\]/);
+  // The declared check on a community's page: the checks run at 1280px,
+  // where One Home (#6361) draws no Communities tab at all, so it pins the
+  // community's own row in Recents, lit; the phone's "Communities, on …" is
+  // communitiesAriaLabel's, pinned above, for the node that stays.
+  const check = DAPP.tests.find((t) => /^On a wide window the sidebar's Recents lists your communities/.test(t.name));
+  assert.ok(check, 'the declared check for a community\'s row is still there');
+  assert.match(check.expectSelector, /\.platform-rail-row\[data-rail-row="usernode-2d5619"\] > a\.platform-rail-community\[aria-current="page"\]/);
+  assert.doesNotMatch(check.expectSelector, /#platform-tab-workshop/, 'the tab is drawn on neither bar');
 });

@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { shortDate } from '../../lib/timestamp';
 import { useDialog } from './use-dialog';
 
 type DomainStatus = 'pending' | 'verified' | 'live' | 'failed' | 'disabled';
@@ -85,7 +86,7 @@ function statusText(row: DomainRow): string {
   if (!STATUS_LINE[row.status]) return row.last_error ? `${row.status}. ${row.last_error}` : `${row.status}.`;
   if (row.status === 'live') {
     return row.live_at
-      ? translate('dialogs:appDomain.status.liveSince', { date: new Date(row.live_at).toLocaleDateString() })
+      ? translate('dialogs:appDomain.status.liveSince', { date: shortDate(row.live_at) })
       : translate('dialogs:appDomain.status.live');
   }
   if (row.last_error) return translate(STATUS_WITH_REASON[row.status], { reason: row.last_error });
@@ -265,22 +266,22 @@ export function AppDomainDialog() {
             </p>
             <table id="app-domain-records" className="w-full text-xs border-collapse">
               <thead>
-                <tr className="text-left text-zinc-500 dark:text-zinc-400">
-                  <th className="py-1 pr-2 font-semibold">{t('dialogs:appDomain.records.type')}</th>
-                  <th className="py-1 pr-2 font-semibold">{t('dialogs:appDomain.records.name')}</th>
+                <tr className="text-start text-zinc-500 dark:text-zinc-400">
+                  <th className="py-1 pe-2 font-semibold">{t('dialogs:appDomain.records.type')}</th>
+                  <th className="py-1 pe-2 font-semibold">{t('dialogs:appDomain.records.name')}</th>
                   <th className="py-1 font-semibold">{t('dialogs:appDomain.records.value')}</th>
                 </tr>
               </thead>
               <tbody>
                 {(data?.records || []).map((record) => (
                   <tr key={record.type} className="border-t border-zinc-200 dark:border-zinc-800 align-top">
-                    <td className="py-1.5 pr-2">{record.type}</td>
-                    <td className="py-1.5 pr-2 font-mono break-all">{recordName(record, domain.hostname)}</td>
+                    <td className="py-1.5 pe-2">{record.type}</td>
+                    <td className="py-1.5 pe-2 font-mono break-all">{recordName(record, domain.hostname)}</td>
                     <td className="py-1.5">
                       <span className="font-mono break-all">{record.value}</span>
                       <button
                         type="button"
-                        className="ml-1 text-violet-700 hover:text-violet-400 dark:text-violet-400 transition-colors"
+                        className="ms-1 text-violet-700 hover:text-violet-400 dark:text-violet-400 transition-colors"
                         onClick={() => void copy(record.value)}
                       >{copied === record.value ? t('dialogs:appDomain.records.copied') : t('dialogs:appDomain.records.copy')}</button>
                     </td>

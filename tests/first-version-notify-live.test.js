@@ -155,13 +155,14 @@ test('a first version\'s maker is told it is live unless they turn it off, again
     lead: 'Your first version is live. Open Club Votes to try it.',
   });
 
-  // Anybody else's change is as it was: its ready is emailed.
+  // Anybody else's change is not news in their chat with the bot (5 Nov
+  // 2026, docs/plans/bot-one-model.md, step 4): it rings from its stage, and
+  // its ready owes its email through the notice clock (work-state-postgres
+  // "the bell"), not through a message.
   await forget();
-  const change = await say(ben, 'proposal', { appSlug: supper.slug, appName: supper.name, issueNumber: 4 });
+  assert.equal(await say(ben, 'proposal', { appSlug: supper.slug, appName: supper.name, issueNumber: 4 }), null);
   await flush();
-  assert.deepEqual((await rang(change.messageId)).map((r) => r.kind), ['build_ready']);
-  assert.deepEqual((await owed()).map((m) => [m.userId, m.messageId]), [[ben.id, change.messageId]]);
-  await forget();
+  assert.deepEqual(await owed(), [], 'no message, so no mail owed by one');
 
   // Off: said in the chat, unread, and nothing rings or is emailed.
   assert.equal(await dm.setFirstVersionNotify(pool, { appSlug: 'club-votes', userId: maya.id, on: false }), false);
@@ -358,7 +359,7 @@ test('under the plan: a first version gets the switch, whatever this device chos
   assert.equal(plan.notifyFooter(complicated, false, 7), null, 'chosen on this device: not offered again');
 
   const card = read('frontend/src/features/messages/bot-plan.tsx');
-  assert.match(card, /footer=\{state === 'built' && card && card\.state !== 'done'\s*\? notifyFooter\(meta, offer, userId\)\s*: null\}/,
+  assert.match(card, /footer=\{state === 'built' && card && card\.state !== 'done'\s*\? notifyFooter\(meta, offer, userId, conversationId, Number\(message\.id\)\)\s*: null\}/,
     'only once built, and only while it is being built');
 });
 

@@ -248,6 +248,10 @@ function postHarness({ claimed = true, githubFails = false } = {}) {
       calls.messages.push({ appId, content, msgType, metadata, thread });
       return { id: 777 };
     },
+    async sendBotMessage(pool_, appId, { user, content, msgType, metadata, thread }) {
+      calls.messages.push({ appId, content, msgType, metadata, thread, user });
+      return { id: 778 };
+    },
   };
   return { pool, github, ws, calls };
 }
@@ -255,7 +259,7 @@ function postHarness({ claimed = true, githubFails = false } = {}) {
 test('a post goes to both surfaces, scoped to the issue, and is recorded', async () => {
   const h = postHarness();
   const out = await live.post({ ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
-  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true });
+  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true, messageId: 777 });
   assert.deepEqual(h.calls.comments, [{ owner: 'usernode-bot', repo: 'rss-reader', n: 12, body: 'Which feed?' }]);
   assert.deepEqual(h.calls.messages[0].thread, { type: 'issue', ref: 12 });
   assert.equal(h.calls.messages[0].msgType, 'system');
@@ -312,6 +316,106 @@ test('a GitHub failure still posts in Homeroom, and never throws', async () => {
   assert.equal(out.githubCreatedAt, null, 'nothing to mark as seen');
 });
 
+// ── #6229: one bot note, on the page where it is read ──────────────────
+//
+// A change built for a request has no page of its own (1 Nov 2026), so a
+// note written on both threads shows twice on the request's page. When a
+// request leads the change's thread, post() says it once, tagged with the
+// change; a change with no request still gets its own copy.
+
+function leadPool(hasLead) {
+  const h = postHarness();
+  const base = h.pool.query.bind(h.pool);
+  h.pool.query = async (sql, params) => {
+    if (/JOIN threads t ON t\.id = s\.thread_id/.test(sql)) return { rows: hasLead ? [{ ok: 1 }] : [] };
+    return base(sql, params);
+  };
+  return h;
+}
+
+test('a change on its request page is said once, on the request, tagged with the change', async () => {
+  const h = leadPool(true);
+  const out = await live.post({
+    ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'followup_person',
+    text: 'I cannot get this change past its checks on my own.', sender: BOT, proposalSessionId: 12428,
+  });
+  assert.equal(h.calls.messages.length, 1, 'one note, not two');
+  const [m] = h.calls.messages;
+  assert.deepEqual(m.thread, { type: 'issue', ref: 12 });
+  assert.deepEqual(m.metadata.aboutChange, { sessionId: 12428 }, 'the kept copy says which change it is about');
+  assert.equal(m.metadata.hrbotPost, '55');
+  assert.equal(out.thread, true);
+});
+
+test('a change with no request still gets its note on its own thread', async () => {
+  const h = leadPool(false);
+  await live.post({
+    ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'followup_person',
+    text: 'x', sender: BOT, proposalSessionId: 12428,
+  });
+  assert.deepEqual(h.calls.messages.map((m) => m.thread), [
+    { type: 'issue', ref: 12 }, { type: 'session', ref: 12428 },
+  ]);
+  assert.equal(h.calls.messages[1].metadata, null, 'the change\'s copy, as today');
+});
+
+test('onlyProposal writes the change\'s copy alone, even on its request\'s page', async () => {
+  const h = leadPool(true);
+  await live.post({
+    ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question',
+    text: 'x', sender: BOT, proposalSessionId: 12428, onlyProposal: true,
+  });
+  assert.deepEqual(h.calls.messages.map((m) => m.thread), [{ type: 'session', ref: 12428 }]);
+});
+
+function specHarness({ hasLead, hasIssueCard }) {
+  const calls = { sent: [], queries: [] };
+  const pool = {
+    async query(sql, params) {
+      calls.queries.push({ sql: String(sql), params });
+      if (/JOIN threads t ON t\.id = s\.thread_id/.test(sql)) return { rows: hasLead ? [{ ok: 1 }] : [] };
+      if (/FROM chat_messages\s+WHERE app_id = \$1 AND thread_type = 'issue' AND msg_type = 'spec_share'/.test(sql)) {
+        return { rows: hasIssueCard ? [{ ok: 1 }] : [] };
+      }
+      return { rows: [] };
+    },
+  };
+  const ws = {
+    async sendBotMessage(_pool, _appId, args) { calls.sent.push(args); return { id: 900 }; },
+  };
+  return { pool, ws, calls };
+}
+
+test('the plan already on the request is not posted again as a proposed card', async () => {
+  const h = specHarness({ hasLead: true, hasIssueCard: true });
+  const out = await live.postSpecOnProposal({
+    ...h, app: APP, bot: BOT, sessionId: 12428, version: 1, spec: '# Fix it\n\nDo the thing.',
+  });
+  assert.equal(out, null);
+  assert.deepEqual(h.calls.sent, []);
+  assert.ok(h.calls.queries.some((q) => /UPDATE chat_session_specs SET shared_to_group_at/.test(q.sql)),
+    'the version is still made readable');
+});
+
+test('an updated plan still posts on the change', async () => {
+  const h = specHarness({ hasLead: true, hasIssueCard: true });
+  const out = await live.postSpecOnProposal({
+    ...h, app: APP, bot: BOT, sessionId: 12428, version: 2, spec: '# Fix it\n\nDo the thing.', revised: true,
+  });
+  assert.ok(out);
+  assert.equal(h.calls.sent.length, 1);
+  assert.equal(h.calls.sent[0].thread.type, 'session');
+});
+
+test('a change with no request still gets its proposed plan', async () => {
+  const h = specHarness({ hasLead: false, hasIssueCard: true });
+  const out = await live.postSpecOnProposal({
+    ...h, app: APP, bot: BOT, sessionId: 12428, version: 1, spec: '# Fix it\n\nDo the thing.',
+  });
+  assert.ok(out);
+  assert.equal(h.calls.sent.length, 1);
+});
+
 // ── Naming the person who filed the issue ──────────────────────────────
 
 function notifyStub({ fails = false } = {}) {
@@ -334,7 +438,7 @@ test('a post that names the poster: @handle in the thread only, and one mention 
     ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900,
     text: 'Which feed? @alice said the sports one.', mention: 'evan', senderId: 77, notifications,
   });
-  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true });
+  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true, messageId: 777 });
   assert.equal(h.calls.messages[0].content, '@evan Which feed? @alice said the sports one.', 'named in the thread');
   assert.equal(h.calls.comments[0].body, 'Which feed? @alice said the sports one.',
     'never on GitHub: a platform username there would notify whoever owns it (#723)');
@@ -421,8 +525,8 @@ test('the answers that ask something tag whoever filed the issue and took part; 
 
   h.posts.length = 0;
   lookups.length = 0;
-  await act(h, { verdict: 'question', question: 'x' }, { capSuppressed: 'question_tripwire' });
-  assert.deepEqual(h.posts.map((p) => [p.kind, p.mentions]), [['held_question_tripwire', []]]);
+  await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'proposals_per_app' });
+  assert.deepEqual(h.posts.map((p) => [p.kind, p.mentions]), [['held_proposals_per_app', []]]);
   assert.equal(lookups.length, 0, 'a held note looks nobody up');
 
   for (const kind of ['proposal', 'build_failed', 'spec', 'plan', 'blocked', 'empty', 'followup_answer', 'followup_revise',
@@ -447,9 +551,10 @@ test('what it says: the question, notes that never close, a linked proposal', ()
   assert.match(two, /^Homeroom bot has two questions before it can build this:\n\n1\. What time\?\n2\. How\?\n\n/);
   assert.match(q, /Reply here \(or on the GitHub issue\) and it will look again\./);
   assert.match(live.personText({ reason: 'It changes who can see feeds.' }), /a person needs to decide this one: It changes who can see feeds\./);
-  // #4239: about Homeroom itself, the note says so, and who can move it.
+  // #4239, #6311: about Homeroom itself, the note says so, and who can move
+  // it or file it there too, in plain words.
   const platform = live.personText({ reason: 'The header is drawn by Homeroom.', platform: true, project: 'RSS Reader' });
-  assert.match(platform, /^Homeroom bot thinks this is about Homeroom itself, not RSS Reader: The header is drawn by Homeroom\.\n\nWhoever asked for it, or RSS Reader's creator or admins, can have Homeroom bot move it to Homeroom's own board\.$/);
+  assert.match(platform, /^Homeroom bot thinks this is about Homeroom itself, not RSS Reader: The header is drawn by Homeroom\.\n\nWhoever asked for it, or RSS Reader's creator or admins, can have it filed on Homeroom's own board too, or moved there\.$/);
   assert.doesNotMatch(platform, /\u2014/);
   const empty = live.emptyText({ reason: 'The body is a placeholder.' });
   assert.match(empty, /couldn't find anything to build/);
@@ -687,6 +792,8 @@ test('a ready request is built in a session of its own and proposed', async () =
     // What each stage cost, on its model (services/stage-costs.js): a spec
     // turn whose cost is unknown has no line.
     stageCosts: { build: { usd: 0.05, model: 'z-ai/glm-5.3-flash' } },
+    // #6209: no GitHub client here, so the document check keeps the links.
+    docOnly: false,
   }, 'this harness writes no spec, and the result says so');
 
   const insert = h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
@@ -724,6 +831,33 @@ test('a refused promotion is reported with the route\'s own words, and the built
   assert.match(out.error, /built but could not be proposed: Session not found/);
   assert.deepEqual(h.calls.closed, [],
     'left paused, so a person can open the session and propose it');
+});
+
+// #6267: GitHub refused one upload while it was having problems, and a
+// finished build was thrown away (run 4530). A temporary refusal keeps the
+// session and its saved commit and waits to push; only a permanent one fails.
+test('a temporary push refusal keeps the build and waits to push it', async () => {
+  const h = buildHarness({ result: { pushOk: false, ahead: 1, sha: 'b'.repeat(40),
+    pushFailed: 'push_failed', pushFailure: { ok: false, code: 'push_failed', permanent: false } } });
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...BUILD_ARGS });
+  assert.equal(out.ok, false);
+  assert.equal(out.waitingToPush, true);
+  assert.equal(out.sessionId, 5001);
+  assert.equal(out.branchName, 'homeroom_bot/s5001');
+  assert.equal(out.sha, 'b'.repeat(40));
+  assert.equal(out.error, 'waiting to push: couldn\'t push the build\'s commit (push_failed, temporary)');
+  assert.deepEqual(h.calls.promoted, [], 'nothing is proposed until it lands');
+  assert.deepEqual(h.calls.closed, [], 'its worker and the commit in it are kept');
+});
+
+test('a permanent push refusal is a failed build, as it was', async () => {
+  const h = buildHarness({ result: { pushOk: false, ahead: 1, sha: 'b'.repeat(40),
+    pushFailed: 'non_fast_forward', pushFailure: { ok: false, code: 'non_fast_forward', permanent: true } } });
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...BUILD_ARGS });
+  assert.equal(out.ok, false);
+  assert.equal(out.waitingToPush, undefined);
+  assert.match(out.error, /couldn't push the build's commit \(non_fast_forward, permanent\)/);
+  assert.deepEqual(h.calls.closed, [{ sessionId: 5001, reason: 'bot-failed' }]);
 });
 
 test('a build is held to the same wall clock as a triage turn', async (t) => {
@@ -893,13 +1027,15 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   assert.deepEqual(h.posts.map((p) => p.kind), ['question', 'person', 'empty']);
 
   h.posts.length = 0;
-  assert.equal(await act(h, { verdict: 'question', question: 'Which feed?' }, { capSuppressed: 'question_tripwire' }), 'held');
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'proposals_per_app' }), 'held');
-  assert.deepEqual(h.posts.map((p) => p.kind), ['held_question_tripwire', 'held_proposals_per_app'],
-    'the caps hold the question and the build, and say so in one line (#3152)');
-  assert.ok(!/Which feed/.test(h.posts[0].text), 'the held question itself is not posted');
+  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'builds_per_app' }), 'held');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['held_proposals_per_app', 'held_builds_per_app'],
+    'the caps hold the build, and say so in one line (#3152)');
   // One request, one story: in whole sentences, the project by its name.
-  assert.equal(h.posts[1].text, 'Homeroom bot will build this when one of its 5 changes on RSS reader is voted in or closed.');
+  // #6156: the number is the cap that held it: its changes waiting for votes,
+  // or its builds, and each says what it waits for.
+  assert.equal(h.posts[0].text, `Homeroom bot will build this when one of its ${bot.WAITING_PER_APP} changes on RSS reader is voted in or closed.`);
+  assert.equal(h.posts[1].text, `Homeroom bot will build this when one of the ${bot.BUILDS_PER_APP} changes it is building on RSS reader at once is done.`);
 
   live.buildAndPropose = async (args) => {
     await args.onSession({ id: 5001 });
@@ -1054,8 +1190,45 @@ test('a held issue is told once, not again on every retry that is held again (#3
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, held), 'held');
   assert.deepEqual(h.posts.map((p) => p.kind), ['held_proposals_per_app'], 'the second hold says nothing new');
   // Held for a different reason than the newest post: that is news.
-  await act(h, { verdict: 'question', question: 'q' }, { capSuppressed: 'question_tripwire' });
-  assert.deepEqual(h.posts.map((p) => p.kind), ['held_proposals_per_app', 'held_question_tripwire']);
+  await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'builds_per_app' });
+  assert.deepEqual(h.posts.map((p) => p.kind), ['held_proposals_per_app', 'held_builds_per_app']);
+});
+
+test('3 Nov 2026: a project past ten questions and notes today is still read and answered, with no held line', async (t) => {
+  // The bot's runs on the project today: 25 questions and notes, far past
+  // the 10 a day that used to hold the next one ('question_tripwire').
+  const counted = [];
+  const pool = {
+    async query(sql) {
+      const s = String(sql);
+      if (s === bot.SLOT_HOLDERS_SQL) return { rows: [] };
+      if (/COUNT\(\*\)/.test(s)) { counted.push(s); return { rows: [{ cnt: 25 }] }; }
+      return { rows: [] };
+    },
+  };
+  for (const verdict of ['question', 'empty', 'person']) {
+    assert.equal(await bot.simulateCaps(pool, BOT, 9, verdict, {}), null, `a ${verdict} verdict is never held`);
+  }
+  assert.ok(!counted.some((s) => /homeroom_bot_runs/.test(s)), 'and nothing counts what the bot said today');
+  // A complicated change's plan, which asks its requester before it is built,
+  // is held only by the project's slots, which are free here.
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', {}), null);
+  assert.equal(bot.planTripwire, undefined);
+  assert.equal(bot.QUESTION_TRIPWIRE_PER_DAY, undefined);
+  assert.equal(bot.TRIPWIRE_VERDICTS, undefined);
+  assert.deepEqual(Object.keys(await bot.capRoomFor(pool, BOT, 9, {})).sort(), ['builds_per_app', 'proposals_per_app', 'proposals_total'],
+    'the refresh has no room left to count for questions either');
+
+  const h = actHarness();
+  const realPost = live.post;
+  t.after(() => { live.post = realPost; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind, text: args.text }); return { githubCreatedAt: '2026-09-25T17:00:05Z' }; };
+  const caps = await bot.simulateCaps(pool, BOT, 9, 'question', {});
+  assert.equal(await act(h, { verdict: 'question', question: 'Which feed should it read first?' }, { capSuppressed: caps }), 'question');
+  assert.equal(await act(h, { verdict: 'empty', reason: 'Nothing to build here.' }, { capSuppressed: caps }), 'empty');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['question', 'empty'], 'the eleventh question and note are posted as ever');
+  assert.match(h.posts[0].text, /Which feed should it read first\?/);
+  assert.ok(!h.posts.some((p) => /^held_/.test(p.kind) || /questions and notes|a day old/.test(p.text || '')), 'no held line');
 });
 
 test('a backlog pass holds silently, and still speaks when it has something to say (#3509)', async (t) => {
@@ -1065,7 +1238,7 @@ test('a backlog pass holds silently, and still speaks when it has something to s
   live.post = async (args) => { h.posts.push({ kind: args.kind }); return { githubCreatedAt: '2026-09-25T17:00:05Z' }; };
   const quiet = { quietHold: true };
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, { ...quiet, capSuppressed: 'proposals_per_app' }), 'held');
-  assert.equal(await act(h, { verdict: 'question', question: 'q' }, { ...quiet, capSuppressed: 'question_tripwire' }), 'held');
+  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, { ...quiet, capSuppressed: 'builds_per_app' }), 'held');
   assert.deepEqual(h.posts, [], 'held is still the verdict, and the cap_freed refresh brings it back; no note');
   assert.equal(await act(h, { verdict: 'question', question: 'Which feed?' }, quiet), 'question');
   assert.deepEqual(h.posts.map((p) => p.kind), ['question'], 'a verdict that is not held is said as ever');
@@ -1143,13 +1316,17 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
     },
   };
   // Every app is live, so the automatic ceiling is a fixed one; an admin's
-  // number replaces it.
-  assert.equal(bot.PROPOSALS_PER_APP_CAP, 5);
-  assert.equal(bot.botProposalCeiling({}), 100, 'the automatic ceiling');
-  assert.equal(bot.botProposalCeiling(null), 100);
-  total = 99;
+  // number replaces it. #6156: a project's own caps are its builds and its
+  // changes waiting for votes.
+  assert.equal(bot.BUILDS_PER_APP, 5);
+  // #6157: 50 waiting since a waiting proposal's preview sleeps.
+  assert.equal(bot.WAITING_PER_APP, 50);
+  // #6157: 500 since a waiting proposal's preview sleeps.
+  assert.equal(bot.botProposalCeiling({}), 500, 'the automatic ceiling');
+  assert.equal(bot.botProposalCeiling(null), 500);
+  total = 499;
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', {}), null);
-  total = 100;
+  total = 500;
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', {}), 'proposals_total');
   const settings = { proposalCeiling: 20 };
   assert.equal(bot.botProposalCeiling(settings), 20, 'an admin\'s number');
@@ -1157,7 +1334,7 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), null);
   total = 20;
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), 'proposals_total');
-  perApp = 5;
+  perApp = bot.WAITING_PER_APP;
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), 'proposals_per_app', 'the app\'s own cap is named first');
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'question', settings), null, 'only a build is held by them');
 
@@ -1185,16 +1362,72 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
   }), 'proposed');
   assert.deepEqual(built, [20]);
   assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON \|\| item\.reason === BACKLOG_REASON,\n\s+proposalCeiling: botProposalCeiling\(settings\),/);
-  assert.match(BOT_SRC, /simulateCaps\(pool, bot, app\.id, v\.verdict, settings\)/);
+  // (Homeroom bot parity, P4 and P6: with the request it decides for, which a batch may raise the hold for and a flaky check's fix is exempt from.)
+  assert.match(BOT_SRC, /simulateCaps\(pool, bot, app\.id, v\.verdict, settings, \{ issueNumber \}\)/);
   assert.match(LIVE_SRC, /router: deps\.votesRouter \|\| null, ceiling: proposalCeiling,/);
+});
+
+test('#6156: a project\'s builds and its changes waiting for votes are two caps, each held at its own number', async () => {
+  let builds = 0;
+  let proposals = 0;
+  const pool = {
+    async query(sql) {
+      const s = String(sql);
+      // The app's slots (slotHolders): one row each, of its kind.
+      if (s === bot.SLOT_HOLDERS_SQL) {
+        return { rows: [
+          ...Array.from({ length: proposals }, (_, i) => ({ kind: 'proposal', issue_number: 100 + i })),
+          ...Array.from({ length: builds }, (_, i) => ({ kind: 'build', issue_number: 200 + i })),
+        ] };
+      }
+      if (/FROM chat_sessions\s+WHERE user_id = \$1/.test(s)) return { rows: [{ cnt: proposals }] };
+      return { rows: [{ cnt: 0 }] };
+    },
+  };
+  const caps = (settings = {}) => bot.simulateCaps(pool, BOT, 9, 'ready', settings);
+  [builds, proposals] = [5, 0];
+  assert.equal(await caps(), 'builds_per_app', '5 builds under way: it waits for the bot\'s turn');
+  // #6157: 50 changes may wait for votes (their previews sleep): the 50th is
+  // built, and the 51st waits.
+  [builds, proposals] = [0, 49];
+  assert.equal(await caps(), null, '49 waiting: the 50th is built');
+  [builds, proposals] = [0, 50];
+  assert.equal(await caps(), 'proposals_per_app', '50 changes up for a vote: the 51st waits for votes');
+  [builds, proposals] = [4, 49];
+  assert.equal(await caps(), null, 'room in both: it is built');
+  [builds, proposals] = [5, 50];
+  assert.equal(await caps(), 'proposals_per_app', 'both full: votes are what it waits for longest');
+  // A project's own numbers (settings.appCaps, by app id), clamped as stored.
+  [builds, proposals] = [0, 50];
+  const own = bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 9: { waiting: 80 } }) }]);
+  assert.deepEqual(bot.appCapsOf(own, 9), { building: bot.BUILDS_PER_APP, waiting: 80 });
+  assert.equal(await caps(own), null, 'waiting set to 80 lets the 51st through');
+  proposals = 80;
+  assert.equal(await caps(own), 'proposals_per_app');
+  assert.equal(await caps(bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 8: { waiting: 80 } }) }])), 'proposals_per_app',
+    'another project\'s number is not this one\'s');
+  [builds, proposals] = [0, 15];
+  assert.equal(await caps(bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 9: { waiting: 15 } }) }])), 'proposals_per_app',
+    'a smaller project\'s own number, lower than the default');
+  [builds, proposals] = [2, 0];
+  assert.equal(await caps(bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 9: { building: 2 } }) }])), 'builds_per_app');
+  // Only a build is held by them.
+  [builds, proposals] = [5, 50];
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'question', {}), null);
 });
 
 test('the held lines name the limit and never promise more than the refresh does', () => {
   assert.match(live.heldText({ cap: 'proposals_per_app', verdict: 'ready', limit: 2 }), /when one of its 2 changes on this project is voted in or closed/);
-  const q = live.heldText({ cap: 'question_tripwire', verdict: 'question', limit: 10 });
-  assert.match(q, /has a question about this request, but it has already posted 10 questions and notes on this project today/);
-  assert.match(live.heldText({ cap: 'question_tripwire', verdict: 'empty', limit: 10 }), /has a note on this request/);
-  for (const text of [q, live.heldText({ cap: 'proposals_per_app', limit: 2 })]) assert.ok(!/\u2014/.test(text));
+  // #6156: a project's builds all under way: it waits for the bot's turn, not for a vote.
+  const turn = live.heldText({ cap: 'builds_per_app', verdict: 'ready', limit: 5, project: 'Plant Pal' });
+  assert.equal(turn, 'Homeroom bot will build this when one of the 5 changes it is building on Plant Pal at once is done.');
+  assert.ok(!/vote/.test(turn));
+  assert.ok(!/\u2014/.test(turn));
+  const total = live.heldText({ cap: 'proposals_total', limit: 500 });
+  assert.equal(total, 'Homeroom bot will build this when one of its 500 changes across Homeroom is voted in or closed.');
+  for (const text of [total, live.heldText({ cap: 'proposals_per_app', limit: 2 })]) assert.ok(!/\u2014/.test(text));
+  // 3 Nov 2026: there is no daily limit on questions and notes to name.
+  assert.doesNotMatch(String(live.heldText), /posted|questions and notes|a day old/);
 });
 test('runTriage acts only through the live module, and only when the app is live', () => {
   // Shadow mode stays structurally silent: none of the posting or proposing

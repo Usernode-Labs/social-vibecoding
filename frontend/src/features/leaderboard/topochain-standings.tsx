@@ -4,7 +4,7 @@
  *
  * The only writer of the DOM below that root. ./topochain-leaderboard.js still
  * owns everything that makes this pane WORK — the four public `/api/v4` reads,
- * the event-context subscription, the staleness guards, the page cursor, the
+ * the event-context subscription, the staleness guards, the loading state, the
  * season-vs-event column decision — and hands over two descriptors,
  * `bodyView()` and `drillView()`. This file spells them as markup, class string
  * for class string.
@@ -85,13 +85,6 @@ type BodyView =
       nonPodiumToggle: NonPodiumToggle | null;
       /** #6039: how a place is worked out; rendered under the table. */
       orderNote?: boolean;
-      pagination: {
-        page: number;
-        totalPages: number;
-        total: number;
-        prevDisabled: boolean;
-        nextDisabled: boolean;
-      } | null;
     };
 
 type Triple = { loading: boolean; error: string | null };
@@ -123,9 +116,9 @@ const controller = () => (window as any).TopochainLeaderboard;
 
 /** Every column's alignment, so the head and the body cannot disagree. */
 const ALIGN: Record<ColumnKey, string> = {
-  rank: 'text-left',
-  user: 'text-left',
-  points: 'text-right whitespace-nowrap',
+  rank: 'text-start',
+  user: 'text-start',
+  points: 'text-end whitespace-nowrap',
 };
 
 const HINT = 'text-sm text-zinc-500 py-8 text-center dark:text-zinc-400';
@@ -143,7 +136,7 @@ const CARD = 'rounded-2xl bg-white dark:bg-zinc-900';
 const RULE = 'border-t border-zinc-100 dark:border-zinc-800';
 
 /** Figures line up by digit, the way Your standing's rank does, not in mono. */
-const FIGURE = 'px-4 py-3 text-[0.9375rem] tabular-nums text-right';
+const FIGURE = 'px-4 py-3 text-[0.9375rem] tabular-nums text-end';
 
 function Disclaimer({ text }: { text: string | null }): ReactNode {
   if (!text) return null;
@@ -273,8 +266,8 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
 
 /**
  * #5275: "You · #22 · 10,823 points", above the table, so the viewer sees
- * their own place without paging to it. Pressing it opens their details,
- * under their row when it is on this page.
+ * their own place without scrolling the whole board. Pressing it opens their
+ * details, under their row when it is in the list.
  */
 function YouLine({ you }: { you: YouView | null | undefined }): ReactNode {
   const t = useMessages('leaderboard');
@@ -283,7 +276,7 @@ function YouLine({ you }: { you: YouView | null | undefined }): ReactNode {
     <button
       type="button"
       id="tc-lb-you"
-      className={`${CARD} mb-3 block w-full px-4 py-3 text-left text-[0.9375rem] font-[650] tabular-nums text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500`}
+      className={`${CARD} mb-3 block w-full px-4 py-3 text-start text-[0.9375rem] font-[650] tabular-nums text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500`}
       onClick={() => controller()?._openViewerRow()}
     >
       {t('leaderboard:standings.you', { rank: you.rank, points: you.points, count: you.count })}
@@ -331,7 +324,7 @@ function StandingsTable(
                 {view.columns.map((c) => <Cell key={c} column={c} row={row} />)}
               </tr>
               {/* #5275: the row's details open under it, not at the foot of
-                  a 25-row table. */}
+                  a long table. */}
               {openIndex === row.index && drill ? (
                 <tr>
                   <td colSpan={view.columns.length} className="px-4 pb-4">
@@ -343,39 +336,6 @@ function StandingsTable(
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function Pagination(
-  { meta }: { meta: Extract<BodyView, { state: 'table' }>['pagination'] },
-): ReactNode {
-  const t = useMessages('leaderboard');
-  if (!meta) return null;
-  const btn = 'rounded-full bg-white dark:bg-zinc-900 px-3 py-1 text-xs font-medium disabled:opacity-40';
-  return (
-    <div className="flex items-center justify-between mt-3 text-sm">
-      <span className="text-zinc-500 dark:text-zinc-400">
-        {t('leaderboard:standings.page', { page: meta.page, pages: meta.totalPages, count: meta.total })}
-      </span>
-      <div className="flex gap-2">
-        <button
-          id="tc-lb-prev"
-          className={btn}
-          disabled={meta.prevDisabled}
-          onClick={() => controller()?._prevPage()}
-        >
-          {t('leaderboard:standings.prev')}
-        </button>
-        <button
-          id="tc-lb-next"
-          className={btn}
-          disabled={meta.nextDisabled}
-          onClick={() => controller()?._nextPage()}
-        >
-          {t('leaderboard:standings.next')}
-        </button>
-      </div>
     </div>
   );
 }
@@ -408,7 +368,7 @@ function StandingsSkeleton(): ReactNode {
       <div className="px-4 pt-3 pb-2 flex items-center gap-3">
         <Skeleton shape="muted" className="w-8" />
         <Skeleton shape="muted" className="w-20" />
-        <Skeleton shape="muted" className="ml-auto w-12" />
+        <Skeleton shape="muted" className="ms-auto w-12" />
         <Skeleton shape="muted" className="w-12" />
       </div>
       {Array.from({ length: 6 }, (_, i) => (
@@ -418,7 +378,7 @@ function StandingsSkeleton(): ReactNode {
         >
           <Skeleton shape="muted" className="w-4" />
           <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
-          <Skeleton shape="muted" className="ml-auto w-10" />
+          <Skeleton shape="muted" className="ms-auto w-10" />
           <Skeleton shape="muted" className="w-14" />
         </div>
       ))}
@@ -481,7 +441,6 @@ function Body({ view, drill }: { view: BodyView | null; drill: DrillView | null 
       <NonPodiumChip toggle={view.nonPodiumToggle} />
       <StandingsTable view={view} drill={drill} />
       {view.orderNote ? <OrderNote /> : null}
-      <Pagination meta={view.pagination} />
     </>
   );
 }
@@ -514,19 +473,19 @@ function EpochBreakdown({ view }: { view: DrillView['epoch'] }): ReactNode {
       <table className="w-full text-xs">
         <thead className="text-zinc-500 dark:text-zinc-400">
           <tr>
-            <th className="text-left py-1">{t('leaderboard:drill.epoch.column.epoch')}</th>
-            <th className="text-right py-1">{t('leaderboard:drill.epoch.column.wonSlots')}</th>
-            <th className="text-right py-1">{t('leaderboard:drill.epoch.column.produced')}</th>
-            <th className="text-right py-1">{t('leaderboard:drill.epoch.column.successRate')}</th>
+            <th className="text-start py-1">{t('leaderboard:drill.epoch.column.epoch')}</th>
+            <th className="text-end py-1">{t('leaderboard:drill.epoch.column.wonSlots')}</th>
+            <th className="text-end py-1">{t('leaderboard:drill.epoch.column.produced')}</th>
+            <th className="text-end py-1">{t('leaderboard:drill.epoch.column.successRate')}</th>
           </tr>
         </thead>
         <tbody>
           {view.rows.map((e, i) => (
             <tr key={i} className="border-t border-zinc-100 dark:border-zinc-800">
               <td className="py-1 font-mono">{e.epoch}</td>
-              <td className="py-1 font-mono text-right">{e.wonSlots}</td>
-              <td className="py-1 font-mono text-right">{e.produced}</td>
-              <td className="py-1 font-mono text-right">{`${e.successRate}%`}</td>
+              <td className="py-1 font-mono text-end">{e.wonSlots}</td>
+              <td className="py-1 font-mono text-end">{e.produced}</td>
+              <td className="py-1 font-mono text-end">{`${e.successRate}%`}</td>
             </tr>
           ))}
         </tbody>
@@ -592,9 +551,9 @@ function Figures({ figures }: { figures: DrillView['figures'] }): ReactNode {
 
 /**
  * The details themselves. Drawn under the open row of the table (#5275),
- * or, for the viewer's own row opened from the "You" line while it is on
- * another page, under the table on its own card. Either way the panel is
- * #tc-lb-drill, once.
+ * or, for the viewer's own row opened from the "You" line while the
+ * non-podium filter leaves it out of the list, under the table on its own
+ * card. Either way the panel is #tc-lb-drill, once.
  */
 function DrillPanel({ view }: { view: DrillView }): ReactNode {
   const t = useMessages('leaderboard');

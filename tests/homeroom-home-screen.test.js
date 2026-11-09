@@ -90,7 +90,7 @@ test('the arrival address: the steps once, the parameter off the address, the re
 test('the row: after About, a plain row, steps in the browser and Homeroom from an app\'s window', () => {
   const row = SHEET.slice(SHEET.indexOf('id="app-menu-row-add-homeroom"'));
   assert.ok(SHEET.indexOf('id="app-menu-row-about"') < SHEET.indexOf('id="app-menu-row-add-homeroom"'));
-  assert.match(SHEET, /\{homeroomOffer \? \(\s+<button\s+id="app-menu-row-add-homeroom"\s+type="button"\s+className=\{`\$\{ROW\} w-full text-left`\}/);
+  assert.match(SHEET, /\{homeroomOffer \? \(\s+<button\s+id="app-menu-row-add-homeroom"\s+type="button"\s+className=\{`\$\{ROW\} w-full text-start`\}/);
   assert.match(row, /if \(homeroomOffer\.via === 'browser'\) \{\s+openHomeroomInBrowser\(\);\s+void AppContext\.dismissForNav\(\);/,
     'the window opens in the tap itself, then the menu closes');
   assert.match(row, /void AppContext\.close\(\)\.then\(\(\) => setHomeroomSteps\(os\)\);/, 'the steps once the menu is down');

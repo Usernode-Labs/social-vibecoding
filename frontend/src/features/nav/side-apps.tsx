@@ -27,6 +27,7 @@ import { XIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { useNamedApp } from './app-names';
 import { forgetParked } from './parked-strip';
 import { parkedStore, runningAppStore } from './parked-store.js';
 import { noteResumeOrigin } from './resume-motion';
@@ -41,12 +42,14 @@ function isModifiedClick(event: React.MouseEvent): boolean {
   return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
 }
 
+// The icon loads at once: the strip is always on screen, and a lazy image in
+// it stayed its first letter for as long as Home was up (1 Nov 2026).
 function AppTile({ app }: { app: StripApp }) {
   return (
     <>
       <span className="platform-tab-mark">
         <span data-icon={appIconKind(record(app))} className="app-icon-tile platform-side-app-tile">
-          <AppIconContent app={record(app)} />
+          <AppIconContent app={record(app)} eager />
         </span>
       </span>
       <span className="platform-tab-label">{app.name}</span>
@@ -56,8 +59,10 @@ function AppTile({ app }: { app: StripApp }) {
 
 export function SideApps() {
   const t = useMessages();
-  const running = useStoreState(runningAppStore).app as StripApp | null;
-  const parked = useStoreState(parkedStore).app as StripApp | null;
+  // Each by its name while this device remembers it, never its slug
+  // (./app-names.ts).
+  const running = useNamedApp(useStoreState(runningAppStore).app as StripApp | null);
+  const parked = useNamedApp(useStoreState(parkedStore).app as StripApp | null);
   const left = parked && parked.slug !== running?.slug ? parked : null;
   return (
     <div className={'platform-side-apps' + (running || left ? '' : ' hidden')}>
@@ -86,7 +91,9 @@ export function SideApps() {
             onClick={(event) => {
               if (isModifiedClick(event)) return;
               event.preventDefault();
-              noteResumeOrigin(left.slug, event.currentTarget);
+              // It grows out of the tile, where its close lands
+              // (./resume-motion.ts resumeHandleFor), not the whole row.
+              noteResumeOrigin(left.slug, event.currentTarget.querySelector('.platform-side-app-tile') || event.currentTarget);
               window.App?.openAppTab?.(left.slug, 'app');
             }}
           >

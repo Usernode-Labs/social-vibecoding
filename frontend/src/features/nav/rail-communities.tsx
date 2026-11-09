@@ -105,7 +105,7 @@
 
 import { Fragment, useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 
-import { AppWindowIcon, SearchIcon, XIcon } from '@/components/ui/icons';
+import { AppWindowIcon, PushPinIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
@@ -116,13 +116,15 @@ import {
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { devWorkshopStore } from '../dev-board/card/cards-store';
 import { useCommunity } from '../dev-board/workshop/community-card';
-import { openPlace, placeStore } from '../dev-board/workshop/place-store';
+import { itemReturnPlace, openPlace, placeStore } from '../dev-board/workshop/place-store';
+import type { PlaceKey } from '../dev-board/workshop/places';
+import { improveStore } from '../improve/improve-store.js';
 import { ProjectPlaces } from '../dev-board/workshop/project-places';
 import { openCommunitiesSearch } from '../workshop/communities-search';
 import { communityScopeStore, goToCommunity, type CommunityInfo } from '../workshop/community-scope';
 import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
-import { openPinMenu } from './pin-actions';
+import { isPinned, openPinMenu, togglePin } from './pin-actions';
 import { pinnedAppsStore } from './pinned-apps-store.js';
 import { NestSlot } from './rail-nest';
 import { recentAppsStore } from './recent-apps-store.js';
@@ -271,19 +273,27 @@ export function useRailCommunities(): string[] {
 }
 
 /** A community's places, nested under its row: the project's own list, kept short. */
-function RailPlaces({ slug, onPage }: { slug: string; onPage: boolean }) {
+function RailPlaces({ slug, onPage, needs = 0 }: { slug: string; onPage: boolean; needs?: number }) {
   const place = useStoreState(placeStore);
   const v = useStoreState(devWorkshopStore);
+  const improve = useStoreState(improveStore) as { slug: string | null; tab: string | null; subTab: string | null };
   const community = useCommunity(slug);
   // In its app, no place is lit: App is.
   const here = onPage && place.slug === slug;
+  // A request's or a change's page lights the place its back chip returns
+  // to (itemReturnPlace), as All items lights the Workshop: with none lit
+  // the sidebar said nothing of where you were (audit N05, 1 Nov 2026).
+  const onItem = onPage && improve.slug === slug && improve.tab === 'dev' && improve.subTab === 'topic';
   return (
     <ProjectPlaces
       slug={slug}
       name={community?.name || slug}
       // Nothing lit until the page has said where it is.
-      place={here ? place.place : null}
-      owed={here ? place.owed : 0}
+      place={here ? place.place : (onItem ? itemReturnPlace(slug) as PlaceKey : null)}
+      // Off its page (in its app) the row's own count moves here: it hid
+      // the row's figure when the part opened, and Needs you drew nothing,
+      // so the one count that asks for you vanished (audit N04).
+      owed={here ? place.owed : needs}
       places={community?.places}
       // #2915: the Workshop's dot, as the page's own list draws it.
       filtered={here && v.slug === slug && !!v.meta?.filtered && place.place !== 'all'}
@@ -296,6 +306,25 @@ function RailPlaces({ slug, onPage }: { slug: string; onPage: boolean }) {
 function isNativeClick(event: MouseEvent): boolean {
   const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
   return !!nav?.isNativeClick?.(event);
+}
+
+/**
+ * A COMMUNITY PRESSED IN THE SIDEBAR IS A PLACE SWITCH (1 Nov 2026), and it
+ * swaps like the tabs above it, a cut (#2797, #2880). It went through
+ * navigateToApp's zoom with nothing on screen to grow out of, so the kit
+ * fell back to its sliding page transition: the old page, sidebar and all,
+ * slid left over the new sidebar while the new page was still blank. The
+ * router's own mark for a press (App._tabPress, as resumeWorkshopView sets
+ * it) is read before navigateToApp's first await, and never outlives it.
+ */
+export function pressPlace(navigate: () => void): void {
+  const app = (window as unknown as { App?: { _tabPress?: boolean } }).App;
+  if (app) app._tabPress = true;
+  try {
+    navigate();
+  } finally {
+    if (app) app._tabPress = false;
+  }
 }
 
 /** Where you are, as every row of the sidebar's communities reads it. */
@@ -376,10 +405,15 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
   const open = sidebarRows && (onPage === slug || (onApp === slug && yours));
   const app = hasAppRow(slug, info, list);
   const running = live.includes(slug);
-  // The part: everything while you are in it, its App row alone while its app runs.
-  const part = open || (sidebarRows && app && (running || onApp === slug));
+  // The "still open" dot is for an app you are NOT in: it marks the one kept
+  // loaded behind another page and sits where its close X shows. On the App
+  // row of the app on screen it said nothing ("still open" while you look at
+  // it), and an unexplained grey dot on the lit row read as a warning
+  // (audit N04, 1 Nov 2026).
+  const keptOpen = running && onApp !== slug;
   // Open, its votes are Needs you's count under it.
-  const votes = c && !c.unchosen && !open ? Number(c.needs) || 0 : 0;
+  const needs = c && !c.unchosen ? Number(c.needs) || 0 : 0;
+  const votes = open ? 0 : needs;
   const appName = t('core:rail.appOf', { name });
   const href = `#app/${encodeURIComponent(slug)}/workshop`;
   // The App row, which the close control hands the focus to before it goes.
@@ -387,8 +421,16 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
   // While Home is on show, a section row can be dragged onto My apps (#6025).
   // A pin keeps its own drag-out to unpin, so it is not one of these.
   const dragToHome = !pin && sidebarRows && screen === 'home-screen';
+  const stuck = !!pin || isPinned(slug);
+  const keepTop = () => togglePin({ slug, name, iconUrl: icon.icon_url, iconEmoji: icon.icon_emoji });
+  // The part: everything while you are in it, its App row alone while its app runs.
+  const part = open || (sidebarRows && app && (running || onApp === slug));
   return (
     <Fragment>
+      {/* RECENTS' ROW (One Home, #6361): the link fills the row, and the pin
+          and the count sit over its end in their own columns, the pin first,
+          so the count keeps the row's end (app.css .platform-rail-row). */}
+      <div className="platform-rail-row" data-rail-row={slug} {...(votes > 0 ? { 'data-votes': '' } : null)}>
       <a
         className="platform-rail-community"
         href={href}
@@ -412,7 +454,7 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
           event.preventDefault();
           // On its page, a press goes up the page; from its app, to its page.
           if (onPage === slug) pressLitTab(screen, { stopAtCommunity: true });
-          else goToCommunity(slug);
+          else pressPlace(() => goToCommunity(slug));
         }}
         // One of yours pins or unpins from its right-click menu, which
         // keeps the link's Open in new tab (./pin-actions.ts).
@@ -432,12 +474,26 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
           <AppIconContent app={icon} />
         </span>
         <span className="platform-rail-name">{name}</span>
-        {votes > 0 ? (
-          <span className="platform-rail-votes" aria-label={t('core:tabs.votesWaiting', { count: votes })}>
-            {votes > 99 ? '99+' : String(votes)}
-          </span>
-        ) : null}
+        {votes > 0 ? <span className="sr-only">{t('core:tabs.votesWaiting', { count: votes })}</span> : null}
       </a>
+      <button
+        type="button"
+        className="platform-rail-pin"
+        data-rail-pin={slug}
+        aria-pressed={stuck}
+        aria-label={stuck ? t('core:rail.pin.unpinTop', { name }) : t('core:rail.pin.keepTop', { name })}
+        title={stuck ? t('core:rail.pin.unpin') : t('core:rail.pin.add')}
+        onClick={(event) => { event.preventDefault(); event.stopPropagation(); keepTop(); }}
+      >
+        {/* Filled while pinned: app.css keys it off aria-pressed. */}
+        <PushPinIcon className="platform-rail-pin-glyph" aria-hidden="true" />
+      </button>
+      {votes > 0 ? (
+        <span className="platform-rail-votes" aria-hidden="true">
+          {votes > 99 ? '99+' : String(votes)}
+        </span>
+      ) : null}
+      </div>
       <NestSlot open={part} className="platform-rail-nest" rows=".platform-rail-app, .dev-ws-place, .dev-ws-places-head">
         {app ? (
           // A row wrapper, because the close control cannot live inside the
@@ -453,7 +509,7 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
               title={appName}
               // "Game Corner app", and that it is still open: the row's words
               // are only "App", under the community's name.
-              aria-label={running ? listText([appName, liveAppLabel()]) : appName}
+              aria-label={keptOpen ? listText([appName, liveAppLabel()]) : appName}
               aria-current={onApp === slug ? 'page' : undefined}
               onClick={(event) => {
                 if (isNativeClick(event)) return;
@@ -469,13 +525,13 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
             >
               <AppWindowIcon className="platform-rail-sub-glyph" aria-hidden="true" />
               <span className="platform-rail-sub-name">{t('core:rail.app')}</span>
-              {running ? <LiveAppDot className="platform-rail-live" /> : null}
+              {keptOpen ? <LiveAppDot className="platform-rail-live" /> : null}
             </a>
             {/* Close the app (#5525): an X where the dot sits, shown on hover
                 or keyboard focus (app.css). Not offered for the app on
                 screen — there is nothing to close it away from. Pressing it
                 must not press the row's own open. */}
-            {running && onApp !== slug ? (
+            {keptOpen ? (
               <button
                 type="button"
                 className="platform-rail-live-stop"
@@ -496,7 +552,7 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
           </div>
         ) : null}
         <NestSlot open={open} className="platform-rail-nest platform-rail-places" rows=".dev-ws-place, .dev-ws-places-head">
-          <RailPlaces slug={slug} onPage={onPage === slug} />
+          <RailPlaces slug={slug} onPage={onPage === slug} needs={needs} />
         </NestSlot>
       </NestSlot>
     </Fragment>
@@ -539,7 +595,7 @@ export function RailCommunities({ shown }: { shown: string[] }) {
         <a
           id="platform-rail-search"
           className="platform-rail-search"
-          href="#communities"
+          href="/"
           aria-label={t('core:rail.search')}
           title={t('core:rail.search')}
           onClick={(event) => {

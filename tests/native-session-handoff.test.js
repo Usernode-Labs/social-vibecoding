@@ -90,6 +90,7 @@ function loadNativeChrome({
   fetchImpl,
   establishImpl,
   prepareForLoginImpl,
+  prepareProvingParametersImpl,
   restoreImpl,
   sharedAttemptStorage,
 } = {}) {
@@ -98,6 +99,7 @@ function loadNativeChrome({
     fetch: [],
     establish: [],
     prepareForLogin: 0,
+    prepareProvingParameters: 0,
     logout: 0,
     admission: [],
     events: [],
@@ -173,6 +175,10 @@ function loadNativeChrome({
       return establishResult(payload, sandbox.App.user.id.toString());
     },
     async restoreWebSession() { return restoreImpl(); },
+    async prepareProvingParameters() {
+      calls.prepareProvingParameters += 1;
+      return prepareProvingParametersImpl ? prepareProvingParametersImpl() : true;
+    },
     async prepareForLogin() {
       calls.prepareForLogin += 1;
       if (prepareForLoginImpl) return prepareForLoginImpl();
@@ -860,7 +866,7 @@ test('the renewal count moves only when a restore lands, and names the one in fl
 });
 
 function recoveryReader(restore, responses) {
-  const sandbox = { NativeChrome: { restoreWebSession: restore }, App: {}, fetch: async () => responses.shift() };
+  const sandbox = { NativeChrome: { restoreWebSession: restore }, App: {}, fetch: async () => responses.shift(), setTimeout, clearTimeout };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   const start = appSource.indexOf('  async _fetchSession()');
@@ -879,9 +885,113 @@ test('boot retries web authentication once after successful native restoration',
   assert.deepEqual(calls, [true]);
 });
 
+test('boot stops waiting on a native restore that does not answer, and takes up its late success', async () => {
+  // Offline follow-up, 2 Nov 2026: on a network that carries nothing the
+  // restore held the boot for the bridge's 45 s.
+  let finish;
+  const reader = recoveryReader(() => new Promise((resolve) => { finish = resolve; }),
+    [response({}, { ok: false, status: 401 })]);
+  assert.equal(reader.BOOT_NATIVE_RESTORE_TIMEOUT_MS, 8000);
+  reader.BOOT_NATIVE_RESTORE_TIMEOUT_MS = 5;
+  let late = 0;
+  reader._lateNativeRestore = () => { late += 1; };
+  await assert.rejects(reader._fetchSession(), /timed out/, 'an expired web session with no restore is no answer');
+  assert.equal(late, 0);
+  finish(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(late, 1, 'the restore that finished late is taken up');
+
+  // A valid web session is used without waiting for it; a late failure changes nothing.
+  const ok = response({ user: { id: 41 } });
+  let fail;
+  const valid = recoveryReader(() => new Promise((_resolve, reject) => { fail = reject; }), [ok]);
+  valid.BOOT_NATIVE_RESTORE_TIMEOUT_MS = 5;
+  valid._lateNativeRestore = () => { late += 1; };
+  assert.equal(await valid._fetchSession(), ok);
+  fail(new Error('native unreachable'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(late, 1);
+
+  // Taken up: a snapshot boot is confirmed again; one with none lets the
+  // session in as a sign-in does, unless the viewer began their own.
+  const lateRestore = appSource.slice(appSource.indexOf('  _lateNativeRestore() {'), appSource.indexOf('  _answeredSignedOut(res) {'));
+  assert.match(lateRestore, /if \(App\._sessionFromSnapshot\) \{\s+App\._reconcileSession\(\)\.catch\(\(\) => \{\}\);\s+return;\s+\}/);
+  assert.match(lateRestore, /const stillWanted = \(\) => !App\.user && !App\._authedBooted && !App\._signInBegun;/);
+  assert.match(lateRestore, /AuthScreens\.finishLogin\(\{ stillWanted \}\)\.catch\(\(\) => \{\}\);/);
+});
+
 test('boot preserves a valid web session on native failure, and treats failed recovery of an expired cookie as unknown', async () => {
   const restore = async () => { throw new Error('native unreachable'); };
   const ok = response({ user: { id: 41 } });
   assert.equal(await recoveryReader(restore, [ok])._fetchSession(), ok);
   await assert.rejects(recoveryReader(restore, [response({}, { ok: false, status: 401 })])._fetchSession(), /unreachable/);
+});
+
+
+const preparationInfo = {
+  version: 5, sessionLifecycleProtocol: 2,
+  capabilities: ['establishNativeSession', 'prepareProvingParameters', 'logout'],
+};
+
+test('preparation finishes before any handoff or sign-in attempt is created', async () => {
+  const ready = deferred();
+  const loaded = loadNativeChrome({ info: preparationInfo,
+    prepareProvingParametersImpl: () => ready.promise });
+  loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+  loaded.sandbox.App.user = { id: 41 };
+  const pending = loaded.NativeChrome.establishCurrentSession();
+  const duplicate = loaded.NativeChrome.establishCurrentSession();
+  await settle();
+  assert.equal(loaded.calls.prepareProvingParameters, 1);
+  assert.equal(loaded.calls.fetch.length, 0);
+  assert.equal(loaded.calls.establish.length, 0);
+  assert.equal(loaded.storage.has(loaded.NativeChrome._ATTEMPT_STORAGE_KEY), false);
+  ready.resolve(true);
+  assert.equal((await pending).identity.participantId, '41');
+  await duplicate;
+  assert.equal(loaded.calls.fetch.length, 1);
+  assert.equal(loaded.calls.establish.length, 1);
+});
+
+test('identity changes during preparation cannot mint a stale handoff', async () => {
+  const ready = deferred();
+  const loaded = loadNativeChrome({ info: preparationInfo,
+    prepareProvingParametersImpl: () => ready.promise });
+  loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+  loaded.sandbox.App.user = { id: 41 };
+  const pending = loaded.NativeChrome.establishCurrentSession();
+  await settle();
+  loaded.NativeChrome.prepareIdentityPublication(null);
+  loaded.sandbox.App.user = null;
+  ready.resolve(true);
+  assert.equal(await pending, null);
+  assert.equal(loaded.calls.fetch.length, 0);
+  assert.equal(loaded.calls.establish.length, 0);
+});
+
+test('failed preparation retries without consuming a sign-in attempt', async () => {
+  let failed = true;
+  const loaded = loadNativeChrome({ info: preparationInfo,
+    prepareProvingParametersImpl: async () => {
+      if (failed) throw new Error('preparation failed');
+      return true;
+    } });
+  loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+  loaded.sandbox.App.user = { id: 41 };
+  assert.equal(await loaded.NativeChrome.establishCurrentSession(), null);
+  assert.equal(loaded.calls.fetch.length, 0);
+  assert.equal(loaded.storage.has(loaded.NativeChrome._ATTEMPT_STORAGE_KEY), false);
+  failed = false;
+  assert.equal((await loaded.NativeChrome.establishCurrentSession()).identity.participantId, '41');
+  assert.equal(loaded.calls.prepareProvingParameters, 2);
+  assert.equal(loaded.calls.fetch.length, 1);
+});
+
+test('an advertised preparation capability requires its bridge implementation', async () => {
+  const loaded = loadNativeChrome({ info: preparationInfo });
+  delete loaded.sandbox.usernode.prepareProvingParameters;
+  loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+  loaded.sandbox.App.user = { id: 41 };
+  assert.equal(await loaded.NativeChrome.establishCurrentSession(), null);
+  assert.equal(loaded.calls.fetch.length, 0);
 });

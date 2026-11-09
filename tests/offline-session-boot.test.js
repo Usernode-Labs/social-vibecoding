@@ -286,9 +286,10 @@ test('reconciling handles all four answers, and only one of them is a reload loo
   assert.match(rec, /if \(!res\) \{[\s\S]{0,300}?Offline\?\.nudge\(\)/);
   assert.match(rec, /if \(!res\) \{[\s\S]{0,400}?_publishBootSession\(\{ unknown: true \}\)/,
     'and a joiner is told we could not tell, so it reads for itself');
-  // Same deadline'd read as the boot: on the boot path this IS the boot's
-  // read, and an open-but-stalled socket must not hold it open forever.
-  assert.match(rec, /res = await App\._fetchSession\(\);/);
+  // Same plain (non-optional) read as the boot, now with the late window:
+  // the boot stops WAITING at its deadline but no longer aborts the read, so
+  // a slow answer still settles the check (#6429).
+  assert.match(rec, /App\._fetchSession\(\{ late: true \}\)/);
 });
 
 test('the snapshot is the whole user record, which is why the shell it paints is right', () => {
@@ -430,7 +431,9 @@ test('Settings no longer opens the boot read a second time', () => {
 });
 
 test('reconnecting reconciles the snapshot against the real session', () => {
-  const body = appMethod('_reconcileSession');
+  // The answer's meaning lives in _settleSnapshotSession now (#6429): the
+  // on-time answer, a late one and a retry all settle through it.
+  const body = appMethod('_reconcileSession') + appMethod('_settleSnapshotSession');
   // 401 → the session really ended.
   assert.match(body, /_dropCachedSession\(\)/);
   // A different user → the shell was painted for someone else.

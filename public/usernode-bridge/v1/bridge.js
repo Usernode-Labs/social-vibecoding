@@ -21,6 +21,113 @@
 (function () {
   window.usernode = window.usernode || {};
 
+  /* __USERNODE_OFFLINE_CACHE_BEGIN__ */
+  // ── Offline apps from the browser's own cache ──────────────────────────
+  //
+  // The shell frames an offline app at ONE address whatever the token, so
+  // the page the browser kept is the page asked for, online or not: the
+  // platform's parameters go after `#` (`un-token`, `un-theme`, sometimes
+  // `un-refresh`; public/js/app-view.js buildAppIframeSrc), and the app gate
+  // keeps the app's pages and files fresh (src/services/offline-cache.js).
+  //
+  // FIRST IN THIS FILE, before the app's own code and before anything here
+  // reads the address:
+  //   1. The token and theme move into the query, where apps have always
+  //      read them (history.replaceState: no reload).
+  //   2. The app's files are remembered (in its own storage) as it loads
+  //      them, so a refresh knows what to fetch again.
+  //   3. `un-refresh`: the app's build changed since this device last kept
+  //      it. The page is hidden, every remembered file and the page are
+  //      fetched again past the cache, and the frame reloads onto them. A
+  //      plain reload is not enough: Chrome re-checks only the page.
+  //   4. It tells the shell it opened: `{ __usernode_offline_cache: 'open',
+  //      fresh }`, fresh being whether this copy is of the live build. The
+  //      shell frames the app the old way if it never hears this.
+  (function () {
+    try {
+      if (!(window.parent && window.parent !== window)) return;
+    } catch (_) { return; }
+    var hash;
+    try { hash = String(location.hash || ""); } catch (_) { return; }
+    if (hash.indexOf("#un-") !== 0) return;
+    var own;
+    try { own = new URLSearchParams(hash.slice(1)); } catch (_) { return; }
+    var page = String(location.href).split("#")[0];
+    var origin = location.origin;
+    var refresh = own.get("un-refresh") === "1";
+    var FILES_KEY = "usernode:offline-files";
+    var MAX_FILES = 200;
+
+    try {
+      var query = new URLSearchParams(location.search);
+      var token = own.get("un-token");
+      if (token) query.set("token", token);
+      var theme = own.get("un-theme");
+      if (theme) query.set("un-theme", theme);
+      var qs = query.toString();
+      history.replaceState(history.state, "", location.pathname + (qs ? "?" + qs : ""));
+    } catch (_) { /* refused: the app reads no token, as on an offline load */ }
+
+    // A file of this app's own, as the browser keeps it: no data reads, no
+    // platform paths, never an address that carries the token.
+    function keepable(raw) {
+      var u;
+      try { u = new URL(String(raw), origin); } catch (_) { return null; }
+      if (u.origin !== origin) return null;
+      if (u.pathname.indexOf("/api/") === 0 || u.pathname.indexOf("/__") === 0) return null;
+      if (/(^|&)token=/.test(u.search.slice(1))) return null;
+      u.hash = "";
+      return u.toString();
+    }
+    function readFiles() {
+      try {
+        var list = JSON.parse(localStorage.getItem(FILES_KEY));
+        return Array.isArray(list) ? list.filter(function (u) { return typeof u === "string"; }) : [];
+      } catch (_) { return []; }
+    }
+    function remember(names) {
+      var add = [];
+      for (var i = 0; i < names.length; i++) {
+        var k = keepable(names[i]);
+        if (k && add.indexOf(k) === -1) add.push(k);
+      }
+      if (!add.length) return;
+      var list = add.concat(readFiles().filter(function (u) { return add.indexOf(u) === -1; }));
+      try { localStorage.setItem(FILES_KEY, JSON.stringify(list.slice(0, MAX_FILES))); } catch (_) { /* full: kept as far as it goes */ }
+    }
+    try {
+      if (typeof PerformanceObserver === "function") {
+        new PerformanceObserver(function (entries) {
+          remember(entries.getEntries().map(function (e) { return e.name; }));
+        }).observe({ type: "resource", buffered: true });
+      }
+    } catch (_) { /* no observer: a refresh fetches the page alone */ }
+
+    function say(fresh) {
+      try { window.parent.postMessage({ __usernode_offline_cache: "open", fresh: !!fresh }, "*"); } catch (_) { /* parent gone */ }
+    }
+
+    if (!refresh) { say(true); return; }
+    say(false);
+    try { document.documentElement.style.visibility = "hidden"; } catch (_) { /* no document yet */ }
+    var files = readFiles();
+    var pageFetch = fetch(page, { cache: "reload", credentials: "same-origin" })
+      .then(function (res) { return !!(res && res.ok); }, function () { return false; });
+    Promise.all([pageFetch].concat(files.map(function (u) {
+      return fetch(u, { cache: "reload", credentials: "same-origin" }).catch(function () { return null; });
+    }))).then(function (done) {
+      if (!done[0]) {
+        // The page could not be fetched again: run on the copy there is, and
+        // the shell asks again on the next open.
+        try { document.documentElement.style.visibility = ""; } catch (_) { /* gone */ }
+        return;
+      }
+      own.delete("un-refresh");
+      location.replace(page + "#" + own.toString());
+    });
+  })();
+  /* __USERNODE_OFFLINE_CACHE_END__ */
+
   // ── Native + iframe-relay detection ───────────────────────────────────
   //
   // "dapp mode" (top frame inside the Flutter WebView) exposes a JS channel
@@ -104,6 +211,7 @@
     requestAlarmPermissions: true,
     openNotificationSettings: true,
     prepareForLogin: true,
+    prepareProvingParameters: true,
     restoreWebSession: true,
     logout: true,
     establishNativeSession: true,
@@ -139,6 +247,7 @@
   var _realmSession = null;
   var _realmSessionGeneration = 0;
   var _realmEstablishLease = null;
+  var _realmPreparations = new Set();
   var _REALM_CLOSE_EVENT = "sv:native-realm-close";
 
   // ── Privileged-handshake outcome record ───────────────────────────────
@@ -260,6 +369,8 @@
     _realmSession = null;
     _realmEstablishLease = null;
     _realmSessionGeneration++;
+    _realmPreparations.forEach(function (cancel) { cancel(reason); });
+    _realmPreparations.clear();
     _socialReceiptObservers = {};
 
     var pending = window.__usernodeBridge && window.__usernodeBridge.pending;
@@ -267,7 +378,7 @@
     Object.keys(pending).forEach(function (id) {
       var entry = pending[id];
       if (!entry || (entry.sessionBound !== true &&
-          entry.establishment !== true)) return;
+          entry.establishment !== true && entry.preparation !== true)) return;
       delete pending[id];
       entry.reject(taggedNativeError(
         reason || "Native session request stopped because the session changed",
@@ -427,6 +538,7 @@
           !!privilegedCapability,
         sessionBound: !!realmSessionClaim,
         establishment: method === "establishNativeSession",
+        preparation: method === "prepareProvingParameters",
         realmSessionGeneration: realmSessionGeneration,
       };
       var payload = { method: method, id: id, args: args || {} };
@@ -459,6 +571,7 @@
           privileged: origEntry.privileged,
           sessionBound: origEntry.sessionBound,
           establishment: origEntry.establishment,
+          preparation: origEntry.preparation,
           realmSessionGeneration: origEntry.realmSessionGeneration,
         };
         try {
@@ -556,6 +669,7 @@
   }
 
   function callNative(method, args) {
+    var generation = _realmSessionGeneration;
     var needsRealmSession = isRealmSessionMethod(method);
     var needsRootCapability = isPrivilegedNativeMethod(method) ||
       (!_inIframe && needsRealmSession);
@@ -575,6 +689,12 @@
       );
     }
     return ensurePrivilegedCapability().then(function (capability) {
+      if (method === "prepareProvingParameters" &&
+          generation !== _realmSessionGeneration) {
+        throw taggedNativeError(
+          "Native session changed during preparation", "session-changed"
+        );
+      }
       return postNative(
         method, args, capability,
         realmSession && realmSession.claim,
@@ -5336,6 +5456,37 @@
     );
   };
 
+  // Public-data preparation precedes the short-lived authentication handoff.
+  // Native owns download progress/retry. Do not impose an action timeout on
+  // this wait; realm closure/pagehide rejects its pending request instead.
+  window.usernode.prepareProvingParameters = function () {
+    if (!window.usernode.isNative) {
+      return Promise.reject(new Error("Proof tools require the native app"));
+    }
+    var generation = _realmSessionGeneration;
+    var cancel;
+    var cancelled = new Promise(function (_, reject) {
+      cancel = function (reason) {
+        reject(taggedNativeError(reason ||
+          "Native session changed during preparation", "session-changed"));
+      };
+    });
+    // Register before capability bootstrap: it may still be awaiting native
+    // permission when identity publication or navigation closes this realm.
+    _realmPreparations.add(cancel);
+    var preparing = callNative("prepareProvingParameters", {}).then(function (ready) {
+      if (_realmSessionGeneration !== generation) {
+        throw taggedNativeError("Native session changed during preparation",
+          "session-changed");
+      }
+      if (ready !== true) throw new Error("Native proof tools are not ready");
+      return true;
+    });
+    return Promise.race([preparing, cancelled]).finally(function () {
+      _realmPreparations.delete(cancel);
+    });
+  };
+
   // Root-owned, trusted top frame only. Native installs the HttpOnly cookie;
   // the result contains public identity/attempt metadata, never credentials.
   window.usernode.restoreWebSession = function () {
@@ -7504,6 +7655,14 @@
   // sent, so an app that unregisters its worker — or one whose
   // registration the WebView refuses — stops being opened offline on its
   // next load rather than getting a frame that cannot paint.
+  //
+  // A THIRD ANSWER, "registered" (2 Nov 2026): no worker controls this load,
+  // but this document's registration has an active one. That is a load the
+  // browser sent past a worker the app still has: WebKit did it on the first
+  // load of every new app frame until the shell primed them (app-frame-
+  // bridge.js `prime`), and a hard reload does it everywhere. It is neither
+  // a claim nor a withdrawal, so the shell keeps what it knew. Only a
+  // document with no active worker at all says "not-ready".
   (function () {
     function post(kind) {
       try {
@@ -7513,7 +7672,14 @@
 
     function announce() {
       try {
-        post(navigator.serviceWorker.controller ? "ready" : "not-ready");
+        var sw = navigator.serviceWorker;
+        if (sw.controller) { post("ready"); return; }
+        if (typeof sw.getRegistration !== "function") { post("not-ready"); return; }
+        sw.getRegistration().then(function (reg) {
+          // Claimed while we asked: controllerchange has said "ready".
+          if (sw.controller) return;
+          post(reg && reg.active ? "registered" : "not-ready");
+        }, function () { post("not-ready"); });
       } catch (_) { /* serviceWorker access threw — say nothing */ }
     }
 
@@ -7531,6 +7697,342 @@
     } catch (_) { /* serviceWorker unavailable in this context */ }
   })();
   /* __USERNODE_OFFLINE_READY_END__ */
+
+  /* __USERNODE_OFFLINE_DATA_BEGIN__ */
+  // ── An app's last reads, kept for offline ─────────────────────────────
+  //
+  // An app that opens with no connection (its own service worker, or the
+  // browser's cache: "Offline" in the platform conventions) has its code but
+  // not its data: every `/api/*` read fails. `usernode.offline` keeps the
+  // last answer of each read an app wraps, and gives it back when the read
+  // cannot be answered, with the time it was kept, so the app can say how
+  // old it is (docs/plans/project-apps-offline-data.md):
+  //
+  //   usernode.offline.read(name, readFn) -> { value, fromCopy, savedAt }
+  //   usernode.offline.get(name)          -> { value, savedAt } or null
+  //   usernode.offline.put(name, value)   -> true when kept
+  //   usernode.offline.remove(name)
+  //   usernode.offline.available()        -> whether anything can be kept
+  //
+  // (each a promise). `readFn` returns a promise of the data itself, which
+  // must survive JSON.
+  //
+  // WHOSE THEY ARE. A copy is kept in this app's own localStorage, sealed
+  // (AES-GCM) with a key the shell holds for the signed-in person and gives
+  // to this app's frame alone, derived for this origin
+  // (AppView.handleAppDataKeyMessage in public/js/app-view.js). The shell
+  // drops the key when the person signs out, so from then on no copy of
+  // theirs can be opened, in any app, without any app being visited; a copy
+  // under another key (another person, or one signed out since) is deleted
+  // the first time this block sees it. The answer is believed only from the
+  // platform's origin (platform.json beside this file, remembered for loads
+  // that cannot fetch it). With no shell to ask (the app at its own address,
+  // a staging preview, a shell from before this block) nothing is kept, and
+  // a read is just the read.
+  //
+  // WHEN THE COPY IS USED. When the read fails without a "no" from the
+  // server: no answer (a network error, a timeout, an error with no
+  // `status`), a 5xx, a 408 or 429, or a 401 on a load that carried no
+  // token (an offline mount; the next load has one). A 403, 404 or 410 says
+  // the data is not there for this person any more: the copy is deleted and
+  // the error stands. Any other 4xx stands too.
+  //
+  // CAPS. A copy is at most MAX_COPY_CHARS of JSON, and all of this app's
+  // copies at most MAX_TOTAL_CHARS of storage: room is made by deleting the
+  // copies kept longest ago. A copy that cannot be kept takes its older copy
+  // with it, and one older than MAX_AGE_MS is not given back.
+  (function () {
+    if (window.usernode.offline) return;
+
+    var PREFIX = "usernode:kept:";
+    var ORIGIN_KEY = "usernode:platform-origin";
+    var CONFIG_SRC = "/usernode-bridge/v1/platform.json";
+    var MAX_COPY_CHARS = 250000;
+    var MAX_TOTAL_CHARS = 1000000;
+    var MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+    var KEY_TIMEOUT_MS = 3000;
+
+    var framed = false;
+    try { framed = !!(window.parent && window.parent !== window); } catch (_) { framed = false; }
+    // Read after the cache block at the top of this file has moved an
+    // offline app's token into the query.
+    var hadToken = false;
+    try { hadToken = !!new URLSearchParams(location.search).get("token"); } catch (_) { hadToken = false; }
+
+    var _store;
+    function storage() {
+      if (_store !== undefined) return _store;
+      _store = null;
+      try {
+        var s = window.localStorage;
+        s.setItem(PREFIX + "probe", "1");
+        s.removeItem(PREFIX + "probe");
+        _store = s;
+      } catch (_) { /* refused storage: nothing is kept */ }
+      return _store;
+    }
+
+    function subtle() {
+      try { return window.crypto && window.crypto.subtle ? window.crypto.subtle : null; } catch (_) { return null; }
+    }
+
+    function toB64(bytes) {
+      var s = "";
+      for (var i = 0; i < bytes.length; i += 0x8000) {
+        s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      }
+      return btoa(s);
+    }
+    function fromB64(text) {
+      var s = atob(text);
+      var out = new Uint8Array(s.length);
+      for (var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+      return out;
+    }
+
+    // ── The key ──────────────────────────────────────────────────────────
+
+    // Is `from` the platform's origin? The one remembered from an earlier
+    // load answers at once (offline, platform.json may not load); anything
+    // else waits for platform.json, which then becomes the one remembered.
+    function fromPlatform(s, from) {
+      var remembered = null;
+      try { remembered = s.getItem(ORIGIN_KEY); } catch (_) { remembered = null; }
+      if (remembered && from === remembered) return Promise.resolve(true);
+      return Promise.resolve().then(function () {
+        return window.fetch(CONFIG_SRC, { credentials: "omit" });
+      }).then(function (res) {
+        return res && res.ok ? res.json() : null;
+      }).then(function (config) {
+        var u;
+        try { u = new URL(String((config && config.platform_origin) || "")); } catch (_) { return false; }
+        if (u.protocol !== "https:" || u.username || u.password) return false;
+        var origin = u.protocol + "//" + u.host;
+        try { s.setItem(ORIGIN_KEY, origin); } catch (_) { /* asked again next load */ }
+        return from === origin;
+      }, function () { return false; });
+    }
+
+    // Copies under any key but this one, or past their age, go.
+    function sweep(s, keyId) {
+      var names = [];
+      try {
+        for (var i = 0; i < s.length; i++) {
+          var k = s.key(i);
+          if (k && k.indexOf(PREFIX) === 0 && k !== PREFIX + "probe") names.push(k);
+        }
+      } catch (_) { return; }
+      var now = Date.now();
+      names.forEach(function (k) {
+        var entry = null;
+        try { entry = JSON.parse(s.getItem(k)); } catch (_) { entry = null; }
+        if (!entry || entry.k !== keyId || typeof entry.t !== "number" || now - entry.t > MAX_AGE_MS) {
+          try { s.removeItem(k); } catch (_) { /* gone anyway */ }
+        }
+      });
+    }
+
+    // The shell's key for this person in this app, once per load:
+    // { key: CryptoKey, id } or null.
+    var _key = null;
+    function sealKey() {
+      if (_key) return _key;
+      _key = new Promise(function (resolve) {
+        var s = storage();
+        var crypto = subtle();
+        if (!framed || !s || !crypto) { resolve(null); return; }
+        var id = "kept-" + String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+        var settled = false;
+        var timer = null;
+        function finish(k) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          window.removeEventListener("message", onMessage);
+          resolve(k);
+        }
+        function onMessage(e) {
+          if (e.source !== window.parent) return;
+          var data = e.data;
+          if (!data || data.__usernode_kept !== "key" || data.id !== id) return;
+          var raw = typeof data.key === "string" ? data.key : null;
+          // No key for this frame (a preview, nobody signed in): nothing to check.
+          if (!raw) { finish(null); return; }
+          fromPlatform(s, e.origin).then(function (ok) {
+            if (!ok) return null;
+            var bytes = fromB64(raw);
+            if (bytes.length !== 32) return null;
+            return Promise.all([
+              crypto.importKey("raw", bytes, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]),
+              crypto.digest("SHA-256", bytes),
+            ]).then(function (both) {
+              var digest = new Uint8Array(both[1]);
+              var keyId = "";
+              for (var i = 0; i < 8; i++) keyId += (digest[i] < 16 ? "0" : "") + digest[i].toString(16);
+              sweep(s, keyId);
+              return { key: both[0], id: keyId };
+            });
+          }).then(finish, function () { finish(null); });
+        }
+        timer = setTimeout(function () { finish(null); }, KEY_TIMEOUT_MS);
+        window.addEventListener("message", onMessage);
+        try { window.parent.postMessage({ __usernode_kept: "key", id: id }, "*"); } catch (_) { finish(null); }
+      });
+      return _key;
+    }
+
+    // ── The copies ───────────────────────────────────────────────────────
+
+    // The name and the time are sealed in with the data, so a copy cannot
+    // be passed off under another name or another time.
+    function bound(name, t) { return new TextEncoder().encode(name + "\n" + t); }
+
+    function drop(s, slot) { try { s.removeItem(slot); } catch (_) { /* gone anyway */ } }
+
+    // Room for `need` more characters under `slot`, deleting the copies kept
+    // longest ago (never `slot`'s own, which is about to be replaced).
+    function makeRoom(s, slot, need) {
+      if (need > MAX_TOTAL_CHARS) return false;
+      var others = [];
+      var total = 0;
+      try {
+        for (var i = 0; i < s.length; i++) {
+          var k = s.key(i);
+          if (!k || k.indexOf(PREFIX) !== 0 || k === slot) continue;
+          var raw = s.getItem(k) || "";
+          var t = 0;
+          try { t = Number(JSON.parse(raw).t) || 0; } catch (_) { t = 0; }
+          others.push({ k: k, size: k.length + raw.length, t: t });
+          total += k.length + raw.length;
+        }
+      } catch (_) { return false; }
+      others.sort(function (a, b) { return a.t - b.t; });
+      while (total + need > MAX_TOTAL_CHARS && others.length) {
+        var gone = others.shift();
+        drop(s, gone.k);
+        total -= gone.size;
+      }
+      return total + need <= MAX_TOTAL_CHARS;
+    }
+
+    // The newest keep of each name wins, whichever finishes first; a remove
+    // outranks every keep already on its way.
+    var turns = {};
+    function turn(name) { turns[name] = (turns[name] || 0) + 1; return turns[name]; }
+
+    function keep(name, value) {
+      var json;
+      try { json = JSON.stringify(value); } catch (_) { json = undefined; }
+      if (typeof json !== "string") return Promise.resolve(false);
+      var mine = turn(name);
+      return sealKey().then(function (k) {
+        if (!k) return false;
+        var s = storage();
+        var slot = PREFIX + name;
+        if (json.length > MAX_COPY_CHARS) { drop(s, slot); return false; }
+        var t = Date.now();
+        var iv = window.crypto.getRandomValues(new Uint8Array(12));
+        return subtle().encrypt(
+          { name: "AES-GCM", iv: iv, additionalData: bound(name, t) },
+          k.key,
+          new TextEncoder().encode(json)
+        ).then(function (sealed) {
+          if (turns[name] !== mine) return false;
+          var raw = JSON.stringify({ k: k.id, t: t, iv: toB64(iv), c: toB64(new Uint8Array(sealed)) });
+          if (!makeRoom(s, slot, slot.length + raw.length)) { drop(s, slot); return false; }
+          try { s.setItem(slot, raw); return true; } catch (_) { drop(s, slot); return false; }
+        });
+      }).catch(function () { return false; });
+    }
+
+    function load(name) {
+      return sealKey().then(function (k) {
+        if (!k) return null;
+        var s = storage();
+        var slot = PREFIX + name;
+        var entry = null;
+        try { entry = JSON.parse(s.getItem(slot)); } catch (_) { entry = null; }
+        if (!entry) return null;
+        if (entry.k !== k.id || typeof entry.t !== "number" || Date.now() - entry.t > MAX_AGE_MS
+            || typeof entry.iv !== "string" || typeof entry.c !== "string") {
+          drop(s, slot);
+          return null;
+        }
+        return subtle().decrypt(
+          { name: "AES-GCM", iv: fromB64(entry.iv), additionalData: bound(name, entry.t) },
+          k.key,
+          fromB64(entry.c)
+        ).then(function (plain) {
+          return { value: JSON.parse(new TextDecoder().decode(plain)), savedAt: entry.t };
+        }, function () {
+          drop(s, slot);
+          return null;
+        });
+      }).catch(function () { return null; });
+    }
+
+    function forget(name) {
+      turn(name);
+      var s = storage();
+      if (s) drop(s, PREFIX + name);
+      return Promise.resolve();
+    }
+
+    function checked(name) {
+      if (typeof name !== "string" || !name || name.length > 100) {
+        throw new TypeError("usernode.offline: a name is a string of 1 to 100 characters");
+      }
+      return name;
+    }
+
+    function statusOf(err) {
+      var n = err && err.status != null ? Number(err.status) : NaN;
+      return n > 0 ? n : 0;
+    }
+    function usesCopy(err) {
+      var status = statusOf(err);
+      if (!status) return true;
+      if (status >= 500 || status === 408 || status === 429) return true;
+      return status === 401 && !hadToken;
+    }
+    function isGone(err) {
+      var status = statusOf(err);
+      return status === 403 || status === 404 || status === 410;
+    }
+
+    window.usernode.offline = {
+      read: function (name, readFn) {
+        return Promise.resolve().then(function () {
+          checked(name);
+          if (typeof readFn !== "function") throw new TypeError("usernode.offline.read: readFn must be a function");
+          return Promise.resolve().then(readFn).then(function (value) {
+            keep(name, value);
+            return { value: value, fromCopy: false, savedAt: Date.now() };
+          }, function (err) {
+            if (isGone(err)) return forget(name).then(function () { throw err; });
+            if (!usesCopy(err)) throw err;
+            return load(name).then(function (copy) {
+              if (!copy) throw err;
+              return { value: copy.value, fromCopy: true, savedAt: copy.savedAt, error: err };
+            });
+          });
+        });
+      },
+      get: function (name) {
+        return Promise.resolve().then(function () { return load(checked(name)); });
+      },
+      put: function (name, value) {
+        return Promise.resolve().then(function () { return keep(checked(name), value); });
+      },
+      remove: function (name) {
+        return Promise.resolve().then(function () { return forget(checked(name)); });
+      },
+      available: function () {
+        return sealKey().then(function (k) { return !!k; });
+      },
+    };
+  })();
+  /* __USERNODE_OFFLINE_DATA_END__ */
 
   /* __USERNODE_SHORTCUTS_BEGIN__ */
   // ── The platform's C shortcut, from inside an app (#4289) ─────────────
@@ -7794,6 +8296,158 @@
     });
   })();
   /* __USERNODE_SNAPSHOT_END__ */
+
+  /* __USERNODE_CAPTURE_BEGIN__ */
+  // ── This app's page as HTML, for a design thread (#6071) ──────────────
+  //
+  // A person can capture the screen they are looking at into a private
+  // design thread in their chat with Homeroom bot, where the bot edits it
+  // with them. The shell cannot read this frame, which is another origin, so
+  // it asks, and the bridge copies THIS document: a detached clone, never the
+  // live page, with what the person typed into its fields written in, the
+  // CSS this page can read written into one <style>, and its scripts, frames
+  // and hidden parts left out. Nothing else ever asks; nothing here runs
+  // until it does.
+  //
+  // ONLY HOMEROOM MAY ASK, exactly as for the picture above: the asking
+  // frame must be this window's parent, its origin the platform's as
+  // platform.json names it, and the reply goes to that origin alone. The
+  // page's address is sent without its query (the platform's token rides
+  // there), and a password field's value never leaves.
+  //
+  //   parent → { __usernode_capture: "take", id }
+  //   frame  → { __usernode_capture: "page", id, html, width, height, title, path }
+  //            or { ..., id, error }
+  (function () {
+    try {
+      if (!(window.parent && window.parent !== window)) return;
+    } catch (_) { return; }
+
+    var CONFIG_SRC = "/usernode-bridge/v1/platform.json";
+    var MAX_BYTES = 900 * 1024;
+    var _origin = null;
+
+    function platformOrigin() {
+      if (_origin) return _origin;
+      var p = Promise.resolve().then(function () {
+        return window.fetch(CONFIG_SRC, { credentials: "omit", cache: "no-cache" });
+      }).then(function (res) {
+        return res && res.ok ? res.json() : null;
+      }).then(function (config) {
+        var u;
+        try { u = new URL(String((config && config.platform_origin) || "")); } catch (_) { return null; }
+        if (u.protocol !== "https:" || u.username || u.password) return null;
+        return u.protocol + "//" + u.host;
+      }, function () { return null; });
+      _origin = p;
+      p.then(function (o) { if (!o && _origin === p) _origin = null; });
+      return p;
+    }
+
+    // The CSS this page can read (its own sheets and inline styles; another
+    // origin's sheet throws and is left out), as one block of text.
+    function readableCss() {
+      var out = [];
+      var sheets = document.styleSheets || [];
+      for (var i = 0; i < sheets.length; i++) {
+        var rules = null;
+        try { rules = sheets[i].cssRules; } catch (_) { rules = null; }
+        if (!rules) continue;
+        for (var j = 0; j < rules.length; j++) {
+          try { out.push(rules[j].cssText); } catch (_) { /* skip the rule */ }
+        }
+      }
+      return out.join("\n");
+    }
+
+    function same(list, other, fn) {
+      for (var i = 0; i < list.length && i < other.length; i++) fn(list[i], other[i]);
+    }
+
+    function serialize() {
+      var live = document.documentElement;
+      var clone = live.cloneNode(true);
+      // What the person typed, so the copy shows it (never a password).
+      same(live.querySelectorAll("input, textarea, select"), clone.querySelectorAll("input, textarea, select"), function (field, copy) {
+        if (copy.tagName !== field.tagName) return;
+        var type = String(field.type || "").toLowerCase();
+        if (field.tagName === "INPUT") {
+          if (type === "password" || type === "hidden" || type === "file") { copy.removeAttribute("value"); return; }
+          if (type === "checkbox" || type === "radio") {
+            if (field.checked) copy.setAttribute("checked", ""); else copy.removeAttribute("checked");
+          } else {
+            copy.setAttribute("value", field.value);
+          }
+        } else if (field.tagName === "TEXTAREA") {
+          copy.textContent = field.value;
+        } else {
+          var options = copy.querySelectorAll("option");
+          for (var n = 0; n < options.length; n++) {
+            if (field.options[n] && field.options[n].selected) options[n].setAttribute("selected", "");
+            else options[n].removeAttribute("selected");
+          }
+        }
+      });
+      // A frame is a page of its own: a plain box of its size in its place.
+      same(live.querySelectorAll("iframe"), clone.querySelectorAll("iframe"), function (frame, copy) {
+        var r = frame.getBoundingClientRect();
+        var box = document.createElement("div");
+        box.className = copy.className;
+        box.setAttribute("style", (copy.getAttribute("style") || "") + ";width:" + Math.round(r.width) + "px;height:" + Math.round(r.height) + "px;background:#e4e4e7");
+        copy.parentNode.replaceChild(box, copy);
+      });
+      // An image this page drew is kept by its full address.
+      same(live.querySelectorAll("img"), clone.querySelectorAll("img"), function (img, copy) {
+        if (img.currentSrc || img.src) copy.setAttribute("src", img.currentSrc || img.src);
+        copy.removeAttribute("srcset");
+      });
+      var drop = clone.querySelectorAll("script, noscript, template, object, embed, base, link, meta[http-equiv], [hidden], #__un-platform-link");
+      for (var d = 0; d < drop.length; d++) if (drop[d].parentNode) drop[d].parentNode.removeChild(drop[d]);
+      var styled = clone.querySelectorAll("style");
+      for (var k = 0; k < styled.length; k++) if (styled[k].parentNode) styled[k].parentNode.removeChild(styled[k]);
+      var all = clone.querySelectorAll("*");
+      for (var a = 0; a < all.length; a++) {
+        var attrs = all[a].attributes;
+        for (var b = attrs.length - 1; b >= 0; b--) if (/^on/i.test(attrs[b].name)) all[a].removeAttribute(attrs[b].name);
+      }
+      var head = clone.querySelector("head");
+      if (!head) { head = document.createElement("head"); clone.insertBefore(head, clone.firstChild); }
+      var style = document.createElement("style");
+      style.setAttribute("data-captured", "");
+      style.textContent = readableCss();
+      head.insertBefore(style, head.firstChild);
+      return "<!doctype html>\n" + clone.outerHTML;
+    }
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || data.__usernode_capture !== "take") return;
+      var id = data.id;
+      if (typeof id !== "string" || !id || id.length > 100) return;
+      var from = e.origin;
+      platformOrigin().then(function (allowed) {
+        if (!allowed || from !== allowed) return;
+        var fields = { __usernode_capture: "page", id: id };
+        try {
+          var html = serialize();
+          var size = typeof TextEncoder === "function" ? new TextEncoder().encode(html).length : html.length;
+          if (size > MAX_BYTES) fields.error = "too_big";
+          else {
+            fields.html = html;
+            fields.width = window.innerWidth;
+            fields.height = window.innerHeight;
+            fields.title = String(document.title || "").slice(0, 120);
+            fields.path = String(location.pathname || "/").slice(0, 200);
+          }
+        } catch (err) {
+          fields.error = String((err && err.message) || err || "failed").slice(0, 200);
+        }
+        try { window.parent.postMessage(fields, allowed); } catch (_) { /* parent gone */ }
+      });
+    });
+  })();
+  /* __USERNODE_CAPTURE_END__ */
 
   /* __USERNODE_PLATFORM_LINK_START__ */
   // ── The Homeroom button (an app opened at its own address) ────────────

@@ -33,6 +33,7 @@ import { useInnerHtml } from '../../lib/html';
 import { changeHref as changeLink } from '../../lib/change-href';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t } from '../../lib/i18n/runtime';
+import { dirSign } from '../../lib/i18n/direction';
 import { renderSpecHtml, useSpecFrames, type SpecHtmlDoc } from '../../lib/spec-html';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -413,7 +414,7 @@ export function SessionBar({ session, about, embedded, action }: {
         <button
           type="button"
           data-agent-session-changes-button
-          className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+          className="ms-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
           onClick={() => setDrawerOpen(true)}
           disabled={!session}
           aria-haspopup="dialog"
@@ -800,7 +801,12 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
       </section>
     );
   }
-  const checks = checksSummary(change?.checkState, change?.checkFailing, change?.checkSkipReason);
+  const checks = checksSummary(change?.checkState, change?.checkFailing, change?.checkSkipReason, {
+    phase: change?.checkPhase,
+    checkedAt: change?.checksCheckedAt,
+    queueAhead: change?.checksQueueAhead,
+    estimate: change?.checksEstimate,
+  });
   const changeHref = change && change.appSlug && item.changeId != null
     ? changeLink(change.appSlug, item.changeId, prNumber)
     : null;
@@ -822,7 +828,7 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
         {checks ? (
           <button
             type="button"
-            className={`ml-auto inline-flex items-center gap-1 rounded text-xs hover:underline ${CHECK_TONE[checks.key]}`}
+            className={`ms-auto inline-flex items-center gap-1 rounded text-xs hover:underline ${CHECK_TONE[checks.key]}`}
             data-agent-session-checks={checks.key}
             title={t('agent:session.preview.checksTitle')}
             onClick={() => { if (item.changeId != null) window.AppView?.openSessionChecks?.(item.changeId); }}
@@ -1270,8 +1276,8 @@ function SidePane({ sheet, preview, tab, containerRef }: {
     // An iframe swallows pointer moves: the preview's, while the drag runs.
     const frame = document.getElementById('staging-iframe');
     if (frame) frame.style.pointerEvents = 'none';
-    // Dragging right narrows the pane: its left edge is the divider.
-    const onMove = (move: PointerEvent) => { latest = commit(startWidth - (move.clientX - startX)); };
+    // Dragging toward inline-end narrows the pane: its inline-start edge is the divider.
+    const onMove = (move: PointerEvent) => { latest = commit(startWidth - (move.clientX - startX) * dirSign()); };
     const onUp = () => {
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onUp);
@@ -1290,7 +1296,7 @@ function SidePane({ sheet, preview, tab, containerRef }: {
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    writeSpecWidth(commit(width + (event.key === 'ArrowLeft' ? SPEC_WIDTH_STEP : -SPEC_WIDTH_STEP)));
+    writeSpecWidth(commit(width + (event.key === 'ArrowLeft' ? SPEC_WIDTH_STEP : -SPEC_WIDTH_STEP) * dirSign()));
   };
 
   return (
@@ -1528,7 +1534,7 @@ export function PreviewCapture({ change }: { change: AgentChange }) {
         size="xs"
         disabledStyle="dim"
         ink="neutral"
-        className="ml-auto shrink-0 text-xs"
+        className="ms-auto shrink-0 text-xs"
         disabled={stopping}
         onClick={() => void stop()}
       >
@@ -1720,14 +1726,14 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
           components={[<span className="font-semibold uppercase tracking-wide" />, <span />]}
         />
         {busy
-          ? <span className="ml-auto">{t('agent:session.drafts.locked')}</span>
-          : <span className="ml-auto font-semibold text-violet-700 dark:text-violet-300" data-agent-session-drafts-ready>{t('agent:session.drafts.ready')}</span>}
+          ? <span className="ms-auto">{t('agent:session.drafts.locked')}</span>
+          : <span className="ms-auto font-semibold text-violet-700 dark:text-violet-300" data-agent-session-drafts-ready>{t('agent:session.drafts.ready')}</span>}
       </p>
       <ul className="flex flex-col gap-1">
         {drafts.map((draft) => (
           <li
             key={draft.id}
-            className="flex items-center gap-0.5 rounded-xl bg-white py-0.5 pl-3 pr-0.5 dark:bg-zinc-900"
+            className="flex items-center gap-0.5 rounded-xl bg-white py-0.5 ps-3 pe-0.5 dark:bg-zinc-900"
             data-agent-session-draft={draft.id}
           >
             <span className="min-w-0 flex-1 truncate text-sm text-zinc-700 dark:text-zinc-200" title={draft.text}>{draft.text}</span>
@@ -1803,6 +1809,20 @@ export function StopStatus({ turn, onStop }: {
       ) : null}
     </div>
   );
+}
+
+/**
+ * Files pasted, picked or dropped into a session join its tray (#4065,
+ * #6254). A pasted screenshot gets a name. Module-level so the chat column
+ * around the box can take a drop, as the box always did.
+ */
+function takeSessionFiles(list: FileList | File[] | null | undefined): boolean {
+  const picked = Array.from(list || []);
+  if (!picked.length) return false;
+  addAttachments(picked.map((file, index) => (
+    file.name && file.name !== 'image.png' ? file : new File([file], pastedName(file, index), { type: file.type })
+  )));
+  return true;
 }
 
 function Composer({ id }: { id: string }) {
@@ -1994,16 +2014,6 @@ function Composer({ id }: { id: string }) {
     sendTyped();
   }
 
-  // Pasted or dropped files join the tray (a pasted screenshot gets a name).
-  const takeFiles = (list: FileList | File[] | null | undefined) => {
-    const picked = Array.from(list || []);
-    if (!picked.length) return false;
-    addAttachments(picked.map((file, index) => (
-      file.name && file.name !== 'image.png' ? file : new File([file], pastedName(file, index), { type: file.type })
-    )));
-    return true;
-  };
-
   const onSendDraft = (draft: SavedDraft) => {
     if (running) return;
     if (needsLowCreditCheck(credit)) {
@@ -2043,14 +2053,12 @@ function Composer({ id }: { id: string }) {
     input.current?.focus();
   };
 
-  const drop = useFileDrag({ disabled: archived, onFiles: (dropped) => { takeFiles(dropped); } });
-
   const kind = saving ? 'save' : running ? 'stop' : 'send';
   return (
     // `platform-safe-bar` on the outer box: its padding clears the tab bar
     // (a phone keeps it up on this screen) and the home-indicator strip, so
     // the bordered field above it never sits under either.
-    <div className="platform-safe-bar shrink-0 px-3 pt-1" {...drop.handlers}>
+    <div className="platform-safe-bar shrink-0 px-3 pt-1">
     {archived ? (
       <p className="mb-2 flex flex-wrap items-center gap-2 rounded-2xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200" data-agent-session-archived>
         <span className="min-w-0 flex-1">{t('agent:session.composer.archivedNote')}</span>
@@ -2063,10 +2071,6 @@ function Composer({ id }: { id: string }) {
       className="agent-session-composer flex flex-col gap-2 rounded-[1.75rem] border border-zinc-200 bg-white px-3 pb-2.5 pt-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
       onSubmit={submit}
     >
-      {/* #4065: the drop zone, over the card while a file is held anywhere
-          on the bar around it (the drop is the bar's, a little wider than
-          the card, so a near miss still attaches). */}
-      {drop.dragging ? <DropOverlay /> : null}
       {files.length ? (
         <PendingStrip
           id={`${id}-attachments`}
@@ -2103,7 +2107,7 @@ function Composer({ id }: { id: string }) {
         onChange={(event) => update(event.target.value)}
         onPaste={(event) => {
           if (archived || !event.clipboardData?.files?.length) return;
-          if (takeFiles(event.clipboardData.files)) event.preventDefault();
+          if (takeSessionFiles(event.clipboardData.files)) event.preventDefault();
         }}
         onKeyDown={(event) => {
           // Enter is a new line; Send (or Ctrl/Cmd+Enter, as in the dev chat) sends.
@@ -2156,7 +2160,7 @@ function Composer({ id }: { id: string }) {
           tabIndex={-1}
           aria-hidden="true"
           onChange={(event) => {
-            takeFiles(event.currentTarget.files);
+            takeSessionFiles(event.currentTarget.files);
             event.currentTarget.value = '';
           }}
         />
@@ -2433,6 +2437,12 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
   }));
   const scroll = useRef<HTMLDivElement | null>(null);
   const root = useRef<HTMLDivElement | null>(null);
+  // #6254: the whole chat column takes a dropped file, not just the box at
+  // its foot. An archived session, or one with no session yet, takes none.
+  const drop = useFileDrag({
+    disabled: snapshot.session?.status === 'archived' || !snapshot.session,
+    onFiles: takeSessionFiles,
+  });
   // The side pane beside the chat (the spec, a preview, or both), or the
   // spec over it (./spec-layout.ts). False until mounted, so the first
   // render is the one the prerender printed.
@@ -2513,7 +2523,8 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
 
   return (
     <div ref={root} className={`relative flex min-h-0 min-w-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat {...drop.handlers}>
+        {drop.dragging ? <DropOverlay /> : null}
         <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
         <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 [overflow-wrap:anywhere]" aria-live="polite" onScroll={onScroll}>
           {snapshot.phase === 'loading' ? (

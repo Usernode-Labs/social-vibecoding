@@ -36,6 +36,7 @@ test('emphasis, strike-through and inline code lose their markers', () => {
   assert.equal(plainText('__bold__ and *italic* and _also italic_'), 'bold and italic and also italic');
   assert.equal(plainText('***both at once***'), 'both at once');
   assert.equal(plainText('~~gone~~ kept'), 'gone kept');
+  assert.equal(plainText('++underlined++ kept'), 'underlined kept');
   assert.equal(plainText('run `npm test` first'), 'run npm test first');
   assert.equal(plainText('``a `tick` inside``'), 'a `tick` inside');
 });

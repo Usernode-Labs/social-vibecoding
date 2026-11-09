@@ -1,4 +1,5 @@
 'use strict';
+require('./lib/media-store').useMemoryMedia(require('node:test'));
 
 // The staging fixture that puts a change with several screens in the shots
 // member's Needs you (src/db/migrate.js seedStagingShotsScreens), against the

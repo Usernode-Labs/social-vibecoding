@@ -47,6 +47,27 @@ spec:
       ports: [{protocol: TCP, port: {{ .Values.platform.conductor.metricsPort | int64 }}}]
     {{- end }}
   egress:
+    {{- if and .Values.config.checkNodePoolRequired .Values.config.checkPoolMetricsUrl }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.checkPoolMetricsNamespace | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports: [{protocol: TCP, port: 9090}]
+    {{- end }}
+    # Aggregate activity from every gateway, including draining replicas. No
+    # app Pod exposes this listener, and no public Service routes to it.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "networkPolicy.appNamespace is required" .Values.networkPolicy.appNamespace | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: social-vibecoding-app-gate
+              app.kubernetes.io/name: usernode-app-gate
+      ports: [{protocol: TCP, port: 3001}]
     # Runtime health probes use generated app/preview Services directly.
     - to:
         - namespaceSelector:
@@ -133,11 +154,16 @@ spec:
       ports: [{protocol: TCP, port: 443}]
 {{- end }}
 {{- if .Values.migration.enabled }}
+{{- $root := . }}
+{{- $components := list "migration" }}
+{{- if .Values.databaseRoles.enabled }}{{- $components = append $components "database-bootstrap" }}{{- end }}
+{{- range $component := $components }}
+{{- with $root }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "social-vibecoding-platform.fullname" . }}-migration
+  name: {{ include "social-vibecoding-platform.fullname" . }}-{{ $component }}
   labels:
     {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
   annotations:
@@ -146,7 +172,7 @@ spec:
   podSelector:
     matchLabels:
       {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: migration
+      app.kubernetes.io/component: {{ $component }}
   policyTypes: [Egress]
   egress:
     - to:
@@ -163,7 +189,19 @@ spec:
               {{- include "social-vibecoding-platform.postgresqlPodSelector" . | nindent 14 }}
           {{- end }}
       ports: [{protocol: TCP, port: {{ .Values.postgresql.port }}}]
+    {{- if and (eq $component "database-bootstrap") .Values.previewPostgresql.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ default .Release.Namespace .Values.previewPostgresql.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.previewPostgresql.podSelector | nindent 14 }}
+      ports: [{protocol: TCP, port: {{ .Values.previewPostgresql.port }}}]
+    {{- end }}
     - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if .Values.postgresql.enabled }}
 ---

@@ -19,7 +19,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -186,6 +186,38 @@ test('--list prints the mapping and the command and runs nothing', () => {
   assert.doesNotMatch(out, /^# tests/m, 'listing runs no suite');
 });
 
+// ── A new test file brings its baseline entry ──────────────────────────
+
+test('a new test file with no baseline entry is reported; one with an entry, a nested path or a deleted file is not', () => {
+  const exists = (file) => file !== 'tests/deleted.test.js';
+  assert.deepEqual(tc.missingBaselineEntries(
+    ['tests/new.test.js', 'tests/known.test.js', 'tests/lib/nested.test.js', 'tests/deleted.test.js', 'src/x.js'],
+    { 'tests/known.test.js': [1, 1] },
+    exists,
+  ), ['tests/new.test.js']);
+  assert.deepEqual(tc.missingBaselineEntries(['tests/new.test.js'], null, () => true), ['tests/new.test.js'],
+    'an unreadable baseline counts as missing every entry');
+});
+
+test('--list names a new test file with no baseline entry and fails; one that has an entry passes', () => {
+  const added = `tests/zz-no-baseline-${process.pid}-${Date.now()}.test.js`;
+  const file = path.join(root, added);
+  fs.writeFileSync(file, "const test = require('node:test');\ntest('x', () => {});\n");
+  try {
+    const out = spawnSync(process.execPath, ['scripts/test-changed.js', '--list', '--files', added], { cwd: root, encoding: 'utf8' });
+    assert.equal(out.status, 1, out.stdout + out.stderr);
+    assert.match(out.stdout, /These new test files have no entry in tests\/baselines\/test-durations\.json; add them with:/);
+    assert.ok(out.stdout.includes(`npm run test:durations -- --add ${added}`), out.stdout);
+    assert.ok(out.stdout.includes(`    ${added}\n`), 'the path is listed too');
+    assert.doesNotMatch(out.stdout, /^# tests/m, 'listing runs no suite');
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+  const ok = spawnSync(process.execPath, ['scripts/test-changed.js', '--list', '--files', 'tests/test-changed.test.js'], { cwd: root, encoding: 'utf8' });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.doesNotMatch(ok.stdout, /These new test files have no entry/);
+});
+
 // ── The guards no change names ─────────────────────────────────────────
 
 test('a suite marked "test:changed: always" runs on every change; the marker must start its line', () => {
@@ -268,4 +300,17 @@ test('the Mayor golden runs when any prompt changes, and every declared path exi
   const out = execFileSync(process.execPath, ['scripts/test-changed.js', '--list', '--files', declared], { cwd: root, encoding: 'utf8' });
   assert.match(out, new RegExp(`^  ${declared.replace(/[.]/g, '\\.')} → \\d+ suites \\(incl\\. .*${golden.replace(/[.]/g, '\\.')}.*, which declares? it\\)$`, 'm'));
   assert.match(out, /^Running \d+ of \d+ suites:\n  node .* tests\/mayor-turn-golden\.test\.js/m);
+});
+
+test('canonical schema inputs select guards that read the ignored generated schema.sql', () => {
+  const suites = new Map([
+    ['tests/schema-reader.test.js', "read('src/db/schema.sql')"],
+    ['tests/other.test.js', "read('frontend/screen.tsx')"],
+  ]);
+  for (const file of ['src/db/migrations/0002-change.sql', 'src/db/migrations/manifest.json',
+    'src/db/reference-data.js', 'src/db/schema-source.js', 'scripts/build-schema.js', 'scripts/record-schema-migration.js']) {
+    const selection = tc.selectSuites([file], suites);
+    assert.deepEqual(selection.suites, ['tests/schema-reader.test.js'], file);
+    assert.deepEqual(selection.byFile.get('src/db/schema.sql').via, [file]);
+  }
 });

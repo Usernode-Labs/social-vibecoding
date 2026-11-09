@@ -68,6 +68,11 @@ test('the Mayor sees exactly its list, and every name on it is a real tool', () 
   for (const never of ['prepare_work', 'submit_work', 'start_platform_build', 'demo_vote', 'get_checkout_status']) {
     assert.ok(!specs.has(never), `${never} is for a human-driven client, not the Mayor`);
   }
+  // #6384: the Mayor reads a plan posted on a request, as the Homeroom bot's
+  // chat does, and the tool is a plain read.
+  assert.equal(audiences.toolVisibleTo('agent_mayor', 'get_spec'), true);
+  assert.ok(specs.has('get_spec'));
+  assert.equal(specs.get('get_spec').annotations.readOnlyHint, true);
 });
 
 test('the worker sees exactly six reads', () => {
@@ -117,6 +122,7 @@ const SAMPLE_ARGS = {
   get_app: { slug: 'recipe-box' },
   list_requests: { slug: 'recipe-box' },
   get_request: { slug: 'recipe-box', number: 12 },
+  get_spec: { slug: 'recipe-box', requestNumber: 12 },
   get_discussion: { slug: 'recipe-box', threadType: 'issue', ref: 12 },
   get_message: { slug: 'recipe-box', threadType: 'issue', ref: 12, messageId: 40 },
   get_proposal: { proposalId: 50 },
@@ -149,6 +155,8 @@ function fakePlatform(overrides = {}) {
     'GET /api/me/active-sessions': { sessions: [] },
     'GET /api/sessions/50': { session: { id: 50, app_slug: 'recipe-box', status: 'active', branch_name: 'b' } },
     'GET /api/sessions/50/status': { busy: false },
+    'GET /api/apps/recipe-box/issues/12/specs': { specs: [{ sessionId: 50, version: 2 }] },
+    'GET /api/sessions/50/specs/2': { spec: { content: '# A plan' } },
     'POST /api/apps/recipe-box/sessions': { session: { id: 77, status: 'active' } },
     'PATCH /api/sessions/77/linked-issues': { linkedIssues: [12, 13] },
     'POST /api/sessions/50/promote': { ok: true, prNumber: 901, prUrl: 'https://github.com/o/r/pull/901' },
@@ -325,7 +333,7 @@ test('the next step walks a change through its whole life', () => {
     { id: 50, app_slug: 'recipe-box', branch_name: 'b', ...session }, live, '', kind
   ).nextStep;
   assert.match(step({ branch_name: null, status: 'active' }), /Nothing has been built on Change 50 yet/);
-  assert.match(step({ status: 'active' }, { busy: true }), /working on Change 50 right now/);
+  assert.match(step({ status: 'active' }, { busy: true, turn: { kind: 'scout' } }), /working on Change 50 right now/);
   assert.match(step({ status: 'active' }, { sync: { phase: 'merging' } }), /being synced with main/);
   assert.match(step({ status: 'active', check_state: 'pending' }), /Checks are running/);
   assert.match(step({ status: 'active', check_state: 'pending', check_phase: 'deferred' }), /conflicts with main\. sync_change/);
@@ -337,8 +345,34 @@ test('the next step walks a change through its whole life', () => {
   assert.match(step({ status: 'merging' }), /is merging now/);
   assert.match(step({ status: 'merged' }), /part of the app now/);
   assert.match(step({ status: 'archived' }), /withdrawn and is closed for good/);
-  assert.doesNotMatch(step({ status: 'active' }, { busy: true }, 'worker_read'), /working on/,
+  assert.doesNotMatch(step({ status: 'active' }, { busy: true, turn: { kind: 'scout' } }, 'worker_read'), /working on/,
     'the worker is the turn that is running');
+});
+
+// #6068: a status that says busy with no turn on record is a holder nothing
+// is running behind (a run that stopped early). The bot must not report the
+// change as busy, nor tell its owner to wait for a turn that does not exist.
+test('a busy status with no turn on record is idle and retryable', () => {
+  const change = (session, live, kind = 'agent_mayor') => tools.shapeChange(
+    { id: 50, app_slug: 'recipe-box', branch_name: 'b', status: 'active', ...session }, live, '', kind
+  );
+  const held = change({}, { busy: true });
+  assert.equal(held.busy, false, 'busy means a coding turn is running');
+  assert.equal(held.runningTurn, null);
+  assert.match(held.nextStep, /^No coding turn is running on Change 50/);
+  assert.match(held.nextStep, /Ask for the work again/);
+  assert.doesNotMatch(held.nextStep, /working on Change 50 right now/);
+  const worker = change({}, { busy: true }, 'worker_read');
+  assert.doesNotMatch(worker.nextStep, /working on|No coding turn is running/,
+    'a worker is itself the turn, so it is told what to do with the change');
+  assert.match(worker.nextStep, /No checks have reported/);
+  const running = change({}, { busy: true, turn: { kind: 'scout' } });
+  assert.equal(running.busy, true);
+  assert.deepEqual(running.runningTurn, { startedAt: null, kind: 'scout' });
+  assert.match(running.nextStep, /The coding agent is working on Change 50 right now/);
+  assert.equal(change({}, {}).busy, null, 'an unreadable status stays unknown');
+  // A real sync still reads as busy work, and says so.
+  assert.match(change({}, { busy: true, sync: { phase: 'merging' } }).nextStep, /being synced with main/);
 });
 
 test('start_change creates, names and links, and reports what did not stick', async () => {

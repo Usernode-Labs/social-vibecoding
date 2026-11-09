@@ -37,6 +37,7 @@ import { AttrPopover } from './attr-popover';
 import { attrPopoverStore, type AttrPopoverState } from './attr-popover-store';
 import { DevBoardFrame, type DevBoardFrameProps } from './board-frame';
 import { CardMenu } from './card-menu';
+import { menuIconElement } from './menu-icons';
 import { cardMenuStore, type CardMenuRowView } from './card-menu-store';
 import { DevChatSubView } from './chat-frame';
 import { KanbanFilters } from './kanban-filters';
@@ -104,6 +105,8 @@ export interface DevBoardBridge {
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
   mountCardMenu(host: Element | null): void;
   publishCardMenu(rows: CardMenuRowView[]): void;
+  /** A ⋯ row's line icon as a detached svg element, for the kit's action sheet (`iconEl`). */
+  menuIconElement(key: string): Element | null;
   publishMainPause(state: MainPauseState): void;
   publishReleaseStall(state: ReleaseStallState): void;
   publishCodePause(state: CodePauseState): void;
@@ -133,6 +136,8 @@ export interface DevBoardBridge {
   publishVoteSaved(sessionId: number, vote: 'yes' | 'no' | null, epoch: number | null): void;
   /** Run four (13 Oct 2026): the next page of change `sessionId` opens at its Votes card (topic/votes-in-view.ts). */
   showVotes(sessionId: number): void;
+  /** #6439: the next request's page opens at its vote to close it (topic/votes-in-view.ts). */
+  showClose(closeId: number): void;
   publishViewMode(mode: string): void;
   publishWorkshopGroup(mode: string): void;
   /** #3700: the invite link a project's page was opened from (App._followInvite). */
@@ -257,6 +262,12 @@ export const devBoardBridge: DevBoardBridge = {
 
   publishCardMenu(rows) {
     cardMenuStore.set({ rows });
+  },
+
+  // The touch sheet's rows are the kit's, built from data by app-view.js; it
+  // asks here for each row's icon (./menu-icons.tsx, audit D08).
+  menuIconElement(key) {
+    return menuIconElement(key);
   },
 
   // Whether a red main is pausing the app's merges, and for whom the banner
@@ -401,6 +412,8 @@ export const devBoardBridge: DevBoardBridge = {
 
   // A door that sends someone to vote: the change's page opens at its Votes card.
   showVotes: (sessionId: number) => askVotesInView(sessionId),
+  // #6439: a door to a vote to close a request: the request's page opens at it.
+  showClose: (closeId: number) => askVotesInView(`close:${Number(closeId)}`),
 
   publishViewMode,
   publishWorkshopGroup,

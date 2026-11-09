@@ -1579,12 +1579,12 @@ const DevChat = {
           <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="${PlatformI18n.htmlText('core:common.close')}">✕</button>
         </div>
         <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="${PlatformI18n.htmlText('devchat:agentChoice.groupLabel')}">
-          <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
+          <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-start transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · OpenRouter</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('devchat:agentChoice.openRouterBlurb')}</span>
             ${data.defaultBackend === 'codex_openrouter' ? `<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">${PlatformI18n.htmlText('devchat:agentChoice.savedDefault')}</span>` : ''}
           </button>
-          <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
+          <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-start transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · Claude</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('devchat:agentChoice.claudeBlurb')}</span>
             ${data.defaultBackend === 'claude_code' ? `<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">${PlatformI18n.htmlText('devchat:agentChoice.savedDefault')}</span>` : ''}
@@ -1643,7 +1643,7 @@ const DevChat = {
     let favoritesOnly = this._openRouterFavoritesOnlyByDefault(data.models, selectedModel);
     effortSelect.value = selectedEffort;
 
-    const cardClass = (selected) => `rounded-lg border p-3 text-left transition-colors ${selected
+    const cardClass = (selected) => `rounded-lg border p-3 text-start transition-colors ${selected
       ? 'border-violet-500 bg-violet-500/5 ring-1 ring-violet-500'
       : 'border-zinc-300 dark:border-zinc-700 hover:border-violet-400'}`;
 
@@ -1912,7 +1912,7 @@ const DevChat = {
       if (!response.ok) {
         const busy = response.status === 409 && /busy/i.test(String(data.error || ''));
         if (!(busy && quietBusy)) {
-          PlatformUI.toast(data.error || PlatformI18n.t('devchat:agentSwitch.failed'));
+          PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:agentSwitch.failed'));
         }
         return busy ? 'busy' : 'failed';
       }
@@ -1961,7 +1961,7 @@ const DevChat = {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:agentSwitch.platformFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:agentSwitch.platformFailed'));
         return;
       }
       if (!DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
@@ -4391,7 +4391,7 @@ const DevChat = {
       }
       if (!silent) {
         const data = await rr.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:session.resumeFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:session.resumeFailed'));
       }
       return false;
     } catch {
@@ -4548,7 +4548,7 @@ const DevChat = {
             session.status = 'active';
           } else {
             const data = await rr.json().catch(() => ({}));
-            PlatformUI.toast(data.error || PlatformI18n.t('devchat:session.resumeFailed'));
+            PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:session.resumeFailed'));
           }
         } catch { /* network blip — fall through; session stays paused */ }
       }
@@ -7377,7 +7377,7 @@ const DevChat = {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok && res.status !== 409) {
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:issueDraft.failed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:issueDraft.failed'));
         if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
         return;
       }
@@ -7930,7 +7930,7 @@ const DevChat = {
             status: { t: 'status', key: `${key}:s`, icon: 'check', html: msg.content || '', text: msg.content || '', elapsed: null, stamp },
             prUrl: session?.pr_url || msg.prUrl || null,
             prNumber: session?.pr_number || msg.prNumber || null,
-            title: session?.session_title || session?.pr_title || '',
+            title: session?.pr_title || session?.proposed_pr_title || session?.session_title || '',
             closes: DevChat._closesRefs(session),
             // #3605: once the change is up for a vote its status opens the
             // proposal's vote page. Null before then: an underway session has
@@ -8809,6 +8809,23 @@ const DevChat = {
       marked.use({
         breaks: true,
         gfm: true,
+        // #6035: underline has no commonmark form, so `++text++` is its own
+        // inline token. It sits beside emphasis rather than inside it, and
+        // an anchored tokenizer leaves code spans, which marked reads first,
+        // untouched.
+        extensions: [{
+          name: 'underline',
+          level: 'inline',
+          start(src) { return src.indexOf('++'); },
+          tokenizer(src) {
+            const match = /^\+\+(?=\S)([\s\S]*?\S)\+\+(?!\+)/.exec(src);
+            if (!match) return undefined;
+            return { type: 'underline', raw: match[0], tokens: this.lexer.inlineTokens(match[1]) };
+          },
+          renderer(token) {
+            return `<u>${this.parser.parseInline(token.tokens)}</u>`;
+          },
+        }],
         renderer: {
           code({ text, lang, escaped }) {
             let language = lang || '';
@@ -8996,7 +9013,7 @@ const DevChat = {
     const out = DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4', 'h5',
         'p', 'br', 'ol', 'ul', 'li', 'div', 'span', 'table', 'thead', 'tbody',
-        'tr', 'th', 'td', 'hr', 'del',
+        'tr', 'th', 'td', 'hr', 'del', 'u',
         // #3940: the inline issue-video player rides the same opt-in as
         // the images it sits beside (renderMarkdown's images option).
         ...(allowImages ? ['img', 'video'] : [])],
@@ -9580,7 +9597,7 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
       body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || (action === 'resume'
+        PlatformUI.toast(PlatformI18n.errorText(body) || (action === 'resume'
           ? PlatformI18n.t('devchat:sessions.toast.resumeFailed')
           : PlatformI18n.t('devchat:sessions.toast.pauseFailed')));
         return null;
@@ -9620,7 +9637,7 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:sessions.toast.archiveFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:sessions.toast.archiveFailed'));
         return null;
       }
     } catch {
@@ -9639,7 +9656,7 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:sessions.toast.unarchiveFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:sessions.toast.unarchiveFailed'));
         return null;
       }
       if (data.ccPurged) {
@@ -11014,7 +11031,7 @@ const DevChat = {
           body: file,
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || PlatformI18n.t('devchat:attach.uploadFailedHttp', { status: res.status }));
+        if (!res.ok) throw new Error(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:attach.uploadFailedHttp', { status: res.status }));
         entry.id = data.id;
         entry.kind = data.kind;
         entry.meta = data.meta || null;
@@ -11455,7 +11472,7 @@ const DevChat = {
         // the user's mirror and the server have genuinely diverged.
         if (res.status === 409) {
           const data = await res.json().catch(() => ({}));
-          if (data && data.error) DevChat._toast(data.error);
+          if (data && data.error) DevChat._toast(PlatformI18n.errorText(data));
         }
         return false;
       }
@@ -12010,8 +12027,9 @@ const DevChat = {
   // wide viewports.
   //
   // Width is persisted to localStorage so it sticks across reloads.
-  // The CSS rule `min-width: 280px; max-width: calc(100vw - 320px)`
-  // clamps stale or hostile values so the chat pane is always usable.
+  // The CSS rule `min-width: 280px; max-width: calc(100% - 320px)` (of
+  // the session body, the row this drag measures) clamps stale or hostile
+  // values so the chat pane is always usable.
 
   _SPEC_VIEWER_WIDTH_KEY: 'dc-spec-viewer-width-v1',
   // The viewer's open/closed state is persisted per-session, not

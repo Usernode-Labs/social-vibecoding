@@ -73,7 +73,7 @@ test('from Create, the made screen sits below the header with no wordmark bar', 
 test('the island puts the door under the header only from Create, and only when the header shows', () => {
   const src = read(ISLAND);
   assert.match(src, /const underHeader = useMemo\(\(\) => createDoor && platformHeaderShown\(\), \[createDoor\]\);/);
-  assert.match(src, /entry="create"\s+startImport=\{!!mode\.startImport\}\s+idea=\{mode\.idea \?\? null\}\s+audience=\{mode\.audience\}\s+underHeader=\{underHeader\}/);
+  assert.match(src, /entry="create"\s+startImport=\{!!mode\.startImport\}\s+idea=\{mode\.idea \?\? null\}\s+ideaSource=\{mode\.ideaSource \?\? 'thread'\}\s+audience=\{mode\.audience\}\s+underHeader=\{underHeader\}/);
   assert.match(src, /entry=\{mode\.entry\}\s+underHeader=\{fromCreate && underHeader\}/);
   // The first session's make screen never gets it.
   const firstMake = src.slice(src.indexOf("if (mode.kind === 'make') {"), src.indexOf("if (mode.kind === 'made') {"));

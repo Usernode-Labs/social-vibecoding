@@ -157,6 +157,9 @@ selects a skill.
   with a `// test:changed: when <path> (…)` line, and a change to that file
   or anything under that directory selects it: the Mayor turn golden
   declares `src/prompts/`, because the prompts it pins are built from there.
+  A new `tests/*.test.js` needs its entry in `tests/baselines/test-durations.json`
+  (`npm run test:durations -- --add <file>`); test:changed reports one that is
+  missing and the unit suite fails on it.
 - **Run `npm test` only when shared code moved and the mapping cannot see
   who depends on it** — a `public/js/**` module other modules reach through
   a global (the mapping runs the suites that name the module, not those of
@@ -167,6 +170,20 @@ selects a skill.
   `--test-timeout=180000`, which bounds every test and every file as a whole
   (the slowest file takes about twelve seconds); a test that never settles
   fails after three minutes instead of holding the summary open.
+
+## Schema changes need a tracked migration
+
+`src/db/migrations/` is the SQL source of truth. Add a SQL file named for
+what it does (no number: the manifest's order is the history's), then run
+`node scripts/record-schema-migration.js <name>` to append its checksums.
+When `manifest.json` conflicts with main's, never merge it by hand: run
+`node scripts/record-schema-migration.js --onto origin/main` after the merge
+or rebase. Never edit, reorder or delete applied files or the immutable
+baseline. Reference inserts live once in `src/db/reference-data.js`.
+`src/db/schema.sql` is generated and ignored: never edit or commit it.
+`npm run build:schema` regenerates it; npm test/start/dev and image builds do
+this automatically. See `docs/database/schema-migrations.md` for adoption,
+transaction boundaries, preview compatibility and PostgreSQL checks.
 
 ## Declare visible changes for before/after shots
 
@@ -225,31 +242,82 @@ is no replay plan to write and nothing to verify locally.
   community** (`invited`) or **Public community** (`open`) — and what it
   owns are **projects**. Use "project" in user-facing copy where the app is
   the thing being built; keep "app" where it is the thing being used (the
-  App tab, Discover).
-- **The phone's bar is Home · Communities · AI · Messages · You; the
-  desktop rail is Home, Discover, Messages, AI, Communities, then You**
-  (#6019). AI is the Homeroom bot's chat, which is not a row of Messages.
-  Discover is a tab on the rail only: on a phone it is a page Home's
-  Discover section opens, with Back to Home. The markup is the rail's
-  order, and app.css orders the phone's five cells.
-  The Communities tab is a community: the one you last had open (its tile in a square
-  ring, its short name, the votes it waits on you for) or All communities,
-  whose page lists every community you are in, as one list under a search
-  and All, Public, Private and Just you chips, at `#communities` (`#workshop` still routes there;
-  the tab's key and ids keep `workshop`). Under 768px the header's name
-  and ⌄ open **Your communities**
+  App tab, Pinned apps).
+- **The phone's bar is Home · AI · Messages · You; the desktop sidebar is
+  Home, AI, Messages, then Recents and You** (#6019; One Home, #6361). AI is the Homeroom bot's chat, which is not a row of Messages
+  and is never drawn on the Messages screen: its page
+  (`frontend/src/features/ai/`) is the list, Main Chat its first row, and
+  from 768px a column beside it holding Main Chat or one private thread,
+  alone under its own head; on a phone the two are one drawer, Messages'
+  own strip (`phone-drawer.tsx`): the list the whole screen, and Main
+  Chat's name and arrow in the platform header (`nav-drawer/bot-drawer.ts`).
+  Every way into the chat (an address, a
+  bell row, a door that asks Homeroom bot) lands there through
+  `features/ai/door.ts`; `#messages/<the bot's chat>` is swapped for
+  `#homeroom-bot/main` or `/thread/<id>`. A request, a change or a decision
+  opens in the column through the side panel, or on its own page, never in
+  the drawer. What the column shows is one state (`features/ai/column.ts`:
+  Main, a private thread, or a page), which the lit row, the address
+  (`#homeroom-bot/request/<slug>/<n>` and the like) and Main's attachment
+  read; every row opens its own place, a ▷ plan row its request's page.
+  Main Chat holds what you said there and the bot's replies: a request's
+  news is on the request's page, its thread (`conversations.js`
+  REQUEST_NEWS leaves it out of Main, old and new; a first version's stays),
+  where Homeroom bot's plan is drawn for everyone and any member may press
+  Build it, paid from their own week. A thread in Main is only a private
+  one, which the page lists, which says "Only you can see this thread", and
+  which can be done (Mark done, or asking the bot) and reopened. A private
+  thread's origin decides what Main Chat shows of it: one started from the
+  bot's "+" stays out of Main, its opener line and replies
+  (`conversations.js` PLUS_THREAD_OPENER and PLUS_THREAD_REPLY leave them
+  out, old and new), and lives only in the page's list; one the bot opened
+  from Main, answering what was said there, or from a request's page or a
+  captured screen keeps its line in Main, which is the way to its row in the
+  list. Main also holds what you said there, even when a thread grew from it.
+  **Home is the one page of apps and communities, signed in or out (One
+  Home, #6361).** Its sections are **Pinned apps** (`app_favorites`: a tile
+  opens the app; hidden until the first pin), **Pinned communities**
+  (`home_community_pins`, `services/home-pins.js`, `/api/me/home-pins`,
+  `features/home/pinned-communities.tsx`: a tile opens the hub; its All
+  communities tile shows the ones you are in but have not pinned, its Needs
+  you tile, drawn while a vote waits, opens Needs you, and New community
+  starts a project), Challenges as a sideways row, then **Communities to
+  join** (the public directory: **Featured**, what an admin featured, as
+  its first sideways row, then the rest, more as you scroll,
+  `features/home/communities-to-join.tsx`). The two pins are separate acts
+  and neither joins: you may pin what you have not joined. Joining pins the
+  community (`communities.join`); leaving unpins it and keeps the app's
+  pin. Signed out, the landing is the same Home, its pins kept on the
+  device (`features/guest/device-pins.ts`) and moved to the account at
+  sign-in (`POST /api/me/home-pins/import`). Who hears about a project's
+  votes and merges is `app_stakes` (members who pinned its app or its
+  community), not every favorite. Discover's screen and the Communities
+  screen's list are gone: their addresses are rewritten in place by the
+  router, `#apps` and `#communities` (or `#workshop`) to Home, `#apps/<slug>`
+  to that project's hub, and `#communities?ws=needs` to `#needs`. A Home
+  card's "Go to community" opens the hub (`Home.openHub`), and "All
+  communities" anywhere (the switcher, the sidebar's All row) is Home's
+  (`Home.showCommunities({ all: true })`). The Communities tab is drawn on
+  neither bar (app.css); its node stays, with its key `workshop`. The markup
+  is the rail's order, and app.css orders the phone's four cells.
+  **Needs you** (`#needs`, `features/workshop/index.tsx`, the
+  `#workshop-screen` root) is a page under Home, its header's arrow up to
+  it: every decision owed across your projects
+  (`GET /api/workshop/needs-feed`), drawn by the review flow. The vote
+  digest opens it.
+  Under 768px the header's name and ⌄ open **Your communities**
   (`features/workshop/community-switcher.tsx`, scope in
-  `community-scope.ts`); pressing the lit tab goes up a level. From 768px
-  the rail is a 212px sidebar of rows (`features/nav/sidebar-rows.ts`):
-  the communities you pinned under Pinned (`rail-pinned.tsx`), then your
-  five most recent under a Communities heading with a hover search
-  (`rail-communities.tsx`), the tab is their "All 13 communities" row, and
-  the header's name is only a name. **A pin is the account's**
+  `community-scope.ts`). From 768px the rail is a 212px sidebar of rows
+  (`features/nav/sidebar-rows.ts`) under one **Recents** heading: the
+  communities pinned to its top (`rail-pinned.tsx`), then your five most
+  recent, each kept where it first arrived (`rail-communities.tsx`); each
+  row's pin, before its count, keeps it at the top, and the header's name
+  is only a name. **A sidebar pin is the account's**
   (`community_pins`, `services/community-pins.js`,
-  `/api/me/community-pins`): a member's only, four at most, gone when they
-  leave, made from a community's row (right-click), the hub's ⋯ or a My
-  apps tile dropped on the sidebar (`features/nav/pin-actions.ts`), and
-  never one of the five. A project's page wears its community's colour
+  `/api/me/community-pins`), apart from Home's: a member's only, four at
+  most, gone when they leave, made from a community's row (its pin, or
+  right-click), the hub's ⋯ or a Pinned apps tile dropped on the sidebar
+  (`features/nav/pin-actions.ts`), and never one of the five. A project's page wears its community's colour
   (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
   icon) and is navigated by one list of **places**
   (`features/dev-board/workshop/project-places.tsx`): **Hub** (who it is
@@ -261,12 +329,15 @@ is no replay plan to write and nothing to verify locally.
   (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
   Above Hub, the list's first row is **App**, the project's own app
   (Homeroom's community has none: the platform is its app). On a phone the
-  list is the drawer's middle level (`features/nav-drawer/`), or, where the
-  drawer is off, a tray behind the place bar that names where you are
-  (`place-bar.tsx`, `places-tray.tsx`); from 768px it nests under the
-  community's row in the sidebar (`rail-communities.tsx`,
-  `rail-nest.tsx`), and the page publishes where it is for it
-  (`place-store.ts`). While an app runs in a
+  Hub's rows are the way to the places (For you's Needs you, Workshop and
+  #general, then a Topics card, `hub-cards.tsx`): no drawer lists them beside
+  the page since 3 Nov 2026. The header's left button goes back to Home from
+  the Hub, and up to the Hub from any other place
+  (`features/nav-drawer/header-drawer.tsx`); where that header is off, a
+  tray behind the place bar names where you are (`place-bar.tsx`,
+  `places-tray.tsx`); from 768px it nests under the community's row in the
+  sidebar (`rail-communities.tsx`, `rail-nest.tsx`), and the page publishes
+  where it is for it (`place-store.ts`). While an app runs in a
   kept frame its App row carries the green still-open dot, and that
   community keeps its row and its App row in the sidebar until the frame
   goes (`features/app-frame/live-apps.tsx`). **All
@@ -275,9 +346,7 @@ is no replay plan to write and nothing to verify locally.
   channel and a category at once: an entry of dapp.json's `topics`,
   reconciled into `app_category_registry` (origin `'topic'`) when a change
   merges, its channel a `'category'` thread; a new topic, a rename, a merge
-  or an archive is a proposal (Settings & rules › Topics). The Communities
-  screen's Needs you is one feed of every decision owed across your projects
-  (`GET /api/workshop/needs-feed`). A project's channel lives on its page,
+  or an archive is a proposal (Settings & rules › Topics). A project's channel lives on its page,
   not in Messages, and #general is the Homeroom community's channel;
   Messages is people and agents. **A channel
   is what people said:** Homeroom writes no activity (a proposal put up for a
@@ -296,14 +365,40 @@ is no replay plan to write and nothing to verify locally.
   No screen draws them since the Workshop's "Lately in this project" panel
   was removed.
   `migrate.clearAutomatedChannelLines` clears the lines written before. A
-  door to a project's hub (a link that says so) calls
-  `AppView._landOnHub(slug)` first, so it opens on the hub rather than the
-  place the page was last left on. A switch is not a door: the header's ⌄
-  menu, a row of All communities and the phone drawer's list open the other
-  community on the place you were on when it has it, else its hub
-  (`landKeepingPlace` in `place-store.ts`, `keepPlace` in the drawer). Back
-  and Forward are not doors either: the page reopens on the place last
-  shown, read fresh when it mounts.
+  bare link to a project's page, `/app/<slug>/workshop` (a cold load, or
+  `#app/<slug>/workshop` followed), opens its **Workshop**
+  (`App._linkOpensWorkshop`); `?ws=<place>` names any other place. A door
+  to a project's hub (a link that says so) calls `AppView._landOnHub(slug)`
+  first, so it opens on the hub; every door or switch that names its place
+  goes through `AppView._landOnTab`, and the router takes that decision
+  over the link's (`_takePlaceDecision`). A switch is not a door: the
+  header's ⌄ menu opens the other community on the place you were on when
+  it has it, else its hub (`landKeepingPlace` in `place-store.ts`); Home's
+  community tiles are doors to the hub, and the Communities tab's code
+  still reopens the page you left on its place.
+  Back, Forward and a reload are not doors either: the page reopens on the
+  place its history entry names, read fresh when it mounts. A request's
+  "‹" chip names where its press goes: a step Back to the place the page
+  was left on, else the Workshop its link opens.
+- **One page per thread (1 Nov 2026): a change built for a request lives on
+  the request's page.** When a request leads a change's thread
+  (`threads.lead = 'request'`), the change has no page of its own: its
+  addresses (`dev/changes/<N>`, `dev/proposals/<id>`, `dev/shared/<id>`)
+  land on the request's page, scrolled to its section with its Votes card in
+  view (`AppView._renderTopicSubView` and `openTopicInPanel` ask
+  `GET /api/apps/:slug/threads/change/:id`, `services/threads.js`
+  `requestHome`). Keep producing change addresses as they are
+  (notifications, bot messages, pull request bodies, agents' `webPath`):
+  the router is where they land. The change's section carries what its page
+  had: its status pill and ⋯ on its line, its summary, a small before and
+  after whose Expand opens its viewer, and the sheets its ⋯ opens
+  (`features/dev-board/topic/thread-changes.tsx`, `ChangeSheets`).
+  Competing changes fold under their ballot, which is the one way to vote
+  on them; a change for several requests is on the first one's page and the
+  others say where. The request's stream is the thread's one discussion:
+  its changes' replies and what happened to them are read with it
+  (`routes/chat.js` selectStream), each tagged with its change; a new reply
+  there goes to the request. A change with no request keeps its own page.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a
@@ -352,9 +447,9 @@ is no replay plan to write and nothing to verify locally.
   the code (`mcp-tools.platformError` answers `join_required` with the app),
   and the Mayor's refused card offers Join itself. The collab guard in
   `app-access.js` still decides who may be there at all; admins pass.
-  Collaborators, Home pins and platform access join by trigger — write those
-  rows, not `community_members`, unless the action is literally Join or
-  Leave. The vote threshold counts active MEMBERS
+  Collaborators and platform access join by trigger — write those rows,
+  not `community_members`, unless the action is literally Join or Leave. A
+  Home pin no longer joins (One Home dropped `app_favorites_join_community`). The vote threshold counts active MEMBERS
   (`services/active-users.js`, concept #3).
 - **An invite link grants what its maker could grant.** `/invite/<token>`
   (`services/community-invites.js`, the "Communities, stage 6" block of
@@ -428,12 +523,12 @@ is no replay plan to write and nothing to verify locally.
   original order (`app.js` must stay last), and **converted markup is
   like-for-like** — same ids, class strings, `hidden` semantics and `data-*`
   attributes as the hand-written shell, because `public/js/**` looks those up
-  by `getElementById` and `dapp.json`'s 800+ declared checks (its `tests`
+  by `getElementById` and `dapp.json`'s 750+ declared checks (its `tests`
   array; count it rather than trusting this line) select on deep chains of
   them. Their ceiling is `MAX_DECLARED_TESTS` in
-  `src/services/app-manifest.js` (860), and the manifest keeps 20 slots
-  clear of it (`tests/lib/check-cap.js`). In October 2026 it stood exactly
-  at that floor, 840 of 860: fold a new check into an existing one first,
+  `src/services/app-manifest.js` (880; read it there too), and the manifest
+  keeps 20 slots clear of it (`tests/lib/check-cap.js`). On 1 Nov 2026 it
+  stood at 751 of 880: still fold a new check into an existing one first,
   as the guards' message in `check-cap.js` says. The structural baseline is
   `tests/baselines/shell-markup.json` (ids, `data-*` names, script order,
   stylesheet order), enforced by `tests/shell-id-inventory.test.js`,
@@ -535,6 +630,17 @@ carry most of them.
 - **Rows are 15 over 13.** `ListRow`'s title is 15px at weight 650, its
   subtitle 13px muted. Messages' `.messages-row-name` / `-preview` use the
   same pair. A 17px bold row title makes every row a heading.
+  **The Homeroom bot tab's lists are the one exception** (30 Oct 2026,
+  `frontend/src/features/ai/lists.tsx`): every thread you are in across
+  projects, so a row is one 14px line (a glyph, its number from 768px, its
+  title and one word on the right), grouped under its project's name
+  instead of a tile on each row, 36px on a desktop and 44px on a phone. The
+  line a second row would carry is its tooltip; a phone, where nothing
+  hovers, shows it as a 12px second line only where it is news (a request
+  the bot handed back, a vote that frees a build slot). The word on the
+  right is the row's one pill, in the accent when it asks for you ("Vote",
+  "Build it"), plain when it only says where things stand. Do not copy the
+  one-line row into a list without that reason.
 - **A label over a card is small caps; a title inside a card is a
   sentence.** `SectionHeader` is 12px bold uppercase, tracked `0.06em`, muted
   (Messages' `.messages-section-head` matches it). It is the only uppercase
@@ -647,6 +753,12 @@ Two behaviours are easy to lose to React's defaults and are worth naming:
   stays in code is listed in the README: the admin console, a server's own
   error sentences, text a person wrote, developer-only messages, and the
   standalone pages that load no shell bundle.
+- **An email's words are not catalog text, and never code.** Every mail is a
+  stored template, written and translated by admins in the admin console;
+  `src/db/email-template-seeds.js` holds the first versions as plain English
+  data, and `frontend/locales/en/email.json` only the few words an action
+  builds in code. `frontend/locales/README.md` ("An email") has the rest, and
+  `tests/mail-no-hardcoded.test.js` holds it.
 - **A catalog entry is a whole message with a description.**
   `{ "text": "…", "description": "…" }`: no fragment joined to another, named
   parameters (`{{email}}`, never `{{value1}}`), a `_one`/`_other` pair for a
@@ -714,7 +826,9 @@ Two behaviours are easy to lose to React's defaults and are worth naming:
   pins the Docker builder/copy contract. Its `public/index.html` input is the
   ignored output materialized by the test preflight, never a committed
   artifact.
-- The shell loads **no cross-origin assets**. marked, DOMPurify and qrcodejs
+- The shell document loads **no cross-origin assets** (the live site's Google
+  Analytics tag is the one exception, by decision, and stays inside
+  `public/analytics-frame.html`, never in the shell's own page: #6314). marked, DOMPurify and qrcodejs
   are vendored under `public/vendor/` by `npm run vendor:assets` (provenance
   in `public/vendor/README.md`). Don't add a CDN `<script>`/`<link>` to
   `frontend/src/head.html` — vendor or compile it instead; three tests

@@ -211,6 +211,14 @@ const DESIGN_KIT_CSS = `
   [hidden]:where(:not([hidden="until-found"])) {
     display: none !important;
   }
+  /* The phone's own bars. Inside Homeroom the app runs to the foot of the
+     screen, and the bridge hands it the screen's safe area as
+     --un-safe-inset-* (a frame sees no env() of its own); standalone,
+     env() is the real thing. Without this a page's last lines sat under
+     Android's navigation bar. Fixed bars of your own clear it the same way. */
+  body {
+    padding-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
+  }
 }
 
 /* ── Components ───────────────────────────────────────────────────────────
@@ -833,6 +841,19 @@ covers every table with a \`user_id\` (or \`usernode_pubkey\`) column. When
 you add a table that keys a person's rows another way (\`author_id\`), add it
 to \`OWNED_BY\`; when a table's \`user_id\` is not the person the row is
 about, add it to \`SKIP\`. Keep the file and its mount in \`server.js\`.
+
+## Offline
+
+Homeroom opens this app with no connection too, but every \`/api/*\` read
+fails then. Wrap each screen's opening read in the platform bridge's
+\`usernode.offline.read(name, readFn)\`: it keeps the last answer on this
+device, sealed for the person signed in and gone when they sign out, and
+gives it back when the read cannot be answered, as
+\`{ value, fromCopy, savedAt }\`. Draw \`value\` either way, and while
+\`fromCopy\` is true say so under the title, with how old it is ("Offline.
+Showing what was saved at 10:42."). Set \`err.status\` in \`api()\` on an
+error the server answered, so a 403 or 404 is never covered over with an
+old copy. "Offline" in the platform conventions has the rest.
 
 ${DESIGN_CLAUDE_SECTION}
 

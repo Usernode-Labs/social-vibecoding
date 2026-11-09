@@ -387,7 +387,7 @@ async function tellTaken(pool, { app, bot, holders, deps = {} }) {
     const { rows } = await pool.query(PROMISED_SQL, [Number(app.id), numbers, Number(bot.id)]);
     if (!rows.length) return 0;
     const dm = deps.dm || require('./homeroom-bot-dm');
-    const tray = deps.tray || require('./homeroom-bot-tray');
+    const tray = deps.workChanged || require('./bot-work-changed');
     for (const row of rows) {
       const n = Number(row.issue_number);
       const who = (holders.get(n) || []).find((h) => h.username && !same(h.username, row.requester));

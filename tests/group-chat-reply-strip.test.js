@@ -22,11 +22,11 @@ const rule = (sel) => {
 
 test('the strip is the Messages reply draft: full width, accent tint, open rounded edge', () => {
   const strip = rule('.gc-reply-preview-inner');
-  assert.match(strip, /border-left: 3px solid var\(--accent\);/);
-  assert.match(strip, /border-radius: 0 12px 12px 0;/);
+  assert.match(strip, /border-inline-start: 3px solid var\(--accent\);/);
+  assert.match(strip, /border-start-start-radius: 0; border-start-end-radius: 12px; border-end-end-radius: 12px; border-end-start-radius: 0;/);
   assert.match(strip, /background: var\(--accent-tint\);/);
   assert.doesNotMatch(strip, /max-width/, 'spans the composer, not capped at 560px');
-  assert.match(css, /\.messages-reply-draft \{[^}]*border-radius: 0 12px 12px 0;[^}]*background: var\(--accent-tint\);/,
+  assert.match(css, /\.messages-reply-draft \{[^}]*border-start-start-radius: 0; border-start-end-radius: 12px; border-end-end-radius: 12px; border-end-start-radius: 0;[^}]*background: var\(--accent-tint\);/,
     'the Messages screen draws its draft the same way');
 });
 
@@ -89,14 +89,14 @@ function lineFor(replyDraft) {
 
 test('the label names what the reply is to', () => {
   assert.equal(labelFor({ source: 'message', author: 'alice', snippet: 'hi' }).label, '@alice');
-  assert.equal(labelFor({ source: 'pr', prNumber: 12, snippet: 'x' }).label, 'PR #12');
+  assert.equal(labelFor({ source: 'pr', prNumber: 12, snippet: 'x' }).label, 'PR 12');
   assert.equal(lineFor({ source: 'message', author: 'alice', snippet: 'hi' }), '↩ Replying to @alice');
-  assert.equal(lineFor({ source: 'pr', prNumber: 12, snippet: 'x' }), '↩ Replying to PR #12');
+  assert.equal(lineFor({ source: 'pr', prNumber: 12, snippet: 'x' }), '↩ Replying to PR 12');
   // A pull request is told apart from a person: the strip has a sentence for it.
   assert.equal(labelFor({ source: 'pr', prNumber: 12, snippet: 'x' }).pr, '12');
   assert.equal(labelFor({ source: 'message', author: 'alice', snippet: 'hi' }).pr, null);
-  assert.equal(labelFor({ source: 'pr', snippet: 'x' }).label, 'PR #');
-  assert.equal(lineFor({ source: 'pr', snippet: 'x' }), '↩ Replying to PR #');
+  assert.equal(labelFor({ source: 'pr', snippet: 'x' }).label, 'PR');
+  assert.equal(lineFor({ source: 'pr', snippet: 'x' }), '↩ Replying to PR');
   // A row with nobody to name has a whole sentence of its own in the catalog.
   assert.equal(labelFor({ source: 'event', author: null, snippet: 'Proposed PR #12' }).unnamed, 'event');
   assert.equal(labelFor({ source: 'message', author: null, snippet: 'gone' }).unnamed, 'message');

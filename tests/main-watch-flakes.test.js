@@ -285,3 +285,45 @@ test('a red is of known flakes alone only when every failure is one, named in fu
   assert.equal(knownFlakeNames(known, mainWatch.classify(pass).detail), null);
   assert.equal(knownFlakeNames(new Set(), redDetail([FLAKY])), null);
 });
+
+// The test-durations baseline only balances the shards: a missing entry is
+// planned at the default and never fails a check. What main watch reads it
+// for is a refresh request (main-watch.js checkBaselineRefresh), filed when
+// missing plus placeholder entries pass a tenth of the test files.
+test('the baseline gaps are read at the merge commit, and a tenth is the line', async () => {
+  const parsed = { owner: 'org', repo: 'demo' };
+  const testFiles = Array.from({ length: 20 }, (_, i) => `tests/f${String(i).padStart(2, '0')}.test.js`);
+  const raw = {
+    version: 1,
+    defaultSeconds: 1,
+    files: Object.fromEntries(testFiles.slice(0, 18).map((f) => [f, [1, 1]])),
+    unmeasured: [testFiles[17]],
+  };
+  const deps = {
+    listRepoFiles: async () => ({ truncated: false, files: [...testFiles.map((path) => ({ path })), { path: 'src/index.js' }] }),
+    getFileContent: async (owner, repo, path, ref) => {
+      assert.equal(path, 'tests/baselines/test-durations.json');
+      assert.equal(ref, SHA);
+      return JSON.stringify(raw);
+    },
+  };
+  const gaps = await mainWatch.baselineGapsAt({ parsed, sha: SHA }, deps);
+  assert.equal(gaps.total, 20, 'only the test files are counted');
+  assert.deepEqual(gaps.missing, [testFiles[18], testFiles[19]]);
+  assert.deepEqual(gaps.unmeasured, [testFiles[17]]);
+  assert.equal(mainWatch.baselineNeedsRefresh(gaps), true, '3 of 20 is past a tenth');
+  assert.equal(mainWatch.baselineNeedsRefresh({ total: 20, missing: 2, unmeasured: 0 }), false, '2 of 20 is exactly a tenth, not past it');
+
+  const { title, body } = mainWatch.baselineRequestText(gaps);
+  assert.equal(title, mainWatch.BASELINE_REQUEST_TITLE);
+  assert.match(body, /is 3 of 20 test files out of date/, 'it names the size of the gap');
+  assert.match(body, /npm run test:durations -- --add .*tests\/f18\.test\.js/);
+
+  // Nothing to judge: a cut-short listing, or a baseline that is not there.
+  assert.equal(await mainWatch.baselineGapsAt({ parsed, sha: SHA },
+    { ...deps, listRepoFiles: async () => ({ truncated: true, files: [] }) }), null);
+  assert.equal(await mainWatch.baselineGapsAt({ parsed, sha: SHA }, { ...deps, getFileContent: async () => null }), null);
+  // A baseline that is not version 1 throws: broken is still an error.
+  await assert.rejects(mainWatch.baselineGapsAt({ parsed, sha: SHA },
+    { ...deps, getFileContent: async () => JSON.stringify({ version: 2, files: {} }) }), /not a version 1/);
+});

@@ -32,6 +32,8 @@ import { ChatIcon, ChevronRightIcon, PlusIcon, ShareIcon, UserGroupIcon } from '
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
+import { useStoreState } from '../../lib/use-store-state';
+import { devicePinsStore, loadDevicePins, toggleDevicePin } from './device-pins';
 import { useCommunityColor } from '../../lib/community-color';
 import { agoStamp } from '../../lib/timestamp';
 import { GuestCover, GuestIcon, TryLink } from './guest-discover';
@@ -85,7 +87,7 @@ export function VoteCard({ vote, app, onIntent, signedIn = false }: {
                   setWide((m) => (m[side] === isWide ? m : { ...m, [side]: isWide }));
                 }}
               />
-              <figcaption className="absolute bottom-1.5 left-1.5 rounded-full bg-zinc-950/70 px-2 py-0.5 text-[11px] font-bold text-white">
+              <figcaption className="absolute bottom-1.5 start-1.5 rounded-full bg-zinc-950/70 px-2 py-0.5 text-[11px] font-bold text-white">
                 {side === 'before' ? t('auth:guest.project.before') : t('auth:guest.project.after')}
               </figcaption>
             </figure>
@@ -171,7 +173,7 @@ function MembersOnly({ app, onIntent, roomy = false, signedIn = false }: {
 
 function Row({ children, onClick, last }: { children: ReactNode; onClick?: () => void; last: boolean }) {
   const cls = cn(
-    'flex min-h-[52px] w-full items-center gap-3 px-3.5 py-2 text-left',
+    'flex min-h-[52px] w-full items-center gap-3 px-3.5 py-2 text-start',
     last ? '' : 'shadow-[inset_0_-1px_0_var(--app-sheet-line)]',
   );
   if (!onClick) return <div className={cls}>{children}</div>;
@@ -200,6 +202,10 @@ export function GuestProject({ app, primaryClass, onIntent, onOpenInside, onShar
   onShare: (app: GuestApp) => void;
 }) {
   const t = useMessages('auth');
+  const th = useMessages('home');
+  const device = useStoreState(devicePinsStore);
+  useEffect(() => { loadDevicePins(); }, []);
+  const pinnedHere = device.communities.includes(app.slug);
   const color = useCommunityColor({ color: app.icon_color, iconUrl: app.icon_url, iconEmoji: app.icon_emoji, key: app.slug });
   const [tab, setTab] = useState<Tab>(startOnWorkshop ? 'workshop' : 'hub');
   const [overview, setOverview] = useState<GuestOverview | null>(null);
@@ -298,6 +304,22 @@ export function GuestProject({ app, primaryClass, onIntent, onOpenInside, onShar
                 onClick={() => onIntent({ kind: 'join', app })}
               >
                 {t('auth:guest.project.join')}
+              </button>
+            )}
+            {/* ONE HOME (#6361): Pin, beside Join, for somebody not signed
+                in: the community goes on this device's Home and moves to the
+                account at sign-in (./device-pins.ts). */}
+            {signedIn ? null : (
+              <button
+                type="button"
+                data-guest-pin-project=""
+                aria-pressed={pinnedHere}
+                className={pinnedHere
+                  ? 'h-11 shrink-0 rounded-full bg-white px-4 text-base font-semibold text-zinc-950'
+                  : 'h-11 shrink-0 rounded-full bg-white/15 px-4 text-base font-semibold text-white hover:bg-white/25'}
+                onClick={() => { toggleDevicePin('communities', app.slug); }}
+              >
+                {pinnedHere ? th('home:guest.pinnedCommunity') : th('home:guest.pinCommunity')}
               </button>
             )}
             <button

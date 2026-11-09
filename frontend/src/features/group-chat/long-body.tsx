@@ -68,11 +68,12 @@
  * comes back when it closes.
  */
 
-import { useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
 
 import { useMessages } from '../../lib/i18n/react';
+import { BotHtmlReply } from '../messages/bot-html';
 
 /** A body longer than this many lines folds. */
 export const LONG_BODY_LINES = 20;
@@ -130,9 +131,11 @@ export function focusIsClipped(target: { bottom: number }, box: { bottom: number
  * it: dapp.json selects on `.gc-msg > .min-w-0 > div > .gc-msg-content`.
  */
 export function LongBodyView({
-  html, long, expanded, onToggle, onFocusInside, bodyRef,
+  html, content = null, long, expanded, onToggle, onFocusInside, bodyRef,
 }: {
   html: { __html: string };
+  /** Task 2020 follow-up: drawn in the body's box in place of `html` (a reply laid out, ../messages/bot-html.tsx). */
+  content?: ReactNode;
   long: boolean;
   expanded: boolean;
   onToggle?: () => void;
@@ -144,11 +147,12 @@ export function LongBodyView({
   const folded = long && !expanded;
   return (
     <>
+      {/* The same box either way, so the fold, the editor's hook and dapp.json's selectors hold. */}
       <div
         ref={bodyRef}
         className={folded ? `gc-msg-content ${FOLD_CLASS} ${FADE_CLASS}` : 'gc-msg-content'}
         {...(folded && onFocusInside ? { onFocus: (e: { target: EventTarget }) => onFocusInside(e.target) } : {})}
-        dangerouslySetInnerHTML={html}
+        {...(content ? { children: content } : { dangerouslySetInnerHTML: html })}
       />
       {long ? (
         <Button
@@ -179,8 +183,21 @@ export function LongBodyView({
  * which on a long transcript means every row's body is rewritten on every
  * reaction (features/dev-board/board-frame.tsx has the note).
  */
-export function Body({ html }: { html: string }) {
+export function Body({ html, rich = null }: { html: string; rich?: string | null }) {
   const wrapper = useMemo(() => ({ __html: html }), [html]);
+  // The laid-out reply's drawn height: the fold measures again when it changes.
+  const [drawn, setDrawn] = useState(0);
+  // Task 2020 follow-up: Homeroom bot's reply laid out, in the same box and
+  // folded the same way; its words are what it shows until it is drawn, and
+  // what it shows if it cannot be.
+  const content = useMemo(() => (rich ? (
+    <BotHtmlReply
+      html={rich}
+      className="max-w-[720px]"
+      onSized={setDrawn}
+      fallback={<div className="[&>:first-child]:mt-0 [&>:last-child]:mb-0" dangerouslySetInnerHTML={wrapper} />}
+    />
+  ) : null), [rich, wrapper]);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [long, setLong] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -198,7 +215,7 @@ export function Body({ html }: { html: string }) {
       el.removeEventListener('load', measure, true);
       obs?.disconnect();
     };
-  }, [html]);
+  }, [html, rich, drawn]);
 
   // Folding a long body read to its end shrinks it by however much was
   // opened, which would leave the reader on whatever came after it. Bring
@@ -240,6 +257,7 @@ export function Body({ html }: { html: string }) {
   return (
     <LongBodyView
       html={wrapper}
+      content={content}
       long={long}
       expanded={expanded}
       onToggle={toggle}

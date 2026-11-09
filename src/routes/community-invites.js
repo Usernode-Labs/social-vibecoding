@@ -11,6 +11,8 @@
  *                                                  for someone who manages
  *                                                  the project)
  *   DELETE /api/invite-links/:id                   turn one off
+ *   POST   /api/invite-links/:id/shared            it went out: copied or
+ *                                                  shared from the pane
  *   GET    /api/public/invites/:token              the preview, signed out
  *   GET    /api/public/invites/:token/picture      the project's picture, when
  *                                                  it is an after-shot
@@ -170,6 +172,19 @@ function communityInviteRoutes(config) {
     }
   });
 
+  // Audit D03: the pane's Copy or Share. What says a link is out reads it.
+  router.post('/api/invite-links/:id/shared', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const done = await invites.markShared(pool, { inviteId: req.params.id, user: req.user });
+      if (!done.ok) return res.status(done.status).json({ error: done.error });
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error('invites', 'Marking an invite link sent failed', { id: req.params.id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.delete('/api/invite-links/:id', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
@@ -230,18 +245,20 @@ function communityInviteRoutes(config) {
         ? await invites.pictureBytes(pool, req.params.token)
         : null;
       if (!picture) return res.status(404).json({ error: 'No picture' });
-      const data = Buffer.isBuffer(picture.data) ? picture.data : Buffer.from(picture.data || '');
+      const media = require('../services/media-store');
+      const size = picture.sizeBytes;
       res.set({
         'Content-Type': picture.contentType,
-        'Content-Length': String(data.length),
+        'Content-Length': String(size),
         'Cache-Control': 'private, max-age=300',
         ETag: `"${picture.sha256}"`,
         'X-Content-Type-Options': 'nosniff',
         'Content-Disposition': 'inline',
       });
-      return res.end(data);
+      return await media.respond(res, media.getStore(), { object_key: picture.objectKey });
     } catch (err) {
       log.error('invites', 'Invite picture failed', { err: err.message });
+      if (res.headersSent || res.destroyed) return res.destroy();
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -193,9 +193,13 @@ function ran(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionCont
   const { items, cancel, status } = okRun ? itemsOf(d.job, d.running, p.result ?? null, f) : { items: [], cancel: [], status: null };
   const ms = d.startedAt ? ctx.now.getTime() - Date.parse(d.startedAt) : null;
   const failures = okRun ? 0 : d.failures + 1;
+  // A process of an older build never ran the job. Keep its last real
+  // result (a cursor or a published credential) while recording the skip.
+  const olderBuild = status && typeof status === 'object' && !Array.isArray(status)
+    && status.skipped === 'older_build';
   const last: Last = { n: d.running, at: iso(ctx.now), ok: okRun, ms, result: status, error: okRun ? null : (p.error?.message ?? 'failed').slice(0, 500) };
   const next: Data = {
-    ...d, failures, last, kept: okRun ? status : d.kept,
+    ...d, failures, last, kept: okRun && !olderBuild ? status : d.kept,
     due: iso(okRun ? at(ctx, d.everyMs) : at(ctx, retryInMs(d, failures))),
   };
   const given = cancel.length ? { cancel } : {};
@@ -248,6 +252,8 @@ export function clock() {
     retainDays: 7,
     events: EVENTS,
     create: ['Arm'],
+    // What web appends: an admin's Run now.
+    web: ['RunNow'],
     decode: (row) => (row.state === NONE ? { name: NONE, data: null } : { name: row.state as Name, data: row.data as Data }),
     // A run's result: its targets that still have an item outstanding.
     async facts(tx, state, event, ctx) {

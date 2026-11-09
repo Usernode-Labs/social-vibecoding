@@ -8,12 +8,24 @@
  * number, and the target once under them:
  *
  *   LAST 7 DAYS
- *   ┌────────────────────────┬─────────────────┬────────────────┐
- *   │ Merge → live         ⓘ │ Deploys that… ⓘ │ App opens th… ⓘ│
- *   │ Homeroom      ⚠ 19 min │ 4%              │ 99.2%          │
- *   │ Other projects   3 min │ 3 of 74 project │ 1,204 of 1,213 │
- *   │ median · target 15 min │ merges · target │ opens · target │
- *   └────────────────────────┴─────────────────┴────────────────┘
+ *   ┌────────────────────────┬──────────────────────┬──────────────────────┐
+ *   │ Merge → live         ⓘ │ Deploys that failed ⓘ│ App opens that     │
+ *   │ Homeroom      ⚠ 19 min │ 4%                   │ worked             ⓘ│
+ *   │ Other projects   3 min │ 3 of 74 project      │ 99.2%                │
+ *   │ median · target 15 min │ merges · target      │ 1,204 of 1,213       │
+ *   │                        │ under 5%             │ opens · target 99%   │
+ *   ├────────────────────────┼──────────────────────┼──────────────────────┤
+ *   │ Limits that filled up ⓘ│ …                    │                      │
+ *   │ ⚠ 2 times              │                      │                      │
+ *   │ across the platform ·  │                      │                      │
+ *   │ none expected          │                      │                      │
+ *   └────────────────────────┴──────────────────────┴──────────────────────┘
+ *
+ * The tiles wrap (#6273): the card is a grid of as many tiles at least
+ * 170px wide as fit its row, so a topic with twelve figures is three rows
+ * of readable tiles on a desktop and two columns on a phone, never one row
+ * of slivers whose values broke mid-word. A value keeps its words whole:
+ * "7 times" wraps at its space or not at all (app.css, .dev-ws-fig-value).
  *
  * The Homeroom bot's figures are a grid instead: a row each for Answers
  * and Builds, a column each for Quality, Cost and Speed. A group with more
@@ -21,11 +33,12 @@
  *
  * The server words every figure (its label, value, line and what it means)
  * and does the rounding that protects people, so this draws what it is
- * sent. Colour only for a figure off its target (the attention ink, with a
- * warning glyph); one on target stays grey. Each figure's ⓘ opens what it
- * means, on hover or focus, and on a tap where there is no hover. The
- * explanation is drawn on the page body, so the card's rounded edge does
- * not cut it off.
+ * sent. Colour only for a figure off its target: its value in the attention
+ * ink with the warning glyph before it, as a split figure's side that is
+ * off is drawn, and its line in the same ink; one on target stays grey.
+ * Each figure's ⓘ opens what it means, on hover or focus, and on a tap
+ * where there is no hover. The explanation is drawn on the page body, so
+ * the card's rounded edge does not cut it off.
  *
  * Nothing renders until the figures arrive: the channel reads the same
  * without them, and a topic with none draws nothing at all.
@@ -231,12 +244,21 @@ function FigureCell({ figure, open, onOpen, onClose, label }: {
           ))}
         </span>
       ) : (
-        <span className={muted ? 'dev-ws-fig-value dev-ws-fig-value-muted' : 'dev-ws-fig-value'}>{figure.value}</span>
+        // #6273: a figure off its target is read at a glance: the value in
+        // the attention ink with the glyph before it, as a split side is.
+        <span
+          className={muted
+            ? 'dev-ws-fig-value dev-ws-fig-value-muted'
+            : (figure.state === 'warn' ? 'dev-ws-fig-value dev-ws-fig-value-warn' : 'dev-ws-fig-value')}
+        >
+          {figure.state === 'warn' ? <WarningTriangleIcon className="dev-ws-fig-warn" aria-hidden="true" /> : null}
+          {figure.value}
+        </span>
       )}
       {figure.sub ? (
-        // A split figure marks the side that is off target; its line is the target alone.
+        // A split figure marks the side that is off target; its line is the
+        // target alone. A plain figure's line keeps the ink its value has.
         <span className={figure.state === 'warn' && !sides ? 'dev-ws-fig-sub dev-ws-fig-sub-warn' : 'dev-ws-fig-sub'}>
-          {figure.state === 'warn' && !sides ? <WarningTriangleIcon className="dev-ws-fig-warn" aria-hidden="true" /> : null}
           {figure.sub}
         </span>
       ) : null}

@@ -176,12 +176,18 @@ test('a no-cache or reload read asks the worker for the current answer', () => {
   assert.equal(sw.wantsFreshAnswer('default'), false);
   assert.equal(sw.wantsFreshAnswer(undefined), false);
   const src = read('public/sw.js');
-  assert.match(src, /const fresh = wantsFreshAnswer\(event\.request\.cache\);[\s\S]{0,800}const timeoutMs = fresh \? null/,
-    'networkFirstApi gives such a read no deadline');
-  // ...and leaves the correction marks for the next ordinary re-pull, which
-  // they exist to guard (adversarial review).
-  assert.match(src, /const settling = !fresh && awaitingNetwork\.delete\(event\.request\.url\);/);
-  assert.match(src, /const laned = !fresh && !correcting\.delete\(event\.request\.url\)/);
+  // Such a read waits for the network far longer than the 1s deadline: the
+  // saved copy answers it only on a link that has not answered at all
+  // (FRESH_API_TIMEOUT_MS, offline findings 2 Nov 2026), and the late answer
+  // still corrects the screen (tests/pwa-offline-cache.test.js).
+  assert.match(src, /const fresh = wantsFreshAnswer\(event\.request\.cache\);[\s\S]{0,800}: fresh \? \(laned \? FRESH_BOOT_API_TIMEOUT_MS : FRESH_API_TIMEOUT_MS\)/,
+    'networkFirstApi gives such a read the long fresh deadline');
+  assert.ok(sw.FRESH_API_TIMEOUT_MS >= 3 * sw.API_TIMEOUT_MS,
+    'far longer than the ordinary deadline a working link can lose');
+  // A re-pull after a correction is a fresh read now, so it consumes the
+  // correction marks they exist to guard (adversarial review).
+  assert.match(src, /const settling = awaitingNetwork\.delete\(event\.request\.url\);/);
+  assert.match(src, /const laned = !correcting\.delete\(event\.request\.url\)/);
 });
 
 test('with no deadline, a slow network answer wins over the saved copy', async () => {
@@ -505,7 +511,7 @@ test('review 2.6: a failed catch-up stays owed, without retrying in a loop', asy
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls, 1, 'no loop');
   assert.equal(st.stale, true, 'remounting the thread catches it up');
-  assert.match(gcJs, /else if \(st\.stale && !st\.read\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/);
+  assert.match(gcJs, /if \(st\.stale && !st\.read\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/);
 });
 
 // ── The review finding on f9e297e2 ────────────────────────────────────
@@ -520,7 +526,8 @@ test('review 3.1: a live message that beats a saved-copy first page does not set
   const requests = [];
   const GroupChat = loadGroupChat({
     fetch: async (url, init) => {
-      requests.push({ url, init });
+      // Opening a thread also posts its read (#6262): not a page read.
+      if (!String(url).includes('/threads/read')) requests.push({ url, init });
       if (requests.length === 1) {
         await gate;
         return { ok: true, headers: savedCopy, json: async () => ({ messages: [msg(1), msg(2)] }) };
@@ -547,7 +554,8 @@ test('review 3.1: a live message that beats a saved-copy first page does not set
   const requests = [];
   const GroupChat = loadGroupChat({
     fetch: async (url, init) => {
-      requests.push({ url, init });
+      // Opening a thread also posts its read (#6262): not a page read.
+      if (!String(url).includes('/threads/read')) requests.push({ url, init });
       if (requests.length === 1) {
         await gate;
         return { ok: true, headers: savedCopy, json: async () => ({ messages: [msg(1), msg(2)] }) };
@@ -604,7 +612,8 @@ test('a first page answered from the saved copy is caught up at once', async () 
   const requests = [];
   const GroupChat = loadGroupChat({
     fetch: async (url, init) => {
-      requests.push({ url, init });
+      // Opening a thread also posts its read (#6262): not a page read.
+      if (!String(url).includes('/threads/read')) requests.push({ url, init });
       if (requests.length === 1) {
         return { ok: true, headers: { get: (h) => (h === 'sw-cached-at' ? '1' : null) }, json: async () => ({ messages: [] }) };
       }
@@ -755,7 +764,7 @@ test('the open thread catches up; a thread cached off screen is marked stale', a
   assert.deepEqual(ids(open.messages), [10, 11]);
   assert.equal(away.stale, true, 'caught up when it is mounted again');
   assert.notEqual(never.stale, true, 'a thread that never loaded is left to its own first read');
-  assert.match(gcJs, /else if \(st\.stale && !st\.read\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/,
+  assert.match(gcJs, /if \(st\.stale && !st\.read\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/,
     'mountThread catches a stale thread up');
 });
 
@@ -785,7 +794,8 @@ test('a correction that lands during the first read is caught up once that read 
   const requests = [];
   const GroupChat = loadGroupChat({
     fetch: async (url, init) => {
-      requests.push({ url, init });
+      // Opening a thread also posts its read (#6262): not a page read.
+      if (!String(url).includes('/threads/read')) requests.push({ url, init });
       if (requests.length === 1) { await gate; return { ok: true, json: async () => ({ messages: [] }) }; }
       return { ok: true, json: async () => ({ messages: [msg(1), msg(2)] }) };
     },
@@ -1012,8 +1022,10 @@ test('review 4: a fresh roster read asked for during the first load follows it (
 test('opening a governance topic marks its cached roster for a re-read', () => {
   const src = read('public/js/app-view.js');
   const open = src.slice(src.indexOf('  async _renderTopicSubView(content, ref) {'));
-  assert.match(open.slice(0, 2500), /if \(ref\.kind === 'gov'\) AppView\._invalidateGovVoteRoster\(ref\.id\);/);
-  assert.match(open.slice(0, 2500), /AppView\._watchTopicLiveReads\(\);/);
+  // Before the page paints (1 Nov 2026: past the look for a change's request).
+  const head = open.slice(0, open.indexOf('// ── Fast open (#4524)'));
+  assert.match(head, /if \(ref\.kind === 'gov'\) AppView\._invalidateGovVoteRoster\(ref\.id\);/);
+  assert.match(head, /AppView\._watchTopicLiveReads\(\);/);
 });
 
 // ── The adversarial review of f7523842, and the one-rule rewrite ──────
@@ -1348,5 +1360,5 @@ test('a catch-up times out even where AbortSignal.timeout does not exist', async
 
 test('remounting while a catch-up is on the wire does not queue a second one', () => {
   assert.match(gcJs, /if \(GroupChat\._streamStale && !GroupChat\._latestLoad\) void GroupChat\._refreshLatest\(null\);/);
-  assert.match(gcJs, /else if \(st\.stale && !st\.read\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/);
+  assert.match(gcJs, /if \(st\.stale && !st\.read\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/);
 });

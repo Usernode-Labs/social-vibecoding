@@ -24,6 +24,18 @@ export function governanceServices({ config, pool }: Deps): Record<string, WorkH
       },
     },
 
+    // Reopen a GitHub issue, then comment on it (#6000). The same
+    // checkpointed close-then-comment logic, with the reopen call.
+    'github.reopenIssue': {
+      maxAttempts: 6,
+      backoffMs: backoff,
+      async run(ctx): Promise<Json> {
+        const done = await closeAndComment(ctx, 'reopenIssue');
+        if ((done as { gone?: boolean }).gone) return done;
+        return { reopened: true };
+      },
+    },
+
     // A close vote closed a request: the Homeroom bot's proposals for it that
     // are up for a vote are withdrawn once every request they are linked to
     // is closed, and the bot is woken for the app. `strict`: a failure to

@@ -180,17 +180,19 @@ export function appIconKind(app: AppRecord): string {
  * public app — callers check `hasAppPills` before drawing the wrapper, because
  * the wrapper's `mt-1` / `mt-2` is a gap nobody wants on an empty run.
  */
-export function AppPills({ app, limit }: {
+export function AppPills({ app, limit, newBadge = false }: {
   app: AppRecord;
   /**
    * At most this many pills, taken in appPillsFor's order (what needs
    * attention first) with the visibility chip last. Unset: every pill.
    */
   limit?: number;
+  /** Offer the "New" chip for an app created in the last fortnight (#5928). */
+  newBadge?: boolean;
 }): ReactNode {
   // Subscribed: appPillsFor reads the pills' words as it is called.
   useMessages('discover');
-  const all = appPillsFor(app) as {
+  const all = appPillsFor(app, { newBadge }) as {
     chips: Array<{ cls: string; label: string; tip: string }>;
     vis: { icon: 'lock' | 'mail'; label: string; tip: string } | null;
   };
@@ -215,7 +217,7 @@ export function AppPills({ app, limit }: {
   );
 }
 
-export function hasAppPills(app: AppRecord): boolean {
-  const { chips, vis } = appPillsFor(app) as { chips: unknown[]; vis: unknown };
+export function hasAppPills(app: AppRecord, newBadge = false): boolean {
+  const { chips, vis } = appPillsFor(app, { newBadge }) as { chips: unknown[]; vis: unknown };
   return chips.length > 0 || !!vis;
 }

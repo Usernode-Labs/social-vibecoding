@@ -17,10 +17,10 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
-const { proposal, sessionKey, MACHINE, WORK, CLAIM_STALE_MS } = require('../src/workflow/proposal/machine.ts');
+const { proposal, sessionKey, MACHINE, WORK, CLAIM_STALE_MS, REFUSAL_RETRY_MS } = require('../src/workflow/proposal/machine.ts');
 const { inspect } = require('../src/workflow/kernel/index.ts');
 const { attentionStates } = require('../src/workflow/platform.ts');
-const { mergeQueue, MACHINE: QUEUE, appKey } = require('../src/workflow/merge-queue/machine.ts');
+const { mergeQueue, MACHINE: QUEUE, appKey, SWEEP_MS } = require('../src/workflow/merge-queue/machine.ts');
 const { preview } = require('../src/workflow/preview/machine.ts');
 const { PROCESS_PRESENCE_LOCK } = require('../src/workflow/rules/presence.ts');
 const { waitFor } = require('./lib/wait-for');
@@ -559,6 +559,61 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await settle();
   });
 
+  await t.test('M11b a force skips the checks only where it was given: a resolved head merges on its own green checks, a mechanical one keeps the force (2 Nov 2026)', async () => {
+    defaults();
+    // Forced at a, conflicting: resolved at once, and the force stands.
+    const s = await proposalRow({ clean: false, approvalsRequired: 5 });
+    await toProposal(s, 'ForceMerge', { from: 'promoted', userId: s.owner.id, username: 'admin' }, { kind: 'route' });
+    await settle();
+    assert.equal(calls(WORK.sync).length, 1);
+    assert.equal((await pInst(s)).data.force.head, SHA('a'), 'the force names the commit it was given on');
+    // The resolution wrote b: the votes stay, and so does the force, still
+    // about a. b's checks are under way.
+    await toProposal(s, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('a'), to: SHA('b'), keepVotes: true, reason: 'resolved' });
+    await rt.drain();
+    assert.equal((await pInst(s)).data.force.head, SHA('a'));
+    await pool.query(`UPDATE chat_sessions SET check_state = 'pending', checks_commit_sha = $2, integration_merges_clean = TRUE,
+                        integration_head_sha = $2 WHERE id = $1`, [s.id, SHA('b')]);
+    await want(s.app, { sessionId: s.id });
+    await settle();
+    assert.equal(calls(WORK.gate).length, 0, 'not tried while its run is under way');
+    assert.equal(calls(WORK.attempt).length, 0);
+    // Red on b: still not merged, nor tried.
+    await pool.query(`UPDATE chat_sessions SET check_state = 'failing' WHERE id = $1`, [s.id]);
+    await want(s.app, { sessionId: s.id });
+    await settle();
+    assert.equal(calls(WORK.attempt).length, 0, 'a force about a is not one about b');
+    // Even if the gate is asked (the claim is the last word).
+    await toProposal(s, 'MergeRequested', { queueN: 501, force: true }, fromQueueSrc);
+    await settle();
+    assert.equal(calls(WORK.attempt).length, 0, 'the claim refuses b\'s red checks');
+    assert.equal((await pInst(s)).state, 'in_review');
+    // Green on b: the force merges it, with none of its five votes.
+    await pool.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [s.id]);
+    await want(s.app, { sessionId: s.id });
+    await settle();
+    assert.equal(calls(WORK.attempt).length, 1);
+    assert.equal(calls(WORK.attempt)[0].input.head, SHA('b'));
+    assert.equal((await sentTo('merge-followups', sessionKey(s.id)))[0].payload.force, true);
+
+    // A mechanical merge of main is pure git over a: the force follows it,
+    // red checks and all.
+    defaults();
+    const m = await proposalRow({ clean: false, approvalsRequired: 5, checks: 'failing' });
+    await toProposal(m, 'ForceMerge', { from: 'promoted', userId: m.owner.id, username: 'admin' }, { kind: 'route' });
+    await settle();
+    assert.equal(calls(WORK.sync).length, 0, 'the conflict lane spends nothing on a head whose checks fail');
+    await toProposal(m, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('a'), to: SHA('c'), keepVotes: true, reason: 'mechanical' });
+    await rt.drain();
+    assert.equal((await pInst(m)).data.force.head, SHA('c'));
+    await pool.query(`UPDATE chat_sessions SET checks_commit_sha = $2, integration_merges_clean = TRUE, integration_head_sha = $2
+                       WHERE id = $1`, [m.id, SHA('c')]);
+    await want(m.app, { sessionId: m.id });
+    await settle();
+    assert.equal(calls(WORK.attempt).length, 1);
+    assert.equal(calls(WORK.attempt)[0].input.head, SHA('c'));
+  });
+
   await t.test('M12 a proposal left merging with no attempt of this machine\'s is asked about once its claim is old; a merge it lost is recorded', async () => {
     defaults();
     const s = await proposalRow({ status: 'merging' });
@@ -723,6 +778,64 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await want(empty.app);
     await settle();
     assert.equal((await qInst(empty.app)).deadline_at, null, 'an empty line sets no sweep');
+  });
+
+  await t.test('M17b GitHub busy, or a plain refusal, comes back on the queue\'s sweep; a conflict stays held (request 6265)', async () => {
+    assert.equal(REFUSAL_RETRY_MS, SWEEP_MS, 'a refusal expires with the queue\'s sweep');
+    // Move the recorded retry into the past: the clock has advanced past it.
+    const expire = (s) => asTransition((c) => c.query(
+      `UPDATE wf_instances SET data = jsonb_set(data, '{refused,retryAt}', to_jsonb($3::text))
+        WHERE machine = $1 AND key = $2`,
+      [MACHINE, sessionKey(s.id), new Date(Date.now() - 1000).toISOString()]));
+    for (const refusal of [
+      { outcome: 'refused', kind: 'github_busy', reason: 'github_busy', message: 'PR #x wasn\'t merged yet: GitHub said a merge of it was already in progress.' },
+      { outcome: 'refused', kind: 'blocked', reason: 'github_refused', message: 'PR #x wasn\'t merged: GitHub refused it (paused).' },
+    ]) {
+      defaults();
+      const s = await proposalRow();
+      await vote(s, await user(), 'yes');
+      let n = 0;
+      work.answer.set(WORK.attempt, () => {
+        if (++n === 1) throw new Error('Server Error'); // a 5xx: no answer
+        return n === 2 ? refusal : { outcome: 'merged', sha: SHA('9') };
+      });
+      await want(s.app, { sessionId: s.id });
+      await settle();
+      assert.equal(calls(WORK.attempt).length, 2, 'the 5xx is retried, then GitHub\'s answer is read');
+      const held = await row(s);
+      assert.deepEqual(held.integration_block_reasons, [refusal.reason], 'the card is told why it waits');
+      // The time of the next try is the queue's own refusal record, which the
+      // session reads carry beside those reasons (services/integration.js
+      // HELD_UNTIL_SQL); there is no copy of it on the session row.
+      const pi = await pInst(s);
+      assert.ok(Date.parse(pi.data.refused.retryAt) > Date.now() - 1000,
+        'and when the queue tries again');
+      const { rows: [served] } = await pool.query(
+        `SELECT ${require('../src/services/integration').HELD_UNTIL_SQL} AS merge_held_until
+           FROM chat_sessions cs WHERE cs.id = $1`, [s.id]);
+      assert.equal(served.merge_held_until, pi.data.refused.retryAt,
+        'the read serves the queue\'s own retry time');
+      // Nothing else happens on the app: only the queue's sweep, after the
+      // recorded retry has passed, tries it again.
+      await expire(s);
+      await fire(QUEUE, appKey(s.app.id));
+      assert.equal(calls(WORK.attempt).length, 3, 'the sweep tried it again');
+      const told = await sentTo('merge-followups', sessionKey(s.id));
+      assert.equal(told.length, 1, 'and it merged');
+      assert.equal(told[0].payload.mergeSha, SHA('9'));
+    }
+    // A refusal that needs a person or a code change stays held: a conflict
+    // is not asked again by the sweep.
+    defaults();
+    const c = await proposalRow();
+    await vote(c, await user(), 'yes');
+    work.answer.set(WORK.attempt, { outcome: 'refused', kind: 'conflict', message: 'conflict' });
+    await want(c.app, { sessionId: c.id });
+    await settle();
+    assert.equal((await pInst(c)).data.refused.retryAt, null, 'sticky');
+    const before = calls(WORK.attempt).length;
+    await fire(QUEUE, appKey(c.app.id));
+    assert.equal(calls(WORK.attempt).length, before, 'not asked again by the sweep');
   });
 
   await t.test('M18 GitHub\'s conflict on a head the mirror measures clean goes to the conflict lane, and the turn runs (review: queue 4, attempt 6)', async () => {

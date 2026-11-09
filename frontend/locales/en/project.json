@@ -24,28 +24,44 @@
     "description": "Title of the page under a project's Workshop that lists what holds each of Homeroom bot's slots on the project and what waits for one."
   },
   "botSlots.door": {
-    "text": "Homeroom bot: {{used}} of {{cap}} slots in use",
-    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Link at the bottom of the Workshop's overview card that opens the page. {{used}} is how many slots are taken, {{cap}} how many the project has."
+    "text": "Homeroom bot: building {{used}} of {{cap}}",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Link at the bottom of the Workshop's overview card that opens the page, and the first of its facts, which are shown joined by a middle dot: how many builds the bot has waiting or under way on the project. {{used}} is how many, {{cap}} how many it may have at once."
+  },
+  "botSlots.doorVotes_one": {
+    "text": "{{count}} waiting for votes",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. One of the facts on the link to the page at the bottom of the Workshop's overview card, after \"Homeroom bot: building 3 of 5\" and a middle dot: how many of the bot's changes on the project are up for a vote. {{count}} is that number."
+  },
+  "botSlots.doorVotes_other": {
+    "text": "{{count}} waiting for votes",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. One of the facts on the link to the page at the bottom of the Workshop's overview card, after \"Homeroom bot: building 3 of 5\" and a middle dot: how many of the bot's changes on the project are up for a vote. {{count}} is that number."
   },
   "botSlots.doorWaiting_one": {
-    "text": "Homeroom bot: {{used}} of {{cap}} slots in use, {{count}} request waiting",
-    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Link at the bottom of the Workshop's overview card that opens the page, when requests wait for a slot. {{used}} is how many slots are taken, {{cap}} how many the project has, {{count}} how many requests wait."
+    "text": "{{count}} request in line",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. The last of the facts on the link to the page at the bottom of the Workshop's overview card, after a middle dot, when requests the bot is ready to build wait for a slot. {{count}} is how many requests wait."
   },
   "botSlots.doorWaiting_other": {
-    "text": "Homeroom bot: {{used}} of {{cap}} slots in use, {{count}} requests waiting",
-    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Link at the bottom of the Workshop's overview card that opens the page, when requests wait for a slot. {{used}} is how many slots are taken, {{cap}} how many the project has, {{count}} how many requests wait."
+    "text": "{{count}} requests in line",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. The last of the facts on the link to the page at the bottom of the Workshop's overview card, after a middle dot, when requests the bot is ready to build wait for a slot. {{count}} is how many requests wait."
   },
   "botSlots.slots.title": {
     "text": "Slots",
     "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the card listing what holds each slot."
   },
-  "botSlots.slots.used": {
-    "text": "{{used}} of {{cap}} in use",
-    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Figure in the Slots card: how many of the project's slots are taken. {{used}} is how many, {{cap}} how many there are."
+  "botSlots.slots.building": {
+    "text": "Building {{used}} of {{cap}}",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Figure in the Slots card: how many builds the bot has waiting or under way on the project, of how many it may have at once. {{used}} is how many, {{cap}} how many there may be."
+  },
+  "botSlots.slots.votes_one": {
+    "text": "{{count}} of {{cap}} waiting for votes",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Figure in the Slots card, under the builds: how many of the bot's changes on the project are up for a vote or being merged, of how many it may have waiting at once. {{count}} is how many, {{cap}} how many there may be."
+  },
+  "botSlots.slots.votes_other": {
+    "text": "{{count}} of {{cap}} waiting for votes",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Figure in the Slots card, under the builds: how many of the bot's changes on the project are up for a vote or being merged, of how many it may have waiting at once. {{count}} is how many, {{cap}} how many there may be."
   },
   "botSlots.slots.frees": {
-    "text": "A slot frees when a change merges or is withdrawn, or when its request closes.",
-    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Note in the Slots card saying what frees a slot."
+    "text": "A build frees its slot when it is done. A change waiting for votes frees one when it merges or is withdrawn, or when its request closes.",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Note in the Slots card saying what frees each kind of slot: a build's, and a change's that waits for votes."
   },
   "botSlots.slots.empty": {
     "text": "No slots in use: a request found ready is built at once.",
@@ -439,6 +455,14 @@
     "text": "Nothing on the board yet.",
     "description": "Note shown in place of the items on a project's Hub or All items page when the project has no requests or proposals, for a person who can only look. The board is the project's list of work."
   },
+  "boardEmpty.start": {
+    "text": "Start a change",
+    "description": "Button under the note on a project's Hub or All items page when the project has no requests or proposals, for a person who builds changes here. It opens a new session to build a change. \"Change\" is a noun."
+  },
+  "boardEmpty.startBot": {
+    "text": "Tell Homeroom bot what to change",
+    "description": "Button under the note on a project's Hub or All items page when the project has no requests or proposals, for a person Homeroom bot builds changes for on this project. It opens their chat with Homeroom bot with this project attached. Keep \"Homeroom bot\" as it is; here \"change\" is a verb."
+  },
   "boardEmpty.press.hub.collab.full": {
     "text": "Nothing on the board yet. Press <0>⋯</0> to suggest an improvement or import a PR; to make one yourself, use Build it now there.",
     "description": "Note on a project's Hub when the project has no requests or proposals. <0>⋯</0> is the Hub's own More button, shown as its three-dot sign. \"Suggest an improvement\", \"Import a PR\" (a GitHub pull request) and \"Build it now\" are rows of that menu."
@@ -607,10 +631,6 @@
     "text": "Overview",
     "description": "Small-caps label over the first part of the Workshop tab of a project's page: the All items card with its figures, where the open work is, and the approval rule."
   },
-  "workshop.part.happening": {
-    "text": "What's happening",
-    "description": "Small-caps label over the second part of the Workshop tab of a project's page: the viewer's own work in flight and what is new for them since their last visit."
-  },
   "workshop.part.happened": {
     "text": "What happened",
     "description": "Small-caps label over the last part of the Workshop tab of a project's page: this week's changes and requests row by row, then one row for each week before it."
@@ -719,85 +739,49 @@
     "text": "{{count}} landed this week, the same as the week before.",
     "description": "Sentence of the fallback summary on a project's Workshop tab: as many changes were merged this week ({{count}}) as the week before."
   },
-  "workshop.mine.title": {
+  "workshop.desk.title": {
     "text": "Your work",
-    "description": "Heading of the section on a project's Workshop tab that lists this person's own requests, sessions and proposals in the project."
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's title."
   },
-  "workshop.mine.open_one": {
-    "text": "{{count}} open",
-    "description": "Beside the \"Your work\" heading on the Workshop tab of a project's page: how many pieces of the viewer's own work are still open. {{count}} is that number."
+  "workshop.desk.open": {
+    "text": "Opens Homeroom bot, showing your work in {{project}}",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's tooltip. {{project}} is the project's name."
   },
-  "workshop.mine.open_other": {
-    "text": "{{count}} open",
-    "description": "Beside the \"Your work\" heading on the Workshop tab of a project's page: how many pieces of the viewer's own work are still open. {{count}} is that number."
+  "workshop.desk.both": {
+    "text": "Needs you: <0>{{needs}}</0> · In progress: {{progress}}",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end, in the Homeroom bot tab's own words: how many things wait on the person, and how many are being worked on. <0></0> marks the number that asks for them, drawn in the accent."
   },
-  "workshop.mine.empty": {
-    "text": "You have no work going on.",
-    "description": "Line in the Your work section on a project's Workshop tab when this person has nothing in progress and cannot start anything from here."
+  "workshop.desk.needs": {
+    "text": "Needs you: <0>{{needs}}</0>",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end when things wait on the person and nothing else is being worked on. <0></0> marks the number, drawn in the accent."
   },
-  "workshop.mine.emptyBot": {
-    "text": "You have no work going on. To change something, tell Homeroom bot, or use Suggest an improvement in the Homeroom menu.",
-    "description": "Line in the Your work section on a project's Workshop tab when this person has nothing in progress, on a project where Homeroom bot (the platform's own building agent, a name) makes the changes. \"Suggest an improvement\" is a row in the Homeroom menu; Homeroom is the product's name."
+  "workshop.desk.progress": {
+    "text": "In progress: {{progress}}",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end when nothing waits on the person but some of their work is being worked on."
   },
-  "workshop.mine.emptyBuild": {
-    "text": "You have no work going on. Pick up an open item in All items, or press ⋯ on the hub and use Build it now.",
-    "description": "Line in the Your work section on a project's Workshop tab when this person has nothing in progress. All items is the page with the whole board; ⋯ is the More button on the project's Hub and \"Build it now\" a row of its menu."
+  "workshop.desk.waiting": {
+    "text": "Waiting: {{waiting}}",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end when the person's work only waits on somebody else (votes, a free builder)."
   },
-  "workshop.mine.showLess": {
-    "text": "Show less",
-    "description": "Button under the Your work list on a project's Workshop tab: folds the list back to its first three rows."
+  "workshop.desk.next": {
+    "text": "Next: {{title}}",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's second line: the first thing that waits on the person. {{title}} is its title, written by a person."
   },
-  "workshop.mine.showMore_one": {
-    "text": "Show {{count}} more",
-    "description": "Button under the Your work list on a project's Workshop tab: shows the rest of this person's items. {{count}} is how many are hidden."
+  "workshop.desk.empty": {
+    "text": "Nothing of yours here right now.",
+    "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's second line when none of the person's work is under way or waiting in this project."
   },
-  "workshop.mine.showMore_other": {
-    "text": "Show {{count}} more",
-    "description": "Button under the Your work list on a project's Workshop tab: shows the rest of this person's items. {{count}} is how many are hidden."
-  },
-  "workshop.waiting.title": {
-    "text": "Waiting on you",
-    "description": "Heading of a part of the What's happening card on a project's Workshop tab: the viewer's items that need their answer before they can move (a plan waiting for Build it, a question from Homeroom bot, a conversation with Homeroom bot, a change of theirs that needs a fix)."
-  },
-  "workshop.waiting.count_one": {
-    "text": "{{count}} to answer",
-    "description": "Beside the \"Waiting on you\" heading in What's happening on a project's Workshop tab: how many of the viewer's items need their answer before they can move. {{count}} is that number."
-  },
-  "workshop.waiting.count_other": {
-    "text": "{{count}} to answer",
-    "description": "Beside the \"Waiting on you\" heading in What's happening on a project's Workshop tab: how many of the viewer's items need their answer before they can move. {{count}} is that number."
-  },
-  "workshop.upNext.title": {
-    "text": "Up next",
-    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). The section's heading."
-  },
-  "workshop.upNext.count_one": {
-    "text": "{{count}} moving",
-    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). Beside the heading: how many rows it holds. {{count}} is that number."
-  },
-  "workshop.upNext.count_other": {
-    "text": "{{count}} moving",
-    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). Beside the heading: how many rows it holds. {{count}} is that number."
-  },
-  "workshop.fresh.title": {
-    "text": "New for you",
-    "description": "Heading of a card on the Workshop tab of a project's page: requests filed since the viewer's last visit."
-  },
-  "workshop.fresh.count_one": {
-    "text": "{{count}} since your last visit",
-    "description": "Beside the \"New for you\" heading on the Workshop tab of a project's page: how many rows the card holds. {{count}} is that number."
-  },
-  "workshop.fresh.count_other": {
-    "text": "{{count}} since your last visit",
-    "description": "Beside the \"New for you\" heading on the Workshop tab of a project's page: how many rows the card holds. {{count}} is that number."
-  },
-  "workshop.fresh.markAllSeen": {
-    "text": "Mark all seen",
-    "description": "Button beside the \"New for you\" heading on the Workshop tab of a project's page: marks everything new since the viewer's last visit as seen, which empties the card."
+  "hub.workshop.sub": {
+    "text": "What happened, and every item",
+    "description": "The Workshop row of a project's Hub (For you): opens the project's Workshop, which shows what happened week by week and All items, the whole board. Not the person's own work, which has its own card on the Workshop tab (Your work)."
   },
   "workshop.fresh.buildIt": {
     "text": "Build it",
     "description": "Button on a new request's row in the \"New for you\" card on the Workshop tab of a project's page: starts building it, by asking Homeroom bot or with the viewer's own coding agent, whichever the request's own page offers."
+  },
+  "workshop.fresh.workOnIt": {
+    "text": "Work on it",
+    "description": "Button on a new request's row in the \"New for you\" card on the Workshop tab of a project's page: opens a thread only the viewer can see, in their chat with Homeroom bot (the platform's assistant), about this request, as the request's own \"Work on this with Homeroom bot\" does. \"Work on\" is a verb."
   },
   "workshop.private.title": {
     "text": "Private requests",
@@ -1008,8 +992,8 @@
     "description": "What a row is, at the start of the line under its title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"Change · evan · for #4455\". A noun: one proposed change to the project that has no number yet."
   },
   "workRow.name.changeNumbered": {
-    "text": "PR #{{number}}",
-    "description": "What a row is, at the start of the line under its title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"PR #4456 · evan · for #4455 · 4m ago\". PR abbreviates pull request: one proposed change to the project. {{number}} is its number."
+    "text": "PR {{number}}",
+    "description": "What a row is, at the start of the line under its title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"PR 4456 · evan · for #4455 · 4m ago\". PR abbreviates pull request: one proposed change to the project. {{number}} is its number."
   },
   "workRow.name.request": {
     "text": "Request",
@@ -1053,7 +1037,7 @@
   },
   "workRow.facts.pair": {
     "text": "{{first}} · {{second}}",
-    "description": "Joins the short independent facts of the line under a row's title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"PR #4456 · evan · for #4455 · 4m ago\". {{first}} is everything said so far and {{second}} the next fact. Only the separator between them is translated."
+    "description": "Joins the short independent facts of the line under a row's title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"PR 4456 · evan · for #4455 · 4m ago\". {{first}} is everything said so far and {{second}} the next fact. Only the separator between them is translated."
   },
   "workRow.replies_one": {
     "text": "{{count}} comment",
@@ -1062,10 +1046,6 @@
   "workRow.replies_other": {
     "text": "{{count}} comments",
     "description": "One fact on a Workshop row's line, after who made it: how many comments the item has. {{count}} is that number."
-  },
-  "workRow.state.newRequest": {
-    "text": "New request",
-    "description": "First fact on a row of the \"New for you\" card on a project's Workshop tab: the request was filed since the viewer's last visit."
   },
   "needsYou.fact.approvals_one": {
     "text": "{{yes}} of {{count}} approval",
@@ -1807,14 +1787,6 @@
     "text": "<0>{{count}} requests nobody has picked up</0>",
     "description": "Quiet line on the Hub of a project that has only one person in it, when some requests (filed issues) have nobody working on them. The whole line, inside <0></0>, is a link that opens the Needs you tab. {{count}} is the number of such requests."
   },
-  "hub.work.title": {
-    "text": "Your work",
-    "description": "Heading of the card on a project's Hub that lists the changes and requests this person started in the project."
-  },
-  "hub.work.empty": {
-    "text": "No work in progress.",
-    "description": "Shown on the Your work card of a project's Hub when this person has nothing under way in the project."
-  },
   "hub.people.active_one": {
     "text": "{{count}} active this week",
     "description": "Top of a project's Hub, beside the faces of the people active there: how many people took part in the project in the last seven days (talked in its channel, started a change or voted)."
@@ -1839,6 +1811,10 @@
     "text": "+{{count}}",
     "description": "Last circle in the row of faces at the top of a project's Hub: how many more people were active this week than the faces shown. Keep it as short as a plus sign and a number."
   },
+  "hub.topics.title": {
+    "text": "Topics",
+    "description": "On a phone, small heading over the card on a project's Hub that lists the project's topics, each a channel of its own, one row a topic, under the For you card. Pressing a row opens that topic's channel."
+  },
   "hub.forYou.title": {
     "text": "For you",
     "description": "Small heading over the card of what on a project is this person's: the votes they owe, their own work and the project's discussion, on the project's Hub."
@@ -1851,25 +1827,17 @@
     "text": "{{title}}, and {{count}} more",
     "description": "Second line of the Needs you row on a project's Hub: the title of the first change waiting on this person's vote, then how many more are waiting. {{title}} is that change's title."
   },
-  "hub.forYou.work.inProgress_one": {
-    "text": "{{count}} in progress",
-    "description": "Right end of the Your work row on a project's Hub: how many of this person's own requests and changes are in flight in the project."
-  },
-  "hub.forYou.work.inProgress_other": {
-    "text": "{{count}} in progress",
-    "description": "Right end of the Your work row on a project's Hub: how many of this person's own requests and changes are in flight in the project."
-  },
   "hub.forYou.discussion.title": {
     "text": "Discussion <0>#{{handle}}</0>",
     "description": "Title of the row that opens a project's discussion on its Hub. <0></0> draws the channel's name in a lighter weight; {{handle}} is the channel's name without the #, for example general."
   },
   "hub.forYou.discussion.lastBy": {
-    "text": "@{{username}}: {{message}} · {{ago}}",
-    "description": "Second line of the Discussion row on a project's Hub: the last message in the channel, who wrote it and how long ago. {{username}} is the writer, {{message}} the message itself, {{ago}} a time such as \"4h ago\"."
+    "text": "<0>@{{username}}: {{message}}</0><1> · {{ago}}</1>",
+    "description": "Second line of the Discussion row on a project's Hub: the last message in the channel, who wrote it and how long ago. {{username}} is the writer, {{message}} the message itself, {{ago}} a time such as \"4h ago\". <0> wraps the part that is cut short when the line is too long, <1> the time, which is always shown whole."
   },
   "hub.forYou.discussion.last": {
-    "text": "{{message}} · {{ago}}",
-    "description": "Second line of the Discussion row on a project's Hub when the last message in the channel has no writer to name: the message and how long ago it was sent. {{ago}} is a time such as \"4h ago\"."
+    "text": "<0>{{message}}</0><1> · {{ago}}</1>",
+    "description": "Second line of the Discussion row on a project's Hub when the last message in the channel has no writer to name: the message and how long ago it was sent. {{ago}} is a time such as \"4h ago\". <0> wraps the message, which is cut short when the line is too long, <1> the time, which is always shown whole."
   },
   "hub.forYou.discussion.postedBy": {
     "text": "@{{username}} posted · {{ago}}",
@@ -2855,6 +2823,10 @@
     "text": "See what failed",
     "description": "Link-style button under the Testing card on a change's page when its checks failed and there is nothing else to say: opens the Details sheet at the failed checks."
   },
+  "topic.change.gate.openPage": {
+    "text": "Open the page it checked",
+    "description": "Link-style button after the sentence on the Testing card of a change's page when a failed check opened a page on the change's preview: opens that page on the preview so anyone can see what the check saw."
+  },
   "topic.change.gate.fix": {
     "text": "Fix it",
     "description": "Main button on the Testing card of a change's page when its automated checks failed, shown to the change's author: asks the AI agent that built the change to fix what failed. \"It\" is what failed."
@@ -2882,6 +2854,38 @@
   "topic.change.gate.noteWatch": {
     "text": "{{note}} <0>Watch it work</0>",
     "description": "The line under the Testing card on a change's page while the AI agent fixes the checks that failed. {{note}} is one or more whole sentences, already worded. <0></0> is a link-style button that opens the conversation where the agent is working."
+  },
+  "topic.change.gate.closesHead_one": {
+    "text": "Closes {{count}} request when it merges",
+    "description": "Heading of the list under the vote count on a change's Votes card, when the change will close one request if it merges. {{count}} is that number, 1. It is the change."
+  },
+  "topic.change.gate.closesHead_other": {
+    "text": "Closes {{count}} requests when it merges",
+    "description": "Heading of the list under the vote count on a change's Votes card, when the change will close several requests if it merges. {{count}} is that number. It is the change."
+  },
+  "topic.change.gate.closesLine": {
+    "text": "<0>#{{number}}</0> {{title}} · {{by}}",
+    "description": "One request a change will close, on its Votes card. <0></0> is the request's number as a link to its page, {{number}} that number, {{title}} the request's title, and {{by}} the name of the person who filed it."
+  },
+  "topic.change.gate.closesLineNoFiler": {
+    "text": "<0>#{{number}}</0> {{title}}",
+    "description": "One request a change will close, on its Votes card, when nobody knows who filed it. <0></0> is the request's number as a link to its page, {{number}} that number, and {{title}} the request's title."
+  },
+  "topic.change.gate.closesLineUntitled": {
+    "text": "<0>#{{number}}</0>",
+    "description": "A number a change says it would close, on its Votes card, when no request in this project has that number. <0></0> is the number as a link, and {{number}} that number."
+  },
+  "topic.change.gate.closesUnconfirmed": {
+    "text": "not confirmed by its requester",
+    "description": "End of a line naming a request a change will close, on its Votes card, when the person who filed that request has not agreed to it: the change was neither built for that request nor made by that person."
+  },
+  "topic.change.gate.closesMore_one": {
+    "text": "{{count}} more",
+    "description": "Button under the list of requests a change will close, on its Votes card, when one more is hidden. Tapping it shows the hidden line in the same list."
+  },
+  "topic.change.gate.closesMore_other": {
+    "text": "{{count}} more",
+    "description": "Button under the list of requests a change will close, on its Votes card, when some more are hidden. Tapping it shows the hidden lines in the same list."
   },
   "topic.change.shots.title": {
     "text": "Before and after",
@@ -2911,6 +2915,10 @@
     "text": "A change",
     "description": "What one row of the list is, in its grey line, for a change that has no number yet. A change is a proposed edit to the project that people vote on."
   },
+  "change.reload": {
+    "text": "Reload",
+    "description": "Button beside a live change's status pill when the page open in this tab runs a version of Homeroom from before the change. Pressing it reloads the page onto the running version."
+  },
   "topic.thread.item.close": {
     "text": "Vote to close",
     "description": "What one row of the list is, in its grey line: a vote on closing the request without building it."
@@ -2931,13 +2939,21 @@
     "text": "Being made",
     "description": "Where a change in the list stands: someone is still building it."
   },
+  "topic.thread.state.ready": {
+    "text": "Ready for a vote",
+    "description": "Where a change in the list stands: it has finished building and its checks pass, and it waits for its author to put it up for a vote."
+  },
   "topic.thread.state.voting": {
     "text": "Up for a vote",
     "description": "Where a change, a vote to close or a decision in the list stands: people are voting on it now."
   },
   "topic.thread.state.live": {
     "text": "Live",
-    "description": "Where a change in the list stands: it was voted in and is part of the project now."
+    "description": "Where a change in the list stands: it was voted in and is running in production now."
+  },
+  "topic.thread.state.goingLive": {
+    "text": "Going live",
+    "description": "Where a change in the list stands: it merged and is on its way to production, not running yet."
   },
   "topic.thread.state.settled": {
     "text": "Settled",
@@ -2974,6 +2990,10 @@
   "topic.thread.follow.mutedHint": {
     "text": "Muted: replies here do not notify you, until you reply yourself. Press to unmute.",
     "description": "Hover text of the button on a request's or a change's page while the thread is muted."
+  },
+  "topic.thread.follow.unmute": {
+    "text": "Unmute",
+    "description": "A row of a request's or a change's ⋯ menu, once the person has muted its thread: notifications for replies in the thread start again. A verb in the imperative."
   },
   "topic.thread.move.merge": {
     "text": "Proposed: merge into #{{number}}",
@@ -3034,6 +3054,22 @@
   "topic.thread.move.object": {
     "text": "Object",
     "description": "Button beside a proposed merge or split of a thread: the person objects, which puts it to the project's vote."
+  },
+  "topic.thread.move.consentAsk": {
+    "text": "Move into #{{number}}'s thread? Change #{{change}} closes this request, and lives there.",
+    "description": "On a request's page, a change for several requests asks its other requester whether this request's thread should join the change's. {{number}} is the number of the thread the change lives in, {{change}} the change's number."
+  },
+  "topic.thread.move.consentYes": {
+    "text": "Yes",
+    "description": "Button beside a change's question on a request's page: the requester agrees to move this request's thread into the change's."
+  },
+  "topic.thread.move.consentSeparate": {
+    "text": "Keep separate",
+    "description": "Button beside a change's question on a request's page: the requester keeps this request's thread where it is. The change still closes the request."
+  },
+  "topic.thread.move.consentWaiting": {
+    "text": "Waiting for {{names}} to answer",
+    "description": "On a request's page, under a change's question about moving this request's thread into the change's, shown to everyone who cannot answer it: {{names}} are the requesters who still have to answer, by username."
   },
   "topic.thread.move.mergeInto": {
     "text": "Merge into another thread",
@@ -3375,6 +3411,10 @@
     "text": "Show less",
     "description": "Button under a request's own words on its page, and under a change's summary on a change's page, once the text is unfolded: folds it back to four lines."
   },
+  "topic.request.words.translate": {
+    "text": "Translate",
+    "description": "Button beside Show more under someone else's request on its page: shows its title and words in the language the reader uses Homeroom in. A verb."
+  },
   "topic.request.editor.label": {
     "text": "The request",
     "description": "Accessible name of the text box in which the person who filed a request rewrites its words, on the request's page. A noun."
@@ -3390,6 +3430,34 @@
   "topic.request.ownAgent.summary": {
     "text": "Build it with your own Claude Code",
     "description": "Folded line under the status card on a request's page; opening it shows a link that hands this request to Claude Code on the web, on the person's own Claude plan. \"Claude Code\" is a product name."
+  },
+  "topic.request.agentSession.summary": {
+    "text": "Build it in an agent session",
+    "description": "Row in the ⋯ menu of a request's page, next to \"Build it with your own Claude Code\": starts a session where the viewer builds the request with an AI coding agent. An agent session is a working conversation with an AI coding agent. \"Build\" is a verb."
+  },
+  "topic.workWithBot.ask": {
+    "text": "Ask Homeroom bot privately",
+    "description": "Quiet button under a change on a request's page and on a change's own page, when the change is not up for a vote: opens a thread only the viewer can see, in their chat with Homeroom bot (the platform's assistant), to ask about this change. \"Privately\" says the thread is theirs alone."
+  },
+  "topic.workWithBot.askTitle": {
+    "text": "Ask Homeroom bot about this change in a thread only you can see",
+    "description": "Tooltip of the \"Ask Homeroom bot privately\" button under a change. Homeroom bot is the platform's assistant."
+  },
+  "topic.workWithBot.suggest": {
+    "text": "Suggest a change privately",
+    "description": "Quiet button under a change that is up for a vote, on a request's page and on a change's own page: opens a thread only the viewer can see, in their chat with Homeroom bot (the platform's assistant), to sketch a revision of this change. \"Privately\" says the thread is theirs alone."
+  },
+  "topic.workWithBot.suggestTitle": {
+    "text": "Sketch a revision of this change with Homeroom bot, in a thread only you can see",
+    "description": "Tooltip of the \"Suggest a change privately\" button under a change that is up for a vote. Homeroom bot is the platform's assistant."
+  },
+  "topic.workWithBot.opening": {
+    "text": "Opening…",
+    "description": "The \"Ask Homeroom bot privately\" and \"Suggest a change privately\" buttons' words while their private thread with Homeroom bot opens."
+  },
+  "topic.workWithBot.failed": {
+    "text": "The thread with Homeroom bot could not be started just now. Try again in a minute.",
+    "description": "Toast when \"Ask Homeroom bot privately\" or \"Suggest a change privately\" could not open its private thread with Homeroom bot, the platform's assistant."
   },
   "topic.request.ownAgent.lead": {
     "text": "Claude Code opens with a prompt to build this request already typed. Check it and press send. It runs on your own Claude plan.",
@@ -3447,6 +3515,50 @@
     "text": "Voted in",
     "description": "Last of the four stops on the progress line of a request's page (Asked, Plan, Built, Voted in): the change that answers the request was approved by the members' vote and went live."
   },
+  "topic.request.botPlan.subYours": {
+    "text": "Plan for #{{number}} · waiting for you",
+    "description": "On a request's page, under the title of Homeroom bot's plan for it: the plan waits for the reader, who asked for it, to press Build it. {{number}} is the request's number."
+  },
+  "topic.request.botPlan.subTheirs": {
+    "text": "@{{requester}}'s plan for #{{number}} · any member can build it",
+    "description": "On a request's page, under the title of Homeroom bot's plan for it, for anyone but the person who asked for it: whose request it is, and that any member of the community may press Build it. {{requester}} is that person's username; {{number}} is the request's number."
+  },
+  "topic.request.botPlan.subAnyone": {
+    "text": "Plan for #{{number}} · any member can build it",
+    "description": "On a request's page, under the title of Homeroom bot's plan for it, when the person who asked for it is not known: any member of the community may press Build it. {{number}} is the request's number."
+  },
+  "topic.request.botPlan.subBuilding": {
+    "text": "Plan for #{{number}} · building",
+    "description": "On a request's page, under the title of Homeroom bot's plan for it once somebody pressed Build it: the bot is building what the plan describes. It replaces the line that said the plan waits for Build it. {{number}} is the request's number."
+  },
+  "topic.request.botPlan.readWhole": {
+    "text": "Read the whole plan",
+    "description": "On a request's page, a row under the lines of Homeroom bot's plan: opens the whole written plan."
+  },
+  "topic.request.botPlan.readWholeLength": {
+    "text": "Read the whole plan <1>· about {{chars}} characters</1>",
+    "description": "On a request's page, the row under the lines of Homeroom bot's plan: opens the whole written plan, and says how long it is. {{chars}} is a rounded number of characters, already formatted (for example 20,000). The middle dot stands between the two parts."
+  },
+  "topic.request.botPlan.quote": {
+    "text": "Homeroom bot's plan",
+    "description": "On a request's page, the words a reply quoting Homeroom bot's plan shows when the plan has no title (Change something stages that quote in the reply box)."
+  },
+  "topic.request.botPlan.refused.changing": {
+    "text": "Somebody asked for a change to this plan, and the next plan is on its way. Build it comes back with it.",
+    "description": "On a request's page, under Homeroom bot's plan, after Build it was pressed: it did not build, because a change to the plan was asked for and a newer plan is being written."
+  },
+  "topic.request.botPlan.refused.allowance": {
+    "text": "Your building time for this week is used up, so this plan was not built. It resets on Monday.",
+    "description": "On a request's page, under Homeroom bot's plan, after Build it was pressed: it did not build, because the presser's weekly allowance of Homeroom bot's building time is spent. The allowance resets each Monday."
+  },
+  "topic.request.botPlan.refused.gone": {
+    "text": "This plan is no longer waiting: it was built, replaced or stopped.",
+    "description": "On a request's page, under Homeroom bot's plan, after Build it was pressed: the plan had already been built, replaced by a newer one, or stopped, so nothing was built."
+  },
+  "topic.request.botPlan.refused.other": {
+    "text": "Build it did not go through. Try again in a moment.",
+    "description": "On a request's page, under Homeroom bot's plan, after Build it was pressed: the request failed for another reason, such as the connection."
+  },
   "topic.request.spec.kicker": {
     "text": "Plan",
     "description": "Small upper-case label over the title on a plan's card (under a request, or on the page of a change built from the plan), when the plan has no version number. A noun: the written description the change is built from."
@@ -3495,6 +3607,22 @@
     "text": "Read {{title}}",
     "description": "Accessible name of the Read button on a plan's card (under a request, or on the page of a change built from the plan). {{title}} is the plan's title. Read is a verb in the imperative."
   },
+  "topic.thread.page.fromPlan": {
+    "text": "Built from the plan \"{{title}}\"",
+    "description": "On a request's page, under a change built from a plan posted on the request: says which plan it carries out, beside the plan's Read button. {{title}} is the plan's title."
+  },
+  "topic.thread.page.fromPlanVersion": {
+    "text": "Built from v{{version}} of the plan \"{{title}}\"",
+    "description": "On a request's page, under a change built from a numbered version of a plan posted on the request: says which version it carries out, beside the plan's Read button. {{version}} is the plan's version number (1, 2, 3) and {{title}} is the plan's title."
+  },
+  "topic.thread.page.newerPlan": {
+    "text": "v{{version}} is newer",
+    "description": "After \"Built from v1 of the plan ...\" on a change whose plan has a newer version on the request, by the same person: says a newer version exists. {{version}} is that newer version's number (2, 3)."
+  },
+  "topic.thread.page.newerPlanOther": {
+    "text": "{{author}}'s plan is newer",
+    "description": "After \"Built from v1 of the plan ...\" on a change whose plan has a newer version on the request, posted by somebody else: says whose newer plan exists. {{author}} is the person's name, without an @."
+  },
   "topic.request.spec.opening": {
     "text": "Opening…",
     "description": "Replaces \"Read\" on a plan's card (under a request, or on the page of a change built from the plan) while the plan is being fetched."
@@ -3510,6 +3638,18 @@
   "topic.request.stream.replies_other": {
     "text": "{{count}} replies",
     "description": "Line under a request, over the replies to it, on the request's page: how many replies people have written. {{count}} is that number. Reply is a noun."
+  },
+  "topic.request.stream.onChange": {
+    "text": "on Change #{{number}}",
+    "description": "Small words after the time of a reply or a line in a request's discussion that was written on one of the request's changes, which has no page of its own: the request's page holds the discussion of the whole piece of work. {{number}} is the change's number."
+  },
+  "topic.request.stream.onChangeUnnumbered": {
+    "text": "on a change",
+    "description": "Small words after the time of a reply or a line in a request's discussion that was written on one of the request's changes that has no number yet: the request's page holds the discussion of the whole piece of work."
+  },
+  "topic.request.stream.onRequest": {
+    "text": "on #{{number}}",
+    "description": "Small words after the time of a reply in a request's discussion that was written on another request of the same merged thread: {{number}} is that other request's number."
   },
   "topic.request.stream.noReplies": {
     "text": "No replies yet",
@@ -3560,12 +3700,12 @@
     "description": "One line among the replies on a request's page: Homeroom bot (an assistant that builds requests, speaking in the first person) posted its plan (the written description of the change) and is building it. {{version}} is the plan's version number; \"v\" abbreviates version. {{title}} is the plan's title. A \"Read\" link follows the line."
   },
   "topic.request.stream.botPlanWaiting": {
-    "text": "Plan v{{version}}: {{title}}. Waiting for @{{requester}} to say Build it.",
-    "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change) and builds nothing until the person who asked for it approves it. {{version}} is the plan's version number; {{title}} is the plan's title; {{requester}} is that person's username, after an @. \"Build it\" is the name of the button they tap: keep it as the button reads in your language. A \"Read\" link follows the line."
+    "text": "Plan v{{version}}: {{title}}. Nothing is built yet. Waiting for @{{requester}} to say Build it.",
+    "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change) and builds nothing until the person who asked for it approves it. It says plainly that nothing has been built yet. {{version}} is the plan's version number; {{title}} is the plan's title; {{requester}} is that person's username, after an @. \"Build it\" is the name of the button they tap: keep it as the button reads in your language. A \"Read\" link follows the line."
   },
   "topic.request.stream.botPlanWaitingUnnamed": {
-    "text": "Plan v{{version}}: {{title}}. Waiting for the person who asked for it to say Build it.",
-    "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change) and builds nothing until the person who asked for the request approves it; used when that person cannot be named. {{version}} is the plan's version number; {{title}} is the plan's title. \"Build it\" is the name of the button they tap. A \"Read\" link follows the line."
+    "text": "Plan v{{version}}: {{title}}. Nothing is built yet. Waiting for the person who asked for it to say Build it.",
+    "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change) and builds nothing until the person who asked for the request approves it; used when that person cannot be named. It says plainly that nothing has been built yet. {{version}} is the plan's version number; {{title}} is the plan's title. \"Build it\" is the name of the button they tap. A \"Read\" link follows the line."
   },
   "topic.request.stream.botPlanReplaced": {
     "text": "Plan v{{version}}: {{title}}. A newer plan replaced it.",
@@ -3718,6 +3858,26 @@
   "card.pill.setAsideIn": {
     "text": "Set aside in {{time}}",
     "description": "Status bar on a proposal's card while its rejection window counts down: the proposal was voted down and will be closed without merging when the time runs out. {{time}} is the time left, already abbreviated, for example ~2h 5m."
+  },
+  "card.tally.yes": {
+    "text": "{{yes}}/{{needed}} yes",
+    "description": "Final vote count shown beside the Live status of a change that has shipped, when nobody voted against it. {{yes}} is how many yes votes counted and {{needed}} how many were needed to pass, for example \"2/2 yes\"."
+  },
+  "card.tally.yesNo": {
+    "text": "{{yes}}/{{needed}} yes · {{no}} no",
+    "description": "Final vote count shown beside the Live status of a change that has shipped, after the yes votes against the number needed, then the no votes. {{yes}} is how many yes votes counted, {{needed}} how many were needed to pass and {{no}} how many voted no, for example \"3/3 yes · 1 no\"."
+  },
+  "card.tally.passed": {
+    "text": "{{yes}} yes",
+    "description": "Final vote count shown beside the Live status of a change that has shipped with at least as many yes votes as it needed and nobody against it. {{yes}} is how many yes votes counted, for example \"3 yes\". The number needed is in the hover text."
+  },
+  "card.tally.passedNo": {
+    "text": "{{yes}} yes · {{no}} no",
+    "description": "Final vote count shown beside the Live status of a change that has shipped with at least as many yes votes as it needed, then the no votes. {{yes}} is how many yes votes counted and {{no}} how many voted no, for example \"3 yes · 1 no\". The number needed is in the hover text."
+  },
+  "card.tally.title": {
+    "text": "{{yes}} yes and {{no}} no. It needed {{needed}} yes to pass.",
+    "description": "Hover text for the final vote count beside the Live status of a change that has shipped: the whole sentence the short count stands for. {{yes}} is how many yes votes counted, {{no}} how many voted no and {{needed}} how many yes votes were needed to pass."
   },
   "card.countdown.daysHours": {
     "text": "~{{days}}d {{hours}}h",
@@ -4297,7 +4457,7 @@
   },
   "menu.pin.add": {
     "text": "Pin to sidebar",
-    "description": "Row in a project's ⋯ menu on its hub, on a computer: keeps the project's community in the desktop sidebar's Pinned section."
+    "description": "Row in a project's ⋯ menu on its hub, on a computer: keeps the project's community at the top of the desktop sidebar's Recents."
   },
   "menu.pin.sub": {
     "text": "Keep it at the top of your sidebar",
@@ -4305,7 +4465,31 @@
   },
   "menu.pin.remove": {
     "text": "Unpin from sidebar",
-    "description": "The same row once the community is pinned: takes it off the desktop sidebar's Pinned section. It stays one of the person's communities."
+    "description": "The same row once the community is pinned: lets it move with the rest of the desktop sidebar's Recents again. It stays one of the person's communities."
+  },
+  "menu.homeApp.add": {
+    "text": "Pin app to Home",
+    "description": "Row in a project's ⋯ menu on its hub: puts the project's app among Home's Pinned apps, where its tile opens the app. Pinning does not join."
+  },
+  "menu.homeApp.sub": {
+    "text": "Its tile opens the app",
+    "description": "Second line under Pin app to Home in the project's ⋯ menu, saying what the pinned tile does."
+  },
+  "menu.homeApp.remove": {
+    "text": "Unpin app from Home",
+    "description": "The same row once the app is pinned: takes the app's tile off Home's Pinned apps. Membership does not change."
+  },
+  "menu.homeCommunity.add": {
+    "text": "Pin community to Home",
+    "description": "Row in a project's ⋯ menu on its hub: puts the community among Home's Pinned communities, where its tile opens this hub. Pinning does not join."
+  },
+  "menu.homeCommunity.sub": {
+    "text": "Its tile opens this hub",
+    "description": "Second line under Pin community to Home in the project's ⋯ menu, saying what the pinned tile does."
+  },
+  "menu.homeCommunity.remove": {
+    "text": "Unpin community from Home",
+    "description": "The same row once the community is pinned: takes its tile off Home's Pinned communities. Membership does not change."
   },
   "menu.appSettings.title": {
     "text": "App settings",
@@ -4504,19 +4688,19 @@
     "description": "Link at the end of the amber 'merged but not released' banner on the platform project's page: opens, on GitHub, the run of the release workflow the banner is about. 'Open' is a verb; 'run' is a noun."
   },
   "releaseStall.failed.prCommit": {
-    "text": "PR #{{pr}} ({{commit}}) merged but was not released: its release workflow did not complete. Run it on main to release the latest commit; a later merge would also carry this change.",
+    "text": "PR {{pr}} ({{commit}}) merged but was not released: its release workflow did not complete. Run it on main to release the latest commit; a later merge would also carry this change.",
     "description": "Amber banner on the platform project's page: a merged change is not live because the automated release job failed. {{pr}} is the GitHub pull request's number and {{commit}} the merged commit's short code. 'Run it' means run the release workflow; 'main' is the main branch's name and stays as it is."
   },
   "releaseStall.failed.prCommitRunning": {
-    "text": "PR #{{pr}} ({{commit}}) merged but was not released: its release workflow did not complete. The platform is still running {{running}}. Run it on main to release the latest commit; a later merge would also carry this change.",
+    "text": "PR {{pr}} ({{commit}}) merged but was not released: its release workflow did not complete. The platform is still running {{running}}. Run it on main to release the latest commit; a later merge would also carry this change.",
     "description": "Amber banner on the platform project's page: a merged change is not live because the automated release job failed. {{pr}} is the GitHub pull request's number, {{commit}} the merged commit's short code and {{running}} the short code of the build still being served. 'Run it' means run the release workflow; 'main' is the main branch's name and stays as it is."
   },
   "releaseStall.failed.pr": {
-    "text": "PR #{{pr}} merged but was not released: its release workflow did not complete. Run it on main to release the latest commit; a later merge would also carry this change.",
+    "text": "PR {{pr}} merged but was not released: its release workflow did not complete. Run it on main to release the latest commit; a later merge would also carry this change.",
     "description": "Amber banner on the platform project's page: a merged change is not live because the automated release job failed. {{pr}} is the GitHub pull request's number. 'Run it' means run the release workflow; 'main' is the main branch's name and stays as it is."
   },
   "releaseStall.failed.prRunning": {
-    "text": "PR #{{pr}} merged but was not released: its release workflow did not complete. The platform is still running {{running}}. Run it on main to release the latest commit; a later merge would also carry this change.",
+    "text": "PR {{pr}} merged but was not released: its release workflow did not complete. The platform is still running {{running}}. Run it on main to release the latest commit; a later merge would also carry this change.",
     "description": "Amber banner on the platform project's page: a merged change is not live because the automated release job failed. {{pr}} is the GitHub pull request's number and {{running}} the short code of the build still being served. 'Run it' means run the release workflow; 'main' is the main branch's name and stays as it is."
   },
   "releaseStall.failed.commit": {
@@ -4536,19 +4720,19 @@
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live because the automated release job failed. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it. {{running}} is the build still serving."
   },
   "releaseStall.slow.prCommit": {
-    "text": "PR #{{pr}} ({{commit}}) merged and its release workflow is still running, well past the usual couple of minutes.",
+    "text": "PR {{pr}} ({{commit}}) merged and its release workflow is still running, well past the usual couple of minutes.",
     "description": "Amber banner on the platform project's page: a merged change is not live yet because the automated release job is taking far longer than normal. {{pr}} is the GitHub pull request's number and {{commit}} the merged commit's short code."
   },
   "releaseStall.slow.prCommitRunning": {
-    "text": "PR #{{pr}} ({{commit}}) merged and its release workflow is still running, well past the usual couple of minutes. The platform is still running {{running}}.",
+    "text": "PR {{pr}} ({{commit}}) merged and its release workflow is still running, well past the usual couple of minutes. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a merged change is not live yet because the automated release job is taking far longer than normal. {{pr}} is the GitHub pull request's number, {{commit}} the merged commit's short code and {{running}} the short code of the build still being served."
   },
   "releaseStall.slow.pr": {
-    "text": "PR #{{pr}} merged and its release workflow is still running, well past the usual couple of minutes.",
+    "text": "PR {{pr}} merged and its release workflow is still running, well past the usual couple of minutes.",
     "description": "Amber banner on the platform project's page: a merged change is not live yet because the automated release job is taking far longer than normal. {{pr}} is the GitHub pull request's number."
   },
   "releaseStall.slow.prRunning": {
-    "text": "PR #{{pr}} merged and its release workflow is still running, well past the usual couple of minutes. The platform is still running {{running}}.",
+    "text": "PR {{pr}} merged and its release workflow is still running, well past the usual couple of minutes. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a merged change is not live yet because the automated release job is taking far longer than normal. {{pr}} is the GitHub pull request's number and {{running}} the short code of the build still being served."
   },
   "releaseStall.slow.commit": {
@@ -4568,19 +4752,19 @@
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live yet because the automated release job is taking far longer than normal. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it. {{running}} is the build still serving."
   },
   "releaseStall.notRolled.prCommit": {
-    "text": "PR #{{pr}} ({{commit}}) merged and its release workflow succeeded, but the platform has not rolled onto it.",
+    "text": "PR {{pr}} ({{commit}}) merged and its release workflow succeeded, but the platform has not rolled onto it.",
     "description": "Amber banner on the platform project's page: a merged change was built successfully, yet the servers have not switched to the new build. {{pr}} is the GitHub pull request's number and {{commit}} the merged commit's short code."
   },
   "releaseStall.notRolled.prCommitRunning": {
-    "text": "PR #{{pr}} ({{commit}}) merged and its release workflow succeeded, but the platform has not rolled onto it. The platform is still running {{running}}.",
+    "text": "PR {{pr}} ({{commit}}) merged and its release workflow succeeded, but the platform has not rolled onto it. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a merged change was built successfully, yet the servers have not switched to the new build. {{pr}} is the GitHub pull request's number, {{commit}} the merged commit's short code and {{running}} the short code of the build still being served."
   },
   "releaseStall.notRolled.pr": {
-    "text": "PR #{{pr}} merged and its release workflow succeeded, but the platform has not rolled onto it.",
+    "text": "PR {{pr}} merged and its release workflow succeeded, but the platform has not rolled onto it.",
     "description": "Amber banner on the platform project's page: a merged change was built successfully, yet the servers have not switched to the new build. {{pr}} is the GitHub pull request's number."
   },
   "releaseStall.notRolled.prRunning": {
-    "text": "PR #{{pr}} merged and its release workflow succeeded, but the platform has not rolled onto it. The platform is still running {{running}}.",
+    "text": "PR {{pr}} merged and its release workflow succeeded, but the platform has not rolled onto it. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a merged change was built successfully, yet the servers have not switched to the new build. {{pr}} is the GitHub pull request's number and {{running}} the short code of the build still being served."
   },
   "releaseStall.notRolled.commit": {
@@ -4600,19 +4784,19 @@
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch was built successfully, yet the servers have not switched to the new build. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it. {{running}} is the build still serving."
   },
   "releaseStall.noRun.prCommit": {
-    "text": "PR #{{pr}} ({{commit}}) merged but is not running yet, and no release workflow run could be found for it.",
+    "text": "PR {{pr}} ({{commit}}) merged but is not running yet, and no release workflow run could be found for it.",
     "description": "Amber banner on the platform project's page: a merged change is not live and no run of the automated release job was found for it. {{pr}} is the GitHub pull request's number and {{commit}} the merged commit's short code. 'run' after 'workflow' is a noun."
   },
   "releaseStall.noRun.prCommitRunning": {
-    "text": "PR #{{pr}} ({{commit}}) merged but is not running yet, and no release workflow run could be found for it. The platform is still running {{running}}.",
+    "text": "PR {{pr}} ({{commit}}) merged but is not running yet, and no release workflow run could be found for it. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a merged change is not live and no run of the automated release job was found for it. {{pr}} is the GitHub pull request's number, {{commit}} the merged commit's short code and {{running}} the short code of the build still being served. 'run' after 'workflow' is a noun."
   },
   "releaseStall.noRun.pr": {
-    "text": "PR #{{pr}} merged but is not running yet, and no release workflow run could be found for it.",
+    "text": "PR {{pr}} merged but is not running yet, and no release workflow run could be found for it.",
     "description": "Amber banner on the platform project's page: a merged change is not live and no run of the automated release job was found for it. {{pr}} is the GitHub pull request's number. 'run' after 'workflow' is a noun."
   },
   "releaseStall.noRun.prRunning": {
-    "text": "PR #{{pr}} merged but is not running yet, and no release workflow run could be found for it. The platform is still running {{running}}.",
+    "text": "PR {{pr}} merged but is not running yet, and no release workflow run could be found for it. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a merged change is not live and no run of the automated release job was found for it. {{pr}} is the GitHub pull request's number and {{running}} the short code of the build still being served. 'run' after 'workflow' is a noun."
   },
   "releaseStall.noRun.commit": {
@@ -4647,9 +4831,9 @@
     "text": "Assigned to you",
     "description": "Name of an icon toggle chip in the filter strip, read as its tooltip and by screen readers, above a project's list of requests and proposals: shows only the items assigned to the viewer."
   },
-  "filters.quick.createdByYou": {
-    "text": "Created by you",
-    "description": "Name of an icon toggle chip in the filter strip, read as its tooltip and by screen readers, above a project's list of requests and proposals: shows only the items the viewer started."
+  "filters.quick.yours": {
+    "text": "Yours",
+    "description": "Name of an icon toggle chip in the filter strip, read as its tooltip and by screen readers, above a project's list of requests and changes (All items): shows only the person's own work as the Homeroom bot tab reads it: everything they filed, built, claimed, voted on, wrote in or chose Notify me on."
   },
   "filters.search.placeholder": {
     "text": "Search requests, changes, comments or #",
@@ -4954,6 +5138,30 @@
   "topic.back.allItems": {
     "text": "All items",
     "description": "Text of the back chip at the top of a proposal's or request's page when it was opened from the project's All items page (the whole board of requests and proposals under the Workshop tab), which the chip returns to. Shown after a left-pointing chevron."
+  },
+  "topic.back.hub": {
+    "text": "Hub",
+    "description": "Text of the back chip at the top of a proposal's or request's page when the project's page will reopen on its Hub (the project's front page), which the chip returns to. Shown after a left-pointing chevron."
+  },
+  "topic.back.toHub": {
+    "text": "Back to Hub",
+    "description": "Accessible name of the back chip on a proposal's or request's page that returns to the project's Hub, its front page."
+  },
+  "topic.back.needs": {
+    "text": "Needs you",
+    "description": "Text of the back chip at the top of a proposal's or request's page when the project's page will reopen on its Needs you place (the decisions waiting on this person), which the chip returns to. Shown after a left-pointing chevron."
+  },
+  "topic.back.toNeeds": {
+    "text": "Back to Needs you",
+    "description": "Accessible name of the back chip on a proposal's or request's page that returns to the project's Needs you place, the list of decisions waiting on this person."
+  },
+  "topic.back.channel": {
+    "text": "#{{handle}}",
+    "description": "Text of the back chip at the top of a proposal's or request's page when the project's page will reopen on one of its chat channels, which the chip returns to. {{handle}} is the channel's name without its #, such as general. Shown after a left-pointing chevron."
+  },
+  "topic.back.toChannel": {
+    "text": "Back to #{{handle}}",
+    "description": "Accessible name of the back chip on a proposal's or request's page that returns to one of the project's chat channels. {{handle}} is the channel's name without its #, such as general."
   },
   "topic.back.toAllItems": {
     "text": "Back to All items",
@@ -5843,25 +6051,85 @@
     "text": "Change {{letter}} · {{by}}",
     "description": "Small-caps line over one of several competing changes on a request's page, under the request: its changes and its vote to close. {{letter}} is the change's letter (A, B, C), {{by}} who built it."
   },
+  "topic.thread.page.changeLoading": {
+    "text": "Loading the change",
+    "description": "Read by a screen reader while a request's page loads the section about the change built for it: its status pill, its title and its Votes and Testing cards, drawn as a grey outline until they arrive."
+  },
   "topic.thread.page.underway": {
     "text": "Being built. Its votes open once it is up for a vote.",
     "description": "Line under a change on a request's page, under the request: its changes and its vote to close that is still being built, where its Votes and Testing cards will be."
   },
-  "topic.thread.page.earlier_one": {
-    "text": "{{count}} earlier reply on this change",
-    "description": "Button under a change on a request's page, under the request: its changes and its vote to close: opens the replies people wrote on the change's own page before. {{count}} is how many."
-  },
-  "topic.thread.page.earlier_other": {
-    "text": "{{count}} earlier replies on this change",
-    "description": "Button under a change on a request's page, under the request: its changes and its vote to close: opens the replies people wrote on the change's own page before. {{count}} is how many."
-  },
-  "topic.thread.page.earlierHide": {
-    "text": "Hide the earlier replies",
-    "description": "Button under a change on a request's page, under the request: its changes and its vote to close, while its earlier replies are open: folds them away again."
+  "topic.thread.page.ready": {
+    "text": "Built, and its checks pass. Its votes open once it is put up for a vote.",
+    "description": "Line under a change on a request's page, where its Votes and Testing cards will be: the change has finished building and its checks pass, and nothing happens until it is put up for a vote."
   },
   "topic.thread.page.rowBy": {
     "text": "{{by}} · #{{number}}",
     "description": "Second line of one competing change's row on a request's page, under the request: its changes and its vote to close: who built it and the change's number."
+  },
+  "topic.thread.page.more": {
+    "text": "More for this change",
+    "description": "Accessible name and tooltip of the ⋯ button on the line of a change that has no number yet, on its request's page (where a change built for a request is shown, in place of a page of its own): opens the menu with everything else that can be done with the change, such as Details or Edit description."
+  },
+  "topic.thread.page.moreNumbered": {
+    "text": "More for Change #{{number}}",
+    "description": "Accessible name and tooltip of the ⋯ button on a change's line, on its request's page (where a change built for a request is shown, in place of a page of its own): opens the menu with everything else that can be done with the change, such as Details or Edit description. {{number}} is the change's number."
+  },
+  "topic.thread.page.shotBefore": {
+    "text": "Before",
+    "description": "Label on the small picture of how the project looked before a change, beside the one of how it looks after, on the change's section of its request's page. Tapping either opens the before and after viewer."
+  },
+  "topic.thread.page.shotAfter": {
+    "text": "After",
+    "description": "Label on the small picture of how the project looks with a change, beside the one of how it looked before, on the change's section of its request's page. Tapping either opens the before and after viewer."
+  },
+  "topic.thread.page.shotsOpen": {
+    "text": "See the before and after",
+    "description": "Accessible name of the pair of small before and after pictures on a change's section of its request's page: opens the before and after viewer over the page."
+  },
+  "topic.thread.page.shotsExpand": {
+    "text": "Expand",
+    "description": "Button beside the small before and after pictures on a change's section of its request's page: opens the before and after viewer over the page, at nearly the window's size. The same word the viewer's own Expand button uses."
+  },
+  "topic.thread.page.elsewhere": {
+    "text": "Change #{{number}} for this request is on <0>#{{on}}</0>",
+    "description": "Line on a request's page when a change that would close it lives on another request's page (a change for several requests is shown on the first one's). {{number}} is the change's number; {{on}} is the other request's number, and <0></0> links to that request's page, at the change."
+  },
+  "topic.thread.page.elsewhereUnnumbered": {
+    "text": "A change for this request is on <0>#{{on}}</0>",
+    "description": "Line on a request's page when a change that would close it, and has no number yet, lives on another request's page (a change for several requests is shown on the first one's). {{on}} is the other request's number, and <0></0> links to that request's page, at the change."
+  },
+  "topic.thread.page.alsoCloses": {
+    "text": "Also closes <0>{{numbers}}</0>",
+    "description": "Under a change's title on a request's page: the other requests it will close when it merges. <0></0> is the list of request numbers, each a link to its page, possibly ending in \"N more\"."
+  },
+  "topic.thread.page.alsoClosed": {
+    "text": "Also closed <0>{{numbers}}</0>",
+    "description": "Under a change's title on a request's page, once the change has merged: the other requests it closed. <0></0> is the list of request numbers, each a link to its page, possibly ending in \"N more\"."
+  },
+  "topic.thread.page.alsoMore_one": {
+    "text": "{{count}} more",
+    "description": "Last item of the list of other requests a change also closes, on its request's page, when one request is hidden. Tapping it shows the hidden numbers in the same line."
+  },
+  "topic.thread.page.alsoMore_other": {
+    "text": "{{count}} more",
+    "description": "Last item of the list of other requests a change also closes, on its request's page, when some are hidden. Tapping it shows the hidden numbers in the same line."
+  },
+  "topic.thread.page.closesOf_one": {
+    "text": "Closes {{count}} of the {{total}} requests in this thread",
+    "description": "Under a change's title on a request's page, when the thread holds several requests and the change closes only some of them: {{count}} is how many it closes, {{total}} how many the thread holds."
+  },
+  "topic.thread.page.closesOf_other": {
+    "text": "Closes {{count}} of the {{total}} requests in this thread",
+    "description": "Under a change's title on a request's page, when the thread holds several requests and the change closes only some of them: {{count}} is how many it closes, {{total}} how many the thread holds."
+  },
+  "topic.thread.page.partOf_one": {
+    "text": "One of {{count}} requests in <0>{{name}}</0>",
+    "description": "Under a request's title on its page, when its thread holds several requests: it is one of them. {{count}} is how many requests the thread holds, {{name}} the thread's name, a link to the request whose page the thread opens on."
+  },
+  "topic.thread.page.partOf_other": {
+    "text": "One of {{count}} requests in <0>{{name}}</0>",
+    "description": "Under a request's title on its page, when its thread holds several requests: it is one of them. {{count}} is how many requests the thread holds, {{name}} the thread's name, a link to the request whose page the thread opens on."
   },
   "topic.thread.ballot.close": {
     "text": "Close it",
@@ -5939,6 +6207,22 @@
     "text": "You said no.",
     "description": "Line under the Votes card of a proposal to close the request, once the person voted no."
   },
+  "topic.thread.close.closedByVote": {
+    "text": "Closed by vote.",
+    "description": "First words of the line under a request's vote to close it, once the vote has ended: the group voted to close the request, and it closed."
+  },
+  "topic.thread.close.keptOpen": {
+    "text": "Kept open.",
+    "description": "First words of the line under a request's vote to close it, once the vote has ended: the vote was withdrawn or could not be applied, so the request stays open."
+  },
+  "topic.thread.close.closedElsewhere": {
+    "text": "Ended: the request closed another way.",
+    "description": "First words of the line under a request's vote to close it, once the vote has ended because the request closed another way (a change merged, or it was closed on GitHub)."
+  },
+  "topic.thread.close.showAll": {
+    "text": "Show all replies",
+    "description": "Button under a request's vote to close it, under the first few replies people posted on the vote: opens the rest of them."
+  },
   "topic.thread.pill.choosing": {
     "text": "Pick one",
     "description": "Status pill beside a request's number in its page's header: two or more changes (or a change and a proposal to close it) are up for one vote between them."
@@ -5951,6 +6235,10 @@
     "text": "Vote to close",
     "description": "Status pill beside a request's number in its page's header: a proposal to close the request is up for a vote."
   },
+  "topic.thread.pill.ready": {
+    "text": "Ready for a vote",
+    "description": "Status pill beside a request's number in its page's header: a change for it has finished building and its checks pass, and it waits to be put up for a vote."
+  },
   "topic.thread.pill.building": {
     "text": "Being built",
     "description": "Status pill beside a request's number in its page's header: a change for it is being built."
@@ -5958,5 +6246,121 @@
   "topic.thread.pill.live": {
     "text": "Live",
     "description": "Status pill beside a request's number in its page's header: a change built for it went live."
+  },
+  "topic.thread.pill.goingLive": {
+    "text": "Going live…",
+    "description": "Status pill beside a request's number in its page's header: a change built for it merged and is on its way to production, not running yet."
+  },
+  "topic.thread.page.changeNumberedPr": {
+    "text": "Change · PR {{number}} · {{by}}",
+    "description": "Small-caps line over one change on a request's page, under the request, on a project whose code is on GitHub (where a change's number is GitHub's pull request number, written PR, never #): its changes and its vote to close. {{number}} is the change's number, {{by}} who built it (a username, or Homeroom bot). The change's title follows on the next line."
+  },
+  "topic.thread.page.moreNumberedPr": {
+    "text": "More for change PR {{number}}",
+    "description": "Accessible name and tooltip of the ⋯ button on a change's line on its request's page, on a project whose code is on GitHub (a change's number is written PR, never #): opens the menu with everything else that can be done with the change, such as Details or Edit description. {{number}} is the change's number."
+  },
+  "topic.thread.page.rowByPr": {
+    "text": "{{by}} · PR {{number}}",
+    "description": "Second line of one competing change's row on a request's page, on a project whose code is on GitHub (a change's number is written PR, never #): who built it and the change's number."
+  },
+  "topic.thread.page.elsewherePr": {
+    "text": "Change PR {{number}} for this request is on <0>#{{on}}</0>",
+    "description": "Line on a request's page when a change that would close it lives on another request's page, on a project whose code is on GitHub (a change's number is written PR, never #). {{number}} is the change's number; {{on}} is the other request's number, and <0></0> links to that request's page, at the change."
+  },
+  "topic.request.stream.onChangePr": {
+    "text": "on change PR {{number}}",
+    "description": "Small words after the time of a reply or a line in a request's discussion that was written on one of the request's changes, on a project whose code is on GitHub (a change's number is written PR, never #): the request's page holds the discussion of the whole piece of work. {{number}} is the change's number."
+  },
+  "topic.decision.sheetLabel": {
+    "text": "Decision",
+    "description": "Accessible name of the sheet on a governance vote's page, announced by screen readers: the page for one decision the project votes on."
+  },
+  "topic.decision.bar.rename": {
+    "text": "Rename #{{number}}",
+    "description": "Small line above the title in the header of a governance vote's page, for a vote to rename the project. {{number}} is the vote's number."
+  },
+  "topic.decision.bar.secret": {
+    "text": "Secret change #{{number}}",
+    "description": "Small line above the title in the header of a governance vote's page, for a vote to change one of the project's secrets. {{number}} is the vote's number."
+  },
+  "topic.decision.bar.campaign": {
+    "text": "Maintenance campaign #{{number}}",
+    "description": "Small line above the title in the header of a governance vote's page, for a vote to run a maintenance campaign on the project. {{number}} is the vote's number."
+  },
+  "topic.decision.bar.illustration": {
+    "text": "Featured picture #{{number}}",
+    "description": "Small line above the title in the header of a governance vote's page, for a vote to change the picture on the project's card. {{number}} is the vote's number."
+  },
+  "topic.decision.bar.close": {
+    "text": "Close request #{{number}}",
+    "description": "Small line above the title in the header of a governance vote's page, for a vote to close a request. {{number}} is the vote's number. A request is what people file asking for work; never say issue."
+  },
+  "topic.decision.bar.reopen": {
+    "text": "Reopen request #{{number}}",
+    "description": "Small line above the title in the header of a governance vote's page, for a vote to bring back a closed request. {{number}} is the vote's number. A request is what people file asking for work; never say issue."
+  },
+  "topic.decision.bar.move": {
+    "text": "Move threads #{{number}}",
+    "description": "Small line above the title in the header of a governance vote's page, for a vote to merge or split discussions. {{number}} is the vote's number."
+  },
+  "topic.decision.bar.more": {
+    "text": "More actions",
+    "description": "Accessible name and tooltip of the ⋯ button in the header of a governance vote's page: opens the menu with Copy link and, for the person who proposed it, Withdraw."
+  },
+  "topic.decision.rename.fromTo": {
+    "text": "From <0>{{from}}</0> to <1>{{to}}</1>.",
+    "description": "What a vote to rename the project does, as a sentence under the vote's title. {{from}} is the project's current name and {{to}} the proposed one; <0></0> and <1></1> make each name bold."
+  },
+  "topic.decision.secret.set": {
+    "text": "Sets the secret <0>{{key}}</0>. Its value is never shown.",
+    "description": "What a vote to change one of the project's secrets does, under the vote's title. {{key}} is the secret's name, in capitals; <0></0> sets it in code style. The value is deliberately not shown to anyone."
+  },
+  "topic.decision.secret.remove": {
+    "text": "Removes the secret <0>{{key}}</0>. Its value is never shown.",
+    "description": "What a vote to remove one of the project's secrets does, under the vote's title. {{key}} is the secret's name, in capitals; <0></0> sets it in code style."
+  },
+  "topic.decision.campaign.empty": {
+    "text": "This campaign has no description.",
+    "description": "Line under a maintenance campaign vote's title when the campaign was filed without an explanation of what it does."
+  },
+  "topic.decision.close.request": {
+    "text": "It would close the request <0>#{{number}}</0> {{title}}.",
+    "description": "Line under a vote to close a request, naming the request it would close. {{number}} is the request's number and {{title}} its title; <0></0> sets the number in bold. A request is what people file asking for work; never say issue."
+  },
+  "topic.decision.votes.label": {
+    "text": "Votes",
+    "description": "Accessible name of the card on a governance vote's page that shows the tally and offers Yes and No."
+  },
+  "topic.decision.votes.name": {
+    "text": "Votes",
+    "description": "Heading of the card on a governance vote's page that shows the tally and offers Yes and No."
+  },
+  "topic.decision.votes.figure": {
+    "text": "{{yes}} of {{need}} yes",
+    "description": "The count beside the heading of the Votes card on a governance vote's page: how many people said yes and how many the rule needs."
+  },
+  "topic.decision.votes.note": {
+    "text": "Needs {{need}} yes votes. It applies when the vote passes.",
+    "description": "Line under the Votes card on an open governance vote's page, saying how many yes votes the rule needs and what happens then."
+  },
+  "topic.decision.outcome.applied": {
+    "text": "Passed and applied. Voting has ended.",
+    "description": "Line under the Votes card on a governance vote's page once the vote passed and the change was carried out."
+  },
+  "topic.decision.outcome.applying": {
+    "text": "Passed. It is being applied now.",
+    "description": "Line under the Votes card on a governance vote's page once the vote passed and the change is being carried out at this moment."
+  },
+  "topic.decision.outcome.refused": {
+    "text": "Rejected. Voting has ended.",
+    "description": "Line under the Votes card on a governance vote's page once the vote ended without passing, or the change was refused."
+  },
+  "topic.decision.outcome.withdrawn": {
+    "text": "Withdrawn. Voting has ended.",
+    "description": "Line under the Votes card on a governance vote's page once the person who proposed it took it back."
+  },
+  "topic.decision.outcome.superseded": {
+    "text": "No longer needed. Voting has ended.",
+    "description": "Line under the Votes card on a governance vote's page once something else settled what it was about, so the vote no longer applies."
   }
 }

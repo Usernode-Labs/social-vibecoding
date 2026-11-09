@@ -191,7 +191,8 @@ test('the look reads a live first version\'s people into its prompt and its snap
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /const members = liveMode && requester\?\.firstVersion\s+\? await projectMembers\(pool, app\)\.catch\(/);
   assert.match(src, /seed, issueNumber, firstVersion: !!requester\?\.firstVersion, decider,\s+\.\.\.\(members \? \{ members \} : \{\}\),/);
-  assert.match(src, /\.\.\.\(deciderNote\(decider\) \? \{ decider \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+(?:\.\.\.\(starter \? \{ starter \} : \{\}\),\s+)?\},/,
+  // #6383: the plan the read saw rides beside them.
+  assert.match(src, /\.\.\.\(deciderNote\(decider\) \? \{ decider \} : \{\}\),[\s\S]{0,90}\.\.\.\(personPlan \? \{ personPlan \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+(?:\.\.\.\(starter \? \{ starter \} : \{\}\),\s+)?\},/,
     'kept in the snapshot');
   assert.match(read('src/services/bench/runner.js'), /members: snapshot\.extra\?\.members \|\| null,/);
 });
@@ -256,7 +257,12 @@ test('B6: the words of a plan, two questions and the setup message', () => {
   const elsewhere = dm.firstVersionStartedText({ name: 'Plant Pal' });
   assert.equal(elsewhere, '**Plant Pal**\n\nThanks! I\'m setting up Plant Pal now. '
     + 'Once it\'s ready I\'ll send you my plan here first, then build its first version and tell you here when it\'s live.');
-  for (const said of [early, elsewhere]) assert.doesNotMatch(said, /for you to try/, 'nothing waits on a vote');
+  // 1 Nov 2026: made from a design, its screens are drawn already.
+  const designed = dm.firstVersionStartedText({ name: 'Plant Pal', earlyPlan: true, fromDesign: true });
+  assert.equal(designed, '**Plant Pal**\n\nThanks! I\'m setting up Plant Pal now. '
+    + 'Your design is its plan: I\'ll build the first version from it and tell you here when it\'s live.');
+  assert.match(read('src/routes/apps.js'), /fromDesign: !!fromDesign,/);
+  for (const said of [early, elsewhere, designed]) assert.doesNotMatch(said, /for you to try/, 'nothing waits on a vote');
   assert.doesNotMatch(early, /plan/, 'the plan is asked about on the made screen, not here');
   const start = read('src/services/homeroom-bot-dm.js');
   assert.ok(!/I'll build its first version from your/.test(start));
@@ -372,7 +378,7 @@ test('B6: which bot messages draw a plan or two questions, and what state a plan
   // request's plan's reply is posted on the request, and its note says so.
   assert.match(composer, /\{planReply\.firstVersion \? t\('messages:composer\.planReplyNote'\) : t\('messages:composer\.planReplyNotePublic'\)\}/);
   assert.equal(message('messages:composer.planReplyNote'), 'Say what to change, and Homeroom bot sends a new plan. Only you see this.');
-  assert.equal(message('messages:composer.planReplyNotePublic'), 'What you write is posted on the request, where the group can see it.');
+  assert.equal(message('messages:composer.planReplyNotePublic'), 'What you write is drafted for you to post on the request, where the group can see it. Nothing is posted until you tap Post it.');
 });
 
 test('B6: the plan is answered in the chat; #4043: the App tab no longer draws it', () => {
@@ -493,7 +499,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal(card.meta.status, 'open');
     assert.deepEqual(card.meta.plan, PLAN);
     assert.match(card.content, /^Here's my plan for \*\*Plant Pal\*\*:/);
-    const { rows: [action] } = await pool.query('SELECT * FROM homeroom_bot_dm_actions WHERE id = $1', [card.meta.actionId]);
+    const { rows: [action] } = await pool.query('SELECT * FROM bot_cards WHERE id = $1', [card.meta.actionId]);
     assert.deepEqual([action.kind, action.status, Number(action.message_id)], ['build_plan', 'open', Number(card.id)]);
     const { rows: [rang] } = await pool.query('SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id DESC LIMIT 1', [maya.id]);
     // "One story": a first version's plan rings as needs you, worded as its plan.
@@ -542,7 +548,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     // it went, and stays done, never "plan gone".
     const retried = await mayor.actOnTap(pool, {}, { userId: maya.id, actionId: card.meta.actionId, choice: 'build', key: `action:${card.meta.actionId}` });
     assert.deepEqual(retried, { done: true, why: null });
-    const { rows: [action] } = await pool.query('SELECT status, error FROM homeroom_bot_dm_actions WHERE id = $1', [card.meta.actionId]);
+    const { rows: [action] } = await pool.query('SELECT status, error FROM bot_cards WHERE id = $1', [card.meta.actionId]);
     assert.deepEqual([action.status, action.error], ['done', null]);
     await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_ok = FALSE, build_error = $2 WHERE id = $1', [first, 'test: done']);
   });
@@ -590,7 +596,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.deepEqual([run.awaiting_go_at, run.build_ok, run.build_error], [null, false, 'skipped: the request was read again']);
     const card = await planMessage(third);
     assert.equal(card.meta.status, 'closed');
-    const { rows: [action] } = await pool.query('SELECT status FROM homeroom_bot_dm_actions WHERE id = $1', [card.meta.actionId]);
+    const { rows: [action] } = await pool.query('SELECT status FROM bot_cards WHERE id = $1', [card.meta.actionId]);
     assert.equal(action.status, 'declined');
     const late = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'build' });
     assert.equal(late.status, 409, 'a closed plan builds nothing');
@@ -795,7 +801,8 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 
 test('B6: where the waiting state is read, and where it ends', () => {
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /\} else if \(firstVersion\) \{\s*acted = PLAN_ACTED\[await awaitGo\(pool, \{ runId, app, issueNumber, parsed, bot, deps \}\)\];/);
+  // 1 Nov 2026 (C2.3): with the person's plan it builds from, when it has one.
+  assert.match(src, /\} else if \(firstVersion\) \{[\s\S]{0,300}?acted = PLAN_ACTED\[await awaitGo\(pool, \{\s+runId, app, issueNumber, parsed, bot, deps, fromPlan: own\?\.use === 'build' \? own\.fromPlan : null,\s+\}\)\];/);
   // #4175: a plan that could not be sent is sent again on the sweep's
   // cadence (the bot lane's bot.sweep work), and a week-old one is stopped
   // there.

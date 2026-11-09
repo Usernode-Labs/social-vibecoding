@@ -857,10 +857,10 @@ test('the theme switch is CSS: the pick swaps the images and keeps the arrows be
   const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
   const rule = (selector) => new RegExp(`\\n${selector.replace(/[.]/g, '\\.')} \\{([^}]*)\\}`).exec(css)?.[1] || '';
   const flip = rule('.shots-theme-flip');
-  for (const part of ['width: 30px', 'height: 30px', 'border-radius: 999px', 'margin-left: auto']) {
+  for (const part of ['width: 30px', 'height: 30px', 'border-radius: 999px', 'margin-inline-start: auto']) {
     assert.ok(flip.includes(part), `the switch is a small round disc at the bar's end: ${part}`);
   }
-  assert.match(css, /\.shots-theme-flip ~ \.shots-screen-nav \{ margin-left: 0; \}/,
+  assert.match(css, /\.shots-theme-flip ~ \.shots-screen-nav \{ margin-inline-start: 0; \}/,
     'the stepping arrows sit beside the switch, not the bar\'s far end');
   assert.match(css, /\.shots-viewer:has\(\.shots-theme-dark:checked\) \.shots-theme-to-dark,\n\.shots-viewer:has\(\.shots-theme-light:checked\) \.shots-theme-to-light \{ display: none; \}/,
     'the label naming the mode already showing is hidden');
@@ -893,17 +893,47 @@ test('the expand CSS: closed it is the same block, open a window-sized card over
   const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
   assert.match(css, /\.shots-viewer\[popover\] \{ display: block; position: relative; inset: auto; margin: 0; padding: 0; border: 0; width: auto; height: auto;\n  overflow: hidden;/,
     'closed, the UA popover box is neutralised and the viewer is the block it always was');
-  assert.match(css, /\.shots-viewer:popover-open \{ position: fixed; inset: 0; margin: auto; height: fit-content;[^}]*width: min\(calc\(100vw - 48px\), calc\(\(100vh - 200px\) \* 1\.6\)\); max-height: calc\(100vh - 48px\);/,
-    'open, it is nearly the window, in the top layer so a backdrop-filter ancestor cannot trap it');
+  assert.match(css, /\.shots-viewer:popover-open \{ position: fixed; inset: 0 var\(--platform-float-right\) 0 var\(--platform-float-left\); margin: auto; height: fit-content;[^}]*width: min\(calc\(var\(--platform-float-w\) - 48px\), calc\(\(100vh - 200px\) \* 1\.6\)\); max-height: calc\(100vh - 48px\);/,
+    'open, it is nearly the window less the Duo\'s column (the float box, centred in it), in the top layer so a backdrop-filter ancestor cannot trap it');
   assert.match(css, /\.shots-viewer::backdrop \{ background: rgba\(0, 0, 0, 0\.55\); \}/);
-  assert.match(css, /@supports \(height: 100dvh\) \{\n  \.shots-viewer:popover-open \{ width: min\(calc\(100vw - 48px\), calc\(\(100dvh - 200px\) \* 1\.6\)\); max-height: calc\(100dvh - 48px\); \}/);
+  assert.match(css, /@supports \(height: 100dvh\) \{\n  \.shots-viewer:popover-open \{ width: min\(calc\(var\(--platform-float-w\) - 48px\), calc\(\(100dvh - 200px\) \* 1\.6\)\); max-height: calc\(100dvh - 48px\); \}/);
   assert.match(css, /\.shots-expand-in \{ display: none; \}/);
   assert.match(css, /\.shots-viewer:popover-open \.shots-expand-out \{ display: none; \}/);
   assert.match(css, /\.shots-viewer:popover-open \.shots-expand-in \{ display: inline-flex; \}/);
-  assert.match(css, /\.shots-theme-flip ~ \.shots-expand \{ margin-left: 0; \}/);
-  assert.match(css, /\.shots-expand ~ \.shots-screen-nav \{ margin-left: 0; \}/);
+  assert.match(css, /\.shots-theme-flip ~ \.shots-expand \{ margin-inline-start: 0; \}/);
+  assert.match(css, /\.shots-expand ~ \.shots-screen-nav \{ margin-inline-start: 0; \}/);
   assert.match(css, /@supports not selector\(:popover-open\) \{ \.shots-expand \{ display: none; \} \}/,
     'a browser without the popover API gets no button that does nothing');
+});
+
+// #6382: opened from the detail column, the viewer went full screen as a
+// dim with nothing readable in it. The column flattened the popover's box
+// whatever its state, and its `!important` position and inset overrode
+// `.shots-viewer:popover-open`. Only the CLOSED viewer belongs to the column.
+test('in the detail column only the closed viewer is flattened; open it stays the window-sized card', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
+  // Comments carry `{` and `}` in prose; the rules are what is left.
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = [...bare.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map((match) => ({ selector: match[1].trim(), body: match[2] }));
+  const flattening = rules.filter((rule) => rule.selector.includes('.gc-detail-shots')
+    && /\.shots-viewer|\[popover\]/.test(rule.selector)
+    && /\b(position|inset|display|width|margin)\s*:/.test(rule.body));
+  assert.ok(flattening.length > 0, 'the column still lays out the closed viewer');
+  for (const rule of flattening) {
+    assert.match(rule.selector, /:not\(:popover-open\)/,
+      `the column must not touch the open card: ${rule.selector}`);
+  }
+  const scoped = rules.find((rule) => rule.selector === '.gc-detail-shots :is(.shots-viewer, [popover]):not(:popover-open)');
+  assert.ok(scoped, 'the column flattens exactly the closed viewer');
+  assert.match(scoped.body, /display: block !important;/,
+    'closed, the column overrides the UA hiding a closed popover and the thread\'s own rule');
+  assert.match(scoped.body, /position: static !important;/);
+  assert.match(scoped.body, /inset: auto !important;/);
+  // What the open card relies on is untouched: the popover-open rule still
+  // fixes it to the window, in the top layer, over the dim.
+  assert.match(css, /\.shots-viewer:popover-open \{ position: fixed; inset: 0 var\(--platform-float-right\) 0 var\(--platform-float-left\); margin: auto;/);
+  assert.match(css, /\.shots-viewer::backdrop \{ background: rgba\(0, 0, 0, 0\.55\); \}/);
 });
 
 test('the crop is CSS: it applies while both sides show, stacked or beside each other', () => {
@@ -914,7 +944,7 @@ test('the crop is CSS: it applies while both sides show, stacked or beside each 
   assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-flip-side\[data-shots-crop\] > \.shots-crop \{ inset: auto; left: var\(--shots-crop-x, 0\); top: var\(--shots-crop-y, 0\); width: var\(--shots-crop-w, 100%\); height: auto; aspect-ratio: var\(--shots-shape, 16 \/ 10\); \}/);
   assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] \{ grid-template-columns: minmax\(0, 1fr\); grid-template-rows: minmax\(0, 1fr\) minmax\(0, 1fr\); column-gap: 0; row-gap: 12px; \}/);
   assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] > \.shots-flip-after \{ grid-area: 2 \/ 1; \}/);
-  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] \.shots-flip-chip-after \{ left: 10px; top: calc\(50% \+ 16px\); \}/);
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] \.shots-flip-chip-after \{ inset-inline-start: 10px; top: calc\(50% \+ 16px\); \}/);
   for (const [viewport, width] of [['phone', 420], ['desktop', 720]]) {
     assert.match(css, new RegExp(`@container \\(min-width: ${width}px\\) \\{[^@]*?\\.shots-viewer:has\\(\\.shots-side-auto:checked\\) \\.shots-view\\[data-shots-viewport="${viewport}"\\] \\.shots-stage > \\.shots-flip-side\\[data-shots-crop\\]`),
       `${viewport}: the automatic side by side crops too`);

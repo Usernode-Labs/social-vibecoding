@@ -1,12 +1,14 @@
 /**
  * HOMEROOM BOT'S SLOTS (16 Oct 2026): a page under a project's Workshop.
  *
- * The bot may hold PROPOSALS_PER_APP_CAP slots on a project (services/
- * homeroom-bot.js slotHolders): a change of its up for a vote or being
- * merged, or a build under way that will become one. When they are all
- * taken, a request found ready waits for one, and nobody could see that
- * happen: five requests sat held on 15 October and none appeared anywhere a
- * person would look. This page shows the slots and what holds each, with
+ * The bot holds slots on a project (services/homeroom-bot.js slotHolders):
+ * a build under way, or waiting its turn, that will become a change, and a
+ * change of its up for a vote or being merged. #6156: each kind has a cap
+ * of its own, which the server sends (`buildCap`, BUILDS_PER_APP or the
+ * project's own; `waitCap`, WAITING_PER_APP or its own). When either is
+ * full, a request found ready waits, and nobody could see that happen: five
+ * requests sat held on 15 October and none appeared anywhere a person would
+ * look. This page shows the slots and what holds each, with
  * its track (../../messages/bot-track.tsx); the requests waiting for one,
  * in the order the bot takes them up; the ones on hold until the week's
  * building time resets; and the limits, the viewer's own building time
@@ -98,28 +100,45 @@ export function useBotSlots(slug: string | null | undefined): SlotsState {
   return state;
 }
 
+/** Pure (#6156): how many of the slots are builds, and how many changes waiting for votes. */
+export function slotCounts(view: Pick<BotSlotsView, 'slots'>): { building: number; voting: number } {
+  const building = view.slots.filter((entry) => entry.kind === 'build').length;
+  return { building, voting: view.slots.length - building };
+}
+
+/**
+ * Pure (#6156): the door's facts, each a whole phrase, joined by a middle
+ * dot: "Homeroom bot: building 3 of 5 · 12 waiting for votes · 1 request in
+ * line". The caps are the server's; a view without one says the count alone.
+ */
+export function doorWords(view: Pick<BotSlotsView, 'slots' | 'waiting' | 'buildCap'>): string {
+  const { building, voting } = slotCounts(view);
+  return [
+    translate('project:botSlots.door', { used: building, cap: view.buildCap ?? building }),
+    voting ? translate('project:botSlots.doorVotes', { count: voting }) : null,
+    view.waiting.length ? translate('project:botSlots.doorWaiting', { count: view.waiting.length }) : null,
+  ].filter(Boolean).join(' \u00b7 ');
+}
+
 /**
  * The Workshop's door to the page: one line in its overview card, above
- * the approval rule, "Homeroom bot: 5 of 5 slots in use, 1 request waiting". Nothing on
- * a project the bot does not build on and holds nothing on.
+ * the approval rule (doorWords). Nothing on a project the bot does not
+ * build on and holds nothing on.
  */
 export function BotSlotsDoor({ slug, onOpen }: { slug: string; onOpen: () => void }): ReactNode {
-  const t = useMessages('project');
+  useMessages('project');
   const { view } = useBotSlots(slug);
   if (!view || (!view.acts && !view.slots.length)) return null;
-  const used = view.slots.length;
-  const waiting = view.waiting.length;
-  const words = waiting
-    ? t('project:botSlots.doorWaiting', { used, cap: view.cap, count: waiting })
-    : t('project:botSlots.door', { used, cap: view.cap });
+  const { building, voting } = slotCounts(view);
   return (
     <button
       type="button"
-      className="flex w-full items-center gap-2 border-t border-[color:var(--app-sheet-line)] pt-2.5 text-left text-[13px] font-semibold text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
-      data-ws-bot-slots-door={`${used}/${view.cap}`}
+      className="flex w-full items-center gap-2 border-t border-[color:var(--app-sheet-line)] pt-2.5 text-start text-[13px] font-semibold text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
+      data-ws-bot-slots-door={`${building}/${view.buildCap ?? ''}`}
+      data-ws-bot-slots-door-votes={voting}
       onClick={onOpen}
     >
-      <span className="min-w-0 flex-1 truncate">{words}</span>
+      <span className="min-w-0 flex-1 truncate">{doorWords(view)}</span>
       <ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
     </button>
   );
@@ -237,6 +256,7 @@ function EntryRow({ entry, section, slug, openKey, onOpen }: {
           <span className="truncate">{title}</span>
         </span>
       )}
+      tooltip={title || undefined}
       subtitle={entry.excerpt || facts || track ? (
         <span className="flex flex-col gap-1.5">
           {entry.excerpt ? (
@@ -248,7 +268,7 @@ function EntryRow({ entry, section, slug, openKey, onOpen }: {
       ) : null}
       subtitleClassName="whitespace-normal"
       data-ws-bot-slot={entry.issueNumber || ''}
-      data-ws-bot-slot-state={track?.state || ''}
+      data-ws-bot-slot-state={track?.work.stage || ''}
       data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
     />
   );
@@ -283,7 +303,7 @@ function RowSection({ name, title, note = null, entries, section, rowProps }: {
         {shown.length < entries.length ? (
           <button
             type="button"
-            className="w-full px-4 py-3 text-left text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+            className="w-full px-4 py-3 text-start text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
             data-ws-bot-show-all={name}
             onClick={() => setAll(true)}
           >
@@ -295,7 +315,7 @@ function RowSection({ name, title, note = null, entries, section, rowProps }: {
   );
 }
 
-/** The five slots, as five cells: taken ones in the lit ink. */
+/** The project's build slots, one cell each: taken ones in the lit ink. */
 function SlotCells({ used, cap }: { used: number; cap: number }): ReactNode {
   return (
     <span className="grid gap-1" style={{ gridTemplateColumns: `repeat(${Math.max(1, cap)}, minmax(0, 1fr))` }} aria-hidden="true">
@@ -310,6 +330,10 @@ function SlotCells({ used, cap }: { used: number; cap: number }): ReactNode {
 export function BotSlotsBody({ view, openKey = null, onOpen }: { view: BotSlotsView; openKey?: string | null; onOpen?: OpenItem }): ReactNode {
   const t = useMessages('project');
   const used = view.slots.length;
+  // #6156: the builds and the changes waiting for votes, each against its own cap.
+  const { building, voting } = slotCounts(view);
+  const buildCap = view.buildCap ?? building;
+  const waitCap = view.waitCap ?? voting;
   const note = !view.botOn ? t('project:botSlots.off') : view.paused ? t('project:botSlots.paused') : !view.acts ? t('project:botSlots.notHere') : null;
   const week = view.week;
   const resets = week?.resetsAt ? new Date(week.resetsAt) : null;
@@ -324,11 +348,19 @@ export function BotSlotsBody({ view, openKey = null, onOpen }: { view: BotSlotsV
       <GroupedList tone="plane" data-ws-bot-slots="">
         <div className="flex flex-col gap-2 px-4 py-3.5">
           <div className="flex items-baseline justify-between gap-3 text-[13px]">
-            <span className="font-semibold text-zinc-900 dark:text-zinc-100" data-ws-bot-slots-used={`${used}/${view.cap}`}>
-              {t('project:botSlots.slots.used', { used, cap: view.cap })}
+            <span className="font-semibold text-zinc-900 dark:text-zinc-100" data-ws-bot-slots-building={`${building}/${buildCap}`}>
+              {t('project:botSlots.slots.building', { used: building, cap: buildCap })}
             </span>
           </div>
-          <SlotCells used={used} cap={view.cap} />
+          <SlotCells used={building} cap={buildCap} />
+          <div className="flex items-baseline justify-between gap-3 pt-1 text-[13px]">
+            <span className="font-semibold text-zinc-900 dark:text-zinc-100" data-ws-bot-slots-waiting={`${voting}/${waitCap}`}>
+              {t('project:botSlots.slots.votes', { count: voting, cap: waitCap })}
+            </span>
+          </div>
+          <span className="block h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700" aria-hidden="true">
+            <i className="block h-full bg-[color:var(--lit-ink)]" style={{ width: `${waitCap ? Math.min(100, Math.round((voting / waitCap) * 100)) : 0}%` }} />
+          </span>
           <p className="text-[12px] text-zinc-500 dark:text-zinc-400">{used ? t('project:botSlots.slots.frees') : t('project:botSlots.slots.empty')}</p>
         </div>
         {view.slots.map((entry) => <EntryRow key={`${entry.kind || 'slot'}-${entry.issueNumber}`} entry={entry} {...rowProps('slots')} />)}
@@ -374,7 +406,7 @@ export function BotSlotsBody({ view, openKey = null, onOpen }: { view: BotSlotsV
         ) : null}
         <ListRow
           chevron={false}
-          title={view.buildsAtOnce ? t('project:botSlots.limits.buildsAtOnce', { count: view.buildsAtOnce }) : t('project:botSlots.slots.used', { used, cap: view.cap })}
+          title={view.buildsAtOnce ? t('project:botSlots.limits.buildsAtOnce', { count: view.buildsAtOnce }) : t('project:botSlots.slots.building', { used: building, cap: buildCap })}
           subtitle={t('project:botSlots.limits.reading', { count: view.reading })}
           titleClassName="font-medium text-[0.875rem]"
         />

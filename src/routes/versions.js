@@ -124,7 +124,7 @@ function versionsRoutes(config, { pool = getPool(config) } = {}) {
       const open = await followPr.findFollowPr(pool, app.id);
       if (open) return res.status(409).json(alreadyOpenBody(app, open));
 
-      if (!github.hasWriteAccess()) return res.status(503).json({ error: MESSAGES.noCodeHost });
+      if (!github.isEnabled()) return res.status(503).json({ error: MESSAGES.noCodeHost });
       if (!app.repo_url || !repoRef.parse(app.repo_url)) {
         return res.status(400).json({ error: 'App has no repository to open a PR against' });
       }

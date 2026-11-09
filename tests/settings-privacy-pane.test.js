@@ -73,6 +73,24 @@ test('the line under each choice says what is true now (#5926)', () => {
   assert.match(message('settings:privacy.whoCanMessage.anyoneDescription'), /people you don't know/);
 });
 
+test('finding your profile is its own section, not part of messaging (#5926 item 6)', () => {
+  const { PrivacySection } = loadTsx('frontend/src/features/settings/sections/privacy.tsx');
+  const html = renderToHtml(createElement(PrivacySection, {}));
+  const headings = [...html.matchAll(/<h3[^>]*>([^<]*)<\/h3>/g)].map((m) => m[1]);
+  assert.deepEqual(headings, [
+    escape(message('settings:privacy.whoCanMessage.title')),
+    escape(message('settings:privacy.discoverable.title')),
+    escape(message('settings:privacy.contact.title')),
+    escape(message('settings:privacy.usageAnalytics.title')),
+  ], 'four sections: messaging, finding, email & texts (#6044), analytics');
+  assert.equal(message('settings:privacy.discoverable.title'), 'Who can find me');
+  // The switch sits under its own heading, after the messaging radios.
+  const findAt = html.indexOf(escape(message('settings:privacy.discoverable.title')));
+  assert.ok(findAt > html.indexOf('id="settings-who-can-message"'));
+  assert.ok(findAt < html.indexOf('id="settings-profile-discoverable"'));
+  assert.ok(html.includes(escape(message('settings:privacy.discoverable.intro'))));
+});
+
 test('the pane reads and writes the route the rules sit behind', () => {
   assert.match(PANE, /const ENDPOINT = '\/api\/me\/contact-privacy';/);
   assert.match(PANE, /method: 'POST'/);
@@ -111,21 +129,22 @@ test('helper text is 13px in rem and lighter in the dark theme (#5926)', () => {
   // lifted. Every other small line wears the shared helper style.
   assert.doesNotMatch(html, /class="(?![^"]*\bmb-3\b)[^"]*\btext-xs text-zinc-500/, 'no helper line keeps the 12px size');
   const count = html.split(HELP).length - 1;
-  assert.equal(count, 4, `both choices and both switches wear the helper style, found ${count}`);
+  // #6044 adds two: the Email & texts block's two switches' lines.
+  assert.equal(count, 6, `both choices and the four switches wear the helper style, found ${count}`);
 });
 
 test('both switches are announced as switches and say Off before the account is read (#5926)', () => {
   const { PrivacySection } = loadTsx('frontend/src/features/settings/sections/privacy.tsx');
   const html = renderToHtml(createElement(PrivacySection, {}));
-  for (const id of ['settings-profile-discoverable', 'settings-usage-analytics']) {
+  for (const id of ['settings-profile-discoverable', 'settings-contact-marketing-email', 'settings-contact-activity-email', 'settings-usage-analytics']) {
     const input = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`));
     assert.ok(input, `#${id} is rendered`);
     assert.match(input[0], /role="switch"/, `#${id} is announced as a switch`);
     assert.match(input[0], /class="un-switch"/);
     assert.doesNotMatch(input[0], /checked/);
   }
-  const off = `<span aria-hidden="true" class="ml-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">${message('settings:privacy.state.off')}</span>`;
-  assert.equal(html.split(off).length - 1, 2);
+  const off = `<span aria-hidden="true" class="ms-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">${message('settings:privacy.state.off')}</span>`;
+  assert.equal(html.split(off).length - 1, 4, 'every switch, the two Email & texts ones (#6044) too');
   assert.ok(!html.includes(`>${message('settings:privacy.state.on')}</span>`));
   // The analytics switch is still described by its explanation.
   assert.match(html, /id="settings-usage-analytics"[^>]*aria-describedby="settings-usage-analytics-description"|aria-describedby="settings-usage-analytics-description"[^>]*id="settings-usage-analytics"/);
@@ -152,4 +171,256 @@ test('a switch that is on is checked and says On (#5926)', () => {
   assert.ok(on.includes(escape(message('settings:privacy.discoverable.label'))));
   assert.equal(message('settings:privacy.state.on'), 'On');
   assert.equal(message('settings:privacy.state.off'), 'Off');
+});
+
+// #5926 item 8: the radios show keyboard focus, a save that worked says so,
+// and a switch's whole row toggles it.
+test('a radio shows keyboard focus on the mark drawn beside it (#5926 item 8)', () => {
+  const { PrivacySection } = loadTsx('frontend/src/features/settings/sections/privacy.tsx');
+  const html = renderToHtml(createElement(PrivacySection, {}));
+  const radios = [...html.matchAll(/<input[^>]*type="radio"[^>]*>(<span[^>]*>)/g)];
+  assert.equal(radios.length, 2);
+  for (const [whole, mark] of radios) {
+    assert.match(whole, /class="peer sr-only"/, 'the hidden input is the peer');
+    assert.match(mark, /peer-focus-visible:outline-\[color:var\(--accent\)\]/);
+    assert.match(mark, /peer-focus-visible:outline-offset-2/);
+  }
+  // The chosen radio is drawn by the other branch, which a prerender never reaches.
+  assert.equal(PANE.split('${RADIO_FOCUS}').length - 1, 2, 'both of Radio\'s branches wear it');
+});
+
+test('every switch\'s description is inside its label and describes it (#5926 item 8)', () => {
+  const { PrivacySection } = loadTsx('frontend/src/features/settings/sections/privacy.tsx');
+  const html = renderToHtml(createElement(PrivacySection, {}));
+  const described = {
+    'settings-profile-discoverable': 'settings-profile-discoverable-description',
+    'settings-contact-marketing-email': 'settings-contact-marketing-email-help',
+    'settings-contact-activity-email': 'settings-contact-activity-email-help',
+    'settings-usage-analytics': 'settings-usage-analytics-description',
+  };
+  const labels = [...html.matchAll(/<label[^>]*>.*?<\/label>/g)].map((m) => m[0]);
+  for (const [id, descriptionId] of Object.entries(described)) {
+    const label = labels.find((text) => text.includes(`id="${id}"`));
+    assert.ok(label, `#${id} is in a label`);
+    assert.ok(label.includes(`id="${descriptionId}"`), `#${descriptionId} is inside that label`);
+    assert.ok(label.includes(`aria-describedby="${descriptionId}"`));
+    assert.doesNotMatch(label, /<(p|div)\b/, 'a label holds spans');
+  }
+  assert.ok(html.includes(escape(message('settings:privacy.usageAnalytics.neverRecords'))));
+});
+
+test('the switch\'s name stays its label when the description joins the label (#5926 item 8)', () => {
+  const { PrivacySwitch } = loadTsx('frontend/src/features/settings/sections/privacy-text.tsx');
+  const html = renderToHtml(createElement(PrivacySwitch, {
+    id: 's', label: 'Name', checked: false, disabled: false, onChange: () => {},
+    describedBy: 's-help', description: 'Longer words',
+  }));
+  assert.match(html.match(/<input[^>]*>/)[0], /aria-label="Name"/);
+  assert.match(html, /<span id="s-help" class="[^"]*">Longer words<\/span>/);
+  const bare = renderToHtml(createElement(PrivacySwitch, {
+    id: 's', label: 'Name', checked: false, disabled: false, onChange: () => {},
+  }));
+  assert.doesNotMatch(bare, /aria-describedby/, 'no description, nothing points at one');
+});
+
+test('the status lines are there, empty, before anything is saved (#5926 item 8)', () => {
+  const { PrivacySection } = loadTsx('frontend/src/features/settings/sections/privacy.tsx');
+  const html = renderToHtml(createElement(PrivacySection, {}));
+  assert.ok(html.includes('<p id="settings-contact-privacy-status" role="status"></p>'));
+  assert.equal(html.split('<p role="status"></p>').length - 1, 2, 'Email & texts and Usage analytics');
+  assert.ok(!html.includes(`>${message('settings:privacy.saved')}<`));
+  assert.equal(message('settings:privacy.saved'), 'Saved');
+
+  const { SaveStatus } = loadTsx('frontend/src/features/settings/sections/privacy-text.tsx');
+  const status = (props) => renderToHtml(createElement(SaveStatus, props));
+  assert.match(status({ id: 'x', saved: true }), new RegExp(`^<p id="x" role="status" class="[^"]*">${message('settings:privacy.saved')}</p>$`));
+  const failed = status({ saved: false, error: 'It broke' });
+  assert.match(failed, /text-red-700/);
+  assert.match(failed, />It broke</);
+  assert.ok(!status({ saved: true, error: 'It broke' }).includes(message('settings:privacy.saved')), 'an error wins');
+});
+
+// ── The same modules run, effects and all, on a React stepped by hand ─────
+function createSteppedReact() {
+  const slots = [];
+  let cursor = 0;
+  let component = null;
+  let dirty = false;
+  let queued = [];
+  const h = { tree: null, setCalls: 0 };
+  const changed = (prev, next) => !prev || prev.some((value, i) => !Object.is(value, next[i]));
+  const slot = (init) => {
+    const i = cursor++;
+    if (!(i in slots)) slots[i] = init();
+    return slots[i];
+  };
+  h.React = {
+    useRef: (current) => slot(() => ({ current })),
+    useState(initial) {
+      const s = slot(() => {
+        const state = { value: initial };
+        state.set = (next) => {
+          h.setCalls += 1;
+          if (!Object.is(next, state.value)) { state.value = next; dirty = true; }
+        };
+        return state;
+      });
+      return [s.value, s.set];
+    },
+    useCallback(fn, deps) {
+      const s = slot(() => ({ fn, deps }));
+      if (changed(s.deps, deps)) { s.fn = fn; s.deps = deps; }
+      return s.fn;
+    },
+    useEffect(effect, deps) {
+      const s = slot(() => ({ effect: true, deps: null, cleanup: null }));
+      if (!changed(s.deps, deps)) return;
+      s.deps = deps;
+      queued.push(() => {
+        if (s.cleanup) s.cleanup();
+        s.cleanup = effect();
+      });
+    },
+    forwardRef: (render) => render,
+  };
+  const paint = () => {
+    cursor = 0;
+    dirty = false;
+    queued = [];
+    h.tree = component({});
+    for (const run of queued) run();
+  };
+  h.mount = (fn) => { component = fn; paint(); };
+  h.settle = async () => {
+    for (let i = 0; i < 6; i += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+      if (dirty) paint();
+    }
+  };
+  h.unmount = () => {
+    for (const s of slots) if (s && s.effect && s.cleanup) s.cleanup();
+    component = () => null;
+  };
+  return h;
+}
+
+function loadStepped(entry) {
+  const h = createSteppedReact();
+  const t = (id) => id;
+  const mod = loadTsx(entry, {
+    stubs: {
+      react: h.React,
+      '../../../lib/i18n/react': { useMessages: () => t },
+      '../../../lib/legacy-dom': { useWindowEvent: () => {} },
+      '@/components/ui/field': { SectionHeading: () => null },
+      '@/components/ui/switch': { Switch: () => null },
+    },
+  });
+  return { h, mod };
+}
+
+function findAll(node, wanted, out = []) {
+  if (Array.isArray(node)) { for (const item of node) findAll(item, wanted, out); return out; }
+  if (!node || typeof node !== 'object' || !node.props) return out;
+  if (wanted(node)) out.push(node);
+  findAll(node.props.children, wanted, out);
+  return out;
+}
+
+const SECTIONS = [
+  {
+    name: 'Who can find me',
+    entry: 'frontend/src/features/settings/sections/privacy.tsx',
+    component: 'PrivacySection',
+    control: 'settings-profile-discoverable',
+    read: { whoCanContact: 'shared', discoverable: false },
+    wrote: { whoCanContact: 'shared', discoverable: true },
+  },
+  {
+    name: 'Email & texts',
+    entry: 'frontend/src/features/settings/sections/contact-preferences.tsx',
+    component: 'ContactPreferencesSection',
+    control: 'settings-contact-activity-email',
+    read: { activityEmail: false, email: true },
+    wrote: { activityEmail: true, email: true },
+  },
+  {
+    name: 'Usage analytics',
+    entry: 'frontend/src/features/settings/sections/usage-analytics.tsx',
+    component: 'UsageAnalyticsSection',
+    control: 'settings-usage-analytics',
+    read: { enabled: false },
+    wrote: { enabled: true, uiTelemetryEligible: true },
+  },
+];
+
+for (const section of SECTIONS) {
+  test(`${section.name}: "Saved" follows a save that worked, for three seconds (#5926 item 8)`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const realFetch = globalThis.fetch;
+    const realWindow = globalThis.window;
+    t.after(() => { globalThis.fetch = realFetch; globalThis.window = realWindow; });
+    globalThis.window = {};
+    let refuse = false;
+    globalThis.fetch = async (_url, options) => {
+      const writing = options && options.method && options.method !== 'GET';
+      if (writing && refuse) return { ok: false, status: 500, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => (writing ? section.wrote : section.read) };
+    };
+
+    const { h, mod } = loadStepped(section.entry);
+    h.mount(mod[section.component]);
+    await h.settle();
+    const status = () => findAll(h.tree, (el) => el.props.saved !== undefined)[0];
+    const flip = () => findAll(h.tree, (el) => el.props.id === section.control)[0]
+      .props.onChange({ currentTarget: { checked: true } });
+
+    assert.equal(status().props.saved, false, 'nothing is said before a save');
+
+    flip();
+    await h.settle();
+    assert.equal(status().props.saved, true);
+    t.mock.timers.tick(2999);
+    await h.settle();
+    assert.equal(status().props.saved, true, 'still there just before three seconds');
+    t.mock.timers.tick(1);
+    await h.settle();
+    assert.equal(status().props.saved, false, 'gone at three seconds');
+
+    refuse = true;
+    flip();
+    await h.settle();
+    assert.equal(status().props.saved, false, 'a refused save says no such thing');
+  });
+}
+
+test('the Saved timer restarts on each save and stops with the page (#5926 item 8)', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { h, mod } = loadStepped('frontend/src/features/settings/sections/privacy-text.tsx');
+  h.mount(() => mod.useSavedFlash());
+
+  h.tree.flash();
+  await h.settle();
+  t.mock.timers.tick(2000);
+  h.tree.flash();
+  await h.settle();
+  t.mock.timers.tick(2000);
+  await h.settle();
+  assert.equal(h.tree.saved, true, 'the second save has its own three seconds');
+
+  h.tree.clear();
+  await h.settle();
+  assert.equal(h.tree.saved, false, 'the next save takes it away at once');
+  h.tree.flash();
+  await h.settle();
+  assert.equal(h.tree.saved, true, 'so the next Saved is a change to announce');
+
+  const { flash } = h.tree;
+  h.unmount();
+  const before = h.setCalls;
+  t.mock.timers.tick(5000);
+  assert.equal(h.setCalls, before, 'leaving the page cleared the timer');
+  flash();
+  t.mock.timers.tick(5000);
+  assert.equal(h.setCalls, before, 'a save that lands after leaving starts nothing');
 });

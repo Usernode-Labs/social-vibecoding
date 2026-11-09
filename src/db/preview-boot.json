@@ -1,0 +1,4 @@
+{
+  "startsEmpty": 1,
+  "about": "Read by the platform before it builds a preview of this code (SEC-06): this version boots a platform preview from an empty database. Its own seeds make the platform's row at USERNODE_APP_ID, the screenshot personas at their fixed ids (src/services/preview-personas.js), and a reviewer's row on first sign-in, and fill the translation cache from production's public export. See docs/security/platform-preview-data.md. Keep this file while that holds."
+}

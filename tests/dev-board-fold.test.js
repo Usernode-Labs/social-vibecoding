@@ -175,7 +175,7 @@ test('?cards=open draws every card at full size, hooks intact: the board as it w
     'and it sits inside the action band');
   assert.ok(!/dev-card-status-end"[^>]*>(?:(?!<\/span>)[\s\S])*?dev-ws-open-btn/.test(html), 'not on the facts line');
   assert.ok(!/dev-ws-open-btn"[^>]*aria-expanded/.test(html), 'and never the in-place toggle here');
-  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="chooseIssueWork">Build it now<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
+  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="workOnIssueWithBot">Work on this with Homeroom bot<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
     'the card\u2019s own pills come first, each marked foldable, then the link, then the hamburger');
   // A card with nothing in its status band still drops the band (#1139):
   // the toggle is not in it.
@@ -359,8 +359,8 @@ test('the fold mark: the same two chevrons at both sizes, stretched open on the 
   // Geometry: absolute, at the same spot at both sizes, so on open the mark
   // does not move — it stretches — and only the title keeps clear of it.
   assert.match(CSS, /\.dev-ws-row, \.dev-ws-sheet > div:is\(\.dev-card-dense, \.dev-card-topic\) \{ position: relative; \}/);
-  assert.match(CSS, /\.dev-ws-row-title, \.dev-ws-sheet \.dev-card-title \{ padding-right: 22px; \}/);
-  assert.match(CSS, /\.dev-fold-mark \{\n  position: absolute; top: 15px; right: 14px; width: 16px; height: 16px;/);
+  assert.match(CSS, /\.dev-ws-row-title, \.dev-ws-sheet \.dev-card-title \{ padding-inline-end: 22px; \}/);
+  assert.match(CSS, /\.dev-fold-mark \{\n  position: absolute; top: 15px; inset-inline-end: 14px; width: 16px; height: 16px;/);
   assert.match(CSS, /\.dev-fold-mark \.dev-fold-bar \{ transform: scaleY\(0\); \}/, 'closed: the bar scaled away');
   assert.match(CSS, /\.dev-fold-mark\[data-open="1"\] \.dev-fold-top \{ transform: translateY\(-2px\); animation: dev-fold-top \.15s ease both; \}/);
   assert.match(CSS, /\.dev-fold-mark\[data-open="1"\] \.dev-fold-bottom \{ transform: translateY\(2px\); animation: dev-fold-bottom \.15s ease both; \}/);
@@ -1479,7 +1479,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 838 → 839: +1 (#3692): the Homeroom bot DM's activity tray strip on
   // the staging fixture (#messages/910005). It shares that route with the
   // #3624 check, but could not fold into it: that selector is already at
-  // 253 of the 256 characters the runner reads. 839 leaves 21 slots
+  // 253 characters against the runner's selector cap
+  // (`MAX_TEST_SELECTOR_LEN`). 839 leaves 21 slots
   // against MAX_DECLARED_TESTS (860).
   //
   // 839 → 840: +1 (#3755): an agent chat whose change failed its checks
@@ -1500,8 +1501,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 841 → 842: +1 (#4097): the Homeroom bot's news about a request leads
   // with the request's card on the staging fixture (#messages/910005). It
   // shares that route with the #3624 and #3692 checks, but could not fold
-  // into either: their selectors are at 253 and 245 of the 256 characters
-  // the runner reads. 842 leaves 28 slots.
+  // into either: their selectors are at 253 and 245 characters against the
+  // runner's selector cap (`MAX_TEST_SELECTOR_LEN`). 842 leaves 28 slots.
   //
   // 842 → 843: +1: the Benchmark area's Studio place
   // (#admin/homeroom-bot/benchmark/studio), the App bench studio's gallery on
@@ -1544,8 +1545,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // coding-run card checks on 990412 became ONE on the agent-session fixture
   // (#messages/agent/990801), because that card is the dev chat's `Attached`,
   // which agent sessions draw too. It could not fold into the three 990801
-  // checks on that route: their selectors leave at most 43 of the runner's
-  // 256 characters, and this one needs 191 of its own. Three groups stay,
+  // checks on that route: their selectors leave at most 43 characters under
+  // the runner's selector cap (`MAX_TEST_SELECTOR_LEN`), and this one needs
+  // 191 of its own. Three groups stay,
   // because none is the classic chat's own: the spec panel's (900830,
   // 900831), where a shared spec still opens and whose HTML-spec frames
   // (lib/spec-html) agent sessions draw; the published chat's (990002), the
@@ -1634,7 +1636,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 729 → 730: +1 (#4772): the Workshop tab's What's happening files the
   // viewer's work in sections (Waiting on you, Yours, up for a vote, Going
   // live), on the ?demo=1 mocks. Folding it into the Overview check on the
-  // same route took that selector past the runner's 256 characters. 730
+  // same route took that selector past the runner's selector cap
+  // (`MAX_TEST_SELECTOR_LEN`). 730
   // leaves 150 slots.
   //
   // 730 → 731: +1: the admin console's Apps & usage section (#admin/apps),
@@ -1709,8 +1712,54 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // AI tab's own page, Your work and Up next. 747 leaves 133 slots.
   // 747 → 748: +1: a merge stuck behind a red release run names the step
   // and the reason on its page (the ?demo=1 release-blocked mock).
-  // 748 leaves 132 slots.
-  checkCap.assertPinned(DAPP.tests.length, 748);
+  // 748 → 749: +1 (#6035) a channel's message box wears the formatting
+  // row, Bold through Bulleted list. 749 leaves 131 slots.
+  // 749 → 750: +1 (#6044) Settings' Privacy page has the Email & texts
+  // block, before Share usage analytics; no check covered that page, so
+  // nothing to fold it into.
+  // 750 → 751: +1 (#6000) a closed request offers Propose reopening on its
+  // status card, opening the group vote. 751 leaves 129 slots.
+  // 751 → 752: +1 an app build that produces blocks only while open says so
+  // in Settings. It is a new demo route, so nothing to fold it into. 752
+  // leaves 128 slots.
+  // 752 → 753: +1 (#6029) the Basic/Advanced switch on Experimental,
+  // a settings route with no existing declared check to extend.
+  // 753 → 751: −2 (#6276) the old Needs-you reel's four declared checks
+  // become the review flow's two: a project's Needs you draws it, and its
+  // change page is drawn in place in the pane.
+  // 751 → 752: +1 (#6271) a private thread marked done this week is listed
+  // under Live this week with its lock and the day it closed. Live this week
+  // had no declared check to extend. 752 leaves 128 slots.
+  //
+  // 752 → 753: #6134's Needs attention card. It needs its own ?demo= fixture
+  // (connectors-attention), so it has no check to fold into.
+  // 753 → 748: −5 (One Home, #6361) Home's Discover lane went, and its three
+  // checks with it (populated empty note, the add round trip, the drag onto
+  // the grid), the Communities tab's glyph on All communities (the tab is
+  // drawn on neither bar), and the places nested under a sidebar row (the
+  // hub lists them). Its new states folded into existing checks instead.
+  //
+  // 748 → 749: +1 (5 Nov 2026, the Homeroom bot tab is the one place for
+  // your work) a link's project filter (#homeroom-bot?project=<slug>) lights
+  // that project's chip. The checks of the removed Workshop lists and Me ›
+  // Your work were retargeted in place; the address is a route of its own,
+  // so it has no check to fold into.
+  //
+  // 749 → 750: +1 (One Home follow-up, #6361) the places nested under a
+  // community's row in the desktop sidebar come back, and their check with
+  // them (the hub still lists them too).
+  // 750 → 732: −18 (One Home follow-up, #6361) Discover's screen went: 19
+  // checks of its list, details, filters, sort and search are retired (two
+  // more now follow its old addresses: #apps opens Home's Communities to
+  // join, #apps/<slug> its project's hub), and +1 brings the details page's
+  // up-arrow check (#1036) back on Challenges, which goes up to Me. 732
+  // leaves 148 slots.
+  // 732 → 729: −3 (One Home follow-up, #6361) the Communities screen's list
+  // went to Home, and its three checks (its rows' Workshop links, their two
+  // counts, the audience chips) with it. Its page check now follows
+  // #communities to Home and finds the Needs you tile there; the two Needs
+  // you checks follow the page to #needs. 729 leaves 151 slots.
+  checkCap.assertPinned(DAPP.tests.length, 729);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1797,14 +1846,15 @@ test('the open card is the fold’s sheet, and never picks up the Needs-you deck
     'the deck’s dialogs are the fixed, full-screen thing');
   assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
     'and nothing is keyed on the bare name, which is one open card sitting in its row');
-  // Two dialogs since the reel redesign: the vote, and the one sheet whose
-  // two tabs are Comments and Ask.
-  for (const kind of ['vote', 'talk']) {
-    assert.match(WORKSHOP, new RegExp(`className="dev-ws-sheet-modal dev-ws-sheet-${kind}"`),
-      `the ${kind} dialog carries the deck’s base class`);
-  }
+  // The reel's vote and talk dialogs left with the reel (#6276): the review
+  // flow that replaced it draws its own sheet (`rf-*`), so no Workshop
+  // component wears the deck's full-screen class any more. The geometry
+  // rule stays keyed on that name, so only a sheet that means it can pick
+  // it up.
+  assert.ok(!/className="dev-ws-sheet-modal/.test(WORKSHOP),
+    'no Workshop component carries the deck’s full-screen class');
   assert.ok(!/className="dev-ws-sheet dev-ws-sheet-/.test(WORKSHOP),
-    'and neither carries the fold’s');
+    'and nothing carries the fold’s name as a dialog');
   // The open card keeps the bare name, because two declared checks select it
   // that way — which is also why the deck is the side that moved.
   assert.match(FOLD, /<div className="dev-feed-entry dev-ws-sheet" data-ws-sheet=\{row\.key\}>/);
@@ -1848,11 +1898,11 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
   assert.ok(!CARD.includes('className="dev-card-rail"'), 'the rail column is gone from the card');
   const tr = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn {');
   assert.ok(tr > 0);
-  assert.match(CSS.slice(tr, CSS.indexOf('\n}', tr)), /margin-left: auto;/);
+  assert.match(CSS.slice(tr, CSS.indexOf('\n}', tr)), /margin-inline-start: auto;/);
   const pv = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview {');
   assert.ok(pv > 0);
-  assert.match(CSS.slice(pv, CSS.indexOf('\n}', pv)), /margin-left: auto;/, 'Preview pushes the pair when it is the first of them');
-  assert.match(CSS, /\.gc-card-actions > \.gc-vote-btn-preview \+ \.dev-card-menu-btn \{ margin-left: 0; \}/,
+  assert.match(CSS.slice(pv, CSS.indexOf('\n}', pv)), /margin-inline-start: auto;/, 'Preview pushes the pair when it is the first of them');
+  assert.match(CSS, /\.gc-card-actions > \.gc-vote-btn-preview \+ \.dev-card-menu-btn \{ margin-inline-start: 0; \}/,
     'and the hamburger after it keeps the gap, or two auto margins would split the free space');
   assert.ok(!/\n\.dev-card-rail \{/.test(CSS), 'and from app.css');
 });
@@ -1878,7 +1928,7 @@ test('every pill is foldable: the band shows as many as fit its line and the men
   assert.ok(!CARD.includes('ACTION_PRIMARY_MAX'), 'no count cap: the line is the cap');
   assert.ok(!/i > 0 && a\.kudos == null/.test(CARD));
   const html = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
-  assert.match(html, /data-fold="1"[^>]*data-act="chooseIssueWork"/, 'the first pill carries a fold index');
+  assert.match(html, /data-fold="1"[^>]*data-act="workOnIssueWithBot"/, 'the first pill carries a fold index');
 });
 
 test('the tags ride the meta line beside the number, on the open card and the folded row alike', () => {
@@ -1933,13 +1983,13 @@ test('the open card’s meta line is tabbed in under the title, as the row’s i
   // head that has a glyph earns it; the bands below stay at the edge.
   assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head \{ gap: 8px;/);
   assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head > \.dev-card-icon \{\n  width: 22px;/);
-  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-left: 30px; \}/);
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-inline-start: 30px; \}/);
   // The title neither clamps nor reserves a second line any more: the
   // row's has always wrapped in full, and the card's does the same.
   assert.ok(!/dev-card-title-clamp/.test(CSS));
   // And the facts row under the status row is tabbed in like the meta line,
   // as the row's last line is; the status row and the band span the card.
-  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) ~ \.dev-card-facts \{ padding-left: 30px; \}/);
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) ~ \.dev-card-facts \{ padding-inline-start: 30px; \}/);
   assert.ok(!/\.dev-card-head:has\(> \.dev-card-icon\) ~ \.dev-card-status \{/.test(CSS), 'the bar row is not indented');
   // Folded rows sit 4px apart, as the Workshop's do.
   assert.match(CSS, /#dev-kanban \.dev-kanban-col > \.space-y-2 > :not\(\[hidden\]\) ~ :not\(\[hidden\]\) \{ margin-top: 4px; \}/);
@@ -1988,12 +2038,11 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   // now pins the `:has(+ …)` direction rather than just the class names.
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
-  // The Needs-you feed: the deck became a feed, and the check walks to the rail's Vote
-  // control; a second check pins the item's own order (who and when, then
-  // the title, then the sentence, then the caption) with the same `+`/`~`
-  // direction.
-  assert.match(byName(/Needs-you tab is a feed of one decision per screen/).expectSelector, /\[data-ws-needs\] > \[data-ws-rail\] > button\[data-ws-rail-btn="vote"\]/);
-  assert.match(byName(/leads with who and when, then its title, then the sentence a voter reads/).expectSelector, /> \.dev-ws-item-caption > \.dev-ws-item-by \+ \.dev-ws-item-title \+ \.dev-ws-item-summary"?$/);
+  // The Needs-you deck is the review flow now: one check holds that a
+  // project's own Needs you draws it, and another that its change page is
+  // drawn in place in the pane rather than over the shell.
+  assert.match(byName(/A project's Needs you draws the review flow/).expectSelector, /\[data-rf-project="usernode-2d5619"\] \[data-review-flow\]/);
+  assert.match(byName(/change page in place in the pane/).expectSelector, /body:not\(:has\(> \[data-rf-page\]\)\)[\s\S]*\[data-workshop-pane="needs"\] \[data-rf-page\] \[data-rf-back\]/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);
@@ -2035,13 +2084,13 @@ test('the message count rides the meta line at both sizes, and only when there i
   // padding with the 4px edge inside it, its 8px glyph gap, its drop shadow,
   // and no hairline border. Pinned value for value against the card's rule.
   const card = CSS.slice(CSS.indexOf('\ndiv:is(.dev-card-dense, .dev-card-topic) {'));
-  assert.match(card, /border-radius: 22px;[\s\S]*?padding: 14px 14px 12px;\s*padding-left: calc\(14px \+ var\(--dev-edge-w\)\);/);
+  assert.match(card, /border-radius: 22px;[\s\S]*?padding: 14px 14px 12px;\s*padding-inline-start: calc\(14px \+ var\(--dev-edge-w\)\);/);
   assert.match(CSS, /\.dev-ws-row \{[^}]*padding: 14px 14px 12px; border-radius: 22px; border: 0;/);
   // The 8px glyph gap moved to the head when the row became a column, so the
   // bar underneath spans the whole row rather than starting past the glyph.
   assert.match(CSS, /\.dev-ws-row \{[^}]*flex-direction: column; align-items: stretch;/);
   assert.match(CSS, /\.dev-ws-row-head \{ display: flex; align-items: center; gap: 8px; \}/);
-  assert.match(CSS, /\.dev-ws-row \{[^}]*padding-left: calc\(14px \+ var\(--dev-edge-w\)\);[^}]*0 1px 2px rgba\(0, 0, 0, 0\.06\);/);
+  assert.match(CSS, /\.dev-ws-row \{[^}]*padding-inline-start: calc\(14px \+ var\(--dev-edge-w\)\);[^}]*0 1px 2px rgba\(0, 0, 0, 0\.06\);/);
   assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head \{ gap: 8px;/);
   assert.ok(!/\.dev-ws-row:hover \{ border-color/.test(CSS), 'no border to colour on hover');
 });
@@ -2073,8 +2122,8 @@ test('a press changes the fill and nothing else, and the row is the card minus i
     'the text column that held the meta line and the band 30px in is gone');
   // The meta line's tab is the CARD's rule, condition and all: 30px, and
   // only when there is a glyph to tab past.
-  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-left: 30px; \}/);
-  assert.match(CSS, /\.dev-ws-row-head:has\(> \.dev-card-icon\) \+ \.dev-ws-row-meta \{ padding-left: 30px; \}/);
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-inline-start: 30px; \}/);
+  assert.match(CSS, /\.dev-ws-row-head:has\(> \.dev-card-icon\) \+ \.dev-ws-row-meta \{ padding-inline-start: 30px; \}/);
 
   // -- The two gaps ---------------------------------------------------
   // Title to meta: the card stacks them flush, the row carried a 1px column

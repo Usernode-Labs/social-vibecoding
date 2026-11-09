@@ -149,6 +149,7 @@ import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
 import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
+import { placeHref } from '../dev-board/workshop/places';
 import { navStore } from '../nav/nav-store.js';
 
 /**
@@ -207,10 +208,13 @@ const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
  * the rest are <a>s. One fragment is what keeps "the buttons look like the
  * links" true by construction rather than by copies staying in step.
  */
-function RowBody({ icon, label, trailing, external }: {
+function RowBody({ icon, label, trailing, sub, external }: {
   icon: ReactNode;
   label: string;
   trailing?: ReactNode;
+  // Audit D07: a line under the label, for a phrase that would otherwise
+  // share the row with it and cut it ("Go to com… 1 decision waiting on you").
+  sub?: ReactNode;
   // A row that leaves Homeroom (#5927): the browser, or another site. It
   // ends in the external-link glyph rather than the chevron every row
   // inside the platform ends in, and says so to a screen reader.
@@ -221,7 +225,12 @@ function RowBody({ icon, label, trailing, external }: {
       <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">
         {icon}
       </span>
-      <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
+      {sub ? (
+        <span className="flex-1 min-w-0">
+          <span className="block truncate font-medium">{label}</span>
+          {sub}
+        </span>
+      ) : <span className="flex-1 min-w-0 truncate font-medium">{label}</span>}
       {trailing}
       {external ? <ExternalMark /> : (
         <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
@@ -267,6 +276,91 @@ function loadedPlatformShort(): string | null {
  * `defaultPrevented`) only closes the menu, and a modified click never gets
  * here as a navigation of ours: the browser opens its tab.
  */
+/**
+ * Where the "Go to community" row opens the project page (#5927 item 3): on
+ * Needs you, the list of what waits on this person, while its badge counts
+ * any; on the hub otherwise. `owed` is the badge's own figure, so the row
+ * opens on what it says.
+ */
+export function communityRowPlace(owed: number | null): 'needs' | 'status' {
+  return typeof owed === 'number' && owed > 0 ? 'needs' : 'status';
+}
+
+/**
+ * The row's link, for whatever the browser does with it itself: a new tab,
+ * a middle click, a copied address. While the badge shows it is Needs you's
+ * own address (`?ws=needs`, ../dev-board/workshop/places.ts placeHref), so a
+ * tab opened from it lands where a plain tap does; otherwise the hub's.
+ */
+export function communityRowHref(slug: string | null | undefined, owed: number | null): string {
+  if (!slug) return '#';
+  return communityRowPlace(owed) === 'needs'
+    ? placeHref(slug, 'needs')
+    // The Hub's own address (App._placeAddress), so a new tab lands where a
+    // plain tap does: a bare /workshop opens the Workshop.
+    : `#app/${encodeURIComponent(slug)}/dev/hub`;
+}
+
+/**
+ * A press on the row. Only a plain click is ours: it says which place the
+ * page opens on (AppView._landOnTab / _landOnHub), then follows the page's
+ * own address in place. A modified or middle click, or one something else
+ * took, changes nothing on this page, and the browser opens the link.
+ *
+ * ITS MENU CLOSES A TICK LATER. The browser reads the link after this
+ * handler returns, and closing publishes `open: false` synchronously
+ * (flushSync), which clears the badge's figure (`owed`) and with it the
+ * Needs you address: a new tab opened from a closed-in-time row went to the
+ * hub. Deferred, the close comes after the browser has read the link.
+ */
+export function openCommunityRow(e: React.MouseEvent, slug: string | null | undefined, owed: number | null): void {
+  if (!isPlainClick(e)) {
+    deferCommunityRowClose();
+    return;
+  }
+  if (slug) {
+    const view = (window as any).AppView;
+    if (communityRowPlace(owed) === 'needs') view?._landOnTab?.(slug, 'needs');
+    else view?._landOnHub?.(slug);
+  }
+  followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
+}
+
+/**
+ * The close a modified click put off, for THIS opening of the menu only: if
+ * the menu closes another way before the tick (and maybe opens again), the
+ * pending close is dropped rather than shutting the new one, and the sheet's
+ * unmount drops it too.
+ */
+let pendingRowClose: { timer: ReturnType<typeof setTimeout>; off: () => void } | null = null;
+
+export function cancelCommunityRowClose(): void {
+  if (!pendingRowClose) return;
+  clearTimeout(pendingRowClose.timer);
+  pendingRowClose.off();
+  pendingRowClose = null;
+}
+
+function deferCommunityRowClose(): void {
+  cancelCommunityRowClose();
+  if (!appContextStore.get().open) return;
+  const off = appContextStore.subscribe(() => {
+    if (!appContextStore.get().open) cancelCommunityRowClose();
+  });
+  const timer = setTimeout(() => {
+    cancelCommunityRowClose();
+    AppContext.dismissForNav();
+  }, 0);
+  pendingRowClose = { timer, off };
+}
+
+// The click followThenDismiss below follows itself: the button alone, not
+// one something else took.
+function isPlainClick(e: React.MouseEvent): boolean {
+  return !(e.defaultPrevented || e.nativeEvent.defaultPrevented || e.button !== 0
+    || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey);
+}
+
 function followThenDismiss(e: React.MouseEvent, href: string): void {
   if (e.defaultPrevented || e.nativeEvent.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey
     || !href.startsWith('#') || href === '#') {
@@ -280,7 +374,7 @@ function followThenDismiss(e: React.MouseEvent, href: string): void {
 }
 
 function MenuRow({
-  id, href, icon, label, trailing, onClick, elRef, shipsHidden, dataContextRow,
+  id, href, icon, label, trailing, sub, onClick, elRef, shipsHidden, dataContextRow,
 }: {
   id: string;
   // Names the destination for selectors that key on it rather than on the id.
@@ -289,6 +383,7 @@ function MenuRow({
   icon: ReactNode;
   label: string;
   trailing?: ReactNode;
+  sub?: ReactNode;
   onClick?: (e: React.MouseEvent) => void;
   elRef?: React.Ref<HTMLAnchorElement>;
   // Ships `hidden` in the FIRST render, for a row a classic module reveals.
@@ -308,7 +403,7 @@ function MenuRow({
         followThenDismiss(e, href);
       }}
     >
-      <RowBody icon={icon} label={label} trailing={trailing} />
+      <RowBody icon={icon} label={label} trailing={trailing} sub={sub} />
     </a>
   );
 }
@@ -342,17 +437,24 @@ export function AppsSwitcherSheet(): ReactNode {
   // it once (App._privateNoClose), and no Developer terminal: they suggest
   // changes to Homeroom bot instead.
   const { privateMember } = useStoreState(navStore);
-  // Homeroom's privacy notice, for the foot's Privacy link (#5116): the
-  // address GET /api/public/waitlist/options serves (marketing-links.js
-  // privacyNoticeUrl). Asked for when the sheet first opens, not at boot;
-  // the fetch is shared with every other screen that names the notice. The
-  // link is left out until the address is known.
+  // Homeroom's privacy notice and terms, for the foot's two links (#5116,
+  // #5927): the addresses GET /api/public/waitlist/options serves
+  // (marketing-links.js privacyNoticeUrl; the current terms_versions row's
+  // terms_link). Both are the platform's own, whichever app the menu is on: an
+  // app's manifest names neither. Asked for when the sheet first opens, not at
+  // boot; the fetch is shared with every other screen that names them. Each
+  // link is left out until its address is known, and Terms stays out when no
+  // version is published, which is why the privacy address, always served,
+  // is what says the read is done.
   const [privacyHref, setPrivacyHref] = useState<string | null>(null);
+  const [termsHref, setTermsHref] = useState<string | null>(null);
   useEffect(() => {
     if (!open || privacyHref) return undefined;
     let live = true;
     void waitlistOptions().then((options) => {
-      if (live && options?.privacy_link) setPrivacyHref(options.privacy_link);
+      if (!live) return;
+      if (options?.terms_link) setTermsHref(options.terms_link);
+      if (options?.privacy_link) setPrivacyHref(options.privacy_link);
     });
     return () => { live = false; };
   }, [open, privacyHref]);
@@ -408,6 +510,8 @@ export function AppsSwitcherSheet(): ReactNode {
   // The home-screen row stays a private member's (`newcomer`).
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+  // A close the community row put off goes with the sheet.
+  useEffect(() => cancelCommunityRowClose, []);
   const newcomer = mounted && offeringGoToHomeroom(!!privateMember);
   const walkOwed = mounted && owedHomeWalk();
   // #4399: the home-screen offer that rides in the Go to Homeroom card while
@@ -603,15 +707,18 @@ export function AppsSwitcherSheet(): ReactNode {
           */}
           {view !== 'menu' ? (
             <div className="flex-1 min-w-0 flex items-center">
-              <button
-                id="app-about-back"
-                type="button"
-                aria-label={backLabel}
-                className={BACK_DISC}
-                onClick={() => AppContext.goBack()}
-              >
-                <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
-              </button>
+              {/* Audit D07: a pane the sheet opened on has nothing behind it. */}
+              {back === 'none' ? null : (
+                <button
+                  id="app-about-back"
+                  type="button"
+                  aria-label={backLabel}
+                  className={BACK_DISC}
+                  onClick={() => AppContext.goBack()}
+                >
+                  <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
+                </button>
+              )}
             </div>
           ) : (
             /*
@@ -639,13 +746,13 @@ export function AppsSwitcherSheet(): ReactNode {
             </span>
           )}
           {/* A 36px target with a 24px ✕ (#5927): the 20px glyph was the
-              smallest thing on the sheet. `-mr-2` keeps the glyph's edge on
+              smallest thing on the sheet. `-me-2` keeps the glyph's edge on
               the rows' 20px margin; `un-touch-target` grows the hit box to
               44px. */}
           <button
             id="apps-switcher-close"
             type="button"
-            className={'shrink-0 -mr-2 inline-flex items-center justify-center w-9 h-9 rounded-full text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 un-touch-target ' + FOCUS_RING}
+            className={'shrink-0 -me-2 inline-flex items-center justify-center w-9 h-9 rounded-full text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 un-touch-target ' + FOCUS_RING}
             aria-label={t('core:common.close')}
             onClick={close}
           >
@@ -763,7 +870,7 @@ export function AppsSwitcherSheet(): ReactNode {
               <button
                 id="app-menu-row-homeroom"
                 type="button"
-                className={'flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ' + FOCUS_RING}
+                className={'flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-start hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ' + FOCUS_RING}
                 onClick={() => {
                   const info = { slug: slug || null, name: name || null };
                   void AppContext.dismissForNav().then(() => {
@@ -793,7 +900,7 @@ export function AppsSwitcherSheet(): ReactNode {
                   <button
                     id="app-menu-row-add-home"
                     type="button"
-                    className={'flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ' + FOCUS_RING}
+                    className={'flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-start hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ' + FOCUS_RING}
                     onClick={() => { void AppContext.dismissForNav().then(() => addToHomeScreen.run()); }}
                   >
                     <span className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200" aria-hidden="true">
@@ -888,15 +995,17 @@ export function AppsSwitcherSheet(): ReactNode {
             id="app-menu-row-workshop"
             dataContextRow="workshop"
             elRef={workshopRowRef}
-            href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
+            href={communityRowHref(slug, owed)}
             icon={<UserGroupIcon />}
             label={t('agent:appContext.row.community')}
-            trailing={owed ? (
+            // Audit D07: on its own line under the label, which it cut to
+            // "Go to com…" when the two shared the row on a phone.
+            sub={owed ? (
               <span
                 id="app-menu-workshop-owed"
                 title={t('agent:appContext.row.toVote', { count: owed })}
                 aria-label={t('agent:appContext.row.toVote', { count: owed })}
-                className="shrink-0 text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
+                className="block truncate text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
               >
                 {t('agent:appContext.row.toVote', { count: owed })}
               </span>
@@ -906,10 +1015,10 @@ export function AppsSwitcherSheet(): ReactNode {
             // running app on a desktop it opens full width, leaving the app,
             // as every link to a community does: a community's page is never
             // the side panel's (../side-panel/routes.ts).
-            onClick={(e) => {
-              if (slug) (window as any).AppView?._landOnHub?.(slug);
-              followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
-            }}
+            // #5927 item 3: while it says decisions wait on you, it opens
+            // on the list of them, the project's Needs you place, rather
+            // than the hub, where they are one card among others.
+            onClick={(e) => openCommunityRow(e, slug, owed)}
           />
           {/*
               GO TO APP DISCUSSION and INVITE TO COMMUNITY LEFT THE MENU (UI
@@ -958,7 +1067,7 @@ export function AppsSwitcherSheet(): ReactNode {
             // the chevron sits against the words instead of at the edge —
             // which reads as a different KIND of row, on the one row where
             // that would be a lie.
-            className={`${ROW} w-full text-left`}
+            className={`${ROW} w-full text-start`}
             onClick={() => AppContext.showAbout()}
           >
             <RowBody icon={<InfoCircleIcon />} label={appName ? t('agent:appContext.row.about', { app: appName }) : t('agent:appContext.row.aboutThisApp')} />
@@ -967,7 +1076,7 @@ export function AppsSwitcherSheet(): ReactNode {
             <button
               id="app-menu-row-add-homeroom"
               type="button"
-              className={`${ROW} w-full text-left`}
+              className={`${ROW} w-full text-start`}
               onClick={() => {
                 if (homeroomOffer.via === 'browser') {
                   openHomeroomInBrowser();
@@ -993,14 +1102,28 @@ export function AppsSwitcherSheet(): ReactNode {
               PRIVACY SITS BESIDE IT (#5116): "Privacy · Report app", the
               same two links the bridge's footer carries on an app opened at
               its own address. Privacy is Homeroom's notice, in a new tab.
+              TERMS COMES FIRST (#5927): Homeroom's terms, also in a new tab,
+              in the order Settings › About lists them.
 
               READABLE AND TAPPABLE (#5927): 13px in the muted ink a row's
               subtitle uses, a step lighter on dark than the 12px zinc-500 it
               was, each link a 44px-tall target with its own side padding, and
               that padding is the gap between them where a "·" stood.
           */}
-          {(slug && canReport) || privacyHref ? (
+          {(slug && canReport) || privacyHref || termsHref ? (
             <div id="app-menu-legal" className="flex flex-wrap items-center justify-center gap-x-1 px-5 pt-2 text-[13px] text-zinc-600 dark:text-zinc-300">
+              {termsHref ? (
+                <a
+                  id="app-menu-terms"
+                  href={termsHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={'inline-flex items-center min-h-[44px] px-3 rounded-lg hover:text-zinc-900 dark:hover:text-zinc-100 hover:underline ' + FOCUS_RING}
+                >
+                  {t('agent:appContext.terms')}
+                  <ExternalMark className="ms-1 w-3.5 h-3.5" />
+                </a>
+              ) : null}
               {privacyHref ? (
                 <a
                   id="app-menu-privacy"
@@ -1010,7 +1133,7 @@ export function AppsSwitcherSheet(): ReactNode {
                   className={'inline-flex items-center min-h-[44px] px-3 rounded-lg hover:text-zinc-900 dark:hover:text-zinc-100 hover:underline ' + FOCUS_RING}
                 >
                   {t('agent:appContext.privacy')}
-                  <ExternalMark className="ml-1 w-3.5 h-3.5" />
+                  <ExternalMark className="ms-1 w-3.5 h-3.5" />
                 </a>
               ) : null}
               {slug && canReport ? (

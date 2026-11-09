@@ -31,6 +31,13 @@ const MARKETING_WAITLIST_PATH = '/waitlist';
 // GET /api/public/waitlist/options, so the address is decided here once.
 const PRIVACY_NOTICE_PATH = '/legal/privacy-notice';
 
+// The two legal pages the terms point to by name (#6043): the Child Safety
+// Standards, and how to delete your account and data. Settings › About links
+// to both beside the terms and the privacy notice, read from the same
+// options response.
+const CHILD_SAFETY_PATH = '/legal/child-safety-standards';
+const ACCOUNT_DELETION_PATH = '/legal/account-deletion';
+
 // Trim a configured origin down to something safe to concatenate a path
 // onto: no surrounding whitespace, no trailing slash. A value that is empty
 // or not a string falls back rather than producing `undefined/waitlist`.
@@ -85,6 +92,16 @@ function privacyNoticeUrl(config) {
   return `${siteUrl(config)}${PRIVACY_NOTICE_PATH}`;
 }
 
+// The Child Safety Standards and the account-deletion page. Never null, for
+// the same reason.
+function childSafetyUrl(config) {
+  return `${siteUrl(config)}${CHILD_SAFETY_PATH}`;
+}
+
+function accountDeletionUrl(config) {
+  return `${siteUrl(config)}${ACCOUNT_DELETION_PATH}`;
+}
+
 // The shareable invite URL for one signup's referral code.
 //
 // Returns null for a signup with no code yet — the caller renders no link at
@@ -105,6 +122,10 @@ module.exports = {
   MARKETING_WAITLIST_PATH,
   PRIVACY_NOTICE_PATH,
   privacyNoticeUrl,
+  CHILD_SAFETY_PATH,
+  childSafetyUrl,
+  ACCOUNT_DELETION_PATH,
+  accountDeletionUrl,
   normalizeBaseUrl,
   waitlistUrl,
   inviteUrl,

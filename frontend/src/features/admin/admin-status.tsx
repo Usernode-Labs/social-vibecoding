@@ -457,7 +457,7 @@ function Node({ node }: { node: any }) {
         <span className="text-zinc-700 dark:text-zinc-300">{`${node.peers} peer${node.peers === 1 ? '' : 's'}`}</span>
         {node.hasFullUtxoDb === true ? <span className="pill pill-running"><span className="dot" />full UTXO DB</span> : null}
         {ageSeconds != null ? (
-          <span className="text-xs text-zinc-500 dark:text-zinc-400 ml-auto">
+          <span className="text-xs text-zinc-500 dark:text-zinc-400 ms-auto">
             {`updated ${ageSeconds < 60 ? `${ageSeconds}s` : `${Math.floor(ageSeconds / 60)}m`} ago`}
           </span>
         ) : null}
@@ -467,7 +467,7 @@ function Node({ node }: { node: any }) {
           {'tip '}<span className="mono text-zinc-700 dark:text-zinc-300">{ourTip != null ? ourTip.toLocaleString() : '—'}</span>
           {peerTip != null ? <>{' / '}<span className="mono text-zinc-600 dark:text-zinc-400">{peerTip.toLocaleString()}</span>{' on network'}</> : null}
           {behind != null && behind > 0
-            ? <span className="text-yellow-800 dark:text-yellow-400 ml-1">{`(${behind.toLocaleString()} blocks behind)`}</span>
+            ? <span className="text-yellow-800 dark:text-yellow-400 ms-1">{`(${behind.toLocaleString()} blocks behind)`}</span>
             : null}
         </div>
       ) : null}
@@ -508,7 +508,7 @@ function SessionRow({ s }: { s: any }) {
   // in a new tab (lib/repo-link.js).
   const prLink = s.prUrl ? linkAttrs(s.prUrl) : null;
   return (
-    <div className="pl-3 border-l-2 border-zinc-200 dark:border-zinc-800 py-2">
+    <div className="ps-3 border-s-2 border-zinc-200 dark:border-zinc-800 py-2">
       <div className="flex items-center gap-2 flex-wrap">
         <StatePill state={stagingState} label={`staging: ${stagingLabel}`} />
         <span className="text-zinc-600 dark:text-zinc-400 text-xs">{`#${s.id}`}</span>
@@ -519,8 +519,8 @@ function SessionRow({ s }: { s: any }) {
             ? <a href={prLink.href} target={prLink.target} rel={prLink.rel} className="text-violet-700 dark:text-violet-400 hover:underline">{`PR #${s.prNumber}`}</a>
             : <span className="text-zinc-500 dark:text-zinc-400">no PR</span>}
         </span>
-        {s.prTitle ? <span className="text-zinc-700 dark:text-zinc-300 ml-2 truncate">{s.prTitle}</span> : null}
-        <span className="text-zinc-500 dark:text-zinc-400 text-xs ml-auto">{fmtDurationSeconds(s.ageSeconds)}</span>
+        {s.prTitle ? <span className="text-zinc-700 dark:text-zinc-300 ms-2 truncate">{s.prTitle}</span> : null}
+        <span className="text-zinc-500 dark:text-zinc-400 text-xs ms-auto">{fmtDurationSeconds(s.ageSeconds)}</span>
       </div>
       <div className="mt-0.5 text-xs flex items-center gap-2 flex-wrap">
         {s.stagingUrl ? (
@@ -528,16 +528,16 @@ function SessionRow({ s }: { s: any }) {
             className="text-violet-700 dark:text-violet-400 hover:underline mono text-xs break-all">{stagingResolved}</a>
         ) : null}
         {s.staging?.stats ? (
-          <span className="mono text-zinc-500 dark:text-zinc-400 ml-2">{`${s.staging.stats.mem} · ${s.staging.stats.cpu}`}</span>
+          <span className="mono text-zinc-500 dark:text-zinc-400 ms-2">{`${s.staging.stats.mem} · ${s.staging.stats.cpu}`}</span>
         ) : null}
       </div>
       {s.worker ? (
-        <div className="mt-1.5 pl-3 border-l-2 border-violet-300 dark:border-violet-800 text-xs">
+        <div className="mt-1.5 ps-3 border-s-2 border-violet-300 dark:border-violet-800 text-xs">
           <div className="flex items-center gap-2">
             <StatePill state={s.worker.state || 'unknown'} label={`worker: ${s.worker.state || 'unknown'}`} />
             <span className="text-zinc-600 dark:text-zinc-400">
               {fmtDurationSeconds(s.worker.uptimeSeconds)}
-              {s.worker.orphan ? <span className="text-red-700 dark:text-red-400 ml-1">(orphan)</span> : null}
+              {s.worker.orphan ? <span className="text-red-700 dark:text-red-400 ms-1">(orphan)</span> : null}
             </span>
             {s.worker.model ? <span className="mono text-zinc-500 dark:text-zinc-400">{s.worker.model}</span> : null}
           </div>
@@ -641,9 +641,9 @@ function Workers({ workers }: { workers: any[] }) {
               {w.appSlug ? <span className="mono text-xs text-zinc-500 dark:text-zinc-400">{w.appSlug}</span> : null}
               {w.username ? <span className="text-xs">{`@${w.username}`}</span> : null}
               {idleLabel ? <span className="text-xs text-zinc-500 dark:text-zinc-400">{idleLabel}</span> : null}
-              <span className="text-xs text-zinc-500 dark:text-zinc-400 ml-auto">
+              <span className="text-xs text-zinc-500 dark:text-zinc-400 ms-auto">
                 {fmtDurationSeconds(w.uptimeSeconds)}
-                {w.orphan ? <span className="text-red-700 dark:text-red-400 ml-1">orphan</span> : null}
+                {w.orphan ? <span className="text-red-700 dark:text-red-400 ms-1">orphan</span> : null}
               </span>
             </div>
             {w.lastProgress
@@ -667,7 +667,7 @@ function Stuck({ stuck }: { stuck: any[] }) {
             <span className="text-xs text-zinc-600 dark:text-zinc-400">{`session #${s.id}`}</span>
             <span className="mono text-xs text-zinc-500 dark:text-zinc-400">{s.appSlug}</span>
             <span className="text-xs">{`@${s.username || 'unknown'}`}</span>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400 ml-auto">{fmtDurationSeconds(s.ageSeconds)}</span>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 ms-auto">{fmtDurationSeconds(s.ageSeconds)}</span>
           </div>
           <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mono">{s.branchName}</div>
         </div>
@@ -804,7 +804,7 @@ function ChecksQueue({ q, now }: { q: any; now: number }) {
                       <span className="text-zinc-600 dark:text-zinc-400">{run.classLabel || run.class}</span>
                       {run.app ? <span className="mono text-zinc-500 dark:text-zinc-400">{run.app}</span> : null}
                       {run.prNumber != null ? <span>{`PR #${run.prNumber}`}</span> : null}
-                      <span className="text-zinc-500 dark:text-zinc-400 ml-auto">
+                      <span className="text-zinc-500 dark:text-zinc-400 ms-auto">
                         {`${time} · `}
                         {run.ownerAlive
                           ? 'owner alive'
@@ -974,7 +974,7 @@ function StatusSection() {
             <span className="font-semibold text-violet-800 dark:text-violet-200">{deploy?.failed ? 'Deployment failed:' : deploy?.unavailable ? 'Deployment status unavailable:' : deploy?.phase === 'paused' ? 'Deployment paused:' : 'Deploy in progress:'}</span>
             <span className="text-violet-700 dark:text-violet-300/80"> {deploy?.failed ? deploy.message : deploy?.unavailable ? 'the rollout could not be observed.' : deploy?.phase === 'paused' ? 'waiting for the rollout to resume.' : 'your changes may take a minute to go live.'}</span>
           </div>
-          <span id="admin-status-deploy-meta" className="ml-auto text-xs mono text-violet-700 dark:text-violet-400">
+          <span id="admin-status-deploy-meta" className="ms-auto text-xs mono text-violet-700 dark:text-violet-400">
             {[sha, elapsed && `${elapsed} ago`].filter(Boolean).join(' · ')}
           </span>
         </div>

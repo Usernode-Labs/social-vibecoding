@@ -132,6 +132,18 @@ const KINDS = Object.freeze({
     topic: 'infra', fixer: 'bot', source: 'poll', fileAfterMs: 0, quietMs: 6 * HOUR, admin: 'analytics',
     done: 'No page hits this error for 6 hours.',
   }),
+  // #6002: the browser's session guard cut off a read on a signed-out page
+  // or of a public route (signal-observers/session-fences.js).
+  // Both read reports a signed-out page sends without an account, so a
+  // person triages them: the bot never builds on what anybody could send.
+  session_fence_public: Object.freeze({
+    topic: 'onboarding', fixer: 'person', source: 'poll', fileAfterMs: 0, quietMs: 6 * HOUR, admin: 'analytics',
+    done: 'No read of this route is cut off on a signed-out page, or as a public read, for 6 hours.',
+  }),
+  invite_pitch_failed: Object.freeze({
+    topic: 'onboarding', fixer: 'person', source: 'poll', fileAfterMs: 0, quietMs: DAY, admin: 'analytics',
+    done: 'Invite pages that fall back to the pitch because the read failed drop below 3 a day, or below 2% of them.',
+  }),
   homeroom_crash: Object.freeze({
     topic: 'infra', fixer: 'bot', source: 'poll', fileAfterMs: 0, quietMs: DAY, admin: 'status',
     done: 'Homeroom\'s processes run for a day without one dying.',
@@ -438,6 +450,7 @@ async function fileRow(pool, config, row, deps) {
     await pool.query(
       `UPDATE issues SET status = 'open' WHERE app_id = $1 AND github_issue_number = $2 AND kind = 'general'`,
       [app.id, issueNumber]);
+    await require('./work-state').touched(pool, [{ appId: app.id, issueNumber }]);
   } else {
     // A pass that died between filing and recording the number: find it.
     const { rows: [found] } = await pool.query(FILED_SINCE_SQL, [app.id, row.title, row.first_seen_at]);
@@ -520,6 +533,7 @@ async function closeRow(pool, row, deps, { reason = 'cleared', comment = true } 
     await pool.query(
       `UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = $2 AND kind = 'general'`,
       [row.app_id, row.issue_number]);
+    await require('./work-state').touched(pool, [{ appId: Number(row.app_id), issueNumber: Number(row.issue_number) }]);
   }
   await pool.query(
     `UPDATE platform_signals SET state = 'closed', closed_at = NOW(), close_reason = $2 WHERE id = $1`,

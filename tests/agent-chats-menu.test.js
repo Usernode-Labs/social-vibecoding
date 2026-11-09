@@ -236,9 +236,13 @@ test('a newcomer still has every other door to building it themselves', () => {
   assert.match(row, /data-plus="new-change"[\s\S]{0,300}title=\{t\('project:menu\.build\.title'\)\}[\s\S]{0,200}Improve\.startSession\(\)/, 'the hub\'s ⋯');
   assert.equal(message('project:menu.build.title'), 'Build it now');
   const view = read('public/js/app-view.js');
-  assert.match(view, /label: PlatformI18n\.t\('changes:issue\.action\.buildNow'\),\s*title: PlatformI18n\.t\('changes:issue\.action\.buildNowTitle'\),\s*act: \{ fn: 'chooseIssueWork', args: \[n\] \}/, 'a request\'s own');
-  assert.equal(message('changes:issue.action.buildNow'), 'Build it now');
-  assert.equal(message('changes:issue.action.buildNowTitle'), 'Start an agent session on this request');
+  // 1 Nov 2026: a request's own is a row of its ⋯ now, as an agent session:
+  // its face is Work on this with Homeroom bot (tests/work-with-bot.test.js).
+  assert.match(view, /AppView\._worksWithBot\(issue, \{ noNav: false \}\)\) items\.unshift\(\{\s*label: PlatformI18n\.t\('changes:issue\.menu\.buildInSession'\), work: 'build', icon: 'generate', act: \(\) => AppView\.chooseIssueWork\(n\),/, 'a request card\'s own');
+  assert.match(read('frontend/src/features/dev-board/topic/request-head.tsx'),
+    /label: translate\('project:topic\.request\.agentSession\.summary'\),\s*icon: 'generate',\s*act: \(\) => call\('chooseIssueWork', \[r\.number\]\),/, 'and its page\'s');
+  assert.equal(message('changes:issue.menu.buildInSession'), 'Build it in an agent session');
+  assert.equal(message('project:topic.request.agentSession.summary'), 'Build it in an agent session');
   assert.equal(message('messages:inbox.new.agent.label'), 'Agent chat');
   assert.equal(message('messages:inbox.new.agent.hint'), 'Plan and build a change with a coding agent');
   assert.match(read('frontend/src/features/messages/index.tsx'),

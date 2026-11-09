@@ -510,12 +510,16 @@ test('no linked issues -> body has no Closes line and is unchanged', async () =>
   }
 });
 
+// On GitHub `#75` is GitHub's own number, never request 75, so a body there
+// names the request by its page on Homeroom (pr-metadata.js closingLine).
+const REQUEST_75 = `Closes [request 75](https://${require('../src/services/caddy').USERNODE_DOMAIN}/app/acme-app/dev/issues/75)`;
+
 test('a single linked issue adds one Closes line between body and footer', async () => {
   const githubCalls = [];
   const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
   try {
     const pool = mockPool([{ role: 'user', content: 'Fix it', metadata: {} }], { linkedIssues: [75] });
-    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null, app_slug: 'acme-app' };
     await subject.applyPrMetadata({
       pool, session, repoOwner: 'acme', repoName: 'app',
       userMessage: 'Fix it', ccSummary: 'Fixed it', username: 'evan',
@@ -523,7 +527,7 @@ test('a single linked issue adds one Closes line between body and footer', async
     assert.equal(githubCalls[0].type, 'create');
     assert.equal(
       githubCalls[0].opts.body,
-      'Cumulative body\n\nCloses #75\n\n---\n_Dev session by evan via Usernode_'
+      `Cumulative body\n\n${REQUEST_75}\n\n---\n_Dev session by evan via Usernode_`
     );
     // The applied snapshot is persisted on the new-PR write.
     const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
@@ -546,9 +550,10 @@ test('multiple + malformed linked issues are sanitized, deduped and sorted', asy
       pool, session, repoOwner: 'acme', repoName: 'app',
       userMessage: 'x', ccSummary: 'y', username: 'evan',
     });
+    // No app slug to link to: the request is named in words, still no `#`.
     assert.equal(
       githubCalls[0].opts.body,
-      'Cumulative body\n\nCloses #75\nCloses #80\n\n---\n_Dev session by evan via Usernode_'
+      'Cumulative body\n\nCloses request 75\nCloses request 80\n\n---\n_Dev session by evan via Usernode_'
     );
   } finally {
     restore();
@@ -569,8 +574,8 @@ test('regenerating the body is idempotent (no doubled Closes lines)', async () =
       userMessage: 'x', ccSummary: 'y', username: 'evan',
     });
     assert.equal(githubCalls[0].type, 'update');
-    const matches = githubCalls[0].opts.body.match(/Closes #75/g) || [];
-    assert.equal(matches.length, 1, 'exactly one Closes #75 line');
+    const matches = githubCalls[0].opts.body.match(/\brequest 75\b/g) || [];
+    assert.equal(matches.length, 1, 'exactly one closing line for request 75');
   } finally {
     restore();
   }
@@ -592,7 +597,7 @@ test('existing PR updates when the linked-issue set changed even if the title di
     });
     assert.equal(githubCalls.length, 1, 'GitHub update fired despite unchanged title');
     assert.equal(githubCalls[0].type, 'update');
-    assert.match(githubCalls[0].opts.body, /Closes #75/);
+    assert.match(githubCalls[0].opts.body, /Closes request 75/);
     // The applied snapshot is advanced so the next unchanged turn is a no-op.
     const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_title/.test(q.sql));
     assert.deepEqual(upd.params[1], [75]);
@@ -633,6 +638,44 @@ test('sanitizeIssueNumbers / buildClosingBlock helpers behave', async () => {
   assert.equal(buildClosingBlock([2, 1]), 'Closes #1\nCloses #2');
 });
 
+// 30 Oct 2026: request 6050's `Closes #6050` on GitHub linked PR #6048 to
+// pull request #6050, an unrelated change. GitHub numbers its pull requests
+// with its own counter, so on GitHub a request is never written as `#N`.
+test('on GitHub a closing line names the request by its page, never as #N', async (t) => {
+  const { buildClosingBlock } = require('../src/services/pr-metadata');
+  const domain = require('../src/services/caddy').USERNODE_DOMAIN;
+  const repoUrl = 'https://github.com/Usernode-Labs/social-vibecoding';
+  assert.equal(
+    buildClosingBlock([6050, 12], { repoUrl, appSlug: 'usernode-2d5619' }),
+    `Closes [request 12](https://${domain}/app/usernode-2d5619/dev/issues/12)\n`
+      + `Closes [request 6050](https://${domain}/app/usernode-2d5619/dev/issues/6050)`,
+  );
+  assert.equal(buildClosingBlock([7], { owner: 'Usernode-Labs', appSlug: 'x' }),
+    `Closes [request 7](https://${domain}/app/x/dev/issues/7)`, 'owner alone says GitHub too');
+  assert.equal(buildClosingBlock([7], { repoUrl }), 'Closes request 7', 'no slug: words, still no #');
+  assert.doesNotMatch(buildClosingBlock([7, 8], { repoUrl, appSlug: 'x' }), /#\d/);
+
+  // On Homeroom's git host requests and pull requests share one sequence,
+  // so `#N` is the request there and stays.
+  const saved = process.env.GIT_HOST_URL;
+  process.env.GIT_HOST_URL = 'https://git.example.test';
+  t.after(() => { if (saved === undefined) delete process.env.GIT_HOST_URL; else process.env.GIT_HOST_URL = saved; });
+  assert.equal(buildClosingBlock([7], { repoUrl: 'https://git.example.test/apps/plant-pal', appSlug: 'plant-pal' }), 'Closes #7');
+  assert.equal(buildClosingBlock([7], { owner: 'apps', appSlug: 'plant-pal' }), 'Closes #7');
+});
+
+test('every closing line the platform writes is read back and stripped', async () => {
+  const { buildClosingBlock, parseClosingKeywords, stripClosingLines } = require('../src/services/pr-metadata');
+  const linked = buildClosingBlock([6050, 12], { repoUrl: 'https://github.com/acme/app', appSlug: 'acme-app' });
+  const body = `Desc\n\n${linked}\nCloses request 8\nCloses #4\nFixes #3`;
+  assert.deepEqual(parseClosingKeywords(body), [3, 4, 8, 12, 6050]);
+  assert.deepEqual(parseClosingKeywords('see request 9, and #10'), [], 'no keyword, no request');
+  assert.equal(stripClosingLines(body, [6050, 8, 4]),
+    'Desc\n\nCloses [request 12](https://' + require('../src/services/caddy').USERNODE_DOMAIN + '/app/acme-app/dev/issues/12)\nFixes #3');
+  assert.equal(stripClosingLines('Closes [request 6050](u)\nCloses request 605\n', [60, 605]),
+    'Closes [request 6050](u)\n', 'a longer number sharing a prefix is left alone');
+});
+
 // ---- #127: How to test ----
 
 test('buildTestingBlock helper behaves', async () => {
@@ -662,7 +705,7 @@ test('testing guidance lands in the body between LLM body and Closes block', asy
     assert.equal(githubCalls[0].type, 'create');
     assert.equal(
       githubCalls[0].opts.body,
-      'Cumulative body\n\n## How to test\n\n1. Open the board.\n\nDeep link: `/board`\n\nCloses #75\n\n---\n_Dev session by evan via Usernode_'
+      'Cumulative body\n\n## How to test\n\n1. Open the board.\n\nDeep link: `/board`\n\nCloses request 75\n\n---\n_Dev session by evan via Usernode_'
     );
     // The applied snapshot is persisted on the new-PR write (param after
     // the linked-issues snapshot).
@@ -909,7 +952,7 @@ test('summary is prepended as the first paragraph of the PR body, before bullets
       githubCalls[0].opts.body,
       'Adds a dark-mode toggle so people can switch to a dark colour scheme.\n\n'
       + 'Cumulative body\n\n## How to test\n\n1. Open the board.\n\nDeep link: `/board`\n\n'
-      + 'Closes #75\n\n---\n_Dev session by evan via Usernode_'
+      + 'Closes request 75\n\n---\n_Dev session by evan via Usernode_'
     );
     // The summary is persisted to pr_summary_md on the new-PR write.
     const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));

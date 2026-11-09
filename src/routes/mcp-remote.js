@@ -42,6 +42,7 @@ const {
   SERVER_VERSION,
   DELEGATED_TOKEN_PREFIX,
   DELEGATED_CLIENT_NAMES,
+  DELEGATION_KINDS,
 } = require('../services/mcp-connect-constants');
 const mcpOauth = require('../services/mcp-oauth');
 const mcpTools = require('../services/mcp-tools');
@@ -251,7 +252,7 @@ async function authenticateConnector(pool, token) {
   if (row.revoked_at) return { error: 'revoked_token' };
   if (new Date(row.now) >= new Date(row.expires_at)) return { error: 'expired_token' };
   if (row.d_grant_id) {
-    if (row.d_kind !== 'agent_mayor' && row.d_kind !== 'worker_read') return { error: 'invalid_token' };
+    if (!DELEGATION_KINDS.includes(row.d_kind)) return { error: 'invalid_token' };
     const refused = delegationRefusal(row);
     if (refused) return { error: refused };
   }
@@ -892,29 +893,7 @@ function mcpBrowserRoutes(config) {
     }
 
     try {
-      // One row per GRANT (a consent), not per token: rotation mints a new
-      // pair on every refresh, and a user does not think in tokens.
-      //
-      // Delegated grants (#2779) are left out: they are the platform's own
-      // agents for the length of one turn, not a chat product the user
-      // connected, and listing one would offer a Disconnect for something
-      // the user never connected and that is gone before they could press it.
-      const { rows } = await pool.query(
-        `SELECT t.grant_id,
-                MIN(t.created_at)  AS connected_at,
-                MAX(t.last_used_at) AS last_used_at,
-                MAX(c.client_name)  AS client_name,
-                BOOL_OR(t.revoked_at IS NULL
-                        AND t.expires_at > clock_timestamp()) AS active
-           FROM mcp_tokens t
-           LEFT JOIN mcp_clients c ON c.client_id = t.client_id
-          WHERE t.user_id = $1
-            AND NOT EXISTS (SELECT 1 FROM mcp_delegations d WHERE d.grant_id = t.grant_id)
-          GROUP BY t.grant_id
-          ORDER BY MIN(t.created_at) DESC
-          LIMIT 50`,
-        [req.user.id]
-      );
+      const connectors = await readConnectorGrants(pool, req.user.id);
       // The setup-tip status, read-only. It rides on this response rather than
       // on an endpoint of its own because it is one line of the same panel and
       // is worthless without the list next to it. READ-ONLY is the load-bearing
@@ -930,22 +909,56 @@ function mcpBrowserRoutes(config) {
       const hint = await require('../services/mcp-hint-throttle')
         .getHintStatus(pool, { userId: req.user.id });
 
-      return res.json({
-        connectors: rows
-          .filter((row) => row.active)
-          .map((row) => ({
-            id: row.grant_id,
-            client_name: row.client_name || 'Unknown client',
-            connected_at: new Date(row.connected_at).toISOString(),
-            last_used_at: row.last_used_at ? new Date(row.last_used_at).toISOString() : null,
-            status: 'connected',
-          })),
-        hint,
-      });
+      return res.json({ connectors, hint });
     } catch (err) {
       log.error('mcp-remote', 'connector list failed', { message: err.message });
       return res.status(503).json({ error: 'temporarily_unavailable' });
     }
+  });
+
+  // ── Settings: Test connection ────────────────────────────────────────
+  //
+  // The panel's Test connection button. READ-ONLY by construction: it probes
+  // this deployment's own public origin and counts the account's grants. It
+  // mints no token, writes no row and contacts no chat product — a server
+  // that answers while a chat product still fails is the product's problem,
+  // and the panel points back at that product's setup steps for it.
+  //
+  // Declared before DELETE /api/me/connectors/:id so the two can never be
+  // read as one route, though their methods already differ.
+  router.get('/api/me/connectors/test', userRate, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+
+    // Staging mock data: mcp_tokens is staging:private and the surface that
+    // mints a grant is 404 there, so a staging clone can only ever report
+    // "not connected". ?demo= resolves the reviewable results without
+    // touching the DB or probing anything.
+    if (process.env.USERNODE_ENV === 'staging') {
+      return res.json(demoConnectionTest(req.query.demo));
+    }
+
+    const origin = config.cliAuthOrigin;
+    const [discovery, mcp] = await Promise.all([
+      probeConnectorDiscovery(origin),
+      probeConnectorMcp(origin),
+    ]);
+
+    let connection;
+    try {
+      connection = await readConnectorTestGrants(pool, req.user.id);
+    } catch (err) {
+      log.error('mcp-remote', 'connector test grant read failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+
+    return res.json({
+      code: connectorTestCode({ discovery, mcp, connection }),
+      enabled: true,
+      discovery,
+      mcp,
+      connection,
+      checked_at: new Date().toISOString(),
+    });
   });
 
   // Disconnect: revokes every token minted from that one consent, in one
@@ -1023,8 +1036,25 @@ function demoConnector(kind, overrides = {}) {
       connected_at: iso(now - 9 * day),
       last_used_at: iso(now - 3 * day),
     },
+    // A connection whose sign-in ran out two weeks ago: the state the tool's
+    // card says Needs attention for. The sign-in lasts 30 days from its last
+    // refresh, hence the last use 30 days before that.
+    expired: {
+      id: 'staging-demo-connector-4',
+      client_name: 'ChatGPT (chatgpt.com)',
+      connected_at: iso(now - 60 * day),
+      last_used_at: iso(now - 44 * day),
+      status: 'expired',
+      expired_at: iso(now - 14 * day),
+    },
   }[kind];
-  return { ...base, status: 'connected', demo: true, ...overrides };
+  return {
+    status: 'connected',
+    scopes: [READ_SCOPE, WRITE_SCOPE],
+    ...base,
+    demo: true,
+    ...overrides,
+  };
 }
 
 function demoConnectors() {
@@ -1097,8 +1127,210 @@ function demoConnectorState(flag) {
         connectors: demoConnectors(),
         hint: demoHintStatus({ shownThisWindow: 3, lastShownMinutesAgo: 40 }),
       };
+    // A tool that needs connecting again, beside one that works. Only the live
+    // connection counts for the tip and the cases, so the status line follows
+    // Claude and an expired ChatGPT row does not change it.
+    case 'connectors-attention':
+      return {
+        connectors: [demoConnector('claude'), demoConnector('expired')],
+        hint: demoHintStatus({}),
+      };
     default:
       return null;
+  }
+}
+
+// ── Test connection: probes and fixtures ───────────────────────────────
+
+const PROBE_TIMEOUT_MS = 3000;
+
+// A probe answers in one of three states, and the middle one is the whole
+// reason this is not a boolean: `unknown` means the deployment could not
+// reach its own public origin (no hairpin NAT, a split-horizon DNS name),
+// which is a fact about the network, not about whether the server works.
+// The browser settles those legs itself against the origin it is served from.
+async function probeFetch(url, init) {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+  } catch {
+    return null;
+  }
+}
+
+async function probeConnectorDiscovery(origin) {
+  if (!origin) return 'unknown';
+  const headers = { accept: 'application/json' };
+  const [protectedResource, authorization] = await Promise.all([
+    probeFetch(`${origin}/.well-known/oauth-protected-resource/mcp`, { headers }),
+    probeFetch(`${origin}/.well-known/oauth-authorization-server`, { headers }),
+  ]);
+  if (!protectedResource || !authorization) return 'unknown';
+  if (protectedResource.status !== 200 || authorization.status !== 200) return 'failed';
+  const [resource, issuer] = await Promise.all([
+    protectedResource.json().catch(() => null),
+    authorization.json().catch(() => null),
+  ]);
+  return resource && issuer
+    && resource.resource === `${origin}/mcp`
+    && issuer.issuer === origin
+    ? 'ok'
+    : 'failed';
+}
+
+// No Authorization header on purpose: a 401 carrying the standard Bearer
+// challenge is what "reachable and answering" looks like here. Anything that
+// answers differently is a failure, not an unknown.
+async function probeConnectorMcp(origin) {
+  if (!origin) return 'unknown';
+  const response = await probeFetch(`${origin}/mcp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+  if (!response) return 'unknown';
+  const challenge = response.headers.get('www-authenticate') || '';
+  return response.status === 401
+    && challenge.startsWith('Bearer')
+    && challenge.includes('resource_metadata=')
+    ? 'ok'
+    : 'failed';
+}
+
+// The connections Settings lists: one row per GRANT (a consent), not per token,
+// because rotation mints a new pair on every refresh and a user does not think
+// in tokens.
+//
+// Delegated grants (#2779) are left out: they are the platform's own agents for
+// the length of one turn, not a chat product the user connected, and listing
+// one would offer a Disconnect for something the user never connected and that
+// is gone before they could press it.
+//
+// A grant is listed while it is live, and for 90 days after its sign-in ran out
+// (status 'expired'), so the tool's card can say it needs connecting again.
+// "Ran out" means its newest pair simply lapsed: that pair is never revoked.
+// Every other ending revokes the whole chain (Disconnect, RFC 7009 revocation
+// and refresh reuse all go through mcpOauth.revokeGrant), which leaves no
+// unrevoked token, so the FILTERed MAX is NULL and the grant stays hidden.
+//
+// scopes goes through array_to_string because the column is TEXT[]: ARRAY_AGG of
+// arrays is a two-dimensional array, and [1] on one of those is NULL.
+//
+// The row is built field by field. token_hash and token_hint are never selected.
+async function readConnectorGrants(pool, userId) {
+  const { rows } = await pool.query(
+    `SELECT t.grant_id,
+            MIN(t.created_at)  AS connected_at,
+            MAX(t.last_used_at) AS last_used_at,
+            MAX(c.client_name)  AS client_name,
+            (ARRAY_AGG(array_to_string(t.scopes, ' ') ORDER BY t.created_at DESC))[1] AS scopes,
+            MAX(t.expires_at) FILTER (WHERE t.revoked_at IS NULL) AS expires_at,
+            BOOL_OR(t.revoked_at IS NULL
+                    AND t.expires_at > clock_timestamp()) AS active
+       FROM mcp_tokens t
+       LEFT JOIN mcp_clients c ON c.client_id = t.client_id
+      WHERE t.user_id = $1
+        AND NOT EXISTS (SELECT 1 FROM mcp_delegations d WHERE d.grant_id = t.grant_id)
+      GROUP BY t.grant_id
+     HAVING BOOL_OR(t.revoked_at IS NULL AND t.expires_at > clock_timestamp())
+         OR MAX(t.expires_at) FILTER (WHERE t.revoked_at IS NULL)
+              > clock_timestamp() - interval '90 days'
+      ORDER BY MIN(t.created_at) DESC
+      LIMIT 50`,
+    [userId]
+  );
+  return rows.map((row) => ({
+    id: row.grant_id,
+    client_name: row.client_name || 'Unknown client',
+    connected_at: new Date(row.connected_at).toISOString(),
+    last_used_at: row.last_used_at ? new Date(row.last_used_at).toISOString() : null,
+    scopes: String(row.scopes || '').split(' ').filter((scope) => SUPPORTED_SCOPES.includes(scope)),
+    status: row.active ? 'connected' : 'expired',
+    ...(row.active ? {} : { expired_at: new Date(row.expires_at).toISOString() }),
+  }));
+}
+
+// One query, grouped the way the list groups: a row per GRANT (a consent),
+// not per token, with delegated grants left out for the same reason the list
+// leaves them out (#2779). The most recently used active grant is the one the
+// passing line names.
+async function readConnectorTestGrants(pool, userId) {
+  const { rows } = await pool.query(
+    `WITH grants AS (
+       SELECT t.grant_id,
+              MAX(c.client_name)  AS client_name,
+              MAX(t.last_used_at) AS last_used_at,
+              BOOL_OR(t.revoked_at IS NULL AND t.expires_at > clock_timestamp()) AS active
+         FROM mcp_tokens t
+         LEFT JOIN mcp_clients c ON c.client_id = t.client_id
+        WHERE t.user_id = $1
+          AND NOT EXISTS (SELECT 1 FROM mcp_delegations d WHERE d.grant_id = t.grant_id)
+        GROUP BY t.grant_id
+     )
+     SELECT COUNT(*) FILTER (WHERE active)    AS active,
+            COUNT(*) FILTER (WHERE NOT active) AS inactive,
+            (ARRAY_AGG(client_name ORDER BY last_used_at DESC NULLS LAST)
+              FILTER (WHERE active))[1]        AS client_name,
+            (ARRAY_AGG(last_used_at ORDER BY last_used_at DESC NULLS LAST)
+              FILTER (WHERE active))[1]        AS last_used_at
+       FROM grants`,
+    [userId]
+  );
+  const row = rows[0] || {};
+  return {
+    active: Number(row.active || 0),
+    inactive: Number(row.inactive || 0),
+    client_name: row.client_name || null,
+    last_used_at: row.last_used_at ? new Date(row.last_used_at).toISOString() : null,
+  };
+}
+
+// First match wins. An `unknown` leg takes no part: the code is computed from
+// what the server could actually see, and the client settles the rest before
+// it shows anything.
+function connectorTestCode({ discovery, mcp, connection }) {
+  if (discovery === 'failed') return 'discovery_failed';
+  if (mcp === 'failed') return 'server_unreachable';
+  if (!connection.active && !connection.inactive) return 'not_connected';
+  if (!connection.active) return 'connection_expired';
+  return 'ok';
+}
+
+// The reviewable results, one ?demo= value each. `1` is the everyday passing
+// state. Staging never reads the DB and never probes: the same fixture is
+// returned every time, marked `demo`.
+function demoConnectionTest(flag) {
+  const base = (overrides) => ({
+    enabled: true,
+    discovery: 'ok',
+    mcp: 'ok',
+    connection: { active: 0, inactive: 0, client_name: null, last_used_at: null },
+    checked_at: new Date().toISOString(),
+    demo: true,
+    ...overrides,
+  });
+  switch (flag) {
+    case '1': {
+      const connector = demoConnector('claude');
+      return base({
+        code: 'ok',
+        connection: {
+          active: 1,
+          inactive: 0,
+          client_name: connector.client_name,
+          last_used_at: connector.last_used_at,
+        },
+      });
+    }
+    // The server did not answer, so the line can be reviewed.
+    case 'connectors-test-unreachable':
+      return base({ code: 'server_unreachable', mcp: 'failed' });
+    // The server works, nothing is connected yet.
+    case 'connectors-test-none':
+      return base({ code: 'not_connected' });
+    default:
+      // No credential can exist on staging, and the surface that mints one is
+      // 404 there. Without the flag, that is the honest answer.
+      return { code: 'unavailable_here', enabled: false };
   }
 }
 
@@ -1111,5 +1343,10 @@ module.exports = {
   authenticateConnector,
   demoConnectors,
   demoConnectorState,
+  demoConnectionTest,
+  // Exported for the route suite's real-database case: the aggregate is the
+  // thing that can be wrong in a way a stubbed pool cannot show.
+  readConnectorTestGrants,
+  readConnectorGrants,
   isInitializeRequest,
 };

@@ -16,7 +16,7 @@
  */
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { t } from '../../lib/i18n/runtime';
+import { t, errorText } from '../../lib/i18n/runtime';
 
 /** The route names `AuthScreens.show()` accepts, and their screen roots. */
 export const AUTH_SCREEN_IDS: Record<string, string> = {
@@ -560,7 +560,7 @@ export async function passwordSignIn(username: string, password: string): Promis
       body: JSON.stringify({ username, password }),
     });
     const data = await res.json();
-    if (!res.ok) return { ok: false, error: data.error || t('auth:signIn.failed'), details: null };
+    if (!res.ok) return { ok: false, error: errorText(data) || t('auth:signIn.failed'), details: null };
     return { ok: true };
   } catch (error) {
     return {

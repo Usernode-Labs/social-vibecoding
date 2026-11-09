@@ -7,6 +7,7 @@ import {
   TONES, TONE_CLASS, UPLOADED_SLUG, builtInIllustrations, resolveIllustration,
 } from '../../../lib/challenge-illustrations.ts';
 import type { ResolvedIllustration, Tone } from '../../../lib/challenge-illustrations.ts';
+import { arrowStep } from '../../../lib/i18n/direction';
 import { prepareIllustration } from '../../../lib/prepare-illustration.ts';
 import { SVG_ATTRIBUTES, SVG_ELEMENTS } from '../../../lib/svg-allowlist.ts';
 import { fetchJson, send } from './api.ts';
@@ -118,14 +119,12 @@ export function galleryTiles(
   return tiles;
 }
 
-const STEP: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
-
 // Where an arrow, Home or End key moves the selection in a group of `length`,
 // wrapping at both ends; -1 for any other key.
 function arrowTarget(key: string, index: number, length: number): number {
   if (key === 'Home') return 0;
   if (key === 'End') return length - 1;
-  const step = STEP[key];
+  const step = arrowStep(key);
   return step ? (index + step + length) % length : -1;
 }
 
@@ -355,7 +354,7 @@ export function IllustrationGallery({ id, value, onChange }: {
                 {selected ? (
                   <span
                     aria-hidden="true"
-                    className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-violet-600 text-[11px] font-bold text-white"
+                    className="absolute end-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-violet-600 text-[11px] font-bold text-white"
                   >
                     ✓
                   </span>

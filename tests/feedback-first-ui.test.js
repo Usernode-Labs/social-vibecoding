@@ -25,6 +25,7 @@ function element(id) {
 }
 function harness({ response = { firstFeedback: moment }, ok = true, patchResult } = {}) {
   const els = new Map(), timers = new Map(), intervals = new Map(), calls = [], fixes = [], nav = [], toasts = [], closes = [];
+  const threads = [];
   let id = 0, queueHooks, failedReads = 0, clock = 0;
   const el = id => { if (!els.has(id)) els.set(id, element(id)); return els.get(id); };
   const sandbox = {
@@ -36,6 +37,14 @@ function harness({ response = { firstFeedback: moment }, ok = true, patchResult 
     // drive the bounty row with the switch off (#5249). The parked state is
     // pinned in tests/feedback-bounty-ui.test.js.
     KUDOS_PARKED: false,
+    // And its thread-about import (lib/thread-about.ts, stripped too; its
+    // own suite is tests/work-with-bot.test.js): what it was asked to open.
+    openThreadAbout: async (slug, number, kind, { failed, after }) => {
+      threads.push({ slug, number, kind, failed });
+      sandbox.location.hash = `#homeroom-bot/thread/${900 + threads.length}`;
+      after?.();
+      return true;
+    },
     console, URLSearchParams, location: { search: '', hash: '', pathname: '/' },
     performance: { now: () => clock },
     document: { getElementById: el, querySelector: () => null, querySelectorAll: () => [], createElement: element, addEventListener() {}, body: { appendChild() {} } },
@@ -76,7 +85,7 @@ function harness({ response = { firstFeedback: moment }, ok = true, patchResult 
   });
   sandbox.App.openFeedbackModal();
   return {
-    sandbox, el, timers, calls, fixes, nav, toasts, closes,
+    sandbox, el, timers, calls, fixes, nav, toasts, closes, threads,
     failedReads: () => failedReads,
     advance(ms) { clock += ms; },
     // #5992: this harness opens with an app on screen, so the app is the
@@ -138,7 +147,7 @@ test('every way on from the first-request moment moves the address before the di
   assert.deepEqual(fix.fixes, [41], 'and the fix still starts once the app is open');
   const mine = harness(); await mine.submit();
   mine.el('feedback-first-mine').click();
-  assert.deepEqual(mine.closes, [{ hash: '#profile/your-requests', navigations: 0 }]);
+  assert.deepEqual(mine.closes, [{ hash: '#homeroom-bot', navigations: 0 }]);
 });
 test('view-only access keeps the board usable and explains the disabled fix', async () => {
   const h = harness({ response: { firstFeedback: { ...moment, canFix: false } } });
@@ -170,7 +179,7 @@ test('an ordinary posted request stays on its own confirmation, with the way to 
   assert.equal(h.el('feedback-modal').classList.contains('hidden'), false, 'no auto-close');
   h.el('feedback-sent-mine').click();
   assert.ok(h.el('feedback-modal').classList.contains('hidden'));
-  assert.equal(h.sandbox.location.hash, '#profile/your-requests');
+  assert.equal(h.sandbox.location.hash, '#homeroom-bot');
   // The next open is the form again, not the last confirmation.
   h.sandbox.App.openFeedbackModal();
   assert.ok(sent.classList.contains('hidden'));
@@ -203,6 +212,48 @@ test('#5687: Done leads the sent confirmation as its filled primary button', () 
   assert.match(src, /<Button id="feedback-sent-done" className="min-h-\[44px\]">/, 'the filled, default variant');
   assert.match(src, /<Button id="feedback-sent-chat" variant="neutral" ink="neutral"/, 'Open chat is a secondary button');
 });
+// 1 Nov 2026 (threads, one loop: phase B): Done stays the filled primary
+// button; under it, quieter, "Work on it with Homeroom bot" opens a thread
+// only they can see about the request just filed, on the bot tab, where the
+// bot waits for their plan. No helper text.
+test('Work on it with Homeroom bot sits under Done, a neutral button with no helper text', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dialogs/feedback.tsx'), 'utf8');
+  const at = (id) => src.indexOf(`id="${id}"`);
+  assert.ok(at('feedback-sent-done') < at('feedback-sent-work') && at('feedback-sent-work') < at('feedback-sent-chat'), 'right under Done');
+  assert.match(src, /<Button id="feedback-sent-work" variant="neutral" ink="neutral" className="hidden min-h-\[44px\]">\{t\('dialogs:feedback\.sent\.workWithBot'\)\}<\/Button>/);
+  assert.match(src, /<Button id="feedback-first-work" variant="neutral" ink="neutral" className="hidden min-h-\[44px\]">\{t\('dialogs:feedback\.sent\.workWithBot'\)\}<\/Button>\s*<Button id="feedback-first-done"/,
+    'and above Done on the first-request moment');
+  assert.equal(message('dialogs:feedback.sent.workWithBot'), 'Work on it with Homeroom bot');
+});
+test('Work on it with Homeroom bot opens a thread about the request just filed, on the bot tab', async () => {
+  const filed = { appSlug: 'usernode-2d5619', issueNumber: 6071 };
+  const h = harness({ response: { filed } }); await h.submit();
+  const work = h.el('feedback-sent-work');
+  assert.equal(work.classList.contains('hidden'), false, 'the post said where it went');
+  work.click(); await settle();
+  assert.deepEqual(h.threads.map(({ slug, number, kind }) => ({ slug, number, kind })), [{ slug: 'usernode-2d5619', number: 6071, kind: 'request' }]);
+  assert.equal(h.threads[0].failed, 'The thread with Homeroom bot could not be started just now. Try again in a minute.');
+  assert.ok(h.el('feedback-modal').classList.contains('hidden'), 'the dialog closes');
+  assert.equal(h.sandbox.location.hash, '#homeroom-bot/thread/901');
+  assert.deepEqual(h.closes, [{ hash: '#homeroom-bot/thread/901', navigations: 0 }], 'once the address is written (#3683)');
+  // Where the bot builds it too, beside Open chat.
+  const bot = harness({ response: { filed, homeroomBot: { botWillBuild: true, typicalMinutes: 6 } } }); await bot.submit();
+  assert.equal(bot.el('feedback-sent-work').classList.contains('hidden'), false);
+  assert.equal(bot.el('feedback-sent-chat').classList.contains('hidden'), false);
+  // A post that does not say where it went (an older server) has no button,
+  // and neither does the private request's confirmation or a shot.
+  const bare = harness({ response: {} }); await bare.submit();
+  assert.ok(bare.el('feedback-sent-work').classList.contains('hidden'));
+  bare.sandbox.App._simulateFeedbackSent();
+  assert.ok(bare.el('feedback-sent-work').classList.contains('hidden'));
+  // The first-request moment carries it where the request has a board.
+  const first = harness(); await first.submit();
+  assert.equal(first.el('feedback-first-work').classList.contains('hidden'), false);
+  first.el('feedback-first-work').click(); await settle();
+  assert.deepEqual(first.threads.map(({ slug, number }) => [slug, number]), [['filed-app', 41]]);
+  const boardless = harness({ response: { firstFeedback: { ...moment, appSlug: null } } }); await boardless.submit();
+  assert.ok(boardless.el('feedback-first-work').classList.contains('hidden'));
+});
 // Done, then quiet links: See your requests and Edit are one centred row of
 // muted, underlined text links ("See your requests · Edit") with 44px tap
 // targets. Nothing fills them, so Done is the only filled control on the sheet.
@@ -231,7 +282,7 @@ test('the first-request moment offers Your requests too, and replaces a sent con
   const h = harness(); await h.submit();
   h.el('feedback-first-mine').click();
   assert.ok(h.el('feedback-modal').classList.contains('hidden'));
-  assert.equal(h.sandbox.location.hash, '#profile/your-requests');
+  assert.equal(h.sandbox.location.hash, '#homeroom-bot');
   const q = harness({ response: {} }); await q.submit();
   q.flush();
   assert.ok(q.shown());
@@ -246,7 +297,7 @@ test('the form itself offers Your requests before anything is typed', async () =
   assert.equal(h.el('feedback-form').classList.contains('hidden'), false, 'the form, not a confirmation');
   h.el('feedback-form-mine').click();
   assert.ok(h.el('feedback-modal').classList.contains('hidden'));
-  assert.equal(h.sandbox.location.hash, '#profile/your-requests');
+  assert.equal(h.sandbox.location.hash, '#homeroom-bot');
   assert.deepEqual(h.calls.filter((c) => c.url === '/api/feedback').length, 0, 'nothing filed by the look');
 });
 test('a rejected submission never congratulates the user', async () => {

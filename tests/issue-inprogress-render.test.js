@@ -27,7 +27,7 @@ const {
   cardHtml, hasAction, issueCardHtml, mySessionCardHtml, proposalCardHtml, sharedSessionCardHtml,
 } = require('./lib/dev-card-html');
 const { api } = require('./lib/dev-card-html');
-const { renderToHtml, createElement } = require('./lib/render-tsx');
+const { renderToHtml, createElement, loadTsx } = require('./lib/render-tsx');
 
 // ── Rendering one chip ──────────────────────────────────────────────────
 //
@@ -457,8 +457,17 @@ test('the topic head prints a plain dated work note; the feed card does not', ()
   assert.match(note[1], /maya started work on this and last worked on it 5 days ago/);
   assert.match(note[1], /clears itself on/);
   // The self-clear date is the paused window past the last activity, not today.
-  const clears = new Date(Date.now() + 2 * 86400000).toLocaleDateString();
+  // #6103: it is a short month word in the date locale, never digits only.
+  const clearAt = new Date(Date.now() + 2 * 86400000);
+  const { dateLocale } = loadTsx('frontend/src/lib/i18n/locale.ts');
+  const device = typeof navigator === 'undefined' ? []
+    : (navigator.languages?.length ? navigator.languages : [navigator.language].filter(Boolean));
+  const clears = clearAt.toLocaleDateString(dateLocale('en', device),
+    clearAt.getFullYear() === new Date().getFullYear()
+      ? { month: 'short', day: 'numeric' }
+      : { year: 'numeric', month: 'short', day: 'numeric' });
   assert.ok(note[1].includes(clears), `note names ${clears}: ${note[1]}`);
+  assert.doesNotMatch(note[1], /\d{1,2}\/\d{1,2}\/\d{4}/, 'a date can never be misread as day-month or month-day');
   // Dense feed cards have no room; the chip's tooltip carries the same text.
   const feedModel = AppView._issueCardModel(issue);
   const feed = cardHtml(feedModel);
@@ -750,17 +759,23 @@ test('a request with a change waiting for approval offers no Build it now, on th
   const mineInReview = baseIssue({ in_progress: ip({ users: ['me'], mine: true, sessions: [sess({ status: 'promoted', mine: true, username: 'me' })] }) });
   const addressed = baseIssue({ addressed_by: { sessionId: 7, state: 'review', prNumber: 12 } });
 
-  // The control: an ordinary request offers it.
-  assert.equal(AppView._issuePrimaryActionSpec(baseIssue()).label, 'Build it now');
-  assert.ok(hasAction(AppView._issueCardModel(baseIssue()), 'chooseIssueWork'));
+  // The control: an ordinary request offers it. 1 Nov 2026: its face is
+  // Work on this with Homeroom bot, and Build it now is the ⋯'s first row,
+  // as an agent session.
+  const work = (issue) => Array.from(AppView._issueMenuItems(issue, { progressOnFace: true }), (it) => it.label);
+  assert.equal(AppView._issuePrimaryActionSpec(baseIssue()).label, 'Work on this with Homeroom bot');
+  assert.ok(hasAction(AppView._issueCardModel(baseIssue()), 'workOnIssueWithBot'));
+  assert.equal(work(baseIssue())[0], 'Build it in an agent session');
 
   for (const issue of [inReview, mineInReview, addressed]) {
     assert.equal(AppView._issueAwaitingApproval(issue), true);
     assert.equal(AppView._issuePrimaryActionSpec(issue), null);
     for (const model of [AppView._issueCardModel(issue), AppView._issueCardModel(issue, { noNav: true })]) {
       assert.ok(!hasAction(model, 'chooseIssueWork'), 'no Build it now');
+      assert.ok(!hasAction(model, 'workOnIssueWithBot'));
       assert.ok(!cardHtml(model).includes('Build it now'));
     }
+    assert.ok(!work(issue).includes('Build it in an agent session'), 'nor its ⋯ row');
     // The other actions stay: Claim on the face, the rest in the detail list.
     assert.ok(hasAction(AppView._issueCardModel(issue), 'markIssueInProgress')
       || hasAction(AppView._issueCardModel(issue), 'clearIssueClaim'));
@@ -770,7 +785,7 @@ test('a request with a change waiting for approval offers no Build it now, on th
 
   // A change merged, or still being worked on, does not hide it.
   assert.equal(AppView._issueAwaitingApproval(baseIssue({ addressed_by: { sessionId: 7, state: 'merged' } })), false);
-  assert.equal(AppView._issuePrimaryActionSpec(baseIssue({ in_progress: ip({ sessions: [sess()] }) })).label, 'Build it now');
+  assert.equal(AppView._issuePrimaryActionSpec(baseIssue({ in_progress: ip({ sessions: [sess()] }) })).label, 'Work on this with Homeroom bot');
   // The viewer's own Start more work is not Build it now, and stays.
   assert.equal(AppView._issuePrimaryActionSpec({ ...inReview, myPrSessionId: 5 }).label, 'Start more work');
 

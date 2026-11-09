@@ -1,4 +1,5 @@
 import type { ReleaseOutlook } from '../../lib/release-eta';
+import type { WorkState } from '../../lib/work-state';
 import type { UnreadMark } from './unread-anchor';
 
 /**
@@ -28,21 +29,78 @@ export interface ConversationUser {
  * news on the request replaced it). `mirrors`: a reply to it is posted on
  * the request's public discussion.
  */
+/** #6071: a comment pinned on a design's preview: the version, the point as fractions of its drawn size, what was under it. */
+export interface DesignPin {
+  version: number;
+  x: number;
+  y: number;
+  element?: { tag: string; id: string; text: string };
+}
+
+/**
+ * Homeroom bot parity (P1-P9): a card the bot put under a reply beyond its
+ * request, change and project cards: options to pick from, a question set,
+ * a table, a batch, a confirm card, a gallery, an investigation, … Drawn by
+ * ./bot-cards/ (one component per `type`), tapped through
+ * POST /api/conversations/homeroom-bot/cards/:messageId.
+ */
+export interface HomeroomBotCard {
+  type: string;
+  v?: number;
+  [field: string]: unknown;
+}
+
+/**
+ * Homeroom bot parity, P1: what a reply looked at, as one line above its
+ * words (./bot-looked.tsx): each thing in plain words, and how long the
+ * answer took, in milliseconds.
+ */
+export interface HomeroomBotLooked {
+  items: Array<{ what: string }>;
+  ms: number | null;
+}
+
 export interface HomeroomBotMeta {
   kind: string;
+  /** Homeroom bot parity (P1-P9): the reply's card, drawn by ./bot-cards/. */
+  card?: HomeroomBotCard;
+  /** Homeroom bot parity, P1: what the reply looked at (./bot-looked.tsx). */
+  looked?: HomeroomBotLooked;
+  /** Task 2020: a chat answer laid out as an HTML fragment, drawn in place of its words (./bot-html.tsx). */
+  html?: string;
+  /** #6071: a design thread's version this message says (kind 'design_version'). */
+  designVersion?: number;
+  /** #6071: the screen a design thread is of (kind 'opened_design', and 1 Nov 2026 a version's and a drawn thread's line). */
+  designTitle?: string;
+  /** #6071 follow-up: what a thread from the bot's "+" is for (kind 'opened_thread'); none is any kind of change. 1 Nov 2026: 'project', a new project's thread. */
+  changeKind?: 'fix' | 'add' | 'design' | 'project';
+  /** 1 Nov 2026: what a thread opened from a request's or change's page is about (kind 'opened_about'): never `issueNumber`, which would make it the request's story. */
+  aboutKind?: 'request' | 'change';
+  aboutNumber?: number;
+  aboutTitle?: string;
+  /** B08 (audit 2 Nov 2026): what a new project's thread is for (kind 'opened_thread', changeKind 'project'): its name. */
+  projectIdea?: string;
+  /** B19: what a draft's thread drafts (kind 'opened_draft'): the request's title or the words to post. */
+  draftTitle?: string;
   appSlug?: string;
   appName?: string;
   issueNumber?: number;
   issueTitle?: string;
   firstVersion?: boolean;
   mirrors?: boolean;
+  /**
+   * #6427: an offer that posts somewhere public, made in a thread where a
+   * database read happened (an admin's query_prod_db), says so before the
+   * tap (./bot-question.tsx DbReadNote).
+   */
+  dbRead?: boolean;
   question?: string;
   answers?: string[];
   status?: 'open' | 'answered' | 'closed';
   answer?: string;
   link?: string;
   // B3: the decision a message's `server` buttons settle
-  // (homeroom_bot_dm_actions.id), the buttons themselves, and which one was
+  // (bot_cards.id), the buttons themselves, and which one was
   // chosen. An activity card's start and its live state ride along too.
   actionId?: number;
   actions?: HomeroomBotAction[];
@@ -68,6 +126,8 @@ export interface HomeroomBotMeta {
   replaced?: boolean;
   stopped?: boolean;
   changing?: boolean;
+  /** B05: a change its requester wrote waits below it for Post it, so it offers no Build it. */
+  changeDrafted?: boolean;
   choices?: string[];
   /**
    * B7: a change ready to try (kind `proposal`), drawn as its card: whether
@@ -118,7 +178,32 @@ export interface HomeroomBotMeta {
   count?: number;
   /** A moment in a request's thread the main chat also lists, under its "↳ in …" label. */
   alsoInChat?: boolean;
+  /**
+   * 1 Nov 2026 (C2.4): the new project a design's card offers to make (kind
+   * `make_offer`): its name, the design's thread and version. Once made, the
+   * project it made (`madeSlug`, `madeName`).
+   */
+  makeProject?: { name: string; rootId: number; version: number | null };
+  madeSlug?: string;
+  madeName?: string;
+  /**
+   * #6151: a design filed as a request (kind `design_filed`): what happens
+   * next, read off the new request's track when it was filed, said after
+   * the line (./bot-track.tsx filedNextLine).
+   */
+  filedNext?: BotFiledNext;
 }
+
+/**
+ * #6151: what happens to a design filed as a request, as codes
+ * (services/design-threads.js filedNext): Homeroom bot builds it from
+ * `version`, builds it once `limit` frees, or a person decides.
+ */
+export type BotFiledLimit = 'builds' | 'slots' | 'bot_wide' | 'allowance';
+export type BotFiledNext =
+  | { say: 'builds'; version: number }
+  | { say: 'held'; limit: BotFiledLimit }
+  | { say: 'person' };
 
 export interface HomeroomBotReady {
   group: boolean;
@@ -172,6 +257,8 @@ export interface HomeroomBotPlan {
    */
   complicated?: boolean;
   spec?: { sessionId: number; version: number } | null;
+  /** #6220: the card's own text, as the plan writer wrote it: a summary and numbered whole lines. */
+  card?: { summary: string; lines: Array<{ n: number | null; text: string }> } | null;
 }
 
 /**
@@ -189,8 +276,11 @@ export interface HomeroomBotAction {
    * #4231: `invite` opens the invite sheet for the message's project (`appSlug`), in place.
    * #5506: `withdraw` has the bot withdraw the change (`sessionId`), drawn by
    * the ready card itself when its reader may (HomeroomBotReadyNow.canWithdraw).
+   * 1 Nov 2026: `design` (the screen picker) retired: the bot draws a screen from words.
+   * `make` opens the sheet that makes the project a design's card offers
+   * (`makeProject`), in place (./bot-make.tsx).
    */
-  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite' | 'withdraw';
+  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite' | 'withdraw' | 'make';
   target?: string;
   sessionId?: number;
   epoch?: number;
@@ -315,28 +405,15 @@ export interface HomeroomBotPastJob extends HomeroomBotJob {
   at: string | null;
 }
 
+/**
+ * The viewer's requests, one track each (GET /api/ai/tracks: each request's
+ * stored work state with what its card draws, services/homeroom-bot-track.js).
+ */
 export interface HomeroomBotWork {
-  now: HomeroomBotCurrentJob[];
-  needsYou: HomeroomBotPastJob[];
-  history: HomeroomBotPastJob[];
-  /**
-   * 16 Oct 2026: one track per request (services/homeroom-bot-track.js),
-   * which every surface draws. Absent from an older server's answer.
-   */
-  tracks?: BotTrack[];
+  tracks: BotTrack[];
 }
 
-/**
- * Where a request the Homeroom bot has is, as one track every surface draws
- * the same way (services/homeroom-bot-track.js). A loop: queued, planning,
- * building, checks, vote, going live, live, going back to `waiting` (on the
- * person) for a question and to `building` for its next try; or held at a
- * limit, stopped, done another way, or closed. Codes only: the client words
- * them (./bot-track.tsx).
- */
-export type BotTrackState =
-  | 'queued' | 'planning' | 'waiting' | 'building' | 'checks' | 'vote' | 'going_live' | 'live'
-  | 'held' | 'stopped' | 'done_elsewhere' | 'closed';
+/** The five steps a request's track bar draws (services/homeroom-bot-track.js). */
 export type BotTrackStep = 'plan' | 'build' | 'checks' | 'vote' | 'live';
 
 export interface BotTrack {
@@ -349,12 +426,16 @@ export interface BotTrack {
   issueNumber: number | null;
   title: string | null;
   firstVersion: boolean;
-  state: BotTrackState;
+  /**
+   * Where it stands: its stored work state (lib/work-state.ts), the same
+   * one every screen draws (5 Nov 2026).
+   */
+  work: WorkState;
   /** The step of the five its bar lights, or null for one before them all. */
   step: BotTrackStep | null;
-  /** Why it is where it is, as a code (bot.track.why.*), or null. */
-  why: string | null;
   waitingOn: 'you' | 'group' | null;
+  /** Why a build that did not finish stopped, as a code (homeroom-bot-track.js buildStopWhy). */
+  cause?: string;
   /**
    * Who a track waiting on "you" waits on, by username, where it is drawn
    * for somebody else (a request's page: homeroom-bot-track.js forViewer).
@@ -373,6 +454,12 @@ export interface BotTrack {
   rootId: number | null;
   /** Its message still waiting on the person, when there is one. */
   askId: number | null;
+  /**
+   * The private thread that message is in, when it is said in one of the
+   * person's own threads rather than in Main (a plan for a request started
+   * there); null in Main. Optional so an older server reads as Main.
+   */
+  askThreadId?: number | null;
   /** Its change up for a vote, when there is one. */
   proposalId: number | null;
   /** The session its plan and change live in. */
@@ -380,6 +467,8 @@ export interface BotTrack {
   links: HomeroomBotLinks;
   /** `by`: who has it, for a request a person took (limit 'taken'). */
   held?: { limit: string; position: number | null; until: string | null; by?: string | null };
+  /** #6357: paused after repeated errors (line `cooldown`): when Homeroom bot tries again. */
+  retryAt?: string;
   queue?: { ahead: number };
   doneBy?: { username: string | null; prNumber: number | null };
   release?: ReleaseOutlook;
@@ -412,7 +501,14 @@ export interface BotSlotsView {
   botOn: boolean;
   acts: boolean;
   paused: boolean;
-  cap: number;
+  /**
+   * #6156: how many builds the bot may have waiting or under way on the
+   * project (`slots` of kind `build`), and how many of its changes may wait
+   * for votes there (kind `proposal`), as the server sends them; null when
+   * it did not.
+   */
+  buildCap: number | null;
+  waitCap: number | null;
   buildsAtOnce: number | null;
   slots: BotSlotEntry[];
   waiting: BotSlotEntry[];
@@ -472,8 +568,12 @@ export interface HomeroomBotActivity {
   waitingOn?: string;
   /** A `build_failed` ending: why the build stopped. */
   stopCause?: 'time' | 'restart' | 'restarts' | 'no_change' | 'unproposed' | 'no_start' | 'other';
-  /** A `held` ending: which of the bot's limits holds it back. */
-  heldBy?: 'proposals_per_app' | 'proposals_total' | 'questions_per_day';
+  /**
+   * A `held` ending: which of the bot's limits holds it back. #6156: the
+   * project's builds (`builds_per_app`: it waits for the bot's turn) and its
+   * changes waiting for votes (`proposals_per_app`) are told apart.
+   */
+  heldBy?: 'builds_per_app' | 'proposals_per_app' | 'proposals_total';
   /**
    * `going_live`, on a merge of the platform's own app: when the platform's
    * next release carries it (services/release-watch.js), which the card
@@ -627,8 +727,8 @@ export interface ConversationMessage {
   reactions: MessageReaction[];
   attachments: MessageAttachment[];
   objects: SharedObjectCard[];
-  /** Set by the platform only, on the Homeroom bot's messages (#3624). */
-  metadata?: { homeroomBot?: HomeroomBotMeta } | null;
+  /** Set by the platform only, on the Homeroom bot's messages (#3624); a person's carries a design pin at most (#6071). */
+  metadata?: { homeroomBot?: HomeroomBotMeta; designPin?: DesignPin } | null;
   /**
    * Whether the VIEWER has saved this message — their own private bookmark,
    * never an aggregate. Hydrated with the page (services/conversations.js), so
@@ -637,6 +737,12 @@ export interface ConversationMessage {
    */
   saved?: boolean;
   pending?: boolean;
+  /**
+   * The sender's own message, written while the app had no connection: kept
+   * on the device and sent by itself when the connection is back (offline
+   * test, 2 Nov 2026, finding 1; store.ts flushQueued).
+   */
+  queued?: boolean;
   failed?: boolean;
   clientKey?: string;
 }
@@ -657,6 +763,12 @@ export interface ThreadRootRef {
   /** Its start, one line's worth; empty when it was deleted. */
   content: string;
   deleted: boolean;
+  /**
+   * #6250: the thread was started from the bot's "+", so neither its opener
+   * line nor its replies are in Main Chat (bot-shared.ts alsoInChat). A
+   * thread the bot opened from Main stays, as the way to its row.
+   */
+  plusThread?: boolean;
 }
 
 export interface ConversationSummary {
@@ -683,6 +795,13 @@ export interface ConversationSummary {
    * invitation, whose unread state is hidden, and from an older server.
    */
   lastReadMessageId?: number | null;
+  /**
+   * #6426: when the viewer last looked at this conversation, as the server
+   * records it (its read state). Main Chat's "Welcome back" card shows after
+   * eight hours away. Absent from an older server, and hidden on an
+   * invitation like the read cursor.
+   */
+  lastVisitAt?: string | null;
   /**
    * QA 2026-09-24 Q2: the viewer asked for this direct conversation and the
    * other person has not accepted yet. One opening message is allowed; after
@@ -894,6 +1013,12 @@ export interface ReplyThreadState {
    * thread is loading.
    */
   discussion?: DiscussionState | null;
+  /**
+   * B19 follow-up (audit, 2 Nov 2026): the first reply the reader had not
+   * read when the thread was opened, where it opens and its "New" line goes.
+   * Kept while it stays open; null when everything was read.
+   */
+  firstUnreadId?: number | null;
 }
 
 /** One message from the request's public discussion, shown in its bot-card thread (#5219). */

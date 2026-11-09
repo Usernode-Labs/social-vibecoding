@@ -31,11 +31,32 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const NOTE = (kind) => ({ kind, created_at: '2026-10-09T09:02:00Z' });
 const AFTER = '2026-10-09T09:10:00Z';
 const BEFORE = '2026-10-09T09:00:00Z';
-const msg = (body, { at = AFTER, quotesBot = false } = {}) => ({ body, createdAt: at, quotesBot });
+const msg = (body, { at = AFTER, quotesBot = false, userId = null } = {}) => ({ body, createdAt: at, quotesBot, userId });
 const comment = (author, body, at = AFTER) => ({ author, body, createdAt: at });
 
 test('the bot speaks the first time it could leave a note here', () => {
   assert.deepEqual(addressed.addressed({ lastNote: null }), { speak: true, why: 'first_note' });
+});
+
+test('#6399: after "I\'m taking this up now", the read that follows speaks, whatever the words', () => {
+  const promised = { kind: 'going_ahead', created_at: '2026-10-09T09:02:00Z', thread_message_id: 7 };
+  assert.deepEqual(addressed.addressed({ lastNote: promised }), { speak: true, why: 'promised' });
+  assert.deepEqual(addressed.addressed({ lastNote: promised, waitingOnly: true }), { speak: true, why: 'promised' },
+    'a look somebody asked for speaks too');
+  assert.deepEqual(addressed.addressed({ lastNote: promised, messages: [msg('thanks')] }), { speak: true, why: 'promised' });
+  assert.equal(addressed.waitingOn({ lastNote: promised }), null, 'a go-ahead is still not a note it waits on');
+});
+
+test('#6311: a re-read says the same note only when its words have not changed', () => {
+  const note = 'I think this is about Homeroom itself, not Ear trainer: the header is drawn by Homeroom.';
+  assert.equal(addressed.sameNote(note, note), true);
+  assert.equal(addressed.sameNote(note, 'I think this is about Homeroom itself, not Ear trainer: The header is drawn by Homeroom!'),
+    true, 'case and punctuation ignored');
+  assert.equal(addressed.sameNote(note, `${note} The button is the app's own.`), true, '80% of the words in common');
+  assert.equal(addressed.sameNote(note, 'I think this is about Homeroom itself, not Ear trainer: sign-in is Homeroom\'s own.'),
+    false, 'a different reason');
+  assert.equal(addressed.sameNote('', note), false);
+  assert.equal(addressed.sameNote(null, note), false, 'a missing previous text never matches');
 });
 
 test('people talking among themselves after a person note are not for the bot', () => {
@@ -179,6 +200,127 @@ test('#4530: the bot waits on people while its note stands unanswered and the re
   }), null, 'and an edit after it is still news');
 });
 
+// #6146 (ViaTales #52, 1 Nov 2026): the bot's "a person needs to decide"
+// note says "@snait can say Go ahead in a chat with me, or reply here". Its
+// requester replied there with the composer, the next look kept the verdict,
+// and it posted nothing: a plain message was taken for people talking among
+// themselves. A plain message from the requester or a decider the note
+// names is their answer.
+const REQUESTER = 31;
+const DECIDER = 50;
+const OTHER = 40;
+
+test('#6146: after a person note, a plain message from its requester or a named decider is their answer', () => {
+  const after = (kind, userId, extra = {}) => addressed.addressed({
+    lastNote: NOTE(kind), messages: [msg('Yep can you add it via commit?', { userId, ...extra })], answerers: [REQUESTER, DECIDER],
+  });
+  assert.deepEqual(after('person', REQUESTER), { speak: true, why: 'answer' }, 'the requester');
+  assert.deepEqual(after('person', DECIDER), { speak: true, why: 'answer' }, 'a decider the note names');
+  assert.deepEqual(after('person', OTHER), { speak: false, why: 'not_addressed' }, 'anyone else is still among themselves');
+  assert.deepEqual(after('empty', REQUESTER), { speak: false, why: 'not_addressed' }, 'only person and question notes take an answer');
+  assert.deepEqual(after('question', OTHER), { speak: true, why: 'answer' }, 'a question is answered by anyone, as before');
+  assert.deepEqual(after('person', REQUESTER, { at: BEFORE }), { speak: false, why: 'not_addressed' }, 'only words after the note');
+  // Quoting the bot or not: with the voice answering Replies, theirs is still
+  // the note's answer.
+  assert.deepEqual(addressed.addressed({
+    lastNote: NOTE('person'), messages: [msg('go ahead', { userId: REQUESTER, quotesBot: true })], answerers: [REQUESTER], voiceAnswers: true,
+  }), { speak: true, why: 'answer' });
+  assert.deepEqual(addressed.addressed({
+    lastNote: NOTE('person'), messages: [msg('go ahead', { userId: OTHER, quotesBot: true })], answerers: [REQUESTER], voiceAnswers: true,
+  }), { speak: false, why: 'not_addressed' }, 'somebody else\'s Reply is the voice\'s, as before');
+  assert.deepEqual(addressed.addressed({ lastNote: NOTE('person'), messages: [msg('go ahead', { userId: REQUESTER })] }),
+    { speak: false, why: 'not_addressed' }, 'with nobody named to answer, as before');
+});
+
+test('#6146: a person note its requester answered is not waited on: Ask is not refused, and the card stops offering a Reply', () => {
+  const note = { kind: 'person', created_at: '2026-10-09T09:02:00Z', thread_message_id: 41 };
+  assert.equal(addressed.waitingOn({ lastNote: note, messages: [msg('Yep can you add it via commit?', { userId: REQUESTER })], answerers: [REQUESTER] }), null);
+  assert.deepEqual(addressed.waitingOn({ lastNote: note, messages: [msg('ask the others', { userId: OTHER })], answerers: [REQUESTER] }),
+    { kind: 'person', messageId: 41 }, 'still waiting after somebody else\'s words');
+});
+
+test('#6146: who answers a person note: its requester, and the deciders it names', async () => {
+  const pool = (ids, fail = false) => ({
+    queries: [],
+    async query(sql, params) {
+      this.queries.push([String(sql), params]);
+      if (fail) throw new Error('database is down');
+      return { rows: ids.map((id) => ({ id })) };
+    },
+  });
+  const app = { id: 9, slug: 'viatales' };
+  const named = { requester: 'evan', requesterDecides: false, deciders: [{ username: 'snait', role: 'creator' }, { username: 'ann', role: 'admin' }] };
+  const both = pool([DECIDER, 51]);
+  assert.deepEqual(await bot.answerersOf(both, app, { userId: REQUESTER }, named), [REQUESTER, DECIDER, 51]);
+  assert.match(both.queries[0][0], /SELECT id FROM users WHERE username = ANY\(\$1::text\[\]\)/);
+  assert.deepEqual(both.queries[0][1], [['snait', 'ann']]);
+  const alone = pool([]);
+  assert.deepEqual(await bot.answerersOf(alone, app, { userId: REQUESTER }, { requesterDecides: true }), [REQUESTER], 'they decide alone');
+  assert.equal(alone.queries.length, 0);
+  assert.deepEqual(await bot.answerersOf(pool([]), app, null, named), [], 'no requester, nobody');
+  assert.deepEqual(await bot.answerersOf(pool([], true), app, { userId: REQUESTER }, named), [REQUESTER],
+    'the requester still answers when the deciders cannot be read');
+});
+
+test('#6146: the button and the card ask who answers only for a person note somebody wrote after', async () => {
+  // One request: the note and the words since it (loadAddressed's queries).
+  const one = (kind, rows) => ({
+    async query(sql) {
+      if (/FROM homeroom_bot_posts/.test(sql)) return { rows: [{ kind, created_at: '2026-10-09T09:02:00Z', thread_message_id: 41, own_comment_ids: [] }] };
+      return { rows };
+    },
+  });
+  const reads = [];
+  const github = {
+    async fetchPublicIssue(_o, _r, n) { reads.push('issue'); return { issue: { number: n, updatedAt: '2026-10-09T09:02:01Z' } }; },
+    async fetchIssueComments() { reads.push('comments'); return { comments: [], truncated: false }; },
+    async getBotUsername() { return 'usernode-bot'; },
+  };
+  const repo = { owner: 'o', repo: 'viatales' };
+  const asked = [];
+  const answerersOf = async () => { asked.push('who'); return [REQUESTER]; };
+  const theirs = [{ id: 7, user_id: REQUESTER, content: 'Yep can you add it via commit?', created_at: AFTER, quotes_bot: false }];
+  const ask = (pool, extra = {}) => addressed.waitingOnRequest(pool, { appId: 9, issueNumber: 52, botId: 77, github, repo, ...extra });
+  assert.deepEqual(await ask(one('person', theirs)), { kind: 'person', messageId: 41 }, 'without answerers, as before');
+  reads.length = 0;
+  assert.equal(await ask(one('person', theirs), { answerersOf }), null, 'Ask is not refused after the requester answered');
+  assert.deepEqual(reads, [], 'and GitHub is not read for it');
+  assert.deepEqual(asked, ['who']);
+  asked.length = 0;
+  await ask(one('person', []), { answerersOf });
+  await ask(one('question', []), { answerersOf });
+  assert.deepEqual(asked, [], 'not asked with nothing written after the note, nor for a question');
+
+  // The list: two queries for every request, and who answers only for the
+  // person note with words after it.
+  const list = {
+    async query(sql) {
+      if (/DISTINCT ON \(issue_number\)/.test(sql)) {
+        return { rows: [
+          { issue_number: 51, kind: 'question', created_at: '2026-10-09T09:02:00Z', thread_message_id: 61 },
+          { issue_number: 52, kind: 'person', created_at: '2026-10-09T09:02:00Z', thread_message_id: 62 },
+          { issue_number: 53, kind: 'person', created_at: '2026-10-09T09:02:00Z', thread_message_id: 63 },
+        ] };
+      }
+      return { rows: [
+        { issue_number: 52, user_id: REQUESTER, content: 'Yep can you add it via commit?', created_at: AFTER, quotes_bot: false },
+        { issue_number: 53, user_id: OTHER, content: 'ask the others', created_at: AFTER, quotes_bot: false },
+      ] };
+    },
+  };
+  const askedFor = [];
+  const waiting = await addressed.waitingByIssue(list, {
+    appId: 9, botId: 77, issues: [51, 52, 53].map((number) => ({ number, updatedAt: '2026-10-09T09:02:01Z' })),
+    answerersOf: async (n) => { askedFor.push(n); return [REQUESTER]; },
+  });
+  assert.deepEqual([...waiting.keys()].sort(), [51, 53], '52 was answered by its requester; 53 only talked about');
+  assert.deepEqual(askedFor.sort(), [52, 53]);
+
+  const dm = read('src/services/homeroom-bot-dm.js');
+  assert.match(dm, /answerersOf: async \(\) => settingsModule\(\)\.answerersOf\(pool, app, await requesterOf\(pool, app\.id, n\)/);
+  assert.match(dm, /waitingByIssue\(pool, \{ appId, botId: bot\.id, issues, answerersOf \}\)/);
+});
+
 // ── actOnVerdict at the gate ──
 
 const PERSON_PARSED = { verdict: 'person', reason: 'which of the two layouts the group wants' };
@@ -248,6 +390,27 @@ test('a repeat person note stays quiet while people talk among themselves', asyn
     [9, 12, '2026-10-09T09:02:00Z', 77], 'the words after the note, for its user');
 });
 
+test('#6311: a re-read whose note would say the same thing posts nothing, and a changed reason posts', async (t) => {
+  const seen = stubLive(t);
+  const noteText = live.personHomeroomText({ ...PERSON_PARSED, project: 'Chores', requester: null, deciders: [] });
+  const same = fakePool([
+    [/SELECT p\.kind, m\.content/, { rows: [{ kind: 'person', content: noteText }] }],
+    NOTE_ROUTE,
+    [/metadata->'quote'/, { rows: [{ id: 4, content: 'the list one, please', created_at: AFTER, quotes_bot: true }] }],
+  ]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: same, relook: true })), 'unchanged');
+  assert.equal(seen.posts.length, 0, 'the same note is not posted again');
+
+  seen.posts.length = 0;
+  const changed = fakePool([
+    [/SELECT p\.kind, m\.content/, { rows: [{ kind: 'person', content: 'I think a person needs to decide this one: something else entirely. The person who asked for it can say Go ahead in a chat with me, or reply here.' }] }],
+    NOTE_ROUTE,
+    [/metadata->'quote'/, { rows: [{ id: 4, content: 'now it is for a person', created_at: AFTER, quotes_bot: true }] }],
+  ]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: changed, relook: true })), 'person');
+  assert.equal(seen.posts.length, 1, 'a reason that changed is said');
+});
+
 test('the note is posted again after a mention, and after a reply to one of its messages', async (t) => {
   const seen = stubLive(t);
   const mentioned = fakePool([NOTE_ROUTE, talk('@homeroom_bot what did you mean by the header?')]);
@@ -270,6 +433,64 @@ test('a first look posts as it always did, and runs no gate query', async (t) =>
   assert.equal(await bot.actOnVerdict(verdictArgs({ pool, relook: false })), 'person');
   assert.equal(seen.posts.length, 1);
   assert.ok(!pool.queries.some(([sql]) => /homeroom_bot_posts/.test(sql)), 'the gate is not even asked');
+});
+
+// 6 Nov 2026 (#6430): a go-ahead typed in the request's own discussion is
+// the same refusal as one typed in the chat: one plain answer, said to the
+// person who gave it, and no note again.
+test('#6430: a re-read after a thread go-ahead posts the one plain answer, not the note', async (t) => {
+  const seen = stubLive(t);
+  const pool = fakePool([[/goAheadCannot/, { rows: [] }]]);
+  const parsed = {
+    verdict: 'person', reason: 'it was evan\'s go-ahead, and production access is involved',
+    goAheadDecides: false, firstStep: 'Just the three missing read tools',
+  };
+  const acted = await bot.actOnVerdict(verdictArgs({
+    pool, relook: false, parsed, goAhead: { by: 'evan', where: 'thread', messageId: 41 },
+  }));
+  assert.equal(acted, 'person');
+  assert.equal(seen.posts.length, 1, 'one post, not a note and an answer');
+  const said = seen.posts[0].homeroomText;
+  assert.match(said, /even with a go-ahead/);
+  assert.match(said, /your go-ahead/, 'the reader is spoken to, never named in the third person');
+  assert.doesNotMatch(said, /evan/i);
+  assert.doesNotMatch(said, /\bapprove/i, 'it never says somebody has to approve it');
+  assert.match(said, /A person has to build it, for example you with a coding agent/);
+  assert.match(said, /I can build this part now: Just the three missing read tools\.$/);
+  assert.equal(seen.posts[0].dm.goAheadDecides, false);
+  assert.equal(seen.posts[0].dm.firstStep, 'Just the three missing read tools');
+});
+
+test('#6430: a re-read says nothing when the thread already answered that go-ahead', async (t) => {
+  const seen = stubLive(t);
+  const pool = fakePool([[/goAheadCannot/, { rows: [{ ok: 1 }] }]]);
+  const parsed = { verdict: 'person', reason: 'x', goAheadDecides: false, firstStep: 'Just the read tools' };
+  const acted = await bot.actOnVerdict(verdictArgs({
+    pool, relook: false, parsed, goAhead: { by: 'evan', where: 'thread', messageId: 41 },
+  }));
+  assert.equal(acted, 'answered');
+  assert.equal(seen.posts.length, 0, 'the refusal appears once, under itself never twice');
+});
+
+test('#6399: a person note after "I\'m taking this up now" is posted, with its suggestion buttons', async (t) => {
+  const seen = stubLive(t);
+  const promised = [/FROM homeroom_bot_posts/, { rows: [{ kind: 'going_ahead', created_at: '2026-10-09T09:02:00Z' }] }];
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: fakePool([promised]), relook: true })), 'person');
+  assert.equal(seen.posts.length, 1, 'the promise is never the last word');
+  assert.equal(seen.posts[0].kind, 'person');
+
+  // #6399: a read somebody asked for again says what it found, even when its
+  // words repeat the last note (#6311 would otherwise hold it).
+  seen.posts.length = 0;
+  const noteText = live.personHomeroomText({ ...PERSON_PARSED, project: 'Chores', requester: null, deciders: [] });
+  const same = fakePool([
+    [/SELECT p\.kind, m\.content/, { rows: [{ kind: 'person', content: noteText }] }],
+    NOTE_ROUTE,
+    talk('the list one, please'),
+  ]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: same, relook: true, askedAgain: true })), 'person');
+  assert.equal(seen.posts.length, 1, 'a read asked for again posts even when the note repeats');
+  assert.equal(same.queries.some(([sql]) => /metadata->'quote'/.test(sql)), false, 'the gate is not asked');
 });
 
 test('a re-look that concludes the request is ready still acts', async (t) => {
@@ -334,17 +555,47 @@ test('#4530: an asked look speaks on a new request, after an answer, and after a
   assert.equal(seen.posts.length, 4);
 });
 
+// The requester (homeroom-bot-dm requesterOf) and a message of theirs.
+const REQUESTER_ROUTE = [/FROM homeroom_bot_requesters q JOIN users/, {
+  rows: [{ user_id: REQUESTER, username: 'evan', first_version: false, issue_title: 'Add Rumi', is_synthetic: false }],
+}];
+const said = (userId, body) => [/metadata->'quote'/, { rows: [{ id: 5, user_id: userId, content: body, created_at: AFTER, quotes_bot: false }] }];
+
+test('#6146: a repeat person note is said again after its requester\'s or a named decider\'s plain reply, not anyone else\'s', async (t) => {
+  const seen = stubLive(t);
+  const answered = fakePool([NOTE_ROUTE, REQUESTER_ROUTE, said(REQUESTER, 'Yep can you add it via commit?')]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: answered, relook: true })), 'person');
+  assert.equal(seen.posts.length, 1, 'the requester is answered');
+
+  const named = { requester: 'evan', members: 3, requesterDecides: false, deciders: [{ username: 'snait', role: 'creator' }] };
+  const byDecider = fakePool([
+    NOTE_ROUTE, REQUESTER_ROUTE, [/SELECT id FROM users WHERE username = ANY/, { rows: [{ id: DECIDER }] }], said(DECIDER, 'Go ahead.'),
+  ]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: byDecider, relook: true, decider: named })), 'person');
+  assert.equal(seen.posts.length, 2, 'so is a decider the note names');
+
+  const other = fakePool([NOTE_ROUTE, REQUESTER_ROUTE, said(OTHER, 'I would wait for the others.')]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: other, relook: true, decider: named })), 'unaddressed');
+  assert.equal(seen.posts.length, 2, 'somebody else is still talking among themselves');
+});
+
 test('runTriage gates exactly the looks the request itself started, and the ones somebody asked for', () => {
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /relook: item\.reason === 'changed' \|\| item\.reason === READ_AGAIN_REASON,\s*\n/);
   assert.match(src, /askedLook: item\.reason === ASKED_REASON,\s*\n\s*comments,/);
+  // #6399: only a read somebody asked for again is never held by the gate.
+  assert.match(src, /askedAgain: item\.reason === READ_AGAIN_REASON && Number\(item\.requested_by\) > 0,/);
   assert.match(src, /const ASKED_REASON = 'asked';/);
-  assert.match(src, /const gate = \(relook \|\| askedLook\) && !capSuppressed && addressedMod\(\)\.NOTE_KINDS\.includes\(parsed\.verdict\)/);
+  assert.match(src, /const gated = \(relook \|\| askedLook\) && !askedAgain && !capSuppressed && addressedMod\(\)\.NOTE_KINDS\.includes\(parsed\.verdict\);/);
+  assert.match(src, /const gate = gated\n\s+\? await addressedMod\(\)\.shouldSpeak\(pool, \{/);
   assert.match(src, /waitingOnly: !relook,/);
-  // The two doors that queue an 'asked' look: the request page's button and
-  // a request filed on a project the bot builds on.
+  // The two doors that queue a look: the request page's button and a request
+  // filed on a project the bot builds on. #6399: the page's button asks for a
+  // read again when it is that request's card saying so.
   const dm = read('src/services/homeroom-bot-dm.js');
-  assert.equal((dm.match(/reason: 'asked'/g) || []).length, 2);
+  assert.equal((dm.match(/reason: 'asked'/g) || []).length, 1);
+  assert.match(dm, /reason: readAgain \? settingsModule\(\)\.READ_AGAIN_REASON : 'asked'/);
+  assert.match(dm, /readAgain = false \}/);
 });
 
 // ── The queries, against the real schema ──
@@ -432,6 +683,7 @@ test('the gate reads the last note and the words since it, against PostgreSQL', 
   assert.equal(loaded.lastNote.kind, 'person');
   assert.equal(loaded.messages.length, 2, 'the bot\'s own lines and the deleted one are left out');
   assert.deepEqual(loaded.messages.map((m) => m.quotesBot), [true, false], 'the Reply names the bot\'s message');
+  assert.deepEqual(loaded.messages.map((m) => m.userId), [drea.id, evan.id], '#6146: and who wrote each');
   assert.equal(new Date(loaded.messages[0].createdAt).toISOString(), '2026-10-09T09:10:00.000Z');
 
   const replied = await addressed.shouldSpeak(pool, { appId: app.id, issueNumber: n, botId: homeroomBot.id });
@@ -449,6 +701,8 @@ test('the gate reads the last note and the words since it, against PostgreSQL', 
   await post(evan.id, 'Agreed, let us ask the others at the next meeting.', '2026-10-09T09:12:00Z', other);
   const quiet = await addressed.shouldSpeak(pool, { appId: app.id, issueNumber: other, botId: homeroomBot.id });
   assert.deepEqual(quiet, { speak: false, why: 'not_addressed' }, 'two people among themselves');
+  assert.deepEqual(await addressed.shouldSpeak(pool, { appId: app.id, issueNumber: other, botId: homeroomBot.id, answerers: [drea.id] }),
+    { speak: true, why: 'answer' }, '#6146: but drea asked for it, and her plain message is her answer');
 
   await post(evan.id, '@homeroom_bot then make it the list one', '2026-10-09T09:20:00Z', other);
   const now = await addressed.shouldSpeak(pool, { appId: app.id, issueNumber: other, botId: homeroomBot.id });
@@ -515,6 +769,12 @@ test('#4530: which requests the bot waits on, and its own comments by id, agains
   assert.deepEqual([...waiting.keys()].sort(), [51, 53]);
   assert.deepEqual(waiting.get(51), { kind: 'question', messageId: asked51 });
   assert.deepEqual(waiting.get(53), { kind: 'person', messageId: person53 });
+  // #6146: drea is the one who decides on 53, so her plain message answers it.
+  const answered = await addressed.waitingByIssue(pool, {
+    appId: app.id, botId: homeroomBot.id, issues: [{ number: 53, updatedAt: at('09:02:01') }],
+    answerersOf: async (n) => (n === 53 ? [drea.id] : []),
+  });
+  assert.equal(answered.size, 0, 'a person note its decider answered in the discussion');
   const edited = await addressed.waitingByIssue(pool, {
     appId: app.id, botId: homeroomBot.id, issues: [{ number: 51, updatedAt: at('09:40:00') }],
   });

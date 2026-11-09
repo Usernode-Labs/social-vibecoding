@@ -12,6 +12,7 @@ const attachmentsSvc = require('../services/attachments');
 const messageBookmarks = require('../services/message-bookmarks');
 const appChat = require('../services/app-chat');
 const { parkedSystemLineSql } = require('../services/kudos-parked');
+const threadsService = require('../services/threads');
 const groupChannelNotify = require('../services/group-channel-notify');
 const conversationsSvc = require('../services/conversations');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -584,6 +585,15 @@ function chatRoutes(config) {
       }
 
       const body = { messages, has_more_before: hasMoreBefore, has_more_after: hasMoreAfter };
+      // #6391: in a request's or a change's thread, the bot's reply carries a
+      // second button set for members it did not answer. Whether this reader
+      // is one is said once here, so the thread can draw it; posting needs
+      // membership anyway, so anyone else sees no buttons.
+      if (threadType === 'issue' || threadType === 'session') {
+        body.viewer_member = viewerId
+          ? await communities.isMember(pool, appId, viewerId).catch(() => false)
+          : false;
+      }
       if (focus) body.focus = focus;
       if (root) body.root = root;
       // The general stream's first page says where this reader's reading
@@ -626,12 +636,59 @@ function chatRoutes(config) {
       params.push(thread.type, thread.ref);
       // #6019: a request's page reads its whole thread: what was said on
       // every request in it (a thread holds more than one once two were
-      // merged), oldest first. A change's and a decision's own replies stay
-      // folded under their rows on the page, so they are not read here.
-      where += thread.type === 'issue'
-        ? ` AND m.thread_type = $2 AND (m.thread_ref = $3 OR (m.thread_id IS NOT NULL AND m.thread_id = (
-              SELECT r.thread_id FROM requests r WHERE r.app_id = $1 AND r.number = $3)))`
-        : ' AND m.thread_type = $2 AND m.thread_ref = $3';
+      // merged), oldest first. 1 Nov 2026 (one page per thread): and what
+      // was said and done on its changes, which have no page of their own
+      // now, for every change this viewer may read (threads.js
+      // visibleChangeSql). A decision's own replies stay folded under its
+      // row on the page, so they are not read here.
+      if (thread.type === 'issue') {
+        params.push(viewerId);
+        const reader = params.length;
+        const own = '(SELECT r.thread_id FROM requests r WHERE r.app_id = $1 AND r.number = $3)';
+        where += ` AND ((m.thread_type = $2 AND (m.thread_ref = $3 OR (m.thread_id IS NOT NULL AND m.thread_id = ${own})))
+            OR (m.thread_type = 'session' AND m.thread_id IS NOT NULL AND m.thread_id = ${own}
+              AND EXISTS (SELECT 1 FROM chat_sessions s
+                           WHERE s.id = m.thread_ref AND s.app_id = $1 AND s.thread_id = m.thread_id
+                             AND s.is_headless = FALSE
+                             AND ${threadsService.visibleChangeSql('s', `$${reader}`)})))`;
+        // #6229: a bot note written both on the request and on the change's
+        // own thread is one note. The change's page IS this page now (1 Nov
+        // 2026), so its copy is the twin of the request's and is not drawn:
+        // the issue copy is kept. Three shapes are folded, each only for a
+        // session row with an issue twin in the same thread: a bot post
+        // (the same post mark, or the same bot's same words within 10 s,
+        // the request's copy possibly leading with @handles), a plan card
+        // for the same version, and the workflow's promote line beside the
+        // bot's own "I built this" note for the same change. The bot is
+        // known by the mark post() writes on its issue copy, so this reads
+        // chat_messages alone (no users join). A person's rows are never
+        // folded.
+        where += ` AND NOT (m.thread_type = 'session' AND EXISTS (
+          SELECT 1 FROM chat_messages twin
+           WHERE twin.app_id = $1 AND twin.thread_type = 'issue'
+             AND twin.thread_id = m.thread_id
+             AND (
+               (m.metadata->>'hrbotPost' IS NOT NULL
+                AND twin.metadata->>'hrbotPost' = m.metadata->>'hrbotPost')
+               OR (twin.metadata->>'hrbotPost' IS NOT NULL
+                   AND twin.user_id IS NOT NULL AND twin.user_id = m.user_id
+                   AND ABS(EXTRACT(EPOCH FROM (twin.created_at - m.created_at))) <= 10
+                   AND (twin.content = m.content
+                        OR right(twin.content, length(m.content) + 1) = ' ' || m.content))
+               OR (m.msg_type = 'spec_share' AND twin.msg_type = 'spec_share'
+                   AND m.metadata->'specShare'->>'sessionId' IS NOT NULL
+                   AND twin.metadata->'specShare'->>'sessionId' = m.metadata->'specShare'->>'sessionId'
+                   AND twin.metadata->'specShare'->>'version' = m.metadata->'specShare'->>'version')
+               OR (m.msg_type = 'vote' AND m.user_id IS NULL
+                   AND twin.user_id IS NOT NULL
+                   AND twin.metadata->>'hrbotPost' IS NOT NULL
+                   AND twin.metadata->'vote'->>'sessionId' IS NOT NULL
+                   AND twin.metadata->'vote'->>'sessionId' = m.metadata->'vote'->>'sessionId')
+             )
+        ))`;
+      } else {
+        where += ' AND m.thread_type = $2 AND m.thread_ref = $3';
+      }
       // #5249: a request's or a proposal's thread does not draw the system
       // lines a kudos bounty wrote there ("… placed a bounty (kudos) on
       // issue #n", "Bounty on issue #n (k kudos) awarded to …") while kudos
@@ -1211,25 +1268,32 @@ function chatRoutes(config) {
       }
     });
 
-  //   POST /api/apps/:slug/messages/:id/bot-offer  { choice: 'yes' | 'no' }
+  //   POST /api/apps/:slug/messages/:id/bot-offer  { choice: 'yes' | 'no' | 'first' }
   //     → a tap under one of Homeroom bot's offers in a thread
   //       (homeroom-bot-voice.js decideOffer): File it, Withdraw it or
   //       Propose to close, or Not now / Keep it. Only the person it was
-  //       offered to, once, and every gate the offer met is read again.
+  //       offered to (or any member, for an "already works" note's Propose
+  //       to close, #6321), once, and every gate the offer met is read again.
   //       Members only, from the person's own browser.
   router.post('/api/apps/:slug/messages/:id/bot-offer', groupChatWriteLimiter, sameOriginBrowserOnly,
     communities.requireAppMembership(pool), async (req, res) => {
       res.set('Cache-Control', 'private, no-store');
       if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
       const choice = req.body?.choice;
-      if (choice !== 'yes' && choice !== 'no') return res.status(400).json({ error: 'Choose yes or no.' });
+      // #6211: an overlap note's third choice (build this one first) too.
+      if (choice !== 'yes' && choice !== 'no' && choice !== 'first') return res.status(400).json({ error: 'Choose yes or no.' });
+      // #6305: a many-project card's File on all says which rows are ticked.
+      const rows = Array.isArray(req.body?.rows)
+        ? req.body.rows.filter((r) => typeof r === 'string').slice(0, 12)
+        : null;
+      if (rows && choice === 'yes' && !rows.length) return res.status(400).json({ error: 'Tick at least one project.' });
       const id = Number(req.params.id);
       if (!Number.isInteger(id) || id <= 0) return res.status(404).json({ error: 'Message not found' });
       try {
         const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS);
         if (!app) return res.status(404).json({ error: 'App not found' });
         const out = await require('../services/homeroom-bot-voice').decideOffer(pool, config, {
-          app, user: req.user, messageId: id, choice,
+          app, user: req.user, messageId: id, choice, rows,
         });
         if (!out.ok) {
           return res.status(out.status || 400).json({ error: out.error || 'That didn\'t work.', said: out.said || null });

@@ -16,9 +16,17 @@
  *
  * `fill` (#194 card-list revision) is the topic sub-view's thread: it fills its
  * flex container and mirrors the general chat pane — full-width message list,
- * an h-5 typing slot, a bordered-top composer at the bottom of the screen. The
+ * then the status line and the composer bar at the bottom of the screen. The
  * other is the boxed inline layout kept for any legacy caller, where the
  * message list is itself a 40vh scroller.
+ *
+ * Every layout here ends in the chat foot Messages and the general chat end
+ * in (@/components/ui/chat, "A chat's foot", 1 November 2026): the scroller
+ * wears `chat-transcript`, so its transcript ends 12px inside it and it meets
+ * the composer's card; Jump to latest hangs from its foot; the status line
+ * takes no room until somebody types; the bar is `ChatComposerBar`. Each
+ * layout used to give its typing slot a height of its own (`h-5`, `h-4`) and
+ * its bar 4px of padding over the card (`pt-1`).
  *
  * In fill mode an optional header slot and the messages list share ONE scroll
  * container (#363), so a topic's card and its discussion scroll as one area.
@@ -56,8 +64,9 @@
  * draft, the typing ping, the multi-line submit semantics and the Escape rule.
  */
 
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
+import { ChatComposerBar } from '@/components/ui/chat';
 import { useMessages } from '../../lib/i18n/react';
 import { JumpToLatest } from '../messages/jump-to-latest';
 import { ComposerForm, ComposerSlots, StatusLine } from './composer';
@@ -93,14 +102,22 @@ export interface ThreadShellProps {
    * as its root post. Fill mode only.
    */
   change?: boolean;
+  /**
+   * #6440: a governance vote's page — the same sheet again, with the vote as
+   * its root post. Fill mode only.
+   */
+  decision?: boolean;
 }
 
-function Composer({ fill, readOnly, notice, placeholder, maxLength, request = false, change = false }: ThreadShellProps) {
+function Composer({ fill, readOnly, notice, placeholder, maxLength, request = false, change = false, decision = false }: ThreadShellProps) {
   // `platform-safe-bar` on BOTH variants: in fill mode this block is the
   // bottom of the screen, so it carries the home-indicator inset above its own
   // padding, and the read-only notice that replaces it needs the identical
   // clearance. In the boxed layout the bar is not screen-bottom-anchored, so
-  // the inset is inert — harmless, and it keeps one class per role.
+  // the inset is inert: harmless, and it keeps one class per role. The bar
+  // gets it from ChatComposerBar, with the padding every chat's bar has; the
+  // notice, which is a line of text rather than a bar round a card, keeps its
+  // own padding and names the class itself.
   if (readOnly) {
     return (
       <div
@@ -110,19 +127,19 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength, request = fa
       </div>
     );
   }
-  if (request || change) {
+  if (request || change || decision) {
     return (
-      <div className={`messages-composer messages-composer-thread ${SAFE_BAR}`}>
+      <ChatComposerBar className="messages-composer messages-composer-thread">
         <ComposerSlots scope="thread" />
         <ComposerForm scope="thread" fill={fill} placeholder={placeholder} maxLength={maxLength} messages />
-      </div>
+      </ChatComposerBar>
     );
   }
   return (
-    <div className={`shrink-0 px-3 pt-1 pb-2 ${SAFE_BAR}`}>
+    <ChatComposerBar>
       <ComposerSlots scope="thread" />
       <ComposerForm scope="thread" fill={fill} placeholder={placeholder} maxLength={maxLength} />
-    </div>
+    </ChatComposerBar>
   );
 }
 
@@ -146,30 +163,64 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength, request = fa
  * #4455: a change's page is the same sheet, with the change as its root post
  * (features/dev-board/topic/change-head.tsx). `.dev-change` beside
  * `.dev-request` is what app.css tells the two apart by.
+ *
+ * #6440: a governance vote's page is the same sheet a third time, with the
+ * vote as its root post (features/dev-board/topic/governance-head.tsx); it
+ * wears `.dev-decision` beside `.dev-request`, which is what app.css reads.
  */
 function RequestShell(props: ThreadShellProps) {
   const t = useMessages('project');
   const scroll = useRef<HTMLDivElement>(null);
   const change = !!props.change;
+  const decision = !!props.decision;
+  // #6440: a decision opens at its TOP — its root post and Votes card are
+  // what the page is for, not the newest reply. The thread renderer places
+  // a chat at its bottom, and its history lands a paint or two later, so
+  // hold the top for the first moment of the page; any scroll, wheel or
+  // touch from the reader ends that at once and leaves the page to them.
+  useEffect(() => {
+    if (!decision) return undefined;
+    const el = scroll.current;
+    if (!el) return undefined;
+    const started = performance.now();
+    let raf = 0;
+    const stop = () => { cancelAnimationFrame(raf); };
+    const holdTop = () => {
+      el.scrollTop = 0;
+      const gc = (window as Window & { GroupChat?: { _threadPinned?: boolean } }).GroupChat;
+      if (gc) gc._threadPinned = false;
+      if (performance.now() - started < 1500) raf = requestAnimationFrame(holdTop);
+    };
+    raf = requestAnimationFrame(holdTop);
+    el.addEventListener('pointerdown', stop, { once: true });
+    el.addEventListener('wheel', stop, { once: true, passive: true });
+    el.addEventListener('touchmove', stop, { once: true, passive: true });
+    return () => {
+      stop();
+      el.removeEventListener('pointerdown', stop);
+      el.removeEventListener('wheel', stop);
+      el.removeEventListener('touchmove', stop);
+    };
+  }, [decision]);
+  const cls = change ? 'dev-request dev-change platform-kb-column'
+    : decision ? 'dev-request dev-decision platform-kb-column'
+      : 'dev-request platform-kb-column';
   return (
-    <div className={change ? 'dev-request dev-change platform-kb-column' : 'dev-request platform-kb-column'}>
+    <div className={cls}>
       <div id="gc-thread-back" className="dev-request-back" />
-      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? t('project:topic.change.sheetLabel') : t('project:topic.request.sheetLabel')}>
+      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? t('project:topic.change.sheetLabel') : decision ? t('project:topic.decision.sheetLabel') : t('project:topic.request.sheetLabel')}>
         <div id="gc-thread-bar" className="dev-request-bar" />
-        <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain">
+        <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain chat-transcript">
           <div id="gc-thread-head" />
-          {/* #5725: a change page's pin, where its Votes card is repeated and
-              sticks to the top of the scroller while the reader scrolls the
-              thread (topic/change-head.tsx). It is the scroller's own child,
-              so it travels the whole transcript; a request page renders none,
-              so its markup is unchanged. */}
-          {change ? <div id="gc-thread-pin" /> : null}
           <div id="gc-thread-messages" />
         </div>
-        {/* #4553: the button docks in a strip, so it never covers the change
-            or request cards (their Vote, Re-run checks, Preview) under it. */}
-        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} docked />
-        <StatusLine scope="thread" className="px-4 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
+        {/* Floating over the transcript's foot, with nothing behind it
+            (1 Nov 2026). #4553 docked it in a strip of its own so it never
+            covered the cards' buttons, but the strip cut the transcript off
+            above it and read as a solid box; it is up only while the reader
+            is up the page. */}
+        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} />
+        <StatusLine scope="thread" />
         <Composer {...props} />
       </section>
     </div>
@@ -179,7 +230,7 @@ function RequestShell(props: ThreadShellProps) {
 export function ThreadShell(props: ThreadShellProps) {
   const { fill, withHeader } = props;
   const scroll = useRef<HTMLDivElement>(null);
-  if (fill && (props.request || props.change)) return <RequestShell {...props} />;
+  if (fill && (props.request || props.change || props.decision)) return <RequestShell {...props} />;
   if (fill) {
     return (
       // `platform-kb-column` is what app.css hangs the keyboard reservation
@@ -192,29 +243,31 @@ export function ThreadShell(props: ThreadShellProps) {
         <div
           ref={scroll}
           id="gc-thread-scroll"
-          className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 pt-3"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 pt-3 chat-transcript"
         >
           {withHeader ? <div id="gc-thread-head" /> : null}
-          <div id="gc-thread-messages" className="py-2 space-y-0.5" />
+          {/* `pt-2` alone: the transcript's end is the scroller's (above). */}
+          <div id="gc-thread-messages" className="pt-2 space-y-0.5" />
         </div>
         {/* A topic opens at its card (#363), so the way down is up from the
-            start whenever the discussion runs past the screen. #4553: the
-            button docks in a strip below the scroller, so it never covers
-            the card. */}
-        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} docked />
-        <StatusLine scope="thread" className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
+            start whenever the discussion runs past the screen. It floats
+            over the transcript's foot, as on a change's page (above). */}
+        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} />
+        <StatusLine scope="thread" />
         <Composer {...props} />
       </div>
     );
   }
   return (
     <div className="dev-thread border border-zinc-200 dark:border-zinc-800 rounded-xl flex flex-col bg-zinc-50/50 dark:bg-zinc-900/40">
+      {/* The messages host is the scroller here, so it is what wears
+          `chat-transcript`; its `pt-1` is its top alone. */}
       <div
         id="gc-thread-messages"
-        className="overflow-y-auto px-2 py-1 space-y-0.5"
+        className="overflow-y-auto px-2 pt-1 space-y-0.5 chat-transcript"
         style={{ maxHeight: '40vh', minHeight: '60px' }}
       />
-      <StatusLine scope="thread" className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-4 shrink-0" />
+      <StatusLine scope="thread" />
       <Composer {...props} />
     </div>
   );

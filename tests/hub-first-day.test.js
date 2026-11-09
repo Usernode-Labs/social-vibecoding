@@ -147,7 +147,7 @@ test('Share it: a ✕ that closes it, and one line about the invite that is out'
   assert.match(src, /<HubCardClose card="share" onClose=\{close\} \/>/);
   // What it offered stays on the page: Invite in the hero's row.
   assert.match(src, /\{member \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/);
-  assert.match(read('public/css/app.css'), /\.dev-ws-card-close \{\s*margin: -6px -6px -6px auto;/);
+  assert.match(read('public/css/app.css'), /\.dev-ws-card-close \{\s*margin-block: -6px -6px; margin-inline: auto -6px;/);
 });
 
 test('the invite line says how many joined and how long the soonest link has left, in words', () => {
@@ -175,7 +175,7 @@ test('the invite line says how many joined and how long the soonest link has lef
 
 test('the hub read carries the invite links out, summed as listInvites lists them, and since when the app is live', () => {
   const invites = require('../src/services/community-invites');
-  const link = (over) => ({ status: 'live', joined: 0, waiting: 0, expiresAt: null, ...over });
+  const link = (over) => ({ status: 'live', joined: 0, waiting: 0, expiresAt: null, shared: true, ...over });
   assert.deepEqual(invites.summarizeLinks([
     link({ joined: 1, expiresAt: '2026-10-22T10:00:00.000Z' }),
     link({ waiting: 2, expiresAt: '2026-10-18T10:00:00.000Z' }),
@@ -185,6 +185,9 @@ test('the hub read carries the invite links out, summed as listInvites lists the
   ]), { links: 3, joined: 1, waiting: 2, expires_at: '2026-10-18T10:00:00.000Z' }, 'the live ones alone, and the soonest end');
   assert.deepEqual(invites.summarizeLinks([]), { links: 0, joined: 0, waiting: 0, expires_at: null });
   assert.deepEqual(invites.summarizeLinks([link({})]).expires_at, null, 'no end: none');
+  // Audit D03: a link nobody copied, shared or came through is not out.
+  assert.equal(invites.summarizeLinks([link({ shared: false })]).links, 0, 'made by opening the pane: not out');
+  assert.equal(invites.summarizeLinks([link({ shared: false, waiting: 1 })]).links, 1, 'somebody came through it: out');
   const svc = read('src/services/community-invites.js');
   assert.match(svc, /async function inviteSummary\(pool, \{ app, user \}\) \{\s*if \(!app \|\| !user\) return null;\s*const \{ links \} = await listInvites\(pool, \{ app, user \}\);\s*return summarizeLinks\(links\);/,
     'the very links listInvites shows this viewer: their own, or every one to someone who manages the project');

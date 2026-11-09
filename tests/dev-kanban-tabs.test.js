@@ -128,10 +128,10 @@ test('Done column visibly names the live production boundary', () => {
   };
   const html = kanbanHtml(AppView);
   assert.match(html, /data-kanban-col-status="done"/);
-  assert.match(html, /Live in production through PR #42 · abcdef0/, 'in the board\u2019s words (#4486)');
+  assert.match(html, /Live in production through PR 42 · abcdef0/, 'in the board\u2019s words (#4486)');
   // A child app names the change too, when the deployment knows it.
   AppView._mergedCtx.deployment = { kind: 'child', state: 'deployed', runningSha: 'abcdef0123', livePrNumber: 42 };
-  assert.match(kanbanHtml(AppView), /Live in production through PR #42</);
+  assert.match(kanbanHtml(AppView), /Live in production through PR 42</);
 });
 
 test('Done column calls out pending and stalled production changes', () => {
@@ -257,7 +257,7 @@ test('the strip is the pipeline (#4486): a step per stage, its icon, name and co
     assert.ok(!/violet|bg-zinc|border-b/.test(tab), 'its treatment is app.css\u2019s, by state, not a class string');
     assert.match(strip, new RegExp(`data-kind="${key}"[^>]*><svg[\\s\\S]*?</svg></span><span class="dev-kanban-step-name">${title}</span>`));
   }
-  assert.equal((strip.match(/class="dev-kanban-step-arrow"/g) || []).length, 3, 'arrows between the steps');
+  assert.equal((strip.match(/class="dev-kanban-step-arrow[^"]*"/g) || []).length, 3, 'arrows between the steps');
   // The lit tab on a phone wears the "where you are" tokens, as the tab
   // bars do; on a wide window nothing is lit, every column being up.
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');

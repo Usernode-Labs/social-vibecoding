@@ -1,15 +1,15 @@
 import { openReport } from '../dialogs/report';
 import {
-  Fragment, memo, useDeferredValue, useCallback, useEffect, useMemo, useRef, useState,
+  Fragment, createContext, memo, useDeferredValue, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
-  JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,
+  ChatStatusLine, JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,
 } from '@/components/ui/chat';
 import {
-  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, EllipsisHorizontalIcon, PencilSparklesIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, ChevronLeftIcon, EllipsisHorizontalIcon, LockIcon, PencilSparklesIcon,
   PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
@@ -17,6 +17,7 @@ import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { useCommunityColor } from '../../lib/community-color';
+import { dirSign, ownDirection } from '../../lib/i18n/direction';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -30,21 +31,27 @@ import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-st
 import * as api from './api';
 import { BotActivitySync, isActivityMessage, isMovedActivity } from './bot-activity';
 import { botHead } from './bot-head-card';
-import { NO_PLAN_LAYOUT, isPlanMessage, planLayout } from './bot-plan';
+import { NO_PLAN_LAYOUT, asksWithQuestionsCard, isPlanMessage, planLayout } from './bot-plan';
 import { botMeta } from './bot-question';
 import { isReadyMessage } from './bot-ready';
 import {
   alsoInChat, botRequestNames, botThreadTitle, changeBlocks, dotText, threadsAllowed, type ChangeBlock,
 } from './bot-shared';
-import { POLL_MS } from './bot-activity-store';
-import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, WORK_CHANGED_EVENT } from './bot-work';
-import { PrivateThreadBar } from './private-thread-bar';
-import { BotStrip, RequestTag, stripGroups, summaryParts } from './bot-strip';
+import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, useWorkChanged } from './bot-work';
+import {
+  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, privateThreadTitle, privateThreadWords, usePrivateThread,
+} from './private-thread-bar';
+import { requestPageOf } from './request-page';
+import { RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
-import { BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
-import { requestKey } from './bot-request';
+import { asksInChat, BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
+import { isPlusThreadOpener, isRequestNews, requestKey } from './bot-request';
+import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
-import { useMessagesDrawer, type Peek } from './phone-drawer';
+import { WelcomeBack } from './welcome-back';
+import { dropOnComposer, useComposerDropReady } from './pane-drop';
+import { DropOverlay, useFileDrag } from '../attachments/file-drag';
+import { useMessagesDrawer } from './phone-drawer';
 import { messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
@@ -56,7 +63,7 @@ import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import { ShareToDialog } from './share-to-dialog';
 import { JumpToLatest } from './jump-to-latest';
-import { centreInScroller, isNearTop, needsMoreHistory, useStickToBottom } from './stick-to-bottom';
+import { centreInScroller, isNearBottom, isNearStart, isNearTop, LOAD_NEWER_SLACK_PX, needsMoreHistory, useStickToBottom } from './stick-to-bottom';
 import {
   firstUnreadId, jumpLabel, lineTopIn, messageRow, newMessagesLabel, openingScrollTop, useLineHold, useUnreadAffordances,
 } from './unread-anchor';
@@ -86,13 +93,19 @@ import {
   setListCollapsed,
   setSectionFolded,
   FOLDABLE,
+  scopeKey,
   syncChrome,
   followPlatformSlug,
   typingUsers,
   useChannelHandles,
   useMessagesSnapshot,
+  type ComposerScope,
 } from './store';
 import { typingLine } from './typing-line';
+import { BotWorkingCard, typingBesides, workingBot } from './bot-working';
+import { DesignPane, DesignViewSwitch, isDesignRoot, isDesignThread, setDesignView, useDesignView } from './design-pane';
+import { openPreview, usePreview } from '../ai/preview';
+import { NewThreadButton, NewThreadPanel, startedThreadTitle, useNewThread } from './new-thread';
 import { issueRefHref } from './channels';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { PageBackButton } from '../dev-board/workshop/page-back';
@@ -119,7 +132,6 @@ import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
 import { INBOX_QUERY_MAX, INBOX_SECTIONS, agentAsksForYou, buildInbox, savedInboxQuery, shownInSection, type AppDiscussion, type InboxSection } from './inbox';
-import { publishRailInbox, railCandidates, railConversations, type RailConversation } from './rail-inbox';
 import { useSidebarRows } from '../nav/sidebar-rows';
 import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
 
@@ -152,6 +164,17 @@ import type { ConversationDetail, ConversationMessage, ConversationSummary, Disc
 
 function openDialog(name: 'messagesCreate' | 'messagesMembers' | 'messagesShare', payload?: unknown) {
   window.UsernodeReact?.dialogs?.[name]?.open(payload);
+}
+
+/**
+ * #6254: the whole thread pane takes a dropped file, not only the box at its
+ * foot. The composer for this pane's scope owns the upload (./pane-drop), so
+ * the pane asks whether one is drawn — an awaiting or cannot-send thread
+ * shows no outline and drops nothing — and hands the files over.
+ */
+function usePaneDrop(scope: ComposerScope) {
+  const ready = useComposerDropReady(scope);
+  return useFileDrag({ disabled: !ready, onFiles: (files) => { dropOnComposer(scope, files); } });
 }
 
 function conversationPeer(conversation: ConversationSummary) {
@@ -207,7 +230,7 @@ function GroupMemberCount({ count }: { count: number }) {
  * initials, as today. A member with no photo falls back to their initials
  * tile, the way avatars look everywhere else.
  */
-function GroupFaces({ conversation }: { conversation: ConversationSummary }) {
+function GroupFaces({ conversation }: { conversation: Pick<ConversationSummary, 'members' | 'title'> }) {
   const viewerId = typeof window !== 'undefined' ? Number(window.App?.user?.id) : 0;
   const others = conversation.members
     .filter((member) => member.status === 'member' && Number(member.id) !== viewerId)
@@ -232,6 +255,9 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
 }) {
   const t = useMessages('messages');
   const peer = directPerson(conversation);
+  // #6118: the name is its own hover hint, so a row the layout ellipsises can
+  // still be read whole without opening the conversation.
+  const rowName = conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title;
   const invited = conversation.membershipStatus === 'invited';
   const unread = conversation.unreadCount > 0;
   // #1808: the shared ago ladder, which stops being relative at a week — a
@@ -248,8 +274,8 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
     : null;
   const groupPreview = groupSender?.id && conversation.latestSummary
     ? (Number(groupSender.id) === Number(window.App?.user?.id)
-      ? t('messages:inbox.previewYou', { message: conversation.latestSummary })
-      : t('messages:inbox.previewBy', { username: groupSender.username, message: conversation.latestSummary }))
+      ? t('messages:inbox.previewYou', { message: ownDirection(conversation.latestSummary) })
+      : t('messages:inbox.previewBy', { username: groupSender.username, message: ownDirection(conversation.latestSummary) }))
     : null;
   return (
     <a
@@ -274,11 +300,11 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
             "2 new" in grey (#18: grey is new to read, the accent is waiting
             on you) — without adding a third line. */}
         <div className="messages-row-line">
-          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">{t('messages:inbox.aiBadge')}</span> : null}{conversation.kind === 'group' && !invited ? <GroupMemberCount count={conversation.memberCount} /> : null}</span>
+          <span className="messages-row-name" title={rowName || undefined}>{conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">{t('messages:inbox.aiBadge')}</span> : null}{conversation.kind === 'group' && !invited ? <GroupMemberCount count={conversation.memberCount} /> : null}</span>
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
-          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : groupPreview ?? (preview || conversation.latestSummary || t('messages:inbox.noMessages'))}</span>
+          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : groupPreview ?? (ownDirection(preview || conversation.latestSummary || '') || t('messages:inbox.noMessages'))}</span>
           {conversation.unreadCount > 0 ? <span className="messages-unread">{t('messages:inbox.newCount', { count: conversation.unreadCount })}</span> : null}
         </div>
       </div>
@@ -322,7 +348,7 @@ const GeneralChannelRow = memo(function GeneralChannelRow({ conversation, active
         <div className="messages-row-line">
           <span className="messages-row-preview">
             {conversation.latestSummary
-              ? (by ? t('messages:inbox.previewBy', { username: by, message: conversation.latestSummary }) : conversation.latestSummary)
+              ? (by ? t('messages:inbox.previewBy', { username: by, message: ownDirection(conversation.latestSummary) }) : ownDirection(conversation.latestSummary))
               : t('messages:inbox.everyone')}
           </span>
           {unread ? <span className="messages-unread">{t('messages:inbox.newCount', { count: conversation.unreadCount })}</span> : null}
@@ -383,7 +409,7 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
         <div className="messages-row-line">
           <span className="messages-row-preview">
             {discussion.lastMessage
-              ? (discussion.lastBy ? t('messages:inbox.previewBy', { username: discussion.lastBy, message: plainText(discussion.lastMessage) }) : plainText(discussion.lastMessage))
+              ? (discussion.lastBy ? t('messages:inbox.previewBy', { username: discussion.lastBy, message: ownDirection(plainText(discussion.lastMessage)) }) : ownDirection(plainText(discussion.lastMessage)))
               : t('messages:inbox.noMessages')}
           </span>
           {unread ? <span className="messages-unread">{t('messages:inbox.newCount', { count: unread })}</span> : null}
@@ -683,7 +709,7 @@ function ConversationRowSkeleton() {
                 the real row's trailing <time>. */}
             <div className="flex items-center gap-2">
               <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
-              <Skeleton shape="muted" className="ml-auto w-8" />
+              <Skeleton shape="muted" className="ms-auto w-8" />
             </div>
             {/* The preview line under it. */}
             <Skeleton shape="muted" className={`mt-1.5 ${i % 3 ? 'w-3/5' : 'w-2/5'}`} />
@@ -694,11 +720,9 @@ function ConversationRowSkeleton() {
   );
 }
 
-function ConversationList({ drawer = false, litId = null }: {
+function ConversationList({ drawer = false }: {
   /** The phone's drawer holds the screen (./phone-drawer.tsx): the list stays drawn beside a conversation. */
   drawer?: boolean;
-  /** The conversation peeking beside the list, lit as the one you were in. */
-  litId?: number | null;
 } = {}) {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
@@ -844,47 +868,22 @@ function ConversationList({ drawer = false, litId = null }: {
     return false;
   };
   const openKey = found.find(isOpen)?.key || null;
-  // v3 (18 Oct 2026): what the desktop's sidebar nests under Messages
-  // (./rail-inbox.ts), from the whole inbox, whatever the search box holds.
-  const railOpenKey = inbox.find(isOpen)?.key || null;
-  useEffect(() => {
-    // #5693: an agent chat is seated only while it asks for you.
-    const rows = railConversations(railCandidates(inbox, asksForYou))
-      .map(railRow)
-      .filter((row): row is RailConversation => !!row);
-    publishRailInbox({ rows, openKey: railOpenKey, page: !(snap.route.conversationId || snap.route.appSlug || snap.route.agent) });
-  });
   // An agent row that asks for you is never behind "Show N more": a change
   // waiting on you ("Needs you") or an agent at work.
-  // (./inbox.ts asksForYou, shared with the sidebar's seats, #5693).
+  // (./inbox.ts asksForYou, #5693).
   const asksForYou = (entry: { kind: string; key: string }) => agentAsksForYou(entry, bySession, byMayor);
 
   // 16 Oct 2026: what the Homeroom bot's row says. What waits on you and
-  // what it is doing, in the words of its chat's own activity bar
-  // (./bot-strip.tsx summaryParts: "1 needs you · 2 in progress"), read
-  // from the same store once this list is up; its last message until then.
-  // #5392: the row stays current, the same live reads the DM's strip runs
-  // (./bot-work.tsx): again whenever the list opens and the bot's work
-  // moves (its news lands, the work-changed event), and every POLL_MS while
-  // it has work in hand and the page is in view.
+  // what it is doing ("1 needs you · 2 in progress", ./bot-strip.tsx
+  // summaryParts), counted from your requests' tracks once this list is up;
+  // its last message until then. #5392: the row stays current: read again
+  // whenever the list opens and a request's stage moves (./bot-work.tsx).
   const botWork = useBotWork();
   const botConversation = snap.conversations.find((item) => item.homeroomBot && item.kind !== 'channel') || null;
   useEffect(() => {
     if (mounted && botConversation) loadBotWork();
   }, [mounted, botConversation?.id, botConversation?.lastActivityAt]);
-  useEffect(() => {
-    if (!botConversation) return undefined;
-    const changed = () => loadBotWork();
-    window.addEventListener(WORK_CHANGED_EVENT, changed);
-    return () => window.removeEventListener(WORK_CHANGED_EVENT, changed);
-  }, [botConversation]);
-  useEffect(() => {
-    if (!botConversation || !botWork.work?.now.length || document.visibilityState === 'hidden') return undefined;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState !== 'hidden') loadBotWork();
-    }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [botConversation, botWork.work?.now.length]);
+  useWorkChanged(!!botConversation);
   const botLine = useMemo(() => {
     if (!botWork.work) return null;
     const parts = summaryParts(stripGroups(botWork.work));
@@ -1059,54 +1058,6 @@ function ConversationList({ drawer = false, litId = null }: {
     </section>
   );
 
-  /** A row of the sidebar's nested conversations: the list row's address, name, count and face, small. */
-  function railRow(entry: { kind: string; key: string; section: InboxSection }): RailConversation | null {
-    const base = { key: entry.key, section: entry.section, unread: 0 };
-    if (entry.kind === 'person') {
-      const conversation = byConversation.get(entry.key.slice('person:'.length));
-      if (!conversation) return null;
-      const peer = directPerson(conversation);
-      const viewerId = Number(window.App?.user?.id);
-      const face = conversation.kind === 'group' && conversation.membershipStatus !== 'invited'
-        ? conversation.members.find((member) => member.status === 'member' && Number(member.id) !== viewerId) || null
-        : null;
-      return {
-        ...base,
-        href: `#messages/${conversation.id}`,
-        name: conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title,
-        unread: Math.max(0, Number(conversation.unreadCount) || 0),
-        lead: face
-          ? <UserAvatar user={face} size="sm" shape="square" />
-          : <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={peer?.username || conversation.title} size="sm" shape="square" />,
-        reselect: () => selectConversation(conversation.id),
-      };
-    }
-    if (entry.kind === 'session') {
-      const session = bySession.get(entry.key.slice('session:'.length));
-      return session
-        ? { ...base, href: session.href, name: session.title || session.appName || '', lead: <ChangeTile session={session} /> }
-        : null;
-    }
-    const agentTile = (
-      <span className="messages-inbox-tile messages-inbox-agent-tile" aria-hidden="true">
-        <SparklesIcon className="w-5 h-5" />
-      </span>
-    );
-    if (entry.kind === 'mayor') {
-      const session = byMayor.get(entry.key.slice('mayor:'.length));
-      if (!session) return null;
-      const thread: MessagesAgentThread = { kind: 'agent', id: session.id };
-      return {
-        ...base,
-        href: agentThreadAddress(thread),
-        name: session.title || t('messages:agent.row.newSession'),
-        lead: agentTile,
-        reselect: () => openAgentThread(thread),
-      };
-    }
-    return null;
-  }
-
   function inboxRow(entry: { kind: string; key: string }) {
     if (entry.kind === 'person') {
       const conversation = byConversation.get(entry.key.slice('person:'.length));
@@ -1115,7 +1066,7 @@ function ConversationList({ drawer = false, litId = null }: {
           <ConversationRow
             key={entry.key}
             conversation={conversation}
-            active={snap.route.conversationId === conversation.id || (!!litId && litId === conversation.id)}
+            active={snap.route.conversationId === conversation.id}
             preview={conversation.homeroomBot ? botLine : null}
           />
         )
@@ -1380,6 +1331,10 @@ function ThreadHeader() {
   const withBot = active.kind === 'direct' && !!active.homeroomBot;
   // QA 2026-09-24 Q33a: an unanswered request names its requester.
   const person = directPerson(active);
+  // #6118: the header ellipsises its name, so the name is also its hover hint.
+  const threadName = active.kind === 'direct' && person
+    ? senderName(person, { bare: true })
+    : channel ? `#${active.channelKey || active.title}` : active.title;
   // QA 2026-09-24 Q14: "1 member", not "1 members". An invitee is not shown
   // the roster until they accept, so the count the server gives them is 0 —
   // they read the invitation's state instead of "0 members".
@@ -1396,12 +1351,11 @@ function ThreadHeader() {
   // N14: the people asked who have not joined yet, as threadWords says them.
   const asked = active.kind === 'group' && !invited ? active.members.filter((m) => m.status === 'invited').length : 0;
   const subtitle = asked ? dotText([said, t('messages:header.subtitle.invitedCount', { count: asked })]) : said;
-  // N14: a group leads with a member's face, as its row in the list does,
-  // not the initials of its name ("E+" for "Evan + Lukas").
-  const viewerId = Number(window.App?.user?.id);
-  const face = active.kind === 'group' && !invited
-    ? active.members.find((member) => member.status === 'member' && Number(member.id) !== viewerId) || null
-    : null;
+  // N14: a group leads with its members' faces, not the initials of its
+  // name ("E+" for "Evan + Lukas"). Audit C02: the same faces its row in
+  // the list draws (GroupFaces), not one of them, so the group is one
+  // picture in both places.
+  const groupFaces = active.kind === 'group' && !invited;
   return (
     <header className="messages-thread-header">
       {channel ? <PageBackButton label={hubBack.label} onBack={hubBack.onBack} data-channel-back="" /> : null}
@@ -1410,15 +1364,15 @@ function ThreadHeader() {
           page leaves its own name out and keeps only its discs. */}
       {inDrawer ? null : channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
-        : face ? <UserAvatar user={face} shape="square" />
+        : groupFaces ? <GroupFaces conversation={active} />
           : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
       {inDrawer ? <span className="flex-1" aria-hidden="true" /> : (
       <button
         type="button"
-        className="min-w-0 text-left flex-1"
+        className="min-w-0 text-start flex-1"
         onClick={() => { if (active.kind === 'group') openDialog('messagesMembers'); }}
       >
-        <div className="messages-thread-name">{active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge">{t('messages:header.aiBadge')}</span> : null}</div>
+        <div className="messages-thread-name" title={threadName || undefined}>{active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge">{t('messages:header.aiBadge')}</span> : null}</div>
         {/* One request, one story: what the bot is doing is the strip under
             this header (./bot-strip.tsx); the line under its name says what
             it is for. */}
@@ -1426,6 +1380,8 @@ function ThreadHeader() {
       </button>
       )}
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
+      {/* #6071 follow-up: a new thread with Homeroom bot (./new-thread.tsx). */}
+      {botDm ? <NewThreadButton conversationId={active.id} className="messages-thread-action" /> : null}
       <FullWidthToggle />
       <div className="relative" ref={menuWrapRef}>
         <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label={t('messages:header.actions')} aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
@@ -1832,73 +1788,23 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
 
 
 /**
+ * #6426: whether this embedded thread is Main Chat, where the "Welcome
+ * back" card shows. EmbeddedConversation provides it and ConversationThread
+ * reads it here, so the thread's signature and its one-copy gate stay as
+ * #3494 left them.
+ */
+const MainChatContext = createContext(false);
+
+/**
  * The open conversation. `embedded` is the copy a community's page mounts
  * (#3494, EmbeddedConversation below): the same thread, drawn without this
  * screen's header because the page's own header and tabs already name it.
  * Exactly one copy draws the thread at a time — the store's route says
  * which — so the ids its rows carry are never on the page twice.
  */
-/**
- * THE LAST CONVERSATION, PEEKING BESIDE THE LIST on a phone (Evan's design,
- * ./phone-drawer.tsx): what it showed when you left it, its newest at the
- * foot, and nothing in it can be pressed but the whole of it, which opens
- * it. Only a picture: it marks nothing read, sends nothing and follows no
- * live news, so leaving a conversation never keeps it open behind the list.
- */
-function ConversationPeek({ peek }: { peek: Peek }) {
-  const t = useMessages('messages');
-  const channels = useChannelHandles();
-  const scroller = useRef<HTMLDivElement>(null);
-  useIsomorphicLayoutEffect(() => {
-    const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [peek]);
-  const { conversation, messages } = peek;
-  const kind = conversation.kind || 'direct';
-  const person = directPerson(conversation);
-  const rows: ReactNode[] = [];
-  let previous: ConversationMessage | null = null;
-  let previousDay: string | null = null;
-  for (const message of messages) {
-    if (message.deleted || message.threadRootId) continue;
-    const day = dayKey(message);
-    if (day && day !== previousDay) {
-      rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
-      previousDay = day;
-      previous = null;
-    }
-    const grouped = !!previous && !previous.system && !message.system
-      && groupsWithPrevious(
-        { author: previous.sender.id, at: previous.createdAt },
-        { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
-      );
-    rows.push(<MessageRow key={message.clientKey || message.id} message={message} conversationId={conversation.id} grouped={grouped} channels={channels} kind={kind} />);
-    previous = message;
-  }
-  return (
-    <section className={`flex messages-thread-pane messages-thread-peek dc-lift dc-lift-session messages-thread-${kind}`} data-messages-peek={conversation.id}>
-      <div className="messages-peek-body" inert aria-hidden="true">
-        {/* Polish N8: what shows of it is its left edge, so it leads with
-            its own face, where a conversation's header has it, and its rows
-            draw no faces (app.css): a sender's face only starts a run of
-            their lines, so one sat alone mid-screen like a stray badge. */}
-        <div className="messages-peek-head">
-          <UserAvatar user={person} title={person?.username || conversation.title} shape="square" />
-        </div>
-        <div ref={scroller} className="messages-thread-scroll">{rows}</div>
-      </div>
-      <button
-        type="button"
-        className="messages-peek-open"
-        aria-label={t('messages:drawer.peek.open', { name: threadWords(conversation).title })}
-        onClick={() => openConversation(conversation.id)}
-      />
-    </section>
-  );
-}
-
 function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const t = useMessages('messages');
+  const mainChat = useContext(MainChatContext);
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
@@ -1916,7 +1822,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // Whether this conversation was last drawn as a linked window (#2387).
   const wasWindow = useRef(false);
   const conversationId = snap.route.conversationId;
-  const typing = conversationId ? typingUsers(conversationId) : [];
+  // #6254: a file dropped anywhere on this pane goes to this conversation's
+  // own box, so the header, the transcript and the box are one drop zone.
+  const drop = usePaneDrop(scopeKey(conversationId || 0, null));
+  // 1 Nov 2026: the bot's typing is its working card, where its answer will
+  // appear (./bot-working.tsx); the status line keeps people's names, and
+  // the bot's too while the transcript is a window part-way back.
+  const typists = conversationId ? typingUsers(conversationId) : [];
+  const working = snap.nextAfter ? null : workingBot(typists);
+  const typing = typingBesides(typists, working);
   // #2884: the runs of cards the viewer has opened, by their first message.
   const [expandedRuns, setExpandedRuns] = useState<ReadonlySet<string>>(() => new Set());
   // One request, one story: where each request stands, for folding the settled ones.
@@ -1929,6 +1843,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // button at the top as the manual way back, until it succeeds or the
   // conversation (or its next-older cursor) changes.
   const [olderFailed, setOlderFailed] = useState(false);
+  // #6148: the same at the foot of a window a message link opened part-way
+  // back (#2387): a failed load of newer messages restores the button there.
+  const [newerFailed, setNewerFailed] = useState(false);
   // THE "NEW" LINE (./unread-anchor.ts): above the first message after where
   // reading had stopped when this conversation was opened (the store's
   // `unreadMark`). The transcript opens with it near the top.
@@ -1942,6 +1859,16 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // and #4564 its rows draw as change blocks (see the memo below).
   const botDm = !!snap.active && snap.active.id === conversationId && snap.active.kind === 'direct'
     && snap.active.membershipStatus === 'member' && snap.active.homeroomBot === true;
+  // #6426: Main Chat's "Welcome back" card takes the place of the bot's
+  // leftover suggested replies on its newest main-stream message.
+  const [welcomeShown, setWelcomeShown] = useState(false);
+  const newestMainBotId = useMemo(() => {
+    for (let index = snap.messages.length - 1; index >= 0; index -= 1) {
+      const message = snap.messages[index];
+      if (message.sender.bot && !message.threadRootId) return message.id;
+    }
+    return null;
+  }, [snap.messages]);
   // THE BOT'S CHAT OPENS AT ITS FINAL SHAPE (./open-hold.ts): its rows are
   // laid out but hidden, under the spinner, until its tray has answered and
   // the screen is full or nothing older is left. `shownFor` is the
@@ -1971,9 +1898,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const layout = useMemo(() => {
     if (!botDm) return { plans: NO_PLAN_LAYOUT, blocks: null as ReadonlyMap<number, ChangeBlock> | null };
     const plans = planLayout(snap.messages);
+    // B12: what the loop below draws as one news line, and what it folds
+    // into a newer one, read as the loop reads them.
+    const asks = (message: ConversationMessage) => asksInChat(message) && !newsStatusOf(message, botWork)?.settled;
+    const folded = foldBotNews(snap.messages, (message) => isMovedActivity(message) || plans.hidden.has(message.id) || asks(message)).hidden;
     const blocks = changeBlocks(snap.messages, {
       // The rows the loop skips: passed over without breaking a run.
-      hidden: (message) => isMovedActivity(message) || plans.hidden.has(message.id),
+      hidden: (message) => isMovedActivity(message) || plans.hidden.has(message.id) || folded.has(message.id),
+      // A news line draws no outline: it ends a block, in none itself (B12).
+      apart: (message) => isBotNews(message) && !asks(message),
       // The same stretch of transcript: same day, and no unread line between.
       together: (previous, next) => dayKey(previous) === dayKey(next)
         && !(lineAt !== null && previous.id < lineAt && next.id >= lineAt),
@@ -1983,7 +1916,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         || readyNamesRequest(message),
     });
     return { plans, blocks };
-  }, [botDm, snap.messages, lineAt]);
+  }, [botDm, snap.messages, lineAt, botWork]);
 
   useIsomorphicLayoutEffect(() => {
     if (!conversationId) return;
@@ -2089,10 +2022,30 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     void older().then((ok) => { if (!ok) setOlderFailed(true); });
   }
   useIsomorphicLayoutEffect(() => { setOlderFailed(false); }, [conversationId, snap.nextBefore]);
+  // #6148: and at the foot of a window a message link opened part-way back
+  // (#2387), scrolling down near the bottom reads the next page in the same
+  // way, in place of the "Load newer messages" button that used to stop it.
+  // The page lands below what is on screen, so nothing on screen moves, and
+  // `pinned` waits for the present: useStickToBottom's atPresent is
+  // `!snap.nextAfter`, so the reader's scrolls cannot pin the conversation
+  // until the last page is in, and then it follows its newest line as it
+  // always does. One page at a time: loadNewer reads with the same
+  // `loadingOlder` flag as the top.
+  const newerGate = useRef({ nextAfter: snap.nextAfter, loadingOlder: snap.loadingOlder, loadingThread: snap.loadingThread, newerFailed });
+  newerGate.current = { nextAfter: snap.nextAfter, loadingOlder: snap.loadingOlder, loadingThread: snap.loadingThread, newerFailed };
+  function maybeLoadNewer() {
+    const el = scroller.current;
+    if (!el) return;
+    const gate = newerGate.current;
+    if (!gate.nextAfter || gate.loadingOlder || gate.loadingThread || gate.newerFailed) return;
+    if (!isNearBottom(el, LOAD_NEWER_SLACK_PX)) return;
+    void loadNewer().then((ok) => { if (!ok) setNewerFailed(true); });
+  }
+  useIsomorphicLayoutEffect(() => { setNewerFailed(false); }, [conversationId, snap.nextAfter]);
   useIsomorphicLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const onScroll = () => maybeLoadOlder();
+    const onScroll = () => { maybeLoadOlder(); maybeLoadNewer(); };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2106,6 +2059,17 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     if (needsMoreHistory(el)) maybeLoadOlder();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snap.messages, snap.nextBefore, snap.loadingOlder, botWork]);
+  // #6148: and a linked window too short to scroll reads its newer pages in
+  // the same way, until the screen fills or it reaches the present: with
+  // nothing to scroll, the reader cannot reach its foot to ask. A pane with
+  // no height is not short but hidden (under a thread on a phone, or in
+  // Main Chat's column): it reads nothing until it is shown.
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !el.clientHeight) return;
+    if (needsMoreHistory(el)) maybeLoadNewer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap.messages, snap.nextAfter, snap.loadingOlder]);
   // ./open-hold.ts: the bot's chat is shown once it can draw what it will
   // stay as. After the effect above, so it measures what that one read, and
   // a layout effect, so the rows appear in the frame they settle in.
@@ -2144,6 +2108,10 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const rows: ReactNode[] = [];
   let previousDay = '';
   let previous: ConversationMessage | null = null;
+  // B16: in the chat with Homeroom bot, the message its last drawn answer
+  // quoted, until somebody else says something or the day turns: a later
+  // answer to the same message does not quote it again.
+  let quoted: number | null = null;
   // The "New" line, drawn once: above the first unread message, or above
   // the first row drawn after it when that message is not drawn itself.
   let lineDrawn = false;
@@ -2159,7 +2127,10 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const { plans, blocks } = layout;
   // One request, one row: the bot's news about a request is drawn once, at
   // its newest piece; the earlier ones fold into that row (./bot-news-line.tsx).
-  const newsFold = botDm ? foldBotNews(snap.messages, (message) => isMovedActivity(message) || plans.hidden.has(message.id)) : null;
+  // What still asks something here is drawn whole where it was said, and
+  // answered there (31 Oct 2026: the thread that drew it whole is gone).
+  const asking = (message: ConversationMessage) => botDm && asksInChat(message) && !newsStatusOf(message, botWork)?.settled;
+  const newsFold = botDm ? foldBotNews(snap.messages, (message) => isMovedActivity(message) || plans.hidden.has(message.id) || asking(message)) : null;
   const byId = newsFold ? new Map(snap.messages.map((message) => [message.id, message])) : null;
   // Settled rows in a row, waiting to be drawn as one folded line
   // (./bot-news-line.tsx SettledRun); anything else drawn, a day or the
@@ -2194,18 +2165,27 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     // One request, one row: news drawn inside a newer row about its request.
     if (newsFold?.hidden.has(message.id)) continue;
     const day = dayKey(message);
-    const settled = botDm && isBotNews(message) && !!newsStatusOf(message, botWork)?.settled;
+    // #6207: Main Chat is the conversation; a request's news is on its page.
+    if (botDm && isRequestNews(message)) continue;
+    // #6250: only the line that opens a thread from the bot's "+" is the
+    // thread's own, not Main Chat's; one the bot opened from Main stays.
+    if (botDm && isPlusThreadOpener(message)) continue;
+    const asks = asking(message);
+    const settled = botDm && isBotNews(message) && !asks && !!newsStatusOf(message, botWork)?.settled;
     if (!settled || (day && day !== previousDay) || (lineAt !== null && message.id >= lineAt && !lineDrawn)) flushRun();
+    // B16: a new day starts a new exchange, its first answer quoting afresh.
+    if (day && day !== previousDay) quoted = null;
     if (day && day !== previousDay) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
       previousDay = day;
     }
     if (lineAt !== null && message.id >= lineAt) drawLine();
+    // B16: somebody other than the bot spoke; the next answer quotes afresh.
+    if (!message.sender.bot) quoted = null;
     // One request, one story: in the chat with Homeroom bot, the bot's news
     // about a request is ONE short line (./bot-news-line.tsx) whose tap opens
-    // the request's story beside the chat: its thread, or for news from
-    // before threads its pieces, whole.
-    if (botDm && isBotNews(message)) {
+    // the request's own page, unless it still asks something here.
+    if (botDm && isBotNews(message) && !asks) {
       const earlier = newsFold?.earlier.get(message.id) || [];
       // The story's size: its thread's replies, else the news folded in here.
       const root = message.threadRootId ? byId?.get(message.threadRootId) : message;
@@ -2257,6 +2237,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         { author: previous.sender.id, at: previous.createdAt },
         { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
       );
+    const quoteAgain = botDm && !!message.sender.bot && !!message.reply && message.reply.id === quoted;
     rows.push(<MessageRow
       key={message.clientKey || message.id}
       message={message}
@@ -2267,11 +2248,13 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       threadOpen={snap.route.threadRootId === message.id}
       focused={flashId === message.id}
       planCardId={plans.cardOf.get(message.id) ?? null}
-      hidePrompts={plans.answersOpen && !!message.sender.bot}
+      hidePrompts={(plans.answersOpen || asksWithQuestionsCard(message) || (welcomeShown && message.id === newestMainBotId)) && !!message.sender.bot}
       // #4564: this row's part of its change's block, in the bot's DM alone.
       block={blocks?.get(message.id) ?? null}
       botChat={botDm}
+      quoteAgain={quoteAgain}
     />);
+    if (botDm && message.sender.bot && message.reply) quoted = message.reply.id;
     previous = moment ? null : message;
     const length = runs.get(index);
     const runKey = String(message.clientKey || message.id);
@@ -2300,10 +2283,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   }
   flushRun();
   return (
-    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')} data-opening={holding ? '' : undefined}>
+    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')} data-opening={holding ? '' : undefined} {...drop.handlers}>
       {embedded ? null : <ThreadHeader />}
-      {/* One request, one story: "Your requests", pinned under the bot's header. */}
-      {botDm && !embedded ? <BotStrip /> : null}
       <InvitationBanner />
       {botDm ? <BotWorkSync conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
       {/* #3736: and keeps the activity cards in its transcript current. */}
@@ -2321,8 +2302,11 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           once useComposerKeyboard attaches (#3571), as it does to
           `#gc-messages`, and app.css's `.platform-kb-column .un-kb-avoid`
           keeps it from padding this scroller with the inset a second time.
-          So this className stays constant: React never strips the kit's. */}
-      <div ref={scroller} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">
+          So this className stays constant: React never strips the kit's.
+          `chat-transcript` is what ends the transcript 12px inside this
+          scroller, at the composer card's edge, as every chat's does
+          (@/components/ui/chat, "A chat's foot", 1 November 2026). */}
+      <div ref={scroller} className="messages-thread-scroll platform-safe-scroll chat-transcript" aria-live="polite">
         {/* Only a thread with nothing to show yet says it is loading (#2907).
             A refresh of the visible thread — the realtime echo of every send
             is one — re-reads it silently: this row drawn above the messages
@@ -2353,24 +2337,37 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           </div>
         ) : null}
         {rows}
+        {working ? <BotWorkingCard typist={working} /> : null}
         {/* #2387: a message link opened the transcript part-way back. */}
         {snap.nextAfter ? (
-          <div className="messages-newer">
-            <button type="button" className="messages-load-older" disabled={snap.loadingOlder} onClick={() => void loadNewer()}>{snap.loadingOlder ? t('messages:thread.loadingNewer') : t('messages:thread.loadNewer')}</button>
-            <button type="button" className="messages-load-older" onClick={() => { pinned.current = true; jumpToPresent(); }}>{t('messages:thread.jumpToPresent')}</button>
+          <div className="messages-newer" data-load-newer="">
+            {/* #6148: scrolling down to here reads the newer pages in, so
+                the row says "Loading…" while one loads and offers "Load
+                newer messages" only to retry a failed load, as the top's
+                row does. Jump to present stays, quiet, for a reader a long
+                way back. */}
+            {snap.loadingOlder
+              ? <span role="status" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:thread.loadingNewer')}</span>
+              : newerFailed
+                ? <button type="button" onClick={() => { setNewerFailed(false); void loadNewer().then((ok) => { if (!ok) setNewerFailed(true); }); }} className="messages-load-older">{t('messages:thread.loadNewer')}</button>
+                : null}
+            <button type="button" className="messages-jump-present" onClick={() => { pinned.current = true; jumpToPresent(); }}>{t('messages:thread.jumpToPresent')}</button>
           </div>
         ) : null}
       </div>
-      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
       {/* Jump to latest whenever the reader is not at the bottom, with a dot
-          for what arrived while they were up. Run six: at the right edge,
-          hung just above the composer (below the typing line, which is
-          empty on the right), so it covers the strip under the words rather
-          than a message in the middle of the conversation. */}
+          for what arrived while they were up: centred, hung from the
+          transcript's foot, just above the composer (@/components/ui/chat
+          TranscriptOverlay). Above the typing line since 1 November 2026,
+          as in every chat: it rises with the transcript when a name
+          appears rather than covering it. */}
       <TranscriptOverlay edge="foot">
         <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
+      <ChatStatusLine className="messages-typing">{typingLine(t, typing)}</ChatStatusLine>
+      {mainChat && botDm && conversationId ? <WelcomeBack conversationId={conversationId} onShown={setWelcomeShown} /> : null}
       <MessageComposer />
+      {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </section>
   );
 }
@@ -2443,7 +2440,7 @@ function ReplyRowSkeleton() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <Skeleton className="w-24" />
-              <Skeleton shape="muted" className="ml-auto w-12" />
+              <Skeleton shape="muted" className="ms-auto w-12" />
             </div>
             <Skeleton shape="muted" className={`mt-2 ${i % 2 ? 'w-2/5' : 'w-3/5'}`} />
           </div>
@@ -2485,13 +2482,33 @@ function writeReplyWidth(px: number): void {
   try { window.localStorage.setItem(REPLY_WIDTH_KEY, String(Math.round(px))); } catch { /* the default next time */ }
 }
 
-function ReplyThreadPanel() {
+function ReplyThreadPanel({ inMain = false, onBack = null }: {
+  /**
+   * 31 Oct 2026: open in Main Chat's column on the Homeroom bot tab, the
+   * only place the chat with the bot is drawn. The thread covers the chat
+   * there (app.css `[data-main-chat]`). 1 Nov 2026: alone, under its own
+   * head: its title and "Only you can see this thread". 6 Nov 2026 (#6425):
+   * it closes with its own ✕, which leaves the lists alone, or shows Main
+   * Chat again when Main was open just before; a phone's drawer keeps its
+   * back arrow to the list and no ✕.
+   */
+  inMain?: boolean;
+  /** A phone's drawer: the back arrow that leads the head, to the list. */
+  onBack?: (() => void) | null;
+} = {}) {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const conversationId = snap.route.conversationId;
   const rootId = snap.route.threadRootId;
+  // #6254: this thread is its own drop area — a file dropped on the reply box
+  // or on the replies around it never goes to the chat beside it.
+  const drop = usePaneDrop(scopeKey(conversationId || 0, rootId));
   const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
+  // 1 Nov 2026: the bot answering here is its working card (./bot-working.tsx).
+  const threadTypists = conversationId && rootId ? typingUsers(conversationId, rootId) : [];
+  const threadWorking = workingBot(threadTypists);
+  const threadTyping = typingBesides(threadTypists, threadWorking);
   // 16 Oct 2026: a request's thread marks where each of its tries began
   // (./bot-track.tsx), when the bot built it more than once.
   const trackRoot = thread?.root || snap.messages.find((item) => item.id === rootId) || null;
@@ -2525,6 +2542,25 @@ function ReplyThreadPanel() {
     if (el && n !== count.current && pinned.current) el.scrollTop = el.scrollHeight;
     count.current = n;
   }, [thread?.messages.length]);
+  // B19 follow-up (audit, 2 Nov 2026): a thread opens at the first reply
+  // the reader had not read, its "New" line a little below the top, as a
+  // conversation does (./unread-anchor.ts openingScrollTop); with nothing
+  // unread, at its newest reply. Once per open, after the rows are drawn,
+  // and never over a message the thread was opened at (below).
+  const unreadLine = useRef<HTMLDivElement>(null);
+  const openedAt = useRef<string | null>(null);
+  const firstUnread = thread && !thread.loading ? thread.firstUnreadId ?? null : null;
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    const key = `${conversationId}:${rootId}`;
+    if (!el || !thread || thread.loading || openedAt.current === key) return;
+    openedAt.current = key;
+    const line = unreadLine.current;
+    if (!firstUnread || !line || snap.threadFocusId || snap.route.focusMessageId) return;
+    const opening = openingScrollTop({ lineTop: lineTopIn(el, line), scrollHeight: el.scrollHeight, clientHeight: el.clientHeight });
+    el.scrollTop = opening.top;
+    pinned.current = opening.pinned;
+  }, [conversationId, rootId, thread?.loading, thread?.messages.length]);
   // One request, one story: a thread opened at one of its messages (the
   // strip's Needs you button, store.openThreadAt; or a link to a reply)
   // shows it once it is drawn, centred and flashed, and stops following the
@@ -2546,6 +2582,60 @@ function ReplyThreadPanel() {
       clearThreadFocus();
     }, 2400);
   }, [wanted, thread?.messages.length, thread?.loading]);
+  // #6148: scrolling up near the top of the replies reads the earlier page
+  // in, one at a time, as a conversation's top does (#5019), in place of the
+  // "Load earlier replies" button that used to stop it. The top is where the
+  // replies start: their row under the message the thread hangs off, which
+  // can be taller than the allowance on its own (./stick-to-bottom.ts
+  // isNearStart). What is on screen stays where it is, as the conversation's
+  // older() keeps it: the scroller's height before the page, the difference
+  // added after. A failed load restores the button as the manual retry,
+  // until it succeeds or the thread (or its next-earlier cursor) changes.
+  const [earlierFailed, setEarlierFailed] = useState(false);
+  const earlierRow = useRef<HTMLDivElement>(null);
+  const earlierScroll = useRef<number | null>(null);
+  useIsomorphicLayoutEffect(() => { earlierScroll.current = null; }, [conversationId, rootId]);
+  async function earlierReplies() {
+    const el = scroller.current;
+    if (el) earlierScroll.current = el.scrollHeight;
+    const ok = await loadOlderReplies();
+    requestAnimationFrame(() => {
+      if (el && earlierScroll.current !== null) el.scrollTop += el.scrollHeight - earlierScroll.current;
+      earlierScroll.current = null;
+    });
+    return ok;
+  }
+  // The latest values the guard reads go through a ref, so the scroll
+  // listener below attaches once per thread instead of on every publish.
+  const earlierGate = useRef({ nextBefore: thread?.nextBefore || null, loading: !!thread?.loading, earlierFailed });
+  earlierGate.current = { nextBefore: thread?.nextBefore || null, loading: !!thread?.loading, earlierFailed };
+  function maybeLoadEarlierReplies() {
+    const el = scroller.current;
+    if (!el) return;
+    const gate = earlierGate.current;
+    if (!gate.nextBefore || gate.loading || gate.earlierFailed) return;
+    const start = earlierRow.current;
+    if (!(start ? isNearStart(el, start) : isNearTop(el))) return;
+    void earlierReplies().then((ok) => { if (!ok) setEarlierFailed(true); });
+  }
+  useIsomorphicLayoutEffect(() => { setEarlierFailed(false); }, [conversationId, rootId, thread?.nextBefore]);
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const onScroll = () => maybeLoadEarlierReplies();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, rootId]);
+  // A thread too short to scroll reads its earlier pages in until the pane
+  // fills: with nothing to scroll, the reader cannot reach its top to ask.
+  // A pane with no height is hidden, not short: it reads nothing.
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !el.clientHeight) return;
+    if (needsMoreHistory(el)) maybeLoadEarlierReplies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread?.messages.length, thread?.nextBefore, thread?.loading]);
   // #5691: how wide this thread is, against the chat beside it. Read in an
   // effect, never during the first render, so the first paint draws the CSS
   // default (and is the same markup on every render).
@@ -2582,8 +2672,9 @@ function ReplyThreadPanel() {
     // drag runs.
     const frames = Array.from(paneRef.current?.querySelectorAll<HTMLIFrameElement>('iframe') || []);
     frames.forEach((frame) => { frame.style.pointerEvents = 'none'; });
-    // Dragging left widens the thread: its left edge is the divider.
-    const onMove = (move: PointerEvent) => { latest = commitReplyWidth(startWidth - (move.clientX - startX)); };
+    // Dragging toward the thread's own edge widens it: the divider is its
+    // inline-start edge, the left in English and the right in Arabic.
+    const onMove = (move: PointerEvent) => { latest = commitReplyWidth(startWidth - dirSign() * (move.clientX - startX)); };
     const onUp = () => {
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onUp);
@@ -2602,18 +2693,61 @@ function ReplyThreadPanel() {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
     const base = replyWidth ?? Math.round(paneRef.current?.getBoundingClientRect().width || REPLY_MIN_WIDTH);
-    writeReplyWidth(commitReplyWidth(base + (event.key === 'ArrowLeft' ? REPLY_WIDTH_STEP : -REPLY_WIDTH_STEP)));
+    // An arrow toward the divider widens the thread, as the drag does.
+    const toward = event.key === 'ArrowLeft' ? 1 : -1;
+    writeReplyWidth(commitReplyWidth(base + toward * dirSign() * REPLY_WIDTH_STEP));
   };
+  // #6019: a private thread in their chat with the bot is theirs alone
+  // until they File it or Post it under the bot's offer: its head says so,
+  // its foot has the door that applies (./private-thread-bar.tsx). 1 Nov 2026: every one, not only
+  // those off a message of theirs: a "+" thread, a draft the bot opened and
+  // a design thread hang off a line of the bot's, and the server says
+  // whether it is theirs (`mine`). Read before the early return, so the hook
+  // holding where it stands always runs.
+  const meId = Number(typeof window !== 'undefined' ? (window as any).App?.user?.id : 0) || 0;
+  const privateRootMessage = thread?.root || snap.messages.find((item) => item.id === rootId) || null;
+  const privateRoot = rootId && snap.active?.kind === 'direct' && threadsAllowed(snap.active) && snap.active.homeroomBot
+    && privateRootMessage && !requestPageOf(privateRootMessage)
+    ? rootId : null;
+  const [privateWhere, setPrivateWhere] = usePrivateThread(privateRoot);
+  // 1 Nov 2026 (C1): whether this thread's design is open beside it.
+  const preview = usePreview();
+  const privateMine = !!privateRoot && isOwnPrivateThread(privateWhere, privateRootMessage, meId);
+  // #6159: what they write in a done thread brings it back (the server's
+  // reopenOnReply): its state is read again once their message is in it.
+  const ownCount = (thread?.messages || []).filter((item) => !item.sender.bot && item.sender.id === meId && item.id > 0).length;
+  useEffect(() => {
+    if (!privateRoot || privateWhere?.state !== 'done' || !ownCount) return;
+    fetch(`/api/conversations/homeroom-bot/threads/${privateRoot}`, { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (data && typeof data.state === 'string' && data.state !== 'done') setPrivateWhere(data); })
+      .catch(() => {});
+  }, [ownCount]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!conversationId || !rootId) return null;
   const active = snap.active;
   const kind = active?.kind || 'group';
   const root = thread?.root || snap.messages.find((item) => item.id === rootId) || null;
   // One request, one story: the bot's chat names the thread by its request.
   const botChat = kind === 'direct' && threadsAllowed(active);
+  // 31 Oct 2026: a request's story is the request's page (./request-page.ts),
+  // which the store opens instead (store.openThread, loadReplyThread): no
+  // thread of this chat's is drawn for it, even for the moment that takes.
+  if (botChat && kind === 'direct' && requestPageOf(root)) return null;
   const rootMeta = botChat && root?.sender.bot ? root.metadata?.homeroomBot || null : null;
-  const request = rootMeta ? botRequestNames(rootMeta) : null;
-  const where = request ? request.project : active ? (kind === 'channel' ? `#${active.channelKey || active.title}` : active.title) : '';
+  // #6071 follow-up: a thread from the bot's "+" is named by what it is for
+  // and its project, never as a request it is not.
+  const started = rootMeta?.kind === 'opened_thread' ? rootMeta : null;
+  const request = rootMeta && !started ? botRequestNames(rootMeta) : null;
+  const where = started ? (started.appName || started.appSlug || t('messages:newThread.anyProject'))
+    : request ? request.project : active ? (kind === 'channel' ? `#${active.channelKey || active.title}` : active.title) : '';
   const replies = thread?.messages || [];
+  // 1 Nov 2026: in Main Chat's column a thread is named as the tab's list
+  // names it (./private-thread-bar.tsx privateThreadTitle).
+  const mainTitle = inMain
+    ? privateThreadTitle(root, replies, meId) || (started ? startedThreadTitle(t, started.changeKind) : t('messages:replies.title'))
+    : null;
+  // #6118: the name the reply header ellipsises, computed once for its hint.
+  const replyTitle = started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title');
   // #5219: on a request's thread the request's public discussion rides
   // along, and the two read in one transcript, in the order they were said.
   // Ties keep the DM replies first (the sort is stable); a reply still in
@@ -2664,6 +2798,7 @@ function ReplyThreadPanel() {
   return (
     <aside
       ref={paneRef}
+      {...drop.handlers}
       className="messages-reply-pane platform-kb-column dc-lift dc-lift-session"
       style={replyWidth != null ? { '--messages-reply-width': `${replyWidth}px` } as CSSProperties : undefined}
       aria-label={t('messages:replies.paneName')}
@@ -2684,26 +2819,67 @@ function ReplyThreadPanel() {
         onPointerDown={onReplyResizeStart}
         onKeyDown={onReplyResizeKey}
       />
-      <header className="messages-thread-header">
-        <div className="min-w-0 flex-1">
-          <div className="messages-thread-name flex min-w-0 items-center gap-2">
-            {request && !request.firstVersion ? <RequestTag number={request.number} size="head" /> : null}
-            <span className="min-w-0 truncate">{request ? botThreadTitle(request) : t('messages:replies.title')}</span>
+      <header className="messages-thread-header" data-reply-head={inMain ? 'main' : undefined}>
+        {inMain && onBack ? (
+          <button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""
+            aria-label={t('messages:ai.drawer.back')} title={t('messages:ai.drawer.back')} onClick={onBack}>
+            <ChevronLeftIcon aria-hidden="true" />
+          </button>
+        ) : null}
+        {inMain ? (
+          // 1 Nov 2026: the thread alone in Main Chat's place, under its own
+          // name and the line that says it is theirs alone.
+          <div className="min-w-0 flex-1" title={mainTitle || undefined}>
+            <div className="messages-thread-name min-w-0 truncate" data-reply-title="">{mainTitle}</div>
+            <div className="messages-thread-sub flex min-w-0 items-center gap-1" data-private-thread-sub="">
+              <LockIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t('messages:ai.thread.sub')}</span>
+            </div>
           </div>
-          {where ? <div className="messages-thread-sub">{where}</div> : null}
-        </div>
+        ) : (
+          <div className="min-w-0 flex-1">
+            <div className="messages-thread-name flex min-w-0 items-center gap-2">
+              {request && !request.firstVersion ? <RequestTag number={request.number} size="head" /> : null}
+              <span className="min-w-0 truncate" title={replyTitle}>{started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title')}</span>
+            </div>
+            {where ? <div className="messages-thread-sub">{where}</div> : null}
+          </div>
+        )}
+        {/* #6071: in a design thread, the way to its preview: on a phone the
+            switch back to it. 1 Nov 2026 (C1): in Main Chat's column, any
+            thread holding a design (a version said anywhere in it) has
+            Preview, which opens the design as the tab's own column
+            (../ai/preview.ts), while it is not open already. */}
+        {isDesignRoot(root) && !snap.route.embedded ? <DesignViewSwitch onView={setDesignView} /> : null}
+        {inMain && preview?.rootId !== rootId && isDesignThread(root, replies) ? (
+          <button type="button" className="messages-thread-action messages-thread-preview" data-reply-preview=""
+            onClick={() => openPreview({ conversationId, rootId, version: null })}>
+            <span className="text-[13px] font-semibold">{t('messages:design.pane.showPreview')}</span>
+          </button>
+        ) : null}
+        {/* #6159: Mark done, or Reopen, in the thread's own ⋯. */}
+        {privateMine && privateRoot && privateWhere ? (
+          <ThreadDoneMenu rootId={privateRoot} done={privateWhere.state === 'done'}
+            onChanged={(state) => setPrivateWhere({ ...privateWhere, state })} />
+        ) : null}
         {/* On a phone the Messages screen's header bar has the way back
-            (app.css hides this one there, polish N16). */}
-        <button type="button" className="messages-thread-action" data-reply-close="" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
-          <XIcon aria-hidden="true" />
-        </button>
+            (app.css hides this one there, polish N16), and in Main Chat's
+            column the drawer's own back arrow leads the head instead, so no
+            ✕ is drawn. 6 Nov 2026 (#6425): on a desktop the ✕ closes the
+            thread, leaving the lists alone or Main Chat when it was open. */}
+        {inMain && onBack ? null : (
+          <button type="button" className="messages-thread-action" data-reply-close="" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
+            <XIcon aria-hidden="true" />
+          </button>
+        )}
       </header>
-      {/* #6019: a thread the viewer started in their chat with the bot is
-          private until they File it or Post it. */}
-      {botChat && active?.homeroomBot && root && !root.sender.bot && rootId
-        && Number(typeof window !== 'undefined' ? (window as any).App?.user?.id : 0) === root.sender.id
-        ? <PrivateThreadBar rootId={rootId} text={root.content || ''} /> : null}
-      <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll" aria-live="polite">
+      {/* Its head says it is theirs alone in Main Chat's column; under it,
+          where it went once it was filed or posted. */}
+      {privateMine && !(inMain && privateWhere?.state === 'open') ? (
+        <PrivateThreadNote where={privateWhere} rootId={privateRoot}
+          onChanged={(state) => { if (privateWhere) setPrivateWhere({ ...privateWhere, state }); }} />
+      ) : null}
+      <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll chat-transcript" aria-live="polite">
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
             own threadRootId is null, being the main stream's message. */}
         {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
@@ -2717,9 +2893,18 @@ function ReplyThreadPanel() {
           </div>
         )}
         {thread?.loading && !merged.length && !thread.error ? <ReplyRowSkeleton /> : null}
+        {/* #6148: the row holds its height and, while an earlier page
+            loads, the "Loading…" line; the button returns only to retry a
+            failed load. Scrolling up to here does the rest. */}
         {(thread?.nextBefore || discussion?.more) ? (
-          <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 py-2">
-            {thread?.nextBefore ? <button type="button" disabled={thread.loading} onClick={() => void loadOlderReplies()} className="messages-load-older">{thread.loading ? t('messages:replies.loadingEarlier') : t('messages:replies.loadEarlier')}</button> : null}
+          <div ref={earlierRow} className="flex min-h-12 flex-wrap items-center justify-center gap-x-3 gap-y-1 py-2" data-load-earlier-replies="">
+            {thread?.nextBefore
+              ? thread.loading
+                ? <span role="status" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:replies.loadingEarlier')}</span>
+                : earlierFailed
+                  ? <button type="button" onClick={() => { setEarlierFailed(false); void earlierReplies().then((ok) => { if (!ok) setEarlierFailed(true); }); }} className="messages-load-older">{t('messages:replies.loadEarlier')}</button>
+                  : null
+              : null}
             {discussion?.more ? <a className="messages-load-older" href={issueRefHref(discussion.appSlug, String(discussion.issueNumber))}>{t('messages:replies.discussion.more')}</a> : null}
           </div>
         ) : null}
@@ -2737,12 +2922,32 @@ function ReplyThreadPanel() {
               { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
             );
           previous = entry;
+          // B19 follow-up: the "New" line above the first reply not read when it opened.
+          const line = firstUnread && message.id === firstUnread
+            ? <NewMessagesDivider key="unread-line" ref={unreadLine} /> : null;
           const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={cardId && isPlanMessage(message) ? cardId : null} />;
-          return divider ? <Fragment key={message.clientKey || message.id}>{divider}{row}</Fragment> : row;
+          return divider || line ? <Fragment key={message.clientKey || message.id}>{divider}{line}{row}</Fragment> : row;
         })}
+        {threadWorking ? <BotWorkingCard typist={threadWorking} /> : null}
+        {privateRoot && privateMine && root ? (
+          <PrivateThreadDoors
+            rootId={privateRoot}
+            text={privateThreadWords(root, replies, meId)}
+            where={privateWhere}
+            botReplied={replies.some((message) => message.sender.bot)}
+            working={!!threadWorking}
+          />
+        ) : null}
       </div>
       <JumpToLatest scroller={scroller} />
+      {/* 31 Oct 2026: who is typing in this thread (the bot answering a
+          message written here among them), as the conversation's own line
+          says it. It was drawn beside the conversation alone, which a phone
+          hides while a thread is open. Under Jump to latest, as in every
+          chat (1 Nov 2026). */}
+      <ChatStatusLine className="messages-typing">{typingLine(t, threadTyping)}</ChatStatusLine>
       <MessageComposer threadRootId={rootId} />
+      {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </aside>
   );
 }
@@ -2879,9 +3084,18 @@ export function ChannelLoading(): ReactNode {
   );
 }
 
-export function EmbeddedConversation({ conversationId, active, at = null }: {
+export function EmbeddedConversation({ conversationId, active, at = null, mainChat = false, onBack = null }: {
   conversationId: number;
   active: boolean;
+  /**
+   * 31 Oct 2026: this copy is Main Chat on the AI tab, a column of 400 to
+   * 720px (or a phone's drawer): a thread opened in it covers the chat
+   * rather than squeezing in beside it. 1 Nov 2026: alone, under its own
+   * head (ReplyThreadPanel `inMain`).
+   */
+  mainChat?: boolean;
+  /** A phone's drawer: the thread's back arrow, to the tab's list. */
+  onBack?: (() => void) | null;
   /**
    * #3653: where a door into the room asked to land — a reply thread, or a
    * message. Each one is taken ONCE, when the room is put in place or at
@@ -2911,11 +3125,16 @@ export function EmbeddedConversation({ conversationId, active, at = null }: {
     const next = take();
     if (next) embed(conversationId, next);
   }, [at]); // eslint-disable-line react-hooks/exhaustive-deps
+  // #6071 follow-up: a blank thread from Homeroom bot's "+", in the thread's place.
+  const blank = useNewThread(conversationId) && here && !snap.route.threadRootId;
   return (
-    <div className={`messages-layout messages-layout-embedded${here && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`}>
-      {here ? <ConversationThread embedded /> : <ChannelLoading />}
-      {here && snap.route.threadRootId ? <ReplyThreadPanel /> : null}
-    </div>
+    <MainChatContext.Provider value={mainChat}>
+      <div className={`messages-layout messages-layout-embedded${here && (snap.route.threadRootId || blank) ? ' messages-has-reply-thread' : ''}${blank ? ' messages-has-blank-thread' : ''}`} data-main-chat={mainChat ? '' : undefined}>
+        {here ? <ConversationThread embedded /> : <ChannelLoading />}
+        {here && snap.route.threadRootId ? <ReplyThreadPanel inMain={mainChat} onBack={onBack} /> : null}
+        {blank ? <NewThreadPanel conversationId={conversationId} /> : null}
+      </div>
+    </MainChatContext.Provider>
   );
 }
 
@@ -2923,6 +3142,7 @@ export function MessagesScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const snap = useMessagesSnapshot();
+  const designView = useDesignView();
   useVisibilityHiddenClass(screenRef, 'messages-screen', false);
   useEffect(() => initializeMessagesStore(), []);
   // THE CHANGES HALF OF THIS INBOX ASKS FOR ITSELF (#2770). The Improve store's list
@@ -2958,20 +3178,30 @@ export function MessagesScreen() {
   // for it to sit beside, whatever the full-width preference says.
   const channelOpen = !!snap.route.appSlug
     || (!!snap.route.conversationId && snap.active?.id === snap.route.conversationId && snap.active?.kind === 'channel');
-  // THE PHONE'S DRAWER (./phone-drawer.tsx): the list and a conversation
-  // with people side by side, panned between, the last conversation peeking;
-  // an agent chat or an agent session takes the conversation's place.
+  // THE PHONE'S DRAWER (./phone-drawer.tsx): the list, the whole screen, and
+  // a conversation with people sliding in over it; an agent chat or an agent
+  // session takes the conversation's place.
   const agentWords = useAgentThreadWords(snap.route.agent);
-  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, snap.messages, threadWords, agentWords);
-  const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 && !drawer.peek ? ' messages-drawer-alone' : ''}` : '';
-  // v3 (18 Oct 2026): ON A DESKTOP THE LIST IS IN THE SIDEBAR, nested under
-  // Messages (./rail-inbox.ts), so one pane is drawn at a time: the open
-  // conversation alone, or with nothing open the whole list as the page
-  // (All messages), with its search and previews. No back arrow between
-  // them: the sidebar's rows are the way.
+  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, threadWords, agentWords);
+  const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 ? ' messages-drawer-alone' : ''}` : '';
+  // ON A DESKTOP, with nothing open, the whole list is the page (All
+  // messages), with its search and previews; an open conversation has the
+  // list beside it. (v3, 18 Oct 2026, put the list in the sidebar under
+  // Messages and drew one pane at a time; on 7 Nov 2026 the sidebar kept its
+  // nesting for communities alone, so the list is the inbox's own again.)
   const sidebarRows = useSidebarRows();
-  const railClass = sidebarRows && !drawer.on ? (discussionOpen ? ' messages-list-in-rail' : ' messages-list-page') : '';
-  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${railClass}${drawerClass}`;
+  const railClass = sidebarRows && !drawer.on && !discussionOpen ? ' messages-list-page' : '';
+  // #6071: a design thread draws its preview in the conversation's place
+  // (./design-pane.tsx); on a phone the preview and the thread take turns.
+  const designRootId = snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded ? snap.route.threadRootId : null;
+  const designRoot = designRootId
+    ? (snap.thread?.rootId === designRootId ? snap.thread.root : null) || snap.messages.find((item) => item.id === designRootId) || null
+    : null;
+  const designOpen = !!designRootId && isDesignRoot(designRoot);
+  const designClass = designOpen ? ` messages-has-design messages-design-view-${designView}` : '';
+  // #6071 follow-up: a blank thread from Homeroom bot's "+", in the thread's place.
+  const blankThread = useNewThread(snap.route.conversationId) && !snap.route.threadRootId && !snap.route.embedded;
+  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && (snap.route.threadRootId || blankThread) ? ' messages-has-reply-thread' : ''}${railClass}${drawerClass}${designClass}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.
@@ -2979,9 +3209,13 @@ export function MessagesScreen() {
     <>
       <main ref={screenRef} id="messages-screen" className="hidden flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
         <div ref={layoutRef} className={layout} data-messages-drawer={drawer.on ? drawer.level : undefined} {...(drawer.handlers || {})}>
-          <ConversationList drawer={drawer.on} litId={drawer.peek ? drawer.peek.conversation.id : null} />
-          {drawer.peek ? <ConversationPeek peek={drawer.peek} /> : <ConversationThread />}
+          <ConversationList drawer={drawer.on} />
+          <ConversationThread />
+          {designOpen && snap.route.conversationId && designRootId ? (
+            <DesignPane conversationId={snap.route.conversationId} rootId={designRootId} view={designView} onView={setDesignView} />
+          ) : null}
           {snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded ? <ReplyThreadPanel /> : null}
+          {blankThread && snap.route.conversationId ? <NewThreadPanel conversationId={snap.route.conversationId} /> : null}
           {snap.route.appSlug && snap.route.threadRootId ? <AppReplyThreadPanel slug={snap.route.appSlug} rootId={snap.route.threadRootId} /> : null}
         </div>
       </main>

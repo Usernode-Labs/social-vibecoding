@@ -47,6 +47,8 @@ const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const { featuredAppsAdminRoutes } = require('./admin-featured-apps');
+const { emailTemplateAdminRoutes } = require('./admin-email-templates');
+const { emailImageAdminRoutes } = require('./email-images');
 const appStorageCap = require('../services/app-storage-cap');
 const appLimit = require('../services/app-limit');
 const previewProjectsSetting = require('../services/preview-projects-setting');
@@ -399,11 +401,16 @@ function adminRoutes(config) {
       // inventory call.
       const counts = await stagingReap.previewCounts(config)
         .catch(() => ({ open: null, stale: null, abandoned: null }));
+      // #6157: previews asleep (scaled to no replicas), and the storage
+      // their database clones still hold. Null when it cannot be read.
+      const asleep = await require('../services/preview-sleep').asleepTotals(pool).catch(() => null);
       res.json({
         job: await stagingReap.read(pool),
         open: counts.open,
         stale: counts.stale,
         abandoned: counts.abandoned,
+        asleep,
+        sleepAfterMs: require('../services/preview-sleep').sleepAfterMs(config),
         expectedFingerprint: stagingEnv.expectedStagingFingerprint(config),
         automatic: await automaticReap(pool),
         staging,
@@ -1374,7 +1381,7 @@ function adminRoutes(config) {
   router.get('/api/admin/github-budget', (_req, res) => {
     const snap = githubBudget.snapshot();
     const configured = {
-      app: !!(config && config.githubAppId && config.githubPrivateKey),
+      app: !!(config && config.githubAppId),
     };
     if (IS_STAGING && !snap.credentials.length) {
       return res.json({ ...githubBudget.demoSnapshot(), configured, demo: true });
@@ -2058,6 +2065,16 @@ function adminRoutes(config) {
   // (routes/featured-admin.js).
   router.use(featuredAppsAdminRoutes(pool));
 
+  // ── Email templates ────────────────────────────────────────
+  //
+  // The templates and layouts every platform email is written from
+  // (routes/admin-email-templates.js), behind the router-level
+  // adminMiddleware above; writes and test sends need a full admin.
+  router.use(emailTemplateAdminRoutes(pool, config));
+  // The images those templates show (routes/email-images.js): the upload
+  // needs a full admin; the bytes are served publicly from server.js.
+  router.use(emailImageAdminRoutes(pool));
+
   // ── Anthropic credits (#555) ───────────────────────────────
   //
   // The organisation's remaining Anthropic credit, for the drawer's
@@ -2241,6 +2258,11 @@ function adminRoutes(config) {
       } catch (err) {
         log.warn('admin', 'managed OpenRouter allowance sync skipped', { userId, err: err.message });
       }
+      // #6377: a limit raised may give this person's week room again; what it
+      // held back is released now. Best-effort: the limit is already saved and
+      // a release that fails never changes this answer.
+      await homeroomBot.releaseAllowanceHolds(pool).catch((err) =>
+        log.warn('admin', 'Could not release requests held for a weekly limit change', { userId, err: err.message }));
       res.json({ ok: true, weekly_limit_cents: rows[0].weekly_limit_cents });
     } catch (err) {
       log.error('admin', 'Per-user weekly limit update failed', { message: err.message });
@@ -2951,10 +2973,11 @@ function adminRoutes(config) {
 
   // ── Email delivery ─────────────────────────────────────────
   //
-  // The operator's view of platform outbound mail. Three routes, and the
+  // The operator's view of platform outbound mail. Four routes, and the
   // split between them is the whole point: reads are open to any admin
-  // (including view-only), the one that actually puts a message on the
-  // wire is full-admin-only.
+  // (including view-only), the two that change something (which provider
+  // sends, and the one that actually puts a message on the wire) are
+  // full-admin-only.
   //
   // These live under /api/admin/mail and are ADDITIVE. The older
   // /api/v4/admin/settings/mail-status and /mail-activity pair that the
@@ -2980,13 +3003,14 @@ function adminRoutes(config) {
     return { to };
   }
 
-  // Configuration presence only — which provider is active, which keys
+  // Configuration presence only — which provider is active, who named it
+  // (an admin's saved choice, the deploy's variable, or neither), which keys
   // are absent, which flows break while it stays that way. describe()
   // returns no values by construction, so this response can never carry a
   // credential even though the page that renders it is admin-only.
   router.get('/api/admin/mail/status', async (req, res) => {
     try {
-      const status = mail.describe(process.env);
+      const status = mail.describe(process.env, { saved: await mail.savedChoice(pool) });
 
       // Pre-fill the test form with the admin's own address when we have
       // one. The client session payload doesn't carry an email, so it
@@ -3038,9 +3062,12 @@ function adminRoutes(config) {
             GROUP BY status`,
           [kind]
         ),
-        require('../services/mail/reports').readReports(pool, {
-          provider: (config && (config.mailProvider || config.mailTransport?.provider)) || null,
-        }),
+        // The provider in force, an admin's saved choice included: delivered,
+        // bounced and complained are shown only for the one whose webhook
+        // reports them.
+        mail.transportFor(config, pool).then(({ provider }) => (
+          require('../services/mail/reports').readReports(pool, { provider: provider || null })
+        )),
       ]);
 
       const last24h = {};
@@ -3049,6 +3076,45 @@ function adminRoutes(config) {
       res.json({ deliveries: recent.rows, last24h, kind, limit, reports });
     } catch (err) {
       log.error('admin', 'mail activity failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Change who sends platform mail. Full admins only, and a provider that is
+  // not ready cannot be chosen: the point of the switch is a working path,
+  // not a way to stop sign-in codes by accident. 409 carries the names of the
+  // settings that are missing, never a value. The saved choice wins over
+  // PLATFORM_MAIL_PROVIDER and is read at send time, so it needs no redeploy;
+  // a staging preview saves it and goes on logging.
+  router.put('/api/admin/mail/provider', requireAdminWrite, async (req, res) => {
+    try {
+      const name = typeof req.body?.provider === 'string'
+        ? req.body.provider.trim().toLowerCase()
+        : '';
+      const before = mail.describe(process.env, { saved: await mail.savedChoice(pool) });
+      const option = before.providers.find((o) => o.name === name);
+      if (!option) {
+        return res.status(400).json({ error: 'Unknown mail provider.', code: 'unknown_provider' });
+      }
+      if (!option.ready) {
+        return res.status(409).json({
+          error: 'That provider is not ready yet.',
+          code: 'not_ready',
+          missing: option.missing,
+        });
+      }
+      await mail.setProvider(pool, name, req.user.id);
+      events.record(pool, {
+        type: events.EVENT_TYPES.MAIL_PROVIDER_CHANGED,
+        userId: req.user.id,
+        metadata: { from: before.provider || null, to: name },
+      });
+      log.warn('admin', 'Admin changed the mail provider', {
+        by: req.user.username, from: before.provider || null, to: name,
+      });
+      res.json({ ok: true, status: mail.describe(process.env, { saved: name }) });
+    } catch (err) {
+      log.error('admin', 'mail provider change failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

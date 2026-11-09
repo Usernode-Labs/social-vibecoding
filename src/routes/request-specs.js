@@ -18,7 +18,9 @@ const github = require('../services/github');
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
 const requestSpecs = require('../services/request-specs');
-const { requestSpecLimiter } = require('../middleware/rate-limits');
+const { requestSpecLimiter, conversationActionLimiter } = require('../middleware/rate-limits');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const publicPlan = require('../services/homeroom-bot-public-plan');
 const repoRef = require('../services/repo-ref');
 
 function parseOwnerRepo(repoUrl) {
@@ -56,16 +58,11 @@ function requestSpecRoutes(config) {
 
       // Only a request that is open now, the same positive confirmation the
       // claim route asks for: a degraded GitHub read changes nothing.
-      const repo = parseOwnerRepo(app.repo_url);
-      if (!github.isEnabled() || !repo) {
-        return res.status(422).json({ error: 'Cannot verify the request right now: GitHub is unavailable for this app.' });
-      }
-      const open = await github.fetchPublicIssues(repo.owner, repo.repo);
-      if (open.note) {
-        return res.status(422).json({ error: "Couldn't confirm this request is open right now. Try again in a moment." });
-      }
-      const issue = (open.issues || []).find((i) => i.number === issueNumber);
-      if (!issue) return res.status(404).json({ error: `Request #${issueNumber} isn't open on this app.` });
+      // 1 Nov 2026: the check is the service's, shared with a design posted
+      // as a plan (design-threads.js postDesignPlan).
+      const open = await requestSpecs.openRequest(app, issueNumber, { github });
+      if (!open.ok) return res.status(open.status).json({ error: open.error });
+      const { repo, issue } = open;
 
       // The same host the screenshot embeds name (routes/feedback.js).
       const domain = require('../services/caddy').USERNODE_DOMAIN;
@@ -98,6 +95,44 @@ function requestSpecRoutes(config) {
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // #6207/#6210 (3 Nov 2026): Homeroom bot's plan for the request, public on
+  // its page (services/homeroom-bot-public-plan.js). Reading it needs what
+  // reading the request needs; Build it is taking part, so members only,
+  // and the presser's own week pays for it.
+  router.get('/api/apps/:slug/issues/:number/bot-plan', async (req, res) => {
+    const issueNumber = issueNumberOf(req);
+    if (!issueNumber) return res.status(400).json({ error: 'Invalid request number' });
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      return res.json(await publicPlan.readPlan(pool, { app, issueNumber, viewer: req.user || null }));
+    } catch (err) {
+      log.error('request-specs', 'Reading a request\'s plan failed', { issueNumber, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/apps/:slug/issues/:number/bot-plan/build', conversationActionLimiter, sameOriginBrowserOnly,
+    communities.requireAppMembership(pool), async (req, res) => {
+      const issueNumber = issueNumberOf(req);
+      if (!issueNumber) return res.status(400).json({ error: 'Invalid request number' });
+      if (!req.user || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      try {
+        const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view');
+        if (!app) return res.status(404).json({ error: 'App not found' });
+        const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
+        const runId = Number(req.body?.runId) || null;
+        const went = await publicPlan.buildPlan(pool, {
+          app, issueNumber, user: req.user, runId, answers,
+        });
+        if (!went.ok) return res.status(went.status).json({ error: went.error });
+        return res.json({ ok: true });
+      } catch (err) {
+        log.error('request-specs', 'Build it on a request\'s plan failed', { issueNumber, message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    });
 
   return router;
 }

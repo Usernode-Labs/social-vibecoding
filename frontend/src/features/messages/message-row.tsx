@@ -1,7 +1,7 @@
-import { memo, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 
 import {
-  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
+  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, GlobeIcon, LinkIcon, NoSymbolIcon,
   PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
@@ -16,13 +16,18 @@ import type { ConversationKind, ConversationMessage, DiscussionMessage } from '.
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar, senderName } from './format';
 import { issueRefHref } from './channels';
 import { isActivityMessage } from './bot-activity';
-import { BotCardOrTrack } from './bot-track';
+import { BotCardOrTrack, filedNextLine } from './bot-track';
 import { BotQuestion, botMeta } from './bot-question';
 import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
 import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
 import { alsoInChat, botRequestNames, botThreadLabel, threadsAllowed, type ChangeBlock } from './bot-shared';
+import { openRequestPage, requestPageOf } from './request-page';
 import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
+import { DesignVersionCard, designVersionOf } from './design-card';
+import { BotRichCard, botCardOf } from './bot-cards';
+import { BotLookedLine } from './bot-looked';
+import { BotHtmlReply, botReplyHtml } from './bot-html';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
 import { confirmAction } from '../../lib/confirm';
@@ -37,6 +42,7 @@ import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadSummaryChip } from '../message-actions/thread-summary';
 import { useDismiss } from '../message-actions/use-dismiss';
+import { TranslateNote, useTranslate } from './translate';
 
 /*
  * A CONVERSATION HAS SIDES (#5680). A direct message and a group chat — the
@@ -84,6 +90,32 @@ function Attachment({ attachment }: { attachment: ConversationMessage['attachmen
   );
 }
 
+/**
+ * How long a send may be on its way before its row says "Sending…" (offline
+ * test, 2 Nov 2026, finding 1). #2907 took the word away because it came and
+ * went on every send and moved the transcript twice; a send that answers in
+ * a second or two still shows nothing but the fade. One that does not, on a
+ * slow or silent network, said nothing at all and looked sent, so past this
+ * it says so, on the line where "Not sent" or "Will send when you're back
+ * online" takes its place if it comes to that.
+ */
+export const SLOW_SEND_MS = 2000;
+
+/** Whether a row still on its way (`pending`, drawn at `since`) has been out longer than SLOW_SEND_MS. */
+function useSlowSend(pending: boolean, since: string): boolean {
+  const started = Date.parse(since);
+  const [slow, setSlow] = useState(() => pending && Date.now() - started >= SLOW_SEND_MS);
+  useEffect(() => {
+    if (!pending) { setSlow(false); return undefined; }
+    const wait = Number.isFinite(started) ? SLOW_SEND_MS - (Date.now() - started) : SLOW_SEND_MS;
+    if (wait <= 0) { setSlow(true); return undefined; }
+    setSlow(false);
+    const timer = window.setTimeout(() => setSlow(true), wait);
+    return () => window.clearTimeout(timer);
+  }, [pending, started]);
+  return pending && slow;
+}
+
 /*
  * MEMOIZED. The Messages store publishes one snapshot for everything, so any
  * publish — the inbox reloading, someone else's typing ping — re-rendered the
@@ -105,6 +137,7 @@ export const MessageRow = memo(function MessageRow({
   hidePrompts = false,
   block = null,
   botChat = false,
+  quoteAgain = false,
 }: {
   message: ConversationMessage;
   conversationId: number;
@@ -131,6 +164,13 @@ export const MessageRow = memo(function MessageRow({
    */
   block?: ChangeBlock | null;
   /**
+   * B16 (overnight audit, 1 Nov 2026): the bot's answer quotes the same
+   * message its answer just above already quoted, with nothing anybody
+   * said between them (./index.tsx). The quote is left off: it repeated
+   * the whole request over every reply in one exchange.
+   */
+  quoteAgain?: boolean;
+  /**
    * One request, one story: the row is in the viewer's chat with Homeroom
    * bot, the one direct chat with threads (./bot-shared.ts threadsAllowed):
    * each request's card is the root of its thread.
@@ -139,9 +179,18 @@ export const MessageRow = memo(function MessageRow({
 }) {
   const t = useMessages('messages');
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
-  // #4655: in a direct message people are named bare ("ada", not "@ada"),
-  // everywhere this row names someone — its author line, a quote, the sheet
-  // and the Block and Report labels. Group chats and channels keep the @.
+  // #6081: someone else's words can be read in the reader's language. Asked
+  // for on a tap from the ⋯ menu; never on a page load. Only what a person
+  // wrote: the bot's cards and the platform's notices are not translated.
+  const canTranslate = !mine && !message.sender.bot && !message.system
+    && !!message.content && !message.deleted && !message.moderated;
+  const translation = useTranslate(message.content ? [message.content] : [], {
+    enabled: canTranslate,
+  });
+  // #4655: in a direct message people are named bare ("ada", not "@ada") in
+  // the Block and Report labels; group chats and channels keep the @ there.
+  // The author line, a quote and the sheet's header name them bare in every
+  // chat (audit C05/Y06).
   const bare = kind === 'direct';
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
   const [menu, setMenu] = useState<'above' | 'below' | null>(null);
@@ -160,12 +209,17 @@ export const MessageRow = memo(function MessageRow({
   useAutoGrow(editRef, editValue);
 
   const live = !message.deleted && !message.pending && !message.failed && message.id > 0;
+  const slowSend = useSlowSend(!!message.pending, message.createdAt);
   // Threads where the chat keeps them (./bot-shared.ts threadsAllowed). In
   // the chat with Homeroom bot a thread is a request's: it hangs off the
   // request's card (or a message that already has one), and a moment the
   // main chat also shows (`alsoInChat`) opens the thread it was posted in.
   const threads = threadsAllowed({ kind, homeroomBot: botChat });
-  const threadRoot = !live || inThread || !threads ? null
+  // 31 Oct 2026: in the chat with Homeroom bot a request's story is the
+  // request's own page (./request-page.ts), so its news opens that and has
+  // no thread here: no Reply in thread, no "N updates in its thread".
+  const story = botChat && kind === 'direct' && !inThread ? requestPageOf(message) : null;
+  const threadRoot = !live || inThread || !threads || story ? null
     : message.threadRootId ? message.threadRootId
       : kind !== 'direct' || isActivityMessage(message) || message.thread ? message.id : null;
   const canThread = threadRoot !== null;
@@ -260,6 +314,26 @@ export const MessageRow = memo(function MessageRow({
   if (message.content) {
     items.push({ key: 'copy', label: t('messages:row.menu.copyText'), icon: CopyIcon, onSelect: () => { void copyToClipboard(message.content, t('messages:row.textCopied')); } });
   }
+  // #6081: someone else's words, in the reader's language. One more item in
+  // the same menu, so a chat does not fill up with a button on every message.
+  if (canTranslate) {
+    // #6081: while it is being translated the words stay as written and the
+    // item says so, rather than offering a second tap that does nothing.
+    const label = translation.state === 'pending'
+      ? t('messages:translate.pending')
+      : translation.state === 'shown'
+        ? t('messages:row.menu.showOriginal')
+        : translation.state === 'original'
+          ? t('messages:row.menu.showTranslation')
+          : t('messages:row.menu.translate');
+    items.push({
+      key: 'translate', label, icon: GlobeIcon, disabled: translation.state === 'pending',
+      onSelect: () => {
+        if (translation.state === 'shown' || translation.state === 'original') translation.toggle();
+        else translation.ask();
+      },
+    });
+  }
   // #4055: its pictures onto the device, whoever sent them.
   const pictures = downloadableImages(images.map((att) => ({ src: att.url, name: att.name })));
   if (pictures.length) items.push({ key: 'download', label: downloadLabel(pictures.length), icon: DownloadIcon, onSelect: () => { void saveImages(pictures); } });
@@ -319,9 +393,16 @@ export const MessageRow = memo(function MessageRow({
       ? t('messages:row.botBlock.requestLabel', { number: String(head.issueNumber), title: head.title })
       : t('messages:row.botBlock.requestLabelUntitled', { number: String(head.issueNumber) }))
     : null;
+  // #6151: a design filed as a request says what happens to it next, after
+  // its line, in the reader's language (./bot-track.tsx filedNextLine).
+  const filedNext = botMeta(message)?.kind === 'design_filed' ? filedNextLine(botMeta(message)?.filedNext) : null;
+  // Task 2020: a bot answer laid out is drawn in place of its words, which
+  // stay its fallback (./bot-html.tsx).
+  const richHtml = head ? null : botReplyHtml(message);
+  const markdown = <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
   const words = !message.content ? null : head
     ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
-    : <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
+    : richHtml ? <BotHtmlReply html={richHtml} fallback={markdown} /> : markdown;
 
   // #5680: which rows have a side. A DM and a group do; a channel does not
   // (#2783), and neither does a row that is not something a person said: the
@@ -338,13 +419,22 @@ export const MessageRow = memo(function MessageRow({
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its
   // place and nothing else (#2387).
+  const quote = <>{message.reply && !quoteAgain ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare: true })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}</>;
   const body = message.deleted ? (
     <p className="messages-deleted">{t('messages:row.deleted')}</p>
   ) : (
     <>
-      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}
+      {quote}
+      {/* Homeroom bot parity, P1: what the reply looked at, above its words (./bot-looked.tsx). */}
+      {!editing ? <BotLookedLine message={message} /> : null}
       {editing ? (
-        <div className="messages-edit"><textarea ref={editRef} aria-label={t('messages:row.editLabel')} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>{t('core:common.save')}</button><button type="button" onClick={() => setEditing(false)}>{t('core:common.cancel')}</button></div></div>
+        <div className="messages-edit"><textarea ref={editRef} dir="auto" aria-label={t('messages:row.editLabel')} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>{t('core:common.save')}</button><button type="button" onClick={() => setEditing(false)}>{t('core:common.cancel')}</button></div></div>
+      ) : filedNext && words ? (
+        // #6151: a design filed as a request: its line, then what happens next.
+        <>
+          {words}
+          <p className="messages-markdown gc-msg-content" data-design-filed-next={botMeta(message)?.filedNext?.say}>{filedNext}</p>
+        </>
       ) : isThanksMessage(message) ? (
         // #4392: the activity card Build it moved under a plan is the bot's
         // thanks: its words over the app's card and build line.
@@ -376,20 +466,35 @@ export const MessageRow = memo(function MessageRow({
     </>
   );
 
+  // #6081: a person's words read in another language on a tap. The quoted
+  // reply stays above them, and the same markdown renderer draws the
+  // translation, so the row reads as it did.
+  const translatedBody = translation.state === 'shown' && !editing
+    ? <>{quote}<MessageMarkdown content={translation.texts[0]} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} /></>
+    : null;
+
   // Everything a message carries besides its text: files, shared items,
   // reactions, the thread under it and the status line.
+  // 1 Nov 2026: a version of the thread's design, said by the bot, drawn
+  // small under its words with Open preview (./design-card.tsx).
+  const designVersion = inThread && message.threadRootId && !message.deleted ? designVersionOf(message) : null;
   const extras = (
     <>
+      {designVersion && message.threadRootId ? (
+        <DesignVersionCard conversationId={conversationId} rootId={message.threadRootId} version={designVersion} title={message.metadata?.homeroomBot?.designTitle || null} />
+      ) : null}
       {message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
         && !isTwoQuestions(message) && !isReadyMessage(message)
         ? <BotQuestion message={message} conversationId={conversationId} hidePrompts={hidePrompts} /> : null}
+      {/* Homeroom bot parity (P1-P9): a card the bot put under its reply (./bot-cards/). */}
+      {botCardOf(message) ? <BotRichCard message={message} conversationId={conversationId} /> : null}
       {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
       {objects.length ? <div className="messages-object-list">{objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
       {/* #3660: a link in the words to one of Homeroom's own pages, as the
           card it names — for this reader, and never one already above. */}
       {message.content && !message.moderated ? <LinkEmbeds text={message.content} exclude={message.objects} /> : null}
       {message.reactions.length ? <div className="messages-reactions">{message.reactions.map((reaction) => <button type="button" key={reaction.emoji} aria-pressed={reaction.reacted} title={reaction.users ? listText(reaction.users) : undefined} onClick={() => void toggle(reaction.emoji)} className={reaction.reacted ? 'messages-reaction-mine' : ''}><span>{reaction.emoji}</span><span>{reaction.count}</span></button>)}</div> : null}
-      {message.thread && !inThread && kind === 'direct' && threads ? (
+      {message.thread && !inThread && kind === 'direct' && threads && !story ? (
         // One request, one story: in the chat with Homeroom bot the thread
         // under a request's card is its updates, said in words.
         <button
@@ -399,7 +504,7 @@ export const MessageRow = memo(function MessageRow({
           data-bot-thread-link={message.id}
           onClick={() => openThread(message.id)}
         >{t('messages:row.botThread.updates', { count: message.thread.replyCount })}</button>
-      ) : message.thread && !inThread ? (
+      ) : message.thread && !inThread && !story ? (
         <ThreadSummaryChip
           replyCount={message.thread.replyCount}
           lastReplyAt={message.thread.lastReplyAt}
@@ -420,8 +525,8 @@ export const MessageRow = memo(function MessageRow({
 
   // The bar. WHILE A SEND IS IN FLIGHT it is still laid out, but invisible
   // and inert (#2907). A failed row has no bar — its Retry is its control —
-  // and neither has a deleted one.
-  const actions = !message.failed && !message.deleted ? (
+  // and neither has one waiting for a connection, nor a deleted one.
+  const actions = !message.failed && !message.queued && !message.deleted ? (
     <MessageActionBar
       className={`messages-message-actions ${message.pending ? 'messages-message-actions-reserved' : ''}`}
       hidden={!!message.pending}
@@ -446,15 +551,24 @@ export const MessageRow = memo(function MessageRow({
     </MessageActionBar>
   ) : null;
 
+  // Audit D13 (2 Nov 2026): on somebody else's bubble the bar hangs at the
+  // end of its name line, beside the message, not at the transcript's far
+  // edge, where on a wide screen it sat 800px from a short bubble and over
+  // the row above. A continuation line has no name line, and your own
+  // bubble and a channel's rows already end where the bar is.
+  const barBesideHead = sided && !mine && !grouped;
+
   const stateClasses = `${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''} ${message.deleted ? 'messages-message-deleted' : ''} ${focused ? 'messages-message-focus' : ''} ${message.system ? 'messages-message-system' : ''}`;
 
   // The state word a header carries — edited. A continuation line has no
   // header, so it carries it on a meta line of its own, beside nothing: the
   // time is already in the gutter.
   //
-  // NO "sending…" (#2907). A message in flight says so by being faded
-  // (app.css), which changes no line's height; the word came and went in a
-  // line of its own on a continuation row and moved the transcript twice.
+  // NO "sending…" IN THE HEADER (#2907). A message in flight says so by
+  // being faded (app.css), which changes no line's height; the word came and
+  // went in a line of its own on a continuation row and moved the transcript
+  // twice. Only a send still out after SLOW_SEND_MS says it, under the text
+  // (sendNote below).
   const status = message.editedAt && !message.deleted ? <span title={fullTime(message.editedAt)}>{t('messages:row.edited')}</span> : null;
 
   // A send that failed says so under its text, with the two things to do
@@ -465,6 +579,16 @@ export const MessageRow = memo(function MessageRow({
     <span className="text-red-700 dark:text-red-400">{t('messages:row.notSent')}</span>
     {message.clientKey ? <button type="button" className="messages-retry" onClick={() => void retrySend(message.clientKey as string)}>{t('core:common.retry')}</button> : null}
     {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}>{t('messages:row.discard')}</button> : null}
+  </div> : null;
+
+  // Offline test, finding 1: the same line for a message not sent yet. One
+  // written with no connection says it will go by itself, and can be dropped;
+  // one on its way for longer than SLOW_SEND_MS says it is still sending.
+  const sendNote = failedNote ? null : message.queued ? <div className="messages-message-meta messages-message-send-note" role="status">
+    <span>{t('messages:row.queued')}</span>
+    {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}>{t('messages:row.discard')}</button> : null}
+  </div> : slowSend ? <div className="messages-message-meta messages-message-send-note" role="status">
+    <span>{t('messages:row.sending')}</span>
   </div> : null;
 
   // #4564: the change block this row belongs to, as classes and data its
@@ -483,7 +607,13 @@ export const MessageRow = memo(function MessageRow({
         ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
         : sided && mine ? null : <UserAvatar user={message.sender} size="md" shape="square" />}
       <div className={block ? 'min-w-0 flex-1 messages-bot-block-body' : sided ? 'min-w-0 flex-1 messages-bubble-wrap' : 'min-w-0 flex-1'}>
-        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender, { bare })}</span>{message.sender.bot ? <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
+        {/* Audit C05/Y06 (2 Nov 2026): the line over a message names its
+            author the one way every chat does, their bare username, as a
+            direct message and #general already did; a handle in a sentence
+            keeps its @. Your own bubble is already on your side and tinted,
+            so its line says only the time, and your name is there for a
+            screen reader alone, not in the accent, which marks an action. */}
+        {grouped ? null : <div className="messages-message-head"><span dir="auto" className={`messages-message-author ${mine && sided ? 'sr-only' : ''}`}>{senderName(message.sender, { bare: true })}</span>{message.sender.bot ? <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}{barBesideHead ? actions : null}</div>}
         {/* #4564: the dropped card's own label, spoken: a screen reader still
             hears which request these words are about, as the block's top
             shows. */}
@@ -491,20 +621,24 @@ export const MessageRow = memo(function MessageRow({
         {inChatLabel && message.threadRootId ? (
           <button
             type="button"
-            className="block max-w-full truncate text-left text-[0.8125rem] font-medium text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
+            className="block max-w-full truncate text-start text-[0.8125rem] font-medium text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
             data-bot-thread-label={message.threadRootId}
-            onClick={() => openThread(message.threadRootId as number)}
+            onClick={() => (story ? openRequestPage(story, conversationId) : openThread(message.threadRootId as number))}
           >{inChatLabel}</button>
         ) : null}
         {/* #5680: in a conversation the words sit in a bubble on their
             sender's side; the head above them, and everything under them
             (pictures, shared items, reactions, a thread) stays outside it. */}
-        {sided ? <div className="messages-bubble">{body}</div> : body}
+        {/* Task 2020: a laid-out answer takes the bubble's full width (app.css .messages-bubble-rich). */}
+        {sided ? <div className={richHtml && !translatedBody && !editing ? 'messages-bubble messages-bubble-rich' : 'messages-bubble'} dir="auto">{translatedBody || body}</div> : translatedBody || body}
+        {/* #6081: under the words, the way back to them, or why they stayed. */}
+        {canTranslate ? <TranslateNote view={translation} className="mt-1" /> : null}
         {extras}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}
         {failedNote}
+        {sendNote}
       </div>
-      {actions}
+      {barBesideHead ? null : actions}
       <MessageActionSheet
         open={sheet}
         onClose={() => setSheet(false)}
@@ -513,7 +647,7 @@ export const MessageRow = memo(function MessageRow({
         onReact={(emoji) => { void toggle(emoji); }}
         onPick={pick}
         items={sheetItems}
-        preview={{ who: senderName(message.sender, { bare }), text: message.content }}
+        preview={{ who: senderName(message.sender, { bare: true }), text: message.content }}
       />
     </article>
   );
@@ -541,11 +675,11 @@ export const DiscussionRow = memo(function DiscussionRow({
       <UserAvatar user={message.sender} size="md" shape="square" />
       <div className="min-w-0 flex-1">
         <div className="messages-message-head">
-          <span className="messages-message-author">{senderName(message.sender, { bare: true })}</span>
+          <span dir="auto" className="messages-message-author">{senderName(message.sender, { bare: true })}</span>
           <time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>
         </div>
         <a
-          className="block max-w-full truncate text-left text-[0.8125rem] font-medium text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
+          className="block max-w-full truncate text-start text-[0.8125rem] font-medium text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
           href={issueRefHref(appSlug, String(issueNumber))}
         >{t('messages:replies.discussion.from')}</a>
         {message.content ? <MessageMarkdown content={message.content} appSlug={appSlug} /> : null}

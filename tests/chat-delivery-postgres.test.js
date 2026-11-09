@@ -20,7 +20,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const express = require('express');
 
 const DSN = process.env.TEST_DATABASE_URL
@@ -67,9 +66,9 @@ test('chat delivery against the full schema', { timeout: 120000 }, async (t) => 
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent, the new column and index included
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   // The turn's stream in this database (services/session-bus.js), as the
   // server keeps it.
   require('../src/services/session-bus').init({ pool });

@@ -91,8 +91,11 @@
 #   3. git merge origin/main --no-edit
 #      - clean → commit (already done by merge), push, sync_result=clean,
 #        no CC invocation, no LLM spend
-#      - conflict → leave conflict markers in working tree, invoke CC
-#        with a resolution-only prompt, then sanity-check no markers
+#      - conflict → a conflicted schema migration manifest is first
+#        recorded on top of main by the platform repository's own
+#        command (never by CC; abort if it refuses); what is left stays
+#        in the working tree with its markers, for CC with a
+#        resolution-only prompt, then sanity-check no markers
 #        remain; commit + push if clean, abort if not
 #         - resolved   = CC fixed it, push succeeded
 #         - conflict   = CC failed; merge aborted, branch unchanged
@@ -302,13 +305,44 @@ if [ "$MODE" = "sync" ]; then
     # Clean merge → already committed by `git merge`.
     SYNC_RESULT="clean"
   else
-    # Conflict path. Hand off to CC.
-    echo "__USERNODE_PHASE__ sync_conflict_cc"
-    CONFLICT_FILES=$(git diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')
+    # Conflict path. Every file that conflicted is recorded on the result
+    # line, whoever resolves it.
     # Comma-delimited (no spaces) so it rides cleanly on the
     # space-delimited __USERNODE_RESULT__ key/value line.
     CONFLICT_FILES_CSV=$(git diff --name-only --diff-filter=U 2>/dev/null | paste -sd, - | sed 's/,$//')
-    SYNC_PROMPT="A merge of origin/main into branch '$BRANCH' produced conflicts. The conflict markers (<<<<<<<, =======, >>>>>>>) are in the working tree.
+    CC_EXIT=0
+    COMMIT_MESSAGE=""
+
+    # A schema migration history is regenerated, never merged by hand
+    # (docs/database/schema-migrations.md): main's history exactly as main
+    # recorded it, then this branch's migrations recorded again on top. On
+    # 2 Nov 2026 a hand-merged manifest kept two 0013s in the wrong order and
+    # main stopped loading its migrations. Only the platform's own
+    # repository has the command. If it refuses (the branch edited a
+    # migration main has applied, say), the conflict is the author's: no
+    # model edits a history.
+    SCHEMA_MANIFEST="src/db/migrations/manifest.json"
+    if git diff --name-only --diff-filter=U 2>/dev/null | grep -qxF "$SCHEMA_MANIFEST" \
+        && [ -f scripts/record-schema-migration.js ]; then
+      if node scripts/record-schema-migration.js --onto MERGE_HEAD 2>&1; then
+        git add "$SCHEMA_MANIFEST"
+        COMMIT_MESSAGE="Merge origin/main via Homeroom sync (schema history recorded on top of main)"
+      else
+        echo "__USERNODE_WARN__ schema migrations could not be recorded on top of main; aborting merge"
+        git merge --abort 2>&1 || echo "__USERNODE_WARN__ merge --abort failed"
+        AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+        SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+        echo "__USERNODE_RESULT__ cc_exit=0 ahead=$AHEAD behind=$BEHIND_NOW sha=$SHA push_ok=0 mode=sync sync_result=conflict conflict_files=$CONFLICT_FILES_CSV"
+        exit 0
+      fi
+    fi
+
+    # What is left goes to CC.
+    CONFLICT_FILES=$(git diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')
+    if [ -n "$CONFLICT_FILES" ]; then
+      COMMIT_MESSAGE="Merge origin/main via Homeroom sync (Claude-resolved)"
+      echo "__USERNODE_PHASE__ sync_conflict_cc"
+      SYNC_PROMPT="A merge of origin/main into branch '$BRANCH' produced conflicts. The conflict markers (<<<<<<<, =======, >>>>>>>) are in the working tree.
 
 Conflicted files: $CONFLICT_FILES
 
@@ -316,31 +350,33 @@ Resolve every conflict marker. Preserve the intent of both sides — keep the ch
 
 Do not run git commands. I will commit and push for you after you finish editing files."
 
-    claude --print --dangerously-skip-permissions --verbose \
-      --model "$MODEL" --output-format stream-json -p "$SYNC_PROMPT"
-    CC_EXIT=$?
+      claude --print --dangerously-skip-permissions --verbose \
+        --model "$MODEL" --output-format stream-json -p "$SYNC_PROMPT"
+      CC_EXIT=$?
 
-    # Sanity check: any conflict markers left? If yes, the merge is
-    # not resolvable — abort cleanly so the next attempt starts from
-    # a sane state. We deliberately only check for `<<<<<<<` and
-    # `>>>>>>>` (not `=======`); `=======` on its own line is a
-    # legitimate markdown setext h2 underline and would false-positive
-    # any spec/README that uses that style.
-    if grep -rlE --exclude-dir='.git' '^(<<<<<<<|>>>>>>>)( |$)' . 2>/dev/null | grep -q .; then
-      echo "__USERNODE_WARN__ CC left conflict markers; aborting merge"
-      git merge --abort 2>&1 || echo "__USERNODE_WARN__ merge --abort failed"
-      AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
-      BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
-      SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=sync sync_result=conflict conflict_files=$CONFLICT_FILES_CSV"
-      exit 0
+      # Sanity check: any conflict markers left? If yes, the merge is
+      # not resolvable — abort cleanly so the next attempt starts from
+      # a sane state. We deliberately only check for `<<<<<<<` and
+      # `>>>>>>>` (not `=======`); `=======` on its own line is a
+      # legitimate markdown setext h2 underline and would false-positive
+      # any spec/README that uses that style.
+      if grep -rlE --exclude-dir='.git' '^(<<<<<<<|>>>>>>>)( |$)' . 2>/dev/null | grep -q .; then
+        echo "__USERNODE_WARN__ CC left conflict markers; aborting merge"
+        git merge --abort 2>&1 || echo "__USERNODE_WARN__ merge --abort failed"
+        AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+        BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
+        SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+        echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=sync sync_result=conflict conflict_files=$CONFLICT_FILES_CSV"
+        exit 0
+      fi
     fi
 
-    # CC resolved cleanly — stage everything (CC may have edited files
-    # outside the conflict set as a side effect; we want them all in
-    # the merge commit) and commit.
+    # Resolved — stage everything (CC may have edited files outside the
+    # conflict set as a side effect; we want them all in the merge commit)
+    # and commit. Resolved either way: a tree nobody has tested, whose
+    # checks run before it can merge.
     git add -A
-    if ! git commit -m "Merge origin/main via Homeroom sync (Claude-resolved)" 2>&1; then
+    if ! git commit -m "$COMMIT_MESSAGE" 2>&1; then
       echo "__USERNODE_WARN__ commit failed after conflict resolution"
       git merge --abort 2>&1 || true
       echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=$BEHIND_NOW sha= push_ok=0 mode=sync sync_result=conflict conflict_files=$CONFLICT_FILES_CSV"
@@ -589,6 +625,13 @@ if [ "$MODE" = "build" ] && [ "${STOP_GUARD:-}" = "1" ]; then
     # header, LEFTOVER SERVERS), counted for the result line.
     USERNODE_STOP_GUARD_SERVERS="$STOP_GUARD_DIR/servers"
     export USERNODE_STOP_GUARD_START USERNODE_STOP_GUARD_COUNT USERNODE_STOP_GUARD_REPO USERNODE_STOP_GUARD_SERVERS
+    # The notes a person sends this build while it runs (the hook's header,
+    # NOTES FROM THE PERSON), asked for at each stop with this turn's token.
+    if [ -n "$WORKER_JWT" ]; then
+      USERNODE_STOP_GUARD_NOTES="${PLATFORM_URL%/}/api/internal/sessions/${SESSION_ID}/build-notes/take"
+      USERNODE_STOP_GUARD_NOTES_COUNT="$STOP_GUARD_DIR/notes"
+      export USERNODE_STOP_GUARD_NOTES USERNODE_STOP_GUARD_NOTES_COUNT
+    fi
     if [ -n "$STOP_GUARD_CHECKS_ON" ]; then
       USERNODE_STOP_GUARD_CHECKS="$STOP_GUARD_CHECKS"
       USERNODE_STOP_GUARD_CHECKS_COUNT="$STOP_GUARD_DIR/checks"

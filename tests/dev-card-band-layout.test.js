@@ -46,7 +46,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { cardHtml, closeIssueCardHtml, govCardHtml, issueCardHtml, mergedCardHtml, mySessionCardHtml, proposalCardHtml, sharedSessionCardHtml } = require('./lib/dev-card-html');
+const { cardHtml, closeIssueCardHtml, govCardHtml, issueCardHtml, mergedCardHtml, mySessionCardHtml, proposalCardHtml, sharedSessionCardHtml, actionHtml } = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
@@ -532,17 +532,17 @@ test('the band\'s controls: Preview then the hamburger hold the right edge, and 
   // them. The right-hand rail that used to hold the ⋯ up top and the eye at
   // the bottom has no rule left to fight either.
   const trigger = rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn');
-  assert.match(trigger, /margin-left: auto/);
+  assert.match(trigger, /margin-inline-start: auto/);
   const preview = rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview');
-  assert.match(preview, /margin-left: auto/);
-  assert.match(rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview + .dev-card-menu-btn'), /margin-left: 0/);
+  assert.match(preview, /margin-inline-start: auto/);
+  assert.match(rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview + .dev-card-menu-btn'), /margin-inline-start: 0/);
   // #2585: the building state is that same pill in gray, so it holds the
   // same edge by the same two rules — and at the pill's height, not the
   // 28px the badge rule above it still hands .gc-checks-running-badge.
   const building = rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-building');
-  assert.match(building, /margin-left: auto/);
+  assert.match(building, /margin-inline-start: auto/);
   assert.match(building, /height: 24px/, 'the Preview pill\'s own height, so the band cannot shift');
-  assert.match(rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-building + .dev-card-menu-btn'), /margin-left: 0/);
+  assert.match(rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-building + .dev-card-menu-btn'), /margin-inline-start: 0/);
   assert.doesNotMatch(CSS, /\.dev-card-rail\s*[{>]/, 'no rail rule remains');
   assert.match(CARD_TSX, /gc-vote-btn gc-vote-btn-icon dev-card-menu-btn/,
     'the trigger is the icon pill variant, so it never outsizes a text pill');
@@ -631,4 +631,24 @@ test('the two legacy merge badges are boxed INSIDE the clipped band only', () =>
 test('.dev-status-row is retired — no rule, no reference', () => {
   assert.doesNotMatch(CSS, /dev-status-row/, 'the CSS rule is gone');
   assert.doesNotMatch(SRC, /dev-status-row/, 'and nothing renders the class');
+});
+
+test('a busy action pill draws the spinner arc beside its label and says it is busy', () => {
+  // #6104: pressing Submit for review greys the button and swaps its label to
+  // "Submitting…", but nothing on it moved, so the press looked ignored. The
+  // model carries `busy` while the POST is in flight; the pill draws the same
+  // arc and `aria-busy` the dev chat's changes card uses.
+  const busy = actionHtml({ key: 'propose-change', cls: 'gc-vote-btn', label: 'Submitting…', disabled: true, busy: true });
+  assert.match(busy, /aria-busy="true"/);
+  assert.match(busy, /class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"/);
+  assert.match(busy, />\s*<\/span>Submitting…<\/button>/, 'the arc sits before the label');
+  assert.match(busy, /class="gc-vote-btn gap-1\.5"/);
+  assert.match(busy, /disabled/);
+
+  // Without `busy` the pill is byte-for-byte what it was: no attribute, no
+  // extra class, no span.
+  const atRest = actionHtml({ key: 'propose-change', cls: 'gc-vote-btn', label: 'Submit for review' });
+  assert.doesNotMatch(atRest, /aria-busy/);
+  assert.doesNotMatch(atRest, /dc-status-spinner-arc/);
+  assert.match(atRest, /^<button class="gc-vote-btn">/);
 });

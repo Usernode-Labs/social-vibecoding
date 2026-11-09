@@ -77,11 +77,14 @@ function sessionRow(overrides = {}) {
 // guards against the same thing.
 const isActiveSessionsQuery = (c) => /FROM chat_sessions cs/.test(c.sql) && !/WHERE cs\.id = \$1\b/.test(c.sql);
 
-async function fetchActiveSessions(server, { includeImported = false, includeSettings = false } = {}) {
+async function fetchActiveSessions(server, {
+  includeImported = false, includeSettings = false, includeMerged = false,
+} = {}) {
   const port = server.address().port;
-  const suffix = includeImported ? '?include_imported=1' : '';
-  const params = new URLSearchParams(suffix);
+  const params = new URLSearchParams();
+  if (includeImported) params.set('include_imported', '1');
   if (includeSettings) params.set('include_settings', '1');
+  if (includeMerged) params.set('include_merged', '1');
   const qs = params.toString();
   const res = await fetch(`http://127.0.0.1:${port}/api/me/active-sessions${qs ? `?${qs}` : ''}`);
   return { res, body: await res.json() };
@@ -102,7 +105,8 @@ test('query is owner-scoped and excludes archived/headless rows', async () => {
     // another user's rows can never satisfy the WHERE clause.
     assert.match(q.sql, /cs\.user_id = \$1/);
     assert.match(q.sql, /SELECT cs\.id, cs\.user_id,/, 'the rerun guard needs the actual owner on each row');
-    assert.deepStrictEqual(q.params, [VIEWER.id, false, false]);
+    assert.deepStrictEqual(q.params, [VIEWER.id, false, false, false],
+      'the gates ride as params: imported, settings, and (#6042) merged');
     // Status filtering: non-archived statuses only, headless excluded.
     assert.match(q.sql, /status IN \('active', 'promoted', 'paused'\)/);
     assert.match(q.sql, /is_headless = FALSE/);
@@ -136,9 +140,132 @@ test('a caller can opt settings proposals back into the list', async () => {
     const { res } = await fetchActiveSessions(server, { includeSettings: true });
     assert.strictEqual(res.status, 200);
     const q = capturedQueries.find(isActiveSessionsQuery);
-    assert.deepStrictEqual(q.params, [VIEWER.id, false, true],
+    assert.deepStrictEqual(q.params, [VIEWER.id, false, true, false],
       'include_settings=1 clears the settings gate only');
   } finally {
+    server.close();
+  }
+});
+
+// ── #6042: include_merged — the change's lifecycle reaches the row ──────
+//
+// A Messages agent row used to drop its change the moment the change merged
+// (the WHERE kept active/promoted/paused only), so the newest state a row
+// could name was "up for vote". Opt-in with include_merged=1, the flag also
+// admits 'merging' — the state between the vote and the moment the row can
+// say Live — and bounds both to the same week the client's agents list
+// shows. The dev tab's fetch sends no flag and sees none of it.
+test('include_merged=1 admits recent merging/merged rows behind the $4 gate', async () => {
+  capturedQueries = [];
+  poolQueryHandler = async () => ({ rows: [] });
+  const server = await startServer();
+  try {
+    const { res } = await fetchActiveSessions(server, { includeMerged: true });
+    assert.strictEqual(res.status, 200);
+    const q = capturedQueries.find(isActiveSessionsQuery);
+    assert.deepStrictEqual(q.params, [VIEWER.id, false, false, true],
+      'include_merged=1 clears the merged gate only');
+    assert.match(q.sql, /\$4::boolean AND cs\.status IN \('merging', 'merged'\)/);
+    // Bounded to the recent window, on the merge time when there is one —
+    // the same week AGENTS_RECENT_DAYS shows in the client's agents list.
+    assert.match(q.sql,
+      /COALESCE\(cs\.merged_at, cs\.created_at\) >= now\(\) - interval '7 days'/);
+  } finally {
+    server.close();
+  }
+});
+
+test('without the flag the list is the active/promoted/paused set it always was', async () => {
+  capturedQueries = [];
+  poolQueryHandler = async () => ({ rows: [] });
+  const server = await startServer();
+  try {
+    await fetchActiveSessions(server);
+    const q = capturedQueries.find(isActiveSessionsQuery);
+    assert.match(q.sql, /cs\.status IN \('active', 'promoted', 'paused'\)/);
+    // The merged branch is still IN the SQL (one statement for both callers);
+    // the $4 param is what keeps it closed, and the pin above says so.
+    assert.deepStrictEqual(q.params[3], false, 'the merged gate defaults shut');
+  } finally {
+    server.close();
+  }
+});
+
+// #6410: posting a plan on a request writes a `chat_sessions` row with
+// source 'request_spec' and no branch (request-specs.js). No agent ever runs
+// in it, so it is not an agent chat: Messages › Agents, the bell's Agents tab
+// and the dev tab's Active Sessions all read this one route, and none of them
+// should list the plan. The plan is on its request's page. A planning record
+// that gains a branch (a build started from it) is real work and lists.
+test('a posted plan leaves the agent list; a plan record with a branch still lists', async () => {
+  capturedQueries = [];
+  const branchless = sessionRow({
+    id: 61, status: 'paused', source: 'request_spec', branch_name: null,
+    session_title: 'Plan for #177 Design: Recipe home, warm and visual',
+  });
+  const branched = sessionRow({
+    id: 62, status: 'paused', source: 'request_spec', branch_name: 'dev/x',
+    session_title: 'Plan for #20 Bread Bot',
+  });
+  const rows = [branchless, branched];
+  // The mock applies the query's own exclusion, so these assertions fail as
+  // the lists would if the route stopped carrying it.
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/ORDER BY last_activity_at DESC/.test(s)) {
+      const excludesPlans = /AND NOT \(cs\.source IS NOT DISTINCT FROM 'request_spec' AND cs\.branch_name IS NULL\)/.test(s);
+      return {
+        rows: excludesPlans
+          ? rows.filter((r) => !(r.source === 'request_spec' && r.branch_name === null))
+          : rows,
+      };
+    }
+    return { rows: [] };
+  };
+  activeWorkers.clear();
+  const realIsInFlight = worker.isInFlight;
+  worker.isInFlight = () => false;
+  const server = await startServer();
+  try {
+    const { res, body } = await fetchActiveSessions(server);
+    assert.strictEqual(res.status, 200);
+    const q = capturedQueries.find(isActiveSessionsQuery);
+    assert.match(q.sql, /AND NOT \(cs\.source IS NOT DISTINCT FROM 'request_spec' AND cs\.branch_name IS NULL\)/,
+      'the shared plan-record definition filters this route');
+    assert.deepStrictEqual(body.sessions.map((s) => s.id), [62],
+      'only the plan record that gained a branch is an agent chat');
+    assert.deepStrictEqual(body.totals, { active: 0, promoted: 0, paused: 1, busy: 0, total: 1 },
+      'the branchless plan record counts no slot');
+  } finally {
+    worker.isInFlight = realIsInFlight;
+    server.close();
+  }
+});
+
+test('a merging or merged row holds no slot in the totals', async () => {
+  poolQueryHandler = async () => ({
+    rows: [
+      sessionRow({ id: 51, status: 'active' }),
+      sessionRow({ id: 52, status: 'merging' }),
+      sessionRow({ id: 53, status: 'merged' }),
+      sessionRow({ id: 54, status: 'promoted' }),
+    ],
+  });
+  const realIsInFlight = worker.isInFlight;
+  worker.isInFlight = () => false;
+  activeWorkers.clear();
+  const server = await startServer();
+  try {
+    const { body } = await fetchActiveSessions(server, { includeMerged: true });
+    assert.deepStrictEqual(body.totals, {
+      active: 1,   // the one 'active' row only — merged work holds no slot
+      promoted: 1,
+      paused: 0,
+      busy: 0,
+      total: 4,    // every row returned, the merged ones included
+    });
+  } finally {
+    worker.isInFlight = realIsInFlight;
     server.close();
   }
 });
@@ -199,7 +326,7 @@ test('the Dev board can opt imported active rows into the owner list', async () 
     assert.strictEqual(imported.assignee.myValue, 'tester');
     assert.strictEqual(imported.category.top, 'bug');
     const q = capturedQueries.find(isActiveSessionsQuery);
-    assert.deepStrictEqual(q.params, [VIEWER.id, true, false]);
+    assert.deepStrictEqual(q.params, [VIEWER.id, true, false, false]);
     assert.match(q.sql, /cs\.imported_pr_author/);
     assert.match(q.sql, /cs\.staging_url/);
     const detail = capturedQueries.find((c) => /WHERE cs\.id = ANY\(\$1::int\[\]\)/.test(c.sql));

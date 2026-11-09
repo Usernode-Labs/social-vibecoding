@@ -59,17 +59,20 @@ const community = (over = {}) => ({
   ...over,
 });
 
-test('the rail reads Home, Discover, Messages, AI, Communities, you; the phone\'s bar Home, Communities, AI, Messages, you (#6019)', () => {
+test('the rail reads Home, AI, Messages, you, and so does the phone\'s bar; Communities is drawn on neither and Discover is gone (#6019, One Home #6361)', () => {
   // A tab's label is a message id; the word is what the English catalog holds for it.
   const order = [...TABS.matchAll(/\{ key: '([a-z]+)' as const, label: '(core:tabs\.[A-Za-z]+)'/g)].map((m) => [m[1], message(m[2])]);
-  // The markup is the desktop rail's order (Evan, 29 Oct 2026).
-  assert.deepEqual(order.map((o) => o[0]), ['discover', 'messages', 'ai', 'workshop', 'me'],
-    'after Home, whose entry is written across lines');
-  // app.css lays the phone's five out with `order`, and hides Discover there.
+  // The markup is the desktop rail's order (Evan, 29 Oct 2026), the bot
+  // above Messages since One Home (#6361).
+  assert.deepEqual(order.map((o) => o[0]), ['ai', 'messages', 'workshop', 'me'],
+    'after Home, whose entry is written across lines; Discover\'s tab is gone');
+  // app.css lays the phone's four out with `order`, and hides the
+  // Communities tab on both bars: Home holds your communities now.
   const css = read('public/css/app.css');
   const phone = css.slice(css.indexOf('/* TWO ORDERS, ONE MARKUP'));
-  assert.match(phone, /#platform-tab-discover \{ display: none; \}\s*#platform-tab-home \{ order: -4; \}\s*#platform-tab-workshop \{ order: -3; \}\s*#platform-tab-ai \{ order: -2; \}\s*#platform-tab-messages \{ order: -1; \}/);
-  assert.deepEqual(order.find((o) => o[0] === 'discover'), ['discover', 'Discover']);
+  assert.match(phone, /#platform-tab-home \{ order: -4; \}\s*#platform-tab-ai \{ order: -3; \}\s*#platform-tab-messages \{ order: -2; \}/);
+  assert.match(phone, /#platform-tab-workshop \{ display: none !important; \}/);
+  assert.doesNotMatch(TABS, /key: 'discover'/);
   assert.deepEqual(order.find((o) => o[0] === 'ai'), ['ai', 'Homeroom bot'], 'the bot\'s own name (Evan, 29 Oct 2026)');
   assert.deepEqual(order.find((o) => o[0] === 'workshop'), ['workshop', 'Communities'],
     'the key stays `workshop`; the word is Communities');
@@ -147,26 +150,27 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
   // Discussion is the channel whole; #4417: and so is each topic's channel.
   assert.match(LANDER, /\{isChannelPlace\(tab\) \? \(\s*<ProjectDiscussion\s+slug=\{slug\}/);
-  // The Workshop tab, in three titled parts (After-Workshop-B): OVERVIEW,
-  // All items with See all, where the open work is and the approval rule as
-  // its last line (no notices panel since the #4698 follow-up); WHAT'S
-  // HAPPENING, your work (its
-  // first three, #852 review) and what is new for you; WHAT HAPPENED, this
-  // week and a row for each week before it.
+  // The Workshop tab (After-Workshop-B): OVERVIEW, All items with See all,
+  // where the open work is and the approval rule as its last line (no
+  // notices panel since the #4698 follow-up); then YOUR WORK, one row that
+  // opens the Homeroom bot tab narrowed to the project (5 Nov 2026: it was
+  // What's happening, your work and what is new for you); WHAT HAPPENED,
+  // this week and a row for each week before it, its new requests nobody has
+  // picked up ending with Build it.
   const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' && !weekUp ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
   // #4457: a week's page replaces the tab's body.
-  const wsOrder = ['data-ws-part="overview"', 'data-ws-dashboard=""', '<ApprovalLine', 'data-ws-part="happening"',
-    'data-ws-mine=""', 'data-ws-fresh=""', 'data-ws-happened-head=""', 'data-ws-part="happened"', 'data-ws-happened=""', '<ThisWeek', '<WeekRow'].map(w);
+  const wsOrder = ['data-ws-part="overview"', 'data-ws-dashboard=""', '<ApprovalLine', '<YourWorkCard',
+    'data-ws-happened-head=""', 'data-ws-part="happened"', 'data-ws-happened=""', '<ThisWeek', '<WeekRow'].map(w);
   assert.ok(wsOrder.every((n) => n >= 0), `every section is on the tab: ${JSON.stringify(wsOrder)}`);
   assert.deepEqual([...wsOrder].sort((a, b) => a - b), wsOrder,
-    'Overview (All items and the rule), What\'s happening (your work, then what is new for you), then What happened');
+    'Overview (All items and the rule), Your work, then What happened');
   assert.ok(!/<WorkshopNotices|data-ws-notices/.test(ws), 'and no Lately in this project panel');
   assert.ok(!/data-ws-since=""|data-ws-weeks=""|<ApprovalRules/.test(ws), 'Since your last visit, Week by week and the rules card are gone');
-  assert.match(ws, /\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
-  assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
-  assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
-  assert.match(ws, /\(freshAll \? freshRows : freshRows\.slice\(0, WORKSHOP_WORK_FIRST\)\)/, 'and so does what is new for you');
+  assert.match(ws, /\{slug && v\.mine && v\.mine\.viewer \? <YourWorkCard slug=\{slug\} name=\{projectName\} \/> : null\}/,
+    'your work is one row, for a signed-in viewer');
+  assert.ok(!/data-ws-mine=|data-ws-fresh|data-ws-part="happening"/.test(ws), 'and What\'s happening is gone');
+  assert.match(ws, /act=\{freshAct\}/, 'What happened\'s new requests end with Build it');
   assert.equal(message('project:workshop.allItems.title'), 'All items');
   assert.match(ws, /<span className="dev-ws-head-title">\{t\('project:workshop\.allItems\.title'\)\}<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
   // The Overview label opens the Workshop page, All items straight under it;
@@ -203,7 +207,8 @@ test('For you\'s Discussion row: the channel\'s name, its last line, what is new
   assert.match(html, /<button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-channel="preview" data-ws-channel-open="">/,
     'one door, to the Discussion place');
   assert.match(html, />Discussion <span class="dev-ws-foryou-handle">#general<\/span><\/div>/, 'the project\'s channel is its #general');
-  assert.match(html, /<span data-ws-channel-last="">@lin: See you Sunday · [^<]+<\/span>/, 'the newest line, who said it and when');
+  assert.match(html, /<span data-ws-channel-last=""><span data-ws-channel-said="">@lin: See you Sunday<\/span><span data-ws-channel-ago=""> · [^<]+<\/span><\/span>/,
+    'the newest line, who said it and when: the words give way, the time stays whole (audit P04)');
   assert.doesNotMatch(html, /Who has seeds/, 'the rest are the Discussion\'s');
   assert.match(html, /<span class="dev-ws-foryou-pill" data-ws-channel-unread="2">2 new<\/span>/, 'what is new since you last read it, its one pill');
   assert.doesNotMatch(html, /data-ws-channel-compose|<form/, 'no composer on the hub');
@@ -213,7 +218,12 @@ test('For you\'s Discussion row: the channel\'s name, its last line, what is new
   assert.doesNotMatch(homeroom, /data-ws-channel-unread/, 'nothing new, no pill');
   // A multi-line message is one line in the row.
   const long = card(community({ channel: { ...community().channel, recent: [{ id: 3, content: 'one\n\ntwo', created_at: '2026-09-20T10:00:00Z', by: null }] } }));
-  assert.match(long, /<span data-ws-channel-last="">one two · /);
+  assert.match(long, /<span data-ws-channel-last=""><span data-ws-channel-said="">one two<\/span><span data-ws-channel-ago=""> · /);
+  const css = read('public/css/app.css');
+  assert.match(css, /\[data-ws-channel-last\] > \[data-ws-channel-said\] \{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}/);
+  assert.match(css, /\[data-ws-channel-last\] > \[data-ws-channel-ago\] \{ flex: none;/);
+  // The count is new to read, grey as the sidebar's beside it; the accent is a vote's (audit N04).
+  assert.match(css, /\.dev-ws-foryou-pill\[data-ws-channel-unread\] \{ background: var\(--text-faint, #8e8e93\); \}/);
   // Nothing to draw for a viewer who may not talk here. A project that is
   // just yours has its room from the first day (15 Oct 2026), saying so
   // while nothing is said in it.
@@ -327,7 +337,7 @@ test('Recently live: the last three changes that went live, as pictures that ope
 });
 
 test('an open channel lights Communities and hangs off its hub; Messages lists people and agents', () => {
-  assert.match(STORE, /export function channelHub\(\): string \| null \{\s*if \(state\.route\.appSlug\) return `#app\/\$\{encodeURIComponent\(state\.route\.appSlug\)\}\/workshop`;/);
+  assert.match(STORE, /export function channelHub\(\): string \| null \{\s*[\s\S]{0,120}if \(state\.route\.appSlug\) return `#app\/\$\{encodeURIComponent\(state\.route\.appSlug\)\}\/dev\/hub`;/);
   assert.match(STORE, /if \(!row \|\| row\.kind !== 'channel'\) return null;/, '#general is the channel among the conversations');
   assert.match(STORE, /navStore\.set\(\{ tab: hub \? 'workshop' : 'messages' \}\);/);
   assert.match(STORE, /app\.setBackIcon\?\.\('arrow', hub\);/);
@@ -388,8 +398,8 @@ test('#3499: the band and the Discussion pane bleed to the screen\'s edges, not 
   // (an installed app, the native WebView) the hub scrolled sideways by 8px.
   // Each bleed has to cancel exactly the padding it sits in.
   const CSS = read('public/css/app.css');
-  const body = CSS.match(/^#dev-body:has\(> #dev-workshop\) \{ padding: \S+ (\d+)px /m);
-  assert.ok(body, '#dev-body has its Workshop padding');
+  const body = CSS.match(/^#dev-body:has\(> #dev-workshop\) \{ padding-block: [^;]+; padding-inline: (\d+)px; \}/m);
+  assert.ok(body, '#dev-body has its Workshop side padding');
   const side = Number(body[1]);
   const band = CSS.match(/^\.dev-ws-tabs\.dev-ws-band \{\s*margin: -18px -(\d+)px 0;/m);
   assert.ok(band, 'the band bleeds under the header and to the sides');
@@ -420,7 +430,7 @@ test('#3522: on a phone the band pins where it rests', () => {
   assert.match(block, /\.dev-ws-tabs\.dev-ws-band \{\s*position: sticky;\s*top: var\(--ws-band-top\);\s*z-index: 29;/, 'sticky, over the cards, under the header');
   assert.match(block, /#dev-workshop \.dev-ws-pane-head \{ top: calc\(var\(--ws-band-top\) \+ 18px\); \}/, 'All items\' head pins under the band');
   // The two numbers the offsets are built from.
-  assert.match(CSS, /^#dev-body:has\(> #dev-workshop\) \{ padding: 8px /m, '#dev-body\'s 8px top padding');
+  assert.match(CSS, /^#dev-body:has\(> #dev-workshop\) \{ padding-block: 8px /m, '#dev-body\'s 8px top padding');
   assert.match(CSS, /^\.dev-ws-tabs\.dev-ws-band \{\s*margin: -18px /m, 'the band\'s 18px tuck');
 });
 
@@ -479,7 +489,7 @@ test('#3520: a short growing tab keeps one pixel to scroll, so the installed app
   // not the two fitted tabs, which scroll inside themselves.
   assert.match(block, new RegExp(`html:not\\(\\[data-browser-scroller\\]\\) ${growing} \\{\\s*position: relative;\\s*\\}`),
     'the scroller is the sentinel\'s containing block');
-  assert.match(block, new RegExp(`html:not\\(\\[data-browser-scroller\\]\\) ${growing}::after \\{\\s*content: '';\\s*position: absolute; left: 0; bottom: -1px;\\s*width: 1px; height: 1px;\\s*pointer-events: none;\\s*\\}`),
+  assert.match(block, new RegExp(`html:not\\(\\[data-browser-scroller\\]\\) ${growing}::after \\{\\s*content: '';\\s*position: absolute; inset-inline-start: 0; bottom: -1px;\\s*width: 1px; height: 1px;\\s*pointer-events: none;\\s*\\}`),
     'a 1px box hung 1px below the scroller\'s bottom edge');
   // No percentage: a percentage floor in this chain is what Firefox dropped
   // (tests/dev-workshop.test.js), and the grow would absorb a spacer in flow.
@@ -494,4 +504,12 @@ test('#3520: a short growing tab keeps one pixel to scroll, so the installed app
   // call takes options now: the tabs hold still during a pull, pinned in the
   // test above. Still that scroller, so still its one pixel of range.)
   assert.match(read('public/js/app-view.js'), /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\), \{/);
+});
+
+test('the Hub has one large heading on a wide window, and a phone\'s 16px gutter (audit P02, P03)', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ws-placebar\[data-place-bar="status"\] \.dev-ws-place-title \{ font-size: 15px; font-weight: 600; color: var\(--text-muted\); \}/,
+    'on the Hub the hero\'s name is the heading; "Hub" is the band\'s quiet name');
+  assert.match(css, /@media \(max-width: 767\.98px\) \{\s*\.dev-ws\[data-ws-tab="status"\] > \.dev-ws-tabbody \{ padding-inline: 12px; \}\s*\.dev-ws\[data-ws-tab="status"\] > \.dev-ws-tabbody > \.dev-ws-hero \{ padding-inline: 0; \}/,
+    'the column starts 4px in: 12 more puts the cards, the tile and the labels on 16');
 });

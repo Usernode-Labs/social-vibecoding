@@ -1,4 +1,5 @@
 'use strict';
+const { dmStream } = require('./lib/bot-dm-stream');
 
 // The before & after shots demo states (src/services/shots-demo-states.js)
 // against the REAL schema in two throwaway PostgreSQL databases, named as a
@@ -501,7 +502,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // cards' reader. Its build waits its turn, so its line is Building it,
   // and the plan carries its state. Under it: the close offer's pair and,
   // newest of all, the drafted request's pair (#4605).
-  const { messages } = await conversations.listMessages(pool, viewer, demoStates.IDS.botConversation);
+  const { messages } = await dmStream(pool, viewer, demoStates.IDS.botConversation);
   const { planLayout, isPlanMessage, planState } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
   const { isThanksMessage, thanksLine } = loadTsx('frontend/src/features/messages/bot-thanks-card.tsx');
   const plan = messages.find(isPlanMessage);
@@ -563,7 +564,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(ask.sender.id, member);
   assert.equal(offered.reply.id, ask.id);
   const { rows: [action] } = await pool.query(
-    'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.id]);
+    'SELECT * FROM bot_cards WHERE message_id = $1', [offered.id]);
   assert.deepEqual([action.kind, action.status, action.source_issue_number, action.user_id],
     ['close_request', 'open', 900001, member]);
   const why = 'You said dark mode now stays on after a refresh, so this request looks done.';
@@ -579,7 +580,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     user: viewer, actionId: action.id, choice: 'yes', deps: { replies: tapsNow(pool, {}, { github: { isEnabled: () => false } }) },
   });
   assert.equal(tapped.ok, true);
-  const { messages: after } = await conversations.listMessages(pool, viewer, demoStates.IDS.botConversation);
+  const { messages: after } = await dmStream(pool, viewer, demoStates.IDS.botConversation);
   assert.equal(after.at(-1).content, 'I couldn\'t propose closing it just now. Try again in a minute.');
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM issues WHERE kind = \'close_issue\'')).rows[0].n, 0);
 
@@ -592,7 +593,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(fileOffer.reply.id, fileAsk.id);
   assert.equal(chat.latestMessage.id, fileOffer.id);
   const { rows: [fileAction] } = await pool.query(
-    'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1', [fileOffer.id]);
+    'SELECT * FROM bot_cards WHERE message_id = $1', [fileOffer.id]);
   assert.deepEqual([fileAction.kind, fileAction.status, fileAction.user_id],
     ['file_request', 'open', member]);
   assert.equal(fileAction.details, 'Show insights week by week, not only as a total.');
@@ -602,11 +603,37 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     '**Homeroom** · new request: Week by week tracking in insights',
     '',
     'Show insights week by week, not only as a total.',
+    '',
+    '**Where:** the insights page',
+    '',
+    '**Related:**',
+    '- #6230 One detail column for plans and designs: build together, it is the same column',
+    '',
+    '**Done when:**',
+    '- Insights show week by week, not only as a total',
+    '- The same weeks are counted however the list is sorted',
   ].join('\n'));
-  assert.deepEqual(fileOffer.metadata.homeroomBot,
-    mayor.confirmMeta('file_request', {
-      app: { slug: SLUG }, name: 'Homeroom', actionId: fileAction.id, question: 'File this as a request on Homeroom?',
-    }));
+  const { draftExtras, ...cardMeta } = fileOffer.metadata.homeroomBot;
+  assert.deepEqual(cardMeta, mayor.confirmMeta('file_request', {
+    app: { slug: SLUG }, name: 'Homeroom', actionId: fileAction.id, question: 'File this as a request on Homeroom?',
+  }));
+  // #6251: the picture the draft names is on the draft's own message.
+  const { rows: draftPictures } = await pool.query(
+    "SELECT filename FROM conversation_message_attachments WHERE message_id = $1 AND kind = 'image'", [fileOffer.id]);
+  assert.deepEqual(draftPictures.map((r) => r.filename), ['insights.png']);
+  // And on the person's own message, as the attachment offer_request names.
+  const { rows: askPictures } = await pool.query(
+    "SELECT filename, user_id FROM conversation_message_attachments WHERE message_id = $1 AND kind = 'image'",
+    [fileAsk.id]);
+  assert.deepEqual(askPictures, [{ filename: 'insights.png', user_id: member }]);
+  assert.deepEqual(draftExtras, {
+    attachmentIds: (await pool.query("SELECT id FROM conversation_message_attachments WHERE message_id = $1", [fileAsk.id]))
+      .rows.map((r) => r.id),
+    related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
+    context: { saw: 'the insights page' },
+    doneWhen: ['Insights show week by week, not only as a total', 'The same weeks are counted however the list is sorted'],
+    chatHref: '#homeroom-bot/main',
+  });
   assert.deepEqual(fileOffer.metadata.homeroomBot.actions.map((a) => a.label), ['File it', 'Not now']);
 
   // A request whose change waits for approval, as the Requests board reads

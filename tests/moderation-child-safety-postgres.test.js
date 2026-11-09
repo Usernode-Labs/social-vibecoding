@@ -5,8 +5,6 @@
 // full administrator releases it (an audited moderation action).
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const { Client, Pool } = require('pg');
 const express = require('express');
 const moderation = require('../src/services/moderation');
@@ -30,9 +28,9 @@ test('child-safety cases come first, keep their evidence, and only an audited re
     const url = new URL(DSN); url.pathname = '/' + name;
     pool = new Pool({ connectionString: url.toString(), max: 5 });
     pool.on('connect', (client) => connectionsClosed.push(new Promise((resolve) => client.once('end', resolve))));
-    const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
-    await pool.query(schema);
-    await pool.query(schema); // idempotent: the column is added once
+    await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+    await require('../src/db/reference-data').seedReferenceData(pool);
+    await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
     const addUser = async (username) => (await pool.query(
       "INSERT INTO users (username,password,profile_published) VALUES ($1,'unused-test-password',TRUE) RETURNING id,username", [username])).rows[0];
     const reporter = await addUser('reporter');

@@ -14,7 +14,7 @@ const ERRORS: Record<string, string> = {
 
 /** How long an error stays up by itself. Its ✕, Escape or a press anywhere else clears it sooner. */
 export const ERROR_SHOWN_MS = 8000;
-const TIP = 'absolute bottom-full right-0 z-20 mb-2 w-64 rounded-xl bg-white p-3 text-[13px] text-zinc-700 shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-zinc-700';
+const TIP = 'absolute bottom-full end-0 z-20 mb-2 w-64 rounded-xl bg-white p-3 text-[13px] text-zinc-700 shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-zinc-700';
 
 export interface SpeakButtonProps {
   scope: string;
@@ -107,7 +107,7 @@ export function SpeakButton(props: SpeakButtonProps) {
         <span className={`${TIP} flex items-start gap-2`}>
           <span role="alert" className="min-w-0 flex-1">{t(ERRORS[state.error] || 'core:dictation.error.failed')}</span>
           <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={dismiss} aria-label={t('core:common.close')}
-            className="relative -mr-1 -mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-zinc-500 after:absolute after:-inset-2.5 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500 dark:text-zinc-400 dark:hover:bg-zinc-700">
+            className="relative -me-1 -mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-zinc-500 after:absolute after:-inset-2.5 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500 dark:text-zinc-400 dark:hover:bg-zinc-700">
             <XIcon className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         </span>

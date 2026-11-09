@@ -40,6 +40,7 @@ const express = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const events = require('../services/events');
+const contactPreferences = require('../services/contact-preferences');
 const { signUpMetadata } = require('../services/sign-up-from');
 const providers = require('../services/sign-in-providers');
 const communityInvites = require('../services/community-invites');
@@ -203,7 +204,10 @@ function signInProviderRoutes(config) {
     try {
       if (await liveSession(req)) return goBack(res, returnTo, 'error-logout_required');
       const claims = await providers.exchangeCode(pool, config, provider, { code: params.code, state });
-      const result = await providers.signIn(pool, provider, claims, { createSession });
+      const result = await providers.signIn(pool, provider, claims, {
+        // #5974: the session row names the browser that signed in.
+        createSession: (db, userId) => createSession(db, userId, req),
+      });
       // Nobody signed in, so an invite link being followed stays carried for
       // the email code or password the sheet points them to next.
       if (result.refuse) return goBack(res, returnTo, `error-${result.refuse}`);
@@ -297,7 +301,10 @@ function signInProviderRoutes(config) {
         return res.status(422).json({ error: 'That sign-in took too long, or started somewhere else. Try again.', code: 'expired' });
       }
       const claims = await providers.verifyNativeIdToken(pool, config, provider, req.body?.idToken, state);
-      const result = await providers.signIn(pool, provider, claims, { createSession });
+      const result = await providers.signIn(pool, provider, claims, {
+        // #5974: the session row names the browser that signed in.
+        createSession: (db, userId) => createSession(db, userId, req),
+      });
       if (result.refuse) {
         log.info('sign-in-providers', 'App sign-in refused', { provider, reason: result.refuse });
         return res.status(422).json({ error: 'Not signed in.', code: result.refuse });
@@ -353,10 +360,15 @@ function signInProviderRoutes(config) {
       const done = await providers.completeUsername(pool, {
         signupToken: req.cookies?.[SIGNUP_COOKIE],
         username: typeof req.body?.username === 'string' ? req.body.username : '',
-        createSession,
+        // #5974: the session row names the browser that signed in.
+        createSession: (db, userId) => createSession(db, userId, req),
       });
       clearPrivateCookie(res, SIGNUP_COOKIE);
       createSessionCookie(res, done.session.token, done.session.expiresAt);
+      // The username step's "Homeroom news by email" box (#6044), for the
+      // address Apple or Google confirmed. Never fails the sign-up.
+      await contactPreferences.recordSignupChoices(pool, done.user.id,
+        contactPreferences.signupChoicesFrom(req.body), log);
       return res.json({
         user: {
           id: done.user.id,

@@ -38,6 +38,7 @@ const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const appHeal = require('../services/app-heal');
 const appOutages = require('../services/app-outages');
+const wakingPage = require('../services/preview-waking-page');
 
 // How long the page keeps showing the calm "restarting" copy before
 // escalating to "still not responding" (client-side; keep in sync with
@@ -56,14 +57,15 @@ function escapeHtml(s) {
 // Self-contained page: no external assets (the app origin is down and we
 // don't want the error path depending on anything else), works in both
 // the shell iframe and a direct tab, light/dark aware.
-function renderPage(displayName) {
+function renderPage(displayName, { starting = false } = {}) {
   const name = escapeHtml(displayName || 'This app');
+  const action = starting ? 'starting' : 'restarting';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${name} is restarting</title>
+<title>${name} is ${action}</title>
 <style>
   :root { color-scheme: light dark; }
   body {
@@ -90,8 +92,8 @@ function renderPage(displayName) {
 <body>
   <div class="wrap">
     <div class="spinner" id="spinner"></div>
-    <h1 id="title">${name} is restarting</h1>
-    <p id="msg">It&#39;ll be back in a moment. This page retries automatically.</p>
+    <h1 id="title">${name} is ${action}</h1>
+    <p id="msg">${starting ? 'It was resting while nobody used it. This page retries automatically.' : 'It&#39;ll be back in a moment. This page retries automatically.'}</p>
   </div>
 <script>
 (function () {
@@ -120,7 +122,7 @@ function renderPage(displayName) {
       escalated = true;
       document.getElementById('title').textContent = 'Still not responding';
       document.getElementById('msg').textContent =
-        'The team has been notified. We\\u2019ll keep retrying in the background.';
+        ${JSON.stringify(starting ? 'Starting is taking longer than expected. We will keep retrying.' : 'The team has been notified. We’ll keep retrying in the background.')};
     }
     setTimeout(tick, escalated ? 15000 : 5000);
   }
@@ -132,9 +134,49 @@ function renderPage(displayName) {
 </html>`;
 }
 
+// A sleeping preview's host (#6157, services/preview-sleep.js): its
+// Service has no pod, so the app-host gate's proxy fails and lands here with
+// the gate on. The preview is woken, and the visitor gets the waking page,
+// which polls and reloads once it serves. Null for any other host, or a
+// preview that is not asleep (that one is down for another reason).
+async function asleepPreview(pool, rawHost) {
+  const previewSleep = require('../services/preview-sleep');
+  const named = previewSleep.previewSessionOfHost(rawHost);
+  if (!named) return null;
+  const { rows: [row] } = await pool.query(
+    `SELECT cs.id, cs.staging_asleep_at, cs.staging_runtime_kind FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+      WHERE cs.id = $1 AND a.slug = $2`, [named.sessionId, named.slug]);
+  return row && previewSleep.isAsleep(row) ? named : null;
+}
+
 function appErrorRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+  // Used by the gateway after a cold start exceeds its initial request
+  // budget. Generic copy reveals no private app identity and records no
+  // outage: the next request to the original app URL asks to wake it again.
+  router.get('/__app_starting', (req, res) => {
+    res.status(503).set('Retry-After', '5').set('Cache-Control', 'no-store');
+    if (!wakingPage.wantsDocument(req.headers)) return res.json({ error: 'app_starting' });
+    return res.type('html').send(renderPage(null, { starting: true }));
+  });
+
+  // The waking page's ask (#6157): wake the preview this host names. Sent
+  // by the page from the preview's own origin with no credentials and no
+  // body (a no-cors POST), so it carries nothing to check but the host,
+  // which is the preview's own public address: anybody who can open the link
+  // can wake it, as opening it would. Answered at once; the page polls.
+  router.post(wakingPage.WAKE_PATH, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const host = typeof req.query.host === 'string' ? req.query.host.slice(0, 253) : '';
+      const out = await require('../services/preview-sleep').wakeByHost(config, pool, host);
+      return res.status(out.status === 'unknown' ? 404 : 202).json(out);
+    } catch (err) {
+      log.warn('app-error', 'A waking page\'s wake could not be asked', { err: err.message });
+      return res.status(503).json({ status: 'unavailable' });
+    }
+  });
 
   router.get('/__app_unavailable', async (req, res) => {
     res.status(503);
@@ -144,6 +186,21 @@ function appErrorRoutes(config) {
     // Caddy's reverse_proxy preserves the original Host, so the app
     // subdomain the user was visiting arrives here.
     const rawHost = req.headers['x-forwarded-host'] || req.headers.host;
+
+    // A sleeping preview: woken, and the visitor waits on the waking page.
+    let sleeping = null;
+    try { sleeping = await asleepPreview(pool, rawHost); } catch (err) {
+      log.warn('app-error', 'Could not read whether a preview is asleep', { host: rawHost, err: err.message });
+    }
+    if (sleeping) {
+      require('../services/preview-sleep').wakeByHost(config, pool, sleeping.host)
+        .catch((err) => log.warn('app-error', 'A sleeping preview\'s wake could not be asked', { host: sleeping.host, err: err.message }));
+      if (!wakingPage.wantsDocument(req.headers)) return res.json({ error: 'preview_waking' });
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      return res.send(wakingPage.renderWakingPage({
+        wakeUrl: wakingPage.wakeUrlFor(require('../services/caddy').USERNODE_DOMAIN, sleeping.host),
+      }));
+    }
 
     let displayName = null;
     let productionSlug = null;
@@ -197,4 +254,4 @@ function appErrorRoutes(config) {
   return router;
 }
 
-module.exports = { appErrorRoutes };
+module.exports = { appErrorRoutes, _asleepPreviewForTest: asleepPreview };

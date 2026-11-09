@@ -67,6 +67,9 @@
       <p class="text-body text-muted">Who logs the most {{UNIT_PLURAL}} this month. Every {{UNIT_ONE}} counts toward the group goal.</p>
     </header>
 
+    <!-- Shown only when the screen is the copy kept on this device (app.js showSaved). -->
+    <p id="saved-strip" class="rounded-xl bg-raised px-3 py-2 text-small text-muted" role="status" hidden></p>
+
     <!-- Loading: shapes where the goal, the log and the leaderboard will be. -->
     <div id="loading" class="flex flex-col gap-7" aria-label="Loading">
       <div class="skeleton h-32 w-full"></div>

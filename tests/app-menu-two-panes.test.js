@@ -146,11 +146,14 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
   // the figure came with it. The number is a count badge and the words are
   // its accessible name.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /id="app-menu-row-workshop"[\s\S]{0,400}trailing=\{owed \?/,
-    'the badge is the Workshop row\'s trailing figure');
+  assert.match(sheet, /id="app-menu-row-workshop"[\s\S]{0,500}sub=\{owed \?/,
+    'the badge is the Workshop row\'s line under its label (audit D07: beside it, it cut the label)');
   assert.match(sheet, /id="app-menu-workshop-owed"/);
   assert.match(sheet, /aria-label=\{t\('agent:appContext\.row\.toVote', \{ count: owed \}\)\}/);
-  assert.equal(message('agent:appContext.row.toVote', { count: 3 }), '3 to vote');
+  // #5927 item 3: "3 to vote" did not say what was voted on, and read like a
+  // notification. It says it in words.
+  assert.equal(message('agent:appContext.row.toVote', { count: 3 }), '3 decisions waiting on you');
+  assert.equal(message('agent:appContext.row.toVote', { count: 1 }), '1 decision waiting on you');
 
   // ONE SOURCE, TWO READERS: /api/workshop/counts is the Workshop tab's own
   // endpoint, so this is the same figure that screen shows on the same app's
@@ -164,7 +167,7 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
   // an offline or refused request leaves the row exactly as it was.
   assert.match(effect, /catch \{/);
   assert.match(effect, /typeof n === 'number' && n > 0/,
-    'zero is silence too — "0 to vote" is a row shouting that it has nothing');
+    'zero is silence too — "0 decisions" is a row shouting that it has nothing');
 
   // Nothing during render, so the prerender ships no figure and hydration has
   // nothing to correct.
@@ -199,10 +202,11 @@ test('a platform screen is named by the bar, and says it once', () => {
   // of three kinds of message. The Workshop says which workshop with a scope
   // chip: #2759 took it off while the screen was only the list of your apps,
   // and #3051 brought it back as "All apps" over the list it scopes, with
-  // the votes owed across it as one Needs you row.
+  // the votes owed across it as one Needs you row. One Home (#6361) left
+  // only the feed on the page, under the bar's "Needs you".
   assert.doesNotMatch(workshop, /AllAppsScope/,
     'the all-apps screen\'s "All" is the bar\'s own title now (#852), not a chip under it');
-  assert.match(workshop, /data-workshop-needs-open=""/);
+  assert.match(workshop, /<div data-workshop-pane="needs">/);
   // Messages says which of three kinds each conversation is by its
   // section's heading (Homeroom bot, Agents, People; 16 Oct 2026).
   assert.match(messages, /<SectionHead section=\{section\}/);
@@ -218,8 +222,10 @@ test('the desktop rail un-centres the header title', () => {
   const css = read('public/css/app.css');
   const at = css.indexOf('NOT WHILE THE DESKTOP RAIL IS UP');
   assert.ok(at > 0, 'the rule states its reason');
-  const block = css.slice(at, css.indexOf('}', css.indexOf('text-align: left;', at)));
-  assert.match(block, /@media \(min-width: 768px\)/);
+  const block = css.slice(at, css.indexOf('}', css.indexOf('text-align: start;', at)));
+  // From 640px since the overnight audit's U03: the band between, where only
+  // the iPhone Duo held upright lives, was the one place a title centred.
+  assert.match(block, /@media \(min-width: 640px\)/);
   // IT IS NOT KEYED OFF THE RAIL ANY MORE (#2718 review). That left exactly
   // one live case for centring — a desktop window with no rail, which is a
   // running app — so an app's name floated mid-bar while every platform
@@ -230,7 +236,7 @@ test('the desktop rail un-centres the header title', () => {
   assert.doesNotMatch(block, /body:has\(#platform-tabs/,
     'the rail is no longer what decides it');
   assert.match(block, /position: static;/);
-  assert.match(block, /text-align: left;/);
+  assert.match(block, /text-align: start;/, 'left-aligned in English, the start edge in Arabic');
   // Expressed in CSS rather than in the hook: "is there room" is a
   // measurement, "is there a rail" is a layout fact the stylesheet knows, and
   // a media query cannot get out of step with the one that draws the rail.

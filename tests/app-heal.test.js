@@ -101,12 +101,26 @@ function app(overrides = {}) {
   };
 }
 
-test.beforeEach(() => { fx = freshFixtures(); });
+test.beforeEach((t) => {
+  fx = freshFixtures();
+  t.mock.method(runtime(), 'inspect', async (...args) => ({ status: await runtime().status(...args), asleep: false }));
+});
 
 // ── The heal: Kubernetes ─────────────────────────────────────────────────
 
 const kube = () => require('../src/services/kubernetes');
 const runtime = () => require('../src/services/application-runtime');
+
+test('planned Kubernetes sleep is neither restarted nor recorded as an outage', async (t) => {
+  fx.row = app({ runtime_kind: 'kubernetes', runtime_name: 'sv-app-1-puzzle-chain' });
+  fx.rows = [fx.row];
+  t.mock.method(runtime(), 'inspect', async () => ({ status: 'created', asleep: true }));
+  assert.deepEqual(await appHeal.scan(kubeConfig, fakePool, { n: 1 }), { checked: 0, down: [] });
+  assert.equal((await appHeal.heal(kubeConfig, fakePool, 1)).status, 'healthy');
+  assert.deepEqual(fx.reported, []);
+  assert.deepEqual(fx.healed, []);
+  assert.deepEqual(fx.restartCalls, []);
+});
 function noDocker(t) {
   for (const method of ['getContainerStatus', 'restartContainer', 'startContainer', 'waitForHealthy']) {
     t.mock.method(require('../src/services/docker'), method, () => assert.fail(`Docker ${method} called`));

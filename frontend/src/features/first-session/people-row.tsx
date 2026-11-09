@@ -70,7 +70,7 @@ export function PeopleRow({ people }: { people: readonly Person[] }) {
   return (
     <div role="img" aria-label={peopleLabel(people)} data-first-session-people={faces} className="flex items-start justify-center">
       {places.map((person, i) => {
-        const overlap = i ? '-ml-2.5' : '';
+        const overlap = i ? '-ms-2.5' : '';
         const z = { position: 'relative', zIndex: 10 - Math.abs(i - YOU) } as const;
         if (!person) {
           const seat = SEAT[i];

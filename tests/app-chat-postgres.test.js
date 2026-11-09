@@ -26,7 +26,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const express = require('express');
 
 const DSN = process.env.TEST_DATABASE_URL
@@ -54,9 +53,9 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent, the new table and columns included
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   // The routes resolve their pool at construction, so it is swapped first.
   // The cross-instance bus is the one place every room frame passes through
@@ -724,7 +723,7 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
 
   // ── The read cursor ──────────────────────────────────────────────────
 
-  await t.test('#6019: a request\'s stream reads its whole thread, not a change\'s replies', async () => {
+  await t.test('#6019: a request\'s stream reads its whole thread, its changes\' replies included (1 Nov 2026)', async () => {
     const merged = await makeApp('ta-merged', { owner: alice, name: 'Merged' });
     await member(merged, alice);
     await pool.query(`INSERT INTO requests (app_id, number, title) VALUES ($1, 61, 'Lead'), ($1, 62, 'Merged in')`, [merged.id]);
@@ -748,11 +747,110 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref) VALUES ($1, $2, 'on the change', 'session', $3)`,
       [merged.id, alice.id, session.id]);
+    // One page per thread: a change built for the request has no page of
+    // its own, so what was said on it is in the request's one discussion,
+    // in time order, saying where it was written. A live chat nobody else
+    // may see yet is its owner's alone, as its page is.
+    const { rows: [draft] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues) VALUES ($1, $2, 'active', '{61}') RETURNING id`,
+      [merged.id, bob.id]);
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref) VALUES ($1, $2, 'on a draft', 'session', $3)`,
+      [merged.id, bob.id, draft.id]);
+    await at(61, 'after the change');
     const page = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=61', alice)).body;
-    assert.deepEqual(page.messages.map((m) => m.content), ['on the lead', 'on the merged-in request'],
-      'both requests\' replies; the change\'s stay folded under its row');
+    assert.deepEqual(page.messages.map((m) => m.content), ['on the lead', 'on the merged-in request', 'on the change', 'after the change'],
+      'both requests\' replies and the change\'s, in time order');
+    const onChange = page.messages.find((m) => m.content === 'on the change');
+    assert.equal(onChange.thread_type, 'session');
+    assert.equal(Number(onChange.thread_ref), Number(session.id), 'a change\'s row says which change it was written on');
+    const bobs = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=61', bob)).body;
+    assert.ok(bobs.messages.some((m) => m.content === 'on a draft'), 'the draft\'s owner reads its replies');
+    assert.ok(!page.messages.some((m) => m.content === 'on a draft'), 'nobody else does');
+    const newer = (await call('GET', `/api/apps/ta-merged/messages?thread_type=issue&thread_ref=61&after=${onOther.id}`, alice)).body;
+    assert.deepEqual(newer.messages.map((m) => m.content), ['on the change', 'after the change'], 'a catch-up reads them too');
+    // #6421: a new reply on a merged thread's page is stored on that page's
+    // request, and reads back in the one merged stream.
+    await joinCommunity(merged, alice);
+    const said = await call('POST', '/api/apps/ta-merged/messages', alice, { content: 'a new word', thread_type: 'issue', thread_ref: 61 });
+    assert.equal(said.status, 201, JSON.stringify(said.body));
+    const { rows: [stored] } = await pool.query(
+      `SELECT thread_id, thread_ref FROM chat_messages WHERE app_id = $1 AND content = 'a new word'`, [merged.id]);
+    assert.equal(Number(stored.thread_ref), 61, 'written on the page\'s request');
+    assert.equal(Number(stored.thread_id), Number(onLead.thread_id), 'in the merged thread');
+    const reread = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=61', alice)).body;
+    assert.ok(reread.messages.some((m) => m.content === 'a new word'));
+    const onOtherPage = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=62', alice)).body;
+    assert.ok(onOtherPage.messages.some((m) => m.content === 'a new word'), 'the other request\'s page reads it too');
     const alone = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=63', alice)).body;
     assert.deepEqual(alone.messages, [], 'a number with no request reads only its own anchor');
+  });
+
+  await t.test('#6229: a bot note written on both threads is drawn once on the request\'s page', async () => {
+    const twin = await makeApp('ta-twin', { owner: alice, name: 'Twin' });
+    await member(twin, alice);
+    await pool.query(`INSERT INTO requests (app_id, number, title) VALUES ($1, 71, 'Twin request')`, [twin.id]);
+    const { rows: [robot] } = await pool.query(
+      `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot_twin', 'x', TRUE) RETURNING id`
+    );
+    const { rows: [change] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, pr_number)
+       VALUES ($1, $2, 'promoted', '{71}', 99) RETURNING id`,
+      [twin.id, robot.id]
+    );
+    const at = (offset) => `2026-11-03T13:27:19${offset}`;
+    const msg = async ({ user = null, content, type, ref, msgType = 'message', metadata = {}, when }) => (await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [twin.id, user, content, msgType, JSON.stringify(metadata), type, ref, when]
+    )).rows[0];
+    const note = 'I cannot get this change past its checks on my own.';
+    // The 13:27 pair: the request's copy leads with the handle it named and
+    // carries the mark post() writes; the change's copy is the unmarked one.
+    await msg({
+      user: robot.id, content: `@alice ${note}`, type: 'issue', ref: 71,
+      metadata: { hrbotPost: '901' }, when: at('.000Z'),
+    });
+    await msg({ user: robot.id, content: note, type: 'session', ref: change.id, when: at('.004Z') });
+    // The plan, once for the request and once more when it was proposed.
+    await msg({
+      user: robot.id, content: '📋 Plan v1: Fix the export button.', type: 'issue', ref: 71, msgType: 'spec_share',
+      metadata: { specShare: { sessionId: change.id, version: 1 } }, when: at('.100Z'),
+    });
+    await msg({
+      user: robot.id, content: '📋 Plan v1: Fix the export button.', type: 'session', ref: change.id, msgType: 'spec_share',
+      metadata: { specShare: { sessionId: change.id, version: 1 } }, when: at('.200Z'),
+    });
+    // The workflow's promote line beside the bot's own "I built this".
+    await msg({
+      content: 'homeroom_bot promoted PR #99 for voting', type: 'session', ref: change.id, msgType: 'vote',
+      metadata: { vote: { sessionId: change.id } }, when: at('.300Z'),
+    });
+    await msg({
+      user: robot.id, content: 'I built this. It\'s up for a vote', type: 'issue', ref: 71, msgType: 'vote',
+      metadata: { vote: { sessionId: change.id }, hrbotPost: '902' }, when: at('.301Z'),
+    });
+    // A person's identical words on the change are their own reply, not a twin.
+    await msg({ user: alice.id, content: note, type: 'session', ref: change.id, when: at('.500Z') });
+
+    const page = (await call('GET', '/api/apps/ta-twin/messages?thread_type=issue&thread_ref=71', alice)).body;
+    assert.deepEqual(page.messages.map((m) => m.content), [
+      `@alice ${note}`,
+      '📋 Plan v1: Fix the export button.',
+      'I built this. It\'s up for a vote',
+      note,
+    ], 'each bot note once, the request\'s copy kept, a person\'s reply untouched');
+    assert.equal(page.messages[0].thread_type, 'issue', 'the kept copy is the request\'s');
+
+    // A change with no request still reads its own thread as before: the
+    // fold is the request page's, not the change's.
+    const own = (await call('GET', `/api/apps/ta-twin/messages?thread_type=session&thread_ref=${change.id}`, alice)).body;
+    assert.deepEqual(own.messages.map((m) => m.content), [
+      note,
+      '📋 Plan v1: Fix the export button.',
+      'homeroom_bot promoted PR #99 for voting',
+      note,
+    ], 'the change\'s own stream is untouched');
   });
 
   await t.test('the read cursor: lazily zero, forward-only read, back-only unread', async () => {

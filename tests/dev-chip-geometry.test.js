@@ -143,11 +143,12 @@ test('the Workshop line row\'s category chip shrinks before the mask, not into i
   assert.match(r, /flex: 0 1 auto/, 'the category chip is the one thing that gives way');
   assert.match(r, /min-width: 0/);
   assert.match(r, /overflow: hidden/);
-  // The line masks its last 20px; it keeps 20px of right padding so a chip
-  // that FITS is never faded. That is a second rule of its own, so find it
-  // rather than the line's main one.
+  // The line masks its last 20px (the inline end, so the left in Arabic);
+  // it keeps 20px of padding at that same end so a chip that FITS is never
+  // faded. That is a second rule of its own, so find it rather than the
+  // line's main one.
   assert.ok(
-    CSS.includes('\n.dev-ws-lrow .dev-ws-wrow-status { padding-right: 20px; }'),
+    CSS.includes('\n.dev-ws-lrow .dev-ws-wrow-status { padding-inline-end: 20px; }'),
     'a chip that fits ends before the 20px mask');
 });
 

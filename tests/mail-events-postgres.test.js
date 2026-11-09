@@ -65,6 +65,26 @@ test('mail migrations are repeatable; callbacks, suppression and retention work 
   assert.equal(await mail.pruneDeliveries(pool), 1);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM mail_events WHERE delivery_id = $1', [delivery.id])).rows[0].n, 0);
   assert.equal(await events.suppression(pool, 'alice@example.invalid'), 'complaint');
+  await t.test('Brevo: a webhook finds the delivery by its receipt, retries record once, and only what will never arrive suppresses', async () => {
+    const brevoConfig = { ...config, mailProvider: 'brevo', mailTransport: { provider: 'brevo', send: async () => ({ providerMessageId: 'brevo-receipt@relay' }) } };
+    await mail.send(brevoConfig, { kind: 'project_invite', to: 'Brevo@example.invalid', url: 'https://example.invalid/waitlist' });
+    const brevoEvent = (name) => ({ event: name, 'message-id': '<brevo-receipt@relay>', email: 'wrong@example.invalid', subject: 'secret body never retained' });
+    await Promise.all(Array.from({ length: 5 }, () => events.ingestBrevo(pool, brevoEvent('delivered'))));
+    await events.ingestBrevo(pool, brevoEvent('soft_bounce'));
+    await events.ingestBrevo(pool, brevoEvent('blocked'));
+    assert.equal(await events.suppression(pool, 'brevo@example.invalid'), null);
+    await events.ingestBrevo(pool, brevoEvent('hard_bounce'));
+    assert.equal(await events.suppression(pool, 'brevo@example.invalid'), 'bounce');
+    await events.ingestBrevo(pool, brevoEvent('spam'));
+    assert.equal(await events.suppression(pool, 'BREVO@example.invalid'), 'complaint');
+    assert.equal(await events.suppression(pool, 'wrong@example.invalid'), null);
+    const { rows } = await pool.query(`SELECT e.type, e.event_key, e.meta FROM mail_events e
+       JOIN mail_deliveries d ON d.id = e.delivery_id WHERE d.provider = 'brevo' ORDER BY e.id`);
+    assert.deepEqual(rows.map((r) => r.event_key), ['delivered', 'soft_bounce', 'blocked', 'hard_bounce', 'spam'].map((n) => `brevo:brevo-receipt@relay:${n}`));
+    assert.deepEqual(rows.map((r) => r.type), ['delivered', 'bounced', 'bounced', 'bounced', 'complained']);
+    assert.ok(rows.every((r) => r.meta.provider === 'brevo'));
+    assert.doesNotMatch(JSON.stringify(rows), /secret body|wrong@example|Brevo@example/);
+  });
   await t.test('signed clicks, pixels, one-click unsubscribe and unique-message reports', async (t) => {
     const tracking = require('../src/services/mail/tracking');
     const previous = process.env.PLATFORM_MAIL_TRACKING_SECRET;

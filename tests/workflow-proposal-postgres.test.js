@@ -220,6 +220,10 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     const voter = await user();
     const s = await session({ status: 'paused', head: SHA('b') });
     await pool.query('INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)', [s.app_id, voter.id]);
+    // One Home (#6361): a pin no longer joins by itself; the stake is a member's.
+    await pool.query(
+      "INSERT INTO community_members (community_id, user_id, source) SELECT community_id, $2, 'joined' FROM apps WHERE id = $1 ON CONFLICT DO NOTHING",
+      [s.app_id, voter.id]);
     await pool.query(`INSERT INTO notification_preferences (user_id, app_id, category, enabled) VALUES ($1, NULL, 'new_proposals', TRUE)`, [voter.id]);
     // A vote of an earlier review on another head goes.
     await vote(s, voter, 'yes');
@@ -249,8 +253,12 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     assert.deepEqual(lines.map((l) => l.msg_type), ['vote']);
     assert.match(lines[0].content, /promoted PR #\d+: Make it better for voting/);
     const { rows: notes } = await pool.query('SELECT user_id, kind FROM notifications WHERE session_id = $1 ORDER BY id', [s.id]);
-    assert.deepEqual(notes.map((n) => [n.user_id, n.kind]), [[voter.id, 'pr_proposed'], [s.owner.id, 'connector_submitted']],
-      'the vote requests and the owner\'s "your agent put it up", in the move\'s transaction (bug 12)');
+    // #6402: the vote request no longer goes out at promotion. It waits for
+    // the checks to settle passing, which the preview machine's `settled`
+    // write triggers (tests/needs-feed-checks-ready-postgres.test.js pins
+    // that); only the owner's "your agent put it up" is in this move.
+    assert.deepEqual(notes.map((n) => [n.user_id, n.kind]), [[s.owner.id, 'connector_submitted']],
+      'the owner\'s "your agent put it up", in the move\'s transaction (bug 12); the vote requests wait for the checks');
     assert.equal((await pool.query(`SELECT 1 FROM events WHERE session_id = $1 AND event_type = 'pr_promoted'`, [s.id])).rowCount, 1);
     const [kick] = await sentTo(s, 'preview');
     assert.equal(kick.type, 'RevisionSubmitted');
@@ -694,6 +702,45 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
   });
 
   // ── What the caller read, and the guard ─────────────────────────────
+
+  await t.test('P20b an authored push ends an admin force and records what it was; a mechanical move keeps it', async () => {
+    defaults();
+    const s = await session({ status: 'promoted', promotedAgo: 0 });
+    await pool.query(`UPDATE chat_sessions SET shots_state = 'verified' WHERE id = $1`, [s.id]);
+    await send(s, 'ForceMerge', { from: 'promoted', username: 'evan', userId: 7 }, route);
+    await settle();
+    let inst = await instance(s);
+    assert.equal(inst.data.force.by, 'evan');
+    assert.equal(inst.data.force.head, SHA('a'));
+
+    // A mechanical move of main carries the force, and its head, with it.
+    await send(s, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('a'), to: SHA('b'), keepVotes: true, reason: 'mechanical' });
+    await settle();
+    inst = await instance(s);
+    assert.equal(inst.data.force.head, SHA('b'), 'a mechanical move follows the force');
+    assert.equal(inst.data.forceDropped, null);
+
+    // The author's own push ends it, and the record of what it was survives
+    // so the card and the thread can say it no longer applies.
+    await send(s, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('b'), to: SHA('c'), keepVotes: false, reason: 'authored' });
+    await settle();
+    inst = await instance(s);
+    assert.equal(inst.data.force, null);
+    assert.equal(inst.data.forceDropped.by, 'evan');
+    assert.equal(inst.data.forceDropped.head, SHA('b'));
+    assert.equal(inst.data.forceDropped.to, SHA('c'));
+    const { rows: lines } = await pool.query(
+      `SELECT content FROM chat_messages WHERE thread_type = 'session' AND thread_ref = $1
+         AND content ILIKE '%admin merge by evan%'`, [s.id]);
+    assert.equal(lines.length, 1, 'the change\'s thread says the force no longer applies');
+
+    // A new force clears the dropped record.
+    await send(s, 'ForceMerge', { from: 'promoted', username: 'evan', userId: 7 }, route);
+    await settle();
+    inst = await instance(s);
+    assert.ok(inst.data.force);
+    assert.equal(inst.data.forceDropped, null);
+  });
 
   await t.test('P21 every status move names what its caller read: a payload without `from` is refused at the append', async () => {
     const s = await session();

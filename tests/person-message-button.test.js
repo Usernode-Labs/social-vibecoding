@@ -120,6 +120,53 @@ test('the control itself: named for the person, and a refusal is never silent', 
   assert.match(source, /role="alert"/);
 });
 
+test('a person\'s picture replaces the letter on their page and their Top users row', () => {
+  const profileChrome = (avatarUrl) => ({
+    kind: 'profile', who: 'dana', initial: 'D', canMessage: true, avatarUrl,
+  });
+  const tabChrome = {
+    kind: 'tabs',
+    subtitle: 's',
+    subTabs: [{ key: 'users', active: true, label: 'Users' }],
+    winTabs: [],
+  };
+  const userRow = (avatarUrl) => ({
+    key: 'dana|0',
+    rank: 1,
+    who: 'dana',
+    initial: 'D',
+    avatarUrl,
+    meta: [],
+    unmergedNote: null,
+    mergedKudos: 0,
+  });
+  const state = { mounted: true, chrome: profileChrome('/avatars/9'), body: null };
+  const pane = loadTsx('frontend/src/features/leaderboard/kudos-pane.tsx', {
+    stubs: { './kudos-pane-store.js': { kudosPaneStore: { get: () => state, subscribe: () => () => {} } } },
+  });
+  const draw = () => renderToHtml(createElement(pane.KudosPane, {}));
+
+  const header = draw();
+  assert.match(header, /<img[^>]+src="\/avatars\/9"/, 'the page shows the picture');
+  assert.ok(!header.includes('>D</div>'), 'and not the letter as well');
+
+  state.chrome = profileChrome(null);
+  const noPicture = draw();
+  assert.ok(!noPicture.includes('<img'), 'no picture, no image');
+  assert.match(noPicture, />D<\/div>/, 'the initial stays the fallback');
+
+  state.chrome = tabChrome;
+  state.body = { kind: 'users', rows: [userRow('/avatars/9')] };
+  const row = draw();
+  assert.match(row, /<img[^>]+src="\/avatars\/9"[^>]*loading="lazy"/, 'the row shows it too, lazily');
+  assert.ok(!row.includes('>D</div>'));
+
+  state.body = { kind: 'users', rows: [userRow(null)] };
+  const plainRow = draw();
+  assert.ok(!plainRow.includes('<img'));
+  assert.match(plainRow, />D<\/div>/);
+});
+
 test('the button renders where the prototype puts it, and only when allowed', () => {
   const card = loadTsx('frontend/src/features/profile/public-profile-card.tsx');
   const profile = { username: 'dana', displayName: 'Dana Reyes', links: {} };

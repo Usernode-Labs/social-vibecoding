@@ -315,10 +315,12 @@ test('the account step asks for no password, and says how they sign in (#4891)',
   // The request is `saveAccount`, which the full-page Welcome sends too
   // (frontend/src/features/auth/welcome-page.tsx).
   const finishAccount = src.slice(src.indexOf('const finishAccount = useCallback'), src.indexOf('const signInWithPassword = useCallback'));
-  assert.match(finishAccount, /const saved = await saveAccount\(handle\);/);
+  // With the sign-up form's "Homeroom news by email" box (#6044), sent only
+  // for an account still being made.
+  assert.match(finishAccount, /const saved = await saveAccount\(handle, \{ marketingEmail: needsUsername && newsByEmail \}\);/);
   const saveAccount = src.slice(src.indexOf('export async function saveAccount('), src.indexOf('export function linkSigningIn('));
   assert.match(saveAccount, /fetchSessionMint\('\/api\/auth\/otp\/set-password', \{/);
-  assert.match(saveAccount, /body: JSON\.stringify\(\{\s*\.\.\.\(handle \? \{ username: handle \} : \{\}\),\s*\}\),/);
+  assert.match(saveAccount, /body: JSON\.stringify\(\{\s*\.\.\.\(handle \? \{ username: handle \} : \{\}\),\s*\/\/[^\n]*\n\s*\.\.\.\(optIns\.marketingEmail \? \{ marketingEmail: true \} : \{\}\),\s*\}\),/);
   for (const body of [finishAccount, saveAccount]) {
     assert.doesNotMatch(body, /\{ password \}|\bpassword:|passwordConfirmation|passwordField/);
   }
@@ -614,7 +616,7 @@ test('the reset step asks the sign-in screen\'s reset, and says the same whether
 test('the reset has one way back, a way in with a code, and the support note only once a link went (#5259)', () => {
   const src = read(SHEET);
   // One "‹ Sign in", above the title, carrying the typed username back.
-  assert.match(src, /\{step === 'forgot' \? \(\s+<button type="button" data-sign-in-sheet-forgot-back="" className=\{`\$\{QUIET\} mt-2 -ml-1 flex items-center gap-0\.5`\} onClick=\{\(\) => \{ identifierPrefill\.current = typedIdentifier\.current; toStep\('password'\); \}\}>\s+<ChevronLeftIcon/);
+  assert.match(src, /\{step === 'forgot' \? \(\s+<button type="button" data-sign-in-sheet-forgot-back="" className=\{`\$\{QUIET\} mt-2 -ms-1 flex items-center gap-0\.5`\} onClick=\{\(\) => \{ identifierPrefill\.current = typedIdentifier\.current; toStep\('password'\); \}\}>\s+<ChevronLeftIcon/);
   assert.equal(src.match(/data-sign-in-sheet-forgot-back=""/g).length, 1, 'one way back, not two');
   assert.equal(message('auth:signInSheet.forgot.back'), 'Sign in');
   const step = src.slice(src.indexOf("{step === 'forgot' ? (\n          <form"), src.indexOf("{step === 'account' ? ("));
@@ -875,7 +877,7 @@ test('the sheet does not hand off when the make screen is not coming next: a ref
 
 test('Continue shows a spinner while it finishes, beside "Finishing…" (#4892)', () => {
   const sheet = read(SHEET);
-  assert.match(sheet, /function FinishingSpinner\(\) \{\s+return <SpinnerArcIcon className="mr-2 h-\[18px\] w-\[18px\] shrink-0 animate-spin" aria-hidden="true" \/>;/);
+  assert.match(sheet, /function FinishingSpinner\(\) \{\s+return <SpinnerArcIcon className="me-2 h-\[18px\] w-\[18px\] shrink-0 animate-spin" aria-hidden="true" \/>;/);
   // The Welcome step's Continue and a provider's username step's, the two
   // that finish a new account and may hand off to the make screen.
   for (const step of ['account', 'username']) {

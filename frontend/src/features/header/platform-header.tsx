@@ -32,6 +32,7 @@ import { useRef } from 'react';
 
 import {
   BellIcon,
+  ArrowLeftIcon,
   ChevronLeftIcon,
   HomeIcon,
   XIcon,
@@ -331,7 +332,7 @@ export function PlatformHeader() {
           - The back-btn wrapper is always 20px wide (`w-5 shrink-0`) so
           toggling the button's `hidden` class doesn't collapse the
           leftmost column and shift the title.
-          - The right group has `ml-auto` so when the title goes absolute
+          - The right group has `ms-auto` so when the title goes absolute
           (centered mode) and is removed from flex flow, the right group
           still sits at the right edge instead of collapsing next to the
           back-btn.
@@ -541,6 +542,16 @@ export function PlatformHeader() {
               id="back-icon-arrow"
               className={backArrow ? 'w-5 h-5' : 'hidden w-5 h-5'}
             />
+            {/*
+                Overnight audit G01: Android's back is a plain arrow with no
+                disc (Material's arrow_back), so on `html.un-android` (the
+                kit's device class) app.css draws this one in place of the
+                chevron and takes the disc away. No id and no state of its
+                own: the chevron's `#back-icon-arrow` stays the slot's
+                contract (app.js's pre-hydration fallback toggles it by id),
+                and app.css shows this one only beside a shown chevron.
+            */}
+            <ArrowLeftIcon className="back-icon-android w-5 h-5" />
             <HomeIcon
               id="back-icon-home"
               className={mode === 'home' ? 'w-5 h-5' : 'hidden w-5 h-5'}
@@ -597,7 +608,7 @@ export function PlatformHeader() {
             enough to change the title's centred-vs-flow decision on a 390pt
             screen. It was measured with Improve between them and holds
             without it: the gap is between neighbours, not across the group. */}
-        <div ref={rightGroupRef} className="ml-auto shrink-0 flex items-center gap-2.5">
+        <div ref={rightGroupRef} className="ms-auto shrink-0 flex items-center gap-2.5">
           {/*
               #3702: Suggest, the running app's door, FIRST in the group,
               before the bell. It is about the app on screen, so it leads;
@@ -759,7 +770,7 @@ export function PlatformHeader() {
                  value is never patched back out.
               */
               data-session-done="0"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[0.65rem] font-bold flex items-center justify-center"
+              className="hidden absolute -top-1 -end-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[0.65rem] font-bold flex items-center justify-center"
               aria-label={t('core:header.unreadNotifications')}
             >
             </span>

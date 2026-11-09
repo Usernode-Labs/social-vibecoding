@@ -34,7 +34,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { message } = require('./lib/platform-i18n');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -502,7 +502,7 @@ test('the panes keep separate data state', () => {
     assert.ok(!/Leaderboard\._cache/.test(code),
       `the ${name} module must not route through the Kudos cache`);
   }
-  assert.match(topoJs, /_page: /, 'the standings pane keeps its own paging state');
+  assert.match(topoJs, /_loadSeq: /, 'the standings pane keeps its own loading state');
 });
 
 // ─── Shared event selection ──────────────────────────────────────────────
@@ -923,13 +923,154 @@ test('#3887: the drill opens the row the viewer sees, not the payload index', ()
   assert.equal(TL._drillRow.display_name, 'Ocank14');
 });
 
-test('#3887: the chip goes through the module handler, which restarts at page 1', () => {
+test('#3887: the chip goes through the module handler, which reloads the whole board', () => {
   assert.match(topoJs, /_showNonPodium = !TopochainLeaderboard\._showNonPodium/,
     'the flag flips in one place');
-  assert.match(topoJs, /_toggleNonPodium\(\) \{[\s\S]{0,300}?_page = 1;/,
-    'and the table restarts at page 1');
+  const toggle = topoJs.slice(topoJs.indexOf('  _toggleNonPodium() {'), topoJs.indexOf('  // Real hash navigation'));
+  assert.match(toggle, /TopochainLeaderboard\.loadLeaderboard\(\)/,
+    'and the whole board is fetched again');
+  assert.doesNotMatch(toggle, /_page/, 'there is no page to restart at any more');
   assert.match(topoJs, /include_non_podium', '1'/,
     'the fetch carries the ask only while the chip is on');
+});
+
+// ─── #6107: the whole board loads as one scrolling list ──────────────────
+//
+// The table used to show 25 rows at a time behind Prev / Next. It now walks
+// every page of /api/v4/leaderboard — 100 rows a request, following
+// meta.total_pages — and appends the rows, so one scroll reaches everyone.
+
+function pageOf(url) {
+  return Number(new URL(url, 'http://x').searchParams.get('page'));
+}
+
+function boardPage(rows, page, totalPages) {
+  return {
+    status: 200,
+    ok: true,
+    data: {
+      success: true,
+      data: {
+        event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+        leaderboard: rows,
+      },
+      meta: { page, per_page: 100, total: rows.length, total_pages: totalPages },
+    },
+  };
+}
+
+function rankedRows(from, count) {
+  return Array.from({ length: count }, (_, i) => ({
+    ...SEASON_ROW, rank: from + i, display_name: `member-${from + i}`,
+  }));
+}
+
+/** The module reads its text off the global, as it does in the shell. */
+async function withEnglish(fn) {
+  const previous = globalThis.PlatformI18n;
+  globalThis.PlatformI18n = englishPlatformI18n();
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) delete globalThis.PlatformI18n;
+    else globalThis.PlatformI18n = previous;
+  }
+}
+
+test('#6107: every page of the board is walked and its rows appended', async () => {
+  await withEnglish(async () => {
+    const { TL, store } = loadStandings();
+    TL._open = true;
+    const urls = [];
+    TL.fetchJson = (url) => {
+      urls.push(url);
+      const page = pageOf(url);
+      if (page === 1) return Promise.resolve(boardPage(rankedRows(1, 100), 1, 3));
+      if (page === 2) return Promise.resolve(boardPage(rankedRows(101, 100), 2, 3));
+      return Promise.resolve(boardPage(rankedRows(201, 30), 3, 3));
+    };
+    await TL.loadLeaderboard();
+    assert.deepEqual(urls.map(pageOf), [1, 2, 3], 'the walk follows total_pages in order');
+    for (const url of urls) {
+      assert.equal(new URL(url, 'http://x').searchParams.get('per_page'), '100',
+        'each page asks for the largest page the server allows');
+    }
+    assert.equal(store.state.body.state, 'table');
+    assert.equal(store.state.body.rows.length, 230, 'all 230 ranked people are listed');
+    assert.equal(store.state.body.rows[0].rank, '1');
+    assert.equal(store.state.body.rows[229].rank, '230', 'ranks are the server\'s own');
+    assert.equal(TL._loading, false, 'the walk finishes the loading state');
+  });
+});
+
+test('#6107: a newer walk drops an older one\'s late pages', async () => {
+  await withEnglish(async () => {
+    const { TL, store } = loadStandings();
+    TL._open = true;
+    let releaseFirstPage2;
+    const firstPage2 = new Promise((resolve) => { releaseFirstPage2 = resolve; });
+    let page2Calls = 0;
+    TL.fetchJson = (url) => {
+      const page = pageOf(url);
+      if (page === 1) return Promise.resolve(boardPage(rankedRows(1, 2), 1, 2));
+      page2Calls += 1;
+      if (page2Calls === 1) return firstPage2; // the first walk's page 2
+      return Promise.resolve(boardPage(rankedRows(11, 2), 2, 2));
+    };
+    const first = TL.loadLeaderboard();
+    await Promise.resolve();
+    await Promise.resolve();
+    const second = TL.loadLeaderboard();
+    await second;
+    releaseFirstPage2(boardPage(rankedRows(21, 2), 2, 2));
+    await first;
+    assert.deepEqual(store.state.body.rows.map((r) => r.rank), ['1', '2', '11', '12'],
+      'the stale page never reaches the list the newer walk built');
+  });
+});
+
+test('#6107: a page that fails partway shows the error, never a short list', async () => {
+  await withEnglish(async () => {
+    const { TL, store } = loadStandings();
+    TL._open = true;
+    TL.fetchJson = (url) => Promise.resolve(pageOf(url) === 1
+      ? boardPage(rankedRows(1, 100), 1, 2)
+      : { status: 500, ok: false, data: { success: false, error: 'The season could not be read.' } });
+    await TL.loadLeaderboard();
+    assert.equal(store.state.body.state, 'error');
+    assert.equal(store.state.body.message, 'The season could not be read.');
+    assert.equal(TL._data, null, 'no partial board is presented as the whole one');
+  });
+});
+
+test('#6107: the walk stops at the 5,000-row safety cap', async () => {
+  await withEnglish(async () => {
+    const { TL } = loadStandings();
+    TL._open = true;
+    const urls = [];
+    TL.fetchJson = (url) => {
+      urls.push(url);
+      const page = pageOf(url);
+      return Promise.resolve(boardPage(rankedRows(1, 1), page, 500));
+    };
+    await TL.loadLeaderboard();
+    assert.equal(TL._maxPages, 50, '50 pages of 100 rows');
+    assert.equal(urls.length, TL._maxPages, 'a runaway total_pages cannot walk forever');
+  });
+});
+
+test('#6107: the page line and its Prev / Next buttons are gone', async () => {
+  await withEnglish(() => {
+    const view = renderStandings({
+      event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+      leaderboard: [SEASON_ROW],
+    });
+    assert.equal('pagination' in view, false, 'the table state carries no page count');
+    assert.doesNotMatch(standingsTsx, /tc-lb-prev|tc-lb-next/, 'no paging buttons are rendered');
+    assert.doesNotMatch(standingsTsx, /standings\.page|standings\.prev|standings\.next/,
+      'nor their catalog strings');
+    assert.doesNotMatch(topoJs, /_prevPage|_nextPage/, 'nor their handlers');
+  });
 });
 
 test('the standings table is rank, name and points on a season board (#5275)', () => {

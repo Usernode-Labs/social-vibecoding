@@ -66,6 +66,7 @@ import { ChevronLeftIcon } from '@/components/ui/icons';
 import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { backsToBot, improveStore, topicBackHref, topicWorkshopHref } from '../../improve/improve-store.js';
+import { placeHandle } from '../workshop/places';
 
 function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
   const nav = (window as unknown as {
@@ -84,7 +85,7 @@ function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
 }
 
 /** Where a chip goes: the screen it names. */
-type ChipKey = 'messages' | 'bot' | 'workshop' | 'allItems';
+type ChipKey = 'messages' | 'bot' | 'workshop' | 'allItems' | 'hub' | 'needs' | 'channel';
 
 /**
  * The chip's words by destination, as message ids. The key names the
@@ -95,7 +96,31 @@ const CHIP_TEXT: Record<ChipKey, { label: string; name: string }> = {
   bot: { label: 'project:topic.back.bot', name: 'project:topic.back.toBot' },
   workshop: { label: 'project:topic.back.workshop', name: 'project:topic.back.toWorkshop' },
   allItems: { label: 'project:topic.back.allItems', name: 'project:topic.back.toAllItems' },
+  hub: { label: 'project:topic.back.hub', name: 'project:topic.back.toHub' },
+  needs: { label: 'project:topic.back.needs', name: 'project:topic.back.toNeeds' },
+  channel: { label: 'project:topic.back.channel', name: 'project:topic.back.toChannel' },
 };
+
+/**
+ * THE CHIP NAMES THE PLACE IT OPENS (audit N05, 1 Nov 2026; its follow-up,
+ * 2 Nov). Its href is the project's /workshop address, and a press does one
+ * of two things (onBackClick): when the entry below is that page, it steps
+ * Back to it, which shows the place that entry was left on, the one the page
+ * remembers (AppView._workshopTab: the Hub, Needs you, the Workshop, All
+ * items or a channel); otherwise it follows the link, and a link to
+ * /workshop opens the Workshop (App._linkOpensWorkshop). So the chip names
+ * the place for a step Back and "Workshop" for a link, and the phone
+ * header's line and the sidebar's lit row read the same answer
+ * (../workshop/place-store.ts itemReturnPlace).
+ */
+export function placeChip(workshopTab: string | null): { to: ChipKey; handle?: string } {
+  if (workshopTab === 'all') return { to: 'allItems' };
+  if (workshopTab === 'status' || workshopTab === 'plan') return { to: 'hub' };
+  if (workshopTab === 'needs') return { to: 'needs' };
+  const handle = placeHandle(workshopTab);
+  if (handle) return { to: 'channel', handle };
+  return { to: 'workshop' };
+}
 
 /**
  * The destination `href` names, as a key: the rule `topicBackLabel`
@@ -106,24 +131,32 @@ const CHIP_TEXT: Record<ChipKey, { label: string; name: string }> = {
  * back to the Workshop. Read as state, so the chip never compares its own
  * words.
  */
-function chipFor(href: string, workshopTab: string | null): ChipKey {
-  if (href.startsWith('#messages')) return 'messages';
-  if (backsToBot(href)) return 'bot';
-  return workshopTab === 'all' && /\/workshop$/.test(href) ? 'allItems' : 'workshop';
+export function chipFor(href: string, workshopTab: string | null, stepsBack = false): { to: ChipKey; handle?: string } {
+  if (href.startsWith('#messages')) return { to: 'messages' };
+  if (backsToBot(href)) return { to: 'bot' };
+  return /\/workshop$/.test(href) && stepsBack ? placeChip(workshopTab) : { to: 'workshop' };
+}
+
+/** Whether a press on a chip to `href` steps Back (App._canStepBackTo). */
+function stepsBackTo(href: string): boolean {
+  if (typeof window === 'undefined') return false;
+  const app = (window as unknown as { App?: { _canStepBackTo?: (h: string) => boolean } }).App;
+  try { return !!app?._canStepBackTo?.(href); } catch { return false; }
 }
 
 /** One chip: the destination's name behind the chevron. */
-function TopicChip({ href, to }: { href: string; to: ChipKey }): ReactNode {
+function TopicChip({ href, to, handle }: { href: string; to: ChipKey; handle?: string }): ReactNode {
   const t = useMessages('project');
+  const values = handle ? { handle } : undefined;
   return (
     <a
       className="dev-topic-back un-touch-target"
       href={href}
-      aria-label={t(CHIP_TEXT[to].name)}
+      aria-label={t(CHIP_TEXT[to].name, values)}
       onClick={onBackClick}
     >
       <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
-      <span>{t(CHIP_TEXT[to].label)}</span>
+      <span>{t(CHIP_TEXT[to].label, values)}</span>
     </a>
   );
 }
@@ -138,7 +171,7 @@ export function TopicBack(): ReactNode {
   // the item was opened from.
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
   const workshopTab = av && typeof av._workshopTab === 'function' ? av._workshopTab() : null;
-  const back = <TopicChip href={href} to={chipFor(href, workshopTab)} />;
+  const back = <TopicChip href={href} {...chipFor(href, workshopTab, stepsBackTo(href))} />;
   // #3691: and offers its project's Workshop beside that, styled the same
   // (a card opened from the Homeroom bot tab's page too).
   const workshop = topicWorkshopHref({ slug, tab, subTab, boardView, topicOrigin });
@@ -146,7 +179,7 @@ export function TopicBack(): ReactNode {
   return (
     <div className="dev-topic-backs">
       {back}
-      <TopicChip href={workshop} to="workshop" />
+      <TopicChip href={workshop} {...chipFor(workshop, workshopTab, stepsBackTo(workshop))} />
     </div>
   );
 }

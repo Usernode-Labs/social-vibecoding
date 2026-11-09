@@ -12,11 +12,13 @@
 import { useEffect } from 'react';
 
 import { placeUnderAnchor } from '../../lib/anchor-popover';
+import { currentDirection } from '../../lib/i18n/direction';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { menuItems, roveMenuFocus } from '../../lib/menu-keys';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from '../improve/improve-store.js';
 import { AppsSwitcherSheet } from './app-context-sheet';
+import { kitSheetTakesEscape } from './kit-escape';
 import { appContextStore, AppContext } from './mount';
 import './app-openings';
 
@@ -39,12 +41,22 @@ const FIRST_SESSION_TOUR = '[data-first-session-tour]';
 const SHEET_ROWS = 'a[href], button:not([disabled])';
 
 /**
- * Pin the web presentation under the mark: right edges aligned, 6px below it,
- * exactly the vote popover's placement. Written as two custom properties the
- * `min-width: 640px` rule in app.css reads, so the sheet's own class string
- * stays the constant the kit writes to, and the phone presentation — which
- * never reads them — is untouched. No flip: the mark is in the header, and
- * "above the header" is off the screen, so the rule caps the height instead.
+ * Pin the web presentation under the mark: its trailing edges aligned, 6px
+ * below it, exactly the vote popover's placement. Written as two custom
+ * properties the `min-width: 640px` rule in app.css reads, so the sheet's own
+ * class string stays the constant the kit writes to, and the phone
+ * presentation — which never reads them — is untouched. No flip: the mark is
+ * in the header, and "above the header" is off the screen, so the rule caps
+ * the height instead.
+ *
+ * `placeUnderAnchor` measures a physical LEFT offset, while the rule places
+ * the sheet from its inline start, which is the RIGHT edge in Arabic. The
+ * offset is flipped here, once, so the CSS stays logical and the menu still
+ * opens over the column under the mark in either direction.
+ *
+ * The property keeps its `--menu-anchor-left` name: a declared check selects
+ * on that string in the sheet's style attribute, and it is the inline-start
+ * inset the rule reads, wherever the reading starts.
  */
 function anchorUnderMark(sheet: HTMLElement): void {
   const mark = document.getElementById(MARK_ID);
@@ -57,8 +69,11 @@ function anchorUnderMark(sheet: HTMLElement): void {
     { width: window.innerWidth, height: window.innerHeight },
     { flip: false },
   );
+  const start = currentDirection() === 'rtl'
+    ? window.innerWidth - left - sheet.offsetWidth
+    : left;
   sheet.style.setProperty('--menu-anchor-top', `${top}px`);
-  sheet.style.setProperty('--menu-anchor-left', `${left}px`);
+  sheet.style.setProperty('--menu-anchor-left', `${start}px`);
 }
 
 export function AppContextIsland() {
@@ -171,8 +186,13 @@ export function AppContextIsland() {
     return () => { if (timer) clearTimeout(timer); };
   }, []);
 
-  // Escape closes the sheet — web presentation only; adopted into a kit
-  // sheet the kit's modal stack owns the key. Same rule as the Improve panel.
+  // Escape closes the sheet, in every presentation. On the web it is this
+  // listener's alone, the Improve panel's rule. Adopted into a kit sheet (a
+  // phone or a tablet, which can have a keyboard) it is this listener's too:
+  // the kit's sheet answers a swipe and its backdrop but never Escape, since
+  // it does not join the kit's modal stack (#5927 item 10). There it stands
+  // aside for a kit surface above the menu (./kit-escape.ts), and the arrows
+  // stay the kit's.
   //
   // KEYBOARD (QA 2026-09-24 Q18), web presentation only as well. Opening it
   // from the mark moves focus to the menu's first row, the arrows (and Home,
@@ -195,7 +215,10 @@ export function AppContextIsland() {
       }
     }
     const onKey = (event: KeyboardEvent) => {
-      if (AppContext._sheet) return;
+      if (AppContext._sheet) {
+        if (kitSheetTakesEscape(event, document, 'apps-switcher-sheet')) void AppContext.close();
+        return;
+      }
       const el = sheet();
       const inside = !!el && el.contains(event.target as Node);
       if (event.key === 'Escape') {

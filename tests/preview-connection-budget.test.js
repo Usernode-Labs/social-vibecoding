@@ -337,6 +337,110 @@ test('#1771: a preview clone gets a server-enforced ceiling, a fork does not', a
     'must sit above what a healthy preview uses under a full check run');
 });
 
+// A shots run's copies (5 Nov 2026): a copy of Homeroom at full use held the
+// whole preview ceiling (main pool 8, workflow pool 2, bus, locks: 12), so
+// the run's own fixture client was refused with 53300 and the run failed
+// before its shots agent started.
+test('shots: a run\'s copy gets its own ceiling, and a preview keeps its own', async () => {
+  const dbm = require('../src/services/db-manager');
+  const calls = [];
+  const execute = async (sql) => { calls.push(sql); };
+  const saved = { shots: process.env.SHOTS_DB_CONNECTION_LIMIT, staging: process.env.STAGING_DB_CONNECTION_LIMIT };
+  try {
+    delete process.env.SHOTS_DB_CONNECTION_LIMIT;
+    delete process.env.STAGING_DB_CONNECTION_LIMIT;
+    for (const name of ['app_usernode_2d5619_shots_a422bcef20e0_b', 'app_usernode_2d5619_shots_a422bcef20e0_h',
+      'app_recipe_box_evidence_0123456789ab_b']) {
+      assert.equal(await dbm.applyStagingConnectionLimit(name, { execute }), dbm.DEFAULT_SHOTS_DB_CONNECTION_LIMIT, name);
+    }
+    assert.deepEqual(calls, [
+      `ALTER DATABASE app_usernode_2d5619_shots_a422bcef20e0_b CONNECTION LIMIT ${dbm.DEFAULT_SHOTS_DB_CONNECTION_LIMIT}`,
+      `ALTER DATABASE app_usernode_2d5619_shots_a422bcef20e0_h CONNECTION LIMIT ${dbm.DEFAULT_SHOTS_DB_CONNECTION_LIMIT}`,
+      `ALTER DATABASE app_recipe_box_evidence_0123456789ab_b CONNECTION LIMIT ${dbm.DEFAULT_SHOTS_DB_CONNECTION_LIMIT}`,
+    ]);
+    assert.equal(await dbm.applyStagingConnectionLimit('app_usernode_2d5619_staging_s12699_703c77', { execute }),
+      dbm.DEFAULT_STAGING_DB_CONNECTION_LIMIT, 'a preview\'s ceiling is unchanged');
+    assert.equal(dbm.DEFAULT_STAGING_DB_CONNECTION_LIMIT, 12);
+
+    // Each key turns off only its own ceiling.
+    calls.length = 0;
+    process.env.STAGING_DB_CONNECTION_LIMIT = '0';
+    assert.equal(await dbm.applyStagingConnectionLimit('app_x_shots_0123456789ab_b', { execute }),
+      dbm.DEFAULT_SHOTS_DB_CONNECTION_LIMIT, 'the preview key leaves a shots copy capped');
+    delete process.env.STAGING_DB_CONNECTION_LIMIT;
+    process.env.SHOTS_DB_CONNECTION_LIMIT = '0';
+    assert.equal(await dbm.applyStagingConnectionLimit('app_x_shots_0123456789ab_b', { execute }), null,
+      '0 disables the shots ceiling');
+    assert.equal(await dbm.applyStagingConnectionLimit('app_x_staging_s1_aaaaaa', { execute }),
+      dbm.DEFAULT_STAGING_DB_CONNECTION_LIMIT, 'and leaves a preview capped');
+    process.env.SHOTS_DB_CONNECTION_LIMIT = '20';
+    assert.equal(await dbm.applyStagingConnectionLimit('app_x_shots_0123456789ab_h', { execute }), 20);
+    assert.equal(calls.at(-1), 'ALTER DATABASE app_x_shots_0123456789ab_h CONNECTION LIMIT 20');
+  } finally {
+    for (const [key, value] of [['SHOTS_DB_CONNECTION_LIMIT', saved.shots], ['STAGING_DB_CONNECTION_LIMIT', saved.staging]]) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+// Every connection the platform names (db/connection-options.js
+// connectionName), by whether it can hold a backend on a shots copy. A name
+// added anywhere in src/ fails here until it is placed, so a new dedicated
+// client cannot take the run's fixture client's room again unnoticed.
+const COPY_CONNECTIONS = Object.freeze({
+  // The copy's two pools, sized by its config (counted below from it).
+  main: 'pool',
+  workflow: 'pool',
+  // The copy's dedicated clients, one connection each.
+  bus: 'copy',        // services/ws-bus.js, the LISTEN client
+  locks: 'copy',      // db/session-locks.js
+  presence: 'copy',   // services/process-presence.js, opened while a process holds session records
+  debug: 'copy',      // services/debug-access.js, a read-only pool of one
+  // What the platform opens into a copy as its owner role, one at a time each.
+  shots: 'run',       // services/shots-fixtures.js withClient
+  dbadmin: 'run',     // services/db-manager.js, its per-database client
+  // Never against a copy's ceiling, with the reason.
+  'schema-observer': 'boot only, while the migration runs and before the bus, locks and workflow pool open',
+  census: 'the preview server\'s maintenance database',
+  admin: 'the role provisioner, only with DATABASE_ROLE_SPLIT, which a copy\'s environment does not set',
+  export: 'an app export\'s pg_dump, against the app\'s own database',
+  retention: 'held while this process builds an image, and a copy builds none (services/preview-projects.js)',
+});
+
+test('shots: the ceiling sits above a full copy plus the platform\'s own clients into it', () => {
+  const dbm = require('../src/services/db-manager');
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      const rel = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(rel);
+      else if (/\.(js|ts)$/.test(entry.name)) files.push(rel);
+    }
+  };
+  walk('src');
+  const named = new Set();
+  for (const rel of files) {
+    for (const m of read(rel).matchAll(/connectionName\('([a-z-]+)'\)/g)) named.add(m[1]);
+  }
+  assert.ok(named.has('main') && named.has('bus') && named.has('shots'), 'the scan finds the platform\'s named connections');
+  const unplaced = [...named].filter((name) => !(name in COPY_CONNECTIONS));
+  assert.deepEqual(unplaced, [],
+    'place each new named connection in COPY_CONNECTIONS, and if a shots copy can hold it, in DEFAULT_SHOTS_DB_CONNECTION_LIMIT\'s sum (src/services/db-manager.js)');
+  const gone = Object.keys(COPY_CONNECTIONS).filter((name) => !named.has(name));
+  assert.deepEqual(gone, [], 'a connection no longer opened leaves the list');
+
+  const config = loadWith({ USERNODE_ENV: 'staging', STAGING_DB_POOL_MAX: undefined, WF_POOL_MAX: undefined, PROCESS_ROLE: undefined });
+  assert.equal(config.dbPoolMax, 8);
+  assert.equal(config.wfPoolMax, 2);
+  const dedicated = Object.values(COPY_CONNECTIONS).filter((kind) => kind === 'copy').length;
+  const run = Object.values(COPY_CONNECTIONS).filter((kind) => kind === 'run').length;
+  const copy = config.dbPoolMax + config.wfPoolMax + dedicated;
+  assert.equal(copy, 14);
+  assert.ok(dbm.DEFAULT_SHOTS_DB_CONNECTION_LIMIT > copy + run,
+    `a copy can hold ${copy} and the platform opens ${run} more: the ceiling must leave room above both`);
+});
+
 test('#1771: setting the ceiling never fails a build, and can be turned off', async () => {
   const dbm = require('../src/services/db-manager');
   const boom = async () => { throw new Error('permission denied for database'); };
@@ -392,6 +496,77 @@ test('#1771: pressure reclaim skips every preview somebody is using', () => {
   assert.deepEqual(victims.map((v) => v.id), [1, 5, 6],
     'a reviewer arriving at a dead link is worse than a tight connection budget');
   assert.equal(victims[0].id, 1, 'idle-longest first');
+});
+
+// #6157: sleep, beside the pressure reclaim and by its rules (isBusy and
+// last_activity_at), but a vote-backed preview sleeps too: sleep has no dead
+// link, since whatever opens a sleeping preview wakes it.
+test('#6157: an idle vote-backed preview past PREVIEW_SLEEP_AFTER is chosen to sleep, not torn down', () => {
+  const { selectSleepers, selectPressureVictims } = require('../src/services/staging-reap');
+  const now = Date.parse('2026-11-02T12:00:00Z');
+  const hoursAgo = (h) => new Date(now - h * 3600 * 1000).toISOString();
+  const row = (id, extra = {}) => ({
+    id, status: 'promoted', last_activity_at: hoursAgo(3), staging_asleep_at: null,
+    machine_state: 'settled', serving: { n: 2, db: 'app_x_staging_s1_abcdef' }, check_run_open: false, ...extra,
+  });
+  const rows = [row(1, { last_activity_at: hoursAgo(5) }), row(2, { status: 'merging' }), row(3, { status: 'paused', last_activity_at: hoursAgo(4) })];
+  const sleepers = selectSleepers({ rows, isBusy: () => false, now, sleepAfterMs: 2 * 3600 * 1000 });
+  assert.deepEqual(sleepers.map((r) => r.id), [1, 3, 2], 'vote-backed ones too, idle-longest first');
+  assert.deepEqual(selectPressureVictims({ rows: rows.slice(0, 2) }), [],
+    'the teardown passes still never take a vote-backed preview');
+  // What sleeps is scaled down, never torn down.
+  const src = stripComments(read('src/services/staging-reap.js'));
+  const fn = src.slice(src.indexOf('async function sweepSleep('));
+  const body = fn.slice(0, fn.indexOf('\n}\n') + 3);
+  assert.match(body, /previewSleep\.sleep\(config, pool, row, \{ afterMs \}\)/);
+  assert.doesNotMatch(body, /retire|teardown|reapOne/);
+  assert.match(stripComments(read('src/services/preview-sleep.js')), /kubernetes\.scalePreview\(kube, name, 0, \{ attempt: n \}\)/);
+});
+
+test('#6157: a preview something works on does not sleep: a worker turn, a checks run, a shots run, a build', () => {
+  const { selectSleepers } = require('../src/services/staging-reap');
+  const now = Date.parse('2026-11-02T12:00:00Z');
+  const idle = new Date(now - 3 * 3600 * 1000).toISOString();
+  const row = (id, extra = {}) => ({
+    id, status: 'active', last_activity_at: idle, staging_asleep_at: null,
+    machine_state: 'settled', serving: { n: 1 }, check_run_open: false, ...extra,
+  });
+  const rows = [
+    row(1),                                  // nothing works on it: sleeps
+    row(2),                                  // a worker turn (isBusy: session-work.ts workedOnSql)
+    row(3),                                  // a shots run (isBusy too)
+    row(4, { machine_state: 'checking' }),   // the machine's checks run
+    row(5, { check_run_open: true }),        // a checks run on the cluster
+    row(6, { machine_state: 'preparing' }),  // a build
+    row(7, { serving: null }),               // nothing serves
+    row(8, { serving: { n: 1, lost: true } }),
+    row(9, { staging_asleep_at: idle }),     // asleep already
+    row(10, { status: 'merged' }),           // backs nothing: the gc's
+  ];
+  const busy = new Set([2, 3]);
+  assert.deepEqual(selectSleepers({ rows, isBusy: (id) => busy.has(id), now, sleepAfterMs: 2 * 3600 * 1000 }).map((r) => r.id), [1]);
+});
+
+test('#6157: a preview used inside the window does not sleep, and PREVIEW_SLEEP_AFTER_MS=0 switches sleep off', () => {
+  const { selectSleepers } = require('../src/services/staging-reap');
+  const previewSleep = require('../src/services/preview-sleep');
+  const now = Date.parse('2026-11-02T12:00:00Z');
+  const at = (ms) => new Date(now - ms).toISOString();
+  const row = (id, ago) => ({ id, status: 'active', last_activity_at: at(ago), machine_state: 'settled', serving: { n: 1 } });
+  const window = previewSleep.DEFAULT_SLEEP_AFTER_MS;
+  assert.equal(window, 3600 * 1000, 'one hour by default');
+  const rows = [row(1, window + 1000), row(2, window - 1000), row(3, 60 * 1000)];
+  assert.deepEqual(selectSleepers({ rows, now, sleepAfterMs: window }).map((r) => r.id), [1]);
+  assert.deepEqual(selectSleepers({ rows, now, sleepAfterMs: 0 }), []);
+  assert.equal(previewSleep.sleepAfterMs({ previewSleepAfterMs: 0 }), 0);
+  assert.equal(previewSleep.sleepAfterMs({ previewSleepAfterMs: 'junk' }), window);
+});
+
+test('#6157: a sleeping preview holds no connection, so the pressure reclaim passes it by', () => {
+  const src = stripComments(read('src/services/staging-reap.js'));
+  const fn = src.slice(src.indexOf('async function sweepConnectionPressure('));
+  const body = fn.slice(0, fn.indexOf('\n}\n') + 3);
+  assert.match(body, /AND staging_asleep_at IS NULL/);
 });
 
 test('#1771: the reclaim acts on a reading, one preview at a time, and kills nothing', () => {

@@ -36,8 +36,8 @@ export interface SeasonProgressView {
 const ROW = 'min-w-0 truncate text-sm leading-5 text-zinc-500 dark:text-zinc-400';
 const POINTS = 'font-semibold tabular-nums text-zinc-900 dark:text-zinc-100';
 const TRACK = 'relative h-[5px] w-full overflow-hidden rounded-full bg-zinc-900/[0.07] dark:bg-white/10';
-const FILL = 'absolute inset-y-0 left-0 rounded-full bg-violet-700 dark:bg-violet-400';
-const FILL_DONE = 'absolute inset-y-0 left-0 rounded-full bg-emerald-500 dark:bg-emerald-400';
+const FILL = 'absolute inset-y-0 start-0 rounded-full bg-violet-700 dark:bg-violet-400';
+const FILL_DONE = 'absolute inset-y-0 start-0 rounded-full bg-emerald-500 dark:bg-emerald-400';
 
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
 

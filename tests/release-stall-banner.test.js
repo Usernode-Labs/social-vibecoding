@@ -55,16 +55,16 @@ function bannerHtml(state) {
 test('the sentence names the merge, what stopped it and what is running instead', () => {
   const { releaseStallText } = mod();
   assert.equal(releaseStallText(FAILED),
-    'PR #2589 (7817d05) merged but was not released: its release workflow did not complete. '
+    'PR 2589 (7817d05) merged but was not released: its release workflow did not complete. '
     + 'The platform is still running 741b8f7. Run it on main to release the latest commit; a later merge would also carry this change.');
   assert.equal(releaseStallText({ ...FAILED, kind: 'workflow_running' }),
-    'PR #2589 (7817d05) merged and its release workflow is still running, well past the usual couple of minutes. '
+    'PR 2589 (7817d05) merged and its release workflow is still running, well past the usual couple of minutes. '
     + 'The platform is still running 741b8f7.');
   assert.equal(releaseStallText({ ...FAILED, kind: 'rollout_missing' }),
-    'PR #2589 (7817d05) merged and its release workflow succeeded, but the platform has not rolled onto it. '
+    'PR 2589 (7817d05) merged and its release workflow succeeded, but the platform has not rolled onto it. '
     + 'The platform is still running 741b8f7.');
   assert.equal(releaseStallText({ ...FAILED, kind: 'unknown' }),
-    'PR #2589 (7817d05) merged but is not running yet, and no release workflow run could be found for it. '
+    'PR 2589 (7817d05) merged but is not running yet, and no release workflow run could be found for it. '
     + 'The platform is still running 741b8f7.');
   // A direct push has no PR to name; a record with no running sha still reads.
   assert.equal(releaseStallText({ kind: 'workflow_failed', sha: '7817d05', prNumber: null, running: null }),
@@ -85,7 +85,7 @@ test('stalled: amber, above the cards, the commit and the running build named, t
   assert.match(html, /<div id="dev-release-stall-notice" class="px-3 pt-2">/, 'the slot shows');
   assert.match(html, /data-release-stall="workflow_failed"/);
   assert.match(html, /border-amber-500\/40 bg-amber-500\/10/, 'a condition somebody may need to act on: amber');
-  assert.match(html, /PR #2589 \(7817d05\) merged but was not released/);
+  assert.match(html, /PR 2589 \(7817d05\) merged but was not released/);
   assert.match(html, /still running 741b8f7/);
   assert.match(html,
     /<a href="https:\/\/github\.com\/Usernode-Labs\/social-vibecoding\/actions\/runs\/35461203746" target="_blank" rel="noopener noreferrer"[^>]*>Open the workflow run<\/a>/);

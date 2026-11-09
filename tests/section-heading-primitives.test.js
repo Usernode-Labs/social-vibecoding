@@ -64,46 +64,6 @@ const headerHtml = (props, label) => renderToHtml(createElement(SectionHeader, p
 
 // ── Half A: the six sites ──────────────────────────────────────────────
 
-test('the browse directory’s tier labels ARE grouped-list’s SectionHeader', () => {
-  // A label over a group of CARDS: the rows under it are that same file's
-  // ListRow, and below md the #browse-list container IS the card they sit in.
-  const { BrowseRows } = loadTsx('frontend/src/features/apps/browse-list.tsx');
-  const row = (slug, directoryTier) => ({
-    app: { slug, name: slug, directory: { tier: directoryTier, state: 'working' } },
-    slug, name: slug, meta: '1 user', status: 'Running', statusDot: 'bg-green-500',
-    demo: false, openable: true, added: false, addTitle: 'Add to Your apps', directoryTier,
-  });
-  const html = renderToHtml(createElement(BrowseRows, {
-    rows: [row('ready-app', 'ready'), row('new-app', 'unreviewed')],
-    curated: true,
-  }));
-  const picked = { ...row('picked-app', 'ready'), recommended: true };
-  const html2 = renderToHtml(createElement(BrowseRows, {
-    rows: [picked, row('ready-app', 'ready'), row('new-app', 'unreviewed')],
-    curated: true,
-  }));
-  for (const label of ['Featured', 'More apps']) {
-    assert.ok(
-      html2.includes(headerHtml({ className: 'md:col-span-full' }, label)),
-      `“${label}” no longer renders through SectionHeader: it is hand-written again`,
-    );
-  }
-  for (const label of ['All apps']) {
-    assert.ok(
-      html.includes(headerHtml({ className: 'md:col-span-full' }, label)),
-      `“${label}” no longer renders through SectionHeader — it is hand-written again`,
-    );
-  }
-  // `md:col-span-full` is the ONE thing the site adds: at md+ the container is
-  // a 2/3-column grid and a heading has to span it.
-  assert.match(html, /<h2 class="[^"]*md:col-span-full"/);
-  // It stays an <h2> with the label as its only child: dapp.json's `?sort=`
-  // check reads `#browse-list[data-sort="users"]…:not(:has(h2))` to say the
-  // ungrouped list draws no tier headings at all, and that only means anything
-  // while the grouped list draws them AS h2.
-  assert.match(html, /<h2[^>]*>All apps</);
-});
-
 test('the challenge detail page’s What counts label IS field’s SectionHeading', () => {
   // What counts sits tight above the block it names, flush on the screen's
   // own surface — no gutter, no card, so not the grouped-list label. (Scoring
@@ -167,19 +127,25 @@ test('the public-profile controls are a group of the Edit profile sheet, headed 
 });
 
 test('one site keeps its own treatment, deliberately', () => {
-  // NEITHER of these is "a label over a group", and forcing one of the two
-  // primitives onto them would look wrong on its own screen.
+  // NEITHER of these is "a label over a group" drawn by one of the two
+  // primitives, and each has its reason.
   //
-  // 1. The home screen's area titles (home/panels/ui.tsx). Already ONE shared
-  //    primitive rather than a copied class string, deliberately restyled as
-  //    the area TITLE — 16px at weight 550 in the primary ink — rather than a
-  //    caption, and pinned by three declared dapp.json checks as
-  //    `h2.home-area-label`. Its sections carry their own `px-3` gutter, so
-  //    the grouped-list label's `px-4` would indent every home label away from
-  //    the panel it heads.
+  // 1. The home screen's area labels (home/panels/ui.tsx). ONE shared
+  //    primitive rather than a copied class string, pinned by three declared
+  //    dapp.json checks as `h2.home-area-label`. Since the owner's decision of
+  //    2 Nov 2026 (audit Y02) its LABEL wears SectionHeader's literals, the
+  //    small caps every other screen uses; it stays its own component because
+  //    the row carries the area's link beside the label, and its sections
+  //    carry their own `px-3` gutter, so the grouped-list label's `px-4`
+  //    would indent every home label away from the panel it heads.
   const home = read('frontend/src/features/home/panels/ui.tsx');
-  assert.match(home, /className="home-area-label[^"]*text-base font-\[550\]/,
-    'the home area title is unchanged — see the note in this test');
+  assert.match(home, /<h2 className="home-area-label flex items-center gap-2 pt-4 pb-1\.5 leading-tight">/,
+    'the row is unchanged, and carries no type of its own for the link to inherit');
+  assert.match(home, /<span className="min-w-0 flex-1 truncate whitespace-nowrap text-xs font-bold uppercase tracking-\[0\.06em\] text-zinc-500 dark:text-zinc-400">\{children\}<\/span>/,
+    'the label is SectionHeader\'s small caps');
+  const primitive = read('frontend/@/components/ui/grouped-list.tsx');
+  assert.match(primitive, /text-xs font-bold uppercase tracking-\[0\.06em\] text-zinc-500 dark:text-zinc-400/,
+    'the literals it copies are still the primitive\'s');
   // 2. THE SECOND SITE RETIRED (#2718 review). It was the Improve panel's
   //    `<h2>Improve</h2>` — the PANEL'S TITLE, on one baseline with the
   //    target app's name and the close control, which is a dialog title bar
@@ -254,10 +220,10 @@ const EXEMPT = [
   },
   {
     file: 'frontend/src/features/settings/cli-setup-guide.tsx',
-    needles: ['border-l border-zinc-200 dark:border-zinc-700'],
-    why: 'not a separator: the Copy button’s left edge CONTINUES the enclosing '
-      + 'card’s own `border border-zinc-200 dark:border-zinc-700`, and an edge '
-      + 'that breaks colour halfway round is the bug, not the fix',
+    needles: ['border-s border-zinc-200 dark:border-zinc-700'],
+    why: 'not a separator: the Copy button’s inline-start edge CONTINUES the '
+      + 'enclosing card’s own `border border-zinc-200 dark:border-zinc-700`, and '
+      + 'an edge that breaks colour halfway round is the bug, not the fix',
   },
 ];
 

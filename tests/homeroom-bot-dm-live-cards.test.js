@@ -21,6 +21,8 @@
 //      "took 1h 9m". The clock starts when the work did, a restart carries
 //      it on, and the wait is said apart (homeroom-bot-activity.js
 //      workClock): "took 24m, after waiting 46m for the first version".
+//      Since 5 Nov 2026 an ordinary request's card is no longer sent (its
+//      news is on its page); the cards already in a chat still read this way.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/homeroom-bot-dm-live-cards.test.js
 
@@ -188,7 +190,7 @@ test('the live news carries its own button to open the app, as the shell opens o
   assert.match(fn, /const actions = open \? \[open, \.\.\.\(context\.firstVersion \? firstLiveActions\(\{ slug: run\.slug \}\) : \[\]\)\] : \[\];/);
   assert.match(fn, /\.\.\.\(actions\.length \? \{ actions \} : \{\}\),/);
   assert.deepEqual(dm.firstLiveActions({ slug: 'page turners' }), [
-    { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: '#app/page%20turners/workshop' },
+    { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: '#app/page%20turners/dev/hub' },
     { id: 'invite_people', label: 'Invite people', style: 'secondary', type: 'invite' },
   ]);
   assert.deepEqual(dm.firstLiveActions({ slug: '' }), []);
@@ -319,15 +321,15 @@ test('the client keeps a ready card\'s state only as one it knows, and only the 
 });
 
 test('a vote on one of the bot\'s changes reads its requester\'s DM again', () => {
-  // Told to the bot's change machine in the vote's own statement (its tray
-  // push, and a yes's line in the request's thread: bot.tellApproved), so a
-  // restart after the commit loses nothing.
+  // Told to the bot's change machine in the vote's own statement (its push
+  // of where its requests stand), so a restart after the commit loses
+  // nothing. A yes is no line in the request's thread (5 Nov 2026).
   const votes = read('src/routes/votes.js');
   const record = votes.slice(votes.indexOf('async function recordVote('), votes.indexOf('async function retractVote('));
   assert.match(record, /told AS \(\$\{botChangeVotedSql\(\{ from: 'v', sessionId: 'v\.session_id', voterId: '\$2::int', voter: '\$7::text', vote: '\$3::text', epoch: 'v\.approval_epoch' \}\)\}\)/);
   assert.doesNotMatch(votes, /noteVoted/);
   const machine = read('src/workflow/bot-change/machine.ts');
-  assert.match(machine, /return step\(live\.name as Name, asked\(live\.data, work\), \{ work, push: tray\(f\) \}\);/);
+  assert.match(machine, /return step\(live\.name as Name, live\.data, \{ work: \[\], push: tray\(f\) \}\);/);
   const store = read('frontend/src/features/messages/bot-activity-store.ts');
   assert.match(store, /ready: new Map\(ready\.map\(\(entry\) => \[entry\.messageId, entry\]\)\),/);
 });
@@ -450,19 +452,8 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       await yes(priya);
       const [after] = await ready();
       assert.deepEqual([after.approval.missing, after.approval.waitingOn], [0, []]);
-      assert.equal(await dm.sayApproved(pool, 999999, { voterId: priya.id, voter: 'priya' }), null, 'one indexed read for a change that is not the bot\'s');
-      // Her yes is said only while it stands: a retraction since (a re-asked
-      // vote landing after it) says nothing.
-      const asked = [];
-      const watched = { query: (sql, params) => { asked.push(sql); return pool.query(sql, params); } };
-      await pool.query('DELETE FROM pr_votes WHERE session_id = $1 AND user_id = $2', [first.id, priya.id]);
-      assert.equal(await dm.sayApproved(watched, first.id, { voterId: priya.id, voter: 'priya', epoch: 0 }), null, 'retracted');
-      assert.ok(/FROM pr_votes/.test(asked.at(-1)), 'stopped at its vote, nothing said');
-      await yes(priya);
-      asked.length = 0;
-      await dm.sayApproved(watched, first.id, { voterId: priya.id, voter: 'priya', epoch: 0 });
-      const at = asked.findIndex((q) => /FROM pr_votes/.test(q));
-      assert.ok(at >= 0 && asked.length > at + 1, 'standing: it goes on to say it');
+      // Her yes is no line in the request's thread (5 Nov 2026, decision 6).
+      assert.equal(dm.sayApproved, undefined);
     });
 
     await t.test('merged: the card says it is live, with no button of its own (#4228)', async () => {
@@ -497,14 +488,29 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       const { rows: [queued] } = await pool.query(
         `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 2, 1, 'new') RETURNING id`, [app.id],
       );
-      const filed = await activity.startCard(pool, { inDm: true,
+      // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): an ordinary
+      // request's card is its news, said on its page, so none is sent now.
+      assert.equal(await activity.startCard(pool, { inDm: true,
         app, issueNumber: 2, bot, jobKey: Number(queued.id), filed: true, settings,
         requester: {
           userId: priya.id, username: priya.username, hasPlatformAccess: true, issueTitle: 'Books we have read', firstVersion: false, askedText: 'Keep a list',
         },
-      });
-      assert.ok(filed?.messageId, 'her card, sent when she filed it');
-      await pool.query('UPDATE homeroom_bot_dm_messages SET created_at = $2 WHERE message_id = $1', [filed.messageId, at('11:10')]);
+      }), null);
+      // Hers was sent on 5 October, when she filed it: a card from before
+      // still reads its clock from the work.
+      const opened = await require('../src/services/conversations').ensureAdmittedDirect(pool, bot.id, priya.id);
+      const { rows: [old] } = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata)
+         VALUES ($1, $2, $3, jsonb_build_object('homeroomBot', $4::jsonb)) RETURNING id`,
+        [opened.conversationId, bot.id, 'Page Turners #2: Books we have read\n\nFiled. This card follows it from here.',
+          JSON.stringify({ kind: 'activity', appSlug: app.slug, appName: app.name, issueNumber: 2, issueTitle: 'Books we have read' })],
+      );
+      await pool.query(
+        `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, created_at)
+         VALUES ($1, $2, $3, $4, 2, 'activity', $5)`,
+        [old.id, priya.id, opened.conversationId, app.id, at('11:10')],
+      );
+      const filed = { messageId: Number(old.id) };
       // Filed and waiting: nothing has begun.
       const waiting = (await activity.cardsFor(pool, { user: { id: priya.id }, settings })).cards.find((c) => c.messageId === filed.messageId);
       assert.deepEqual([waiting.state, waiting.workedFrom], ['working', null]);
@@ -566,6 +572,6 @@ test('#4238: a first version is announced once in the project\'s channel, by the
   const merged = read('src/services/homeroom-bot-dm.js');
   const fn = merged.slice(merged.indexOf('async function noteProposalMerged('), merged.indexOf('// ── A person writing to the bot'));
   assert.match(fn, /if \(requester\?\.firstVersion && !platform\) await announceFirstVersion\(pool, run, \{ live, deps \}\);/);
-  assert.ok(fn.indexOf('announceFirstVersion(') < fn.indexOf('if (!requester || !hasBot(settings, requester)) return null;'),
+  assert.ok(fn.indexOf('announceFirstVersion(') < fn.indexOf('if (!requester || !hasBot(settings, requester)) { await finish(null); return null; }'),
     'said in the channel whether or not the maker gets the DM');
 });

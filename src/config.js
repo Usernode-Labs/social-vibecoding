@@ -703,6 +703,11 @@ function load() {
       // Empty spreads checks over every node (services/kubernetes.js,
       // checkPlacement).
       checkNodePool: (process.env.CHECK_NODE_POOL || '').trim(),
+      checkNodePoolRequired: process.env.CHECK_NODE_POOL_REQUIRED === 'true',
+      checkPoolMetricsUrl: process.env.CHECK_POOL_METRICS_URL || '',
+      // Explicit app-ID assignments only; an empty map preserves the standard
+      // production requests. Validated before any runtime resource is written.
+      appResourceProfiles: process.env.KUBERNETES_APP_RESOURCE_PROFILES || '{}',
       workerStorageClass: process.env.WORKER_STORAGE_CLASS || '',
       workerStorageSize: process.env.WORKER_STORAGE_SIZE || '5Gi',
       // Which builder produces app images (see services/kubernetes-buildkit.js
@@ -813,6 +818,15 @@ function load() {
     // pause timer so reopening a recently-paused session keeps a warm
     // preview. Default 6h; set to 0 to disable staging GC.
     stagingIdleTeardownMs: parseInt(process.env.STAGING_IDLE_TEARDOWN_MS || String(6 * 60 * 60 * 1000), 10),
+    // #6157: a Kubernetes preview nobody has used for this long sleeps
+    // (scaled to no replicas, everything else kept, woken by whatever opens
+    // it: services/preview-sleep.js), vote-backed ones included. Default 1h;
+    // set to 0 to switch sleep off.
+    previewSleepAfterMs: parseInt(process.env.PREVIEW_SLEEP_AFTER_MS || String(60 * 60 * 1000), 10),
+    // Opt-in, reviewed request-driven production apps only. Zero wakes the
+    // pilot and prevents new sleeps; all background/scheduled apps stay on.
+    appSleepAppIds: process.env.APP_SLEEP_APP_IDS || '',
+    appSleepAfterMs: Number(process.env.APP_SLEEP_AFTER_MS || '3600000'),
     // How often the session sweeper scans for idle sessions.
     sessionSweepIntervalMs: parseInt(process.env.SESSION_SWEEP_INTERVAL_MS || '60000', 10),
     // Production app-container watchdog (services/app-heal.js, #426):
@@ -891,6 +905,11 @@ function load() {
     storageAccessKey: process.env.MINIO_ROOT_USER || '',
     storageSecretKey: process.env.MINIO_ROOT_PASSWORD || '',
     storageBucket: process.env.STORAGE_BUCKET || 'usernode-app-files',
+    // Platform media is separate from app uploads, including in local dev.
+    mediaStorageEndpoint: process.env.MEDIA_STORAGE_ENDPOINT || '',
+    mediaStorageBucket: process.env.MEDIA_STORAGE_BUCKET || '',
+    mediaStorageAccessKey: process.env.MEDIA_STORAGE_ACCESS_KEY || '',
+    mediaStorageSecretKey: process.env.MEDIA_STORAGE_SECRET_KEY || '',
     // GitHub URL of the platform's own repo. Read by feedback (file
     // issues here), the import-flow guard (refuse to import the self-
     // repo as a child app), and the self-app boot seed (Phase 2f).
@@ -1013,7 +1032,9 @@ function load() {
     // transport once, here, from platform_env: Gmail API, a generic HTTP
     // mail API, or the log transport — and ALWAYS the log transport in a
     // staging preview, which is a clone of production data and must never
-    // mail real people from an unvoted branch.
+    // mail real people from an unvoted branch. A provider an admin saved
+    // in Admin → Email delivery wins over this one at send time
+    // (services/mail/index.js transportFor), outside a staging preview.
     //
     // `mailTransport` is null when nothing can send, which is what makes
     // the mailer's loud "NOT delivered" error fire instead of a boot
@@ -1120,6 +1141,7 @@ function load() {
   console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);
   console.log(`  SESSION_AUTOPAUSE_IDLE_MS=${config.sessionAutopauseIdleMs}${config.sessionAutopauseIdleMs === 0 ? ' (disabled)' : ''}`);
   console.log(`  STAGING_IDLE_TEARDOWN_MS=${config.stagingIdleTeardownMs}${config.stagingIdleTeardownMs === 0 ? ' (disabled)' : ''}`);
+  console.log(`  PREVIEW_SLEEP_AFTER_MS=${config.previewSleepAfterMs}${config.previewSleepAfterMs === 0 ? ' (disabled)' : ''}`);
   console.log(`  SESSION_SWEEP_INTERVAL_MS=${config.sessionSweepIntervalMs}`);
   console.log(`  APP_HEAL_INTERVAL_MS=${config.appHealIntervalMs}${config.appHealIntervalMs === 0 ? ' (disabled)' : ''} APP_HEAL_COOLDOWN_MS=${config.appHealCooldownMs}`);
   console.log(`  SESSION_LRU_ON_RESUME=${config.sessionLruOnResume}`);
@@ -1165,7 +1187,8 @@ function load() {
   }
   console.log(`  PLATFORM_MAIL=${config.mailTransport
     ? `${config.mailProvider}${config.mailStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.mailFrom}`
-    : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}`);
+    : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}${
+    config.mailStagingLogOnly ? '' : ' (an admin\'s saved choice wins)'}`);
 
   return config;
 }

@@ -38,6 +38,7 @@ const summaryFreshness = require('../services/summary-freshness');
 const homeroomCommits = require('../services/homeroom-commits');
 const proposalDelivery = require('../services/proposal-delivery');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { updateComingSql } = require('../services/homeroom-bot-progress');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql, isFirstVersion } = require('../services/first-version-rule');
@@ -411,9 +412,14 @@ function stagingMockProposals(viewer) {
     },
     // Auto-takedown — slim No majority (No just edges ahead of Yes, under the
     // 1/3 keep-alive line): long rejection window → "Set aside in ~6d".
-    mk(9000016, 900116,
-      '[Mock] Rejection test: replace the home feed with an infinite-scroll redesign',
-      30, 2, 3, 6, { required: 6, rejectEndsAt: hoursAhead(140), rejectionArmed: true }),
+    // It also carries a cost, the one state a viewer of a demo row cannot reach
+    // otherwise: a real figure goes to its author and admins only (#6116).
+    {
+      ...mk(9000016, 900116,
+        '[Mock] Rejection test: replace the home feed with an infinite-scroll redesign',
+        30, 2, 3, 6, { required: 6, rejectEndsAt: hoursAhead(140), rejectionArmed: true }),
+      cost_total_cents: 124,
+    },
     // Auto-takedown — lopsided opposition (No heavily outweighs Yes): short
     // rejection window → "Set aside in ~Xh".
     mk(9000017, 900117,
@@ -605,9 +611,15 @@ function stagingMockProposals(viewer) {
         '[Mock] #2061: waiting on the author — checks are failing',
         5, 3, 0, 4, { required: 3 }),
       check_state: 'failing',
+      // The preview its failing checks ran on, so the Testing card's "Open
+      // the page it checked" link is reviewable on ?demo=1 (the URL is
+      // deliberately unroutable, like the other mock previews).
+      staging_url: 'https://mock-preview.invalid',
       // What the model writes for this run (services/checks-explanation.js),
       // served by the ?demo=1 branch of GET /api/sessions/:id/checks-explanation.
-      checks_explanation: 'Kudos totals come out one too high after somebody changes their name, and the board stops loading on a narrow screen.',
+      // The expected-versus-found shape the prompt asks for: the words the
+      // check looked for beside the words the page showed.
+      checks_explanation: 'The sample page should say “is blocked at ‘Audit all three lockfiles’”, but it only says “Release blocked”.',
       // #3978: the failing rows carry their diagnosis, and the unit-suite
       // row carries its per-test excerpts, so the "Why it failed" fold on
       // this route shows what a real failing proposal shows. Kept in the
@@ -1770,8 +1782,22 @@ async function annotateDeploymentState(config, pool, app, rows) {
     const at = deploymentOrder(row).at;
     return Number.isFinite(stalledAt) && at > 0 && at <= stalledAt;
   };
+  // #6233: production carrying a build is not the whole answer any more. A
+  // release replaces its servers one at a time, and for Homeroom itself
+  // main_sha moves before the rollout (the migration Job writes it), so a
+  // row the boundary carries is Live only once its rollout finished:
+  // chat_sessions.live_at, which the merge machine stamps when the
+  // platform-rollout job reports the Deployment complete. A rolled-back
+  // release clears it again (merge-followups' RolledBack), so the change
+  // goes back to Going live. Rows merged before live tracking began keep the
+  // reading they always had.
+  const setting = (await pool.query(
+    `SELECT value AS tracked_since FROM platform_settings WHERE key = 'platform_live_tracked_since'`)).rows[0];
+  const trackedSince = setting?.tracked_since ? Date.parse(setting.tracked_since) : NaN;
+  const tracked = (row) => Number.isFinite(trackedSince) && deploymentOrder(row).at >= trackedSince;
   for (const row of prRows) {
-    if (!isAfterDeploymentBoundary(row, boundary)) {
+    const carried = !isAfterDeploymentBoundary(row, boundary);
+    if (carried && (row.live_at || !tracked(row))) {
       row.deployment_state = 'deployed';
     } else if ((stalledSha && normalizedSha(row.merge_commit_sha) === stalledSha) || heldBack(row)) {
       row.deployment_state = 'stalled';
@@ -2076,9 +2102,17 @@ async function reconcileNativeReviewedHead({
   // that passed none used to say a bot's push "was updated on GitHub". An
   // unreadable answer is neither, which says what this said before.
   let made = { madeByHomeroom: false, fixOnly: false };
+  let commits = null;
   try {
-    made = homeroomCommits.classify(await mirror.commitsBetween(dir, oldHead, liveHead));
+    commits = await mirror.commitsBetween(dir, oldHead, liveHead);
+    made = homeroomCommits.classify(commits);
   } catch (_) { /* fail open: a person's update, as before */ }
+
+  // #6287: a catch-up with main changes nothing the change does, so it keeps
+  // the description as the fix round below does. It is a move that keeps the
+  // votes (mechanical or resolved) and adds no commit of the change's own; an
+  // unreadable list (null) is not a catch-up.
+  const catchUp = keepsApprovals && Array.isArray(commits) && commits.length === 0;
 
   // One move, the proposal machine's (Q3): the head installed and, unless the
   // move kept the approvals, the epoch moved on, in one statement, so a crash
@@ -2087,10 +2121,11 @@ async function reconcileNativeReviewedHead({
   // this one was reading (the head it read is no longer the row's), or the
   // proposal has closed or merged meanwhile. A fix round leaves the
   // description as it stands: it changes how the change works, not what it
-  // does (summary-freshness.js).
+  // does (summary-freshness.js). A catch-up with main is kept for the same
+  // reason: it changes nothing the change does.
   const moved = await workflowPlatform().moveReviewHead({
     sessionId: session.id, appId: session.app_id, column: 'reviewed', from: oldHead, to: liveHead,
-    keepVotes: keepsApprovals, fixOnly: made.fixOnly, reason: move.kind,
+    keepVotes: keepsApprovals, fixOnly: made.fixOnly || catchUp, reason: move.kind,
   });
 
   if (!moveAccepted(moved)) return refusedMove(pool, session, liveHead, moved);
@@ -2100,7 +2135,7 @@ async function reconcileNativeReviewedHead({
   session.approval_epoch = epoch;
   session.pr_summary_stale = typeof moved.reply?.prSummaryStale === 'boolean'
     ? moved.reply.prSummaryStale
-    : (made.fixOnly ? !!session.pr_summary_stale : (session.pr_summary_stale || !!session.pr_summary_md));
+    : (made.fixOnly || catchUp ? !!session.pr_summary_stale : (session.pr_summary_stale || !!session.pr_summary_md));
 
   // Checks policy follows who wrote the tree. A mechanical merge is pure git
   // over a tested branch and a tested main, so the verdict carries. Anything
@@ -2661,6 +2696,18 @@ function mergedRowSelect() {
            (SELECT pv.vote FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.user_id = $2
                AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
+           -- #6282: an update on its way. The Votes card says so and holds
+           -- its Vote button until it lands (AppView._changeVotesView).
+           ${updateComingSql('cs')} AS update_coming,
+           -- #6287: the viewer's vote on an EARLIER version — still on their
+           -- row, no longer counted. The change's page, its request's page,
+           -- the pinned Votes card and the side panel all read this row, so
+           -- their Vote button asks "Still yes?" from it (as the Workshop
+           -- card already does from /promoted). Mirrors the /promoted
+           -- subquery below.
+           (SELECT pv.vote FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.user_id = $2
+               AND NOT COALESCE(${currentVotePredicateSql('pv', 'cs')}, FALSE)) as my_prior_vote,
            -- #4715: whose ask a merged bot change was (#4538's rule, the
            -- shared fragment), so Your work can keep the viewer's own
            -- going-live change after it merges. Both callers bind the
@@ -2694,7 +2741,13 @@ function mergedRowSelect() {
            rv.id        as revert_session_id,
            rv.pr_number as revert_pr_number,
            rv.pr_url    as revert_pr_url,
-           rv.status    as revert_status
+           rv.status    as revert_status,
+           -- An admin's force merge (services/merge-requirements.js
+           -- FORCE_SQL): the change page reads its own row from here, so its
+           -- Votes card can say the force skips the vote, and the force an
+           -- authored push dropped when none is held now.
+           ${require('../services/merge-requirements').FORCE_SQL} AS merge_force,
+           ${require('../services/merge-requirements').FORCE_DROPPED_SQL} AS merge_force_dropped
          FROM chat_sessions cs
          LEFT JOIN users u ON cs.user_id = u.id
          LEFT JOIN chat_sessions rv ON rv.revert_of_session_id = cs.id
@@ -3326,7 +3379,21 @@ function voteRoutes(config) {
          WHERE cs.id = $1 AND cs.status IN ('promoted', 'merging')`,
         [req.params.id]
       );
-      if (!sessionRows.length) return res.status(404).json({ error: 'Promoted session not found' });
+      if (!sessionRows.length) {
+        // #6101: the change merged (or left review) since the list this
+        // voter was looking at was read. Say which it is, so the client can
+        // close the vote instead of putting its Yes and No back.
+        const { rows: latestRows } = await pool.query(
+          `SELECT status, merged_at FROM chat_sessions WHERE id = $1`,
+          [req.params.id]
+        ).catch(() => ({ rows: [] }));
+        const latest = latestRows[0] || null;
+        return res.status(404).json({
+          error: 'Promoted session not found',
+          code: 'not_up_for_vote',
+          ...(latest ? { status: latest.merged_at ? 'merged' : latest.status } : {}),
+        });
+      }
       const session = sessionRows[0];
       // A private member does not vote on a public app (communities.js).
       const privateRefusal = await communities.privateVoteRefusal(pool, session.app_id, req.user?.id);
@@ -3457,7 +3524,18 @@ function voteRoutes(config) {
       if ((recorded.rowCount || 0) === 0) {
         // It left review between the read above and the write lock (an
         // imported proposal moved back to Underway, withdrawn): no vote.
-        return res.status(409).json({ error: 'This proposal is no longer up for a vote.' });
+        // #6101: answer with where the change is now, so the client closes
+        // the vote rather than restoring it, and says why it did not count.
+        const { rows: latestRows } = await pool.query(
+          `SELECT status, merged_at FROM chat_sessions WHERE id = $1`,
+          [session.id]
+        ).catch(() => ({ rows: [] }));
+        const latest = latestRows[0] || null;
+        return res.status(409).json({
+          error: 'This proposal is no longer up for a vote.',
+          code: 'not_up_for_vote',
+          ...(latest ? { status: latest.merged_at ? 'merged' : latest.status } : {}),
+        });
       }
 
       // A vote revives a going-stale proposal: the proposal machine's review
@@ -4098,6 +4176,14 @@ function voteRoutes(config) {
       const appRows = [gatedApp];
 
       const userId = req.user?.id || null;
+      // The queue's own retry time for a merge GitHub held back (see
+      // HELD_UNTIL_SQL in services/integration.js), read beside
+      // integration_block_reasons, which carries the reason it explains.
+      const heldUntilSql = require('../services/integration').HELD_UNTIL_SQL;
+      // An admin's force merge, from the proposal machine's instance state
+      // (services/merge-requirements.js FORCE_SQL), so the card can say it is
+      // queued, which step it waits on, and that it skips the vote.
+      const { FORCE_SQL: forceSql, FORCE_DROPPED_SQL: forceDroppedSql } = require('../services/merge-requirements');
       // Include 'merging' alongside 'promoted' so the PR stays visible
       // during the GitHub merge + prod rebuild + staging teardown
       // pipeline (~30s). Otherwise the card disappears the instant the
@@ -4171,6 +4257,11 @@ function voteRoutes(config) {
            cs.integration_merges_clean, cs.integration_conflict_paths,
            cs.integration_merged_tree, cs.integration_checks_base_current,
            cs.integration_block_reasons, cs.integration_error,
+           -- When the queue tries this change again after GitHub held its
+           -- merge back (services/integration.js HELD_UNTIL_SQL).
+           ${heldUntilSql} AS merge_held_until,
+           ${forceSql} AS merge_force,
+           ${forceDroppedSql} AS merge_force_dropped,
            cs.approval_epoch,
            -- #2061: the recording of what the merge gate last did, which the
            -- card turns into "what this still needs before it merges".
@@ -4215,6 +4306,9 @@ function voteRoutes(config) {
            (SELECT pv.vote FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.user_id = $2
                AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
+           -- #6282: an update on its way. The Votes card says so and holds
+           -- its Vote button until it lands (AppView._changeVotesView).
+           ${updateComingSql('cs')} AS update_coming,
            -- #4538: this change was built by Homeroom bot from a request
            -- made for the viewer, so their Workshop lists it in Your work.
            -- The bot stays the row's author; this only says whose ask it
@@ -5047,6 +5141,15 @@ function voteRoutes(config) {
         // #4452: how long testing usually takes here, for the change page's
         // one testing bar and its time left (services/checks-estimate.js).
         proposal.checks_estimate = await require('../services/checks-estimate').forApp(pool, gatedApp.id);
+        // #6234: Homeroom bot fixing its own change's failing checks, for the
+        // Testing card (services/homeroom-bot-progress.js changeBotFix);
+        // null for any change of a person's.
+        proposal.bot_fix = await require('../services/homeroom-bot-progress')
+          .changeBotFix(pool, proposal.id, { viewer: req.user }).catch(() => null);
+        // #6116: what it has cost so far at list price, for its author or an
+        // admin only, as the dev chat's meter (services/session-cost.js).
+        proposal.cost_total_cents = await require('../services/session-cost')
+          .sessionCostForViewer(pool, proposal, req.user);
         // #4479: the plan it was built from, for the page's plan card.
         proposal.plan = await require('./sessions')
           .changePlanFor(pool, proposal.id, proposal.user_id, userId).catch(() => null);
@@ -5061,6 +5164,28 @@ function voteRoutes(config) {
         // what it brings, what it does here, and where it stands, for the
         // change page's From <original> card. Null for any other change.
         proposal.upstream = await require('../services/upstream-offers').changeView(pool, proposal.id);
+        // #6140: what its Preview reads (AppView._cardPreviewSpec), on a change
+        // still up for a vote. A request's page draws a change from this read
+        // alone, with no board row under it, so without these its Testing card
+        // had no Try it. The fields /promoted carries, with its own derivation
+        // of building and failed; can_preview is the one the session lists
+        // use, so a preview gone to sleep can be woken. Never while it builds:
+        // _cardPreviewSpec offers a rebuild before it says "building". A
+        // merged row keeps its shape: its page offers the live app instead.
+        if (proposal.status === 'promoted' || proposal.status === 'merging') {
+          const { rows: [preview] } = await pool.query(
+            `SELECT staging_url, testing_md, testing_path,
+                    (pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL
+                       OR shared_at IS NOT NULL) AS can_preview
+               FROM chat_sessions WHERE id = $1`,
+            [proposal.id]
+          );
+          proposal.staging_url = preview?.staging_url || null;
+          proposal.testing_md = preview?.testing_md || null;
+          proposal.testing_path = preview?.testing_path || null;
+          Object.assign(proposal, require('../services/staging').previewDisplayState(proposal));
+          proposal.can_preview = !!preview?.can_preview && !proposal.staging_building;
+        }
       }
 
       // #3669: the proposal page's own read must carry the same per-row
@@ -5413,13 +5538,33 @@ function voteRoutes(config) {
       log.info('votes', 'Admin force-merge requested', {
         sessionId: session.id, by: req.user.username,
       });
-      const out = await require('../workflow/platform.ts').forceMerge({
+      const platform = require('../workflow/platform.ts');
+      // One force at a time. A second one would overwrite the first and ask
+      // the queue again without saying so, which is why it is refused here
+      // (two tabs can both reach this route) and by the client before it.
+      const before = await platform.proposalInstance(session.id).catch(() => null);
+      if (before?.data?.force) {
+        return res.status(409).json({
+          error: 'already_queued',
+          message: 'An admin merge is already queued for this change.',
+          force: before.data.force,
+        });
+      }
+      const out = await platform.forceMerge({
         sessionId: session.id, appId: session.app_id, from: session.status, userId: req.user.id, username: req.user.username,
       });
       if (out.status === 'rejected') {
-        return res.status(out.reason === 'not_authorized' ? 403 : 409).json({ error: out.reason || 'not_in_review' });
+        const reason = out.reason || 'not_in_review';
+        // A bare reason told the admin nothing on screen; each one is said in
+        // words here.
+        const message = {
+          in_progress: 'This change is already merging.',
+          not_in_review: 'This change is no longer up for a vote.',
+        }[reason] || null;
+        return res.status(reason === 'not_authorized' ? 403 : 409).json({ error: reason, ...(message ? { message } : {}) });
       }
-      res.json({ ok: true, queued: true });
+      const after = await platform.proposalInstance(session.id).catch(() => null);
+      res.json({ ok: true, queued: true, force: after?.data?.force || null });
     } catch (err) {
       log.error('votes', 'Admin force-merge route failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -6354,6 +6499,10 @@ function sessionLabel(session) {
 // as it stands now (null when GitHub could not be read).
 function refusalKind(err, pr) {
   const msg = String((err && err.message) || '').toLowerCase();
+  // GitHub is still finishing an earlier merge of this pull request (it holds
+  // the merge lock until that finishes, or until the request it made times
+  // out). Not a refusal of the head: the attempt asks again.
+  if (/merge already in progress/.test(msg)) return 'github_busy';
   if (pr && pr.draft === true) return 'draft';
   if (/base branch was modified/.test(msg)) return 'base_moved';
   if (pr && (pr.mergeable === false || pr.mergeable_state === 'dirty')) return 'conflict';
@@ -6371,7 +6520,7 @@ function refusalKind(err, pr) {
 //   unverified { message }        a 409 whose revision GitHub would not confirm
 //   reopened   {}                 closed on GitHub, reopened: it can be merged again
 //   closed     { message }        closed on GitHub, and could not be reopened
-//   refused    { kind, message }  conflict | draft | blocked | base_moved | base_not_main
+//   refused    { kind, message }  conflict | draft | blocked | base_moved | base_not_main | github_busy
 // An import is only ever merged into main (src/workflow/rules/pr-base.ts):
 // its pull request's base is read before GitHub is asked, one based on any
 // other branch is refused, and every `merged` names the branch it went into
@@ -6381,8 +6530,18 @@ function refusalKind(err, pr) {
 // pull request first, so a lost answer is observed rather than misread as a
 // refusal (merge trace bug 1). An error that is no answer from GitHub (the
 // network, a 5xx, its rate limit) is thrown: the work is tried again,
-// observing first.
-async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, checkpoint = async () => {} } = {}) {
+// observing first. An answer that a merge is "already in progress" is GitHub
+// still busy, not a refusal: the pull request is re-read and the merge asked
+// again a couple of times inside the attempt (BUSY_RETRIES), then the queue
+// is left to try again later.
+const BUSY_RETRY_MS = 20 * 1000;
+const BUSY_RETRIES = 2;
+
+async function attemptMerge(config, pool, sessionId, {
+  head, resumeFrom = null, checkpoint = async () => {},
+  // The busy back-off's clock; tests pass one that returns at once.
+  wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
   const { rows: [session] = [] } = await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [sessionId]);
@@ -6425,7 +6584,9 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
         ? `${label} wasn't merged: it is a draft on GitHub. Its author has to mark it ready for review, and it merges then.`
         : kind === 'base_moved'
           ? `${label} wasn't merged on this attempt: main moved while GitHub was merging it. It is tried again.`
-          : `${label} wasn't merged: GitHub refused it (${said || 'no reason given'}). It is tried again when its commit, main or its votes change.`;
+          : kind === 'github_busy'
+            ? `${label} wasn't merged yet: GitHub said a merge of it was already in progress. It is tried again in a few minutes.`
+            : `${label} wasn't merged: GitHub refused it (${said || 'no reason given'}). It is tried again when its commit, main or its votes change.`;
     return { outcome: 'refused', kind, message, githubMessage: said || null };
   };
   const unanswered = (err) => !err || !Number.isInteger(err.status) || err.status >= 500 || err.status === 429;
@@ -6483,9 +6644,28 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     const data = await client.mergePR(owner, repo, session.pr_number, pinned);
     return { outcome: 'merged', sha: (data && data.sha) || null, ...baseOf(base) };
   };
-  try {
-    return await merge();
-  } catch (err) {
+  // GitHub is still finishing an earlier merge of this pull request ("Merge
+  // already in progress"), not refusing this one. The pull request is read
+  // again first, since the earlier try may have landed; otherwise the merge
+  // is asked again after a short wait, at most BUSY_RETRIES times, and the
+  // queue is left to try again later if GitHub is still busy after that.
+  const busy = (err) => /merge already in progress/i.test(String((err && err.message) || ''));
+  const observedMerge = (pr) => ({
+    outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null,
+    observed: true, ...baseOf(pr.base ? prBase.otherBase(pr) : base),
+  });
+  const reopenOrClosed = async () => {
+    try {
+      await client.reopenPR(owner, repo, session.pr_number);
+      return { outcome: 'reopened' };
+    } catch (reopenErr) {
+      // Only GitHub's refusal is "closed for good": no answer is asked again.
+      if (throttled(reopenErr)) return limited(reopenErr);
+      if (unanswered(reopenErr)) throw reopenErr;
+      return { outcome: 'closed', message: `PR #${session.pr_number} is closed on GitHub and couldn't be reopened: ${reopenErr.message}` };
+    }
+  };
+  const handle = async (err) => {
     if (throttled(err)) return limited(err);
     // The branch is not on the git host (services/code-missing.js; the gate
     // refuses this first, so only a branch deleted since reaches here). Its
@@ -6493,6 +6673,26 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     // queue to resolve.
     if (codeMissing.isError(err)) {
       return { outcome: 'refused', kind: 'blocked', codeMissing: true, message: `${label} wasn't merged. ${codeMissing.REASON}` };
+    }
+    if (busy(err)) {
+      const said = String((err && err.message) || '').slice(0, 300);
+      for (let i = 0; i < BUSY_RETRIES; i++) {
+        await wait(BUSY_RETRY_MS);
+        const pr = await readPr();
+        if (pr && pr.merged) return observedMerge(pr);
+        if (pr && pr.state === 'closed') return reopenOrClosed();
+        try {
+          return await merge();
+        } catch (again) {
+          // Another busy answer loops; anything else is handled as it would
+          // be from the first ask.
+          if (!busy(again)) return handle(again);
+        }
+      }
+      return {
+        outcome: 'refused', kind: 'github_busy', githubMessage: said || null,
+        message: `${label} wasn't merged yet: GitHub said a merge of it was already in progress. It is tried again in a few minutes.`,
+      };
     }
     if (err && err.headMoved) {
       // GitHub answers 409 for a moved head and for a merge it will not make:
@@ -6533,20 +6733,8 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     }
     if (unanswered(err)) throw err;
     const pr = await readPr();
-    if (pr && pr.merged) {
-      return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true, ...baseOf(pr.base ? prBase.otherBase(pr) : base) };
-    }
-    if (pr && pr.state === 'closed') {
-      try {
-        await client.reopenPR(owner, repo, session.pr_number);
-        return { outcome: 'reopened' };
-      } catch (reopenErr) {
-        // Only GitHub's refusal is "closed for good": no answer is asked again.
-        if (throttled(reopenErr)) return limited(reopenErr);
-        if (unanswered(reopenErr)) throw reopenErr;
-        return { outcome: 'closed', message: `PR #${session.pr_number} is closed on GitHub and couldn't be reopened: ${reopenErr.message}` };
-      }
-    }
+    if (pr && pr.merged) return observedMerge(pr);
+    if (pr && pr.state === 'closed') return reopenOrClosed();
     // A draft of ours goes up for review again and is merged once more; an
     // imported one is its author's to mark ready.
     if (pr && pr.draft === true && !isImported && typeof client.markPrReadyForReview === 'function') {
@@ -6560,6 +6748,11 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
       }
     }
     return refused(err, pr);
+  };
+  try {
+    return await merge();
+  } catch (err) {
+    return handle(err);
   }
 }
 

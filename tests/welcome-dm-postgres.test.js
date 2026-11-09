@@ -16,7 +16,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const express = require('express');
 const { Pool } = require('pg');
 
@@ -70,9 +69,9 @@ test('welcome messages against the full PostgreSQL schema', { timeout: 180000 },
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent, the welcome block included
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   let seq = 0;
   async function user(prefix = 'person', { access = true, synthetic = false, placeholder = false } = {}) {
@@ -112,7 +111,7 @@ test('welcome messages against the full PostgreSQL schema', { timeout: 180000 },
       `SELECT tgname FROM pg_trigger
         WHERE tgrelid = 'users'::regclass AND tgname = 'users_enqueue_welcome_dm'`
     );
-    assert.equal(triggers.length, 1, 'applying the schema twice left one trigger');
+    assert.equal(triggers.length, 1, 'a reboot leaves one trigger');
   });
 
   await t.test('while the switch is off, nobody is queued, and switching on does not reach back', async () => {

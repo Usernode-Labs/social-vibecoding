@@ -76,7 +76,21 @@ test('a digest of one change opens that change', () => {
   N.items = [{ id: 1, readAt: null, kind: 'vote_digest', detail: '1', appSlug: 'flat-4b-chores', sessionId: 40 }];
   N._onItemClick(1);
   // Run four (13 Oct): at its Votes card (tests/change-votes-in-view.test.js).
-  assert.deepEqual(nav(calls), [['showVotes', 40], ['openAppTab', 'flat-4b-chores', 'dev', { subTab: 'proposals', ref: 40 }]]);
+  // #6099: the row's own session id is carried as a typed topic ref, so the
+  // digest opens exactly the change it names. It normalizes to the same page
+  // the old `subTab: 'proposals'` spelling did.
+  assert.deepEqual(nav(calls), [['showVotes', 40], ['openAppTab', 'flat-4b-chores', 'dev', { subTab: 'topic', ref: { kind: 'proposal', id: 40 } }]]);
+  assert.equal(calls[0][0], 'dismiss', 'the sheet gets out of the way first');
+});
+
+// #5404: the Monday count of the changes you voted on names none of them.
+// Me › Your votes became the bot tab's History on Votes (5 Nov 2026).
+test('the Monday row opens History on its Votes', () => {
+  const { N, calls, location } = load();
+  N.items = [{ id: 4, readAt: null, kind: 'voted_digest', detail: '3', appSlug: null, sessionId: null }];
+  N._onItemClick(4);
+  assert.deepEqual(nav(calls), []);
+  assert.equal(location.hash, '#homeroom-bot/history?kind=vote');
   assert.equal(calls[0][0], 'dismiss', 'the sheet gets out of the way first');
 });
 
@@ -107,8 +121,9 @@ test('a digest of several opens Needs you, which lists them, instead of nothing'
   const { N, calls, location } = load();
   N.items = [{ id: 2, readAt: null, kind: 'vote_digest', detail: '3', appSlug: null, sessionId: null }];
   N._onItemClick(2);
-  assert.deepEqual(nav(calls), [['setTab', 'needs']]);
-  assert.equal(location.hash, '#communities', 'not the screen it was tapped on (the bot DM, on 4 October)');
+  // One Home (#6361): Needs you is a page of its own, #needs.
+  assert.deepEqual(nav(calls), []);
+  assert.equal(location.hash, '#needs', 'not the screen it was tapped on (the bot DM, on 4 October)');
 });
 
 test('the digest names its change when there is exactly one, and nothing when there are several', async () => {

@@ -15,9 +15,17 @@
     "text": "Mark all from {{app}} as read",
     "description": "Accessible name of that button. {{app}} is the project's name."
   },
+  "sheet.markOlder": {
+    "text": "Mark everything older than a week as read",
+    "description": "Quiet text button at the foot of the notifications sheet's Unread filter, shown only when an unread notification older than seven days is listed. It marks every unread notification older than seven days as read and leaves the newer ones unread."
+  },
   "sheet.group.other": {
-    "text": "Other",
-    "description": "Heading on the Unread filter over the notifications that belong to no project (messages, friends, account)."
+    "text": "Across Homeroom",
+    "description": "Heading on the Unread filter over the notifications that are not filed under a single project's group: account notices, people, and the daily reminder of changes waiting for the viewer's approval (which, when several changes wait, is filed here even if they all belong to one project). It replaced the vague \"Other\"."
+  },
+  "sheet.group.unnamedProject": {
+    "text": "Unnamed project",
+    "description": "Heading on the Unread filter over one project's notifications when the project's name is not known (for example, it was removed or is not visible to the viewer)."
   },
   "stack.showAll_one": {
     "text": "Show {{count}} notification",
@@ -210,6 +218,42 @@
   "sheet.tab.all": {
     "text": "All",
     "description": "Filter button at the top of the notifications sheet: shows every notification, read ones included."
+  },
+  "sheet.needsYou": {
+    "text": "Needs you",
+    "description": "Small label over the project groups on the notifications sheet's Unread tab that hold something waiting on the reader (an approval, a decision, a friend request), shown only when other groups follow under \"Everything else\"."
+  },
+  "sheet.everythingElse": {
+    "text": "Everything else",
+    "description": "Small label over the remaining project groups on the notifications sheet's Unread tab, under the \"Needs you\" groups: the rows that only tell the reader what happened."
+  },
+  "sheet.catchUp.needsYou_one": {
+    "text": "{{count}} needs you",
+    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab: one notification or invite is waiting on the reader. May stand alone."
+  },
+  "sheet.catchUp.needsYou_other": {
+    "text": "{{count}} need you",
+    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab: {{count}} notifications or invites are waiting on the reader. May stand alone."
+  },
+  "sheet.catchUp.needsYouAtLeast_one": {
+    "text": "At least {{count}} needs you",
+    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab, while older unread notifications have not loaded yet: one is known to wait on the reader and there may be more. May stand alone."
+  },
+  "sheet.catchUp.needsYouAtLeast_other": {
+    "text": "At least {{count}} need you",
+    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab, while older unread notifications have not loaded yet: {{count}} are known to wait on the reader and there may be more. May stand alone."
+  },
+  "sheet.catchUp.unread_one": {
+    "text": "{{count}} unread",
+    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab: how many notifications are unread in all, counting any that need the reader. May stand alone."
+  },
+  "sheet.catchUp.unread_other": {
+    "text": "{{count}} unread",
+    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab: how many notifications are unread in all, counting any that need the reader. May stand alone."
+  },
+  "sheet.catchUp.unreadCapped": {
+    "text": "99+ unread",
+    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab, when more than 99 are unread: the same capped number the bell's badge shows. May stand alone."
   },
   "sheet.today": {
     "text": "Today",
@@ -407,6 +451,22 @@
     "text": "{{count}} sessions finished",
     "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. The viewer's coding sessions finished their work."
   },
+  "row.group.live_one": {
+    "text": "{{count}} of your requests went live",
+    "description": "Subject of one notification row in the bell that stands for several requests of one project which went live close together, each listed under it. {{count}} is how many; it is at least 1. 'Live' is the app's word for a change that is now part of the app."
+  },
+  "row.group.live_other": {
+    "text": "{{count}} of your requests went live",
+    "description": "Subject of one notification row in the bell that stands for several requests of one project which went live close together, each listed under it. {{count}} is how many. 'Live' is the app's word for a change that is now part of the app."
+  },
+  "row.group.liveItem": {
+    "text": "#{{number}} · {{title}}",
+    "description": "One request listed under a notification row that folds several requests which went live together. {{number}} is the request's number, kept with its # before it, and {{title}} is what the request asked for."
+  },
+  "row.group.liveItemUnnumbered": {
+    "text": "{{title}}",
+    "description": "One request listed under a notification row that folds several requests which went live together, for a request that has no number to show. {{title}} is what the request asked for."
+  },
   "row.sending": {
     "text": "Sending…",
     "description": "Shown on a notification's \"Still yes\" button while the vote is being sent."
@@ -515,6 +575,26 @@
     "text": "On hold",
     "description": "First line of a notification from Homeroom bot: work on the viewer's requests waits until Monday, because this week's building time is used up. The request's title (or how many requests) is on the line below."
   },
+  "row.bot.onHoldNote.allowance": {
+    "text": "Until Monday: this week's building time is used up.",
+    "description": "Small line under the title of an \"On hold\" notification from Homeroom bot: why the viewer's request or requests wait. It may stand for one request or several, so it has no verb of its own."
+  },
+  "row.bot.onHoldNote.paused": {
+    "text": "Until Monday: Homeroom bot's budget for this week is used up.",
+    "description": "Small line under the title of an \"On hold\" notification from Homeroom bot: the request waits because the bot itself has used its budget for the week. Homeroom bot is the assistant's name."
+  },
+  "row.bot.onHoldNote.slots": {
+    "text": "Until a slot frees up: all of this project's are in use.",
+    "description": "Small line under the title of an \"On hold\" notification from Homeroom bot: the request waits because the project already has as many changes waiting for votes as it may have. A slot is one of those places."
+  },
+  "row.bot.onHoldNote.builds": {
+    "text": "Until one of this project's builds is done: it has as many under way as it may have.",
+    "description": "Small line under the title of an \"On hold\" notification from Homeroom bot: the request waits because the bot is already building as much on this project as it may at once."
+  },
+  "row.bot.onHoldNote.taken": {
+    "text": "Somebody has taken it on, so Homeroom bot is leaving it to them.",
+    "description": "Small line under the title of an \"On hold\" notification from Homeroom bot: a person took on the request the bot was going to build. Homeroom bot is the assistant's name."
+  },
   "row.bot.label.live": {
     "text": "Live",
     "description": "First line of a notification from Homeroom bot: what the viewer asked for is now part of the running project. The request's title is on the line below."
@@ -552,8 +632,8 @@
     "description": "First line of a notification from Homeroom bot: the bot could not build one of the viewer's requests as written and asks them to add detail. The request's title is on the line below."
   },
   "row.bot.ask.done": {
-    "text": "Looks done already",
-    "description": "First line of a notification from Homeroom bot: what one of the viewer's requests asks for seems to exist already, and the bot offers to close it. The request's title is on the line below."
+    "text": "Already works",
+    "description": "First line of a notification from Homeroom bot: what one of the viewer's requests asks for already exists, and the bot offers to close it. The request's title is on the line below."
   },
   "row.bot.ask.platform": {
     "text": "Move it to Homeroom's board?",
@@ -851,6 +931,10 @@
     "text": "Approved, can't go live yet",
     "description": "First line of a notification: the viewer's proposed change has enough votes but cannot be merged (a conflict or failing checks), and will be archived if nothing changes. The change's title is on the line below."
   },
+  "row.stale.blockedNote": {
+    "text": "The votes are in, but something is stopping the merge, such as a conflict or a failing check.",
+    "description": "Small line under the title of the \"Approved, can't go live yet\" notification: why the viewer's change is not live. The platform does not record the exact cause, so it only gives examples."
+  },
   "row.stale.yourChange": {
     "text": "your change",
     "description": "Second line of the \"Needs votes\" notification when the change has no title. Lower case: it stands where the title would."
@@ -1044,12 +1128,32 @@
     "description": "First line of a daily reminder notification: proposed changes the viewer has not voted on. How many is on the line below."
   },
   "row.voteDigest.count_one": {
-    "text": "{{count}} change",
+    "text": "{{count}} change to review",
     "description": "Second line of the \"Waiting for your approval\" notification. {{count}} is how many proposed changes still wait for the viewer's vote. \"Change\" is a noun."
   },
   "row.voteDigest.count_other": {
-    "text": "{{count}} changes",
+    "text": "{{count}} changes to review",
     "description": "Second line of the \"Waiting for your approval\" notification. {{count}} is how many proposed changes still wait for the viewer's vote. \"Change\" is a noun."
+  },
+  "row.voteDigest.countIn_one": {
+    "text": "{{count}} change to review in {{project}}",
+    "description": "Second line of the \"Waiting for your approval\" notification when it is about one project. {{count}} is how many proposed changes still wait for the viewer's vote; {{project}} is the project's name. \"Change\" is a noun."
+  },
+  "row.voteDigest.countIn_other": {
+    "text": "{{count}} changes to review in {{project}}",
+    "description": "Second line of the \"Waiting for your approval\" notification when it is about one project. {{count}} is how many proposed changes still wait for the viewer's vote; {{project}} is the project's name. \"Change\" is a noun."
+  },
+  "row.votedDigest.label": {
+    "text": "Changes you voted on",
+    "description": "First line of a weekly notification about changes the viewer voted on. How many were decided is on the line below."
+  },
+  "row.votedDigest.count_one": {
+    "text": "{{count}} decided in the last week",
+    "description": "Second line of the weekly \"Changes you voted on\" notification. {{count}} is how many of those changes went live or were closed in the last week. Tapping it opens the Your votes page."
+  },
+  "row.votedDigest.count_other": {
+    "text": "{{count}} decided in the last week",
+    "description": "Second line of the weekly \"Changes you voted on\" notification. {{count}} is how many of those changes went live or were closed in the last week. Tapping it opens the Your votes page."
   },
   "row.connector.shared": {
     "text": "Shared by your agent",
@@ -1405,7 +1509,7 @@
   },
   "toast.markAllFailed": {
     "text": "Couldn’t mark notifications as read. Try again.",
-    "description": "Brief message shown when \"Mark all read\" failed."
+    "description": "Brief message shown when \"Mark all read\" or \"Mark everything older than a week as read\" failed."
   },
   "toast.markAppFailed": {
     "text": "Couldn’t mark these notifications as read. Try again.",
@@ -1690,5 +1794,9 @@
   "ask.sheet.codeLabel": {
     "text": "Code to scan for the Homeroom app",
     "description": "Accessible name of the code image on that sheet."
+  },
+  "row.chat.changeReplyPr": {
+    "text": "Replied on change PR {{number}}",
+    "description": "First line of a notification: somebody posted in the discussion of a change on a project whose code is on GitHub, where a change's number is written PR, not #. The viewer built it, voted on it or posted in it. {{number}} is the change's number. \"Change\" is a noun. The message is on the line below."
   }
 }

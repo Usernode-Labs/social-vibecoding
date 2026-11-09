@@ -136,7 +136,7 @@ export function DevConsolePanel() {
     <div
       ref={panelRef}
       id="dev-console-panel"
-      className="hidden fixed left-0 right-0 bottom-0 z-50 flex flex-col bg-zinc-950 border-t border-zinc-700"
+      className="hidden fixed start-0 end-0 bottom-0 z-50 flex flex-col bg-zinc-950 border-t border-zinc-700"
       style={{ height: "40vh", maxHeight: "60vh" }}
     >
       <div className="flex items-center gap-3 px-3 py-2 border-b border-zinc-800 shrink-0 text-sm">

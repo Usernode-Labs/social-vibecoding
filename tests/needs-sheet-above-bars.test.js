@@ -76,23 +76,12 @@ test('the sheets sit above the tab bar and the Resume strip', () => {
   assert.match(CSS, /UNDER the panels, sheets and dialogs \(which sit at 40 and above\)/);
 });
 
-test('the vote sheet is not held at the rail\'s level while it is up', () => {
-  // It is rendered inside the rail...
-  const rail = WORKSHOP.slice(WORKSHOP.indexOf('<aside className="dev-ws-rail" data-ws-rail=""'), WORKSHOP.indexOf('</aside>'));
-  assert.match(rail, /className="dev-ws-sheet-modal dev-ws-sheet-vote" data-ws-sheet="vote"/, 'the vote sheet lives in the rail');
-  // ...the rail is a stacking context on a phone...
-  assert.match(CSS, /\.dev-ws-rail \{\n  position: absolute; right: 8px; bottom: 10px; z-index: 3;/);
-  // ...so while the vote sheet is shown the rail lets go of it. `data-ws-sheet`
-  // is the feed root's, set for as long as a sheet is shown or leaving.
-  assert.match(WORKSHOP, /className="dev-ws-needs"\n\s*data-ws-needs=""\n\s*data-ws-sheet=\{shown \|\| undefined\}/);
-  assert.match(CSS, /\n\.dev-ws-needs\[data-ws-sheet="vote"\] > \.dev-ws-rail \{ z-index: auto; \}/);
-});
 
 test('the wide layout keeps its own stacking: the 40 is the phone sheet\'s alone', () => {
   const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS)[1];
   assert.match(wide, /\.dev-ws-sheet-talk \{\n\s*position: relative; inset: auto; flex: 0 1 380px; min-width: 300px; z-index: auto;/);
   assert.match(wide, /\.dev-ws-sheet-vote \{ position: absolute;[^}]*z-index: 6;/);
-  assert.match(wide, /\.dev-ws-rail \{\n\s*position: relative; right: auto; bottom: auto; z-index: auto;/);
+  assert.match(wide, /\.dev-ws-rail \{\n\s*position: relative; inset-inline-end: auto; bottom: auto; z-index: auto;/);
 });
 
 test('on a phone a tall sheet scrolls and the vote keeps its buttons on screen', () => {
@@ -129,15 +118,4 @@ test('the sticky row is a child of the form, so it can ride anywhere over the fo
     assert.match(html, /^<div class="dev-ws-vote-form"[^>]*>/);
     assert.match(html, /<div class="dev-vote-reason-actions">(?:(?!<div)[\s\S])*<\/div><\/div>$/, `the action row closes the form (${side})`);
   }
-});
-
-test('the keyboard counts in the Homeroom app too', () => {
-  // `[data-ws-kb]` lifts the cap and drops the indicator's clearance. It is
-  // set from the kit's `un-kb` (Safari, Chrome: the keys cover the page) and
-  // from the page's own `platform-kb-open` (the app: the page ends at them).
-  assert.match(WORKSHOP, /const up = docEl\.classList\.contains\('un-kb'\) \|\| docEl\.classList\.contains\('platform-kb-open'\);/);
-  assert.match(KB_OPEN, /export const KB_OPEN_CLASS = 'platform-kb-open';/, 'the class workshop.tsx names is the one keyboard-open.ts writes');
-  assert.match(WORKSHOP, /data-ws-kb=\{kbUp \? '' : undefined\}/);
-  assert.match(CSS, /\n\.dev-ws-needs\[data-ws-kb\] \.dev-ws-sheet-card \{ max-height: calc\(100% - var\(--platform-safe-top, 0px\)\); padding-bottom: 12px; \}/,
-    'the whole strip above the keys, short of the status bar');
 });

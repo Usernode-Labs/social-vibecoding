@@ -126,6 +126,8 @@ export function pageOf(route: string): HomeroomLink | null {
   const ref = parts[4];
   if (!section) return page('hub', slug, `${base}/workshop`);
   if (section === 'chat') return page('discussion', slug, `${base}/dev/chat`);
+  // The Hub's own address (App._placeAddress).
+  if (section === 'hub' && !ref) return page('hub', slug, `${base}/dev/hub`);
   // A list with no id is the card list, which is the hub; an id that does
   // not parse is no card at all, not the list it would fall back to.
   if (!ref) return ['issues', 'proposals', 'changes', 'governance', 'sessions', 'shared'].includes(section)
@@ -134,6 +136,10 @@ export function pageOf(route: string): HomeroomLink | null {
   const n = id(ref);
   if (!n) return null;
   if (section === 'issues') return page('issue', slug, `${base}/dev/issues/${n}`, { issueNumber: n });
+  // #6439: a pasted governance link keeps its own card; opening one goes
+  // through the forward in public/js/app-view.js `_renderTopicSubView`, so a
+  // vote to close a request lands on the request's page without the address
+  // in the message changing.
   if (section === 'governance') return page('governance', slug, `${base}/dev/governance/${n}`, { proposalId: n });
   // A change: its proposal page, its shared session's page, or its dev
   // session. One card for all three — the server shows it only where the

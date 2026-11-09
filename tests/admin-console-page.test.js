@@ -139,7 +139,10 @@ test('the console island imports every admin module, console first', () => {
     'admin-db-export',
     // #4405: every custom domain a project has claimed.
     'admin-domains',
-    'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
+    'admin-e2e',
+    // Email templates: what every platform email says, and its layouts.
+    'admin-email-templates',
+    'admin-estimator', 'admin-featured-apps', 'admin-features',
     'admin-gallery',
     // #2684: the Homeroom bot's shadow-mode verdicts and their ratings.
     'admin-homeroom-bot',
@@ -239,11 +242,11 @@ test('the menu carries every section, grouped, with no external tools left', () 
   const keyCount = (sectionBlock.match(/key: '/g) || []).length;
   const groupCount = (sectionBlock.match(/group: '/g) || []).length;
   assert.equal(keyCount, groupCount, 'every SECTIONS entry carries a group');
-  // Responsive split: sidebar on md+, two-level hierarchy below md. The
-  // sidebar's HOST is React-owned chassis now (#1082 chunk E) while the module
-  // still fills it — hence the two different files.
-  assert.ok(islandTsx.includes('id="admin-nav-desktop"'), 'the island renders the desktop sidebar host');
-  assert.match(consoleJs, /getElementById\('admin-nav-desktop'\)/, 'the module fills that sidebar');
+  // Responsive split: the top bar on md+ (#6456; a sidebar before it),
+  // two-level hierarchy below md. The bar's HOST is React-owned chassis
+  // (#1082 chunk E) while the module fills it — hence the two files.
+  assert.ok(islandTsx.includes('id="admin-nav-desktop"'), 'the island renders the desktop nav host');
+  assert.match(consoleJs, /getElementById\('admin-nav-desktop'\)/, 'the module fills that bar');
   assert.ok(consoleJs.includes('id="admin-mobile-menu"'), 'the mobile level-1 menu renders');
   // The horizontally scrolling tab strip it replaced is GONE, not merely
   // hidden — its id and its sideways scroll are what made fifteen
@@ -254,21 +257,20 @@ test('the menu carries every section, grouped, with no external tools left', () 
     'nothing in the console scrolls sideways any more');
   // Both navs read their grouping from one helper so they cannot drift.
   assert.match(consoleJs, /_groupedSections\(\)\s*\{/,
-    'one shared grouping helper feeds the sidebar and the mobile menu');
+    'one shared grouping helper feeds the top bar and the mobile menu');
   const menuHtml = consoleJs.slice(consoleJs.indexOf('_mobileMenuHtml()'));
   assert.match(menuHtml.slice(0, 1600), /_groupedSections\(\)/,
     'the mobile menu groups via the shared helper');
-  const sideHtml = consoleJs.slice(consoleJs.indexOf('  _navItemsHtml()'));
-  assert.match(sideHtml.slice(0, 1200), /_groupedSections\(\)/,
-    'the sidebar groups via the shared helper');
-  // #1152 made each heading a collapse toggle. Both builders must key that
-  // state off the group NAME the shared helper emits — keying off the map
-  // index would silently mis-pair the moment _visibleSections() narrows the
-  // menu and a group drops out, collapsing the wrong heading's rows.
-  for (const [label, html] of [['sidebar', sideHtml], ['mobile menu', menuHtml]]) {
-    assert.match(html.slice(0, 2400), /_isGroupCollapsed\(g\.name\)/,
-      `the ${label}'s collapse state is keyed by group name, not by index`);
-  }
+  const barHtml = consoleJs.slice(consoleJs.indexOf('  _topBarHtml()'));
+  assert.match(barHtml.slice(0, 2400), /_groupedSections\(\)/,
+    'the top bar groups via the shared helper');
+  // #1152 made each phone heading a collapse toggle, keyed off the group
+  // NAME the shared helper emits — keying off the map index would silently
+  // mis-pair the moment _visibleSections() narrows the menu and a group
+  // drops out, collapsing the wrong heading's rows. The desktop sidebar that
+  // shared it is the top bar now (#6456), which has no headings to fold.
+  assert.match(menuHtml.slice(0, 2400), /_isGroupCollapsed\(g\.name\)/,
+    "the mobile menu's collapse state is keyed by group name, not by index");
 });
 
 // #860: the six folded-in sections each live in their own module. They were

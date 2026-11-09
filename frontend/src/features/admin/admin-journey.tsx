@@ -130,7 +130,7 @@ const JUI = Object.freeze({
   row: 'flex flex-wrap items-baseline gap-x-2 gap-y-1 py-2 border-b border-zinc-100 dark:border-zinc-800/60 last:border-b-0',
   name: 'font-medium text-violet-700 dark:text-violet-400 hover:underline',
   dialogPanel: 'w-full max-w-2xl max-h-[82vh] overflow-y-auto bg-white dark:bg-zinc-900 rounded-2xl p-5 shadow-xl',
-  chip: 'inline-flex items-center gap-1 rounded-full bg-zinc-100 dark:bg-zinc-800 py-0.5 pl-0.5 pr-2 text-xs font-medium text-zinc-800 dark:text-zinc-200 transition-colors',
+  chip: 'inline-flex items-center gap-1 rounded-full bg-zinc-100 dark:bg-zinc-800 py-0.5 ps-0.5 pe-2 text-xs font-medium text-zinc-800 dark:text-zinc-200 transition-colors',
   chipOn: 'bg-violet-600 text-white',
   chipOff: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700',
   path: 'flex flex-wrap gap-1 text-xs',
@@ -147,7 +147,7 @@ const JUI = Object.freeze({
   mileGrid: 'grid items-center gap-x-1 gap-y-1.5 grid-cols-[repeat(10,minmax(0,1fr))_2.5rem] sm:grid-cols-[7.5rem_repeat(10,minmax(0,1fr))_2.5rem]',
   // A column label is a button: tapping it says what the column counts.
   mileLabel: 'w-full min-w-0 rounded text-center text-[10px] leading-tight tracking-tight text-zinc-500 dark:text-zinc-400 underline decoration-dotted decoration-zinc-400 dark:decoration-zinc-500 underline-offset-2 hover:text-zinc-900 dark:hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500',
-  mileHelp: 'absolute top-full z-20 mt-1 w-56 max-w-[70vw] rounded-lg bg-zinc-900 dark:bg-zinc-100 px-3 py-2 text-left text-xs font-normal normal-case leading-snug tracking-normal text-white dark:text-zinc-900 shadow-lg',
+  mileHelp: 'absolute top-full z-20 mt-1 w-56 max-w-[70vw] rounded-lg bg-zinc-900 dark:bg-zinc-100 px-3 py-2 text-start text-xs font-normal normal-case leading-snug tracking-normal text-white dark:text-zinc-900 shadow-lg',
   // The creation path by week: the week, then one column per step.
   weekGrid: 'grid items-start gap-x-2 gap-y-1 grid-cols-[3.5rem_repeat(5,minmax(0,1fr))]',
   pathStep: 'rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-zinc-700 dark:text-zinc-300',
@@ -516,7 +516,7 @@ const STATUS_ORDER: Array<[string, string]> = [
 
 function GroupRow({ grp, onOpen, note }: { grp: Group; onOpen: OpenPerson; note?: string }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0 pl-4" data-journey-group={grp.slug}>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0 ps-4" data-journey-group={grp.slug}>
       <span className="text-sm font-medium truncate w-28 shrink-0">{grp.name}</span>
       <Chips people={grp.people} onOpen={onOpen} />
       {note ? <span className={JUI.fine}>{note}</span> : null}
@@ -615,6 +615,43 @@ const STEP_FILL: Record<string, string> = {
   not_yet: 'bg-zinc-200 dark:bg-zinc-700',
 };
 
+// The mail column in three shades (#6138): opened is the step's done fill,
+// sent but not opened is the staircase's plain fill, and a mail sent before
+// tracking began is striped, because nothing is known about it either way.
+const MAIL_FILL = {
+  opened: 'bg-violet-500',
+  unopened: 'bg-violet-300 dark:bg-violet-400/50',
+  untracked: 'bg-[repeating-linear-gradient(135deg,theme(colors.violet.500)_0_2px,theme(colors.violet.100)_2px_5px)] dark:bg-[repeating-linear-gradient(135deg,theme(colors.violet.500)_0_2px,theme(colors.violet.900)_2px_5px)]',
+};
+
+/** A person's mail cell: what its tracking saw, once the mail is past. */
+function mailFill(p: MilePerson, state: string): string {
+  if (state !== 'done' && state !== 'skipped' && state !== 'unknown') return STEP_FILL[state] || STEP_FILL.not_yet;
+  return !p.mail ? MAIL_FILL.untracked : p.mail.opened ? MAIL_FILL.opened : MAIL_FILL.unopened;
+}
+
+/**
+ * One cohort's admit mail, said on its line: "3 of 5 opened", then how
+ * many sit unopened and for how long (the oldest of them: a cohort's mail
+ * goes out on its admit day, so they are usually all the same). Empty when
+ * nobody in the cohort was mailed (they came in another way).
+ */
+function cohortMail(people: MilePerson[], nowMs: number): string {
+  const mailed = people.filter((p) => p.steps.some((st) => st.key === 'mail_sent' && st.state !== 'stuck' && st.state !== 'not_yet'));
+  if (!mailed.length) return '';
+  const tracked = mailed.filter((p) => p.mail);
+  if (!tracked.length) return ' · mail not tracked';
+  const unopened = tracked.filter((p) => !p.mail!.opened);
+  let said = ` · ${tracked.length - unopened.length} of ${tracked.length} opened`;
+  if (unopened.length) {
+    const sentAt = unopened.map((p) => p.steps.find((st) => st.key === 'mail_sent')?.at).filter((at): at is string => !!at);
+    const oldest = sentAt.length ? Math.min(...sentAt.map((at) => new Date(at).getTime())) : null;
+    // In the tracks' own unit, "4 d", like the days column beside them.
+    said += ` · ${unopened.length} sent, not opened${oldest != null ? `, ${Math.floor((nowMs - oldest) / 86_400_000)} d` : ''}`;
+  }
+  return said;
+}
+
 const MILE_KEYS = Object.keys(MILE_STEPS);
 
 // What each column counts, said where its label is tapped. Plain words and
@@ -622,7 +659,7 @@ const MILE_KEYS = Object.keys(MILE_STEPS);
 // "mail" is the provider taking the message, not the inbox getting it.
 const MILE_HELP: Record<string, string> = {
   admitted: 'Let in from the waitlist.',
-  mail_sent: 'Our mail provider accepted the \u201cYou\u2019re in\u201d mail. Since 7 Oct it is tracked: a person\u2019s panel says whether they opened it or clicked its link, and that is kept after the mail log\u2019s 30 days. An open is approximate, and no open is not proof it went unread.',
+  mail_sent: 'Our mail provider accepted the \u201cYou\u2019re in\u201d mail. Dark: opened. Light: sent, not opened. Striped: sent before tracking began on 7 Oct, so there is no record either way. The number over the bar is opened of tracked. An open is approximate, and no open is not proof it went unread.',
   code_asked: 'The mail\u2019s button was followed: its one-time sign-in link was used, or a sign-in code was asked for after the admit (the page asks for one when the link no longer works). A used link counts as a click on the mail even where opens are not tracked.',
   account: 'Account created and finished.',
   access: 'The account has platform access.',
@@ -648,7 +685,7 @@ function MileLabel({ id, label, open, onOpen, onClose }: {
   const i = HELP_KEYS.indexOf(id);
   // Keep the note on the card: the first columns open rightwards, the last
   // ones leftwards, the middle ones centred under the label.
-  const side = i < 3 ? 'left-0' : i > HELP_KEYS.length - 4 ? 'right-0' : 'left-1/2 -translate-x-1/2';
+  const side = i < 3 ? 'start-0' : i > HELP_KEYS.length - 4 ? 'end-0' : 'left-1/2 -translate-x-1/2';
   return (
     <span className="relative min-w-0" data-journey-mile-label={id}>
       <button type="button" className={JUI.mileLabel} aria-expanded={open != null}
@@ -718,15 +755,19 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
   }).length;
   const label = (cohort: string) => (cohort === 'other_way' ? 'Came in another way' : `Admitted ${weekLabel(cohort)}`);
   const onboarded = people.filter((p) => p.onboard && p.onboard.complete).length;
-  // The admit mail's tracking, on the card's own meta line: counts over the
-  // people whose mail was tracked, the gap said as a gap, and nothing when
-  // nobody here was sent one (all came in another way).
-  const mailed = people.filter((p) => p.steps.some((st) => st.key === 'mail_sent'));
-  const tracked = mailed.flatMap((p) => (p.mail ? [p.mail] : []));
-  const mailNote = !mailed.length ? ''
-    : tracked.length
-      ? ` \u00b7 mail: ${tracked.filter((m) => m.opened).length} opened \u00b7 ${tracked.filter((m) => m.clicked).length} clicked of ${tracked.length} tracked`
-      : ' \u00b7 mail opens not tracked';
+  const nowMs = Date.now();
+  // The mail bar in the three shades of its cells, and its count as opened
+  // of tracked; with nothing tracked it is a plain bar with a plain count.
+  const mailPast = people.filter((p) => {
+    const st = cellOf(p, 'mail_sent');
+    return st && (st.state === 'done' || st.state === 'skipped' || st.state === 'unknown');
+  });
+  const mailParts = {
+    opened: mailPast.filter((p) => p.mail && p.mail.opened).length,
+    unopened: mailPast.filter((p) => p.mail && !p.mail.opened).length,
+    untracked: mailPast.filter((p) => !p.mail).length,
+  };
+  const mailTracked = mailParts.opened + mailParts.unopened;
   // One column note open at a time, and how it opened: a tap keeps it until
   // the next tap, a hover only while the mouse stays.
   const [help, setHelp] = useState<{ id: string; how: 'tap' | 'hover' } | null>(null);
@@ -748,7 +789,7 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
       onOpen={(how) => setHelp({ id, how })} onClose={() => setHelp(null)} />
   );
   return (
-    <Card id="admin-journey-mile" title="First mile" note={`admit mail to first act · ${scope.cohort ? 'this cohort' : 'every cohort'}, any week${mailNote}`}>
+    <Card id="admin-journey-mile" title="First mile" note={`admit mail to first act · ${scope.cohort ? 'this cohort' : 'every cohort'}, any week`}>
       {miles ? (n ? (
         <>
           {/* One grid for the staircase and every track, so each bar stands
@@ -756,13 +797,23 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
               of its own and the nine columns keep the full width. */}
           <div className={JUI.mileGrid}>
             <span className="hidden sm:block" />
-            {MILE_KEYS.map((key, i) => (
+            {MILE_KEYS.map((key, i) => (key === 'mail_sent' && mailTracked ? (
+              <div key={key} className="flex flex-col items-stretch justify-end h-16" data-journey-mile-step={key}>
+                <span className="text-center text-[11px] leading-none mb-0.5 font-semibold text-violet-700 dark:text-violet-400">{mailParts.opened}/{mailTracked}</span>
+                <div className="flex flex-col-reverse rounded-sm overflow-hidden"
+                  style={{ height: `${Math.max(4, Math.round((passed(key) / n) * 100))}%` }}>
+                  {(['opened', 'unopened', 'untracked'] as const).map((part) => (mailParts[part]
+                    ? <div key={part} className={`basis-0 min-h-0 ${MAIL_FILL[part]}`} style={{ flexGrow: mailParts[part] }} />
+                    : null))}
+                </div>
+              </div>
+            ) : (
               <div key={key} className="flex flex-col items-stretch justify-end h-16" data-journey-mile-step={key}>
                 <span className="text-center text-[11px] leading-none mb-0.5 text-zinc-500 dark:text-zinc-400">{passed(key)}</span>
                 <div className={`rounded-sm ${i === MILE_KEYS.length - 1 ? 'bg-emerald-500' : 'bg-violet-300 dark:bg-violet-400/50'}`}
                   style={{ height: `${Math.max(4, Math.round((passed(key) / n) * 100))}%` }} />
               </div>
-            ))}
+            )))}
             <div className="flex flex-col items-stretch justify-end h-16" data-journey-mile-step="onboard">
               <span className="text-center text-[11px] leading-none mb-0.5 text-zinc-500 dark:text-zinc-400">{onboarded}</span>
               <div className="rounded-sm bg-violet-300 dark:bg-violet-400/50"
@@ -775,7 +826,7 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
             <span />
             {groups.map((m) => (
               <div key={m.cohort} className="contents">
-                <span className={`col-span-full mt-2 ${JUI.label}`}>{label(m.cohort)} · {m.people.length}</span>
+                <span className={`col-span-full mt-2 ${JUI.label}`}>{label(m.cohort)} · {m.people.length}{cohortMail(m.people, nowMs)}</span>
                 {m.people.map((p, i) => {
                   const done = p.steps.every((st) => st.state === 'done' || st.state === 'skipped' || st.state === 'unknown');
                   return (
@@ -784,11 +835,11 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
                       {MILE_KEYS.map((key) => {
                         const st = cellOf(p, key);
                         return st
-                          ? <span key={key} className={`h-2.5 rounded-sm ${STEP_FILL[st.state] || STEP_FILL.not_yet}`} />
+                          ? <span key={key} className={`h-2.5 rounded-sm ${key === 'mail_sent' ? mailFill(p, st.state) : STEP_FILL[st.state] || STEP_FILL.not_yet}`} />
                           : <span key={key} className="h-2.5 rounded-sm border border-dashed border-zinc-300 dark:border-zinc-600" />;
                       })}
                       <OnboardCell onboard={p.onboard} />
-                      <span className={`text-right text-xs tabular-nums ${p.stuckAt ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                      <span className={`text-end text-xs tabular-nums ${p.stuckAt ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
                         {p.stuckAt ? `${p.daysSince} d` : done ? '✓' : ''}
                       </span>
                     </div>
@@ -797,7 +848,8 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
               </div>
             ))}
           </div>
-          <Legend items={[[STEP_FILL.done, 'done'], [STEP_FILL.stuck, 'stuck, days since'], [STEP_FILL.not_yet, 'not yet']]} />
+          <Legend items={[[STEP_FILL.done, 'done, mail opened'], [MAIL_FILL.unopened, 'mail sent, not opened'],
+            [MAIL_FILL.untracked, 'mail not tracked'], [STEP_FILL.stuck, 'stuck, days since'], [STEP_FILL.not_yet, 'not yet']]} />
         </>
       ) : <Empty>Nobody here yet.</Empty>) : days ? <Loading failed={failed} what="the first mile" /> : null}
     </Card>
@@ -825,7 +877,7 @@ function StagesCard({ scope, onNames }: { scope: Scope; onNames: (n: NamesList) 
             { label: 'Reached it', people: reached },
           ] });
           return (
-            <button key={key} type="button" className="grid w-full grid-cols-[4.5rem_1fr_1.5rem] items-center gap-2 text-left text-sm rounded hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+            <button key={key} type="button" className="grid w-full grid-cols-[4.5rem_1fr_1.5rem] items-center gap-2 text-start text-sm rounded hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
               data-journey-stage={key} onClick={open}>
               <span>{label}</span>
               {typeof v === 'number' ? (
@@ -834,7 +886,7 @@ function StagesCard({ scope, onNames }: { scope: Scope; onNames: (n: NamesList) 
                   {stopped.length ? <span className="h-full rounded-r-sm bg-amber-400" style={{ width: `${Math.round((Math.min(stopped.length, v) / Math.max(1, v)) * 100)}%` }} /> : null}
                 </span>
               ) : <span className={`h-3.5 rounded-sm border border-dashed border-zinc-300 dark:border-zinc-600 ${JUI.fine} text-[11px] leading-3 px-1`}>not recorded yet</span>}
-              <span className="text-right tabular-nums"><Num v={typeof v === 'number' ? v : null} /></span>
+              <span className="text-end tabular-nums"><Num v={typeof v === 'number' ? v : null} /></span>
             </button>
           );
         })}
@@ -928,7 +980,7 @@ function LoopCard({ data, failed, s, scope }: { data: Loops | null; failed: bool
                   <div className={`h-2 rounded-sm ${t.holder ? 'bg-violet-300 dark:bg-violet-400/50' : 'bg-amber-400'}`}
                     style={{ width: `${Math.max(4, Math.round(((t.days || 0) / maxDays) * 100))}%` }} />
                 </div>
-                <span className="w-24 shrink-0 text-right text-xs text-zinc-500 dark:text-zinc-400 truncate">
+                <span className="w-24 shrink-0 text-end text-xs text-zinc-500 dark:text-zinc-400 truncate">
                   {days(t.days)}{t.holder ? ` · ${t.holder}` : ''}
                 </span>
               </div>
@@ -959,7 +1011,7 @@ function InviteCard({ data, failed, onOpen }: { data: Loops | null; failed: bool
               <PersonChip person={p.host} onOpen={onOpen} />
               <span aria-hidden="true" className="text-zinc-500 dark:text-zinc-400">→</span>
               <PersonChip person={p.invitee} onOpen={onOpen} />
-              <span className="flex gap-0.5 ml-1" aria-label={INVITE_DONE.filter(([k]) => p[k]).map(([, l]) => l).join(', ') || 'not arrived'}>
+              <span className="flex gap-0.5 ms-1" aria-label={INVITE_DONE.filter(([k]) => p[k]).map(([, l]) => l).join(', ') || 'not arrived'}>
                 {INVITE_DONE.map(([k]) => <span key={k} className={`h-2.5 w-5 rounded-sm ${p[k] ? 'bg-emerald-500' : JUI.empty}`} />)}
               </span>
             </div>
@@ -1056,7 +1108,7 @@ function CreationTimingRows({ timing }: { timing: CreationTimingSummary | undefi
             <div className={`h-2 rounded-sm ${JUI.empty}`}>
               <div className="h-2 rounded-sm bg-violet-500" style={{ width: `${Math.max(2, Math.round((st.medianMs / most) * 100))}%` }} />
             </div>
-            <span className="text-right tabular-nums">{msDur(st.medianMs)}</span>
+            <span className="text-end tabular-nums">{msDur(st.medianMs)}</span>
           </div>
         );
       })}
@@ -1267,18 +1319,18 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
       <div className={`${JUI.label} mt-4 mb-1.5`}>By week</div>
       <div className={JUI.weekGrid} id="admin-journey-creation-weeks">
         <span className={JUI.fine}>Week</span>
-        {CREATION_STEPS.map(([key]) => <span key={key} className={`${JUI.fine} text-right`}>{CREATION_SHORT[key]}</span>)}
+        {CREATION_STEPS.map(([key]) => <span key={key} className={`${JUI.fine} text-end`}>{CREATION_SHORT[key]}</span>)}
         {data.weeks.map((w) => (
           <div key={w.week} className="contents" data-journey-creation-week={w.week}>
             <span className="text-xs tabular-nums">{weekLabel(w.week)}</span>
             {CREATION_STEPS.map(([key]) => {
               const cell = w.steps.find((s) => s.key === key);
               if (!cell || isNotRecorded(cell.reached)) {
-                return <span key={key} className={`${JUI.fine} text-right`} title="not recorded yet">?</span>;
+                return <span key={key} className={`${JUI.fine} text-end`} title="not recorded yet">?</span>;
               }
               const target = data.targets ? data.targets[key] ?? null : null;
               return (
-                <span key={key} className="text-right text-xs tabular-nums">
+                <span key={key} className="text-end text-xs tabular-nums">
                   {cell.reached}
                   {cell.medianSeconds != null && key !== 'created'
                     ? <span className={`block text-[10px] ${targetTone(cell.medianSeconds, target)}`}>{dur(cell.medianSeconds)}</span> : null}
@@ -1337,8 +1389,10 @@ type FirstSessionStep = {
   key: string; reached: number; inSession: number; medianSeconds: number | null;
   targetSeconds: number | null; withinTarget: number | null;
 };
+type InviteLanded = { card: number; dead: number; failed: number; timeout: number };
 type InviteFunnel = {
   from: string; opened: number; signedIn: number; signedInByInvite: number; signedInAlready: number; joined: number;
+  landed?: InviteLanded | NotRecorded;
 };
 type FirstSessionData = {
   week: string; finished: boolean; sessionMinutes: number;
@@ -1533,6 +1587,35 @@ function InviteFunnelRows({ funnel }: { funnel: InviteFunnel }) {
   );
 }
 
+// Where invite pages first settled (#6002), each against the opens.
+const INVITE_LANDED: ReadonlyArray<readonly [keyof InviteLanded, string]> = [
+  ['card', 'The invite card'],
+  ['dead', 'The dead-link page'],
+  ['failed', 'The pitch, the read failed'],
+  ['timeout', 'The pitch, the read took too long'],
+];
+
+function InviteLandedRows({ landed, opened }: { landed: InviteLanded | NotRecorded; opened: number }) {
+  return (
+    <div id="admin-journey-first-session-landed">
+      <div className={`${JUI.label} mt-4 mb-1.5`}>Where the invite page landed</div>
+      {isNotRecorded(landed) ? <Num v={landed} /> : (
+        <>
+          <div className="space-y-0.5">
+            {INVITE_LANDED.map(([key, label]) => (
+              <div key={key} data-journey-invite-landed={key} className="flex items-baseline justify-between gap-2 text-sm">
+                <span>{label}</span>
+                <span className="tabular-nums shrink-0">{conversion(landed[key], opened)}</span>
+              </div>
+            ))}
+          </div>
+          <p className={`mt-1 ${JUI.fine}`}>Where invite pages first settled, each outcome counted once per signed-in person, and once per network a day for signed-out pages, which are anonymous and unverified. "The read failed" should stay near zero.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
   const { data, failed } = useJourney<FirstSessionData>(scoped('/api/admin/journey/first-session', scope));
   if (!data) return <Card id="admin-journey-first-session" title="First session"><Loading failed={failed} what="the first session" /></Card>;
@@ -1588,6 +1671,8 @@ function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson 
         <div id="admin-journey-first-session-opens">
           <div className={`${JUI.label} mt-4 mb-1.5`}>{funnelFrom ? `Invite links · from ${weekLabel(funnelFrom)}` : 'Invite links'}</div>
           {isNotRecorded(data.opens) ? <Num v={data.opens} /> : <InviteFunnelRows funnel={data.opens} />}
+          {isNotRecorded(data.opens) || !data.opens.landed ? null
+            : <InviteLandedRows landed={data.opens.landed} opened={data.opens.opened} />}
         </div>
       )}
       <div className={`${JUI.label} mt-4 mb-1.5`}>Newest first sessions</div>
@@ -1695,7 +1780,7 @@ function NextCard({ s, scope }: { s: Summary; scope: Scope }) {
             return (
               <div key={r.screen} data-journey-next={r.screen} className={r.few ? 'opacity-60' : ''}>
                 <div className="flex items-baseline justify-between text-sm">
-                  <span className="font-medium">{screenLabel(r.screen)}{r.deadEnd ? <span className="ml-1.5 text-amber-600 dark:text-amber-400" title="mostly left or went back">▲</span> : null}</span>
+                  <span className="font-medium">{screenLabel(r.screen)}{r.deadEnd ? <span className="ms-1.5 text-amber-600 dark:text-amber-400" title="mostly left or went back">▲</span> : null}</span>
                   <span className={JUI.fine}>{r.moves} moves · {r.people} people{r.few ? ' · few' : ''}</span>
                 </div>
                 <div className="flex gap-0.5 mt-1">
@@ -1865,7 +1950,7 @@ function LeftOutDialog({ onOpen, onClose }: { onOpen: OpenPerson; onClose: () =>
             {e.reason === 'objected' ? 'Objected' : 'Test account'}
           </span>
           {e.note ? <span className={JUI.fine}>{e.note}</span> : null}
-          <span className={`${JUI.fine} sm:ml-auto`}>{weekLabel((e.addedAt || '').slice(0, 10))}</span>
+          <span className={`${JUI.fine} sm:ms-auto`}>{weekLabel((e.addedAt || '').slice(0, 10))}</span>
           {canWrite && removing !== e.userId ? (
             <button type="button" className={`${AdminUI.btn.ghost} text-xs`} onClick={() => setRemoving(e.userId)}>Remove</button>
           ) : null}
@@ -1886,7 +1971,7 @@ function LeftOutDialog({ onOpen, onClose }: { onOpen: OpenPerson; onClose: () =>
           {pick ? (
             <div className="space-y-2">
               <p className="text-sm">{pick.username} <span className={JUI.fine}>#{pick.id}</span>
-                <button type="button" className={`${AdminUI.btn.link} text-xs ml-2`} onClick={() => setPick(null)}>Change</button>
+                <button type="button" className={`${AdminUI.btn.link} text-xs ms-2`} onClick={() => setPick(null)}>Change</button>
               </p>
               <select className={AdminUI.select} value={reason} onChange={(e) => setReason(e.target.value)} aria-label="Reason">
                 <option value="test">Test account: leave out of the numbers</option>
@@ -1912,7 +1997,7 @@ function LeftOutDialog({ onOpen, onClose }: { onOpen: OpenPerson; onClose: () =>
                 <button type="button" className={AdminUI.btn.outline} onClick={search}>Find</button>
               </div>
               {matches ? (matches.length ? matches.map((m) => (
-                <button key={m.id} type="button" className={`${JUI.row} w-full text-left`} onClick={() => setPick(m)}>
+                <button key={m.id} type="button" className={`${JUI.row} w-full text-start`} onClick={() => setPick(m)}>
                   <span className="font-medium">{m.username}</span>
                   <span className={JUI.fine}>#{m.id}</span>
                 </button>
@@ -2221,4 +2306,4 @@ const AdminJourney = {
 if (typeof window !== 'undefined') (window as any).AdminJourney = AdminJourney;
 
 // InviteFunnelRows for its render test (tests/admin-journey-section.test.js).
-export { AdminJourney, InviteFunnelRows, CreationTimingRows, exampleTiming };
+export { AdminJourney, InviteFunnelRows, InviteLandedRows, CreationTimingRows, exampleTiming };

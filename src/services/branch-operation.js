@@ -58,6 +58,16 @@ async function sourceBranch(pool, request) {
   return src && src.app_id === request.appId ? { branch: src.branch_name || null } : null;
 }
 
+// #6389: the change a session's branch is rebuilt from (a bot's own version
+// of a person's change): its branch, on this app.
+async function rebuiltFrom(pool, request) {
+  const id = Number(request.input.fromSessionId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const { rows: [src] } = await pool.query(
+    'SELECT app_id, branch_name FROM chat_sessions WHERE id = $1', [id]);
+  return src && src.app_id === request.appId ? { branch: src.branch_name || null } : null;
+}
+
 async function authorize({ pool }, request, user) {
   const { purpose, branch, baseSha } = request.input || {};
   if (!['proposal-start', 'headless', 'clone-headless', 'session'].includes(purpose)) {
@@ -70,6 +80,9 @@ async function authorize({ pool }, request, user) {
   if (!branchAllowed(purpose, branch, user.id)) return { status: 400, error: 'bad_branch_name' };
   if (purpose === 'proposal-start' && !SHA.test(String(baseSha || ''))) return { status: 400, error: 'bad_base_sha' };
   if (purpose === 'clone-headless' && !(await sourceBranch(pool, request))) return { status: 404, error: 'Auto session not found' };
+  if (purpose === 'session' && request.input.fromSessionId && !(await rebuiltFrom(pool, request))) {
+    return { status: 404, error: 'source_branch_missing' };
+  }
   if (purpose === 'session' && !(await sessionFree(pool, request))) return { status: 409, error: 'The change already has another branch' };
   if (!github.isEnabled()) return { status: 503, error: 'github_unavailable' };
   return null;
@@ -79,6 +92,12 @@ async function run({ pool }, request, _user, steps) {
   const { purpose, branch, baseSha } = request.input;
   const t = await target(pool, request);
   if (!t) throw Object.assign(new Error('App not found'), { permanent: true });
+  // #6389: a version rebuilt from a change starts at that change's head,
+  // never at main when the branch is gone.
+  const from = purpose === 'session' && request.input.fromSessionId ? await rebuiltFrom(pool, request) : null;
+  if (purpose === 'session' && request.input.fromSessionId && !from?.branch) {
+    return { ok: false, status: 409, error: 'source_branch_missing' };
+  }
   // Where the branch starts, resolved once: a retry makes the same branch.
   const start = await steps.once('start', async () => {
     if (purpose === 'proposal-start') return { sha: baseSha, inherited: false };
@@ -87,8 +106,14 @@ async function run({ pool }, request, _user, steps) {
       const sha = src?.branch ? await github.getBranchSha(t.owner, t.repo, src.branch).catch(() => null) : null;
       if (sha) return { sha, inherited: true };
     }
+    if (from?.branch) {
+      const sha = await github.getBranchSha(t.owner, t.repo, from.branch).catch(() => null);
+      if (sha) return { sha, inherited: true };
+      return { sha: null, missing: true };
+    }
     return { sha: await github.getBranchSha(t.owner, t.repo, 'main'), inherited: false };
   });
+  if (start.missing) return { ok: false, status: 409, error: 'source_branch_missing' };
   try {
     await steps.once('branch', () => github.ensureBranchAtSha(t.owner, t.repo, branch, start.sha).then(() => true));
   } catch (err) {

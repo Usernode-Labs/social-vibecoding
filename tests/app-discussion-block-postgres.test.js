@@ -35,7 +35,8 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
       CREATE TABLE apps (
         id int PRIMARY KEY, slug text NOT NULL, name text NOT NULL,
         icon_image_id int, icon_emoji text, self_hosted boolean NOT NULL DEFAULT false,
-        view_visibility text NOT NULL DEFAULT 'public', moderation_suspended_at timestamptz
+        view_visibility text NOT NULL DEFAULT 'public', moderation_suspended_at timestamptz,
+        community_id int
       );
       CREATE TABLE app_collaborators (app_id int, user_id int, status text);
       CREATE TABLE user_app_blocks (user_id int, app_id int, PRIMARY KEY (user_id, app_id));
@@ -54,9 +55,14 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
       -- #2967: the tables the Messages list's "yours"/"more" sections and
       -- #2387's unread count read. Empty here: this test is about blocks.
       CREATE TABLE app_favorites (app_id int, user_id int, hidden boolean NOT NULL DEFAULT false);
+      -- One Home (#6361): a community pinned to Home counts as "yours" too.
+      CREATE TABLE home_community_pins (community_id int, user_id int);
       CREATE TABLE message_reactions (message_id int, user_id int, emoji text);
+      -- 1 Nov 2026: a request's stream reads its changes' replies too, by
+      -- their thread and whether they may be read (routes/chat.js).
       CREATE TABLE chat_sessions (id int PRIMARY KEY, app_id int, user_id int,
-        is_headless boolean NOT NULL DEFAULT false, promoted_at timestamptz, status text);
+        is_headless boolean NOT NULL DEFAULT false, promoted_at timestamptz, status text,
+        thread_id bigint, shared_at timestamptz);
       CREATE TABLE pr_votes (session_id int, user_id int);
       CREATE TABLE issues (id int PRIMARY KEY, app_id int, created_by int);
       CREATE TABLE issue_votes (issue_id int, user_id int);

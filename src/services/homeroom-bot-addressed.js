@@ -14,7 +14,10 @@
 //   - a mention of @homeroom_bot, in the discussion or on the GitHub issue;
 //   - a Reply (homeroom-bot-dm wording) to one of the bot's messages there;
 //   - anything written after a question the bot asked, which is taken as
-//     the answer to it.
+//     the answer to it;
+//   - #6146: after "a person needs to decide", whose note asks them to
+//     reply here, a message in the discussion from the request's requester
+//     or a decider the note names, which is their answer to it.
 //
 // When none of those happened the bot still reads and records what was said
 // (the run's thread_seen_at, set with the run), so it does not read the same
@@ -32,7 +35,7 @@
 // again (number-guessing #52 got it three times in 35 minutes).
 
 const log = require('./logger');
-const { mentionPattern } = require('./homeroom-bot-holds');
+const { mentionPattern, GOING_KIND } = require('./homeroom-bot-holds');
 const { OWN_STAMP_SLACK_MS } = require('./homeroom-bot-live');
 
 // The note verdicts the gate covers (homeroom-bot.js actOnVerdict). A ready
@@ -51,13 +54,23 @@ const LAST_NOTE_SQL = `
    WHERE app_id = $1 AND issue_number = $2 AND kind <> 'looking'
    ORDER BY created_at DESC, id DESC LIMIT 1`;
 
+// The last note's own words in the request's discussion, to tell a re-read
+// that says the same thing from one that does not (#6311). A note posted
+// with no thread message has no words: it never matches.
+const LAST_NOTE_TEXT_SQL = `
+  SELECT p.kind, m.content
+    FROM homeroom_bot_posts p
+    LEFT JOIN chat_messages m ON m.id = p.thread_message_id
+   WHERE p.app_id = $1 AND p.issue_number = $2 AND p.kind <> 'looking'
+   ORDER BY p.created_at DESC, p.id DESC LIMIT 1`;
+
 // What people have said on the request since the bot's last note, oldest
 // first. The bot's own messages and every synthetic writer are left out, so
 // its own note and its later posts cannot answer themselves. A Reply is
 // stored as metadata.quote.refMsgId (ws.js quote handling), joined to the
 // row it quotes; quotes_bot is true when that row is one of the bot's.
 const MESSAGES_SQL = `
-  SELECT m.id, m.content, m.created_at, (q.user_id = $4) AS quotes_bot
+  SELECT m.id, m.user_id, m.content, m.created_at, (q.user_id = $4) AS quotes_bot
     FROM chat_messages m
     JOIN users u ON u.id = m.user_id
     LEFT JOIN chat_messages q
@@ -71,6 +84,51 @@ const MESSAGES_SQL = `
 
 // A time as milliseconds: pg hands timestamptz back as a Date.
 const ms = (at) => (at instanceof Date ? at.getTime() : Date.parse(at));
+
+// ── The same note again (#6311) ──────────────────────────────────────────
+
+// Pure: a note's words, lowercased, without punctuation and without the
+// handles a note is tagged with (the thread copy starts with them).
+function noteTokens(text) {
+  return String(text || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word && !word.startsWith('@'))
+    .map((word) => word.replace(/[^\p{L}\p{N}]/gu, ''))
+    .filter(Boolean);
+}
+
+/**
+ * Pure (#6311): whether two notes say the same thing: the same once case
+ * and punctuation are ignored, or at least 80% of their words in common.
+ * A missing previous text never matches.
+ */
+function sameNote(a, b) {
+  const first = noteTokens(a);
+  const second = noteTokens(b);
+  if (!first.length || !second.length) return false;
+  const left = new Set(first);
+  const right = new Set(second);
+  const shared = [...left].filter((word) => right.has(word)).length;
+  const union = new Set([...left, ...right]).size;
+  return union > 0 && shared / union >= 0.8;
+}
+
+/**
+ * The bot's last note on a request, with the words it posted in the
+ * request's discussion: { kind, text } or null. `text` is null when the note
+ * has no thread message. Never throws.
+ */
+async function lastNoteText(pool, { appId, issueNumber }) {
+  try {
+    const { rows } = await pool.query(LAST_NOTE_TEXT_SQL, [Number(appId), Number(issueNumber)]);
+    if (!rows[0]) return null;
+    return { kind: rows[0].kind, text: typeof rows[0].content === 'string' ? rows[0].content : null };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the bot\'s last note', { appId, issueNumber, err: err.message });
+    return null;
+  }
+}
 
 /**
  * #4530: whether the GitHub issue changed since the bot's note in a way its
@@ -90,19 +148,29 @@ function editedSince(lastNote, comments, updatedAt) {
  * Pure: does anything since the bot's last note speak to the bot?
  *
  *   { speak: true,  why: 'first_note' }    the bot never posted a note here
+ *   { speak: true,  why: 'promised' }      its last word here is "I'm taking
+ *                                          this up now": the read that follows
+ *                                          says what it found (#6399)
  *   { speak: true,  why: 'not_waiting' }   (waitingOnly) its last word here
  *                                          is not one of NOTE_KINDS
  *   { speak: true,  why: 'mention' }       somebody mentioned @homeroom_bot
  *   { speak: true,  why: 'reply' }         somebody replied to its message
- *   { speak: true,  why: 'answer' }        an answer to a question it asked
+ *   { speak: true,  why: 'answer' }        an answer to a question it asked,
+ *                                          or (#6146) to a `person` note from
+ *                                          one of `answerers`
  *   { speak: true,  why: 'edited' }        (waitingOnly) the request was
  *                                          edited since (editedSince)
  *   { speak: false, why: 'not_addressed' } people talking among themselves
  *
  * `messages` are the discussion rows since the note ({ body, createdAt,
- * quotesBot }); `comments` the GitHub issue's ({ author, body, createdAt,
- * id }), with its own comments skipped: by login, and by the ids it recorded
- * posting (`ownCommentIds`). Only words after the note count.
+ * quotesBot, userId }); `comments` the GitHub issue's ({ author, body,
+ * createdAt, id }), with its own comments skipped: by login, and by the ids
+ * it recorded posting (`ownCommentIds`). Only words after the note count.
+ *
+ * `answerers` (#6146) are the user ids whose plain message in the
+ * discussion answers a `person` note, which tells them to reply there: its
+ * requester, and the deciders it names (homeroom-bot.js answerersOf).
+ * Anyone else's is still people working it out among themselves.
  *
  * `waitingOnly` is a look somebody asked for (Ask Homeroom bot to build
  * this): held only while the bot waits on its own note, exactly when the
@@ -111,9 +179,13 @@ function editedSince(lastNote, comments, updatedAt) {
  */
 function addressed({
   lastNote, messages = [], comments = [], botLogin = '', ownCommentIds = [], waitingOnly = false, updatedAt = null,
-  voiceAnswers = false,
+  voiceAnswers = false, answerers = [],
 }) {
   if (!lastNote) return { speak: true, why: 'first_note' };
+  // #6399: after "I'm taking this up now, as asked", the read that follows
+  // posts what it found, even when its words repeat an earlier note: the
+  // promise is never left as the bot's last word.
+  if (lastNote.kind === GOING_KIND) return { speak: true, why: 'promised' };
   if (waitingOnly && !NOTE_KINDS.includes(lastNote.kind)) return { speak: true, why: 'not_waiting' };
   const own = new Set((ownCommentIds || []).map(String));
   const sinceMs = Date.parse(lastNote.created_at);
@@ -127,7 +199,13 @@ function addressed({
     ? new RegExp(`(^|[^a-z0-9_])@${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9_-]|$)`, 'i')
     : null;
   const asked = lastNote.kind === 'question';
+  // #6146: who answers a `person` note with a plain message: its requester and
+  // the deciders it names. Quoting the bot or not.
+  const answering = lastNote.kind === 'person'
+    ? new Set((answerers || []).map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))
+    : new Set();
   let answered = false;
+  let theirAnswer = false;
   for (const msg of messages) {
     if (!after(msg.createdAt)) continue;
     // `voiceAnswers`: the bot's voice answers a mention or a reply in the
@@ -136,6 +214,7 @@ function addressed({
     if (!voiceAnswers && mention.test(String(msg.body || ''))) return { speak: true, why: 'mention' };
     if (!voiceAnswers && msg.quotesBot) return { speak: true, why: 'reply' };
     answered = true;
+    if (answering.has(Number(msg.userId))) theirAnswer = true;
   }
   for (const comment of comments) {
     if (!after(comment?.createdAt)) continue;
@@ -146,7 +225,7 @@ function addressed({
     if (mention.test(body) || (loginMention && loginMention.test(body))) return { speak: true, why: 'mention' };
     answered = true;
   }
-  if (asked && answered) return { speak: true, why: 'answer' };
+  if ((asked && answered) || theirAnswer) return { speak: true, why: 'answer' };
   if (waitingOnly && editedSince(lastNote, comments, updatedAt)) return { speak: true, why: 'edited' };
   return { speak: false, why: 'not_addressed' };
 }
@@ -157,7 +236,9 @@ async function loadAddressed(pool, { appId, issueNumber, botId }) {
   const lastNote = note.rows[0] || null;
   if (!lastNote) return { lastNote: null, messages: [], ownCommentIds: [] };
   const { rows } = await pool.query(MESSAGES_SQL, [appId, issueNumber, lastNote.created_at, botId]);
-  const messages = rows.map((row) => ({ body: row.content, createdAt: row.created_at, quotesBot: !!row.quotes_bot }));
+  const messages = rows.map((row) => ({
+    body: row.content, createdAt: row.created_at, quotesBot: !!row.quotes_bot, userId: Number(row.user_id) || null,
+  }));
   return { lastNote, messages, ownCommentIds: lastNote.own_comment_ids || [] };
 }
 
@@ -168,10 +249,11 @@ async function loadAddressed(pool, { appId, issueNumber, botId }) {
  */
 async function shouldSpeak(pool, {
   appId, issueNumber, botId, comments = [], botLogin = '', waitingOnly = false, updatedAt = null, voiceAnswers = false,
+  answerers = [],
 }) {
   try {
     const { lastNote, messages, ownCommentIds } = await loadAddressed(pool, { appId, issueNumber, botId });
-    return addressed({ lastNote, messages, comments, botLogin, ownCommentIds, waitingOnly, updatedAt, voiceAnswers });
+    return addressed({ lastNote, messages, comments, botLogin, ownCommentIds, waitingOnly, updatedAt, voiceAnswers, answerers });
   } catch (err) {
     log.warn('homeroom-bot', 'Could not check whether the request addressed the bot; speaking as before', {
       appId, issueNumber, err: err.message,
@@ -185,13 +267,16 @@ async function shouldSpeak(pool, {
 /**
  * Pure: is the bot waiting on people here? Its last note is one of
  * NOTE_KINDS, nothing since was for it, and the request was not edited
- * since (addressed with waitingOnly, `updatedAt` the GitHub issue's).
+ * since (addressed with waitingOnly, `updatedAt` the GitHub issue's). A
+ * `person` note one of `answerers` replied to is answered (#6146).
  * Resolves { kind, messageId } (its note in the discussion, to reply to) or
  * null.
  */
-function waitingOn({ lastNote, messages = [], comments = [], botLogin = '', ownCommentIds = [], updatedAt = null }) {
+function waitingOn({
+  lastNote, messages = [], comments = [], botLogin = '', ownCommentIds = [], updatedAt = null, answerers = [],
+}) {
   if (!lastNote || !NOTE_KINDS.includes(lastNote.kind)) return null;
-  if (addressed({ lastNote, messages, comments, botLogin, ownCommentIds, waitingOnly: true, updatedAt }).speak) return null;
+  if (addressed({ lastNote, messages, comments, botLogin, ownCommentIds, waitingOnly: true, updatedAt, answerers }).speak) return null;
   return { kind: lastNote.kind, messageId: Number(lastNote.thread_message_id) || null };
 }
 
@@ -200,14 +285,17 @@ function waitingOn({ lastNote, messages = [], comments = [], botLogin = '', ownC
  * homeroom-bot-dm.js askBotToBuild): waitingOn with the GitHub issue read
  * fresh and then its comments, so an answer left only on GitHub, or an edit
  * of the request, is news. GitHub is read only when the discussion leaves
- * the bot waiting. Never throws: whatever cannot be read leaves it not
+ * the bot waiting. `answerersOf` (#6146) resolves the user ids that answer a
+ * `person` note (homeroom-bot.js answerersOf), asked only when that note has
+ * messages after it. Never throws: whatever cannot be read leaves it not
  * waiting, and a look that then only repeats its note is still held by
  * actOnVerdict's gate.
  */
-async function waitingOnRequest(pool, { appId, issueNumber, botId, github = null, repo = null }) {
+async function waitingOnRequest(pool, { appId, issueNumber, botId, github = null, repo = null, answerersOf = null }) {
   try {
     const { lastNote, messages, ownCommentIds } = await loadAddressed(pool, { appId, issueNumber, botId });
-    if (!waitingOn({ lastNote, messages, ownCommentIds })) return null;
+    const answerers = await answerersFor(lastNote, messages, answerersOf);
+    if (!waitingOn({ lastNote, messages, ownCommentIds, answerers })) return null;
     if (!github || !repo) return null;
     const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber, { fresh: true });
     if (!fetched?.issue) return null;
@@ -218,7 +306,7 @@ async function waitingOnRequest(pool, { appId, issueNumber, botId, github = null
     const botLogin = await require('./homeroom-bot-live').botUsernameOf(github);
     return waitingOn({
       lastNote, messages, comments: read.comments || [], botLogin: botLogin || '', ownCommentIds,
-      updatedAt: fetched.issue.updatedAt,
+      updatedAt: fetched.issue.updatedAt, answerers,
     });
   } catch (err) {
     log.warn('homeroom-bot', 'Could not check whether the bot is waiting on a request; not waiting', {
@@ -226,6 +314,17 @@ async function waitingOnRequest(pool, { appId, issueNumber, botId, github = null
     });
     return null;
   }
+}
+
+/**
+ * #6146: who answers `lastNote` when it is a `person` note with messages
+ * after it, from `answerersOf` (a function resolving user ids); [] otherwise,
+ * or when it cannot say.
+ */
+async function answerersFor(lastNote, messages, answerersOf) {
+  if (lastNote?.kind !== 'person' || !messages?.length || typeof answerersOf !== 'function') return [];
+  const ids = await Promise.resolve().then(() => answerersOf()).catch(() => []);
+  return Array.isArray(ids) ? ids : [];
 }
 
 // The bot's last note on each of an app's requests, and what people said in
@@ -238,7 +337,7 @@ const LAST_NOTES_SQL = `
    ORDER BY issue_number, created_at DESC, id DESC`;
 
 const MESSAGES_BY_ISSUE_SQL = `
-  SELECT m.thread_ref AS issue_number, m.content, m.created_at, (q.user_id = $4) AS quotes_bot
+  SELECT m.thread_ref AS issue_number, m.user_id, m.content, m.created_at, (q.user_id = $4) AS quotes_bot
     FROM chat_messages m
     JOIN unnest($2::int[], $3::timestamptz[]) AS s(n, since)
       ON m.thread_ref = s.n AND m.created_at > s.since
@@ -257,10 +356,11 @@ const MESSAGES_BY_ISSUE_SQL = `
  * waiting on, Map(number → { kind, messageId }). From the discussion and the
  * issue's updated_at alone, as the list reads no comments: a request whose
  * GitHub issue moved since the note keeps its Ask button, and the button
- * reads the comments (waitingOnRequest). Two queries for the whole list.
- * Never throws.
+ * reads the comments (waitingOnRequest). Two queries for the whole list,
+ * and `answerersOf(number)` (#6146) only for a `person` note somebody wrote
+ * after. Never throws.
  */
-async function waitingByIssue(pool, { appId, botId, issues = [] }) {
+async function waitingByIssue(pool, { appId, botId, issues = [], answerersOf = null }) {
   const out = new Map();
   try {
     const byNumber = new Map();
@@ -279,11 +379,15 @@ async function waitingByIssue(pool, { appId, botId, issues = [] }) {
     for (const row of rows) {
       const n = Number(row.issue_number);
       if (!said.has(n)) said.set(n, []);
-      said.get(n).push({ body: row.content, createdAt: row.created_at, quotesBot: !!row.quotes_bot });
+      said.get(n).push({
+        body: row.content, createdAt: row.created_at, quotesBot: !!row.quotes_bot, userId: Number(row.user_id) || null,
+      });
     }
     for (const note of noted) {
       const n = Number(note.issue_number);
-      const waiting = waitingOn({ lastNote: note, messages: said.get(n) || [], updatedAt: byNumber.get(n)?.updatedAt || null });
+      const messages = said.get(n) || [];
+      const answerers = await answerersFor(note, messages, answerersOf && (() => answerersOf(n)));
+      const waiting = waitingOn({ lastNote: note, messages, updatedAt: byNumber.get(n)?.updatedAt || null, answerers });
       if (waiting) out.set(n, waiting);
     }
   } catch (err) {
@@ -297,6 +401,8 @@ module.exports = {
   addressed,
   loadAddressed,
   shouldSpeak,
+  sameNote,
+  lastNoteText,
   waitingOn,
   waitingOnRequest,
   waitingByIssue,

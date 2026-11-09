@@ -301,11 +301,13 @@ test('queueWait: its own refusal, then its payer\'s week, then the bot\'s fault 
   assert.equal(bot.queueWait({ wait_reason: 'session_busy', wait_until: '2026-10-09T16:20:00Z' }, { now }), null);
   assert.equal(bot.queueWait({ started_at: '2026-10-09T16:29:00Z', wait_reason: 'session_busy', wait_until: later }, { now }), null,
     'a running row is not waiting');
-  assert.deepEqual(bot.queueWait({ held_until: later }, { now }), { reason: 'allowance', until: later });
+  assert.deepEqual(bot.queueWait({ held_until: later, held_reason: 'allowance' }, { now }), { reason: 'allowance', until: later });
+  // #6357: a hold for a day after repeated errors is no payer's week.
+  assert.deepEqual(bot.queueWait({ held_until: later, held_reason: 'cooldown' }, { now }), { reason: 'cooldown', until: later });
   assert.deepEqual(bot.queueWait({}, { now, fault: { until: Date.parse(later) } }), { reason: 'platform_fault', until: later });
   assert.equal(bot.queueWait({}, { now }), null);
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /q\.held_until, q\.wait_reason, q\.wait_until, q\.waiting_total, q\.running_total,\n\s+a\.slug AS app_slug/);
+  assert.match(src, /q\.held_until, q\.held_reason, q\.wait_reason, q\.wait_until, q\.waiting_total, q\.running_total,\n\s+a\.slug AS app_slug/);
   assert.match(src, /const items = rows\.map\(\(\{ waiting_total: _w, running_total: _r, \.\.\.q \}\) => \(\{ \.\.\.q, waiting: queueWait\(q, ctx\) \}\)\);/);
   // The fault pause from the bot's lane instance (bot-lane), read from
   // Postgres: the same answer in every process (loopMemory).
@@ -315,7 +317,7 @@ test('queueWait: its own refusal, then its payer\'s week, then the bot\'s fault 
   // The row's own wait is the backoff its request's instance keeps, written
   // by its projection (bot-request), and cleared while it looks.
   assert.match(read('src/workflow/bot-request/machine.ts'),
-    /looking \? null : d\.backoff\?\.reason \?\? null, looking \? null : d\.backoff\?\.until \?\? null\]/);
+    /looking \? null : d\.backoff\?\.reason \?\? null, looking \? null : d\.backoff\?\.until \?\? null,\n\s+o\.heldUntil \? o\.heldFor \?\? null : null\]/);
   assert.match(read('src/db/schema.sql'), /ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS wait_reason TEXT;\nALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS wait_until TIMESTAMPTZ;/);
 });
 

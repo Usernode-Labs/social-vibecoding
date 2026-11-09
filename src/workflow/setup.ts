@@ -33,7 +33,7 @@ export async function startWorkflowClients(config: any): Promise<void> {
   const pool = legacy('db/pool').getPool(config);
   await legacy('services/github-pause').start(pool);
   legacy('services/requests').setPool(pool);
-  await legacy('services/github').init(config);
+  await legacy('services/github').init(config, pool);
   // The telemetry kill switch is configured even with no Anthropic client:
   // OpenRouter and local coding runs need the provider-neutral collector.
   legacy('services/llm-telemetry').init(config);

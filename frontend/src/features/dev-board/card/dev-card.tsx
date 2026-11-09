@@ -62,6 +62,7 @@ import { linkAttrs } from '../../../lib/repo-link.js';
 import { cardTintClass } from '../../home/panels/ui';
 import type { NoChoice } from '../../review-flow/vote-sheet';
 import { aiEnabledStore, cardNowStore, voteSendingStore } from './cards-store';
+import { liveTally } from './fold';
 import type {
   ActionRef,
   ActionSpec,
@@ -233,6 +234,10 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
       ? t('project:card.pill.reasonAndMore', { reason: titleParts[0] ?? '', count: extra })
       : t('project:card.pill.moreReasons', { count: extra }))
     : (titleParts.length ? titleParts.join(' · ') : undefined);
+  // #6075: a live pill keeps its final counted vote beside its words, the
+  // same phrase the Workshop's rows draw (fold.tsx `liveTally`). Read-only
+  // history: a settled change has no vote to cast again.
+  const tally = liveTally(s);
   const cd = s.countdown ? (s.reject ? ' gc-reject-countdown' : ' gc-merge-countdown') : '';
   // An OPEN vote is the bar's own tone on a board card — accent blue, with an
   // accent fill — where the tier's `progress` violet is kept for the merge
@@ -258,6 +263,9 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
             className="gc-vote-count-suffix"
             title={t('project:card.pill.advisoryVotes', { count: s.advisory })}
           >{`+${s.advisory}`}</span>
+        ) : null}
+        {tally ? (
+          <span className="gc-vote-count-suffix" title={tally.title}>{` · ${tally.text}`}</span>
         ) : null}
         {s.lock ? (
           <span
@@ -669,7 +677,16 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   //
   // #3984: a vote already on its way is not sent again.
   const send = (a: ActionSpec, reason: string | null) => {
+    // #6098: a vote sent from the desktop picker puts focus back on the face
+    // button, so the next Tab carries on from the vote just cast instead of
+    // starting again at the top of the page. The popover is a portal: it
+    // unmounts with `shut()` and would drop focus to the page. The touch
+    // sheet and the action sheet are the kit's, and take focus back
+    // themselves. A card redrawn under the send has replaced the button, and
+    // there is none left to return focus to (`isConnected`).
+    const btn = open ? btnRef.current : null;
     shut();
+    if (btn?.isConnected) btn.focus({ preventScroll: true });
     if (!a.act) return;
     if (!isVote) { call(a.act); return; }
     if (voteSendingStore.get()[sendKey]) return;
@@ -905,7 +922,11 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         aria-expanded={open || !!sheetEl ? 'true' : undefined}
         title={sending ? t('project:card.vote.title.sending') : title}
         aria-busy={sending ? 'true' : undefined}
-        disabled={disabled || approved || !!sending}
+        // #6098: a vote on its way is shown busy, not switched off, so the
+        // button keeps keyboard focus while it is sent. `toggle` refuses a
+        // second press.
+        aria-disabled={sending ? 'true' : undefined}
+        disabled={disabled || approved}
         onClick={toggle}
       >
         {sending ? t('project:card.vote.sending') : (
@@ -1135,13 +1156,15 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
   // JavaScript source.
   return (
     <button
-      className={a.cls || 'gc-vote-btn'}
+      className={`${a.cls || 'gc-vote-btn'}${a.busy ? ' gap-1.5' : ''}`}
       disabled={a.disabled}
+      aria-busy={a.busy ? 'true' : undefined}
       title={a.title}
       {...foldAttrs}
       data-act={a.act?.fn}
       onClick={a.act ? (e) => call(a.act, a.passNode ? e.currentTarget : undefined) : undefined}
     >
+      {a.busy ? <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true" /> : null}
       {a.label}
     </button>
   );
@@ -1322,7 +1345,7 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
       <summary className="cursor-pointer list-none px-2.5 py-1.5 text-[0.72rem] leading-snug text-zinc-600 dark:text-zinc-300 flex items-center gap-1.5">
         <span className="font-semibold text-zinc-800 dark:text-zinc-100" data-req-headline>{x.headline}</span>
         {x.detail ? <span className="truncate text-zinc-500 dark:text-zinc-400">{`· ${x.detail}`}</span> : null}
-        <span className="ml-auto tabular-nums text-[0.68rem] text-zinc-400 dark:text-zinc-500" data-req-count>
+        <span className="ms-auto tabular-nums text-[0.68rem] text-zinc-400 dark:text-zinc-500" data-req-count>
           {`${x.done}/${x.total}`}
         </span>
       </summary>
@@ -1333,11 +1356,12 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
             className="px-2.5 py-1 grid grid-cols-[1rem_1fr] gap-x-1.5 items-baseline text-[0.72rem]"
             data-req-gate={g.key}
             data-req-state={g.state}
+            data-req-skipped={g.skipped ? 'force' : undefined}
           >
             <span className={`text-center font-bold ${REQ_TONE[g.state] || REQ_TONE.pending}`} aria-hidden="true">
               {g.state === 'active'
                 ? <span className="dc-status-spinner inline-block align-[-1px]" />
-                : (REQ_MARK[g.state] || '·')}
+                : (g.skipped ? '–' : (REQ_MARK[g.state] || '·'))}
             </span>
             <span className={g.state === 'done' || g.state === 'pending'
               ? 'text-zinc-500 dark:text-zinc-400'
@@ -1377,7 +1401,7 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
  * words, because the empty state (the app icon shows instead) is a real
  * outcome a voter is deciding on, not a missing picture.
  */
-function IllustrationPreviewRow({ x }: { x: Extract<ExtraSpec, { t: 'illustration' }> }): ReactNode {
+export function IllustrationPreviewRow({ x }: { x: Extract<ExtraSpec, { t: 'illustration' }> }): ReactNode {
   const t = useMessages('project');
   const side = (label: string, which: 'current' | 'proposed', art: typeof x.proposed) => (
     <figure className="m-0 flex min-w-0 flex-1 flex-col gap-1" data-illustration-side={which}>

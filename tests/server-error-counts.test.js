@@ -426,7 +426,14 @@ test('the middleware records what every response cost, and hands a slow one to t
   assert.ok(finished.every((e) => Number.isFinite(e.startedAt) && Number.isFinite(e.durationMs)));
 });
 
-test('a request whose client gave up first still costs what it took, counted as aborted', async () => {
+test('a request whose client gave up first still costs what it took, counted as aborted', async (t) => {
+  // Each record is bucketed by the minute `Date.now()` was in when the
+  // response closed, and the two requests below are about 250ms apart: run
+  // across the turn of a minute, they land in two buckets and the first
+  // one's routes hold only `/api/slow`. Freeze `Date` at T0 so both are
+  // counted in one minute. Only `Date` is frozen: `setTimeout` and
+  // `process.hrtime` keep real time, so the durations are still measured.
+  t.mock.timers.enable({ apis: ['Date'], now: T0 });
   const c = counts.createCounts({ pod: 'p1' });
   const finished = [];
   const app = express();
@@ -443,19 +450,28 @@ test('a request whose client gave up first still costs what it took, counted as 
       ac.abort();
       await r;
     }
-    for (let i = 0; i < 50 && c.snapshot().reduce((n, b) => n + b.routes.length, 0) < 2; i += 1) {
-      await new Promise((t) => setTimeout(t, 10));
+    const bothCounted = () => {
+      const [bucket] = c.snapshot();
+      const named = new Set((bucket?.routes || []).map((r) => r.route));
+      return named.has('/api/slow') && named.has('/api/events');
+    };
+    for (let i = 0; i < 50 && !bothCounted(); i += 1) {
+      await new Promise((r) => setTimeout(r, 10));
     }
   } finally {
     server.close();
+    t.mock.timers.reset();
   }
+  assert.equal(c.snapshot().length, 1, 'both aborted requests are counted in the one frozen minute');
   const [m] = c.snapshot();
   assert.equal(m.requests, 0, 'the /api/ totals still count only responses that finished');
   const byRoute = new Map(m.routes.map((r) => [r.route, r]));
   const slow = byRoute.get('/api/slow');
+  assert.ok(slow, 'the aborted request was counted');
   assert.equal(slow.aborted, 1);
   assert.ok(slow.totalMs >= 200 && slow.totalMs < 600, `its time until the client went (${slow.totalMs})`);
   const events = byRoute.get('/api/events');
+  assert.ok(events, 'the abandoned event stream was counted');
   assert.deepEqual([events.requests, events.streams, events.totalMs], [1, 1, 0],
     'an event stream ended by its client counts as a stream, its time left out');
   assert.deepEqual(finished.map((e) => [e.route, e.aborted]), [['/api/slow', true]], 'the stall watcher hears of it');

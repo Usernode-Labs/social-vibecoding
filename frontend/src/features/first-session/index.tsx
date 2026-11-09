@@ -77,7 +77,9 @@ import {
   anyOwed, armWalk, claimWalk, clearLook, FIRST_VISIT_CHECK_MS, lookOwed, noteTipShown, noteWalkRun, oweLook, oweTip,
   owedTip, owedWalk, oweWalk, readScreen, type TipRecord, type TipWho, tipDue, walkArms, walkDue, type WalkRecord,
 } from './first-visit';
-import { type CreateAudience, type Made, type MakeEntry, MakeScreen } from './make';
+// S01: the made screen kept across a reload (./first-visit.ts oweMade).
+import { clearMade, oweMade, owedMade } from './first-visit';
+import { type CreateAudience, type IdeaSource, type Made, type MakeEntry, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
 import { noteMoment } from './made-moments';
 import { APP_MENU, BOTTOM_BARS, homeWalkSteps, lookAroundSteps, type TourScreen, type TourStep } from './tour-steps';
@@ -166,7 +168,8 @@ export function enterScreen(screen: TourScreen, slug: string, conversationId?: n
   else if (screen === 'app') App.navigateToApp?.(slug, 'app');
   else if (screen === 'hub') { AppView?._landOnHub?.(slug); App.navigateToApp?.(slug, 'dev'); }
   else if (screen === 'discussion') App.openDiscussionInHub?.(slug);
-  else if (screen === 'bot' && conversationId) window.location.hash = `#messages/${conversationId}`;
+  // 1 Nov 2026: the chat with the bot is its tab's, as Main Chat.
+  else if (screen === 'bot' && conversationId) window.location.hash = '#homeroom-bot/main';
 }
 
 /** The longest the held frame waits on a private member's app (appDrawn). */
@@ -883,8 +886,8 @@ export function Tour({ info, steps, onEnd: endTour, start = 0, moments = false, 
         data-tour-says-where-it-opens={step.saysWhereItOpens ? '' : undefined}
         data-first-session-tour-wait={wait || undefined}
         className={settling || wait === 'held' || leavingMenu
-          ? 'pointer-events-none fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 opacity-0 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100'
-          : 'pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] transition-opacity duration-150 dark:bg-zinc-800 dark:text-zinc-100'}
+          ? 'pointer-events-none fixed start-4 end-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 opacity-0 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100'
+          : 'pointer-events-auto fixed start-4 end-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] transition-opacity duration-150 dark:bg-zinc-800 dark:text-zinc-100'}
         style={card}
       >
         {waiting ? (
@@ -977,7 +980,7 @@ export function WelcomeHeld() {
           <SkeletonGroup label={t('onboarding:firstSession.welcome.opening')} className="my-auto flex flex-col items-center pb-10">
             <span className="flex">
               <Skeleton shape="block" className="h-10 w-10 rounded-full" />
-              <Skeleton shape="block" className="-ml-2.5 h-10 w-10 rounded-full" />
+              <Skeleton shape="block" className="-ms-2.5 h-10 w-10 rounded-full" />
             </span>
             <Skeleton className="mt-5 w-32" />
             <Skeleton shape="block" className="mt-3 h-9 w-64" />
@@ -993,7 +996,7 @@ export type Mode =
   // `app`: handed to the app an invite opened (welcome), and down once it is drawn.
   | { kind: 'held'; app?: string }
   // `entry` 'create' is the Create button's (see the header); none is the first session's.
-  | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean; idea?: string | null; audience?: CreateAudience }
+  | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean; idea?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience }
   | { kind: 'made'; made: Made; entry?: MakeEntry }
   | { kind: 'tour'; info: FirstSessionInfo; path: TourPath; start?: number; moments?: boolean };
 
@@ -1209,7 +1212,7 @@ function viewerName(): string {
 export function openCreate(
   setMode: Dispatch<SetStateAction<Mode>>,
   startImport = false,
-  start: { idea?: string | null; audience?: CreateAudience } = {},
+  start: { idea?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience } = {},
 ): boolean {
   let opened = false;
   flushSync(() => setMode((prev) => {
@@ -1220,7 +1223,7 @@ export function openCreate(
     // #6019 follow-up: a private thread's New project starts from its words,
     // for the audience the person chose.
     return start.idea || start.audience
-      ? { kind: 'make', entry: 'create', idea: start.idea || null, audience: start.audience }
+      ? { kind: 'make', entry: 'create', idea: start.idea || null, ideaSource: start.ideaSource, audience: start.audience }
       : { kind: 'make', entry: 'create' };
   }));
   if (opened) void invalidateAppAllowance();
@@ -1330,6 +1333,47 @@ export function FirstSession() {
     return () => document.removeEventListener('sv:authed', check);
   }, []);
 
+  // S01 (audit 2 Nov 2026): the first session's made screen, left by a
+  // reload or a cold start of the app before any of its ways on was taken,
+  // opens again (./first-visit.ts oweMade), never Home in its place. Only
+  // over nothing, and never on a screenshot address.
+  useEffect(() => {
+    const check = () => {
+      const user = legacy().App?.user;
+      const uid = user?.id;
+      if (uid == null || user?.hasPlatformAccess === false) return;
+      let shot = false;
+      try { shot = !!new URLSearchParams(window.location.search).get('shot'); } catch { /* no shot */ }
+      if (shot || modeRef.current.kind !== 'none') return;
+      const made = owedMade<Made>(uid);
+      if (!made) return;
+      setMode((prev) => (prev.kind === 'none' ? { kind: 'made', made } : prev));
+    };
+    if (legacy().App?.user) check();
+    document.addEventListener('sv:authed', check);
+    return () => document.removeEventListener('sv:authed', check);
+  }, []);
+
+  // S01: while the first session's made screen is up it is kept on this
+  // browser (oweMade); once it goes, by any of its ways on, it is let go
+  // (clearMade). A reload or a cold start never runs this, so the record
+  // stays and the check above reopens it. Create's own made screen closes
+  // like a dialog and is never kept.
+  const madeUp = mode.kind === 'made' && mode.entry !== 'create' ? mode.made : null;
+  const madeKept = useRef(false);
+  useEffect(() => {
+    const uid = legacy().App?.user?.id;
+    if (uid == null) return;
+    if (madeUp) {
+      madeKept.current = true;
+      oweMade(uid, madeUp);
+      return;
+    }
+    if (!madeKept.current) return;
+    madeKept.current = false;
+    clearMade(uid);
+  }, [madeUp]);
+
   // The bridge App._followInvite calls. welcome() answers whether it will
   // show, so the caller can land the viewer the old way when it will not.
   useEffect(() => {
@@ -1419,11 +1463,15 @@ export function FirstSession() {
       // The Create button (App.showCreateModal): the one front door for a
       // new project, for every signed-in viewer; `import` opens it on
       // importing a GitHub repo.
-      create(opts?: { import?: boolean; idea?: string | null; audience?: CreateAudience }): boolean {
+      create(opts?: { import?: boolean; idea?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience }): boolean {
         const audience = opts?.audience === 'solo' || opts?.audience === 'invited' || opts?.audience === 'open'
           ? opts.audience : undefined;
         const idea = typeof opts?.idea === 'string' ? opts.idea.slice(0, 4000) : null;
-        return openCreate(setMode, !!opts?.import, { idea, audience });
+        // Create's door hands in a Discover search (#5928) or a private
+        // thread's words (#6019), never a waitlist answer: only the first
+        // session's own make screen says "from your waitlist answer".
+        const ideaSource: IdeaSource = opts?.ideaSource === 'search' ? 'search' : 'thread';
+        return openCreate(setMode, !!opts?.import, { idea, ideaSource, audience });
       },
     };
     w.UsernodeReact.firstSession = api;
@@ -1600,6 +1648,7 @@ export function FirstSession() {
         entry="create"
         startImport={!!mode.startImport}
         idea={mode.idea ?? null}
+        ideaSource={mode.ideaSource ?? 'thread'}
         audience={mode.audience}
         underHeader={underHeader}
         // Nothing is answered: the tile behind is refreshed, so the new

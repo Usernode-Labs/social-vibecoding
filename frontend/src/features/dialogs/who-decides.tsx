@@ -47,8 +47,8 @@ import { changeHref } from '../../lib/change-href';
 import { useMessages } from '../../lib/i18n/react';
 import { audienceLine, reloadCommunity, useCommunity } from '../dev-board/workshop/community-card';
 import {
-  currentValue, groupKey, groupLabel, groupNameProblem, groupSize, matchPreset, MAX_AT_LEAST,
-  MAX_GROUPS, MAX_RULES, MIN_MINIMUM, minOf, presetName, presetOf, presetValue, rulePhrase,
+  creatorGroupLine, currentValue, groupKey, groupLabel, groupNameProblem, groupSize, matchPreset, MAX_AT_LEAST,
+  MAX_GROUPS, MAX_RULES, MIN_MINIMUM, minOf, presetName, presetOf, presetValue, ruleGroupChoices, rulePhrase,
   ruleSignature, ruleToday, sameValue, valueProblem, type Group, type Kind, type PresetKey, type Rule,
   type RulesValue,
 } from '../who-decides/model';
@@ -153,6 +153,7 @@ export function WhoDecidesDialog() {
   const current = useMemo(() => currentValue(approval), [approval]);
   const nowPreset = presetOf(current);
   const creator = approval?.creator?.username || null;
+  const creatorGone = approval?.creator_gone === true;
   const viewer: Viewer = { isCreator: !!community?.is_creator, creator };
   const visibility = community?.visibility || null;
   const currentVis: Visibility = visibility?.view === 'public' ? 'public' : 'private';
@@ -410,7 +411,7 @@ export function WhoDecidesDialog() {
             data-who-members=""
             onClick={() => { close(); window.AppView?.openMembersModal?.(); }}
             leading={(
-              <span className="flex -space-x-1.5">
+              <span className="flex -space-x-1.5 rtl:space-x-reverse">
                 {(community?.members || []).slice(0, 3).map((m) => <Face key={m.username} name={m.username} size={26} />)}
               </span>
             )}
@@ -515,7 +516,7 @@ export function WhoDecidesDialog() {
                   <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
                 </div>
               ) : null}
-              <div className="flex items-center pr-2">
+              <div className="flex items-center pe-2">
                 <ListRow
                   as="button"
                   inset="none"
@@ -556,7 +557,8 @@ export function WhoDecidesDialog() {
 
         <SectionHeader className="px-1 pb-2 pt-5">{t('dialogs:whoDecides.own.groups')}</SectionHeader>
         <GroupedList className="mx-0" data-who-groups="">
-          <ListRow title={t('dialogs:whoDecides.group.creator')} subtitle={creator || t('dialogs:whoDecides.group.creatorNobody')} chevron={false}
+          <ListRow title={t('dialogs:whoDecides.group.creator')} subtitle={creatorGroupLine(creator, creatorGone)} chevron={false}
+            subtitleClassName="whitespace-normal"
             trailing={<span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.group.builtIn')}</span>} />
           <ListRow title={t('dialogs:whoDecides.group.members')} subtitle={t('dialogs:whoDecides.group.membersSub', { count: memberCount })} chevron={false}
             subtitleClassName="whitespace-normal"
@@ -679,7 +681,7 @@ export function WhoDecidesDialog() {
 
   function RuleScreen() {
     if (!draft || !ruleDraft) return null;
-    const groupsHere = ['creator', 'members', 'admins', ...draft.groups.map((g) => groupKey(g.name))];
+    const groupsHere = ruleGroupChoices(draft.groups, { creatorGone, current: ruleDraft.group });
     const rule = ruleOf(ruleDraft);
     const ruleCtx = { ...ctx, groups: draft.groups };
     const isPct = ruleDraft.kind === 'percentOfActive' || ruleDraft.kind === 'percentOfEveryone';

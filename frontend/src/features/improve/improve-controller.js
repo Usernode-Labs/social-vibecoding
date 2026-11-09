@@ -171,6 +171,15 @@ function toRow(session, appNameFallback) {
     status: statusLabel(session),
     busy: liveBusy(session),
     awaitingInput: awaitsInput(session),
+    // #6042: the change's lifecycle, for the row's status pill — 'promoted'
+    // is up for vote, 'merging'/'merged' the merge's flight, check_state the
+    // automated checks' last verdict. A work order has no proposal behind it
+    // (taskToRow carries none of these), and an older payload that sends no
+    // status simply leaves the pill on Ready, as before.
+    sessionStatus: session.status || null,
+    checkState: session.check_state || null,
+    checkPhase: session.check_phase || null,
+    failingChecks: session.failing_checks?.total || null,
     sortAt: timeOf(session.last_activity_at) || timeOf(session.created_at),
     // Streamlined Concept: the app-context sheet's change rows show a
     // relative time, the way the Figma board draws them.
@@ -781,6 +790,11 @@ const Improve = {
 
   async loadSessions() {
     const token = ++Improve._loadToken;
+    // #6042: merged and merging changes ride along, so a row can say Live
+    // instead of vanishing the moment its change merges. The server bounds
+    // them to its recent window; the dev tab's own fetch sends no flag and
+    // sees none of them.
+    const demo = Improve._demoQS();
     // #1958: stamped BEFORE the request goes out — see SessionState.seed.
     // This used to hand the seed `data.issuedAt`, a field the endpoint has
     // never sent, so every payload was stamped at ARRIVAL and an answer that
@@ -792,7 +806,7 @@ const Improve = {
     let sessions = [];
     let tasks = [];
     try {
-      const res = await fetch(`/api/me/active-sessions${Improve._demoQS()}`);
+      const res = await fetch(`/api/me/active-sessions?include_merged=1${demo ? `&${demo.slice(1)}` : ''}`);
       if (res.ok) {
         const data = await res.json();
         sessions = Array.isArray(data.sessions) ? data.sessions : [];

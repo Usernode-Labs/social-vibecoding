@@ -83,6 +83,8 @@ const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql } = require('../services/first-version-rule');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const { threadsInSql } = require('../services/ai-work');
+const { updateComingSql } = require('../services/homeroom-bot-progress');
+const { voteReadySql } = require('../services/vote-ready');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
 const codeMissing = require('../services/code-missing');
@@ -189,6 +191,30 @@ const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
             AND ${currentVotePredicateSql('pv', 'cs')}
        )
        AND NOT ${firstVersionSql('cs')}
+       -- #6282 (4 Nov 2026): a change with an update on its way asks for no
+       -- vote. A yes cast now is cleared when the update lands and Homeroom
+       -- asks again, so it waits under Updating / Update queued instead
+       -- (services/homeroom-bot-progress.js updateComingSql, which the AI tab
+       -- and the change's own Votes card read too). A ballot goes with it
+       -- while any of its changes has an update coming, so nobody picks a
+       -- change that is about to change.
+       AND ${updateComingSql('cs')} IS NULL
+       -- #6402 (6 Nov 2026): a vote is asked only once the change is ready:
+       -- its checks passed (or it had nothing to test) and it merges cleanly
+       -- with main. Until then it waits under Waiting & in progress, worded
+       -- by services/work-state.js. Voting early stays possible on the
+       -- change's own page.
+       AND ${voteReadySql('cs')}
+       AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
+             SELECT 1 FROM chat_sessions ru
+              WHERE ${RIVAL_SQL('cs', 'ru')}
+                AND ${updateComingSql('ru')} IS NOT NULL))
+       -- A ballot waits too while any of its changes is not ready, so nobody
+       -- picks between changes that are still being checked.
+       AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
+             SELECT 1 FROM chat_sessions rr
+              WHERE ${RIVAL_SQL('cs', 'rr')}
+                AND NOT ${voteReadySql('rr')}))
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND (
              EXISTS (SELECT 1 FROM chat_sessions rv
                       WHERE ${RIVAL_SQL('cs', 'rv')}
@@ -215,12 +241,37 @@ const OWED_GOVERNANCE_WHERE = `i.status = 'open'
             AND ${CLOSE_TARGET_SQL('i')} = ANY(rc.linked_issues)))`;
 
 // #6019: the questions Homeroom bot asked the viewer about their requests,
-// still open (homeroom_bot_dm_messages): something owed like a vote, in the
-// same counts and the same feed. A question is answered on its request's
-// page, where the bot asked it.
-const OWED_QUESTIONS_FROM = `homeroom_bot_dm_messages q
-      JOIN conversation_messages qm ON qm.id = q.message_id AND qm.deleted_at IS NULL`;
-const OWED_QUESTIONS_WHERE = `q.user_id = $1 AND q.question_status = 'open'`;
+// still open: something owed like a vote, in the same counts and the same
+// feed. A question is answered on its request's page, where the bot asked it.
+// 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): one the bot asked as its
+// post on the request, where the request's stored work state waits for its
+// requester's answer (services/work-state.js), by that post's message; and
+// one asked in their chat with the bot before then, still open there
+// (homeroom_bot_dm_messages), by its message. `$1` is the viewer.
+const OWED_QUESTIONS_FROM = `(
+      SELECT dq.app_id, dq.message_id AS id, dq.issue_number, dq.created_at,
+             COALESCE(dqm.metadata->'homeroomBot'->>'question', '') AS question, dqm.sender_id
+        FROM homeroom_bot_dm_messages dq
+        JOIN conversation_messages dqm ON dqm.id = dq.message_id AND dqm.deleted_at IS NULL
+       WHERE dq.user_id = $1 AND dq.question_status = 'open'
+      UNION ALL
+      SELECT ws.app_id, qp.thread_message_id AS id, ws.item_ref AS issue_number, COALESCE(ws.since, qp.created_at) AS created_at,
+             COALESCE(qpm.content, '') AS question, qpm.user_id AS sender_id
+        FROM work_states ws
+        JOIN LATERAL (
+          SELECT p.thread_message_id, p.created_at FROM homeroom_bot_posts p
+           WHERE p.app_id = ws.app_id AND p.issue_number = ws.item_ref AND p.kind = 'question'
+             AND p.thread_message_id IS NOT NULL
+           ORDER BY p.id DESC LIMIT 1
+        ) qp ON TRUE
+        JOIN chat_messages qpm ON qpm.id = qp.thread_message_id AND qpm.deleted_at IS NULL
+       WHERE ws.requester_id = $1 AND ws.item_kind = 'request'
+         AND ws.stage = 'waiting_for_you' AND ws.why = 'question'
+         AND NOT EXISTS (SELECT 1 FROM homeroom_bot_dm_messages odq
+                          WHERE odq.user_id = $1 AND odq.app_id = ws.app_id AND odq.issue_number = ws.item_ref
+                            AND odq.question_status = 'open')
+    ) q`;
+const OWED_QUESTIONS_WHERE = `TRUE`;
 
 // GET /api/apps's visibility filter, over `a` (apps) and `me` (the viewer's
 // membership row). `$2` is "may see self-hosted rows", `$3` "is an admin".
@@ -281,7 +332,7 @@ const COUNTS_SQL = `
   ),
   owed_questions AS (
     SELECT q.app_id, COUNT(*)::int AS n,
-           array_agg('question:' || q.message_id) AS keys
+           array_agg('question:' || q.id) AS keys
       FROM ${OWED_QUESTIONS_FROM}
      WHERE ${OWED_QUESTIONS_WHERE}
      GROUP BY q.app_id
@@ -326,14 +377,14 @@ const ITEMS_TOTAL = 300;
 const ITEMS_SQL = `
   WITH items AS (
     SELECT 'working'::text AS section, 'session'::text AS kind, cs.app_id, cs.id,
-           COALESCE(NULLIF(cs.session_title, ''), NULLIF(cs.pr_title, ''),
-                    NULLIF(cs.proposed_pr_title, ''))::text AS title,
+           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''),
+                    NULLIF(cs.session_title, ''))::text AS title,
            cs.status::text AS status, cs.last_activity_at AS at
       FROM chat_sessions cs
      WHERE ${MY_SESSIONS_WHERE}
     UNION ALL
     SELECT 'working', 'proposal', cs.app_id, cs.id,
-           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text,
+           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, ''))::text,
            cs.status::text, cs.last_activity_at
       FROM chat_sessions cs
      WHERE ${MY_PROPOSALS_WHERE}
@@ -343,7 +394,7 @@ const ITEMS_SQL = `
      WHERE ${MY_GOVERNANCE_WHERE}
     UNION ALL
     SELECT 'needs', 'proposal', cs.app_id, cs.id,
-           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text,
+           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, ''))::text,
            cs.status::text, cs.last_activity_at
       FROM chat_sessions cs
      WHERE ${OWED_PROPOSALS_WHERE}
@@ -352,8 +403,8 @@ const ITEMS_SQL = `
       FROM issues i
      WHERE ${OWED_GOVERNANCE_WHERE}
     UNION ALL
-    SELECT 'needs', 'question', q.app_id, q.message_id,
-           COALESCE(qm.metadata->'homeroomBot'->>'question', '')::text, 'open'::text, q.created_at
+    SELECT 'needs', 'question', q.app_id, q.id,
+           q.question::text, 'open'::text, q.created_at
       FROM ${OWED_QUESTIONS_FROM}
      WHERE ${OWED_QUESTIONS_WHERE}
   ),
@@ -377,15 +428,12 @@ const ITEMS_SQL = `
 `;
 
 // GET /api/workshop/bot-questions (#6019): the bot's open questions to the
-// viewer, on projects that are not suspended.
+// viewer (OWED_QUESTIONS_FROM), on projects that are not suspended.
 const BOT_QUESTIONS_MAX = 20;
 const BOT_QUESTIONS_SQL = `
-  SELECT q.message_id, q.issue_number, q.created_at, a.slug, a.name,
-         m.metadata->'homeroomBot'->>'question' AS question
-    FROM homeroom_bot_dm_messages q
+  SELECT q.id AS message_id, q.issue_number, q.created_at, a.slug, a.name, q.question
+    FROM ${OWED_QUESTIONS_FROM}
     JOIN apps a ON a.id = q.app_id AND a.moderation_suspended_at IS NULL
-    JOIN conversation_messages m ON m.id = q.message_id AND m.deleted_at IS NULL
-   WHERE q.user_id = $1 AND q.question_status = 'open'
    ORDER BY q.created_at DESC
    LIMIT $2
 `;
@@ -394,6 +442,7 @@ const BOT_QUESTIONS_SQL = `
 //      → { items: FeedItem[] }
 //   FeedItem = { kind: 'proposal'|'governance', id, title, summary, author,
 //                number, epoch, at, yes, no, approve?, advisory?, uncounted?,
+//                request? (a proposal's request: { number, title }; requestOf),
 //                staging_url (a proposal's live preview or null; feedStagingUrl),
 //                app: { slug, name, icon_url, icon_emoji } }
 //
@@ -451,18 +500,37 @@ const IN_THREADS_WHERE = `
 const needsFeedSql = ({ inThreads = false } = {}) => `
   WITH owed AS (
     SELECT 'proposal'::text AS kind, cs.app_id, cs.id,
-           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text AS title,
+           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, ''))::text AS title,
            LEFT(COALESCE(cs.pr_summary_md, ''), ${NEEDS_FEED_SUMMARY_MAX})::text AS summary,
            u.username::text AS author,
            cs.pr_number AS number,
            cs.approval_epoch AS epoch,
-           cs.last_activity_at AS at,
+           -- #6245: when its vote opened, never the latest activity (a page
+           -- read or a preview waking touched that), so a row keeps its
+           -- place in Needs you while it waits. Old rows with no
+           -- promoted_at fall back to when the change was made.
+           COALESCE(cs.promoted_at, cs.created_at) AS at,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                AND ${countedVotePredicateSql('pv', 'cs')})::int AS yes,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'no'
                AND ${countedVotePredicateSql('pv', 'cs')})::int AS no,
+           -- #6389: the facts a row the viewer made through a coding agent
+           -- needs to say what it waits on instead of Vote: who its author
+           -- is, which tool made it, and whether its checks fail or it
+           -- conflicts with main. other_yes is the Yes votes from anyone
+           -- but its author, which an explicit approval needs one of.
+           cs.user_id AS author_id,
+           cs.external_agent::text AS external_agent,
+           cs.check_state::text AS check_state,
+           cs.mergeability::text AS mergeability,
+           cs.integration_merges_clean,
+           cs.merge_conflict_state::text AS merge_conflict_state,
+           (SELECT COUNT(*) FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+               AND ${countedVotePredicateSql('pv', 'cs')}
+               AND pv.user_id IS DISTINCT FROM cs.user_id)::int AS other_yes,
            -- #4490: the card's picture, as a project's Needs you draws it:
            -- the shots run and the heads its serializer checks, the legacy
            -- capture pair, the author's diagram and "What it touches".
@@ -497,6 +565,7 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
            LEFT(COALESCE(i.description, ''), ${NEEDS_FEED_SUMMARY_MAX})::text,
            u.username::text, NULL::int, NULL::int, i.created_at,
            NULL::int, NULL::int,
+           NULL::int, NULL::text, NULL::text, NULL::text, NULL::boolean, NULL::text, NULL::int,
            NULL::text, NULL::jsonb, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
            NULL::jsonb, NULL::text, NULL::jsonb, NULL::text, NULL::jsonb,
            i.kind::text, i.payload,
@@ -507,21 +576,29 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
      WHERE ${OWED_GOVERNANCE_WHERE}
     UNION ALL
     -- #6019: the bot's open questions to the viewer, by their request.
-    SELECT 'question', q.app_id, q.message_id,
-           COALESCE(qm.metadata->'homeroomBot'->>'question', '')::text, NULL::text,
+    SELECT 'question', q.app_id, q.id,
+           q.question::text, NULL::text,
            qu.username::text, q.issue_number, NULL::int, q.created_at,
            NULL::int, NULL::int,
+           NULL::int, NULL::text, NULL::text, NULL::text, NULL::boolean, NULL::text, NULL::int,
            NULL::text, NULL::jsonb, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
            NULL::jsonb, NULL::text, NULL::jsonb, NULL::text, NULL::jsonb,
            NULL::text, NULL::jsonb,
-           NULL::boolean, NULL::text, NULL::text, NULL::bigint, NULL::int[]
+           NULL::boolean, NULL::text, NULL::text,
+           -- #6262: the bot's question belongs to its request's thread, so
+           -- the Homeroom bot page can count what is new there.
+           (SELECT r.thread_id FROM requests r
+             WHERE r.app_id = q.app_id AND r.number = q.issue_number),
+           NULL::int[]
       FROM ${OWED_QUESTIONS_FROM}
-      LEFT JOIN users qu ON qu.id = qm.sender_id
+      LEFT JOIN users qu ON qu.id = q.sender_id
      WHERE ${OWED_QUESTIONS_WHERE}
   )
   SELECT a.id AS app_id, a.slug, a.name, a.icon_image_id, a.icon_emoji,
          o.kind, o.id, o.title, o.summary, o.author, o.number, o.epoch,
          o.at, o.yes, o.no, a.repo_url,
+         o.author_id, o.external_agent, o.check_state, o.mergeability,
+         o.integration_merges_clean, o.merge_conflict_state, o.other_yes,
          o.shots_run_id, o.shots_detail, o.status, o.source, o.imported_pr_head_sha,
          o.reviewed_head_sha, o.checks_commit_sha, o.handoff_head_sha,
          o.pr_diagram, o.pr_diagram_source, o.pr_touches, o.pr_touches_sha, o.visuals_agg,
@@ -534,7 +611,7 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
          CASE WHEN o.kind = 'proposal' AND o.thread_id IS NOT NULL AND cardinality(o.linked_issues) > 0 THEN (
            SELECT jsonb_agg(jsonb_build_object(
                     'id', rb.id, 'number', rb.pr_number,
-                    'title', COALESCE(NULLIF(rb.pr_title, ''), NULLIF(rb.session_title, '')),
+                    'title', COALESCE(NULLIF(rb.pr_title, ''), NULLIF(rb.proposed_pr_title, ''), NULLIF(rb.session_title, '')),
                     'author', ru.username, 'epoch', rb.approval_epoch, 'staging_url', rb.staging_url)
                   ORDER BY rb.id)
              FROM chat_sessions rb LEFT JOIN users ru ON ru.id = rb.user_id
@@ -652,10 +729,14 @@ async function owedByCommunity(pool, userId, { showSelfHosted = false, isAdmin =
  * project, and only for those rows; a project whose read fails is left
  * without one. Resolves the rows. Exported for tests.
  */
-async function withVotesRequired(pool, rows) {
+async function withVotesRequired(pool, rows, viewerId = null) {
   const byApp = new Map();
   for (const row of rows) {
-    if (row.solo !== true) continue;
+    // #6389: a row the viewer made through a coding agent needs the same
+    // count, so a met vote can be told from one still owed.
+    const authorsAgent = viewerId != null && row.external_agent
+      && Number(row.author_id) === Number(viewerId);
+    if (row.solo !== true && !authorsAgent) continue;
     if (!byApp.has(row.app_id)) byApp.set(row.app_id, []);
     byApp.get(row.app_id).push(row);
   }
@@ -671,6 +752,39 @@ async function withVotesRequired(pool, rows) {
     }
   }));
   return rows;
+}
+
+/**
+ * #6389: whether a change the viewer made through a coding agent has the
+ * votes it needs, so the row is waiting on their fix rather than on a Vote.
+ * The same facts the change's Votes card reads: the gate's Yes count, and,
+ * where an explicit approval is flagged, a Yes from another member.
+ */
+function authorAgentGateMet(row, viewerId) {
+  if (row.kind !== 'proposal' || !row.external_agent) return false;
+  if (viewerId == null || Number(row.author_id) !== Number(viewerId)) return false;
+  const needed = parseInt(row.votes_required, 10);
+  if (!Number.isFinite(needed)) return false;
+  if ((Number(row.yes) || 0) < needed) return false;
+  if (row.requires_explicit_approval && (Number(row.other_yes) || 0) < 1) return false;
+  return true;
+}
+
+/**
+ * #6389: what a change the viewer made through a coding agent waits on once
+ * its vote is in, in the order the page says it: `'checks'`, then
+ * `'conflict'`. Null while the gate is not met (the row stays a Vote) and
+ * when nothing is left for them to fix.
+ */
+function waitingOnFix(row, viewerId) {
+  if (!authorAgentGateMet(row, viewerId)) return null;
+  const reasons = [];
+  if (row.check_state === 'failing') reasons.push('checks');
+  if (row.mergeability === 'conflict'
+      || row.integration_merges_clean === false
+      || row.merge_conflict_state === 'failed'
+      || row.merge_conflict_state === 'conflict') reasons.push('conflict');
+  return reasons.length ? reasons : null;
 }
 
 /**
@@ -885,9 +999,20 @@ function ballotOf(row) {
   };
 }
 
+/**
+ * 30 Oct 2026: the request a change closes (NEEDS_FEED_SQL's ballot_for, the
+ * first request it links), which the Homeroom bot tab names it by, as the
+ * bot does in Main. `{ request }` when it has one, else nothing.
+ */
+function requestOf(row) {
+  const forRow = row.ballot_for && typeof row.ballot_for === 'object' ? row.ballot_for : null;
+  if (!forRow || forRow.number == null) return {};
+  return { request: { number: Number(forRow.number), title: forRow.title || null } };
+}
+
 const FEED_KINDS = new Set(['proposal', 'governance', 'question']);
 
-function shapeNeedsFeed(rows) {
+function shapeNeedsFeed(rows, { inThreads = false } = {}) {
   return rows.map((row) => {
     const ballot = row.kind === 'proposal' ? ballotOf(row) : null;
     return {
@@ -898,11 +1023,17 @@ function shapeNeedsFeed(rows) {
     summary: (row.summary || '').trim() || null,
     author: row.author || null,
     number: row.number == null ? null : Number(row.number),
+    ...(row.kind === 'proposal' && !ballot ? requestOf(row) : {}),
     epoch: row.epoch == null ? null : Number(row.epoch),
     at: row.at instanceof Date ? row.at.toISOString() : (row.at || null),
     yes: row.yes == null ? null : Number(row.yes),
     no: row.no == null ? null : Number(row.no),
     ...(approvedAlone(row) ? { approve: true } : {}),
+    // #6389: the viewer's own change, made through a coding agent, whose
+    // votes are in and which waits on their fix. The row says what it waits
+    // on instead of Vote, and names the tool it was made in.
+    ...(row.kind === 'proposal' && Array.isArray(row.waiting_on) && row.waiting_on.length
+      ? { waitingOn: row.waiting_on, agent: row.external_agent || null } : {}),
     // #5365: only when set — an unmarked row carries no flag at all, so the
     // card keeps its usual place and wording.
     ...(row.uncounted ? { uncounted: true } : {}),
@@ -915,6 +1046,10 @@ function shapeNeedsFeed(rows) {
     ...(row.kind === 'proposal' ? { staging_url: feedStagingUrl(row) } : {}),
     // #4490: the card's picture, the same as a project's Needs you draws.
     ...pictureFields(row),
+    // #6262: the thread its page is, for the Homeroom bot page's unread
+    // count (needsFeedFor adds how many are new). Absent from the full feed,
+    // which is not that page's.
+    ...(inThreads && row.thread_id != null ? { threadId: Number(row.thread_id) } : {}),
     app: {
       slug: row.slug,
       name: row.name || row.slug,
@@ -923,6 +1058,33 @@ function shapeNeedsFeed(rows) {
     },
     };
   });
+}
+
+/**
+ * The Needs you feed for `user`, as GET /api/workshop/needs-feed answers it:
+ * every decision they owe, or (`inThreads`) only those in the threads they
+ * are in, the Homeroom bot tab's. Homeroom bot's my_work reads the same
+ * (services/ai-work.js pageLists), so its answer names what the tab does.
+ */
+async function needsFeedFor(pool, { user, showSelfHosted = false, inThreads = false, shotsPresent = false }) {
+  const { rows } = await pool.query(inThreads ? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL, [
+    user.id, !!showSelfHosted, !!user.isAdmin, NEEDS_FEED_MAX,
+  ]);
+  await withCodeMissing(pool, rows);
+  await withPictures(pool, rows, { shotsPresent, viewer: user });
+  await withViewerDecides(pool, rows, user.id);
+  const voted = await withVotesRequired(pool, rows, user.id);
+  // #6389: a row that is the viewer's own change made through a coding
+  // agent says what it waits on once its vote is in, and leaves Needs you
+  // when nothing is left for them to fix (only testing is running).
+  for (const row of voted) row.waiting_on = waitingOnFix(row, user.id);
+  const kept = voted.filter((row) => !(authorAgentGateMet(row, user.id) && !row.waiting_on));
+  const items = decidingFirst(shapeNeedsFeed(kept, { inThreads }));
+  if (!inThreads) return items;
+  // #6262: how many messages in each item's thread are new to the viewer.
+  const unread = await require('../services/thread-reads')
+    .unreadFor(pool, user.id, items.map((item) => item.threadId));
+  return items.map((item) => ({ ...item, unread: unread.get(item.threadId) || 0 }));
 }
 
 /**
@@ -968,6 +1130,10 @@ const DEMO_NEEDS_FEED = [
     kind: 'proposal', id: -103, title: 'Sort recipes by rating',
     summary: 'Adds a Rating option to the sort menu, highest first, and remembers the choice per person.',
     author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-24T12:00:00Z', yes: 2, no: 0,
+    // #6262: a demo item with something new, so ?demo=1 shows its dot.
+    threadId: -103, unread: 1,
+    // The request it closes, which the Homeroom bot tab names it by (requestOf).
+    request: { number: 9213, title: 'Staging demo: sort by rating' },
     // No preview: the demo project has no container (stagingMockProposals
     // gives its cards none either), so "Try it" is not offered.
     staging_url: null,
@@ -987,6 +1153,7 @@ const DEMO_NEEDS_FEED = [
     summary: 'A shared list on the app\'s home screen that any member can add to and tick off.',
     author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-22T10:00:00Z', yes: 1, no: 1,
     staging_url: null,
+    threadId: -104, unread: 1,
     // #5365: the demo card for an advisory vote, so the feed's label and the
     // deciding-first order can be seen on ?demo=1 without a governed project.
     advisory: true,
@@ -1187,14 +1354,12 @@ function workshopOverviewRoutes(config) {
   router.get('/api/workshop/needs-feed', async (req, res) => {
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
-      const showSelfHosted = !!req.user.isAdmin || !!config.selfAppPublicVoting;
-      const { rows } = await pool.query(req.query.in === 'threads' ? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL, [
-        req.user.id, showSelfHosted, !!req.user.isAdmin, NEEDS_FEED_MAX,
-      ]);
-      await withCodeMissing(pool, rows);
-      await withPictures(pool, rows, { shotsPresent: !!config.shots?.present, viewer: req.user });
-      await withViewerDecides(pool, rows, req.user.id);
-      const items = decidingFirst(shapeNeedsFeed(await withVotesRequired(pool, rows)));
+      const items = await needsFeedFor(pool, {
+        user: req.user,
+        showSelfHosted: !!req.user.isAdmin || !!config.selfAppPublicVoting,
+        inThreads: req.query.in === 'threads',
+        shotsPresent: !!config.shots?.present,
+      });
       if (IS_STAGING && req.query.demo === '1') {
         return res.json({ items: decidingFirst(withDemoNeedsFeed(items)), max: NEEDS_FEED_MAX });
       }
@@ -1211,7 +1376,7 @@ function workshopOverviewRoutes(config) {
 module.exports = {
   workshopOverviewRoutes, demoNeedsVoteRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
-  NEEDS_FEED_SQL, NEEDS_FEED_IN_THREADS_SQL, NEEDS_FEED_MAX, BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX, shapeNeedsFeed, withVotesRequired, withViewerDecides, decidingFirst,
+  NEEDS_FEED_SQL, NEEDS_FEED_IN_THREADS_SQL, NEEDS_FEED_MAX, needsFeedFor, BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX, shapeNeedsFeed, withVotesRequired, waitingOnFix, authorAgentGateMet, withViewerDecides, decidingFirst,
   withPictures, withCodeMissing, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,

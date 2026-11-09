@@ -312,7 +312,8 @@ test('the installation client is recorded as its own credential', async () => {
   // goes through instrument(); there is no bot-token client any more.
   const src = read('src/services/github.js');
   assert.match(src, /return instrument\(new Octokit\(\{ auth: token \}\), `installation:\$\{owner\}`\);/);
-  assert.equal((src.match(/new Octokit\(/g) || []).length, 1, 'every client github.js builds is that one, recorded');
+  assert.equal((src.match(/new Octokit\(/g) || []).length, 2, 'the writer and scoped reader are both recorded');
+  assert.match(src, /return instrument\(new Octokit\(\{ auth: token \}\), `installation:\$\{owner\}`, \{ readOnly: true \}\)/);
   assert.doesNotMatch(src, /'pat'\)/, 'no client is recorded as the bot token');
 });
 

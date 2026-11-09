@@ -422,6 +422,11 @@ const AGENT_MAYOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/sessions/:id' },
   { method: 'GET', pattern: '/api/sessions/:id/status' },
   { method: 'GET', pattern: '/api/sessions/:id/spec' },
+  // A plan posted on a request (get_spec): its versions and the one it
+  // reads. Both are plain reads; the routes already check the caller may see
+  // the request.
+  { method: 'GET', pattern: '/api/apps/:slug/issues/:number/specs' },
+  { method: 'GET', pattern: '/api/sessions/:id/specs/:version' },
   { method: 'PATCH', pattern: '/api/sessions/:id/linked-issues' },
   // The change lifecycle (start_change, promote_change, recheck_change,
   // sync_change, withdraw_change). start_change names the change on the
@@ -449,9 +454,36 @@ const WORKER_READ_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/sessions/:id/status' },
 ]);
 
+// `bot_admin`: Homeroom bot answering a full platform admin in their own
+// conversation with it (Homeroom bot parity P7): exactly the routes its
+// curated tools call (services/mcp-audiences.js BOT_ADMIN_TOOLS), each one
+// already on the external list above and gated by its own handler for a full
+// admin (the featured picture: for whoever may manage the project). Its
+// writes run only on a grant minted for one action the admin confirmed on a
+// card.
+const BOT_ADMIN_ALLOWED_ROUTES = Object.freeze([
+  { method: 'GET', pattern: '/api/bot-bench/runs' },
+  { method: 'GET', pattern: '/api/bot-bench/runs/:id' },
+  { method: 'POST', pattern: '/api/bot-bench/runs' },
+  { method: 'GET', pattern: '/api/bot-configs' },
+  { method: 'POST', pattern: '/api/bot-configs' },
+  { method: 'POST', pattern: '/api/bot-configs/:id/role' },
+  { method: 'POST', pattern: '/api/bot-configs/budget' },
+  { method: 'GET', pattern: '/api/test-accounts' },
+  { method: 'POST', pattern: '/api/test-accounts' },
+  { method: 'POST', pattern: '/api/test-accounts/:id/retire' },
+  { method: 'POST', pattern: '/api/test-accounts/release-emails' },
+  { method: 'GET', pattern: '/api/apps/:slug/featured-illustration' },
+  { method: 'PUT', pattern: '/api/apps/:slug/featured-illustration' },
+  { method: 'GET', pattern: '/api/bot-studio/bot' },
+  { method: 'POST', pattern: '/api/bot-studio/bot/settings' },
+  { method: 'GET', pattern: '/api/bot-studio/shots' },
+]);
+
 const DELEGATED_ALLOWED_ROUTES = Object.freeze({
   agent_mayor: AGENT_MAYOR_ALLOWED_ROUTES,
   worker_read: WORKER_READ_ALLOWED_ROUTES,
+  bot_admin: BOT_ADMIN_ALLOWED_ROUTES,
 });
 
 function matchesPattern(pathname, pattern) {
@@ -530,6 +562,7 @@ module.exports = {
   CONNECTOR_ALLOWED_ROUTES,
   AGENT_MAYOR_ALLOWED_ROUTES,
   WORKER_READ_ALLOWED_ROUTES,
+  BOT_ADMIN_ALLOWED_ROUTES,
   canonicalApiTarget,
   isCliApiPath,
   isConnectorApiRequest,

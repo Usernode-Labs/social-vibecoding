@@ -61,7 +61,8 @@ test('the markup: the section sits between Home and the Communities tab, its hea
   assert.ok(at('platform-rail-communities') < at('platform-tab-workshop'));
   assert.match(html, /<div id="platform-rail-communities" class="platform-rail-communities" role="group" aria-labelledby="platform-rail-communities-label">/);
   assert.match(html, new RegExp(`<span id="platform-rail-communities-label" class="platform-rail-head-label">${message('core:rail.communities')}</span>`));
-  assert.match(html, new RegExp(`<a id="platform-rail-search" class="platform-rail-search" href="#communities" aria-label="${message('core:rail.search')}"`));
+  // One Home (#6361): the search is Home's, so the link names Home.
+  assert.match(html, new RegExp(`<a id="platform-rail-search" class="platform-rail-search" href="/" aria-label="${message('core:rail.search')}"`));
   assert.doesNotMatch(html, /data-rail-community=/, 'no rows before the community list is read');
   // The All row's face rides in the Communities tab, for app.css to show.
   const tab = html.slice(at('platform-tab-workshop'), html.indexOf('</a>', at('platform-tab-workshop')));
@@ -72,10 +73,19 @@ test('the markup: the section sits between Home and the Communities tab, its hea
   assert.doesNotMatch(tab.slice(0, tab.indexOf('>')), /aria-label=/);
 });
 
+test('audit Y04: the All row counts only when there are more than the rows above', () => {
+  const tab = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(tab, /allCount > RAIL_COMMUNITIES \? t\('core:rail\.all', \{ count: allCount \}\) : t\('core:rail\.allPlain'\)/,
+    '"All 2 communities" under the same two rows says nothing; it is "All communities"');
+  assert.equal(message('core:rail.allPlain'), 'All communities');
+  assert.equal(message('core:rail.all', { count: 13 }), 'All 13 communities');
+});
+
 test('the presses: a row switches in place, the lit one climbs to its Hub and stops', () => {
   const src = read(RAIL);
   // From its app, the row goes to its page; on its page, up the page.
-  assert.match(src, /if \(onPage === slug\) pressLitTab\(screen, \{ stopAtCommunity: true \}\);\s*else goToCommunity\(slug\);/);
+  // A press is a place switch, a cut like the tabs (pressPlace, 1 Nov 2026).
+  assert.match(src, /if \(onPage === slug\) pressLitTab\(screen, \{ stopAtCommunity: true \}\);\s*else pressPlace\(\(\) => goToCommunity\(slug\)\);/);
   assert.match(src, /const href = `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`;[\s\S]*?href=\{href\}/, 'a modified click opens its page');
   assert.match(src, /onPage: screen === 'app-view' && tab === 'workshop' \? scoped : null,/);
   // The ladder's root step is All communities; the row stops short of it.
@@ -103,23 +113,26 @@ test('the presses: a row switches in place, the lit one climbs to its Hub and st
   }
 });
 
-test('the search: All communities, with its box focused and lit once it shows', () => {
-  const calls = [];
+test('the search: Home, with its search box focused (One Home, #6361)', () => {
+  const closed = [];
   const search = loadTsx('frontend/src/features/workshop/communities-search.ts', {
-    stubs: { './community-scope': { goToCommunity: (slug) => calls.push(slug) } },
+    stubs: { './community-scope': { closeSwitcher: () => closed.push(true) } },
   });
-  assert.equal(search.communitiesSearchStore.get().asked, 0);
-  search.openCommunitiesSearch();
-  search.openCommunitiesSearch();
-  assert.equal(search.communitiesSearchStore.get().asked, 2, 'each press is a new request');
-  assert.deepEqual(calls, [null, null]);
-  const screen = read('frontend/src/features/workshop/index.tsx');
-  assert.match(screen, /if \(!state\.open \|\| !wide \|\| asked <= answered\.current\) return undefined;/, 'answered once, on the open screen');
-  assert.match(screen, /input\.focus\(\{ preventScroll: true \}\);/);
-  assert.match(screen, /onBlur=\{\(\) => setLit\(false\)\}/, 'lit until focus leaves');
-  assert.match(screen, /placeholder=\{t\('communities:drawer\.search\.placeholder'\)\}/, 'the drawer\'s words');
-  assert.match(screen, /\{state\.tab === 'needs' \? \(/, 'v3: Needs you is its own page, not beside the list');
-  assert.match(screen, /if \(state\.tab !== 'status'\) workshopController\.setTab\('status'\);/, 'the search is at the list\'s head');
+  const had = global.window;
+  const asked = [];
+  global.window = { Home: { focusSearch: () => asked.push('search') } };
+  try {
+    search.openCommunitiesSearch();
+    search.openCommunitiesSearch();
+  } finally {
+    global.window = had;
+  }
+  assert.deepEqual(asked, ['search', 'search'], 'each press focuses Home\'s search');
+  assert.equal(closed.length, 2, 'and closes the switcher first');
+  const home = read('frontend/src/features/home/home.js');
+  assert.match(home, /focusSearch\(\) \{\n\s*if \(typeof App !== 'undefined' && App\.navigateHome\) App\.navigateHome\(\);[\s\S]*?document\.getElementById\('home-search-input'\);[\s\S]*?input\.focus\(/);
+  // The Communities screen's own search is gone with its list.
+  assert.doesNotMatch(read('frontend/src/features/workshop/index.tsx'), /id="workshop-search"|communitiesSearchStore/);
 });
 
 test('the width: one block on every desktop window, from 768px; the phone\'s bar and the header\'s switcher below it', () => {
@@ -128,7 +141,7 @@ test('the width: one block on every desktop window, from 768px; the phone\'s bar
   // where the sidebar holding the same things is 212px.
   assert.equal(SIDEBAR_ROWS_QUERY, '(min-width: 768px)');
   const css = read('public/css/app.css');
-  assert.match(css, /\.platform-rail-communities,\n\.platform-rail-conversations,\n\.platform-tab-all-glyph,\n\.platform-tab-all-label,\n\.platform-tab-all-votes,\n\.platform-rail-pinned \{\n  display: none;\n\}/,
+  assert.match(css, /\.platform-rail-communities,\n\.platform-tab-all-glyph,\n\.platform-tab-all-label,\n\.platform-tab-all-votes,\n\.platform-rail-pinned \{\n  display: none;\n\}/,
     'nothing of it is drawn outside the block');
   const at = css.indexOf('@media (min-width: 768px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
   assert.ok(at > 0, 'the block');
@@ -144,7 +157,7 @@ test('the width: one block on every desktop window, from 768px; the phone\'s bar
   // The header's name: the switcher on a phone, a name beside the sidebar.
   const header = read('frontend/src/features/header/header-title.tsx');
   assert.match(header, /const appSwitch = communityPage && !sidebarRows;/);
-  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen' && !sidebarRows;/);
+  assert.doesNotMatch(header, /allAppsSwitcher/, 'the Communities screen\'s switcher left with its list (One Home, #6361)');
   // The tab's own name follows what it shows.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /\? \(sidebarRows \? undefined : communitiesAriaLabel\(scoped, votes\)\)/);
@@ -154,7 +167,7 @@ test('the width: one block on every desktop window, from 768px; the phone\'s bar
   assert.doesNotMatch(read('frontend/src/Shell.tsx'), /SectionColumn|platform-section-column/);
 });
 
-test('the apps: none apart from their communities; Pinned, above them, only while something is pinned', () => {
+test('the apps: none apart from their communities; the pinned group, above them under Recents, only while something is pinned', () => {
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.doesNotMatch(bar, /StripApps/, 'no Pinned and Recent apps sections');
   const src = read('frontend/src/features/nav/rail-pinned.tsx');
@@ -162,10 +175,13 @@ test('the apps: none apart from their communities; Pinned, above them, only whil
   assert.match(src, /useHiddenClass\(ref, items\.length === 0 && !drop\);/);
   const css = read('public/css/app.css');
   assert.match(css, /\.platform-rail-pinned:not\(\.hidden\) \{\n    display: flex;/, 'drawn in the block once shown');
-  assert.equal(message('core:rail.pinned'), 'Pinned');
+  // One Home (#6361): one Recents heading over the pinned group and the
+  // rest; the rest's own heading hides while the group carries it.
+  assert.equal(message('core:rail.pinned'), 'Recents');
+  assert.match(css, /#platform-rail-pinned:not\(\.hidden\) \+ #platform-rail-communities > \.platform-rail-head \{ display: none; \}/);
 });
 
-test('#6025: the community rows drag onto My apps while Home is on show', () => {
+test('#6025: the community rows drag onto Pinned apps while Home is on show', () => {
   const mod = loadTsx(RAIL);
   assert.equal(mod.RAIL_DRAG_ITEMS, '.platform-rail-community[data-rail-community]',
     'the rows, not their App line or the places under them');

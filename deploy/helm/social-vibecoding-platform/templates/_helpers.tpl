@@ -155,6 +155,7 @@ administrative connection and a psql).
 {{- end -}}
 
 {{- define "social-vibecoding-platform.validate" -}}
+{{- include "social-vibecoding-platform.databaseRoleValidate" . -}}
 {{- if .Values.enabled -}}
   {{- if and .Values.platform.web.serviceAccountName (not .Values.platform.conductor.enabled) -}}
     {{- fail "platform.web.serviceAccountName needs platform.conductor.enabled: with the conductor off the platform Pods do its work, as social-platform-runtime" -}}
@@ -229,6 +230,9 @@ administrative connection and a psql).
         {{- fail "secrets.previewDatabasePassword must be non-empty and URL-safe when previewPostgresql is enabled" -}}
       {{- end -}}
     {{- end -}}
+  {{- end -}}
+  {{- if and .Values.platform.enabled .Values.platform.conductor.enabled .Values.secrets.create .Values.config.gitHost.url (empty .Values.secrets.gitHostReadToken) -}}
+    {{- fail "secrets.gitHostReadToken is required when the conductor and git host are enabled; provision read-only Forgejo access before rollout" -}}
   {{- end -}}
   {{- if and .Values.platform.enabled .Values.secrets.create (or (empty .Values.secrets.githubAppId) (empty .Values.secrets.githubPrivateKey)) -}}
     {{- fail "secrets.githubAppId and secrets.githubPrivateKey are required when platform is enabled" -}}

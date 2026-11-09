@@ -57,9 +57,8 @@ import { GroupedList, ListRow, SectionHeader, rowSeparator } from '@/components/
 import {
   AppWindowIcon, BellIcon, BookmarkIcon, BookmarkSolidIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon,
   CompassIcon, DescriptionIcon, EyeIcon, GlobeIcon, InfoCircleIcon, LightBulbIcon, LinkIcon, LockIcon,
-  PhonePlusIcon, ShieldCheckIcon, SparklesIcon, SunIcon, TerminalIcon, UserIcon, WalletIcon,
+  PhonePlusIcon, SearchIcon, ShieldCheckIcon, SparklesIcon, SunIcon, TerminalIcon, UserIcon, WalletIcon,
 } from '@/components/ui/icons';
-import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
@@ -377,20 +376,29 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
       setQuery('');
     }
   };
+  // THE SHELL'S SEARCH FIELD (overnight audit W05, 1 Nov 2026): the white
+  // pill with its glyph that Messages and the Communities screen draw
+  // (`.messages-search` in app.css), not the grey boxed form field, which
+  // read as disabled and was the one search in the shell without a glyph.
+  // `settings-filter` drops the list's own margins; the hosts space it.
   return (
-    <Input
-      id={id}
-      type="search"
-      data-settings-filter=""
-      aria-label={t('settings:nav.filter.field')}
-      placeholder={t('settings:nav.filter.field')}
-      autoComplete="off"
-      spellCheck={false}
-      aria-keyshortcuts={FILTER_SHORTCUT_KEYS}
-      value={query}
-      onChange={(e) => setQuery(e.currentTarget.value)}
-      onKeyDown={onKeyDown}
-    />
+    <div className="messages-search settings-filter">
+      <SearchIcon className="messages-search-glyph w-5 h-5" aria-hidden="true" />
+      <input
+        id={id}
+        type="search"
+        className="messages-search-input"
+        data-settings-filter=""
+        aria-label={t('settings:nav.filter.field')}
+        placeholder={t('settings:nav.filter.field')}
+        autoComplete="off"
+        spellCheck={false}
+        aria-keyshortcuts={FILTER_SHORTCUT_KEYS}
+        value={query}
+        onChange={(e) => setQuery(e.currentTarget.value)}
+        onKeyDown={onKeyDown}
+      />
+    </div>
   );
 }
 
@@ -463,7 +471,7 @@ export function RecentSearches({ items, setQuery, variant }: {
   };
   return (
     <div data-settings-recent="" className={desktop ? 'mb-1' : 'mb-5'}>
-      <div className={desktop ? 'flex items-baseline justify-between gap-2 pr-3' : 'flex items-baseline justify-between gap-2 pr-4'}>
+      <div className={desktop ? 'flex items-baseline justify-between gap-2 pe-3' : 'flex items-baseline justify-between gap-2 pe-4'}>
         <SectionHeader className={desktop ? NAV_HEADING : 'px-4 pb-1.5'}>{t('settings:nav.filter.recent.heading')}</SectionHeader>
         <button
           type="button"
@@ -519,10 +527,10 @@ const NAV_HEADING = 'px-3 pb-1';
 const MENU_ROW = 'settings-menu-row min-h-[44px] py-2 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors';
 // The sidebar's filter hits: the row's own class string, unhighlighted, with
 // room for the matched parts under the label.
-const HIT_ROW = 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800';
+const HIT_ROW = 'settings-nav-item block w-full text-start rounded-lg px-3 py-2 text-sm font-medium transition-colors text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800';
 const HIT_PARTS = 'block text-xs font-normal text-zinc-500 dark:text-zinc-400';
 // The Sign out hit: a hit row in the button's own red, an action and not a page.
-const SIGN_OUT_HIT_ROW = 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors text-red-700 dark:text-red-400 hover:bg-red-500/10';
+const SIGN_OUT_HIT_ROW = 'settings-nav-item block w-full text-start rounded-lg px-3 py-2 text-sm font-medium transition-colors text-red-700 dark:text-red-400 hover:bg-red-500/10';
 const SIGN_OUT_TITLE = 'font-normal text-red-700 dark:text-red-400';
 // #5995: a row's count, in muted words; a settled state gets no colour.
 const NAV_STATUS = 'shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400';
@@ -715,19 +723,19 @@ function GroupHeading({ group, className, phone }: {
   return (
     <div className="flex items-end">
       <SectionHeader className={cn('min-w-0 flex-1', className)}>{group.name}</SectionHeader>
-      <button {...fold} className={cn(CONTROL, 'mb-0.5 mr-1 h-6 w-6')}>{chevron('h-3.5 w-3.5')}</button>
+      <button {...fold} className={cn(CONTROL, 'mb-0.5 me-1 h-6 w-6')}>{chevron('h-3.5 w-3.5')}</button>
     </div>
   );
 }
 
 // The phone heading's button: it keeps the heading's small caps (a button
 // does not inherit text-transform) and puts the words on the heading's line.
-const PHONE_FOLD = 'flex min-h-[44px] w-full items-end gap-2 pb-1.5 text-left uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
+const PHONE_FOLD = 'flex min-h-[44px] w-full items-end gap-2 pb-1.5 text-start uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
 
 // The sidebar's pin strip: over the row's trailing edge, on the plane colour
 // so a long name runs under it, shown while the row is pointed at or holds
 // the keyboard (always, on a screen with no pointer that hovers).
-const NAV_CONTROLS = 'absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-[color:var(--dc-sheet-solid)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100';
+const NAV_CONTROLS = 'absolute end-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-[color:var(--dc-sheet-solid)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100';
 
 /**
  * The desktop sidebar. `className` is NOT rendered on the <nav> — it is a
@@ -808,7 +816,7 @@ export function SettingsNavDesktop() {
 }
 
 /**
- * The phone's level-1 menu. Empty on desktop — `md:hidden` on the host is
+ * The phone's level-1 menu. Empty on desktop — `lg:hidden` on the host is
  * what hides it there, and `mobile: null` is what keeps it empty; both, so
  * that a viewport change without a repaint still cannot show two navs.
  */
@@ -822,7 +830,7 @@ export function SettingsMobileMenu() {
   const signOutHit = matchesSignOut(query);
   const filtering = query.trim() !== '';
   return (
-    <div id="settings-mobile-menu-host" className="md:hidden">
+    <div id="settings-mobile-menu-host" className="lg:hidden">
       {mobile ? (
         <div className="px-1 pb-4">
           <FilterField id="settings-filter-mobile" query={query} setQuery={setQuery} hits={hits} signOutHit={signOutHit} />
@@ -901,7 +909,7 @@ export function SettingsMobileMenu() {
                   // #5997: the pin (and a pinned row's arrows) beside the row,
                   // always shown on a phone, where nothing hovers.
                   return group.key ? (
-                    <div key={item.key} className={cn('relative flex items-center pr-1', rowSeparator({ inset: 'text' }))} data-settings-row={item.key}>
+                    <div key={item.key} className={cn('relative flex items-center pe-1', rowSeparator({ inset: 'text' }))} data-settings-row={item.key}>
                       {row}
                       <RowControls item={item} place={place} count={group.items.length} hostId="settings-mobile-menu-host" phone />
                     </div>
@@ -915,4 +923,28 @@ export function SettingsMobileMenu() {
       )}
     </div>
   );
+}
+
+/**
+ * THE PAGE'S OWN NAME at the head of the pane (overnight audit W05, 1 Nov
+ * 2026), from lg up, where the sidebar is beside it. A page of several parts
+ * (Account is Profile, Sign-in and Delete account) opened under the first
+ * part's heading, so "Account" was lit in the list while the pane said
+ * "Profile", and three headings of the same large size stood in one page.
+ * Now the page is named once, large, and its parts' headings step down
+ * (app.css `.settings-page-title`). Drawn only for a page of several parts:
+ * a one-part page's own heading already is its name. Below lg the header
+ * names the page (Settings._syncChrome), so this stays hidden there.
+ *
+ * Nothing until the nav's first paint, which is the prerender's empty pane.
+ */
+export function SettingsPageTitle() {
+  const { desktop } = useStoreState(settingsNavStore) as NavState;
+  let label = '';
+  for (const group of desktop || []) {
+    const hit = group.items.find((item) => item.active);
+    if (hit) { label = hit.label; break; }
+  }
+  if (!label) return null;
+  return <h2 className="settings-page-title" data-settings-page-title="">{label}</h2>;
 }

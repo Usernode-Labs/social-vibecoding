@@ -30,7 +30,9 @@ export function botVoiceServices({ config, pool }: Deps): Record<string, WorkHan
       leaseMs: 120 * 1000,
       async run({ input, key }): Promise<Json> {
         const turnKey = `${placeKey(Number(input.appId), input.place)}#${key}`;
-        const out = await voice().runTurn(pool, config, {
+        // The one entry (thread-bot.js, step 5): the place's thread kind.
+        const out = await legacy('services/thread-bot').answer(pool, config, {
+          kind: legacy('services/bot-profiles').kindOfPlace(input.place),
           appId: Number(input.appId), place: input.place, through: Number(input.through) || 0, sorry: !!input.sorry, turnKey,
         });
         return { outcome: out?.outcome ?? null, throughId: out?.throughId ?? null, replyId: out?.replyId ?? null };
@@ -44,6 +46,7 @@ export function botVoiceServices({ config, pool }: Deps): Record<string, WorkHan
       async run({ input }): Promise<Json> {
         const out = await voice().actOnOffer(pool, config, {
           offerId: Number(input.offerId), userId: Number(input.userId), choice: String(input.choice), key: String(input.key),
+          rows: Array.isArray(input.rows) ? input.rows : null,
           gaveUp: !!input.gaveUp,
         });
         return (out || null) as Json;

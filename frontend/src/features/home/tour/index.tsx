@@ -33,7 +33,7 @@
  *     ./tour-steps.ts carries the whole argument;
  *   * the steps after it shut the menu through `Improve.close()`, the
  *     controller's own close path and never a write into its DOM, then point
- *     at the Messages tab, where Homeroom bot is, and the Me tab, whose
+ *     at Homeroom bot's own tab and the Me tab, whose
  *     screen holds Settings, where the tour can be replayed.
  *
  * ── The island rules, and how each is kept ────────────────────────────
@@ -258,7 +258,9 @@ const NO_HOLE_DIM = ['bg-zinc-950/60', 'dark:bg-zinc-950/75'] as const;
 // highlighted control cannot be pressed there.
 const SPOT = 'hidden absolute rounded-xl ring-2 ring-violet-500 dark:ring-violet-400 '
   + 'shadow-[0_0_0_200vmax_black] shadow-zinc-950/60 dark:shadow-zinc-950/75';
-const CARD = 'absolute w-[340px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-zinc-200 '
+// At most the float box (app.css THE USABLE BOX: the window less the Duo's
+// column) less the 12px a side the placement keeps.
+const CARD = 'absolute w-[340px] max-w-[calc(var(--platform-float-w)-1.5rem)] rounded-2xl border border-zinc-200 '
   + 'dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-xl focus:outline-none '
   + 'pointer-events-auto';
 // The card while its step's target settles: laid out and measurable, and
@@ -444,16 +446,16 @@ function backToTopOfHome(): void {
 }
 
 /**
- * #5528: Finish ends the tour ON the Communities page, the one its first card
- * pointed at. The same address the Communities tab opens (`tab-bar.tsx`, and
- * `outer-level.tsx` navigates the same way): a plain hash assignment, which
- * pushes a history entry, so Back returns to Home. Not the community-scope
- * setter (`goToCommunity` with null), which would reset the tab's chosen
- * community scope and forget the resumable Workshop view; the tour changes
- * neither.
+ * #5528: Finish ends the tour ON the communities its first card pointed at:
+ * Home's Pinned communities since One Home (#6361), brought into view
+ * (Home.showCommunities), where it was the Communities page. Not the
+ * community-scope setter (`goToCommunity` with null), which would reset the
+ * tab's chosen community scope and forget the resumable Workshop view; the
+ * tour changes neither.
  */
 function goToCommunities(): void {
-  if (window.location.hash !== '#communities') window.location.hash = '#communities';
+  const home = (window as unknown as { Home?: { showCommunities?: () => void } }).Home;
+  home?.showCommunities?.();
 }
 
 /**
@@ -976,16 +978,11 @@ export function OnboardingTour() {
     clearStep(userId);
     setConfirming(false);
     setOpen(false);
-    // #5528: Finish's landing is the Communities page, and the hash change
-    // reports that screen itself; reporting Home first would log a
-    // navigation that did not happen.
-    if (ended === 'finish') {
-      goToCommunities();
-      return;
-    }
-    // The steps may have scrolled Home; hand the viewer back the top of the
-    // page they started on.
-    backToTopOfHome();
+    // #5528: Finish's landing is Home's Pinned communities; Skip hands the
+    // viewer back the top of the page they started on (the steps may have
+    // scrolled it). Either way the screen under the tour is Home.
+    if (ended === 'finish') goToCommunities();
+    else backToTopOfHome();
     // Back on the screen under the tour: the next step of the path (#3369).
     (window as any).App?._renotifyNavigation?.();
   }, [userId]);
@@ -1095,7 +1092,7 @@ export function OnboardingTour() {
             >
               {t('onboarding:tour.skip')}
             </Button>
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ms-auto flex items-center gap-2">
               <Button
                 id="home-tour-back"
                 type="button"

@@ -15,6 +15,10 @@
 //   * same-origin stylesheets that fail, answer 204/205, or come back empty;
 //   * a document that renders nothing visible at all.
 //
+// A page the runner loaded again is judged by its retry, not its first
+// attempt: a first load that read nothing while a retry rendered is a pass
+// with a note, while a retry that is blank too still fails.
+//
 // This module folds those readings into ONE row. No dapp.json setting reaches
 // it — `allowConsoleErrors` included — because the point is a floor the app
 // cannot talk itself below.
@@ -55,12 +59,53 @@ function readingOf(frame) {
 }
 
 // Pure. `frames` are visuals.parseTests records. Returns null when no frame
-// carried a reading, else { passed, reason }.
+// carried a reading, else { passed, reason }, plus `note` when a page read
+// blank on its first load and rendered on a retry.
 function summarize(frames) {
+  const list = Array.isArray(frames) ? frames : [];
+  const primaries = new Map();
+  const retriesOf = new Map();
+  for (const f of list) {
+    if (!f || typeof f !== 'object') continue;
+    if (Number.isInteger(f.retryOf)) {
+      if (!retriesOf.has(f.retryOf)) retriesOf.set(f.retryOf, []);
+      retriesOf.get(f.retryOf).push(f);
+    } else if (Number.isInteger(f.index)) {
+      primaries.set(f.index, f);
+    }
+  }
+
+  // A page that was loaded again is judged by its latest retry that carried
+  // a reading: the retry is the page's second opinion, so a first attempt
+  // that read nothing does not fail the row when the page rendered the
+  // second time. A retry whose primary is not in this run is a reading of
+  // its own, so nothing is silently dropped.
   const readings = [];
-  for (const f of Array.isArray(frames) ? frames : []) {
-    const r = readingOf(f);
-    if (r) readings.push({ path: typeof f.path === 'string' && f.path ? f.path : '/', r });
+  const recovered = [];
+  for (const f of list) {
+    if (!f || typeof f !== 'object') continue;
+    const isRetry = Number.isInteger(f.retryOf);
+    if (isRetry && primaries.has(f.retryOf)) continue; // folded into its primary
+    const path = typeof f.path === 'string' && f.path ? f.path : '/';
+    const own = readingOf(f);
+    let effective = own;
+    if (!isRetry) {
+      // Only the primary this index resolves to takes the retries; a second
+      // frame with the same index (an older capture's duplicate) keeps its
+      // own reading.
+      const retries = primaries.get(f.index) === f ? (retriesOf.get(f.index) || []) : [];
+      let latest = null;
+      for (const r of retries) {
+        if (!readingOf(r)) continue;
+        if (!latest || r.index > latest.index) latest = r;
+      }
+      if (latest) effective = readingOf(latest);
+      if (own && own.blank === true && effective && effective.blank !== true && !recovered.includes(path)) {
+        recovered.push(path);
+      }
+    }
+    if (!effective) continue;
+    readings.push({ path, r: effective });
   }
   if (!readings.length) return null;
 
@@ -77,7 +122,14 @@ function summarize(frames) {
     }
     if (r.blank === true && !blankPages.includes(path)) blankPages.push(path);
   }
-  if (!sheetProblems.size && !blankPages.length) return { passed: true, reason: null };
+  if (!sheetProblems.size && !blankPages.length) {
+    if (recovered.length) {
+      const listed = recovered.slice(0, MAX_LISTED).join(', ');
+      const more = recovered.length > MAX_LISTED ? ` and ${recovered.length - MAX_LISTED} more` : '';
+      return { passed: true, reason: null, note: `blank on its first load, rendered on retry: ${listed}${more}` };
+    }
+    return { passed: true, reason: null };
+  }
 
   const parts = [];
   const sheets = [...sheetProblems.values()];
@@ -134,6 +186,10 @@ async function maybeBuildRenderHealthRow({ pool, appId, sessionId = null, frames
       log.info('render-health', 'Render health failed', {
         sessionId, appId, graduated, reason: verdict.reason.slice(0, 200),
       });
+    } else if (verdict.note) {
+      // A recovered pass is still a pass; the note only keeps the pattern
+      // traceable in the platform's own logs.
+      log.info('render-health', 'Render health passed on retry', { sessionId, appId, note: verdict.note });
     }
     return shapeOutcome({ ...verdict, graduated });
   } catch (err) {

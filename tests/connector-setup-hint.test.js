@@ -139,6 +139,7 @@ test('every read tool returns through readResult and no others do', () => {
     'get_challenge_event', 'get_challenge_scoring', 'get_challenge_template',
     'get_change', 'get_check_output', 'get_checkout_status', 'get_connector_guidance', 'get_discussion',
     'get_featured_illustration', 'get_homeroom_bot',
+    'get_journey_cohorts', 'get_journey_first_mile', 'get_journey_person', 'get_journey_readings',
     'get_message',
     'get_platform_build', 'get_platform_conventions', 'get_proposal', 'get_recent_shots',
     'get_request', 'get_run_report', 'get_shots_eval', 'get_shots_eval_pair', 'get_shots_eval_shots', 'get_spec', 'get_spec_format', 'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',

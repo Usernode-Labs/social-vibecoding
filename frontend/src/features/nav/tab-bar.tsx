@@ -68,7 +68,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ChatIcon,
   CogIcon,
-  CompassIcon,
   HomeIcon,
   HomeroomBotIcon,
   Squares2X2Icon,
@@ -92,8 +91,7 @@ import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
 import { runningAppStore } from './parked-store.js';
 import { SideApps } from './side-apps';
-import { RailCommunities, useRailCommunities } from './rail-communities';
-import { RailConversations } from './rail-conversations';
+import { RAIL_COMMUNITIES, RailCommunities, useRailCommunities } from './rail-communities';
 import { RailPinned } from './rail-pinned';
 import { useSidebarRows } from './sidebar-rows';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
@@ -131,11 +129,8 @@ import { schedulePress, type PendingPress } from './tab-press';
  * own projects"). Inside a project, "Workshop" is the build tab beside its
  * hub — the one place that word is shown now.
  *
- * Discover is a compass (v3, 18 Oct 2026), on every bar alike, where it
- * kept the magnifier the app menu's `#switcher-row-discover` drew: it is
- * where you go to find something new, and a magnifier says "search", which
- * the sidebar's Communities heading and the inbox already offer. One glyph
- * a destination, whatever bar it is on.
+ * Discover was a compass tab until One Home (#6361) retired its screen:
+ * Home's Communities to join is the directory now.
  */
 // `label` is a message id (frontend/locales/en/core.json), read when the bar
 // renders so the words follow the language on screen.
@@ -151,15 +146,14 @@ const TABS = [
     href: '/',
     Icon: HomeIcon,
   },
-  // The rail's alone: app.css hides it on the phone's bar (see above).
-  { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: CompassIcon },
-  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   // #6019: the Homeroom bot's chat, which left the Messages list for a tab
   // of its own. `#homeroom-bot` opens it (app.js; `#ai`, its old address,
   // still does), and the tab is lit while it is the
   // conversation on screen (the nav store's `bot`). Its glyph is the bot's
-  // own picture in line, not a sparkle (29 Oct 2026).
+  // own picture in line, not a sparkle (29 Oct 2026). One Home (#6361) put
+  // it above Messages, on the phone's bar and the desktop sidebar alike.
   { key: 'ai' as const, label: 'core:tabs.ai', href: '#homeroom-bot', Icon: HomeroomBotIcon },
+  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
   // "You", signed in or not (N7 of the 19 Oct polish board); the accessible
   // name adds whose account it is — see tabLabel below.
@@ -352,11 +346,17 @@ function VotesBadge({ count }: { count: number }) {
  * The TEXT is React's, and it is empty at zero, so the prerender and the
  * first client render agree on an empty hidden span.
  */
-function TabBadge({ count, id = 'platform-tabs-badge', label }: {
+function TabBadge({ count, id = 'platform-tabs-badge', label, title }: {
   count: number;
   id?: string;
   /** The accessible name, already in the language on screen. */
   label: string;
+  /**
+   * What the number counts, shown as a tooltip on the number itself (#6194).
+   * Only above zero, as the badge is: at zero it is hidden and the prerender
+   * (count 0) ships no title, so the first client render still agrees.
+   */
+  title?: string;
 }) {
   const ref = useRef<HTMLSpanElement | null>(null);
   useHiddenClass(ref, count <= 0);
@@ -366,6 +366,7 @@ function TabBadge({ count, id = 'platform-tabs-badge', label }: {
       id={id}
       className="platform-tab-badge hidden"
       aria-label={label}
+      title={count > 0 ? title : undefined}
     >
       {count > 0 ? (count > 99 ? '99+' : String(count)) : ''}
     </span>
@@ -863,9 +864,96 @@ function openCommunitiesPage(): void {
   if (window.location.hash !== '#communities') window.location.hash = '#communities';
 }
 
+/**
+ * THE PHONE'S BAR IS READ IN THE ORDER IT IS SEEN (audit N01, 1 Nov 2026).
+ *
+ * The markup is the rail's order (TWO ORDERS, ONE MARKUP above), and the
+ * declared checks pin that sibling chain, so the phone's five cells are laid
+ * out with `order`. A screen reader followed the markup: Home, Messages,
+ * Homeroom bot, Communities, You, against Home, Communities, Homeroom bot,
+ * Messages, You on screen. Below 768px `aria-owns` hands the five tabs to
+ * the accessibility tree in the bar's order; the DOM, and so the chain the
+ * checks select on, is untouched. Off the phone the attribute goes, and the
+ * rail reads in its markup order as before.
+ *
+ * …AND THE TAB KEY MOVES IN IT TOO (2 Nov 2026, the owner's call after
+ * #6102). `aria-owns` reorders what a screen reader reads, not what Tab
+ * focuses, which still followed the markup. So below 768px a Tab or
+ * Shift+Tab on one of the five moves to its neighbour in the drawn order
+ * (`nextPhoneTab`). At the two ends it is left to the browser: Home is
+ * first and You last in the markup as on screen, so Tab out of You and
+ * Shift+Tab out of Home leave the bar where they always did. No tabindex is
+ * written, so the markup, the prerender and every other bar are untouched.
+ *
+ * Written from an effect, never rendered: the prerender has no width, and a
+ * first client render that differed from it would be a hydration mismatch.
+ * The Duo's side strip is left alone: its Apps section is the bar's first
+ * child, which this list would not reach.
+ */
+// ONE HOME (#6361): four tabs, in the markup's own order now; the
+// Communities tab (#platform-tab-workshop) is drawn on neither bar.
+export const PHONE_TAB_ORDER = [
+  'platform-tab-home',
+  'platform-tab-ai',
+  'platform-tab-messages',
+  'platform-tab-me',
+] as const;
+
+export function phoneReadingOrder(phone: boolean, sideStrip: boolean): string | null {
+  return phone && !sideStrip ? PHONE_TAB_ORDER.join(' ') : null;
+}
+
+/** The tab a Tab (or, `back`, a Shift+Tab) on `id` moves to in the phone's drawn order, or null at an end. */
+export function nextPhoneTab(id: string, back: boolean): string | null {
+  const at = (PHONE_TAB_ORDER as readonly string[]).indexOf(id);
+  if (at === -1) return null;
+  return PHONE_TAB_ORDER[at + (back ? -1 : 1)] ?? null;
+}
+
+function usePhoneReadingOrder(barRef: React.RefObject<HTMLElement | null>): void {
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar || typeof window === 'undefined' || !window.matchMedia) return undefined;
+    const mq = window.matchMedia('(max-width: 767.98px)');
+    const root = document.documentElement;
+    const apply = () => {
+      const owns = phoneReadingOrder(mq.matches, root.hasAttribute('data-side-strip'));
+      if (owns) bar.setAttribute('aria-owns', owns);
+      else bar.removeAttribute('aria-owns');
+    };
+    // Tab and Shift+Tab, in the drawn order (the note above).
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (!phoneReadingOrder(mq.matches, root.hasAttribute('data-side-strip'))) return;
+      const from = (event.target as HTMLElement | null)?.closest?.('a[id], button[id]');
+      let id = from && bar.contains(from) ? from.id : '';
+      while (id) {
+        id = nextPhoneTab(id, event.shiftKey) || '';
+        const to = id ? document.getElementById(id) : null;
+        if (to && to.getClientRects().length > 0) {
+          event.preventDefault();
+          to.focus();
+          return;
+        }
+      }
+    };
+    apply();
+    mq.addEventListener?.('change', apply);
+    bar.addEventListener('keydown', onKey);
+    const watch = typeof MutationObserver === 'function' ? new MutationObserver(apply) : null;
+    watch?.observe(root, { attributes: true, attributeFilter: ['data-side-strip'] });
+    return () => {
+      mq.removeEventListener?.('change', apply);
+      bar.removeEventListener('keydown', onKey);
+      watch?.disconnect();
+    };
+  }, [barRef]);
+}
+
 export function PlatformTabs() {
   const barRef = useRef<HTMLElement | null>(null);
   const t = useMessages();
+  usePhoneReadingOrder(barRef);
   // `true` is what the prerendered document ships: the bar is present and
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
@@ -1149,7 +1237,14 @@ export function PlatformTabs() {
             */}
             {key === 'messages' ? <TabBadge count={messages} label={t('core:tabs.unreadConversations')} /> : null}
             {/* #6019: the bot's chat has something unread. */}
-            {key === 'ai' ? <TabBadge count={ai} id="platform-tabs-ai-badge" label={t('core:tabs.unreadAi')} /> : null}
+            {key === 'ai' ? (
+              <TabBadge
+                count={ai}
+                id="platform-tabs-ai-badge"
+                label={t('core:tabs.unreadAi')}
+                title={t('core:tabs.unreadAiTitle', { count: ai })}
+              />
+            ) : null}
             {/*
                 THE CHANNELS' COUNT, on Communities. A project's channel lives
                 on its hub now, not in Messages, so "something was said in a
@@ -1172,10 +1267,13 @@ export function PlatformTabs() {
               app.css shows these instead of the label and the tab's own
               badge there; a hidden element is not in the accessible name, so
               each width's name is what it shows.
+              Overnight audit Y04: the count is said only when it IS more
+              than the rows above list. "All 2 communities" under the same
+              two rows (or "All 1 community") said nothing but a stray number.
           */}
           {key === 'workshop' ? (
             <span className="platform-tab-all-label">
-              {allCount > 0 ? t('core:rail.all', { count: allCount }) : t('core:rail.allPlain')}
+              {allCount > RAIL_COMMUNITIES ? t('core:rail.all', { count: allCount }) : t('core:rail.allPlain')}
             </span>
           ) : null}
           {key === 'workshop' && allVotes > 0 ? (
@@ -1184,11 +1282,10 @@ export function PlatformTabs() {
             </span>
           ) : null}
         </a>,
-        // v3 (18 Oct 2026): THE CONVERSATIONS, nested under Messages while
-        // its screen is up in the sidebar of rows (./rail-conversations.tsx).
-        // The element is there at every width and on every screen, empty
-        // when shut, so the bar's sibling order is one order.
-        key === 'messages' ? <RailConversations key="conversations" /> : null,
+        // Messages nested its five most recent conversations under its row
+        // here (v3, 18 Oct 2026) until the sidebar kept its nesting for
+        // communities alone (7 Nov 2026): the inbox draws its own list
+        // beside an open conversation.
       ])}
       {/*
           SETTINGS, ONE CLICK FROM THE RAIL'S FOOT (#3120). A cog beside the

@@ -27,6 +27,7 @@ import { MACHINE as CREATION, appCreation, creationKey } from './app-creation/ma
 import { appCreationServices } from './app-creation/services.ts';
 import { bootRelease } from './release/boot.ts';
 import { MACHINE as PREVIEW, preview, sessionKey as previewKey } from './preview/machine.ts';
+import { requestWake as askPreviewWake } from './preview/wake.ts';
 import { PREPARE_LEASE_MS, previewServices } from './preview/services.ts';
 import { LIVE as SHOTS_LIVE, MACHINE as SHOTS, sessionKey as shotsKey, shots } from './shots/machine.ts';
 import { shotsServices } from './shots/services.ts';
@@ -65,6 +66,11 @@ import { workerStop } from './worker-stop/machine.ts';
 import { workerStopServices, workerInterruptServices } from './worker-stop/services.ts';
 import { workerInterrupt, requestWorkerInterrupt as askWorkerInterrupt } from './worker-stop/interrupt.ts';
 import { requestWorkerStop as askWorkerStop } from './worker-stop/request.ts';
+// Homeroom bot parity, P3 and P9: a look into a project's code, and an investigation of days.
+import { botLook } from './bot-look/machine.ts';
+import { botLookServices } from './bot-look/services.ts';
+import { botInvestigation } from './bot-investigation/machine.ts';
+import { botInvestigationServices } from './bot-investigation/services.ts';
 import { MACHINE as PLATFORM_OPERATION, WORK as OPERATION_WORK, operationKey, platformOperation, requested as operationRequested, singleFlight } from './platform-operation/machine.ts';
 import type { Request as OperationRequest } from './platform-operation/machine.ts';
 import { platformOperationServices } from './platform-operation/services.ts';
@@ -83,11 +89,16 @@ const pg = createRequire(import.meta.url)('pg');
 
 let runtime: Runtime | null = null;
 let kernelPool: Pool & { end(): Promise<void> } | null = null;
+// The security-clock pull-in `startWorkflowLoops` started, owned so
+// `stopWorkflow` can end it: it queries the workflow pool between rounds,
+// and must not still be doing so after that pool is closed.
+let pullIn: { abort: AbortController; done: Promise<void> } | null = null;
 let log: Logger | null = null;
 // The configuration the runtime started with (the release's own steps read it).
 let appConfig: any = null;
-// Each machine's event types in this build (reaskRefused reads them).
-let knownEvents: Map<string, Set<string>> = new Map();
+// Each machine's event types in this build, and those web may append
+// (reaskRefused reads them).
+let knownEvents: Map<string, { types: Set<string>; web: ReadonlySet<string> }> = new Map();
 
 // What the ownership triggers read, synced on every boot: enabled:<machine>
 // for every machine (wf_holds reads it). Every machine is the only path for
@@ -95,11 +106,18 @@ let knownEvents: Map<string, Set<string>> = new Map();
 // from outside it.
 const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS, PROPOSAL, QUEUE, CAMPAIGN, MAIN_CHECK, BOT_REQUEST];
 
+// A login that may not write them (web's: services/database-role-grants.js
+// restrictWebWorkflow) leaves them to the conductor, whose boot checks it can.
 export async function syncSettings(pool: Pool): Promise<void> {
   for (const name of MACHINES) {
-    await pool.query(
-      `INSERT INTO wf_settings (key, value) VALUES ($1, '1')
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [`enabled:${name}`]);
+    try {
+      await pool.query(
+        `INSERT INTO wf_settings (key, value) VALUES ($1, '1')
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [`enabled:${name}`]);
+    } catch (err) {
+      if ((err as { code?: string }).code === '42501') return;
+      throw err;
+    }
   }
 }
 
@@ -111,18 +129,29 @@ export async function syncSettings(pool: Pool): Promise<void> {
 // statement: the row lock serialises two processes booting at once. Every
 // serving process records it (releaseServing): a merge recovery records late
 // reads it.
+//
+// #6233: each entry also says whether that boot was the WHOLE rollout
+// (`rollout_complete`). Off Kubernetes one server serves, so it is. On
+// Kubernetes a release replaces its servers one at a time and this boot is
+// one of them: production carries the change everywhere only when the
+// Deployment reports the rollout complete (the platform-rollout clock job),
+// so the build alone is not Live there. Reading it off the entry rather than
+// this process's own environment keeps the merge machine's decision in the
+// record it reads, which a test can write.
 async function recordBooted(pool: Pool): Promise<void> {
   const sha = String(process.env.GIT_SHA || '').toLowerCase();
   if (!/^[0-9a-f]{40}$/.test(sha)) return;
+  const whole = !process.env.KUBERNETES_SERVICE_HOST;
   await pool.query(
     `UPDATE apps a SET booted_shas = (
        SELECT COALESCE(jsonb_agg(y.e ORDER BY y.at DESC), '[]'::jsonb) FROM (
          SELECT x.e, x.at FROM (
            SELECT DISTINCT ON (e->>'sha') e, (e->>'at')::timestamptz AS at
-             FROM jsonb_array_elements(jsonb_build_array(jsonb_build_object('sha', $1::text, 'at', now())) || a.booted_shas) e
+             FROM jsonb_array_elements(jsonb_build_array(
+                    jsonb_build_object('sha', $1::text, 'at', now(), 'rollout_complete', $2::boolean)) || a.booted_shas) e
             ORDER BY e->>'sha', (e->>'at')::timestamptz DESC) x
           ORDER BY x.at DESC LIMIT 10) y)
-      WHERE a.self_hosted = TRUE`, [sha]);
+      WHERE a.self_hosted = TRUE`, [sha, whole]);
 }
 
 // What browsers should hear, published on the WebSocket bus's channel in
@@ -251,8 +280,10 @@ export async function startWorkflow(config: any, opts: { loops: boolean; preview
   const trials = shotsEval(evalDeps(config));
   // People's turns: a conversation's, a change's (turn/).
   const turns = turnMachine();
-  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks, workerRelease(), workerStop(), workerInterrupt(), platformOperation()];
-  knownEvents = new Map(machines.map((m) => [m.name, new Set(m.events.keys())]));
+  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks, workerRelease(), workerStop(), workerInterrupt(), platformOperation(),
+    // Homeroom bot parity, P3 and P9.
+    botLook(), botInvestigation()];
+  knownEvents = new Map(machines.map((m) => [m.name, { types: new Set(m.events.keys()), web: m.web }]));
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...appCreationServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
@@ -266,6 +297,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean; preview
     ...platformOperationServices({ pool: appPool, config }),
     ...releaseServices({ adoptions: ADOPTIONS }),
     ...clockServices(CLOCK_JOBS, { config, pool: appPool, previewRetirement: opts.previewRetirement }),
+    ...botLookServices({ config, pool: appPool }), ...botInvestigationServices({ config, pool: appPool }),
   };
   const started = createPlatformRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, release: bootRelease(),
@@ -274,6 +306,13 @@ export async function startWorkflow(config: any, opts: { loops: boolean; preview
     // read on the runtime's own pool, never waiting behind the app's.
     newest: () => newestBuild(workflowPool),
     publish: (q, pushes) => publishPushes(q, pushes, { badges: !!config.mobilePushEnabled }),
+    // One work state per request and change (services/work-state.js): an
+    // accepted event of a machine that moves one stores it again, in the
+    // event's own transaction, and pushes what changed.
+    afterAccepted: {
+      wants: (info) => legacy('services/work-state').wants(info),
+      run: (q, info) => legacy('services/work-state').afterTransition(q, info),
+    },
   });
   try {
     await started.start({ slots: true });
@@ -301,7 +340,13 @@ export async function releaseServing(pool: Pool): Promise<void> {
   const warn = (what: string) => (err: Error) =>
     (log ?? legacy('services/logger')).warn('workflow', what, { message: err.message });
   await recordBooted(pool).catch(warn('Could not record the booted build'));
-  if (runtime) await releaseBooted(pool).catch(warn('Could not report the running release'));
+  // #6233: on Kubernetes a release replaces its servers one at a time, so
+  // one process booting says nothing about production carrying the change
+  // everywhere. The platform-rollout job marks merges Live once the web
+  // Deployment reports the rollout finished. Off Kubernetes (one server,
+  // local work) this boot is the whole rollout.
+  const onKubernetes = !!process.env.KUBERNETES_SERVICE_HOST;
+  if (runtime && !onKubernetes) await releaseBooted(pool).catch(warn('Could not report the running release'));
 }
 
 // The build this process runs (release/boot.ts): GIT_SHA, or, on a build
@@ -329,8 +374,18 @@ export async function startWorkflowLoops(): Promise<void> {
     await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: {
       job: job.name, everyMs: job.everyMs, firstDueAt: new Date().toISOString(), onDemand: false,
     } }, { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
-    void pullInSecurityClock(job, release).catch((err: Error) =>
-      log!.warn('workflow', 'Could not pull the preview retirement clock in', { message: err.message }));
+    // Boot never waits for it, but it is not left loose either: it keeps the
+    // runtime and pool it started with, and `stopWorkflow` aborts it and
+    // waits for `done` before closing the pool. One already running is kept.
+    if (!pullIn) {
+      const abort = new AbortController();
+      const done = pullInSecurityClock(job, release, runtime, kernelPool!, abort.signal)
+        .catch((err: Error) => log!.warn('workflow', 'Could not pull the preview retirement clock in', { message: err.message }))
+        // Done on its own (the proof is there): a later loops start may pull
+        // in again. A stop has already cleared it, and awaits `done` itself.
+        .finally(() => { if (pullIn?.abort === abort) pullIn = null; });
+      pullIn = { abort, done };
+    }
   }
   await runtime.append(RELEASE, releaseKey(release), { type: 'Booted', payload: { release } },
     { requestKey: `booted:${release}`, source: { kind: 'system', name: 'boot' } });
@@ -354,28 +409,52 @@ export async function startWorkflowLoops(): Promise<void> {
 const PULL_IN_FOR_MS = 180_000;
 const PULL_IN_EVERY_MS = 2_000;
 const PULL_IN_INTERVAL_MS = 1_000;
-async function pullInSecurityClock(job: { name: string; everyMs: number }, release: string): Promise<void> {
+
+// A pause between pull-in rounds that ends at once when the runtime stops, so
+// a stop never waits out its two seconds. Still unref'd: a pull-in nobody is
+// waiting for never holds the process open.
+function pullInPause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) { resolve(); return; }
+    const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
+    const timer = setTimeout(done, ms);
+    timer.unref?.();
+    signal.addEventListener('abort', done, { once: true });
+  });
+}
+
+async function pullInSecurityClock(job: { name: string; everyMs: number }, release: string,
+  rt: Runtime, pool: Pool, signal: AbortSignal): Promise<void> {
   const startup = legacy('services/platform-preview-startup');
   const key = clockKey(job.name);
   const me = randomUUID().slice(0, 8);
-  const arm = (everyMs: number, requestKey: string) => runtime!.append(CLOCK, key,
+  const arm = (everyMs: number, requestKey: string) => rt.append(CLOCK, key,
     { type: 'Arm', payload: { job: job.name, everyMs, onDemand: false } },
     { requestKey, source: { kind: 'system', name: 'release' } });
+  // The runtime this pull-in belongs to has ended or been replaced (a
+  // restart), or `stopWorkflow` has ended it: nothing more to say on it.
+  const stopped = () => signal.aborted || runtime !== rt;
   const deadline = Date.now() + PULL_IN_FOR_MS;
-  for (let n = 0; runtime && Date.now() < deadline; n += 1) {
-    const proven = await startup.proven(appConfig, kernelPool);
-    const { rows: [clock] } = await kernelPool!.query(
+  for (let n = 0; !stopped() && Date.now() < deadline; n += 1) {
+    const proven = await startup.proven(appConfig, pool);
+    if (stopped()) return;
+    const { rows: [clock] } = await pool.query(
       `SELECT state, (data->>'everyMs')::bigint AS every,
               (data->>'due')::timestamptz > clock_timestamp() + make_interval(secs => $3) AS later
          FROM wf_instances WHERE machine = $1 AND key = $2`,
       [CLOCK, key, PULL_IN_EVERY_MS / 1000]);
+    if (stopped()) return;
     if (!clock) return;
-    if (!proven && clock.state === 'waiting' && clock.later) await arm(PULL_IN_INTERVAL_MS, `pull-in:${release}:${me}:${n}`);
+    if (!proven && clock.state === 'waiting' && clock.later) {
+      await arm(PULL_IN_INTERVAL_MS, `pull-in:${release}:${me}:${n}`);
+      if (stopped()) return;
+    }
     if (Number(clock.every) !== job.everyMs || (!proven && clock.state === 'waiting' && clock.later)) {
       await arm(job.everyMs, `pull-back:${release}:${me}:${n}`);
+      if (stopped()) return;
     }
     if (proven) return;
-    await new Promise((resolve) => setTimeout(resolve, PULL_IN_EVERY_MS).unref?.());
+    await pullInPause(PULL_IN_EVERY_MS, signal);
   }
 }
 
@@ -600,8 +679,10 @@ export async function askClockRun(job: string, admin: { id: number; username?: s
 // asked once. A type this build knows cannot have been refused by it. Only
 // refusals since this build's rollout began (its release instance, less a
 // margin for web processes serving before it) are asked: an older one was
-// another rollout's, and its moment has passed. The reask-refused clock runs
-// it, in the newest build only.
+// another rollout's, and its moment has passed. One web appended is asked
+// again only if web may append it (machine `web`): asked again, it is the
+// conductor's, which the pipeline would no longer refuse. The reask-refused
+// clock runs it, in the newest build only.
 const LIVE_SECONDS = 45;
 const REASK_LOOKBACK_HOURS = 48;
 const REASK_ROLLOUT_MARGIN_MINUTES = 15;
@@ -619,19 +700,21 @@ async function olderBuildServes(db: Queryable): Promise<boolean> {
 export async function reaskRefused(db: Queryable): Promise<{ waiting?: string; asked: number }> {
   if (!runtime) return { waiting: 'runtime', asked: 0 };
   if (await olderBuildServes(db)) return { waiting: 'older_build', asked: 0 };
-  const pairs = [...knownEvents].flatMap(([m, types]) => [...types].map((t) => [m, t] as const));
+  const pairs = [...knownEvents].flatMap(([m, { types, web }]) => [...types].map((t) => [m, t, web.has(t)] as const));
   if (!pairs.length) return { asked: 0 };
   const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
   const { rows } = await db.query(
     `SELECT e.id, e.machine, e.key, e.app_id, e.type, e.payload, e.source, e.actor
        FROM wf_events e
-       JOIN unnest($1::text[], $2::text[]) AS k(machine, type) ON k.machine = e.machine AND k.type = e.type
+       JOIN unnest($1::text[], $2::text[], $8::boolean[]) AS k(machine, type, web) ON k.machine = e.machine AND k.type = e.type
       WHERE e.status = 'processed' AND e.result = 'rejected' AND e.reason = 'unknown_event'
+        AND (e.producer <> 'web' OR k.web)
         AND e.processed_at > GREATEST(now() - make_interval(hours => $3),
               (SELECT r.created_at - make_interval(mins => $6) FROM wf_instances r WHERE r.machine = $5 AND r.key = $7))
         AND NOT EXISTS (SELECT 1 FROM wf_events r WHERE r.caused_by = e.id AND r.request_key = 'reask:' || e.id)
       ORDER BY e.id LIMIT $4`,
-    [pairs.map((p) => p[0]), pairs.map((p) => p[1]), REASK_LOOKBACK_HOURS, REASK_PAGE, RELEASE, REASK_ROLLOUT_MARGIN_MINUTES, releaseKey(own ?? '')]);
+    [pairs.map((p) => p[0]), pairs.map((p) => p[1]), REASK_LOOKBACK_HOURS, REASK_PAGE, RELEASE, REASK_ROLLOUT_MARGIN_MINUTES, releaseKey(own ?? ''),
+      pairs.map((p) => p[2])]);
   for (const e of rows) {
     await runtime.append(e.machine, e.key, { type: e.type, payload: e.payload }, {
       requestKey: `reask:${e.id}`, source: e.source, actor: e.actor ?? null, appId: e.app_id ?? null, causedBy: Number(e.id),
@@ -756,6 +839,14 @@ export async function botNotOwed(db: Db, p: { appId: number; issueNumber: number
   await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
     type: 'NotOwed', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), quiet: !!p.quiet } as any,
   }, { requestKey: p.key, source: BOT_SOURCE('refresh'), appId: Number(p.appId) });
+}
+
+// #6377: the payer's week has room again (a weekly limit raised or cleared, a
+// charge refunded): what was held for its building time may look again now.
+export async function botAllowanceFreed(db: Db, p: { appId: number; issueNumber: number; key: string }): Promise<void> {
+  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'AllowanceFreed', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber) } as any,
+  }, { requestKey: p.key, source: BOT_SOURCE('allowance'), appId: Number(p.appId) });
 }
 
 // A person wrote on a request's thread (in the statement's transaction).
@@ -889,6 +980,17 @@ export async function askTurn(db: Queryable, p: {
     { requestKey: `ask:${p.key}:${p.turnId}`, source: { kind: 'route', name: 'turn' }, appId: p.appId ?? null });
 }
 
+// A turn instance left `running` with no run item behind it (its result was
+// refused, so nothing will end it): the turn-leftovers clock appends the Tick
+// its own timer would have appended at MAX_TURN_MS. `turnId` keeps a pass
+// that races the real result from ending the turn that follows, and makes a
+// second pass a replay.
+export async function endOrphanTurn(db: Queryable, p: { key: string; turnId: string }): Promise<void> {
+  await appendEvent(db, TURN, p.key,
+    { type: 'Tick', payload: { turnId: p.turnId } as any },
+    { requestKey: `orphan:${p.key}:${p.turnId}`, source: sys('turn-leftovers') });
+}
+
 // A person's Stop of the turn running on `key`: the machine stops its coding
 // agent by its journal; the turn hears it from its claim (stamped first).
 export async function stopTurn(p: { key: string; by: string | null }): Promise<void> {
@@ -1011,13 +1113,14 @@ function tapAnswer(out: EventOutcome, refusals: Map<string, { status: number; er
 
 // A tap under one of the voice's offers (routes/chat.js): decided once in
 // the place its message is in; the act is that place's work.
-export async function tapVoiceOffer(p: { appId: number; offerId: number; messageId: number; userId: number; choice: string }) {
+export async function tapVoiceOffer(p: { appId: number; offerId: number; messageId: number; userId: number; choice: string; rows?: string[] | null }) {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   const { rows: [m] } = await kernelPool!.query('SELECT thread_type, thread_ref FROM chat_messages WHERE id = $1 AND app_id = $2', [p.messageId, p.appId]);
   const place = m ? placeOf(m.thread_type ? { type: m.thread_type, ref: m.thread_ref } : null) : null;
   if (!place) return { ok: false, status: 404, error: 'Nothing to decide here.' };
   const out = await runtime.appendAndWait(BOT_VOICE, voiceKey(p.appId, place),
-    { type: 'OfferTapped', payload: { appId: p.appId, place: place as any, offerId: p.offerId, userId: p.userId, choice: p.choice } },
+    { type: 'OfferTapped', payload: { appId: p.appId, place: place as any, offerId: p.offerId, userId: p.userId, choice: p.choice,
+      ...(Array.isArray(p.rows) ? { rows: p.rows } : {}) } },
     { requestKey: `tap-offer:${p.offerId}:${p.userId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-offer' }, actor: `user:${p.userId}`, appId: p.appId });
   return tapAnswer(out, VOICE_TAP);
 }
@@ -1219,8 +1322,14 @@ export function workflowWorkRunning(): number {
 
 export async function stopWorkflow(): Promise<void> {
   const r = runtime;
+  // The pull-in goes first: it queries the workflow pool between rounds, so
+  // the pool is ended only once it has stopped.
+  const pulled = pullIn;
+  pullIn = null;
+  pulled?.abort.abort();
   runtime = null;
   await r?.stop();
+  await pulled?.done;
   await kernelPool?.end();
   kernelPool = null;
 }
@@ -1430,6 +1539,7 @@ function failed(outcome: EventOutcome): Reply | null {
 
 const RESULT_KEYS = new Map([
   ['rename', 'renamed'], ['secret_change', 'secretChanged'], ['close_issue', 'issueClosed'],
+  ['reopen_issue', 'issueReopened'],
   ['maintenance_campaign', 'campaignStarted'], ['featured_illustration', 'illustrationChanged'],
 ]);
 
@@ -1526,19 +1636,72 @@ export async function parentMerged(p: { sessionId: number; appId: number; parent
       requestKey: `parent-merged:${p.sessionId}:${p.parentId}:${Math.floor(Date.now() / 3600000)}` });
 }
 
-// The platform's own app now runs `sha` (its release booting): every merge
-// of it still waiting to go live hears it, and checks whether that build
-// contains it. (A child app's deploys are app-delivery's, which tells the
-// merges waiting on it.)
-async function productionDeployed(appId: number, sha: string): Promise<void> {
+// The platform's own app now runs `sha` (its whole rollout finished): every
+// merge of it still waiting to go live hears it, and checks whether that
+// build contains it. (A child app's deploys are app-delivery's, which tells
+// the merges waiting on it. Off Kubernetes a single serving process is the
+// whole rollout, so its boot reports this too.)
+export async function productionDeployed(appId: number, sha: string, nonce: string | null = null): Promise<void> {
   if (!runtime || !/^[0-9a-f]{40}$/i.test(String(sha || ''))) return;
+  // `nonce` names this rollout (the Deployment's own transition time): a
+  // second rollout of the same build is a new report, while the job's next
+  // look at the same one is not. Absent (a boot off Kubernetes) it is the
+  // build alone.
+  const key = `deployed:${sha.toLowerCase()}${nonce ? `:${nonce}` : ''}`;
   const { rows } = await kernelPool!.query(
-    `SELECT key FROM wf_instances
-      WHERE machine = $1 AND app_id = $2 AND state IN ('delivering', 'deploy_failed') AND data->>'role' = 'merge'`,
-    [MERGE, appId]);
+    `SELECT w.key FROM wf_instances w
+      WHERE w.machine = $1 AND w.app_id = $2 AND w.state IN ('delivering', 'deploy_failed')
+        AND w.data->>'role' = 'merge'
+        AND NOT EXISTS (SELECT 1 FROM wf_events e
+                         WHERE e.machine = w.machine AND e.key = w.key AND e.request_key = $3
+                           AND (e.status = 'pending' OR e.result <> 'rejected'))`,
+    [MERGE, appId, key]);
   for (const r of rows) {
     await runtime.append(MERGE, r.key, { type: 'Deployed', payload: { sha: sha.toLowerCase() } },
-      { requestKey: `deployed:${sha.toLowerCase()}`, source: { kind: 'system', name: 'deploy' }, appId });
+      { requestKey: key, source: { kind: 'system', name: 'deploy' }, appId });
+  }
+}
+
+// #6233: a complete rollout that no longer carries a Live merge rolled it
+// back. `sha` is the build every serving process now runs; the merges after
+// its merge order (services/release-watch.js mergeOrder) are not in it, and
+// neither are the changes they carried. Each live instance hears RolledBack,
+// and the merge machine clears its live_at: the change says Going live
+// again, rather than staying Live because an earlier release served it.
+// Never throws: the caller logs it.
+export async function productionRolledBack(appId: number, sha: string, nonce: string | null = null): Promise<void> {
+  if (!runtime || !/^[0-9a-f]{40}$/i.test(String(sha || ''))) return;
+  const releaseWatch = legacy('services/release-watch');
+  // A build no merge made has no boundary: nothing can be compared, so
+  // nothing is ruled out (the same reading release-watch takes).
+  const order = await releaseWatch.mergeOrder(kernelPool!, appId, sha);
+  if (!order) return;
+  const key = `rolled-back:${sha.toLowerCase()}${nonce ? `:${nonce}` : ''}`;
+  const { rows } = await kernelPool!.query(
+    `WITH rolled AS (
+       SELECT w.key
+         FROM wf_instances w
+         JOIN chat_sessions cs
+           ON cs.id = NULLIF(substring(w.key from '^session:([0-9]+)$'), '')::int
+        WHERE w.machine = $1 AND w.app_id = $2 AND w.state = 'live'
+          AND (COALESCE(cs.merged_at, cs.created_at), cs.id) > ($3::timestamptz, $4::int)
+     ), candidates AS (
+       SELECT key FROM rolled
+       UNION
+       SELECT w.key
+         FROM wf_instances w
+        WHERE w.machine = $1 AND w.state = 'live'
+          AND NULLIF(w.data->'includedIn'->>'sessionId', '')::int IN (
+            SELECT NULLIF(substring(r.key from '^session:([0-9]+)$'), '')::int FROM rolled r)
+     )
+     SELECT c.key FROM candidates c
+      WHERE NOT EXISTS (SELECT 1 FROM wf_events e
+                         WHERE e.machine = $1 AND e.key = c.key AND e.request_key = $5
+                           AND (e.status = 'pending' OR e.result <> 'rejected'))`,
+    [MERGE, appId, new Date(order.at).toISOString(), order.id, key]);
+  for (const r of rows) {
+    await runtime.append(MERGE, r.key, { type: 'RolledBack', payload: { sha: sha.toLowerCase() } },
+      { requestKey: key, source: { kind: 'system', name: 'deploy' }, appId });
   }
 }
 
@@ -1633,6 +1796,12 @@ export async function reportUnreachable(appId: number, requestKey: string): Prom
     { requestKey, source: { kind: 'system', name: 'visit' }, appId });
 }
 
+export async function reportAppWake(appId: number, requestKey: string): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(DELIVERY, appKey(appId), { type: 'WakeRequested', payload: { appId } },
+    { requestKey, source: { kind: 'system', name: 'app-wake' }, appId });
+}
+
 // main at a commit production does not run (the main-drift clock, keyed by
 // the movement: what production ran when it was seen, and the commit; an
 // admin's Check for updates, by hand): what app delivery decided. Main
@@ -1695,6 +1864,11 @@ export async function submitRevision(r: { sessionId: number; appId: number; head
   return runtime!.appendAndWait(PREVIEW, previewKey(r.sessionId), { type: 'RevisionSubmitted', payload: {
     sessionId: r.sessionId, head: r.head, source: r.source, trigger: r.trigger ?? null, carryFrom: r.carryFrom ?? null,
   } }, { requestKey: `rev:${r.head}:${r.source}:${randomUUID()}`, source: sys(r.source), appId: r.appId, waitMs: 2000 });
+}
+
+// Web asks a conductor to wake the existing runtime and waits for its receipt.
+export function requestPreviewWake(r: Parameters<typeof askPreviewWake>[2], opts?: Parameters<typeof askPreviewWake>[3]) {
+  return askPreviewWake(running(), kernelPool!, r, opts);
 }
 
 // A person asks for the preview (ensure: the Preview click; deploy).
@@ -2203,9 +2377,26 @@ export async function adminEvent(
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });
 }
 
+// Releasing writes the instance and its held events, which only a deciding
+// process may (src/db/migrations/0011-workflow-producers.sql): the route asks
+// a conductor for it (services/workflow-release-operation.js), which reads the
+// admin's authority again in the release's own transaction.
 export async function adminRelease(machineName: string, key: string, mode: 'retry' | 'skip', admin: { id: number }) {
   if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
-  const out = await runtime.release(machineName, key, { mode, actor: `user:${admin.id}` });
-  if (out.reason === 'not_authorized') throw new AdminActionError(403, 'Current admin access required');
-  return out;
+  const out = await runOperation({ op: 'workflow.release', appId: null, userId: admin.id, input: { machine: machineName, key, mode } },
+    { waitMs: 15000 });
+  if (out.status === 'pending') return { status: 'pending' };
+  if (out.status === 'done') {
+    const result = out.result as { ok?: boolean; status?: number; error?: string } & Record<string, Json>;
+    if (result?.ok === false) throw new AdminActionError(result.status ?? 403, result.error ?? 'Current admin access required');
+    const { ok: _ok, ...released } = result;
+    return released;
+  }
+  if (out.status === 'refused') throw new AdminActionError(409, `The release was refused (${out.reason})`);
+  throw new AdminActionError(500, out.error?.message ?? 'The release failed');
+}
+
+// On a conductor: the release an admin asked for.
+export async function releaseFaulted(machineName: string, key: string, mode: 'retry' | 'skip', userId: number) {
+  return running().release(machineName, key, { mode, actor: `user:${userId}` });
 }

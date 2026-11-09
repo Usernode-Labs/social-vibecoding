@@ -18,7 +18,9 @@
  * bottom of the thread panel, ./general-chat.tsx to the bottom of the chat
  * pane, and the two read-only notices are worded and placed differently
  * enough that sharing them would be a change rather than a de-duplication.
- * What is shared is everything between the bar's edges.
+ * What is shared is everything between the bar's edges. The bar itself is
+ * the chat foot's (@/components/ui/chat ChatComposerBar), the one Messages'
+ * composer sits in, so its padding is decided in one place for both.
  *
  * The LISTENERS are still attached by the module, on the line after the mount:
  * submit, input, keydown, the paperclip, the paste and drag-and-drop wiring,
@@ -34,10 +36,12 @@
  */
 
 import { Button } from '@/components/ui/button';
+import { ChatStatusLine } from '@/components/ui/chat';
 import { ArrowUpIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 
 import { DropOverlay } from '../attachments/file-drag';
+import { BOT_CHIP_CLASS } from './bot-request';
 import {
   PendingStrip,
   type PendingAttachmentView,
@@ -91,6 +95,13 @@ const IDS = {
 export function useComposerSlot(scope: ComposerScope): ComposerSlot {
   return useStoreState(composerStore)[scope];
 }
+
+/** #6228: the status line's words for each state of the bot's reply line. */
+const BOT_STATUS_WORDS = {
+  will_read: 'chat:group.botStatus.willRead',
+  reading: 'chat:group.botStatus.reading',
+  quiet: 'chat:group.botStatus.quiet',
+} as const;
 
 /**
  * "↩ Replying to @alice" over the quoted line (#15).
@@ -161,15 +172,42 @@ function AttachStrip({ scope, items }: { scope: ComposerScope; items: PendingAtt
 /**
  * The one-line slot under the messages — who is typing, or the reconnect
  * notice. `*View` is the pure half, which is what the tests render.
+ *
+ * It is the chat foot's status line (@/components/ui/chat ChatStatusLine),
+ * so its size, colour and inset are the ones Messages' typing line has, and
+ * it takes no room while it is empty (1 November 2026). The callers passed
+ * their own Tailwind (`h-5` in the chat pane and the topic thread, `h-4` in
+ * the boxed one, three different insets), which held the line open while it
+ * said nothing and made each copy a little different.
  */
-export function StatusLineView(
-  { scope, className, status }: { scope: ComposerScope; className: string; status: string },
-) {
-  return <div id={IDS[scope].typing} className={className}>{status}</div>;
+export function StatusLineView({ scope, status, bot = null }: {
+  scope: ComposerScope;
+  status: string;
+  bot?: ComposerSlot['bot'];
+}) {
+  const t = useMessages('chat');
+  // Typing, or the reconnect notice, takes the line while it says something;
+  // the bot's line comes back afterwards.
+  const words = !status && bot
+    ? t(bot.state === 'reading' && bot.mine
+      ? 'chat:group.botStatus.readingYours'
+      : BOT_STATUS_WORDS[bot.state])
+    : '';
+  return (
+    <ChatStatusLine id={IDS[scope].typing}>
+      {status || (bot ? (
+        <span className={BOT_CHIP_CLASS} data-bot-status={bot.state}>
+          {bot.state === 'quiet' ? null : <span aria-hidden="true">👀</span>}
+          <span>{words}</span>
+        </span>
+      ) : null)}
+    </ChatStatusLine>
+  );
 }
 
-export function StatusLine({ scope, className }: { scope: ComposerScope; className: string }) {
-  return <StatusLineView scope={scope} className={className} status={useComposerSlot(scope).status} />;
+export function StatusLine({ scope }: { scope: ComposerScope }) {
+  const slot = useComposerSlot(scope);
+  return <StatusLineView scope={scope} status={slot.status} bot={slot.bot} />;
 }
 
 /** The three module-fed rows above the form, in their shipped order. */
@@ -208,11 +246,16 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
   // #4065: the drop zone, while a file is held over this composer or its
   // messages. The module's tracker publishes the flag; it lies over the card,
   // and takes no pointer events, so the drop still lands on the form.
-  const dragging = !!useComposerSlot(scope).dragging;
+  const slot = useComposerSlot(scope);
+  const dragging = !!slot.dragging;
   const dropZone = dragging ? <DropOverlay /> : null;
+  // Audit C06: with nothing to send, Send looks as Messages' own does, faded
+  // (app.css reads the empty field off :placeholder-shown, which follows
+  // the module's own writes to it too). Files staged are something to send.
+  const files = slot.attachments.length ? '' : undefined;
   if (messages) {
     return (
-      <form id={ids.form} className="messages-composer-card">
+      <form id={ids.form} className="messages-composer-card" data-gc-files={files}>
         <div className="flex items-end gap-1.5">
           <div className="messages-composer-add">
             <button type="button" id={ids.attach} className="messages-composer-action" aria-label={t('chat:group.composer.page.attachFiles')} title={t('chat:group.composer.page.attachFiles')}>
@@ -246,7 +289,7 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
   // already, and a card in a card is the thing the language avoids.
   if (fill) {
     return (
-      <form id={ids.form} className="gc-composer-card flex items-end gap-1.5">
+      <form id={ids.form} className="gc-composer-card flex items-end gap-1.5" data-gc-files={files}>
         <button
           type="button"
           id={ids.attach}

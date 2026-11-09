@@ -1,6 +1,7 @@
 import { createInstance, type TOptions } from 'i18next';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { matchLanguage, resolveLanguage, type Catalogs } from './locale';
+import { dateLocale, matchLanguage, resolveLanguage, type Catalogs } from './locale';
+import { directionFor } from './direction';
 
 /**
  * The language runtime, built from one set of catalogs.
@@ -71,7 +72,7 @@ function writeStored(key: string, value: string | null) {
     if (value) localStorage.setItem(key, value); else localStorage.removeItem(key);
   } catch { /* private mode: the choice lasts for this page */ }
 }
-function deviceLanguages(): readonly string[] {
+export function deviceLanguages(): readonly string[] {
   if (typeof navigator === 'undefined') return [];
   return navigator.languages?.length ? navigator.languages : [navigator.language].filter(Boolean);
 }
@@ -374,8 +375,14 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     activeLanguage = language;
     preference = value;
     await i18n.changeLanguage(language);
-    if (typeof document !== 'undefined' && document.documentElement.lang !== language) {
-      document.documentElement.lang = language;
+    if (typeof document !== 'undefined') {
+      const root = document.documentElement;
+      if (root.lang !== language) root.lang = language;
+      // The layout follows the language: `dir` is what app.css and the
+      // direction-aware geometry read. Set before announce() so a listener
+      // that measures the page sees the new direction.
+      const direction = directionFor(language);
+      if (root.dir !== direction) root.dir = direction;
     }
     if (changed) announce();
     // The language is on screen: lift the head's hold, and remember it so
@@ -530,6 +537,8 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     changeLanguage,
     applySessionLanguage,
     getLanguage: () => activeLanguage,
+    /** The locale dates are written in (#6103): this language, this device's region. */
+    getDateLocale: () => dateLocale(activeLanguage, deviceLanguages()),
     getPreference: () => preference,
     isSignedIn: () => signedIn,
     getNotice: () => notice,

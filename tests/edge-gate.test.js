@@ -53,6 +53,7 @@ const state = {
   redeemed: new Set(),
   blocked: new Set(),          // `${uid}:${appId}`
   customHostQueries: [],
+  touched: [],                 // [sessionId, slug]: a preview's use, noted
 };
 function resetState() {
   state.liveSessions = new Set([`${SID}:${MEMBER_ID}`, `${SID}:${OUTSIDER_ID}`]);
@@ -136,6 +137,12 @@ const fakePool = {
       state.customHostQueries.push(params[0]);
       const found = CUSTOM_HOSTS[params[0]];
       return { rows: found && found.status === 'live' ? [{ app_id: found.app.id, slug: found.app.slug, name: found.app.slug }] : [] };
+    }
+    // #6157: a request that reaches a preview moves its session's
+    // last_activity_at (services/preview-sleep.js touchActivity).
+    if (/UPDATE chat_sessions cs SET last_activity_at = now\(\)/.test(sql)) {
+      state.touched.push([params[0], params[2]]);
+      return { rows: [] };
     }
     throw new Error(`edge-gate stub: unexpected query: ${sql}`);
   },
@@ -259,6 +266,21 @@ test('a preview inherits the production app’s visibility', async () => {
   const priv = await gate({ host: `privapp--s42.${DOMAIN}` });
   assert.equal(priv.status, 302);
   assert.ok(isAuthorize(priv.headers.location));
+});
+
+test('#6157 a request that reaches a preview is a use of it, noted at most once a minute; a production app\'s is not', async () => {
+  require('../src/services/preview-sleep')._resetForTest();
+  state.touched = [];
+  assert.equal((await gate({ host: `pubapp--s42.${DOMAIN}` })).status, 200);
+  assert.equal((await gate({ host: `pubapp--s42.${DOMAIN}`, uri: '/app.js' })).status, 200);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(state.touched, [[42, 'pubapp']], 'once, for its own app\'s session: a preview in use does not sleep');
+  assert.equal((await gate({ host: PUB_HOST })).status, 200);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(state.touched.length, 1);
+  const refused = await gate({ host: `privapp--s43.${DOMAIN}` });
+  assert.equal(refused.status, 302);
+  assert.equal(state.touched.length, 1, 'a request the gate refuses is not a use');
 });
 
 test('an unknown slug or a foreign host is 404', async () => {
@@ -607,6 +629,23 @@ test('asked by the Kubernetes gate, a 2xx names the app’s Service', async () =
 });
 
 // ── Custom domains (#4405) ─────────────────────────────────────────────
+
+test('authorization precedes production waking, and previews never ask the production wake path', async (t) => {
+  const calls = [];
+  t.mock.method(require('../src/services/production-sleep'), 'access', async (_pool, id, uri) => {
+    calls.push({ id, uri }); return { eligible: true, ready: false, waking: true };
+  });
+  const extra = { 'X-Usernode-Gate': 'kubernetes' };
+  const denied = await gate({ host: PRIV_HOST, uri: '/api/write', method: 'POST', extra });
+  assert.notEqual(denied.status, 200); assert.deepEqual(calls, []);
+  const publicApp = await gate({ host: PUB_HOST, uri: '/api/read', extra });
+  assert.equal(publicApp.status, 503);
+  assert.equal(publicApp.headers['retry-after'], '5');
+  assert.equal(publicApp.headers['x-usernode-runtime-sleep'], 'waking');
+  assert.deepEqual(calls, [{ id: PUB_APP_ID, uri: '/api/read' }]);
+  await gate({ host: `pubapp--s42.${DOMAIN}`, extra });
+  assert.equal(calls.length, 1);
+});
 
 test('a live custom domain is the app’s production address: the same gate, the same sign-in', async () => {
   require('../src/services/app-domains').resetCachesForTest();

@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { CheckIcon } from '@/components/ui/icons';
+import { arrowStep } from '../../lib/i18n/direction';
 import { useMessages } from '../../lib/i18n/react';
 import { useDialog } from './use-dialog';
 
@@ -32,8 +33,7 @@ function ReasonList({ reasons, value, onPick, labelId }: {
   const t = useMessages('dialogs');
   const focusable = reasons.some(([key]) => key === value) ? value : reasons[0]?.[0];
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const step = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1
-      : event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 0;
+    const step = arrowStep(event.key);
     if (!step) return;
     event.preventDefault();
     const at = Math.max(0, reasons.findIndex(([key]) => key === value));
@@ -56,7 +56,10 @@ function ReasonList({ reasons, value, onPick, labelId }: {
           onClick={() => onPick(key)}
           className="py-3"
           title={t(label)}
-          titleClassName="font-medium"
+          // Overnight audit D05: the reasons wrap. The first and most serious
+          // ("Child safety: a minor at risk, or sexual content involving a
+          // minor") is the longest, and a truncated row hid what it meant.
+          titleClassName="font-medium whitespace-normal"
           chevron={false}
           trailing={value === key
             ? <CheckIcon className="h-5 w-5 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden="true" />

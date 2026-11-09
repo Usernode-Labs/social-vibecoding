@@ -10,6 +10,7 @@ import { newsIcon } from './bot-shared';
 import { endedWords, OpenState, ProjectTile, RequestTag, SettledLine, trayEnded, trayNow, type StripRow } from './bot-strip';
 import { tracksByKey } from './bot-track';
 import { useBotWork } from './bot-work';
+import { openRequestPage, requestPageOf } from './request-page';
 import { openThreadAt } from './store';
 import type { ConversationMessage, HomeroomBotMeta, HomeroomBotWork } from './types';
 
@@ -23,18 +24,21 @@ import type { ConversationMessage, HomeroomBotMeta, HomeroomBotWork } from './ty
  *            Needs your answer · 3 updates
  *
  * the project's tile, the request's number and title and where it stands.
- * Every row opens the same way: a tap opens the request's story in the pane
- * beside the chat, at the message. That is its thread (the message's
- * `threadRootId`, or the card itself); for news from before threads, which
- * has no thread, it is the oldest piece, which the pane draws with the
- * pieces after it (./bot-request.ts storyRootIn). Inside, everything is whole.
+ * Every row opens the same way: a tap opens the request's own page, its
+ * public thread (31 Oct 2026, ./request-page.ts): beside the bot page on a
+ * desktop, else the page. It used to open a thread of this chat's own
+ * beside it, a second view of the same request that nothing else listed.
  *
- * A row says at a glance whether it is still open. One the tray holds open
- * is two lines with a full tile, and a badge in amber while it waits on the
- * person (the words under the title stay grey: amber words read as an
- * error). One
- * that is done, or that the tray no longer holds, is SETTLED: one line, a
- * small tile, and how it ended (a green check when it went live).
+ * What still asks something here (a question and its answers, a plan and
+ * its Build it, a button to press) is not folded into a line: it is drawn
+ * whole where it was said (asksInChat), so it is answered in the chat.
+ *
+ * A row says at a glance whether it is still open. One whose request is
+ * still under way (its track, bot-work.tsx) is two lines with a full tile,
+ * and a badge in amber while it waits on the person (the words under the
+ * title stay grey: amber words read as an error). One that is done, or that
+ * has no track any more, is SETTLED: one line, a small tile, and how it
+ * ended (a green check when it went live).
  *
  * The bot's conversational replies, its offers (File it / Not now), its
  * hellos and anything about no request stay ordinary messages
@@ -73,6 +77,8 @@ const KIND_WORDS: Record<string, NewsWords> = {
   paused: { key: 'messages:bot.news.onHold', need: false },
   held_proposals_per_app: { key: 'messages:bot.news.slots', need: false },
   held_proposals_total: { key: 'messages:bot.news.slots', need: false },
+  // #6156: the project's builds are all under way: it waits for the bot's turn.
+  held_builds_per_app: { key: 'messages:bot.news.builds', need: false },
   merged: { key: 'messages:bot.news.live', need: false },
   request_closed: { key: 'messages:bot.news.doneElsewhere', need: false },
   request_taken: { key: 'messages:bot.news.taken', need: false },
@@ -90,6 +96,7 @@ function momentWords(moment: string, said: string): NewsWords | null {
     case 'stopped': return KIND_WORDS.build_failed;
     case 'on_hold':
       if (said === 'taken') return KIND_WORDS.request_taken;
+      if (said === 'builds') return KIND_WORDS.held_builds_per_app;
       return said === 'slots' ? KIND_WORDS.held_proposals_per_app : KIND_WORDS.allowance;
     case 'live': return KIND_WORDS.merged;
     case 'done_elsewhere': return KIND_WORDS.request_closed;
@@ -148,23 +155,23 @@ export interface NewsStatus {
   settled: boolean;
   /** How it ended, in the activity cards' words ('live', 'closed', …), when known. */
   ended: string | null;
-  /** The tray's row for it while it is open: what its badge shows. */
+  /** Its request's row (from its track) while it is open: what its badge shows. */
   row: StripRow | null;
 }
 
-/** What a request ended as, read from the last news about it when the tray has no record of it. */
+/** What a request ended as, read from the last news about it when its track has no record of it. */
 const KIND_ENDINGS: Record<string, string> = {
   merged: 'live', request_closed: 'done_elsewhere',
   build_failed: 'build_failed', first_version_failed: 'build_failed', preview_failed: 'build_failed', followup_failed: 'build_failed',
 };
 
 /**
- * Pure: a row's second line, and how it is drawn. A request the tray still
- * holds says where it stands NOW, in the drawer's own words, in amber only
- * while it waits on the person; done today, it is settled. One the tray no
- * longer holds is settled too, and keeps its message's words, an ask among
- * them told in the past ("Asked you a question"): whatever it asked has moved
- * on. Before the tray's first read, the message's words as they rang, and
+ * Pure: a row's second line, and how it is drawn. A request with a track
+ * says where it stands NOW, in its stage's own words, in amber only while
+ * it waits on the person; done today, it is settled. One with no track any
+ * more is settled too, and keeps its message's words, an ask among them told
+ * in the past ("Asked you a question"): whatever it asked has moved on.
+ * Before the tracks' first read, the message's words as they rang, and
  * nothing is settled yet.
  */
 export function newsStatus(meta: HomeroomBotMeta, now: Map<string, StripRow> | null, ended: Map<string, string> | null = null): NewsStatus {
@@ -188,11 +195,27 @@ const PAST_WORDS: Record<string, string> = {
 
 /** Pure: the request's name on a line: its title, "Plant Pal, first version", or "Request #12". */
 export function newsTitle(meta: HomeroomBotMeta): string {
-  const project = meta.appName || meta.appSlug || translate('messages:bot.job.unnamedProject');
-  if (meta.firstVersion) return translate('messages:bot.strip.firstVersion', { project });
+  const named = meta.appName || meta.appSlug;
+  const project = named || translate('messages:bot.job.unnamedProject');
+  // A project nobody can name is not named by its stand-in: its own wording.
+  if (meta.firstVersion) return named ? translate('messages:bot.strip.firstVersion', { project }) : translate('messages:bot.job.firstVersionUnnamed');
   const title = meta.requestTitle || meta.issueTitle;
   if (title) return title;
   return meta.issueNumber ? translate('messages:bot.strip.requestNumber', { number: String(meta.issueNumber) }) : project;
+}
+
+/**
+ * Pure: whether a piece of news still asks something the chat answers: a
+ * question with its answers, two at once, a plan to build, buttons to
+ * press. Such a message is drawn whole in the main chat rather than folded
+ * into its request's line, for as long as it is open. What it asks once its
+ * request has no track any more is the caller's to read (newsStatusOf):
+ * that has moved on, and is a line again.
+ */
+export function asksInChat(message: ConversationMessage): boolean {
+  const meta = metaOf(message);
+  if (!meta || message.deleted || meta.status !== 'open' || meta.replaced) return false;
+  return !!(meta.question || meta.questions?.length || meta.actions?.length || (meta.kind === 'plan' && meta.plan));
 }
 
 /** Pure: the thread a line opens, or null for a message from before threads (its story opens on its oldest piece). */
@@ -228,13 +251,17 @@ export function BotNewsLine({ message, focused = false, earlier = [], updates: u
   const meta = metaOf(message);
   if (!meta) return null;
   const status = newsStatus(meta, trayNow(work), trayEnded(work));
-  // Its story: the thread, else the oldest piece from before threads.
-  const rootId = newsThread(message) ?? (earlier[0]?.id || message.id);
   const key = requestKey(meta);
   const icon = newsIcon(work, meta.appSlug, meta.appName);
   const updates = updatesIn ?? (meta.kind === 'activity' && message.thread ? message.thread.replyCount : 0);
+  // Its story: the request's own page. News that names no project's page
+  // (sent before the bot's news named its project) opens where it is told,
+  // its thread or, from before threads, its oldest piece.
+  const page = requestPageOf(message);
+  const rootId = newsThread(message) ?? (earlier[0]?.id || message.id);
   function tap() {
-    openThreadAt(rootId, rootId === message.id ? null : message.id);
+    if (page) openRequestPage(page, message.conversationId);
+    else openThreadAt(rootId, rootId === message.id ? null : message.id);
   }
 
   return (
@@ -251,7 +278,7 @@ export function BotNewsLine({ message, focused = false, earlier = [], updates: u
       {status.settled ? (
         <button
           type="button"
-          className="flex w-full min-w-0 items-center gap-2 rounded-xl py-1 pr-1 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+          className="flex w-full min-w-0 items-center gap-2 rounded-xl py-1 pe-1 text-start hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
           data-bot-news-open="thread"
           data-bot-news-state="settled"
           onClick={tap}
@@ -267,7 +294,7 @@ export function BotNewsLine({ message, focused = false, earlier = [], updates: u
       ) : (
         <button
           type="button"
-          className="flex w-full min-w-0 items-center gap-2 rounded-xl py-1.5 pr-1 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+          className="flex w-full min-w-0 items-center gap-2 rounded-xl py-1.5 pe-1 text-start hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
           data-bot-news-open="thread"
           data-bot-news-state={status.need ? 'needs' : 'open'}
           onClick={tap}
@@ -360,7 +387,7 @@ export function SettledRun({ items, holdPlace }: {
         <button
           ref={count}
           type="button"
-          className="flex h-[30px] shrink-0 items-center gap-1 rounded-lg text-left text-[14px] font-semibold leading-5 text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
+          className="flex h-[30px] shrink-0 items-center gap-1 rounded-lg text-start text-[14px] font-semibold leading-5 text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
           aria-expanded={open}
           data-bot-settled-toggle=""
           onClick={toggle}

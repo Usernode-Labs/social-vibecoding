@@ -21,6 +21,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('module');
 
+const { previewDisplayState } = require('../src/services/staging');
+
 function makeRecordingRouter(routes) {
   const record = (method) => (path, ...handlers) => {
     routes.push({ method, path, handler: handlers[handlers.length - 1] });
@@ -90,7 +92,8 @@ function loadVotes({ row = null, gateApp = { id: 1, slug: 'demo' }, staging = fa
     }),
   });
   stub(ids.github, { isEnabled: () => false });
-  stub(ids.staging, {});
+  // The real derivation: the by-id read answers with what /promoted does (#6140).
+  stub(ids.staging, { previewDisplayState });
   stub(ids.docker, {});
   stub(ids.ws, { broadcast() {}, getReactionsForMessages: async () => ({}) });
   // The #3669 enrichment calls the real gate math (mergeGate / atLeastGate /
@@ -175,6 +178,27 @@ test('returns the merged-shaped row under { proposal }', async () => {
   assert.match(q.sql, /cs\.app_id = \$1 AND cs\.id = \$3/, 'filters by app + id');
   assert.match(q.sql, /cs\.status IN \('promoted', 'merging', 'merged'\)/, 'accepts active + merged');
   assert.deepEqual(q.params, [1, 1, 4242], 'app_id, userId, id bound');
+});
+
+// #6287: the page's Vote button asks "Still yes?" from the row it reads. The
+// single-change read must carry the viewer's vote on an earlier version,
+// exactly as the /promoted list already does; the "Your yes was on an earlier
+// version" line comes from a different read, so without this the card knew
+// about the earlier yes while its button offered a fresh "Vote".
+test('#6287: the row carries the viewer\'s vote on an earlier version', async () => {
+  const row = { id: 4242, pr_number: 88, status: 'promoted', my_vote: null, my_prior_vote: 'yes' };
+  const { routes, captured } = loadVotes({ row });
+  const { payload, statusCode } = await callById(routes, { id: 4242, user: { id: 7 } });
+  assert.equal(statusCode, 200);
+  assert.equal(payload.proposal.my_prior_vote, 'yes', 'the change page can ask "Still yes?"');
+  assert.equal(payload.proposal.my_vote, null);
+  const q = captured.calls.find((c) => /cs\.id = \$3/.test(c.sql));
+  assert.ok(q, 'by-id query issued');
+  assert.match(q.sql, /NOT COALESCE\(\(pv\.approval_epoch = cs\.approval_epoch\), FALSE\)\) as my_prior_vote/,
+    'the earlier vote is outside the current epoch');
+  assert.match(q.sql, /WHERE pv\.session_id = cs\.id AND pv\.user_id = \$2/,
+    'read for the viewer bound at \$2');
+  assert.deepEqual(q.params, [1, 7, 4242], 'app_id, userId, id bound');
 });
 
 test('unknown id 404s', async () => {
@@ -378,6 +402,62 @@ async function callChange(routes, { slug = 'demo', number, query = {}, user = { 
   );
   return { payload, statusCode };
 }
+
+// #6140: a request's page draws a change from this read alone, so its Testing
+// card's Try it comes from here (AppView._cardPreviewSpec).
+const previewColumns = (over = {}) => (sql) => (/SELECT staging_url, testing_md, testing_path/.test(sql)
+  ? [{ staging_url: null, testing_md: null, testing_path: null, can_preview: true, ...over }]
+  : undefined);
+const voteRow = (over = {}) => ({
+  id: 4242, pr_number: 88, status: 'promoted', votes_required: 2, check_state: 'passing', ...over,
+});
+
+test('#6140: a promoted row carries its preview, what to test on it, and that it can be woken', async () => {
+  const { routes, captured } = loadVotes({
+    row: voteRow(),
+    db: previewColumns({ staging_url: 'https://p.example', testing_md: 'Try the list', testing_path: '/list' }),
+  });
+  const { payload: { proposal } } = await callById(routes, { id: 4242 });
+  assert.equal(proposal.staging_url, 'https://p.example');
+  assert.equal(proposal.testing_md, 'Try the list');
+  assert.equal(proposal.testing_path, '/list');
+  assert.equal(proposal.can_preview, true);
+  assert.equal(proposal.preview_state, 'ready');
+  // The session lists' own derivation of whether a slept preview can be woken.
+  const q = captured.calls.find((c) => /SELECT staging_url, testing_md, testing_path/.test(c.sql));
+  assert.match(q.sql, /pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL\s+OR shared_at IS NOT NULL/);
+  assert.deepEqual(q.params, [4242]);
+});
+
+test('#6140: a preview that failed says so, one being built is not offered as a rebuild', async () => {
+  const failed = await callById(loadVotes({
+    row: voteRow({ check_state: 'error', check_error_detail: 'did not boot' }), db: previewColumns(),
+  }).routes, { id: 4242 });
+  assert.equal(failed.payload.proposal.preview_state, 'failed');
+  assert.equal(failed.payload.proposal.staging_error, 'did not boot');
+
+  const building = await callById(loadVotes({
+    row: voteRow({ check_state: 'pending', check_phase: 'building' }), db: previewColumns(),
+  }).routes, { id: 4242 });
+  assert.equal(building.payload.proposal.staging_building, true);
+  assert.equal(building.payload.proposal.can_preview, false, 'the spec would offer a rebuild ahead of "building"');
+
+  const asleep = await callById(loadVotes({ row: voteRow(), db: previewColumns() }).routes, { id: 4242 });
+  assert.equal(asleep.payload.proposal.staging_url, null, 'always written: the board merges this row key by key');
+  assert.equal(asleep.payload.proposal.preview_state, 'unavailable');
+  assert.equal(asleep.payload.proposal.can_preview, true);
+});
+
+test('#6140: a merged row, and an underway one, keep the shape they had', async () => {
+  for (const status of ['merged', 'active']) {
+    const { routes, captured } = loadVotes({ row: voteRow({ status }), db: previewColumns({ staging_url: 'https://p.example' }) });
+    const { payload: { proposal } } = await callById(routes, { id: 4242 });
+    assert.ok(!captured.calls.some((c) => /SELECT staging_url, testing_md/.test(c.sql)), status);
+    for (const key of ['staging_url', 'can_preview', 'testing_md', 'preview_state', 'staging_error']) {
+      assert.ok(!(key in proposal), `${status}: ${key}`);
+    }
+  }
+});
 
 test('changes/:number resolves a PR number to its session, by app and visibility', async () => {
   const { routes, captured } = loadVotes({

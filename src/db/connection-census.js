@@ -100,8 +100,12 @@ function isSaturated(census) {
  */
 async function connectionCensus(pool, { topN = 5 } = {}) {
   try {
-    const { rows } = await pool.query(
-      `SELECT current_setting('max_connections')::int AS max,
+    const split = require('../services/database-role-access').enabled();
+    const { rows } = await pool.query(split
+      ? `SELECT current_setting('max_connections')::int AS max,
+                COALESCE(sum(used), 0)::int AS used, COALESCE(sum(idle), 0)::int AS idle
+           FROM public.homeroom_connection_counts()`
+      : `SELECT current_setting('max_connections')::int AS max,
               count(*)::int AS used,
               count(*) FILTER (WHERE state = 'idle')::int AS idle
          FROM pg_stat_activity
@@ -122,7 +126,10 @@ async function connectionCensus(pool, { topN = 5 } = {}) {
     // Which databases are holding them. This is the line that names the
     // culprit: a row per preview clone, biggest first.
     const { rows: byDb } = await pool.query(
-      `SELECT datname, count(*)::int AS count
+      split
+      ? `SELECT datname, used::int AS count FROM public.homeroom_connection_counts()
+          WHERE datname IS NOT NULL ORDER BY used DESC LIMIT $1`
+      : `SELECT datname, count(*)::int AS count
          FROM pg_stat_activity
         WHERE backend_type = 'client backend' AND datname IS NOT NULL
         GROUP BY datname

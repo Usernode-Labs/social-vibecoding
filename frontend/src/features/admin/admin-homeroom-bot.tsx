@@ -85,6 +85,9 @@ interface Settings {
   // and whether a DM to the bot is read by its model.
   liveAtOnce: number;
   perPerson: number;
+  // 3 Nov 2026: how many of one project's requests are read at once, each
+  // on a triage session of its own.
+  readsPerApp?: number;
   dmChat: boolean;
   // Its voice outside the DM (homeroom-bot-voice.js), one switch per place.
   voiceSession?: boolean;
@@ -100,6 +103,10 @@ interface Settings {
   everyoneSince?: string | null;
   // The most proposals the bot keeps up for a vote at once; 0 is automatic.
   proposalCeiling?: number;
+  // #6156: projects with numbers of their own, by app id: how many builds
+  // the bot may have waiting or under way there at once, and how many of
+  // its changes may wait for votes. A number not set is the default (caps).
+  appCaps?: Record<string, { building?: number; waiting?: number }>;
 }
 
 // #3624 stage 2: one piece of work running now.
@@ -435,8 +442,14 @@ interface Payload {
     listedWaiting?: number; listedRunning?: number;
   };
   runs: Run[];
-  apps: { slug: string; name: string }[];
-  caps: { proposalsPerApp: number; proposalsTotal: number; questionsPerAppPerDay: number };
+  apps: { id?: number; slug: string; name: string }[];
+  // #6156: a project's builds (buildsPerApp) and its changes waiting for
+  // votes (proposalsPerApp) by default, and byApp, by slug, the projects
+  // with numbers of their own.
+  caps: {
+    buildsPerApp?: number; proposalsPerApp: number; proposalsTotal: number;
+    byApp?: Record<string, { appId?: number; buildsPerApp?: number; proposalsPerApp?: number }>;
+  };
   mentionOptOuts: { total: number; items: MentionOptOut[] };
   workingNow?: Working[];
   dmChat?: DmChat;
@@ -529,14 +542,18 @@ function ProposalLink({ run, children }: { run: Run; children: string }) {
 /**
  * Why a cap held a run, with the cap's own limit (the payload's caps), as
  * get_homeroom_bot says it (connector-data.js heldWords). The caps act now:
- * a held run is held, not one that would have been. Pure.
+ * a held run is held, not one that would have been. #6156: the project's
+ * builds and its proposals waiting for votes are said apart, each with the
+ * project's own number where it has one (caps.byApp, by its slug `app`).
+ * Pure.
  */
-export function heldLine(cap: string | null | undefined, caps?: Partial<Payload['caps']> | null): string {
+export function heldLine(cap: string | null | undefined, caps?: Partial<Payload['caps']> | null, app?: string | null): string {
   if (!cap) return '';
   const n = (v: unknown) => (Number.isInteger(v) ? `${v} ` : '');
-  if (cap === 'proposals_per_app') return `held: ${n(caps?.proposalsPerApp)}proposals open on this app`;
+  const own = (app && caps?.byApp?.[app]) || null;
+  if (cap === 'builds_per_app') return `held: ${n(own?.buildsPerApp ?? caps?.buildsPerApp)}builds under way on this app`;
+  if (cap === 'proposals_per_app') return `held: ${n(own?.proposalsPerApp ?? caps?.proposalsPerApp)}proposals waiting for votes on this app`;
   if (cap === 'proposals_total') return `held: the bot's ceiling of ${n(caps?.proposalsTotal)}proposals open across Homeroom`;
-  if (cap === 'question_tripwire') return `held: ${n(caps?.questionsPerAppPerDay)}questions asked on this app today`;
   return `held: ${cap.replace(/_/g, ' ')}`;
 }
 
@@ -973,7 +990,9 @@ export function waitingFor(depth: number, buildsWaiting: number): string {
 // waited days behind a first version still up for a vote, saying nothing.
 const WAIT_WORDS: Record<string, string> = {
   session_busy: 'a turn is running on its session',
+  reads_per_app: 'its project is already reading as many requests as it may at once',
   allowance: 'its payer\'s week is used up',
+  cooldown: 'its look failed several times in a row, so it waits a day',
   platform_fault: 'the bot is backing off a platform fault',
   bot_paused: 'the bot is off or its weekly budget is spent',
   app_paused: 'its app is paused',
@@ -1207,6 +1226,88 @@ export function AppModes({ apps, paused, savedPaused, canWrite, onChange, onRetr
   );
 }
 
+/**
+ * #6156: the projects with numbers of their own: how many builds the bot
+ * may have waiting or under way on each at once, and how many of its
+ * changes may wait for votes there. A blank number is the default (the
+ * payload's caps, never one written here); "Use the defaults" takes the
+ * project off the list, and the menu below adds one. Saved with the form.
+ */
+export function AppCaps({ apps, value, saved, defaults, canWrite, onChange }: {
+  apps: { id?: number; slug: string; name: string }[];
+  value: Record<string, AppCapsRow>; saved: Record<string, AppCapsRow>;
+  defaults: { building: number | null; waiting: number | null };
+  canWrite: boolean;
+  onChange: (value: Record<string, AppCapsRow>) => void;
+}) {
+  const names = new Map(apps.filter((a) => a.id != null).map((a) => [String(a.id), a.name || a.slug]));
+  const ids = Object.keys(value).sort((a, b) => (names.get(a) || a).localeCompare(names.get(b) || b));
+  const addable = apps.filter((a) => a.id != null && !(String(a.id) in value))
+    .sort((a, b) => (a.name || a.slug).localeCompare(b.name || b.slug));
+  const set = (id: string, field: keyof AppCapsRow, v: string) => onChange({ ...value, [id]: { ...(value[id] || { building: '', waiting: '' }), [field]: v } });
+  const drop = (id: string) => onChange(Object.fromEntries(Object.entries(value).filter(([k]) => k !== id)));
+  const hint = (n: number | null) => (n == null ? 'Default' : `Default: ${n}`);
+  return (
+    <div id="admin-homeroom-bot-app-caps" className="space-y-1">
+      {ids.map((id) => {
+        const row = value[id];
+        const changed = JSON.stringify(appCapsCanon({ [id]: row })) !== JSON.stringify(appCapsCanon(saved[id] ? { [id]: saved[id] } : {}));
+        const name = names.get(id) || `Project ${id} (not running)`;
+        return (
+          <div key={id} className="flex flex-wrap items-end gap-3 py-1.5 border-b border-zinc-100 dark:border-zinc-800/60" data-app-caps={id}>
+            <span className="text-sm font-medium w-full sm:w-56 shrink-0 sm:pb-2">{name}</span>
+            <label className="w-32">
+              <span className={AdminUI.label}>Builds at once</span>
+              <input
+                type="number" min={1} max={10} step="1" inputMode="numeric"
+                className={`${AdminUI.input} mt-1`}
+                placeholder={hint(defaults.building)}
+                value={row.building}
+                disabled={!canWrite}
+                data-app-caps-building={id}
+                onChange={(e) => set(id, 'building', e.target.value)}
+              />
+            </label>
+            <label className="w-40">
+              <span className={AdminUI.label}>Waiting for votes</span>
+              <input
+                type="number" min={1} max={100} step="1" inputMode="numeric"
+                className={`${AdminUI.input} mt-1`}
+                placeholder={hint(defaults.waiting)}
+                value={row.waiting}
+                disabled={!canWrite}
+                data-app-caps-waiting={id}
+                onChange={(e) => set(id, 'waiting', e.target.value)}
+              />
+            </label>
+            {canWrite ? (
+              <button type="button" className={AdminUI.btn.outlineSm} data-app-caps-drop={id} onClick={() => drop(id)}>Use the defaults</button>
+            ) : null}
+            {changed ? <span className={AdminUI.badge.warn}>not saved</span> : null}
+          </div>
+        );
+      })}
+      {!ids.length ? (
+        <p className={AdminUI.muted} id="admin-homeroom-bot-app-caps-none">No project has numbers of its own: every one has the defaults.</p>
+      ) : null}
+      {canWrite && addable.length ? (
+        <label className="block pt-2 sm:w-80">
+          <span className="sr-only">Give a project numbers of its own</span>
+          <select
+            className={AdminUI.select}
+            id="admin-homeroom-bot-app-caps-add"
+            value=""
+            onChange={(e) => { if (e.target.value) onChange({ ...value, [e.target.value]: { building: '', waiting: '' } }); }}
+          >
+            <option value="">Give a project numbers of its own…</option>
+            {addable.map((a) => <option key={a.id} value={String(a.id)}>{a.name || a.slug}</option>)}
+          </select>
+        </label>
+      ) : null}
+    </div>
+  );
+}
+
 // The benchmark stage whose result describes a bot stage's model. A bot
 // follow-up is benchmarked as a follow-up and as a checks fix; the first one
 // with a graded result is shown.
@@ -1307,12 +1408,17 @@ interface Form {
   buildConcurrency: string;
   liveAtOnce: string;
   perPerson: string;
+  readsPerApp: string;
   proposalCeiling: string;
+  // #6156: the projects with numbers of their own, by app id, each number
+  // as the text in its field ('' for the default).
+  appCaps: Record<string, AppCapsRow>;
   turnMinutes: string;
   turnTokens: string;
   batchSize: string;
 }
 type FormKey = keyof Form;
+interface AppCapsRow { building: string; waiting: string }
 
 const FIELD_LABEL: Record<FormKey, string> = {
   mode: 'on or off',
@@ -1333,7 +1439,9 @@ const FIELD_LABEL: Record<FormKey, string> = {
   buildConcurrency: 'shadow builds at once',
   liveAtOnce: 'live requests at once',
   perPerson: 'per person at once',
+  readsPerApp: 'reads per project at once',
   proposalCeiling: 'proposals at once',
+  appCaps: 'room per project',
   turnMinutes: 'minutes per issue',
   turnTokens: 'the token warning',
   batchSize: 'issues per app',
@@ -1363,7 +1471,12 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     buildConcurrency: String(s.buildConcurrency ?? 2),
     liveAtOnce: String(s.liveAtOnce ?? 12),
     perPerson: String(s.perPerson ?? 3),
+    readsPerApp: String(s.readsPerApp ?? 3),
     proposalCeiling: String(s.proposalCeiling ?? 0),
+    appCaps: Object.fromEntries(Object.entries(s.appCaps || {}).map(([id, own]) => [id, {
+      building: own?.building == null ? '' : String(own.building),
+      waiting: own?.waiting == null ? '' : String(own.waiting),
+    }])),
     turnMinutes: String(Math.round((s.turnSeconds ?? 1200) / 60)),
     turnTokens: String(Math.round((s.turnInputTokens ?? 10_000_000) / 1_000_000)),
     batchSize: String(s.batchSize ?? 100),
@@ -1374,7 +1487,45 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
 const SET_FIELDS: FormKey[] = ['pausedApps'];
 function sameField(key: FormKey, a: unknown, b: unknown): boolean {
   if (SET_FIELDS.includes(key)) return JSON.stringify([...(a as string[])].sort()) === JSON.stringify([...(b as string[])].sort());
+  if (key === 'appCaps') return JSON.stringify(appCapsCanon(a as Form['appCaps'])) === JSON.stringify(appCapsCanon(b as Form['appCaps']));
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** #6156: the per-project numbers as set, in id order, a project with neither left out. Pure. */
+function appCapsCanon(rows: Form['appCaps'] | undefined): [string, string, string][] {
+  return Object.entries(rows || {})
+    .map(([id, row]): [string, string, string] => [id, String(row?.building ?? '').trim(), String(row?.waiting ?? '').trim()])
+    .filter(([, building, waiting]) => building || waiting)
+    .sort((x, y) => Number(x[0]) - Number(y[0]));
+}
+
+/**
+ * #6156: the change to the per-project numbers that Save sends (the route's
+ * appCaps): each project whose numbers changed, a blank number as null (the
+ * default), a project with neither as null; or the first thing wrong. Pure.
+ */
+export function appCapsPatch(form: Form['appCaps'], saved: Form['appCaps'], nameOf: (id: string) => string = (id) => `project ${id}`,
+  maxima: { building: number; waiting: number } = { building: 10, waiting: 100 }): { patch: Record<string, { building: number | null; waiting: number | null } | null>; error: string | null } {
+  const now = new Map(appCapsCanon(form).map(([id, b, w]) => [id, [b, w]]));
+  const before = new Map(appCapsCanon(saved).map(([id, b, w]) => [id, [b, w]]));
+  const patch: Record<string, { building: number | null; waiting: number | null } | null> = {};
+  for (const id of [...new Set([...now.keys(), ...before.keys()])].sort((a, b) => Number(a) - Number(b))) {
+    const [b, w] = now.get(id) || ['', ''];
+    const [ob, ow] = before.get(id) || ['', ''];
+    if (b === ob && w === ow) continue;
+    if (!b && !w) { patch[id] = null; continue; }
+    const whole = (raw: string, max: number): number | null | undefined => {
+      if (!raw) return null;
+      const n = Number(raw);
+      return Number.isInteger(n) && n >= 1 && n <= max ? n : undefined;
+    };
+    const building = whole(b, maxima.building);
+    const waiting = whole(w, maxima.waiting);
+    if (building === undefined) return { patch: {}, error: `Builds at once on ${nameOf(id)} must be a whole number from 1 to ${maxima.building}, or blank for the default.` };
+    if (waiting === undefined) return { patch: {}, error: `Changes waiting for votes on ${nameOf(id)} must be a whole number from 1 to ${maxima.waiting}, or blank for the default.` };
+    patch[id] = { building, waiting };
+  }
+  return { patch, error: null };
 }
 
 /** The fields an edit actually changed. Pure. */
@@ -1431,7 +1582,13 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
     else if (key === 'buildConcurrency') patch.buildConcurrency = whole(key, 1, 4, 'Shadow builds at once');
     else if (key === 'liveAtOnce') patch.liveAtOnce = whole(key, 1, 24, 'Live requests at once');
     else if (key === 'perPerson') patch.perPerson = whole(key, 1, 6, 'Per person at once');
+    else if (key === 'readsPerApp') patch.readsPerApp = whole(key, 1, 6, 'Reads per project at once');
     else if (key === 'proposalCeiling') patch.proposalCeiling = whole(key, 0, 1000, 'Proposals up for a vote at once');
+    else if (key === 'appCaps') {
+      const out = appCapsPatch(form.appCaps, saved.appCaps);
+      if (out.error) errors.push(out.error);
+      else if (Object.keys(out.patch).length) patch.appCaps = out.patch;
+    }
     else if (key === 'turnMinutes') {
       const n = whole(key, 1, 180, 'Minutes per issue');
       if (n != null) patch.turnSeconds = n * 60;
@@ -1717,7 +1874,7 @@ function HomeroomBotSection() {
               onClick={() => showTab(key)}
             >
               {TAB_LABEL[key]}
-              {key === 'settings' && dirty.length ? <span className="ml-1">(not saved)</span> : null}
+              {key === 'settings' && dirty.length ? <span className="ms-1">(not saved)</span> : null}
             </button>
           ))}
         </div>
@@ -1792,7 +1949,7 @@ function HomeroomBotSection() {
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-identity">
               {`${bot
                 ? `Runs as ${bot.username} on ${bot.model || 'the platform default model'}, ${bot.hasIncludedKey ? 'with its included OpenRouter key' : 'with no OpenRouter key yet (the first pass mints one)'}.`
-                : 'The bot user is not set up yet; the dashboard creates it on load, so check the logs if this persists.'} Before posting anything the live rules would hold a verdict at ${payload?.caps.proposalsPerApp ?? 5} open bot proposals per app (${payload?.caps.proposalsTotal ?? 5} across all its live apps) and ${payload?.caps.questionsPerAppPerDay ?? 10} questions per app per day; rows below say when they would have.`}
+                : 'The bot user is not set up yet; the dashboard creates it on load, so check the logs if this persists.'} Before building anything the live rules hold a ready verdict at ${payload?.caps.buildsPerApp ?? '?'} builds under way or ${payload?.caps.proposalsPerApp ?? '?'} proposals waiting for votes per app, unless the app has numbers of its own (Settings), and at ${payload?.caps.proposalsTotal ?? '?'} proposals across all apps. Rows below say when they did.`}
             </p>
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-cadence">
               The loop wakes the moment a request is filed, edited or discussed here, drains the queue, then sleeps until the next one. A sweep of GitHub every five minutes catches what happens there directly.
@@ -1930,17 +2087,17 @@ function HomeroomBotSection() {
                       <td className={AdminUI.td}>
                         <button
                           type="button"
-                          className="text-left"
+                          className="text-start"
                           aria-expanded={isOpen}
                           onClick={() => setOpen((o) => ({ ...o, [run.id]: !isOpen }))}
                         >
                           <span className={run.budget_stop ? AdminUI.badge.warn : VERDICT_BADGE[run.verdict]}>
                             {run.budget_stop ? `Stopped: ${run.budget_stop}` : VERDICT_LABEL[run.verdict]}
                           </span>
-                          {run.cap_suppressed ? <span className={`${AdminUI.badge.outline} ml-1`}>held</span> : null}
-                          {run.reused_run_id ? <span className={`${AdminUI.badge.outline} ml-1`} data-homeroom-bot-reused={run.reused_run_id}>reused</span> : null}
-                          {isFollowUp(run) ? <span className={`${AdminUI.badge.outline} ml-1`}>follow-up</span> : null}
-                          <span className={`${AdminUI.muted} ml-2`}>{isOpen ? 'hide' : 'show'}</span>
+                          {run.cap_suppressed ? <span className={`${AdminUI.badge.outline} ms-1`}>held</span> : null}
+                          {run.reused_run_id ? <span className={`${AdminUI.badge.outline} ms-1`} data-homeroom-bot-reused={run.reused_run_id}>reused</span> : null}
+                          {isFollowUp(run) ? <span className={`${AdminUI.badge.outline} ms-1`}>follow-up</span> : null}
+                          <span className={`${AdminUI.muted} ms-2`}>{isOpen ? 'hide' : 'show'}</span>
                         </button>
                       </td>
                       <td className={`${AdminUI.td} whitespace-nowrap`}>{money(run.cost_usd)}</td>
@@ -1987,7 +2144,7 @@ function HomeroomBotSection() {
                               {run.mode === 'live' ? <span>live: acted on the issue</span> : null}
                               <span>determined: {run.determined == null ? '–' : run.determined ? 'yes' : 'no'}</span>
                               {run.missing_fact ? <span>missing: {run.missing_fact}</span> : null}
-                              {run.cap_suppressed ? <span data-run-held={run.cap_suppressed}>{heldLine(run.cap_suppressed, payload?.caps)}</span> : null}
+                              {run.cap_suppressed ? <span data-run-held={run.cap_suppressed}>{heldLine(run.cap_suppressed, payload?.caps, run.app_slug)}</span> : null}
                               {run.reused_run_id ? <span>{`reused run #${run.reused_run_id}'s verdict: the request had not changed`}</span> : null}
                               {run.model ? <span>{run.model}</span> : null}
                               {run.build_model && run.build_model !== run.model ? <span>{`built on ${run.build_model}`}</span> : null}
@@ -2145,6 +2302,28 @@ function HomeroomBotSection() {
               </p>
             </div>
 
+            <div className={`${AdminUI.card} p-4`}>
+              <div className={AdminUI.cardHeader}>
+                <h3 className={AdminUI.cardTitle}>Room per project</h3>
+                <span className={AdminUI.cardDescription} id="admin-homeroom-bot-app-caps-state">
+                  {`On each project it builds up to ${payload?.caps.buildsPerApp ?? '?'} changes at once and keeps up to ${payload?.caps.proposalsPerApp ?? '?'} waiting for votes, unless the project has numbers of its own.`}
+                </span>
+              </div>
+              <AppCaps
+                apps={payload?.apps || []}
+                value={form.appCaps} saved={saved.appCaps}
+                defaults={{ building: payload?.caps.buildsPerApp ?? null, waiting: payload?.caps.proposalsPerApp ?? null }}
+                canWrite={canWrite}
+                onChange={(next) => setField('appCaps', next)}
+              />
+              <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-app-caps-note">
+                A ready request waits when either is full: for the bot&apos;s turn when its builds are, for votes on its
+                other changes when those are. Builds at once paces the bot&apos;s own work, and a running batch may build
+                more of its own requests. Each change waiting for votes keeps a preview and a copy of its database up, and
+                on a small project it is what paces how many votes the bot asks of people.
+              </p>
+            </div>
+
             <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-models">
               <div className={AdminUI.cardHeader}>
                 <h3 className={AdminUI.cardTitle}>Models</h3>
@@ -2285,6 +2464,8 @@ function HomeroomBotSection() {
                   value={form.liveAtOnce} min={1} max={24} canWrite={canWrite} onChange={(v) => setField('liveAtOnce', v)} />
                 <NumberField id="admin-homeroom-bot-per-person" label="Per person at once"
                   value={form.perPerson} min={1} max={6} canWrite={canWrite} onChange={(v) => setField('perPerson', v)} />
+                <NumberField id="admin-homeroom-bot-reads-per-app" label="Reads per project at once"
+                  value={form.readsPerApp} min={1} max={6} canWrite={canWrite} onChange={(v) => setField('readsPerApp', v)} />
                 <NumberField id="admin-homeroom-bot-proposal-ceiling" label="Proposals up for a vote at once (0: automatic)"
                   value={form.proposalCeiling} min={0} max={1000} canWrite={canWrite} onChange={(v) => setField('proposalCeiling', v)} />
                 <NumberField id="admin-homeroom-bot-turn-minutes" label="Minutes one issue may take"
@@ -2301,9 +2482,9 @@ function HomeroomBotSection() {
                   value={form.batchSize} min={1} max={500} canWrite={canWrite} onChange={(v) => setField('batchSize', v)} />
               </div>
               <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-at-once-note">
-                Live requests are counted across the whole platform. It takes one request per app at a time and shares the
-                slots between people in turns. Each slot uses a worker from the same pool as people&apos;s own coding
-                sessions.
+                Live requests are counted across the whole platform. On one project it reads as many requests at a time as
+                Reads per project at once allows, each in a session of its own, and shares the slots between people in
+                turns. Each slot uses a worker from the same pool as people&apos;s own coding sessions, only while it runs.
               </p>
               <label className="flex items-center gap-2 mt-4 text-sm" htmlFor="admin-homeroom-bot-continue-reads">
                 <input

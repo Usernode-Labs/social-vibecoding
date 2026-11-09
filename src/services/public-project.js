@@ -36,7 +36,10 @@ const SUMMARY_MAX = 240;
 
 // The summary a proposal carries for the people voting on it is Markdown,
 // sometimes several paragraphs. The card shows its first paragraph as plain
-// words.
+// words. A preview too long for the card ends after the last whole word that
+// fits, with trailing punctuation dropped, then "…", so it never stops partway
+// through a word. A single word longer than the limit has no break to end on
+// and is cut at the limit instead.
 function plainSummary(md) {
   if (typeof md !== 'string') return null;
   const first = md.replace(/\r\n?/g, '\n').split(/\n\s*\n/).map((p) => p.trim()).find(Boolean);
@@ -50,7 +53,17 @@ function plainSummary(md) {
     .replace(/\s+/g, ' ')
     .trim();
   if (!text) return null;
-  return text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX - 1).trimEnd()}…` : text;
+  if (text.length <= SUMMARY_MAX) return text;
+  const cut = text.slice(0, SUMMARY_MAX - 1);
+  // Look at the next character too: a word that ends exactly at the limit is
+  // whole, even though the last space the slice holds is the one before it.
+  const space = text[SUMMARY_MAX - 1] === ' ' ? cut.length : cut.lastIndexOf(' ');
+  const whole = space > 0
+    ? cut.slice(0, space).replace(/[\s,;:.\-–(]+$/u, '')
+    : '';
+  // A slice with no space (one long word) keeps the hard cut, so the preview
+  // is never longer than the limit either way.
+  return `${whole || cut.trimEnd()}…`;
 }
 
 function parseOwnerRepo(repoUrl) {

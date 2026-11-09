@@ -14,6 +14,7 @@ import { createPortal } from 'react-dom';
 
 import { CheckIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
+import { inlineStep } from '../../lib/i18n/direction';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t } from '../../lib/i18n/runtime';
 import type { AiBudgetFigures } from '../header/ai-budget';
@@ -349,7 +350,7 @@ export function ModelSheetBody({ options, value, onPick, effort, credit }: {
   const t = useMessages('agent');
   const [effortOpen, setEffortOpen] = useState(false);
   const effortLabel = effort ? (effort.options.find((option) => option.value === effort.value)?.label || effort.value) : '';
-  const row = 'flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-700/60';
+  const row = 'flex w-full items-center gap-3 px-4 py-3 text-start hover:bg-zinc-50 dark:hover:bg-zinc-700/60';
   return (
     <div className="flex flex-col gap-3" data-agent-session-model-sheet>
       <p className="px-1 text-sm leading-snug text-zinc-600 dark:text-zinc-300">{t('agent:session.buildWith.homeroomIntro')}</p>
@@ -372,7 +373,7 @@ export function ModelSheetBody({ options, value, onPick, effort, credit }: {
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="text-[15px] font-medium text-zinc-900 dark:text-zinc-100">
                       {option.label}
-                      {option.isDefault ? <span className="ml-1.5 text-xs font-normal text-zinc-500 dark:text-zinc-400">{t('agent:session.model.defaultTag')}</span> : null}
+                      {option.isDefault ? <span className="ms-1.5 text-xs font-normal text-zinc-500 dark:text-zinc-400">{t('agent:session.model.defaultTag')}</span> : null}
                     </span>
                     {option.detail ? <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{option.detail}</span> : null}
                   </span>
@@ -401,12 +402,12 @@ export function ModelSheetBody({ options, value, onPick, effort, credit }: {
               key={option.value}
               type="button"
               aria-pressed={option.value === effort.value}
-              className={`${row} border-t border-zinc-100 py-2.5 pl-8 dark:border-zinc-700`}
+              className={`${row} border-t border-zinc-100 py-2.5 ps-8 dark:border-zinc-700`}
               onClick={() => { effort.onPick(option.value); setEffortOpen(false); }}
             >
               <span className="flex-1 text-[15px] text-zinc-800 dark:text-zinc-200">
                 {option.label}
-                {option.isDefault ? <span className="ml-1.5 text-xs text-zinc-500 dark:text-zinc-400">{t('agent:session.effort.defaultTag')}</span> : null}
+                {option.isDefault ? <span className="ms-1.5 text-xs text-zinc-500 dark:text-zinc-400">{t('agent:session.effort.defaultTag')}</span> : null}
               </span>
               {option.value === effort.value ? <CheckIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden="true" /> : null}
             </button>
@@ -465,10 +466,10 @@ export function BuildSheetBody({ tab, onTab, onClose, heading = true, homeroom, 
   const strip = useRef<HTMLDivElement | null>(null);
   const move = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const at = BUILD_TABS.findIndex((item) => item.id === tab);
-    const next = event.key === 'ArrowRight' ? (at + 1) % BUILD_TABS.length
-      : event.key === 'ArrowLeft' ? (at + BUILD_TABS.length - 1) % BUILD_TABS.length
-        : event.key === 'Home' ? 0
-          : event.key === 'End' ? BUILD_TABS.length - 1 : -1;
+    const step = inlineStep(event.key);
+    const next = step ? (at + step + BUILD_TABS.length) % BUILD_TABS.length
+      : event.key === 'Home' ? 0
+        : event.key === 'End' ? BUILD_TABS.length - 1 : -1;
     if (next < 0) return;
     event.preventDefault();
     onTab(BUILD_TABS[next].id);
@@ -486,7 +487,7 @@ export function BuildSheetBody({ tab, onTab, onClose, heading = true, homeroom, 
           >
             <XIcon className="h-5 w-5" aria-hidden="true" />
           </button>
-          <h2 className="mr-[52px] flex-1 text-center text-base font-semibold text-zinc-900 dark:text-zinc-100">{t('agent:session.buildWith.heading')}</h2>
+          <h2 className="me-[52px] flex-1 text-center text-base font-semibold text-zinc-900 dark:text-zinc-100">{t('agent:session.buildWith.heading')}</h2>
         </div>
       ) : null}
       <div
@@ -627,7 +628,7 @@ export function SentAttachments({ sessionId, attachments }: { sessionId: number 
             key={att.id}
             href={href}
             download={att.filename}
-            className="flex max-w-[14rem] flex-col rounded-xl bg-zinc-100 px-3 py-2 text-left dark:bg-zinc-800"
+            className="flex max-w-[14rem] flex-col rounded-xl bg-zinc-100 px-3 py-2 text-start dark:bg-zinc-800"
           >
             <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{att.filename}</span>
             <span className="text-xs text-zinc-500 dark:text-zinc-400">{formatSize(att.sizeBytes)}</span>

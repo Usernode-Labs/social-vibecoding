@@ -40,8 +40,7 @@ test('the reasons are a list to tap, not a drop-down', () => {
 
 test('the list works from the keyboard like a radio group', () => {
   assert.match(REPORT, /tabIndex=\{key === focusable \? 0 : -1\}/, 'one row in the tab order');
-  assert.match(REPORT, /'ArrowDown'/);
-  assert.match(REPORT, /'ArrowUp'/);
+  assert.match(REPORT, /const step = arrowStep\(event\.key\);/, 'Up, Down, and Left and Right as they read on screen (tests/rtl-geometry)');
   assert.match(REPORT, /onPick\(key\);\s*const row = [^;]+;\s*row\?\.focus\(\);/,
     'an arrow key picks the next reason and moves focus to it');
 });
@@ -63,6 +62,10 @@ test('#5102: child safety is the first reason, worded plainly', () => {
   assert.ok(REPORT.includes("['child_safety', 'dialogs:report.reason.childSafety']"));
   assert.equal(message('dialogs:report.reason.childSafety'),
     'Child safety: a minor at risk, or sexual content involving a minor');
+});
+
+test('audit D05: a reason wraps rather than truncating (child safety is the longest)', () => {
+  assert.match(REPORT, /titleClassName="font-medium whitespace-normal"/);
 });
 
 test('Send report is the one strong button; Cancel is quiet text', () => {

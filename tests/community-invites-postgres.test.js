@@ -91,7 +91,7 @@ async function connectPool() {
       id TEXT PRIMARY KEY, run_id TEXT NOT NULL, story_id TEXT NOT NULL, viewport TEXT,
       side TEXT NOT NULL, variant TEXT NOT NULL, media TEXT NOT NULL,
       theme TEXT NOT NULL DEFAULT 'light', public_safe BOOLEAN,
-      content_type TEXT NOT NULL, data BYTEA NOT NULL, sha256 TEXT NOT NULL,
+      content_type TEXT NOT NULL, sha256 TEXT NOT NULL, object_key TEXT, bytes INTEGER,
       width INTEGER, height INTEGER);
     CREATE TABLE app_illustrations (app_id INTEGER PRIMARY KEY, id TEXT NOT NULL, dark_id TEXT);
     CREATE TABLE community_members (
@@ -131,6 +131,8 @@ async function connectPool() {
       payload JSONB NOT NULL, source JSONB NOT NULL, actor TEXT, request_key TEXT NOT NULL, caused_by BIGINT);
   `);
   await pool.query(stageSixBlock());
+  // Audit D03: when a link went out, a migration of its own after the baseline.
+  await pool.query(fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'migrations', '0010-invite-link-shared.sql'), 'utf8'));
   // The fixture: ada (who had access before the invite tree), an open
   // community and a group.
   await pool.query(`
@@ -428,17 +430,17 @@ test('invite links against a real PostgreSQL', async (t) => {
           (1, 2, NOW() - INTERVAL '1 day', 'verified', 'r1'),
           (2, 2, NULL, 'verified', 'r2'),
           (3, 2, NOW(), 'verified', 'r3');
-        INSERT INTO shot_artifacts (id, run_id, story_id, viewport, side, variant, media, public_safe, content_type, data, sha256, width, height) VALUES
-          ('wide', 'r1', 's1', 'desktop', 'head', 'context', 'png', TRUE, 'image/png', '\\x01', 'aa', 1280, 800),
-          ('before', 'r1', 's1', 'phone', 'base', 'context', 'png', TRUE, 'image/png', '\\x02', 'bb', 390, 844),
-          ('phone', 'r1', 's1', 'phone', 'head', 'context', 'png', TRUE, 'image/png', '\\x89504e47', 'cc', 390, 844),
-          ('unmerged', 'r2', 's1', 'phone', 'head', 'context', 'png', TRUE, 'image/png', '\\x03', 'dd', 390, 844),
-          ('as-admin', 'r3', 's1', 'phone', 'head', 'context', 'png', TRUE, 'image/png', '\\x04', 'ee', 390, 844);
+        INSERT INTO shot_artifacts (id, run_id, story_id, viewport, side, variant, media, public_safe, content_type, object_key, sha256, width, height) VALUES
+          ('wide', 'r1', 's1', 'desktop', 'head', 'context', 'png', TRUE, 'image/png', 'media/sha256/4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a', 'aa', 1280, 800),
+          ('before', 'r1', 's1', 'phone', 'base', 'context', 'png', TRUE, 'image/png', 'media/sha256/dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986', 'bb', 390, 844),
+          ('phone', 'r1', 's1', 'phone', 'head', 'context', 'png', TRUE, 'image/png', 'media/sha256/0f4636c78f65d3639ece5a064b5ae753e3408614a14fb18ab4d7540d2c248543', 'cc', 390, 844),
+          ('unmerged', 'r2', 's1', 'phone', 'head', 'context', 'png', TRUE, 'image/png', 'media/sha256/084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5', 'dd', 390, 844),
+          ('as-admin', 'r3', 's1', 'phone', 'head', 'context', 'png', TRUE, 'image/png', 'media/sha256/e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71', 'ee', 390, 844);
       `);
       preview = await invites.preview(pool, made.link.token);
       assert.deepEqual(preview.project.picture, { kind: 'shot', url: `/api/public/invites/${made.link.token}/picture`, darkUrl: null });
       const bytes = await invites.pictureBytes(pool, made.link.token);
-      assert.deepEqual([bytes.contentType, bytes.sha256, bytes.data.toString('hex')], ['image/png', 'cc', '89504e47']);
+      assert.deepEqual([bytes.contentType, bytes.sha256, bytes.objectKey], ['image/png', 'cc', 'media/sha256/0f4636c78f65d3639ece5a064b5ae753e3408614a14fb18ab4d7540d2c248543']);
       const illustration = { kind: 'illustration', url: '/app-illustrations/light1', darkUrl: '/app-illustrations/dark1' };
       // Not cleared by the shots agent: the card image instead.
       await pool.query(`UPDATE shot_artifacts SET public_safe = NULL WHERE id = 'phone'`);
@@ -551,6 +553,8 @@ test('invite links against a real PostgreSQL', async (t) => {
 
     await t.test('15 Oct 2026: the hub\'s summary and the list\'s "Invite link out" read the live links as listInvites does', async () => {
       const arena = await app('arena');
+      // Audit D03: what is out is what went out; these links all did.
+      await pool.query('UPDATE community_invites SET shared_at = NOW() WHERE shared_at IS NULL');
       const { links } = await invites.listInvites(pool, { app: arena, user: ADA });
       const live = links.filter((l) => l.status === 'live');
       assert.ok(live.length > 0 && links.length > live.length, 'live links and ended ones both');
@@ -570,6 +574,48 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.equal(out.has(999999), false, 'no links, no entry');
       assert.equal((await invites.linksOutFor(pool, [arena.id], 999)).size, 0, 'somebody with no links of their own');
       assert.equal((await invites.linksOutFor(pool, [], ADA.id)).size, 0);
+    });
+
+    await t.test('audit D03: a link made by opening the pane is not out until it is copied or shared, or used', async () => {
+      const arena = await app('arena');
+      const outNow = async () => (await invites.linksOutFor(pool, [arena.id], ADA.id)).get(arena.id)?.links || 0;
+      const summaryNow = async () => (await invites.inviteSummary(pool, { app: arena, user: ADA })).links;
+      const [out0, summary0] = [await outNow(), await summaryNow()];
+      const made = await invites.createInvite(pool, { app: arena, user: ADA, days: 7, maxUses: 25 });
+      assert.equal(made.link.shared, false, 'a new link has not gone out');
+      assert.equal(await outNow(), out0, 'the list does not count it');
+      assert.equal(await summaryNow(), summary0, 'nor the hub');
+      assert.deepEqual(await invites.markShared(pool, { inviteId: made.link.id, user: as(2, 'bo', true) }),
+        { ok: false, status: 404, error: 'Invite link not found' }, 'only its maker says it went out');
+      assert.deepEqual(await invites.markShared(pool, { inviteId: made.link.id, user: ADA }), { ok: true, shared: true });
+      const when = async () => (await pool.query('SELECT shared_at FROM community_invites WHERE id = $1', [made.link.id])).rows[0].shared_at.getTime();
+      const first = await when();
+      await invites.markShared(pool, { inviteId: made.link.id, user: ADA });
+      assert.equal(await when(), first, 'the first time is the one kept');
+      assert.equal(await outNow(), out0 + 1, 'copied or shared: out');
+      assert.equal(await summaryNow(), summary0 + 1);
+      const listed = (await invites.listInvites(pool, { app: arena, user: ADA })).links.find((l) => l.id === made.link.id);
+      assert.equal(listed.shared, true);
+    });
+
+    await t.test('a made link is no open seat on the hub until it is copied, shared or used (hasLiveLink, as D03 counts)', async () => {
+      const arena = await app('arena');
+      const ME = as(5, 'seats', true);
+      await pool.query(`INSERT INTO users (id, username, has_platform_access) VALUES (5, 'seats', TRUE) ON CONFLICT DO NOTHING`);
+      await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, 5) ON CONFLICT DO NOTHING', [arena.community_id]);
+      assert.equal(await invites.hasLiveLink(pool, arena.id, ME.id), false, 'no link');
+      const made = await invites.createInvite(pool, { app: arena, user: ME, days: 7, maxUses: 25 });
+      assert.ok(made.ok, made.error);
+      assert.equal(await invites.hasLiveLink(pool, arena.id, ME.id), false, 'made, as opening the pane makes it: not out');
+      await invites.markShared(pool, { inviteId: made.link.id, user: ME });
+      assert.equal(await invites.hasLiveLink(pool, arena.id, ME.id), true, 'copied or shared: out');
+      // Used without the pane saying it went out (copied from the box by hand): out too.
+      await pool.query('UPDATE community_invites SET shared_at = NULL WHERE id = $1', [made.link.id]);
+      await pool.query(
+        `INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, 1, 'queued')`, [made.link.id]);
+      assert.equal(await invites.hasLiveLink(pool, arena.id, ME.id), true, 'somebody came through it: out');
+      await invites.revokeInvite(pool, { inviteId: made.link.id, user: ME });
+      assert.equal(await invites.hasLiveLink(pool, arena.id, ME.id), false, 'turned off: not out');
     });
 
     await t.test('WP-D: a project with no shot yet shows the card of its idea through a live link, and only then', async () => {

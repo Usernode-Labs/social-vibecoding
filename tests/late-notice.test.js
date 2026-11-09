@@ -28,5 +28,7 @@ test('a notice owed hours ago is not said; one owed now, or before owedAt existe
   const run = (handlers, kind, input) => handlers[kind].run({ input, steps: () => ({}) });
   assert.deepEqual(await run(botDmServices({ config: {}, pool }), DM.mail, { userId: 1, messageId: 2, owedAt }), { skipped: 'late' });
   assert.deepEqual(await run(turnServices({ config: {}, pool }), TURN.stalled, { sessionId: 1, agentSessionId: 2, owedAt }), { skipped: 'late' });
-  assert.deepEqual(await run(botChangeServices({ pool }), CHANGE.approved, { sessionId: 1, voterId: 2, epoch: 0, owedAt }), { skipped: 'late' });
+  // A yes's line in its request's thread is no longer said (5 Nov 2026,
+  // decision 6): work owed before settles, late or not, reading nothing.
+  assert.deepEqual(await run(botChangeServices({ pool }), CHANGE.approved, { sessionId: 1, voterId: 2, epoch: 0, owedAt }), { skipped: 'retired' });
 });

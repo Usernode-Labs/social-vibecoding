@@ -3,7 +3,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const activity = require('../src/services/app-activity');
 const scorer = require('../src/services/topochain/challenge-scorer');
@@ -32,9 +31,9 @@ test('challenge credits retain the qualifying usage time through delayed and con
       await admin.query(`DROP DATABASE ${name}`);
       await admin.end();
     });
-    const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-    await pool.query(schema);
-    await pool.query(schema);
+    await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+    await require('../src/db/reference-data').seedReferenceData(pool);
+    await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
     let seq = 0;
     const person = async () => (await pool.query(
       `INSERT INTO users (username, password) VALUES ($1, 'unused') RETURNING id`,

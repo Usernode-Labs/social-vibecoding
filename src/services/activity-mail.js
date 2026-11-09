@@ -29,6 +29,7 @@
 
 const crypto = require('crypto');
 const { PRODUCTION_ORIGIN } = require('./cli-auth-constants');
+const { englishFrom, englishTexts } = require('./push-text');
 
 const KINDS = Object.freeze(['build_ready', 'invite_activity', 'project_opened']);
 
@@ -84,8 +85,13 @@ async function canPush(pool, userId) {
  * bot's chat (its root), or the message it rang for, or the chat; else the
  * project.
  */
-function openUrl({ appSlug, conversationId = null, threadRootId = null, messageId = null }) {
+function openUrl({ appSlug, conversationId = null, threadRootId = null, messageId = null, issueNumber = null }) {
   const valid = (v) => Number.isSafeInteger(Number(v)) && Number(v) > 0;
+  // A request's own page, where its stage rang from (the bell's door,
+  // frontend notifications.js).
+  if (appSlug && valid(issueNumber) && !valid(conversationId)) {
+    return `${origin()}/#homeroom-bot/request/${encodeURIComponent(appSlug)}/${Number(issueNumber)}`;
+  }
   if (valid(conversationId)) {
     if (valid(threadRootId)) return `${origin()}/#messages/${Number(conversationId)}/thread/${Number(threadRootId)}`;
     if (valid(messageId)) return `${origin()}/#messages/${Number(conversationId)}/m/${Number(messageId)}`;
@@ -120,13 +126,13 @@ async function readyRow(pool, { userId, conversationId, messageId = null }) {
  */
 async function emailIfNoPush(pool, {
   userId, kind, appName = null, appSlug = null, line = null, conversationId = null, notWorking = false,
-  detail = null, threadRootId = null, messageId: rangFor = null, count = null,
+  detail = null, threadRootId = null, messageId: rangFor = null, count = null, notice = null, issueNumber = null,
 }) {
   if (!config || !KINDS.includes(kind) || !userId) return 'off';
   const unsubscribe = unsubscribeUrl(userId);
   if (!unsubscribe) return 'off';
   const { rows } = await pool.query(
-    `SELECT email, email_confirmed, activity_email, is_synthetic FROM users WHERE id = $1`,
+    `SELECT email, email_confirmed, activity_email, is_synthetic, locale FROM users WHERE id = $1`,
     [userId],
   );
   const user = rows[0];
@@ -150,12 +156,14 @@ async function emailIfNoPush(pool, {
   await mail.send(config, {
     kind,
     to: user.email,
+    ...(user.locale ? { locale: user.locale } : {}),
     appName: appName || 'Your project',
     line,
+    ...(notice ? { notice } : {}),
     ...(count != null ? { count } : {}),
     ...(notWorking ? { notWorking: true } : {}),
     ...(words ? { subject: words.subject, lead: words.lead } : {}),
-    url: openUrl({ appSlug, conversationId, threadRootId: root, messageId }),
+    url: openUrl({ appSlug, conversationId, threadRootId: root, messageId, issueNumber }),
     unsubscribeUrl: unsubscribe,
   });
   return 'sent';
@@ -175,11 +183,18 @@ async function emailIfNoPush(pool, {
 // phone, and owes no email. A row already queued for one is 'settled' below.
 const NOTICE_MAIL_KINDS = new Set(['member_joined', 'first_message', 'project_opened']);
 const NOTICE_MAIL_WITHIN_HOURS = 24;
+// 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's change
+// ready to try rings its requester from its stage (services/work-state.js
+// bellPushes), with no message behind it, and owes the email that stands in
+// for its push as a notice does. One that a message of the bot's rang (a
+// first version's, or from before) owes its email through that message
+// (homeroom-bot-dm.js sendDm, MailOwed), so it is never this.
+const STAGE_MAIL_SQL = `(kind = 'build_ready' AND conversation_message_id IS NULL AND detail IS NOT NULL)`;
 
 async function noticeMailTargets(pool, { limit = 200 } = {}) {
   const { rows } = await pool.query(
     `SELECT id FROM notifications
-      WHERE mailed_at IS NULL AND kind = ANY($1::text[])
+      WHERE mailed_at IS NULL AND (kind = ANY($1::text[]) OR ${STAGE_MAIL_SQL})
         AND created_at > NOW() - make_interval(hours => $2::int)
       ORDER BY id LIMIT $3`,
     [[...NOTICE_MAIL_KINDS], NOTICE_MAIL_WITHIN_HOURS, limit],
@@ -190,9 +205,20 @@ async function noticeMailTargets(pool, { limit = 200 } = {}) {
 // The email a notice stands for, from the notice: its kind, words and link.
 function noticeEmail(row) {
   const app = { appName: row.app_name || null, appSlug: row.app_slug || null };
-  if (row.kind === 'first_message') return { kind: 'invite_activity', ...app, line: `@${row.username} said hi in ${row.app_name}.` };
+  // `line` is the English; `notice` lets the mail word it in the recipient's language.
+  const english = englishFrom(englishTexts(undefined, 'email'));
+  const values = { actor: row.username, app: row.app_name };
+  if (row.kind === 'first_message') {
+    return { kind: 'invite_activity', ...app, line: english('email:inviteActivity.firstMessage', values), notice: { id: 'first_message', values } };
+  }
   if (row.kind === 'member_joined') {
-    return { kind: 'invite_activity', ...app, line: `${row.username ? `@${row.username}` : 'Someone'} joined ${row.app_name} through your invite.` };
+    return row.username
+      ? { kind: 'invite_activity', ...app, line: english('email:inviteActivity.joined', values), notice: { id: 'member_joined', values } }
+      : { kind: 'invite_activity', ...app, line: english('email:inviteActivity.joinedSomeone', values), notice: { id: 'member_joined_someone', values } };
+  }
+  if (row.kind === 'build_ready') {
+    const said = require('./homeroom-bot-notify-copy').parseBotDetail(row.detail);
+    return { kind: 'build_ready', ...app, detail: row.detail, issueNumber: said?.issueNumber || null };
   }
   return { kind: 'project_opened', ...app };
 }
@@ -206,6 +232,7 @@ function noticeEmail(row) {
 async function mailNotice(pool, notificationId, steps) {
   const { rows: [row] } = await pool.query(
     `SELECT n.id, n.user_id, n.kind, n.detail, n.mailed_at, n.created_at > NOW() - make_interval(hours => $2::int) AS recent,
+            n.conversation_message_id,
             a.slug AS app_slug, a.name AS app_name, u.username
        FROM notifications n
        LEFT JOIN apps a ON a.id = n.app_id
@@ -213,7 +240,8 @@ async function mailNotice(pool, notificationId, steps) {
       WHERE n.id = $1`,
     [notificationId, NOTICE_MAIL_WITHIN_HOURS],
   );
-  if (!row || row.mailed_at || !NOTICE_MAIL_KINDS.has(row.kind)) return { said: 'settled' };
+  const stage = row?.kind === 'build_ready' && row.conversation_message_id == null && !!row.detail;
+  if (!row || row.mailed_at || !(NOTICE_MAIL_KINDS.has(row.kind) || stage)) return { said: 'settled' };
   const said = !row.recent ? 'stale'
     : await steps.once('sent', () => module.exports.emailIfNoPush(pool, { userId: row.user_id, ...noticeEmail(row) }));
   await pool.query('UPDATE notifications SET mailed_at = NOW() WHERE id = $1 AND mailed_at IS NULL', [row.id]);

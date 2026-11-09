@@ -185,13 +185,14 @@ import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { t as translate } from '../../lib/i18n/runtime';
+import { t as translate, errorText } from '../../lib/i18n/runtime';
 import { CodeBoxes, CODE_LENGTH, codeDigits } from './code-boxes';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { PhoneInput, readPhone } from './phone-input';
 import { phoneRecaptchaInUse, postPhoneCodeRequest, RECAPTCHA_LINE } from './recaptcha';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
+import { SignupOptIn } from './signup-opt-in';
 import {
   blockedOffline,
   fetchSessionMint,
@@ -369,7 +370,7 @@ export const CLOSE_MS = 240;
  * (./welcome-page.tsx).
  */
 export function FinishingSpinner() {
-  return <SpinnerArcIcon className="mr-2 h-[18px] w-[18px] shrink-0 animate-spin" aria-hidden="true" />;
+  return <SpinnerArcIcon className="me-2 h-[18px] w-[18px] shrink-0 animate-spin" aria-hidden="true" />;
 }
 
 /**
@@ -500,7 +501,7 @@ export async function requestPasswordReset(address: string): Promise<{ ok: true 
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      return { ok: false, error: data.error || translate('auth:signInSheet.forgot.sendFailed') };
+      return { ok: false, error: errorText(data) || translate('auth:signInSheet.forgot.sendFailed') };
     }
     return { ok: true };
   } catch {
@@ -668,20 +669,25 @@ export async function spendReleaseLink(key: string, { newAccountOnly = false }: 
  * The sheet's account step and the full-page Welcome (./welcome-page.tsx)
  * both send it. May throw what fetchSessionMint throws.
  */
-export async function saveAccount(handle: string | null): Promise<{ ok: true } | { ok: false; error: string; field: string | null }> {
+export async function saveAccount(
+  handle: string | null,
+  optIns: { marketingEmail?: boolean } = {},
+): Promise<{ ok: true } | { ok: false; error: string; field: string | null }> {
   const res = await fetchSessionMint('/api/auth/otp/set-password', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
     body: JSON.stringify({
       ...(handle ? { username: handle } : {}),
+      // The sign-up form's "Homeroom news by email" box (#6044), only when ticked.
+      ...(optIns.marketingEmail ? { marketingEmail: true } : {}),
     }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.user) {
     return {
       ok: false,
-      error: data.error || translate('auth:signInSheet.account.failed'),
+      error: errorText(data) || translate('auth:signInSheet.account.failed'),
       field: typeof data.field === 'string' ? data.field : null,
     };
   }
@@ -848,6 +854,10 @@ export function SignInSheet({
   // Whose username step this is: a provider's (Apple, Google) or the phone's.
   const [usernameVia, setUsernameVia] = useState<'oauth' | 'phone'>('oauth');
   const [needsUsername, setNeedsUsername] = useState(false);
+  // The sign-up form's opt-in boxes (#6044, ./signup-opt-in.tsx), unticked
+  // until ticked. Sent only with the request that makes the account.
+  const [newsByEmail, setNewsByEmail] = useState(false);
+  const [newsByText, setNewsByText] = useState(false);
   // The address a release link signed in (#4594), for the account step's welcome.
   const [welcome, setWelcome] = useState<string | null>(null);
   // The release link was refused (used, or expired): the code step says so,
@@ -1062,14 +1072,14 @@ export function SignInSheet({
         // limiter says.
         if (res.status === 429) {
           setStep('code');
-          setError(data.error || translate('auth:signInSheet.email.tooMany'));
+          setError(errorText(data) || translate('auth:signInSheet.email.tooMany'));
           const retryAfter = Number(res.headers.get('Retry-After'));
           setCooldownUntil(Date.now() + (Number.isFinite(retryAfter) && retryAfter > 0
             ? Math.min(retryAfter, 900) * 1000 : RESEND_COOLDOWN_MS));
           return;
         }
         setStep('email');
-        setError(data.error || translate('auth:signInSheet.email.sendFailed'));
+        setError(errorText(data) || translate('auth:signInSheet.email.sendFailed'));
         return;
       }
       if (codeField.current) codeField.current.value = '';
@@ -1219,12 +1229,12 @@ export function SignInSheet({
         if (data.code === 'password_required') {
           identifierPrefill.current = email;
           setStep('password');
-          setError(data.error || translate('auth:signInSheet.code.passwordAccount'));
+          setError(errorText(data) || translate('auth:signInSheet.code.passwordAccount'));
           return;
         }
         setError(res.status === 429
-          ? data.error || translate('auth:signInSheet.code.tooManyAttempts')
-          : data.error || translate('auth:signInSheet.code.rejected'));
+          ? errorText(data) || translate('auth:signInSheet.code.tooManyAttempts')
+          : errorText(data) || translate('auth:signInSheet.code.rejected'));
         return;
       }
       if (data.next === 'signed-in') {
@@ -1275,13 +1285,13 @@ export function SignInSheet({
         // code is still the one to type, with the resend held.
         if (res.status === 429 && phoneSession.current && value === phoneNumber) {
           setStep('phone-code');
-          setError(data.error || translate('auth:signInSheet.phone.tooMany'));
+          setError(errorText(data) || translate('auth:signInSheet.phone.tooMany'));
           setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
           setNow(Date.now());
           return;
         }
         setStep('phone');
-        setError(data.error || translate('auth:signInSheet.phone.sendFailed'));
+        setError(errorText(data) || translate('auth:signInSheet.phone.sendFailed'));
         return;
       }
       phoneSession.current = data.sessionInfo;
@@ -1332,13 +1342,17 @@ export function SignInSheet({
           code,
           ...(phoneName.current ? { name: phoneName.current } : {}),
           ...(followInvite ? { followInvite: true } : {}),
+          // The invite's phone step's "Text me Homeroom news" box (#6044),
+          // only when ticked. The server keeps it only for an account this
+          // sign-in creates.
+          ...(askName && !phoneLink && newsByText ? { marketingSms: true } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         setError(res.status === 429
-          ? data.error || translate('auth:signInSheet.phoneCode.tooManyAttempts')
-          : data.error || translate('auth:signInSheet.phoneCode.rejected'));
+          ? errorText(data) || translate('auth:signInSheet.phoneCode.tooManyAttempts')
+          : errorText(data) || translate('auth:signInSheet.phoneCode.rejected'));
         return;
       }
       if (data.next === 'signed-in') {
@@ -1353,7 +1367,7 @@ export function SignInSheet({
     } finally {
       setBusy(false);
     }
-  }, [followInvite, finish]);
+  }, [followInvite, finish, askName, phoneLink, newsByText]);
 
   // #4891: the account step asks for the username and nothing else. The
   // password was optional (#4595), and still one more decision at the very
@@ -1368,7 +1382,7 @@ export function SignInSheet({
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
-      const saved = await saveAccount(handle);
+      const saved = await saveAccount(handle, { marketingEmail: needsUsername && newsByEmail });
       if (!saved.ok) {
         setError(saved.error);
         if (saved.field === 'username') usernameField.current?.focus({ preventScroll: true });
@@ -1380,7 +1394,7 @@ export function SignInSheet({
     } finally {
       setBusy(false);
     }
-  }, [needsUsername, finish]);
+  }, [needsUsername, newsByEmail, finish]);
 
   // The password step: the sign-in screen's own exchange (./shared.ts).
   const signInWithPassword = useCallback(async () => {
@@ -1466,18 +1480,24 @@ export function SignInSheet({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ username: handle }),
+        body: JSON.stringify({
+          username: handle,
+          // The step's opt-in box (#6044), only when ticked: news by text for
+          // a phone-made account, by email for one Apple or Google made.
+          ...(usernameVia === 'phone' && newsByText ? { marketingSms: true } : {}),
+          ...(usernameVia === 'oauth' && newsByEmail ? { marketingEmail: true } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.user) {
         if (data.field === 'username') {
-          setError(data.error || translate('auth:signInSheet.username.refused'));
+          setError(errorText(data) || translate('auth:signInSheet.username.refused'));
           providerUsernameField.current?.focus({ preventScroll: true });
           return;
         }
         // The continuation is gone: start over from the first step.
         setStep(firstStep);
-        setError(data.error || translate('auth:signInSheet.username.expired'));
+        setError(errorText(data) || translate('auth:signInSheet.username.expired'));
         return;
       }
       await finish('new');
@@ -1486,7 +1506,7 @@ export function SignInSheet({
     } finally {
       setBusy(false);
     }
-  }, [finish, firstStep, usernameVia]);
+  }, [finish, firstStep, usernameVia, newsByText, newsByEmail]);
 
   if (!open) return null;
 
@@ -1606,7 +1626,7 @@ export function SignInSheet({
       >
         <div className="mx-auto h-1 w-9 rounded-full bg-[color:var(--border)] md:hidden" aria-hidden="true" />
         {step === 'forgot' ? (
-          <button type="button" data-sign-in-sheet-forgot-back="" className={`${QUIET} mt-2 -ml-1 flex items-center gap-0.5`} onClick={() => { identifierPrefill.current = typedIdentifier.current; toStep('password'); }}>
+          <button type="button" data-sign-in-sheet-forgot-back="" className={`${QUIET} mt-2 -ms-1 flex items-center gap-0.5`} onClick={() => { identifierPrefill.current = typedIdentifier.current; toStep('password'); }}>
             <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />{t('auth:signInSheet.forgot.back')}
           </button>
         ) : null}
@@ -1697,6 +1717,9 @@ export function SignInSheet({
                 <PhoneInput inputRef={phoneField} id="sign-in-sheet-phone" defaultValue={phoneNumber} />
               </div>
             </div>
+            {askName && !phoneLink ? (
+              <SignupOptIn id="sign-in-sheet-news-text" kind="sms" checked={newsByText} onChange={setNewsByText} />
+            ) : null}
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.phone.sending') : t('auth:signInSheet.phone.send')}</button>
           </form>
         ) : null}
@@ -1725,6 +1748,11 @@ export function SignInSheet({
                 <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={t('auth:signInSheet.providerUsernamePlaceholder')} {...HANDLE_FIELD} />
               </div>
             </div>
+            {usernameVia === 'phone' ? (
+              <SignupOptIn id="sign-in-sheet-news-text" kind="sms" checked={newsByText} onChange={setNewsByText} />
+            ) : (
+              <SignupOptIn id="sign-in-sheet-news-email" kind="email" checked={newsByEmail} onChange={setNewsByEmail} />
+            )}
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? <><FinishingSpinner />{t('auth:signInSheet.username.finishing')}</> : t('auth:signInSheet.username.submit')}</button>
           </form>
         ) : null}
@@ -1843,6 +1871,7 @@ export function SignInSheet({
                     </div>
                   </div>
                 ) : null}
+                <SignupOptIn id="sign-in-sheet-news-email" kind="email" checked={newsByEmail} onChange={setNewsByEmail} />
               </>
             ) : null}
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? <><FinishingSpinner />{t('auth:signInSheet.account.finishing')}</> : needsUsername ? t('auth:signInSheet.account.create') : t('auth:signInSheet.account.submit')}</button>

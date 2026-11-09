@@ -35,8 +35,16 @@ export function threadsAllowed(conversation: { kind?: string; homeroomBot?: bool
 }
 
 /** A thread reply the bot also lists in the main chat: one of the four moments that ring. */
-export function alsoInChat(message: { threadRootId?: number | null; metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null }): boolean {
-  return !!message.threadRootId && message.metadata?.homeroomBot?.alsoInChat === true;
+export function alsoInChat(message: {
+  threadRootId?: number | null;
+  threadRoot?: { plusThread?: boolean } | null;
+  metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null;
+}): boolean {
+  if (!message.threadRootId || message.metadata?.homeroomBot?.alsoInChat !== true) return false;
+  // #6250: a thread started from the bot's "+" stays out of Main Chat, its
+  // replies included. One the bot opened from Main has no such mark, and its
+  // moments are Main's too, as the way to its row in the list.
+  return message.threadRoot?.plusThread !== true;
 }
 
 /**
@@ -44,7 +52,11 @@ export function alsoInChat(message: { threadRootId?: number | null; metadata?: {
  * unread and moves the read cursor: a message of the conversation itself, or
  * a thread reply it also lists there (`alsoInChat`).
  */
-export function inMainStream(message: { threadRootId?: number | null; metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null }): boolean {
+export function inMainStream(message: {
+  threadRootId?: number | null;
+  threadRoot?: { plusThread?: boolean } | null;
+  metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null;
+}): boolean {
   return !message.threadRootId || alsoInChat(message);
 }
 
@@ -156,7 +168,7 @@ export function appTabSlug(target: string | null | undefined): string | null {
  * writes it), or null for any other address.
  */
 export function hubSlug(target: string | null | undefined): string | null {
-  const match = /^#app\/([^/?#]+)\/workshop$/.exec(String(target || ''));
+  const match = /^#app\/([^/?#]+)\/(?:workshop|dev\/hub)$/.exec(String(target || ''));
   if (!match) return null;
   try {
     return decodeURIComponent(match[1]) || null;
@@ -260,6 +272,14 @@ export interface ChangeBlocksOptions {
    * same block may drop its own.
    */
   showsRequest: (message: ConversationMessage) => boolean;
+  /**
+   * B12 (overnight audit, 1 Nov 2026): a row the transcript draws as
+   * something other than a message (the bot's one-line news about a
+   * request, ./bot-news-line.tsx). It is in no block and ends one, as a
+   * thread reply does: counted in, it left the block's outline open above
+   * and below a line that draws none ("a bubble with no top edge").
+   */
+  apart?: (message: ConversationMessage) => boolean;
 }
 
 /**
@@ -285,7 +305,7 @@ export interface ChangeBlocksOptions {
  */
 export function changeBlocks(
   messages: readonly ConversationMessage[],
-  { hidden, together, showsRequest }: ChangeBlocksOptions,
+  { hidden, together, showsRequest, apart = () => false }: ChangeBlocksOptions,
 ): Map<number, ChangeBlock> {
   const blocks = new Map<number, ChangeBlock>();
   let run: ConversationMessage[] = [];
@@ -308,7 +328,7 @@ export function changeBlocks(
     if (hidden(message)) continue;
     const key = changeKey(message);
     const previous = run[run.length - 1];
-    const blocked = !!key && !threaded(message);
+    const blocked = !!key && !threaded(message) && !apart(message);
     const joins = blocked && !!previous && changeKey(previous) === key && together(previous, message);
     if (!joins) close();
     if (blocked) run.push(message);
@@ -320,13 +340,13 @@ export function changeBlocks(
 /**
  * Pure: the project's icon as the strip has it. A bot message names its
  * project but carries no artwork, so a line (./bot-news-line.tsx) and a
- * project's card at the head of a message (./bot-head-card.tsx) take the
- * tray's, and the strip and the chat show the same icon; with none, a line
+ * project's card at the head of a message (./bot-head-card.tsx) take its
+ * requests' tracks', so the chat shows the project's own icon; with none, a line
  * draws the project's initial and a card its glyph.
  */
 export function newsIcon(work: HomeroomBotWork | null, slug: string | null | undefined, name: string | null | undefined = null): { iconUrl: string | null; iconEmoji: string | null } {
   if (work && (slug || name)) {
-    for (const job of [...work.needsYou, ...work.now, ...work.history]) {
+    for (const job of work.tracks) {
       // A project with no slug (the staging demo's) is known by its name.
       const same = slug ? job.appSlug === slug : !job.appSlug && job.appName === name;
       if (same && (job.iconUrl || job.iconEmoji)) return { iconUrl: job.iconUrl, iconEmoji: job.iconEmoji };

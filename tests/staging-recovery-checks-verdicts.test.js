@@ -5,8 +5,7 @@
 // the proposal stayed merge-blocked forever. Now every no-op hands an
 // explicit terminal verdict to the preview machine:
 //
-//   - unparseable repo_url / no git host and no GitHub App → 'skipped'
-//     ("checks unavailable: GitHub is not configured"), gate-passing;
+//   - unparseable repo_url → refused; missing read access → handed off;
 //   - branch not ahead of main → 'skipped' ("nothing to test");
 //   - compareCommits throw → the head the row knows is handed to the
 //     machine, whose build (and error lane) settles it.
@@ -212,40 +211,27 @@ test('a deferred verdict is waiting on a conflict, not on a runner: never overdu
   } finally { restore(); }
 });
 
-test("rebuildSessionStaging: unparseable repo_url hands a 'skipped' verdict to the machine (GitHub not configured)", async () => {
+test('rebuildSessionStaging requires usable repository metadata', async () => {
   const { subject, handoffs, compares, restore } = loadRecovery();
   try {
-    const r = await subject.rebuildSessionStaging({
-      config: {}, pool: makeRecordingPool(),
-      session: { ...SESSION, repo_url: 'not-a-github-url' },
-      reason: 'test',
-    });
-    assert.equal(r, 'skipped');
-    const [[name, arg], ...rest] = handoffs();
-    assert.equal(name, 'skipped');
-    assert.equal(rest.length, 0, 'nothing is built');
-    assert.equal(arg.session.id, 42);
-    assert.match(arg.reason, /GitHub is not configured/);
-    assert.equal(arg.head, 'cafe1234', 'stamps the last-known commit');
-    assert.equal(compares.length, 0);
+    await assert.rejects(subject.rebuildSessionStaging({
+      config: {}, pool: makeRecordingPool(), session: { ...SESSION, repo_url: 'not-a-repository' }, reason: 'test',
+    }), { code: 'repo_unavailable' });
+    assert.deepEqual(handoffs(), []); assert.deepEqual(compares, []);
   } finally { restore(); }
 });
 
-test("rebuildSessionStaging: no git host and no GitHub App hands a 'skipped' verdict to the machine", async () => {
-  const { subject, handoffs, restore } = loadRecovery();
+test('rebuildSessionStaging delegates the revision when this process has no App', async () => {
+  const { subject, handoffs, compares, restore } = loadRecovery({ compare: new Error('read access unavailable') });
   githubApp.on = false;
   try {
-    const r = await subject.rebuildSessionStaging({
-      config: {}, pool: makeRecordingPool(),
-      session: { ...SESSION, repo_url: 'https://github.com/acme/whiteboard' },
-      reason: 'test',
-    });
-    assert.equal(r, 'skipped');
-    assert.deepEqual(handoffs().map(([name]) => name), ['skipped']);
-    assert.match(handoffs()[0][1].reason, /GitHub is not configured/);
-  } finally {
-    restore();
-  }
+    assert.equal(await subject.rebuildSessionStaging({
+      config: {}, pool: makeRecordingPool(), session: { ...SESSION, repo_url: 'https://github.com/acme/whiteboard' }, reason: 'test',
+    }), 'handed_off');
+    assert.deepEqual(handoffs().map(([name]) => name), ['revision']);
+    assert.equal(compares.length, 1);
+    assert.equal(handoffs()[0][1].head, SESSION.checks_commit_sha);
+  } finally { restore(); }
 });
 
 test('recordChecksSkipped: hands the verdict to the machine, which records, broadcasts and re-drives the merge', async () => {

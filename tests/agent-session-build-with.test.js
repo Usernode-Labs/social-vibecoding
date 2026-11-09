@@ -88,8 +88,8 @@ test('#3078: Build with is a tablist of Homeroom, Claude Code and Codex', () => 
 
   // Keyboard: the arrows, Home and End move the selection and the focus.
   const src = read('frontend/src/features/agent-session/composer-parts.tsx');
-  assert.match(src, /event\.key === 'ArrowRight' \? \(at \+ 1\) % BUILD_TABS\.length/);
-  assert.match(src, /event\.key === 'ArrowLeft' \? \(at \+ BUILD_TABS\.length - 1\) % BUILD_TABS\.length/);
+  assert.match(src, /const step = inlineStep\(event\.key\);/);
+  assert.match(src, /step \? \(at \+ step \+ BUILD_TABS\.length\) % BUILD_TABS\.length/);
   assert.match(src, /event\.key === 'Home' \? 0/);
   assert.match(src, /event\.key === 'End' \? BUILD_TABS\.length - 1/);
   assert.match(src, /aria-label=\{t\('agent:session\.buildWith\.dialogLabel'\)\}\s+className=\{desktop/, 'the sheet is named for what it is now');

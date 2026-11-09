@@ -1,18 +1,20 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
-import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
+import { ChatComposerBar } from '@/components/ui/chat';
+import { ArrowUpIcon, ArrowUpTrayIcon, BoldIcon, HeadingIcon, ItalicIcon, ListBulletIcon, PaperClipIcon, PlusIcon, QuoteIcon, UnderlineIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import * as api from './api';
+import { applyFormat, hasFormatting, type FormatKind } from './composer-format';
 import { waitingFor } from './waiting-for';
-import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot } from './store';
+import { channels, draftAttachmentsFor, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setDraftAttachments, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot, type ComposerScope } from './store';
 import { mirrorsReplies } from './bot-question';
 import { botRequestNames, threadsAllowed } from './bot-shared';
 import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjectReference, StagedObject } from './types';
-import { fileSize, pendingObjectLabel, senderName } from './format';
+import { fileSize, MessageMarkdown, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
-import { DropOverlay, useFileDrag } from '../attachments/file-drag';
-import { refusalSummary } from '../attachments/refusal-summary';
+import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
+import { registerComposerDrop } from './pane-drop';
 import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
 import { wantsKeyboardFocus } from '../message-actions/focus';
@@ -21,17 +23,19 @@ import { completedShortcodeAt, findShortcodeToken, matchShortcodes, replaceShort
 import { SpeakButton } from '../dictation/speak-button';
 import { NotifyAsk } from '../notify-ask/notify-ask';
 
-const MAX_ATTACHMENTS = 4;
 // People asked for per `@` prefix in a channel (#3361).
 const CHANNEL_MENTION_LIMIT = 8;
 
-function attachmentLimit(file: File): number {
-  const name = file.name.toLowerCase();
-  if (file.type.startsWith('image/')) return 4 * 1024 * 1024;
-  if (/\.(txt|md|markdown|json|ya?ml|toml|xml|csv|tsv|js|jsx|ts|tsx|css|html?|py|rb|rs|go|java|kt|swift|dart|sh|sql|diff|patch)$/i.test(name) || file.type.startsWith('text/')) return 200 * 1024;
-  if (name.endsWith('.zip') || file.type === 'application/zip') return 20 * 1024 * 1024;
-  return 10 * 1024 * 1024;
-}
+// #6035: the formatting row a channel's composer wears. Each button is named
+// by its catalog entry, shown as its tooltip and announced by screen readers.
+const FORMAT_BUTTONS: Array<{ kind: FormatKind; label: string; Icon: typeof BoldIcon }> = [
+  { kind: 'bold', label: 'messages:composer.format.bold', Icon: BoldIcon },
+  { kind: 'italic', label: 'messages:composer.format.italic', Icon: ItalicIcon },
+  { kind: 'underline', label: 'messages:composer.format.underline', Icon: UnderlineIcon },
+  { kind: 'heading', label: 'messages:composer.format.heading', Icon: HeadingIcon },
+  { kind: 'quote', label: 'messages:composer.format.quote', Icon: QuoteIcon },
+  { kind: 'bullet', label: 'messages:composer.format.bullets', Icon: ListBulletIcon },
+];
 
 /** The reference alone, as the server takes it: the staged title stays here. */
 function referenceOf(object: StagedObject): SharedObjectReference {
@@ -64,6 +68,19 @@ function useStagedCard(object: StagedObject | null): SharedObjectCard | null {
 }
 
 /**
+ * #6254: the composer's half of the thread's drop zone. It renders nothing;
+ * it tells ./pane-drop that a box which can take files is drawn for this
+ * scope, so the pane around it lights and hands over what is dropped. A ref
+ * carries the latest `addFiles`, which closes over the upload it belongs to.
+ */
+function ComposerDropTarget({ scope, onFiles }: { scope: ComposerScope; onFiles: (files: File[]) => void }) {
+  const latest = useRef(onFiles);
+  latest.current = onFiles;
+  useEffect(() => registerComposerDrop(scope, (files) => latest.current(files)), [scope]);
+  return null;
+}
+
+/**
  * The conversation's composer — or, with `threadRootId` (#2387), the composer
  * of the reply thread open beside it. The two keep their own drafts and
  * their own staged reply (the store's composer scope), and only the
@@ -76,12 +93,28 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const conversationId = snap.route.conversationId || 0;
   const active = snap.active;
   const scope = scopeKey(conversationId, threadRootId);
+  // Where a save lands, and whether its chips are the ones on screen: an
+  // upload started here can finish after the person moved to another draft.
+  const scopeRef = useRef<ComposerScope>(scope);
+  scopeRef.current = scope;
   const inThread = !!threadRootId;
   const [value, setValue] = useState('');
   const [dictating, setDictating] = useState(false);
   const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
   const [uploading, setUploading] = useState(0);
   const [object, setObject] = useState<StagedObject | null>(null);
+  // #6212: where the chip came from. The bot page's list attaches what a row
+  // opens, and that one follows the row you open next; one the person chose
+  // themselves (Share, Ask for changes, the picker) stays until they send it
+  // or press ×. `objectRef` mirrors `object` for the events, which are
+  // registered once per conversation and would otherwise read it stale.
+  const objectFrom = useRef<'list' | 'person' | null>(null);
+  const objectRef = useRef<StagedObject | null>(null);
+  const setChip = (next: StagedObject | null, from: 'list' | 'person' | null) => {
+    objectRef.current = next;
+    objectFrom.current = next ? from : null;
+    setObject(next);
+  };
   // Ask for changes (store.openBot): what the box asks while its change is attached.
   const [prompt, setPrompt] = useState<string | null>(null);
   // The caret goes in the box once it is drawn: an attach can arrive before
@@ -93,11 +126,6 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // whose own news rings as it is): the notification ask, "Hear when they
   // answer?" (../notify-ask/notify-ask.tsx), over the box.
   const [askReply, setAskReply] = useState(false);
-  // #4065: the shared drop zone (features/attachments/file-drag.tsx). Its
-  // depth count keeps the outline steady while the pointer crosses the card's
-  // own controls, where a leave from any child used to clear it.
-  const drop = useFileDrag({ onFiles: (files) => { void addFiles(files); } });
-  const dragging = drop.dragging;
   // #1955: the paperclip and the share tray were two adjacent icons that both
   // answered "put something in this message", and neither said which was
   // which — two guesses at a 40px target, on the narrowest row in the app.
@@ -113,9 +141,22 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // #2386: friends lead the @ list (features/friends/store.ts).
   const friendIds = useFriendIds();
 
+  // #6249: the attached files come back with the words they were saved with.
+  // A scope change is still the one place the composer reads a draft back.
   useEffect(() => {
-    setValue(draftFor(scope)); setAttachments([]); setObject(null); setPrompt(null); setError(''); setAskReply(false);
+    setValue(draftFor(scope)); setAttachments(draftAttachmentsFor(scope)); setChip(null, null); setPrompt(null); setError(''); setAskReply(false);
   }, [scope]);
+
+  /**
+   * #6249: save a draft's attached files, and draw them when that draft is
+   * the one on screen. `target` is the scope the change belongs to, which is
+   * not always the one open now.
+   */
+  const updateAttachments = (target: ComposerScope, change: (items: MessageAttachment[]) => MessageAttachment[]) => {
+    const next = change(draftAttachmentsFor(target));
+    setDraftAttachments(target, next);
+    if (target === scopeRef.current) setAttachments(next);
+  };
 
   // Reply puts the caret here where there is a hardware keyboard, so the
   // next keystroke is the reply (message-actions/focus.ts).
@@ -127,15 +168,32 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   useEffect(() => {
     if (inThread) return undefined;
     const onSelected = (event: Event) => {
-      const detail = (event as CustomEvent<SharedObjectReference>).detail;
-      if (detail) { setObject(detail); setPrompt(null); inputRef.current?.focus(); }
+      const detail = (event as CustomEvent<SharedObjectReference & { conversationId?: number; source?: 'list' | 'person' }>).detail;
+      if (!detail) return;
+      // Addressed to one conversation (the Homeroom bot tab's Main): every
+      // other composer mounted under a hidden screen leaves it alone.
+      const { conversationId: to, source, ...object } = detail;
+      if (to != null && to !== conversationId) return;
+      // #6212: the list's attach follows the row you open; it never replaces
+      // an item the person chose themselves.
+      if (source === 'list' && objectFrom.current === 'person' && objectRef.current) return;
+      setChip(object, source === 'list' ? 'list' : 'person'); setPrompt(null); inputRef.current?.focus();
+    };
+    // #6212: the list opened something else, or nothing, so its own
+    // attachment comes off. One the person chose stays until they send it
+    // or press its ×.
+    const onCleared = (event: Event) => {
+      const to = (event as CustomEvent<{ conversationId?: number } | undefined>).detail?.conversationId;
+      if (to != null && to !== conversationId) return;
+      if (objectFrom.current !== 'list') return;
+      setChip(null, null); setPrompt(null);
     };
     // Ask for changes: the change itself, attached, and the caret in the box.
     const attachPending = () => {
       if (!conversationId) return;
       const pending = takePendingAttach(conversationId);
       if (!pending) return;
-      setObject(pending.object); setPrompt(pending.placeholder); setFocusWanted(true);
+      setChip(pending.object, 'person'); setPrompt(pending.placeholder); setFocusWanted(true);
     };
     const onShare = (event: Event) => {
       // A bare Messages screen is asking the user to choose a destination;
@@ -149,6 +207,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       window.UsernodeReact?.dialogs?.messagesShare?.open(detail || undefined);
     };
     window.addEventListener('usernode:messages-object-selected', onSelected);
+    window.addEventListener('usernode:messages-object-cleared', onCleared);
     window.addEventListener('usernode:messages-share', onShare);
     window.addEventListener('usernode:messages-attach', attachPending);
     // An app/card share can navigate into Messages before this conversation
@@ -160,6 +219,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     }
     return () => {
       window.removeEventListener('usernode:messages-object-selected', onSelected);
+      window.removeEventListener('usernode:messages-object-cleared', onCleared);
       window.removeEventListener('usernode:messages-share', onShare);
       window.removeEventListener('usernode:messages-attach', attachPending);
     };
@@ -167,8 +227,8 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
 
   useEffect(() => () => {
     if (typingStop.current) window.clearTimeout(typingStop.current);
-    notifyTyping(false);
-  }, [conversationId]);
+    notifyTyping(false, threadRootId);
+  }, [conversationId, threadRootId]);
 
   const boxShown = !!active && active.membershipStatus === 'member' && !!active.canSend;
   useEffect(() => {
@@ -309,6 +369,15 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     emojiCaret.current = null;
     inputRef.current?.setSelectionRange(at, at);
   }, [value]);
+  // #6035: where the selection goes after a formatting button edited the
+  // text, put back in the same layout effect as an emoji swap's caret.
+  const formatCaret = useRef<{ start: number; end: number } | null>(null);
+  useLayoutEffect(() => {
+    const selection = formatCaret.current;
+    if (!selection) return;
+    formatCaret.current = null;
+    inputRef.current?.setSelectionRange(selection.start, selection.end);
+  }, [value]);
   const emoji = useMemo(() => {
     const input = inputRef.current;
     const cursor = input?.selectionStart ?? value.length;
@@ -389,12 +458,34 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     input?.focus();
   }
 
+  /** #6035: Ctrl/Cmd+B and Ctrl/Cmd+I in a channel, as other chat apps do. */
+  function onFormatKey(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
+    if (!isChannel || event.nativeEvent.isComposing || event.altKey || event.shiftKey) return false;
+    if (!(event.metaKey || event.ctrlKey)) return false;
+    const key = event.key.toLowerCase();
+    if (key !== 'b' && key !== 'i') return false;
+    event.preventDefault();
+    formatSelected(key === 'b' ? 'bold' : 'italic');
+    return true;
+  }
+
   function updateValue(next: string) {
     const trimmed = next.slice(0, 8000);
     setValue(trimmed); setDraft(scope, trimmed);
-    notifyTyping(true);
+    // 31 Oct 2026: typed in a thread, it is that thread's typing line.
+    notifyTyping(true, threadRootId);
     if (typingStop.current) window.clearTimeout(typingStop.current);
-    typingStop.current = window.setTimeout(() => notifyTyping(false), 2200);
+    typingStop.current = window.setTimeout(() => notifyTyping(false, threadRootId), 2200);
+  }
+
+  /** #6035: format the selection (or the caret's line/spot) and keep the focus. */
+  function formatSelected(kind: FormatKind) {
+    const input = inputRef.current;
+    if (!input) return;
+    const result = applyFormat(input.value.slice(0, 8000), input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, kind);
+    formatCaret.current = { start: result.start, end: result.end };
+    input.focus({ preventScroll: true });
+    updateValue(result.value);
   }
 
   function insertMention(username: string) {
@@ -408,24 +499,18 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   }
 
   async function addFiles(files: File[]) {
-    const room = Math.max(0, MAX_ATTACHMENTS - attachments.length - uploading);
-    const selected = files.slice(0, room);
-    if (!selected.length) { setError(t('messages:composer.attachLimit', { count: MAX_ATTACHMENTS })); return; }
-    // #4065: one line for every file left out — the first reason, and how
-    // many more went with it. The files past the room used to go silently.
-    const tooLarge = selected.filter((file) => file.size > attachmentLimit(file));
-    const cut = files.length - selected.length;
-    const firstReason = tooLarge.length
-      ? t('messages:composer.fileTooLarge', { file: tooLarge[0].name })
-      : (cut ? t('messages:composer.attachLimit', { count: MAX_ATTACHMENTS }) : '');
-    const refused = refusalSummary(firstReason, tooLarge.length + cut - 1);
+    // #6249: an upload that finishes after the person moved on is saved to
+    // the draft it was started in, never drawn in the one they moved to.
+    const startScope = scopeRef.current;
+    // #6256: the cap, the per-type ceiling and the line naming what was left
+    // out are shared with the blank thread's composer (../attachments/limits).
+    const { upload, refused } = stageFiles(files, attachments.length + uploading, t);
     setError(refused);
-    for (const file of selected) {
-      if (tooLarge.includes(file)) continue;
+    for (const file of upload) {
       setUploading((count) => count + 1); setError(refused);
       try {
         const attachment = await api.uploadAttachment(conversationId, file);
-        setAttachments((items) => [...items, attachment]);
+        updateAttachments(startScope, (items) => [...items, attachment]);
       }
       catch (err) { setError(err instanceof Error ? err.message : t('messages:composer.uploadFailed', { file: file.name })); }
       finally { setUploading((count) => Math.max(0, count - 1)); }
@@ -469,7 +554,10 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // `preventScroll` for the same reason.
   function submit() {
     if (dictating || uploading || (!value.trim() && !attachments.length && !object)) return;
-    setError(''); notifyTyping(false); setPrompt(null);
+    setError(''); notifyTyping(false, threadRootId); setPrompt(null);
+    // #6212: the chip leaves with the message it rode on, so where it came
+    // from goes with it.
+    objectRef.current = null; objectFrom.current = null;
     const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object ? referenceOf(object) : undefined };
     const answerable = active?.homeroomBot !== true;
     setValue(''); setAttachments([]); setObject(null);
@@ -480,6 +568,9 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   }
 
   if (!active || active.membershipStatus !== 'member') return null;
+  // A conversation that did not load has no box to write in, though its
+  // header still names it when the read got no answer (store.ts loadThread).
+  if (!inThread && snap.threadError && !snap.messages.length) return null;
 
   // QA 2026-09-24 Q2: a direct request the other person has not accepted
   // yet. It carries ONE opening message; once that is sent (or in flight —
@@ -489,15 +580,19 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // Retry could never work.
   const awaiting = !inThread && !!active.awaitingAcceptance;
   const { name: waitingOn, unknown: waitingUnknown } = awaiting ? waitingFor(active) : { name: '', unknown: false };
+  // The bar round the card is the chat foot's (@/components/ui/chat
+  // ChatComposerBar), as in every chat: its padding and its clearance under
+  // it are decided there (1 November 2026). "You can't send here" is a line
+  // of text in the card's place, not a bar round one, so it keeps its own.
   if (awaiting && (!active.canSend || snap.messages.length > 0)) {
     return (
-      <div className="messages-composer messages-composer-awaiting platform-safe-bar" data-awaiting-acceptance="">
+      <ChatComposerBar className="messages-composer messages-composer-awaiting" data-awaiting-acceptance="">
         {askReply ? <NotifyAsk moment="reply" className="mb-2" /> : null}
         <div className="messages-awaiting" role="status">
           <strong>{t('messages:composer.requestSent.title')}</strong>
           <p>{waitingUnknown ? t('messages:composer.requestSent.waitingUnknown') : waitingOn ? t('messages:composer.requestSent.waitingNamed', { username: waitingOn }) : t('messages:composer.requestSent.waitingUnnamed')}</p>
         </div>
-      </div>
+      </ChatComposerBar>
     );
   }
   if (!active.canSend) return <div className="messages-composer-disabled platform-safe-bar">{t('messages:composer.cannotSend')}</div>;
@@ -518,9 +613,14 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const planReply = reply?.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? reply.metadata.homeroomBot : null;
   // Where the count turns amber, and the only length a phone shows it at.
   const nearLimit = value.length > 7600;
+  // #6035, Drea: the draft as it will be sent, drawn by the same renderer a
+  // sent message is. It is shown once the draft carries formatting, so a
+  // plain message's box stays the one row it was; the field keeps the
+  // source that gets sent.
+  const preview = isChannel && hasFormatting(value) && plainText(value).length > 0 ? value.trim() : null;
 
   return (
-    <div className={`messages-composer platform-safe-bar ${inThread ? 'messages-composer-thread' : ''} ${dragging ? 'messages-composer-dragging' : ''}`} {...drop.handlers}>
+    <ChatComposerBar className={`messages-composer ${inThread ? 'messages-composer-thread' : ''}`}>
       {/* QA 2026-09-24 Q2: before the opening message of a request, what it
           will be — so the composer turning into a notice after it is no
           surprise. */}
@@ -530,9 +630,12 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           inset (`platform-safe-bar`), so the card keeps its own padding on a
           notched phone instead of growing a tall blank foot. */}
       <div className="messages-composer-card">
+      {/* #6254: a file dropped anywhere on the thread reaches this box's
+          upload. The pane draws the outline and calls this. */}
+      <ComposerDropTarget scope={scope} onFiles={(files) => { void addFiles(files); }} />
       {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">{reply.sender.unnamed ? (reply.sender.id ? t('messages:composer.replyingToUnknownHandle') : t('messages:composer.replyingToUnknown')) : t('messages:composer.replyingTo', { name: senderName(reply.sender, { bare: active.kind === 'direct' }) })}</span><p className="truncate">{plainText(reply.content) || t('messages:composer.replyAttachment')}</p>{reply.sender.bot && mirrorsReplies(reply.metadata?.homeroomBot) ? <p className="messages-bot-note">{t('messages:bot.draft.reply')}</p> : null}{planReply ? <p className="messages-bot-note">{planReply.firstVersion ? t('messages:composer.planReplyNote') : t('messages:composer.planReplyNotePublic')}</p> : null}</div><button type="button" onClick={() => setReply(scope, null)} aria-label={t('messages:composer.cancelReply')}>×</button></div> : null}
-      {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{pendingObjectLabel(object, stagedCard)}</span><button type="button" onClick={() => { setObject(null); setPrompt(null); }} aria-label={t('messages:composer.removeSharedItem')}>×</button></div> : null}
-      {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={t('messages:composer.removeAttachment', { file: item.name })}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}</div> : null}
+      {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{pendingObjectLabel(object, stagedCard)}</span><button type="button" onClick={() => { setChip(null, null); setPrompt(null); }} aria-label={t('messages:composer.removeSharedItem')}>×</button></div> : null}
+      {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => updateAttachments(scope, (items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={t('messages:composer.removeAttachment', { file: item.name })}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}</div> : null}
       {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label={t('messages:composer.channelsMenu')}>{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
       {mentionShown && mention ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label={t('messages:composer.peopleMenu')}>{mention.map((member, index) => <button key={member.id} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
       {emojiOpen && emoji ? (
@@ -546,6 +649,23 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
               </button>
             ))}
           </div>
+        </div>
+      ) : null}
+      {preview ? (
+        <div className="messages-format-preview" role="group" aria-label={t('messages:composer.format.preview')}>
+          <span className="messages-format-preview-label" aria-hidden="true">{t('messages:composer.format.preview')}</span>
+          <div className="messages-format-preview-body">
+            <MessageMarkdown content={preview} />
+          </div>
+        </div>
+      ) : null}
+      {isChannel ? (
+        <div className="messages-format-bar" role="toolbar" aria-label={t('messages:composer.format.bar')}>
+          {FORMAT_BUTTONS.map(({ kind, label, Icon }) => (
+            <button key={kind} type="button" className="messages-format-btn" data-format={kind} onMouseDown={(event) => event.preventDefault()} onClick={() => formatSelected(kind)} disabled={dictating} aria-label={t(label)} title={t(label)}>
+              <Icon aria-hidden="true" />
+            </button>
+          ))}
         </div>
       ) : null}
       <div className="flex items-end gap-1.5">
@@ -570,7 +690,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        <textarea ref={inputRef} dir="auto" value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false, threadRootId)} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <SpeakButton scope={`messages:${scope}`} getText={() => inputRef.current?.value || ''} onText={updateValue} maxLength={8000} onBusyChange={setDictating} disabled={!boxShown} />
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={dictating || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')}><ArrowUpIcon aria-hidden="true" /></button>
       </div>
@@ -581,7 +701,6 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           keystroke does not push the composer up by a line. */}
       <div className="messages-composer-count mt-1 px-1 flex justify-end h-[15px]" data-near-limit={nearLimit ? '' : undefined} aria-hidden={!value.length}><span className={`text-[10px] leading-[15px] ${nearLimit ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
       </div>
-      {dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
-    </div>
+    </ChatComposerBar>
   );
 }

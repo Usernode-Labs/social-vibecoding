@@ -21,6 +21,10 @@
 const DETAIL_PREFIX = 'hrbot2:';
 const LEGACY_RE = /^hrbot:([a-z_]{1,20}):(.*)$/s;
 
+// A project slug, as features/ai/door.ts reads one: the bell opens a request's
+// thread by its project and number, so both must be the shape the address takes.
+const APP_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,254}$/;
+
 // The moments, in the words the bell heads a row with.
 const BELL_LABELS = Object.freeze({
   needs_you: 'Needs you',
@@ -44,7 +48,8 @@ const NEEDS_YOU_ASKS = Object.freeze({
   decide: 'Your decision',
   blocked: 'Needs more detail',
   empty: 'Needs more detail',
-  done: 'Looks done already',
+  // #6306: nothing is left to build; the ask already works.
+  done: 'Already works',
   platform: 'Move it to Homeroom\'s board?',
 });
 
@@ -60,10 +65,11 @@ const SAID_BY_MOMENT = Object.freeze({
     'blocked', 'empty', 'done', 'platform']),
   ready: Object.freeze(['ready', 'ready_group', 'ready_first', 'ready_broken']),
   stopped: Object.freeze(['build_time', 'build_restart', 'build_no_change', 'build_not_proposed', 'build_no_start',
-    'build_other', 'update_failed', 'needs_look', 'checks', 'first_failed']),
-  // 16 Oct 2026: `slots`, a build held because the project's slots are all
-  // in use (homeroom-bot.js PROPOSALS_PER_APP_CAP), rings once.
-  on_hold: Object.freeze(['allowance', 'paused', 'slots', 'taken']),
+    'build_other', 'build_no_plan', 'build_push', 'build_push_permanent', 'build_push_gave_up', 'update_failed', 'needs_look', 'checks', 'first_failed']),
+  // 16 Oct 2026: `slots`, a build held because the project's changes waiting
+  // for votes are as many as it may have (homeroom-bot.js WAITING_PER_APP),
+  // rings once; #6156: `builds`, because its builds are (BUILDS_PER_APP).
+  on_hold: Object.freeze(['allowance', 'paused', 'slots', 'builds', 'taken']),
   live: Object.freeze(['live', 'live_soon', 'live_first', 'live_first_soon']),
   done_elsewhere: Object.freeze(['done_elsewhere']),
 });
@@ -134,6 +140,11 @@ const BUILD_CAUSES = Object.freeze({
   no_change: 'build_no_change', no_changes: 'build_no_change', empty_diff: 'build_no_change',
   not_proposed: 'build_not_proposed', promote_failed: 'build_not_proposed',
   no_start: 'build_no_start', not_started: 'build_no_start',
+  // #6267: the build finished and GitHub refused the upload.
+  push: 'build_push', push_permanent: 'build_push_permanent', push_gave_up: 'build_push_gave_up',
+  // #6313: the plan could not be written; nothing was built, and the bot is
+  // trying again by itself.
+  plan: 'build_no_plan',
 });
 
 function oneLine(value, max) {
@@ -194,6 +205,7 @@ function saidFor(moment, metadata = {}) {
     if (kind === 'paused') return 'paused';
     // 16 Oct 2026: a person took on what the bot had promised.
     if (kind === 'request_taken') return 'taken';
+    if (kind === 'held_builds_per_app') return 'builds';
     return /^held_proposals/.test(String(kind || '')) ? 'slots' : 'allowance';
   }
   if (moment === 'done_elsewhere') return 'done_elsewhere';
@@ -248,6 +260,9 @@ function botNotificationDetail(metadata) {
   );
   if (deciders) out.d = deciders;
   if (metadata.oneMore === true) out.o = 1;
+  // #6306: an already-done verdict's own sentence.
+  const reason = oneLine(metadata.reason, 120);
+  if (reason) out.n = reason;
   // Done another way: who shipped it.
   const doneBy = oneLine(metadata.doneBy, 60);
   if (doneBy) out.y = doneBy;
@@ -259,7 +274,14 @@ function botNotificationDetail(metadata) {
   const broken = brokenCount(metadata);
   if (said === 'ready_broken' && broken) out.b = Math.min(broken, 99);
   const issue = positiveInt(metadata.issueNumber);
-  if (issue) out.i = issue;
+  if (issue) {
+    out.i = issue;
+    // 4 Nov 2026 (#6290): the project too, so a notification about a request
+    // opens that request's own thread rather than Main Chat. Only beside a
+    // request number, so no quiet message grows by it.
+    const slug = typeof metadata.appSlug === 'string' ? metadata.appSlug : '';
+    if (APP_SLUG_RE.test(slug)) out.p = slug;
+  }
   const root = positiveInt(metadata.threadRootId);
   if (root) out.r = root;
   return `${DETAIL_PREFIX}${JSON.stringify(out)}`;
@@ -273,7 +295,7 @@ function parseBotDetail(detail) {
     try { raw = JSON.parse(detail.slice(DETAIL_PREFIX.length)); } catch { return null; }
     if (!raw || typeof raw !== 'object') return null;
     const moment = normalizeMoment(raw.m);
-    if (!moment || moment === 'reply') return moment === 'reply' ? { moment, said: 'reply' } : null;
+    if (!moment || moment === 'reply') return moment === 'reply' ? { moment, said: 'reply', appSlug: '' } : null;
     const said = SAID_BY_MOMENT[moment].includes(raw.s) ? raw.s : saidFor(moment, {});
     return {
       moment,
@@ -283,19 +305,22 @@ function parseBotDetail(detail) {
       firstVersion: raw.f === 1 || raw.f === true,
       waiting: oneLine(raw.w, 120),
       deciders: oneLine(raw.d, 120),
+      // #6306: an already-done verdict's own sentence.
+      reason: oneLine(raw.n, 120),
       oneMore: raw.o === 1 || raw.o === true,
       doneBy: oneLine(raw.y, 60),
       takenBy: oneLine(raw.k, 60),
       count: positiveInt(raw.c),
       broken: positiveInt(raw.b),
       issueNumber: positiveInt(raw.i),
+      appSlug: APP_SLUG_RE.test(String(raw.p || '')) ? String(raw.p) : '',
       threadRootId: positiveInt(raw.r),
     };
   }
   const m = LEGACY_RE.exec(detail);
   if (!m || !LEGACY_SAID[m[1]]) return null;
   const [moment, said] = LEGACY_SAID[m[1]];
-  if (moment === 'reply') return { moment, said };
+  if (moment === 'reply') return { moment, said, appSlug: '' };
   const appName = oneLine(m[2], 80);
   return {
     moment,
@@ -310,6 +335,7 @@ function parseBotDetail(detail) {
     count: null,
     broken: null,
     issueNumber: null,
+    appSlug: '',
     threadRootId: null,
     legacy: true,
   };
@@ -328,7 +354,15 @@ function bodyFor(d) {
     case 'decide_others': return `This needs a decision from ${d.deciders || d.waiting || 'someone else'} before I build it.`;
     case 'blocked': return 'I can\'t build it as written. Add detail and I\'ll look again.';
     case 'empty': return 'I couldn\'t find anything to build. Add detail and I\'ll look again.';
-    case 'done': return 'This looks done already. Close it, or tell me what\'s missing.';
+    case 'done': {
+      // #6306: the bot's one sentence says what already works; the offer is
+      // the same close vote the row and the page offer.
+      if (d.reason) {
+        const reason = /[.!?…]$/.test(d.reason) ? d.reason : `${d.reason}.`;
+        return `Already works: ${reason} Propose to close it?`;
+      }
+      return 'Already works. Propose to close it, or tell me what\'s missing.';
+    }
     case 'platform': return 'This is about Homeroom itself. Move it to Homeroom\'s own board?';
     case 'ready': return 'Ready to try. Try it, and approve it if you\'re happy.';
     case 'ready_group': {
@@ -354,7 +388,15 @@ function bodyFor(d) {
       ? 'Stopped: I built your first version but couldn\'t put it live yet. Tap Try again and I\'ll finish it.'
       : 'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.';
     case 'build_no_start': return 'Stopped: I couldn\'t get started. Tap Try again.';
+    // #6267: the build finished; the upload to GitHub did not. The platform
+    // retries a temporary refusal itself, so the first needs no tap.
+    case 'build_push': return 'Built, but GitHub refused the upload. I\'ll try again soon.';
+    case 'build_push_permanent': return 'Built, but GitHub wouldn\'t take the upload. Reply to try again.';
+    case 'build_push_gave_up': return 'Built, but GitHub kept refusing the upload. Reply to send it.';
     case 'build_other': return 'Stopped: something went wrong while I was building. Tap Try again.';
+    // #6313: nothing was built, so it is never said as "while I was building",
+    // and no tap is asked for a retry that is already coming.
+    case 'build_no_plan': return 'Stopped: I couldn\'t write the plan for it. I\'m trying again.';
     case 'update_failed': return 'Stopped: I couldn\'t update it. It\'s as it was.';
     case 'needs_look': return 'Stopped: it\'s built, but a person needs to look at it before you can try it.';
     case 'checks': return 'Stopped: its checks still fail. A person needs to look.';
@@ -362,6 +404,7 @@ function bodyFor(d) {
     case 'allowance': return 'On hold until Monday: your building time for this week is used up.';
     case 'paused': return 'On hold until Monday: I\'ve used my budget for this week.';
     case 'slots': return 'Waiting for a slot: all of this project\'s are in use. I\'ll start when one frees.';
+    case 'builds': return 'Waiting for my turn: I\'m building as much on this project as I may at once. I\'ll start when one is done.';
     case 'taken': return d.takenBy
       ? `On hold: @${d.takenBy} has taken it on, so I'm leaving it to them.`
       : 'On hold: somebody has taken it on, so I\'m leaving it to them.';
@@ -427,6 +470,22 @@ function plainText(value) {
     .trim();
 }
 
+/** The longest bell subject a reply gives, in characters, its "…" included. */
+const BELL_SUBJECT_MAX = 140;
+
+/**
+ * Pure: a bell subject no longer than BELL_SUBJECT_MAX, cut at the last
+ * whole word with "…" (overnight audit D04, 2 Nov 2026: a bare 140-character
+ * cut left "Tap File it under my mes", which read as a typo and hid the ask).
+ */
+function bellSubjectOf(words) {
+  if (words.length <= BELL_SUBJECT_MAX) return words;
+  const room = words.slice(0, BELL_SUBJECT_MAX - 1);
+  const space = room.lastIndexOf(' ');
+  const cut = space > BELL_SUBJECT_MAX / 2 ? room.slice(0, space) : room;
+  return `${cut.replace(/[\s.,;:!?-]+$/, '')}…`;
+}
+
 /**
  * Pure: the words for one of the bot's notifications, from its detail:
  * `{ title, body, bellLabel, bellSubject, bellMeta, moment, said,
@@ -442,7 +501,7 @@ function botMomentCopy(detail, message = '') {
   if (d.moment === 'reply') {
     const words = plainText(message);
     return {
-      title: 'Homeroom bot', body: words, bellLabel: 'Homeroom bot', bellSubject: words.slice(0, 140),
+      title: 'Homeroom bot', body: words, bellLabel: 'Homeroom bot', bellSubject: bellSubjectOf(words),
       bellMeta: 'Homeroom bot', moment: 'reply', said: 'reply', threadRootId: null,
     };
   }
@@ -506,6 +565,7 @@ module.exports = {
   botNotificationDetail,
   parseBotDetail,
   botMomentCopy,
+  bellSubjectOf,
   botEmailCopy,
   firstSentence,
   momentKind,

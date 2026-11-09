@@ -197,6 +197,96 @@ function historyPool(graduatedKeys) {
 const BROKEN = [frame('/', { v: 1, stylesheets: [{ path: '/tailwind.css', problem: 'answered 204 with no content' }], blank: false })];
 const KEY = appManifest.checkKey(renderHealth.RENDER_CHECK_NAME, renderHealth.RENDER_CHECK_PATH);
 
+// ── a retried page is judged by its retry ─────────────────────────────────
+
+const SETTINGS_BACK = '/?shot=settings-back#settings';
+const RETRY_BASE = 100000; // capture.js RETRY_INDEX_BASE, above every primary
+
+const primary = (index, path, status, render) => ({
+  index, name: path, path, status, retryOf: null, ...(render ? { render } : {}),
+});
+const retry = (index, of, path, status, render) => ({
+  index, name: path, path, status, retryOf: of, ...(render ? { render } : {}),
+});
+const clean = { v: 1, stylesheets: [], blank: false };
+const blank = { v: 1, stylesheets: [], blank: true };
+
+test('a page blank on its first load and rendered on retry passes, with a note', async () => {
+  const frames = [
+    primary(0, SETTINGS_BACK, 'fail', blank),
+    retry(RETRY_BASE, 0, SETTINGS_BACK, 'pass', clean),
+    primary(1, '/', 'pass', clean),
+  ];
+  const out = renderHealth.summarize(frames);
+  assert.equal(out.passed, true);
+  assert.equal(out.reason, null);
+  assert.match(out.note, /blank on its first load, rendered on retry/);
+  assert.ok(out.note.includes(SETTINGS_BACK), 'the note names the recovered path');
+
+  const graded = await renderHealth.maybeBuildRenderHealthRow({ pool: historyPool([KEY]), appId: 7, frames });
+  assert.equal(graded.row.status, 'pass');
+  assert.equal(graded.row.advisory, false);
+  assert.equal(graded.history.passed, true);
+});
+
+test('a page blank on every attempt still fails the row', async () => {
+  const frames = [
+    primary(0, SETTINGS_BACK, 'fail', blank),
+    retry(RETRY_BASE, 0, SETTINGS_BACK, 'fail', blank),
+    retry(RETRY_BASE + 1, 0, SETTINGS_BACK, 'fail', blank),
+  ];
+  const out = renderHealth.summarize(frames);
+  assert.equal(out.passed, false);
+  assert.equal(out.reason, `nothing visible rendered on ${SETTINGS_BACK}.`);
+
+  const graded = await renderHealth.maybeBuildRenderHealthRow({ pool: historyPool([KEY]), appId: 7, frames });
+  assert.equal(graded.row.status, 'fail');
+  assert.equal(graded.row.advisory, false, 'a graduated row blocks');
+});
+
+test('the latest retry with a reading is the one that counts', () => {
+  const frames = [
+    primary(0, SETTINGS_BACK, 'fail', blank),
+    retry(RETRY_BASE, 0, SETTINGS_BACK, 'fail', blank),
+    retry(RETRY_BASE + 1, 0, SETTINGS_BACK, 'pass', clean),
+  ];
+  const out = renderHealth.summarize(frames);
+  assert.equal(out.passed, true);
+  assert.match(out.note, /blank on its first load, rendered on retry/);
+});
+
+test('a stylesheet problem read on the retry still fails the row', () => {
+  const sheet = { path: '/tailwind.css', problem: 'answered 204 with no content' };
+  const frames = [
+    primary(0, SETTINGS_BACK, 'fail', blank),
+    retry(RETRY_BASE, 0, SETTINGS_BACK, 'pass', { v: 1, stylesheets: [sheet], blank: false }),
+  ];
+  const out = renderHealth.summarize(frames);
+  assert.equal(out.passed, false);
+  assert.match(out.reason, /the stylesheet \/tailwind\.css answered 204 with no content \(on \/\?shot=settings-back#settings\)/);
+  assert.doesNotMatch(out.reason, /nothing visible rendered/, 'the retry rendered, so the blank part is gone');
+});
+
+test('a retry with no reading leaves the first load\'s reading standing', () => {
+  const frames = [
+    primary(0, SETTINGS_BACK, 'fail', blank),
+    retry(RETRY_BASE, 0, SETTINGS_BACK, 'pass'),
+  ];
+  const out = renderHealth.summarize(frames);
+  assert.equal(out.passed, false);
+  assert.equal(out.reason, `nothing visible rendered on ${SETTINGS_BACK}.`);
+});
+
+test('a blank path is listed once however many retries share it', () => {
+  const frames = [
+    primary(0, SETTINGS_BACK, 'fail', blank),
+    retry(RETRY_BASE, 0, SETTINGS_BACK, 'fail', blank),
+    retry(RETRY_BASE + 1, 0, SETTINGS_BACK, 'fail', blank),
+  ];
+  const out = renderHealth.summarize(frames);
+  assert.equal(out.reason.split(SETTINGS_BACK).length - 1, 1);
+});
+
 test('earned gating: advisory until a merged change has passed it, blocking after', async () => {
   const fresh = await renderHealth.maybeBuildRenderHealthRow({ pool: historyPool([]), appId: 7, frames: BROKEN });
   assert.equal(fresh.row.index, renderHealth.RENDER_CHECK_INDEX);

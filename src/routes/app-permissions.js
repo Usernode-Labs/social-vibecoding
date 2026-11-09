@@ -216,7 +216,8 @@ function appPermissionsRoutes(config) {
   //   * a capability the app did not DECLARE cannot be granted, however
   //     the request got here. That is what stops an app asking for the
   //     camera without the request ever appearing in its own diff.
-  router.post('/api/me/permission-grants', async (req, res) => {
+  // Only the Homeroom page itself may write one, as for the revoke below.
+  router.post('/api/me/permission-grants', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const { appSlug, capability } = req.body || {};
     if (!appSlug || typeof appSlug !== 'string') {

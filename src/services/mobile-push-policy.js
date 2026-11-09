@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { ALLOWED_KINDS } = require('./mobile-push-preferences');
 const notifyCopy = require('./homeroom-bot-notify-copy');
 const { PARKED_NOTIFICATION_KINDS } = require('./kudos-parked');
+const pushText = require('./push-text');
 
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const RECIPIENT_CONTEXT = 'usernode-social-push-recipient-v1';
@@ -42,6 +43,14 @@ function recipientBinding({ installationId, userId, environment }) {
 // stays opaque — context feeds ONLY the display strings. Anything missing
 // or malformed degrades to the generic copy; copy assembly never throws,
 // so a context problem can never kill a delivery.
+//
+// The fixed words are frontend/locales/en/push.json, whole messages asked for
+// by id, so Homeroom's translation step fills them like the rest of its text.
+// `t` is pushText.english unless the worker has one for the recipient's language
+// (push-language.js). Names, titles, quoted words and the bot's own words are
+// parameters or pass through as written. What only a full admin receives
+// (platformIncidentCopy, platformLimitCopy) stays English here, like the admin
+// console it points at.
 
 const TITLE_MAX = 80;
 const BODY_MAX = 140;
@@ -52,6 +61,9 @@ const VOTE_REASON_EMBED_MAX = 138;
 // Labels embedded in a TITLE get a tighter cap than body embeds, so the
 // actor and the ` · App` suffix survive the final 80-char truncation.
 const TITLE_EMBED_MAX = 40;
+// What a push says when nothing else can be said, and what that is when not
+// even the catalog can be read: genericCopy asks the catalog first, for the
+// same words.
 const GENERIC_COPY = Object.freeze({ title: 'Homeroom', body: 'You have new activity' });
 
 // dev/evan-1786562509265 and friends: a trailing run of digits marks a
@@ -96,7 +108,7 @@ function botMomentCopy(detail, message) {
 
 // WP-E: the bot's build moments as their own kinds ("Your builds"). Worded
 // by the moment the detail names, like its messages above; these are what a
-// row without one says.
+// row without one says, and they are the bot's words too.
 const BUILD_FALLBACK = Object.freeze({
   build_ready: 'Ready to try. Try it, and approve it if you\'re happy.',
   build_needs_you: 'I need your answer before I go on.',
@@ -106,10 +118,10 @@ const BUILD_FALLBACK = Object.freeze({
 
 // "One story": a change named the way every ping names it, "{change title}
 // · {project}". '' without a title.
-function changeTitle(label, app) {
+function changeTitle(label, app, t) {
   if (!label) return '';
   const title = truncate(label, TITLE_EMBED_MAX);
-  return app ? `${title} · ${app}` : title;
+  return app ? t('push:join.app', { title, app }) : title;
 }
 
 function truncate(value, max) {
@@ -118,9 +130,9 @@ function truncate(value, max) {
 }
 
 const AUTO_SOLVE_BODIES = Object.freeze({
-  spec: 'Plan ready. Review it in the app',
-  code: "Code ready. Review and promote when you're happy",
-  spec_code: "Plan and code ready. Review and promote when you're happy",
+  spec: 'push:autoSolve.done.body.spec',
+  code: 'push:autoSolve.done.body.code',
+  spec_code: 'push:autoSolve.done.body.specCode',
 });
 
 function daysSince(value, now) {
@@ -226,7 +238,7 @@ function platformLimitCopy(detail) {
 
 // Kind-specific {title, body}, or null when the kind's essential context is
 // missing (e.g. a mention without a sender) — null means the generic copy.
-function buildCopy(kind, context, now) {
+function buildCopy(kind, context, now, t) {
   const app = cleanText(context.appName);
   const conversation = cleanText(context.conversationTitle);
   const actor = cleanText(context.sourceUsername);
@@ -247,102 +259,110 @@ function buildCopy(kind, context, now) {
   const branch = cleanText(context.branchName);
   const label = cleanText(context.sessionTitle) || cleanText(context.prTitle)
     || (GENERATED_BRANCH_RE.test(branch) ? '' : branch);
-  const withApp = (text) => (app ? `${text} · ${app}` : text);
-  const withConversation = (text) => (conversation ? `${text} · ${conversation}` : text);
-  const quoted = label ? `"${truncate(label, EMBED_TITLE_MAX)}"` : '';
-  const quotedTitle = label ? `"${truncate(label, TITLE_EMBED_MAX)}"` : '';
+  const withApp = (title) => (app ? t('push:join.app', { title, app }) : title);
+  const withConversation = (title) => (conversation ? t('push:join.conversation', { title, conversation }) : title);
+  // The label as a body and as a title show it: a title's is shorter.
+  const bodyLabel = label ? truncate(label, EMBED_TITLE_MAX) : '';
+  const titleLabel = label ? truncate(label, TITLE_EMBED_MAX) : '';
   switch (kind) {
     case 'test_alert':
-      return { title: 'Homeroom test alert', body: 'Your phone can receive push notifications from Homeroom.' };
+      return { title: t('push:testAlert.title'), body: t('push:testAlert.body') };
     case 'conversation_invite':
       return {
-        title: withConversation(actor ? `@${actor} invited you to a conversation`
-          : 'You have a conversation invitation'),
-        body: 'Open Messages to accept or decline',
+        title: withConversation(actor ? t('push:conversationInvite.title.person', { actor })
+          : t('push:conversationInvite.title.unnamed')),
+        body: t('push:conversationInvite.body'),
       };
     case 'conversation_message':
       return {
-        title: withConversation(actor ? `@${actor} sent you a message` : 'New message'),
+        title: withConversation(actor ? t('push:conversationMessage.title.person', { actor })
+          : t('push:conversationMessage.title.unnamed')),
         body: message,
       };
     case 'conversation_mention':
       return actor && {
-        title: withConversation(`@${actor} mentioned you`),
+        title: withConversation(t('push:conversationMention.title', { actor })),
         body: message,
       };
     case 'conversation_reply':
       return actor && {
-        title: withConversation(`@${actor} replied to you`),
+        title: withConversation(t('push:conversationReply.title', { actor })),
         body: message,
       };
     // #2387: the thread is the news, so the title says where it happened.
     case 'conversation_thread_reply':
       return actor && {
-        title: withConversation(`@${actor} replied in a thread`),
+        title: withConversation(t('push:conversationThreadReply.title', { actor })),
         body: message,
       };
     case 'conversation_reaction':
       return actor && {
         title: withConversation(detail
-          ? `@${actor} reacted ${detail} to your message`
-          : `@${actor} reacted to your message`),
-        body: message && `You said: ${message}`,
+          ? t('push:conversationReaction.title.emoji', { actor, reaction: detail })
+          : t('push:conversationReaction.title.plain', { actor })),
+        body: message && t('push:conversationReaction.body', { message }),
       };
     // #2386. No app, no conversation: the person IS the news. The body says
     // what to do about it, because the row it opens carries the buttons.
     case 'friend_request':
       return actor && {
-        title: `@${actor} sent you a friend request`,
-        body: 'Accept or decline in Notifications',
+        title: t('push:friendRequest.title', { actor }),
+        body: t('push:friendRequest.body'),
       };
     case 'friend_accept':
       return actor && {
-        title: `@${actor} accepted your friend request`,
-        body: 'You\'re friends now. They show up first when you start a message',
+        title: t('push:friendAccept.title', { actor }),
+        body: t('push:friendAccept.body'),
       };
     case 'mention':
       return actor && {
-        title: withApp(quotedTitle
-          ? `@${actor} mentioned you in ${quotedTitle}` : `@${actor} mentioned you`),
+        title: withApp(titleLabel
+          ? t('push:mention.title.named', { actor, title: titleLabel }) : t('push:mention.title.plain', { actor })),
         body: message,
       };
     // #3952: named with @ in a request somebody filed. `detail` is its number.
     case 'issue_mention': {
-      const issue = /^\d+$/.test(detail) ? ` #${detail}` : '';
+      const numbered = /^\d+$/.test(detail);
       return actor && {
-        title: withApp(`@${actor} mentioned you in request${issue}`),
-        body: 'Open the request to see what they wrote',
+        title: withApp(numbered
+          ? t('push:issueMention.title.numbered', { actor, number: detail })
+          : t('push:issueMention.title.plain', { actor })),
+        body: t('push:issueMention.body'),
       };
     }
     case 'reply':
       return actor && {
-        title: withApp(quotedTitle
-          ? `@${actor} replied in ${quotedTitle}` : `@${actor} replied to you`),
+        title: withApp(titleLabel
+          ? t('push:reply.title.named', { actor, title: titleLabel }) : t('push:reply.title.plain', { actor })),
         body: message,
       };
     // #2387: somebody answered in an app-chat reply thread you are in. The
     // reply itself is the body, like a reply to you.
     case 'thread_reply':
       return actor && {
-        title: withApp(`@${actor} replied in a thread`),
+        title: withApp(t('push:threadReply.title', { actor })),
         body: message,
       };
     // #4535: somebody posted in a request's discussion you filed or posted
     // in. `detail` is the request's number, so the title says which one;
     // without it, "a request". The reply itself is the body.
     case 'issue_thread_reply': {
-      const issue = /^\d+$/.test(detail) ? `request #${detail}` : 'a request';
+      const numbered = /^\d+$/.test(detail);
       return actor && {
-        title: withApp(`@${actor} replied on ${issue}`),
+        title: withApp(numbered
+          ? t('push:issueThreadReply.title.numbered', { actor, number: detail })
+          : t('push:issueThreadReply.title.plain', { actor })),
         body: message,
       };
     }
     // #6019: the same in a thread a change or a decision leads. `detail` is
     // the change's number; a decision filed as a governance row has none.
     case 'change_thread_reply': {
-      const what = /^\d+$/.test(detail) ? `change #${detail}` : 'a decision';
+      const numbered = /^\d+$/.test(detail);
       return actor && {
-        title: withApp(`@${actor} replied on ${what}`),
+        title: withApp(numbered
+          ? t('push:changeThreadReply.title.numbered', { actor, number: detail })
+          : t('push:changeThreadReply.title.decision', { actor })),
         body: message,
       };
     }
@@ -352,47 +372,51 @@ function buildCopy(kind, context, now) {
     // since, should the row have grown before the push went out.
     case 'channel_message': {
       const count = /^\d{1,6}$/.test(detail) ? Number(detail) : 1;
-      const where = app ? truncate(app, TITLE_EMBED_MAX) : '';
+      const place = app ? truncate(app, TITLE_EMBED_MAX) : '';
       if (count > 1) {
         return {
-          title: where ? `${count} new messages in ${where}` : `${count} new messages`,
-          body: actor && message ? `@${actor}: ${message}` : message,
+          title: place
+            ? t('push:channelMessage.many.title.where', { count, place })
+            : t('push:channelMessage.many.title', { count }),
+          body: actor && message ? t('push:channelMessage.many.body', { actor, message }) : message,
         };
       }
       return actor && {
-        title: where ? `@${actor} in ${where}` : `@${actor} wrote in the discussion`,
+        title: place
+          ? t('push:channelMessage.one.title.where', { actor, place })
+          : t('push:channelMessage.one.title', { actor }),
         body: message,
       };
     }
     case 'reaction':
       return actor && {
         title: withApp(detail
-          ? `@${actor} reacted ${detail} to your message`
-          : `@${actor} reacted to your message`),
-        body: message && `You said: ${message}`,
+          ? t('push:reaction.title.emoji', { actor, reaction: detail })
+          : t('push:reaction.title.plain', { actor })),
+        body: message && t('push:reaction.body', { message }),
       };
     case 'kudos':
       return actor && {
-        title: withApp(quotedTitle
-          ? `@${actor} gave you kudos for ${quotedTitle}` : `@${actor} gave you kudos`),
-        body: 'Your work is getting noticed',
+        title: withApp(titleLabel
+          ? t('push:kudos.title.named', { actor, title: titleLabel }) : t('push:kudos.title.plain', { actor })),
+        body: t('push:kudos.body'),
       };
     // WP-E: what an invite link brought back to its maker
     // (services/invite-activity.js). A push is only ever the day's first of
     // each; the bell counts the rest. An open is never anybody's name.
     case 'invite_opened':
       return {
-        title: app ? `Someone opened your invite to ${app}` : 'Someone opened your invite',
-        body: 'You hear when they join',
+        title: app ? t('push:inviteOpened.title.app', { app }) : t('push:inviteOpened.title.plain'),
+        body: t('push:inviteOpened.body'),
       };
     case 'member_joined':
       return actor && {
-        title: app ? `@${actor} joined ${app}` : `@${actor} joined`,
-        body: 'They came in through your invite. Say hello',
+        title: app ? t('push:memberJoined.title.app', { actor, app }) : t('push:memberJoined.title.plain', { actor }),
+        body: t('push:memberJoined.body'),
       };
     case 'first_message':
       return actor && {
-        title: app ? `@${actor} said hi in ${app}` : `@${actor} said hi`,
+        title: app ? t('push:firstMessage.title.app', { actor, app }) : t('push:firstMessage.title.plain', { actor }),
         body: message,
       };
     // An invite into a private project is to join it (detail 'join',
@@ -401,43 +425,43 @@ function buildCopy(kind, context, now) {
       if (detail === 'join') {
         return {
           title: actor
-            ? (app ? `@${actor} invited you to join ${app}` : `@${actor} invited you to join them`)
-            : withApp('You have an invite to join'),
-          body: 'Accept or decline in the app',
+            ? (app ? t('push:collabInvite.join.title.app', { actor, app }) : t('push:collabInvite.join.title.plain', { actor }))
+            : withApp(t('push:collabInvite.join.title.unnamed')),
+          body: t('push:collabInvite.join.body'),
         };
       }
       return {
         title: actor
-          ? (app ? `@${actor} wants to build ${app} with you` : `@${actor} wants to build with you`)
-          : withApp('You have a collaboration invite'),
-        body: 'Join them to build it. Accept or decline in the app',
+          ? (app ? t('push:collabInvite.build.title.app', { actor, app }) : t('push:collabInvite.build.title.plain', { actor }))
+          : withApp(t('push:collabInvite.build.title.unnamed')),
+        body: t('push:collabInvite.build.body'),
       };
     case 'collab_invite_accepted':
       return actor && {
-        title: withApp(`@${actor} is in!`),
-        body: 'Your invite was accepted. You can start building together',
+        title: withApp(t('push:collabInviteAccepted.title', { actor })),
+        body: t('push:collabInviteAccepted.body'),
       };
     case 'approver_invite':
       return {
-        title: withApp(actor ? `@${actor} asked you to help approve changes` : 'You were asked to help approve changes'),
-        body: "You'd try changes and vote on them. Accept in the app",
+        title: withApp(actor ? t('push:approverInvite.title.person', { actor }) : t('push:approverInvite.title.unnamed')),
+        body: t('push:approverInvite.body'),
       };
     case 'approver_invite_accepted':
       return actor && {
-        title: withApp(`@${actor} can approve changes now`),
-        body: 'They can try changes and vote on them from now on',
+        title: withApp(t('push:approverInviteAccepted.title', { actor })),
+        body: t('push:approverInviteAccepted.body'),
       };
     case 'spec_shared':
       return {
         title: withApp(actor
-          ? (quotedTitle ? `@${actor} shared ${quotedTitle} with you` : `@${actor} shared a plan with you`)
-          : 'A plan was shared with you'),
-        body: detail ? `Plan v${detail}. Take a look and leave feedback` : 'Take a look and leave feedback',
+          ? (titleLabel ? t('push:specShared.title.named', { actor, title: titleLabel }) : t('push:specShared.title.plain', { actor }))
+          : t('push:specShared.title.unnamed')),
+        body: detail ? t('push:specShared.body.version', { version: detail }) : t('push:specShared.body.plain'),
       };
     case 'session_done':
       return {
-        title: withApp('Your build is ready'),
-        body: quoted && `${quoted} finished. Review it while it's fresh`,
+        title: withApp(t('push:sessionDone.title')),
+        body: bodyLabel && t('push:sessionDone.body', { title: bodyLabel }),
       };
     // #3181: the turn ended on an error, a timeout or a lost worker, or the
     // platform paused the session mid-turn. The title says what happened and
@@ -445,28 +469,28 @@ function buildCopy(kind, context, now) {
     case 'session_stalled':
       return {
         title: app
-          ? `Your session on ${truncate(app, TITLE_EMBED_MAX)} stopped before finishing`
-          : 'Your session stopped before finishing',
-        body: quoted ? `Open ${quoted} to continue` : 'Open it to continue',
+          ? t('push:sessionStalled.title.app', { app: truncate(app, TITLE_EMBED_MAX) })
+          : t('push:sessionStalled.title.plain'),
+        body: bodyLabel ? t('push:sessionStalled.body.named', { title: bodyLabel }) : t('push:sessionStalled.body.plain'),
       };
     case 'auto_solve_done': {
       if (detail === 'question') {
         return {
-          title: withApp('Auto-solve is waiting on you'),
-          body: quoted ? `${quoted} needs an answer before it can continue`
-            : 'Your run needs an answer before it can continue',
+          title: withApp(t('push:autoSolve.question.title')),
+          body: bodyLabel ? t('push:autoSolve.question.body.named', { title: bodyLabel })
+            : t('push:autoSolve.question.body.plain'),
         };
       }
       if (detail === 'failed') {
         return {
-          title: withApp('Auto-solve hit a wall'),
-          body: quoted ? `${quoted} failed. Open the log to see what happened`
-            : 'The run failed. Open the log to see what happened',
+          title: withApp(t('push:autoSolve.failed.title')),
+          body: bodyLabel ? t('push:autoSolve.failed.body.named', { title: bodyLabel })
+            : t('push:autoSolve.failed.body.plain'),
         };
       }
       return {
-        title: withApp(quotedTitle ? `Auto-solve finished ${quotedTitle}` : 'Auto-solve finished'),
-        body: AUTO_SOLVE_BODIES[detail] || '',
+        title: withApp(titleLabel ? t('push:autoSolve.done.title.named', { title: titleLabel }) : t('push:autoSolve.done.title.plain')),
+        body: Object.prototype.hasOwnProperty.call(AUTO_SOLVE_BODIES, detail) ? t(AUTO_SOLVE_BODIES[detail]) : '',
       };
     }
     // B7 / "one story": the change and its project over who asked for it
@@ -474,13 +498,13 @@ function buildCopy(kind, context, now) {
     // ready to try. Try it and vote.").
     case 'change_ready':
       return {
-        title: changeTitle(label, app) || 'A change is ready to try',
-        body: `${actor ? `@${actor}'s change` : 'This change'} is ready to try. Try it and vote.`,
+        title: changeTitle(label, app, t) || t('push:changeReady.title'),
+        body: actor ? t('push:changeReady.body.person', { actor }) : t('push:changeReady.body.unnamed'),
       };
     case 'pr_proposed':
       return actor && {
-        title: withApp(quotedTitle ? `@${actor} proposed ${quotedTitle}` : `@${actor} proposed a change`),
-        body: `@${actor} would love your eyes on this`,
+        title: withApp(titleLabel ? t('push:prProposed.title.named', { actor, title: titleLabel }) : t('push:prProposed.title.plain', { actor })),
+        body: t('push:prProposed.body', { actor }),
       };
     // #2273: these four kinds arrived with the per-app notification controls,
     // after the contextual push registry was written. They were push-eligible
@@ -489,17 +513,20 @@ function buildCopy(kind, context, now) {
     // loaded the actor, app, proposal and detail needed to identify it.
     case 'proposal_vote': {
       if (!actor) return null;
-      const direction = detail === 'no' ? 'no' : 'yes';
+      let title;
+      if (detail === 'no') {
+        title = titleLabel ? t('push:proposalVote.no.title.named', { actor, title: titleLabel }) : t('push:proposalVote.no.title.plain', { actor });
+      } else {
+        title = titleLabel ? t('push:proposalVote.yes.title.named', { actor, title: titleLabel }) : t('push:proposalVote.yes.title.plain', { actor });
+      }
       // #1688: the voter's line IS the news. Quoted when they left one, so
       // the proposer reads what to fix from the banner itself.
       const voteReason = cleanText(context.voteReason);
       return {
-        title: withApp(quotedTitle
-          ? `@${actor} voted ${direction} on ${quotedTitle}`
-          : `@${actor} voted ${direction} on your change`),
+        title: withApp(title),
         body: voteReason
-          ? `“${truncate(voteReason, VOTE_REASON_EMBED_MAX)}”`
-          : 'Open the change to see their vote',
+          ? t('push:proposalVote.body.reason', { reason: truncate(voteReason, VOTE_REASON_EMBED_MAX) })
+          : t('push:proposalVote.body.plain'),
       };
     }
     case 'pr_merged': {
@@ -511,20 +538,22 @@ function buildCopy(kind, context, now) {
       // is released afterwards, outside this process (GitHub Actions, then
       // Argo CD; services/release-watch.js), so at merge time it is only on
       // its way. Say so rather than claim a deploy that has not happened.
-      const outcome = context.appSelfHosted === true
-        ? 'Your change will be live in a few minutes'
-        : 'Your change is live';
+      const soon = context.appSelfHosted === true;
+      let body;
+      if (detail === 'forced') {
+        body = soon ? t('push:prMerged.body.forced.soon') : t('push:prMerged.body.forced.live');
+      } else if (detail) {
+        body = t('push:prMerged.body.credits', { credits: truncate(detail, 120) });
+      } else {
+        body = soon ? t('push:prMerged.body.carried.soon') : t('push:prMerged.body.carried.live');
+      }
       return {
         // B10d: live, in the words every screen uses; the platform's own
         // change is approved now and live in a few minutes.
-        title: withApp(context.appSelfHosted === true
-          ? (quotedTitle ? `${quotedTitle} was approved` : 'Your change was approved')
-          : (quotedTitle ? `${quotedTitle} is live` : 'Your change is live')),
-        body: detail === 'forced'
-          ? `${context.appSelfHosted === true ? 'An admin approved it.' : 'An admin made it live.'} ${outcome}`
-          : detail
-            ? `The vote carried. ${truncate(detail, 120)}`
-            : `The vote carried. ${outcome}`,
+        title: withApp(soon
+          ? (titleLabel ? t('push:prMerged.title.approved.named', { title: titleLabel }) : t('push:prMerged.title.approved.plain'))
+          : (titleLabel ? t('push:prMerged.title.live.named', { title: titleLabel }) : t('push:prMerged.title.live.plain'))),
+        body,
       };
     }
     // #1688: the author pushed a new version of a change this person had
@@ -534,36 +563,45 @@ function buildCopy(kind, context, now) {
     // "@name" or "you", notifications.createRevisionRecheckNotifications),
     // never "after your feedback" when it was somebody else's.
     case 'revision_recheck': {
-      const subject = changeTitle(label, app);
-      const asker = /^epoch:\d+:(you|@[A-Za-z0-9_.-]{1,40})$/.exec(detail || '');
-      const who = actor ? `@${actor}` : 'Someone';
+      const subject = changeTitle(label, app, t);
+      const asked = /^epoch:\d+:(you|@[A-Za-z0-9_.-]{1,40})$/.exec(detail || '');
       const bot = context.sourceIsSynthetic === true;
-      const after = asker
-        ? ` after ${asker[1]} asked for a change`
-        : (bot ? ' after a request for changes' : '');
+      let body;
+      if (asked?.[1] === 'you') {
+        body = actor ? t('push:revisionRecheck.body.person.you', { actor }) : t('push:revisionRecheck.body.unnamed.you');
+      } else if (asked) {
+        const asker = asked[1].slice(1);
+        body = actor ? t('push:revisionRecheck.body.person.asker', { actor, asker }) : t('push:revisionRecheck.body.unnamed.asker', { asker });
+      } else if (bot) {
+        body = actor ? t('push:revisionRecheck.body.person.bot', { actor }) : t('push:revisionRecheck.body.unnamed.bot');
+      } else {
+        body = actor ? t('push:revisionRecheck.body.person.plain', { actor }) : t('push:revisionRecheck.body.unnamed.plain');
+      }
       return {
-        title: subject ? `Still good? ${subject}` : 'Still good? A change you backed was updated',
-        body: `${who} updated it${after}. One tap keeps your yes.`,
+        title: subject ? t('push:revisionRecheck.title.named', { change: subject }) : t('push:revisionRecheck.title.plain'),
+        body,
       };
     }
     // #4396: a project this person joined while it was made is open: its
     // first version went live (services/project-opened.js).
     case 'project_opened':
       return {
-        title: app ? `${app} is open` : 'A project you joined is open',
-        body: 'It’s ready to use. Take a look',
+        title: app ? t('push:projectOpened.title.app', { app }) : t('push:projectOpened.title.plain'),
+        body: t('push:projectOpened.body'),
       };
     // #4787: the change this person voted on went live. #2897's split, as
     // pr_merged above: a child app's merge is live when the row arrives; the
     // platform's own is released a few minutes after. `detail` is 'yes' when
     // their vote was yes (createVotedChangeMergedNotifications).
     case 'voted_change_merged': {
-      const voted = detail === 'yes' ? 'You voted yes.' : 'You voted on it.';
+      const soon = context.appSelfHosted === true;
+      const yes = detail === 'yes';
+      let body;
+      if (soon) body = yes ? t('push:votedChangeMerged.body.soon.yes') : t('push:votedChangeMerged.body.soon.voted');
+      else body = yes ? t('push:votedChangeMerged.body.live.yes') : t('push:votedChangeMerged.body.live.voted');
       return {
-        title: changeTitle(label, app) || (context.appSelfHosted === true ? 'A change you voted on was approved' : 'A change you voted on is live'),
-        body: context.appSelfHosted === true
-          ? `Approved. It will be live in a few minutes. ${voted}`
-          : `It's live. ${voted}`,
+        title: changeTitle(label, app, t) || (soon ? t('push:votedChangeMerged.title.soon') : t('push:votedChangeMerged.title.live')),
+        body,
       };
     }
     // #1688: the Friday card. `detail` is "<merged>:<open>" — how many
@@ -573,67 +611,78 @@ function buildCopy(kind, context, now) {
       const merged = counts ? Number(counts[1]) : 0;
       const open = counts ? Number(counts[2]) : 0;
       const shipped = merged === 0
-        ? 'Nothing landed this week.'
-        : `${merged} ${merged === 1 ? 'change' : 'changes'} went live.`;
-      const waiting = open === 0
-        ? ''
-        : ` ${open === 1 ? 'One change is' : `${open} changes are`} waiting for approval`;
+        ? t('push:weeklyDigest.body.nothing')
+        : t('push:weeklyDigest.body.shipped', { count: merged });
       return {
-        title: app ? `This week on ${app}` : 'This week',
-        body: `${shipped}${waiting}`.trim(),
+        title: app ? t('push:weeklyDigest.title.app', { app }) : t('push:weeklyDigest.title.plain'),
+        body: open === 0
+          ? shipped
+          : t('push:weeklyDigest.body.both', { shipped, waiting: t('push:weeklyDigest.body.waiting', { count: open }) }),
       };
     }
     case 'issue_opened': {
-      const issue = /^\d+$/.test(detail) ? ` #${detail}` : '';
+      const numbered = /^\d+$/.test(detail);
+      let title;
+      if (actor) {
+        title = numbered ? t('push:issueOpened.title.person.numbered', { actor, number: detail }) : t('push:issueOpened.title.person.plain', { actor });
+      } else {
+        title = numbered ? t('push:issueOpened.title.unnamed.numbered', { number: detail }) : t('push:issueOpened.title.unnamed.plain');
+      }
       return {
-        title: withApp(actor ? `@${actor} filed request${issue}` : `New request${issue}`),
-        body: 'Open the request to see what needs attention',
+        title: withApp(title),
+        body: t('push:issueOpened.body'),
       };
     }
     case 'vote_digest': {
       const count = /^\d+$/.test(detail) ? Math.max(0, Number(detail)) : 0;
       // Where a tap goes (notifications.js): one change opens that change,
-      // several the Communities screen's Needs you, which lists them.
+      // several Needs you (#needs), which lists them.
       return {
-        title: count
-          ? `${count} ${count === 1 ? 'change is' : 'changes are'} waiting for your approval`
-          : 'Changes are waiting for your approval',
-        body: count === 1 ? 'Open it to try it and approve it' : 'See them under Needs you in Communities',
+        title: count ? t('push:voteDigest.title', { count }) : t('push:voteDigest.title.plain'),
+        body: count === 1 ? t('push:voteDigest.body.one') : t('push:voteDigest.body.many'),
+      };
+    }
+    case 'voted_digest': {
+      // Names no project or change: a count, and Your votes has the rest.
+      const count = /^\d+$/.test(detail) ? Math.max(0, Number(detail)) : 0;
+      return {
+        title: count ? t('push:votedDigest.title', { count }) : t('push:votedDigest.title.plain'),
+        body: t('push:votedDigest.body'),
       };
     }
     case 'check_failed':
       return {
-        title: withApp(quotedTitle ? `Testing found a problem with ${quotedTitle}` : 'Testing found a problem with your change'),
-        body: 'It needs a fix before it can go live',
+        title: withApp(titleLabel ? t('push:checkFailed.title.named', { title: titleLabel }) : t('push:checkFailed.title.plain')),
+        body: t('push:checkFailed.body'),
       };
     case 'stale_pr': {
       // Its votes are met and its merge is what stands still: asking for
       // votes would send the author after the wrong thing.
       if (detail === 'blocked') {
         return {
-          title: withApp(quotedTitle ? `${quotedTitle} is approved but can't go live` : "Your approved change can't go live"),
-          body: 'It needs a fix before it can go live, or it will be set aside',
+          title: withApp(titleLabel ? t('push:stalePr.blocked.title.named', { title: titleLabel }) : t('push:stalePr.blocked.title.plain')),
+          body: t('push:stalePr.blocked.body'),
         };
       }
       const days = daysSince(context.promotedAt, now);
       return {
-        title: withApp(quotedTitle
-          ? `${quotedTitle} is waiting for approval` : 'Your change needs attention'),
+        title: withApp(titleLabel
+          ? t('push:stalePr.waiting.title.named', { title: titleLabel }) : t('push:stalePr.waiting.title.plain')),
         body: days >= 1
-          ? `Nobody has weighed in for ${days} ${days === 1 ? 'day' : 'days'}. Share the preview or ask a friend to try it`
-          : 'Share the preview or ask a friend to try it',
+          ? t('push:stalePr.waiting.body.days', { count: days })
+          : t('push:stalePr.waiting.body.plain'),
       };
     }
     // #1405 path A. The agent, not you, put this somewhere — so the copy leads
     // with the destination, which is the fact you cannot infer from being away.
     case 'connector_submitted':
       return {
-        title: withApp(quotedTitle
-          ? `Your agent submitted ${quotedTitle}`
-          : 'Your agent submitted work'),
+        title: withApp(titleLabel
+          ? t('push:connectorSubmitted.title.named', { title: titleLabel })
+          : t('push:connectorSubmitted.title.plain')),
         body: context.detail === 'shared'
-          ? 'It is visible in the in-progress area (no vote yet)'
-          : 'It is waiting for approval, and it is being tested',
+          ? t('push:connectorSubmitted.body.shared')
+          : t('push:connectorSubmitted.body.waiting'),
       };
     // #1405 path B, and the copy is load-bearing.
     //
@@ -646,10 +695,10 @@ function buildCopy(kind, context, now) {
     case 'agent_awaiting_input': {
       const mins = minutesSince(context.armedAt || context.createdAt, now);
       return {
-        title: withApp('Claude asked you something'),
+        title: withApp(t('push:agentAwaiting.title')),
         body: mins >= 1
-          ? `Asked ${mins} ${mins === 1 ? 'minute' : 'minutes'} ago. It is holding for your answer`
-          : 'It is holding for your answer',
+          ? t('push:agentAwaiting.body.minutes', { count: mins })
+          : t('push:agentAwaiting.body.plain'),
       };
     }
     // #2253: the app storage cap speaks through app_health, and its two
@@ -659,33 +708,33 @@ function buildCopy(kind, context, now) {
     case 'app_health':
       if (detail === 'storage_warn') {
         return {
-          title: withApp('Storage is nearly full'),
-          body: `${app || 'Your app'} has used most of its storage. Clean up old data or ask an admin to raise the limit`,
+          title: withApp(t('push:appHealth.storageWarn.title')),
+          body: app ? t('push:appHealth.storageWarn.body.app', { app }) : t('push:appHealth.storageWarn.body.plain'),
         };
       }
       if (detail === 'storage_full') {
         return {
-          title: withApp('Out of storage'),
-          body: 'New data cannot be saved until an admin raises the limit or allows time to clean up',
+          title: withApp(t('push:appHealth.storageFull.title')),
+          body: t('push:appHealth.storageFull.body'),
         };
       }
       if (detail === 'deploy_failed') {
         return {
-          title: withApp('Deploy failed'),
-          body: 'The latest change did not go live. Open the app to see what failed',
+          title: withApp(t('push:appHealth.deployFailed.title')),
+          body: t('push:appHealth.deployFailed.body'),
         };
       }
       // The platform's own app: merged, but the release outside the platform
       // (the image workflow, Argo CD, the rollout) has not delivered it.
       if (detail === 'release_stalled') {
         return {
-          title: withApp('Approved but not live yet'),
-          body: 'An approved change is not live yet. Open the board to see where it stopped',
+          title: withApp(t('push:appHealth.releaseStalled.title')),
+          body: t('push:appHealth.releaseStalled.body'),
         };
       }
       return {
-        title: withApp('App needs attention'),
-        body: 'Open the app to see what needs attention',
+        title: withApp(t('push:appHealth.other.title')),
+        body: t('push:appHealth.other.body'),
       };
     // A server-wide cap nearing or at its ceiling, for full admins only
     // (services/platform-limit-alerts.js). The detail token carries which
@@ -701,21 +750,30 @@ function buildCopy(kind, context, now) {
   }
 }
 
-function buildNotificationCopy(kind, context, now = new Date()) {
+function genericCopy(t) {
   try {
-    const copy = buildCopy(kind, context && typeof context === 'object' ? context : {}, now);
-    const title = copy ? truncate(cleanText(copy.title), TITLE_MAX) : '';
-    if (!title) return { ...GENERIC_COPY };
-    const body = truncate(cleanText(copy.body), BODY_MAX);
-    return body ? { title, body } : { title };
+    return { title: GENERIC_COPY.title, body: cleanText(t('push:generic.body')) || GENERIC_COPY.body };
   } catch {
     return { ...GENERIC_COPY };
   }
 }
 
+function buildNotificationCopy(kind, context, now = new Date(), translate = null) {
+  const t = translate || pushText.english;
+  try {
+    const copy = buildCopy(kind, context && typeof context === 'object' ? context : {}, now, t);
+    const title = copy ? truncate(cleanText(copy.title), TITLE_MAX) : '';
+    if (!title) return genericCopy(t);
+    const body = truncate(cleanText(copy.body), BODY_MAX);
+    return body ? { title, body } : { title };
+  } catch {
+    return genericCopy(t);
+  }
+}
+
 function buildMessage({
   token, notificationId, kind, environment, installationId, userId,
-  expiresAt, context, unreadCount, now = new Date(),
+  expiresAt, context, unreadCount, now = new Date(), translate = null,
 }) {
   if (typeof token !== 'string' || !token) throw new Error('mobile_push_registration_missing');
   if (!ALLOWED_KINDS.has(kind) || isPushParked(kind)) throw new Error('mobile_push_kind_not_allowed');
@@ -730,7 +788,7 @@ function buildMessage({
   const collapseId = `usernode-social-${id}`;
   const message = {
     token,
-    notification: buildNotificationCopy(kind, context, now),
+    notification: buildNotificationCopy(kind, context, now, translate),
     data: {
       source: 'usernode_social',
       schema: '1',

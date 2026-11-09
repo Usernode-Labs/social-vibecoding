@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
-import { confirmAction } from '../../lib/confirm';
 import { useMessages } from '../../lib/i18n/react';
 import { useDialog } from '../dialogs/use-dialog';
 import * as api from './api';
@@ -91,24 +90,6 @@ export function CreateConversationDialog() {
     } catch (err) { setError(err instanceof Error ? err.message : t('messages:create.error.unblock')); }
   }
 
-  async function block(user: ConversationUser) {
-    // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
-    const ok = await confirmAction({
-      title: user.unnamed ? t('messages:create.block.titleUnknown') : t('messages:create.block.title', { username: user.username }),
-      message: t('messages:create.block.message'),
-      confirmLabel: t('messages:create.block.confirm'),
-      danger: true,
-    });
-    if (!ok) return;
-    setSubmitting(true); setError('');
-    try {
-      await setUserBlocked(user.id, true);
-      setBlocked((current) => [...current.filter((item) => item.id !== user.id), user]);
-      setQuery('');
-    } catch (err) { setError(err instanceof Error ? err.message : t('messages:create.error.block')); }
-    finally { setSubmitting(false); }
-  }
-
   return (
     <DialogRoot id="messages-create-dialog" layout="scroll" ref={dialog.rootRef} {...dialog.backdropProps}>
       <DialogCard size="md">
@@ -152,19 +133,22 @@ export function CreateConversationDialog() {
           {loadingRow(t, search.loading, query, results.length)}
           {results.map((user) => (
             <div key={user.id} className="flex items-center gap-1 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-800">
-              <button type="button" disabled={submitting} onClick={() => void choose(user)} className="min-w-0 flex-1 flex items-center gap-3 px-2 py-2 text-left disabled:opacity-50">
+              <button type="button" disabled={submitting} onClick={() => void choose(user)} className="min-w-0 flex-1 flex items-center gap-3 px-2 py-2 text-start disabled:opacity-50">
                 <UserAvatar user={user} size="sm" />
                 <span className="text-sm font-medium truncate">@{user.username}</span>
-                <span className="ml-auto text-xs text-violet-700 dark:text-violet-400">{mode === 'group' ? t('messages:create.result.add') : t('messages:create.result.message')}</span>
+                <span className="ms-auto text-xs text-violet-700 dark:text-violet-400">{mode === 'group' ? t('messages:create.result.add') : t('messages:create.result.message')}</span>
               </button>
-              <button type="button" disabled={submitting} onClick={() => void block(user)} aria-label={user.unnamed ? t('messages:create.result.blockUnknown') : t('messages:create.result.blockNamed', { username: user.username })} className="px-2 py-2 text-xs text-red-700 dark:text-red-400 disabled:opacity-50">{t('messages:create.result.block')}</button>
+              {/* Audit D09 (2 Nov 2026): no Block here. A picker is for choosing
+                  someone, and a red Block beside each Message was a mis-tap
+                  away; blocking is on the conversation's ⋯, a message's menu
+                  and the profile. Blocked people, below, still unblocks. */}
             </div>
           ))}
         </div>
         {error ? <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
         <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
           <button type="button" onClick={() => void loadBlocked()} className="text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200">{t('messages:create.blockedPeople')}</button>
-          <div className="ml-auto flex gap-2">
+          <div className="ms-auto flex gap-2">
             <Button type="button" variant="neutral" ink="neutral" onClick={dialog.close}>{t('core:common.cancel')}</Button>
             {mode === 'group' ? <Button type="button" disabled={submitting || !title.trim() || !selected.length} onClick={() => void submitGroup()}>{submitting ? t('messages:create.creating') : t('messages:create.createGroup')}</Button> : null}
           </div>
@@ -173,7 +157,7 @@ export function CreateConversationDialog() {
           <div className="mt-3 rounded-lg border border-zinc-200 dark:border-zinc-800 p-2">
             <div className="text-xs font-semibold mb-1">{t('messages:create.blockedPeople')}</div>
             {!blocked.length ? <p className="text-xs text-zinc-500 dark:text-zinc-400 py-2">{t('messages:create.nobodyBlocked')}</p> : blocked.map((user) => (
-              <div key={user.id} className="flex items-center gap-2 py-1.5"><UserAvatar user={user} size="sm" /><span className="text-sm truncate">@{user.username}</span><button type="button" onClick={() => void unblock(user)} className="ml-auto text-xs text-violet-700 dark:text-violet-400">{t('messages:create.unblock')}</button></div>
+              <div key={user.id} className="flex items-center gap-2 py-1.5"><UserAvatar user={user} size="sm" /><span className="text-sm truncate">@{user.username}</span><button type="button" onClick={() => void unblock(user)} className="ms-auto text-xs text-violet-700 dark:text-violet-400">{t('messages:create.unblock')}</button></div>
             ))}
           </div>
         ) : null}

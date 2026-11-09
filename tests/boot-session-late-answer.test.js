@@ -40,7 +40,7 @@ function methodSource(name) {
   return APP.slice(start + 1, end + 4);
 }
 
-const REAL = ['init', '_adoptLateSession', '_fetchSession', '_settleOptionalSession', '_fetchWebSession', '_answeredSignedOut'];
+const REAL = ['init', '_adoptLateSession', '_fetchSession', '_withinNativeRestoreLimit', '_settleOptionalSession', '_fetchWebSession', '_answeredSignedOut'];
 
 function response(status, body) {
   return { status, ok: status >= 200 && status < 300, json: async () => body };
@@ -81,6 +81,7 @@ function boot({ firstRead, native = false, signInBegun = false, nativeChrome = n
   vm.runInContext(`
     var App = {
       BOOT_SESSION_TIMEOUT_MS: 30,
+      BOOT_NATIVE_RESTORE_TIMEOUT_MS: 30,
       embeddedPanel: false,
       user: null,
       _authedBooted: false,
@@ -186,7 +187,7 @@ test('a native shell still restores the session it keeps, on an answered "nobody
 test('a device with a snapshot keeps the plain read: no optional answer over a live session', async () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
   const reconcile = app.slice(app.indexOf('async _reconcileSession('), app.indexOf('async enterAnonymous('));
-  assert.match(reconcile, /res = await App\._fetchSession\(\);/);
+  assert.match(reconcile, /App\._fetchSession\(\{ late: true \}\)/);
   assert.doesNotMatch(reconcile, /optional/);
 });
 

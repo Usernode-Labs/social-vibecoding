@@ -79,6 +79,9 @@ function harness(initial) {
       return { messages: (server.stale || server.messages).map((item) => ({ ...item })), nextBefore: null };
     },
     markRead: async () => {},
+    // What this device kept to draw offline: nothing, unless a test says so.
+    keptConversations: () => null,
+    keptConversation: () => null,
     sendMessage: (id, payload) => new Promise((resolve) => {
       deferred.push(() => {
         // Idempotent, as services/conversations.js is: the same key is one row.
@@ -142,28 +145,34 @@ test('#3705: a re-read after a realtime event asks the server, never the worker\
   assert.deepEqual(h.contents(), ['I build things for you on Homeroom.', 'Your request is up for a vote.']);
 });
 
-test('#4243: an open reads the offline copy only when offline, or once the fresh read failed', async (t) => {
+test('#4243: an open reads fresh only while online; one with no answer draws the copy this device kept', async (t) => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
   t.after(() => { if (original) Object.defineProperty(globalThis, 'navigator', original); else delete globalThis.navigator; });
   Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true, writable: true });
   const offline = harness([serverMessage(1, BOT, 'Hello.')]);
   await openDm(offline);
   for (const [what, options] of offline.server.reads.filter(([w]) => w !== 'list')) {
-    assert.ok(!options?.fresh, `offline, the open takes the worker's copy (${what})`);
+    assert.ok(!options?.fresh, `offline, the open takes the ordinary read (${what})`);
   }
 
+  // The worker keeps no offline copy of a conversation (it answers
+  // `private, no-store`), so a failed open does not read again for one: it
+  // draws what this device kept (frontend/src/features/messages/api.ts
+  // keptConversation; tests/messages-offline-kept.test.js has the rest).
   globalThis.navigator.onLine = true;
   const failing = harness([serverMessage(1, BOT, 'Hello.')]);
-  const getConversation = failing.api.getConversation;
-  let failures = 1;
   failing.api.getConversation = async (id, options) => {
-    if (options?.fresh && failures-- > 0) { failing.server.reads.push(['conversation', options]); throw new TypeError('Failed to fetch'); }
-    return getConversation(id, options);
+    failing.server.reads.push(['conversation', options]);
+    throw new TypeError('Failed to fetch');
   };
+  failing.api.keptConversation = (id) => (id === 42
+    ? { detail: DM, page: { messages: [serverMessage(1, BOT, 'Hello.')], nextBefore: null } }
+    : null);
   await openDm(failing);
   const reads = failing.server.reads.filter(([w]) => w === 'conversation').map(([, options]) => !!options?.fresh);
-  assert.deepEqual(reads, [true, false], 'the fresh read failed, so the open read again and took the copy');
-  assert.equal(failing.state().threadError, null, 'and drew it, with no error');
+  assert.deepEqual(reads, [true], 'the fresh read failed, and nothing read again');
+  assert.equal(failing.state().threadError, null, 'the kept copy is drawn, with no error');
+  assert.deepEqual(failing.contents(), ['Hello.']);
 });
 
 test('#4220: the bot stays "typing" until the message it sent is drawn, and no longer than the cap', async (t) => {
@@ -221,6 +230,120 @@ test('#4220: a stop with no new message on its way clears the line at once', asy
   assert.equal(h.state().typing[42].length, 1);
   h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: false });
   assert.deepEqual(h.state().typing[42], []);
+});
+
+// 4 Nov 2026 (#6302): the answer so far was drawn only while the newest
+// doing was 'writing'. Every later step the bot named (a read, a wordless
+// "thinking") rebuilt the entry without it, so the words disappeared and came
+// back as the next round streamed: the working card flashed. The store holds
+// the last draft on the bot's Typist now, and it leaves with the card.
+test('the answer so far stays on the card while the bot reads or thinks, and leaves with it', async () => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  Object.assign(globalThis.window, { setTimeout: () => 1, clearTimeout: () => {} });
+  const dm = {
+    ...DM,
+    members: [{ ...ME, status: 'member' }, { ...BOT, status: 'member' }],
+    peer: { id: BOT.id, bot: true, displayName: 'Homeroom bot' },
+  };
+  h.api.getConversation = async () => dm;
+  await openDm(h);
+  const typing = (doing) => h.store.messagesController.handleEvent({
+    type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: true, ...(doing ? { doing } : {}),
+  });
+
+  typing({ kind: 'writing', text: 'A couple of the names you gave' });
+  assert.equal(h.store.typingUsers(42)[0].draft, 'A couple of the names you gave');
+  typing({ kind: 'request', number: 436 });
+  assert.deepEqual(h.store.typingUsers(42)[0], {
+    name: 'Homeroom bot', unnamed: false, bot: true,
+    doing: { kind: 'request', number: 436 },
+    draft: 'A couple of the names you gave',
+  }, 'held while it reads the request');
+  // #6405: a step with no name of its own no longer drops the card back to
+  // "Thinking"; the last step it named stays up until it names the next one.
+  typing();
+  assert.deepEqual(h.store.typingUsers(42)[0].doing, { kind: 'request', number: 436 }, 'the last step named stays up');
+  assert.equal(h.store.typingUsers(42)[0].draft, 'A couple of the names you gave', 'not hidden while it thinks');
+  typing({ kind: 'writing', text: 'So I checked: the list is right' });
+  assert.equal(h.store.typingUsers(42)[0].draft, 'So I checked: the list is right', 'the newer answer replaces it');
+  h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: false });
+  assert.deepEqual(h.store.typingUsers(42), [], 'the card and its words go when typing stops');
+});
+
+test('31 Oct 2026: typing in a thread is that thread\'s line, and never the conversation\'s', async () => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  Object.assign(globalThis.window, { setTimeout: () => 1, clearTimeout: () => {} });
+  const dm = {
+    ...DM,
+    members: [{ ...ME, status: 'member' }, { ...BOT, status: 'member' }],
+    peer: { id: BOT.id, bot: true, displayName: 'Homeroom bot' },
+  };
+  h.api.getConversation = async () => dm;
+  await openDm(h);
+  const typing = (on, threadRootId) => h.store.messagesController.handleEvent({
+    type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: on, ...(threadRootId ? { threadRootId } : {}),
+  });
+  typing(true, 1);
+  assert.deepEqual(h.store.typingUsers(42, 1).map((typist) => typist.name), ['Homeroom bot'], 'drawn in the thread');
+  assert.deepEqual(h.store.typingUsers(42), [], 'not beside it');
+  typing(true);
+  assert.deepEqual(h.store.typingUsers(42).map((typist) => typist.name), ['Homeroom bot']);
+  typing(false, 1);
+  assert.deepEqual(h.store.typingUsers(42, 1), [], 'the thread\'s stops');
+  assert.deepEqual(h.store.typingUsers(42).map((typist) => typist.name), ['Homeroom bot'], 'the conversation\'s stays');
+});
+
+// 1 Nov 2026: the bot's typing says what it is doing, for its working card
+// (frontend/src/features/messages/bot-working.tsx). A person's never does.
+test('the bot types as the bot, with what it is doing; a person\'s typing never carries that', async (t) => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  const timers = [];
+  Object.assign(globalThis.window, {
+    setTimeout: (fn, ms) => { timers.push({ fn, ms, live: true }); return timers.length; },
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
+  });
+  const ADA = { id: 13, username: 'ada', avatarUrl: null };
+  const dm = {
+    ...DM,
+    members: [{ ...ME, status: 'member' }, { ...BOT, status: 'member' }, { ...ADA, status: 'member' }],
+    peer: { id: BOT.id, bot: true, displayName: 'Homeroom bot' },
+  };
+  h.api.getConversation = async () => dm;
+  await openDm(h);
+  const typing = (userId, on, extra = {}) => h.store.messagesController.handleEvent({
+    type: 'conversation_typing', conversationId: 42, userId, typing: on, ...extra,
+  });
+  typing(BOT.id, true);
+  assert.deepEqual(h.store.typingUsers(42), [{ name: 'Homeroom bot', unnamed: false, bot: true, doing: null }], 'thinking');
+  typing(BOT.id, true, { doing: { kind: 'request', number: 12, extra: 'x' } });
+  assert.deepEqual(h.store.typingUsers(42), [{ name: 'Homeroom bot', unnamed: false, bot: true, doing: { kind: 'request', number: 12 } }],
+    'what it is doing, in place');
+  // #6405: a doing the screen cannot read names no step, so the last one it
+  // named stays up. Its words are still never drawn.
+  typing(BOT.id, true, { doing: { kind: 'Reading request #12' } });
+  assert.deepEqual(h.store.typingUsers(42)[0].doing, { kind: 'request', number: 12 }, 'a kind word, never words to draw');
+  typing(BOT.id, true, { doing: { kind: 'drawing' } });
+  typing(ADA.id, true, { doing: { kind: 'drawing' } });
+  assert.deepEqual(h.store.typingUsers(42), [
+    { name: 'Homeroom bot', unnamed: false, bot: true, doing: { kind: 'drawing' } },
+    { name: 'ada', unnamed: false },
+  ], 'a person is a name on the line, whatever their event says');
+
+  // The answer's re-read is slow: the stop holds the card, with its words,
+  // until the answer is drawn (#4220), so the card gives way to it.
+  const listMessages = h.api.listMessages;
+  let release;
+  h.api.listMessages = (...args) => new Promise((resolve) => { release = () => resolve(listMessages(...args)); });
+  h.server.messages.push(serverMessage(h.server.nextId++, BOT, 'Version 1 · The main screen'));
+  h.store.messagesController.handleEvent({ type: 'conversation_message_created', conversationId: 42, messageId: 2 });
+  await h.flush();
+  typing(BOT.id, false);
+  assert.deepEqual(h.store.typingUsers(42)[0], { name: 'Homeroom bot', unnamed: false, bot: true, doing: { kind: 'drawing' } },
+    'held, as it was, while the answer is read');
+  release();
+  await h.flush();
+  assert.ok(h.contents().includes('Version 1 · The main screen'));
+  assert.deepEqual(h.store.typingUsers(42), [{ name: 'ada', unnamed: false }], 'and gone once it is drawn');
 });
 
 // The typing line shows what it showed before the text moved (base 1e6c91e33):

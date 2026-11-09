@@ -146,7 +146,7 @@ const SKELETON_TILES = 8;
 
 /*
  * THE ERRORED TILE'S RETRY (QA 2026-09-24 Q9). It used to be a text button
- * pinned to the tile's top-right corner (`absolute top-2 right-2`): on a phone
+ * pinned to the tile's top-right corner (`absolute top-2 end-2`): on a phone
  * the 56px icon, painted later with no z-index, covered it, so a tap landed on
  * the icon and did nothing; on desktop it sat about 90px from the icon, and the
  * whole tile was `grayscale` and `cursor-not-allowed`, so the one working
@@ -303,7 +303,7 @@ function AppCardTile({ app, style, yours, live, editing }: {
               el.addEventListener('pointerdown', (e) => e.stopPropagation());
             }}
             type="button"
-            className="app-card-remove absolute -top-1.5 -left-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-700 text-white shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-500"
+            className="app-card-remove absolute -top-1.5 -start-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-700 text-white shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-500"
             aria-label={t('home:edit.removeNamed', { app: app.name })}
             onClick={(e) => {
               e.stopPropagation();
@@ -345,7 +345,7 @@ function AppCardTile({ app, style, yours, live, editing }: {
         */}
         {app.forkName ? (
           <span
-            className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
+            className="fork-tag absolute -bottom-1 -start-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
             title={app.forkDeleted ? t('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : t('home:grid.tile.remixedFrom', { app: app.forkName })}
             aria-label={app.forkDeleted ? t('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : t('home:grid.tile.remixedFrom', { app: app.forkName })}
           >
@@ -363,7 +363,7 @@ function AppCardTile({ app, style, yours, live, editing }: {
         */}
         {app.audience !== 'open' ? (
           <span
-            className="app-card-stage absolute -bottom-1 -right-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
+            className="app-card-stage absolute -bottom-1 -end-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
             data-stage={app.audience}
             title={app.audience === 'invited' ? t('home:grid.tile.audience.invited') : t('home:grid.tile.audience.solo')}
             aria-label={app.audience === 'invited' ? t('home:grid.tile.audience.invited') : t('home:grid.tile.audience.solo')}
@@ -463,13 +463,6 @@ export function AppGrid() {
     if (el) { N?._maybeOpenShotMenu?.(el); }
     N?._searchReveal?.sync?.();
     if (el) N?._maybeShowShotGrid?.(el);
-    // Its sibling for the drag that starts in a Discover rail (#1763). Called
-    // from HERE as well as from the lane's own effect for the reason the grid
-    // shot is called from here at all: #app-list renders a className, so every
-    // commit takes `un-reordering` back off it, and the overlay a shot painted
-    // before this commit is no longer a rendering of a lift. It finds the rail
-    // itself — a repaint of the grid is not one of the panels.
-    N?._maybeShowShotIncoming?.();
     // And the one for the drop into the Homeroom widget strip (#2894).
     if (el) N?._maybeShowShotWidgetDrop?.(el);
   });
@@ -478,6 +471,12 @@ export function AppGrid() {
     <div
       ref={listRef}
       id="app-list"
+      // FOUR COLUMNS STAY FOUR (Home.currentCols, HomeLayout.COLS: a stored
+      // layout is keyed by its column count), and they share the column's whole
+      // width like every section under them. A 40rem cap held them to the left
+      // (overnight audit W06 / D18) and left a block empty on their right; #6154
+      // asked for it gone. A tile's icon and name keep their size, centred in
+      // a wider cell.
       className="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2"
       data-view={state.ready ? state.view : undefined}
       // EDIT MODE (#4669). app.css keys the wiggle on this attribute; absent

@@ -58,6 +58,7 @@ import type { ReactNode } from 'react';
 import { FoldMarkIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
+import { t } from '../../../lib/i18n/runtime';
 
 import { Badge, CardIcon, DevCard, edgeFor, metaLineNodes, VoteButton } from './dev-card';
 import { FeedThread } from './feed-thread';
@@ -109,6 +110,8 @@ export function openHref(slug: string, card: DevCardModel): string | null {
   if (!slug) return null;
   if (a['data-issue-row']) return `#app/${slug}/dev/issues/${a['data-issue-row']}`;
   if (a['data-proposal-row']) return `#app/${slug}/dev/proposals/${a['data-proposal-row']}`;
+  // #6439: a vote to close a request is decided on the request's page.
+  if (a['data-close-request']) return `#app/${slug}/dev/issues/${a['data-close-request']}`;
   if (a['data-gov-row']) return `#app/${slug}/dev/governance/${a['data-gov-row']}`;
   if (a['data-shared-session-row']) return `#app/${slug}/dev/proposals/${a['data-shared-session-row']}`;
   if (a['data-session-chip']) return `#app/${slug}/dev/proposals/${a['data-session-chip']}`;
@@ -178,6 +181,38 @@ export function StatePill({ s, className }: { s: StatusPillState; className?: st
   return (
     <span className={`dev-ws-row-state dev-ws-row-state-${s.tone}${className ? ` ${className}` : ''}`} title={s.title}>{s.label}</span>
   );
+}
+
+/**
+ * The final counted vote of a change that is live (#6075): "3 yes · 1 no" (or "1/2 yes"
+ * when it went live short of its threshold), read beside its "✓ Live" pill. The yes count is compared with the
+ * threshold snapshotted at merge time (`StatusPillState.majority`, which
+ * `statusPillState` already falls back to the live majority for legacy
+ * rows); the no votes are shown only when there were some. A row with no
+ * counted votes (an imported pull request) has no tally — it never reads
+ * "0/1". History only: nothing here is a vote the viewer can cast again.
+ */
+export function liveTally(s: StatusPillState | null): { text: string; title: string } | null {
+  if (!s || s.tier !== 0 || (s.key !== 'deployed' && s.key !== 'merged')) return null;
+  const yes = Math.max(0, s.yes || 0);
+  const no = Math.max(0, s.no || 0);
+  if (yes + no <= 0) return null;
+  const needed = s.majority > 0 ? s.majority : 1;
+  // V05 (audit, 2 Nov 2026): with the yes it needed, or more, the count
+  // stands alone ("2 yes"); "2/1 yes" read as more votes than possible.
+  // What it needed stays in the title.
+  const passed = yes >= needed;
+  const text = no > 0
+    ? (passed ? t('project:card.tally.passedNo', { yes, no }) : t('project:card.tally.yesNo', { yes, needed, no }))
+    : (passed ? t('project:card.tally.passed', { yes }) : t('project:card.tally.yes', { yes, needed }));
+  return { text, title: t('project:card.tally.title', { yes, no, needed }) };
+}
+
+/** The live tally beside a "✓ Live" pill, or nothing. */
+export function LiveTally({ s }: { s: StatusPillState | null }): ReactNode {
+  const tally = liveTally(s);
+  if (!tally) return null;
+  return <span className="dev-ws-wrow-tally" title={tally.title}>{tally.text}</span>;
 }
 
 export function RowBand({ card, trailing, chips: withChips = true }: {

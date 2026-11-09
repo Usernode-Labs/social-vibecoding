@@ -208,6 +208,12 @@ export interface WaitlistOptions {
    *  Settings › About links to it (#5094, #5106). Always served; absent only
    *  before the options arrive, when the notice names it without a link. */
   privacy_link?: string | null;
+  /** The Child Safety Standards and the account-deletion page, absolute
+   *  (src/services/marketing-links.js): the other two legal pages the terms
+   *  name, which Settings › About lists beside them (#6043). Always served;
+   *  absent only before the options arrive. */
+  child_safety_link?: string | null;
+  account_deletion_link?: string | null;
   /** The same, from the Homeroom app's own sheets: those whose app client
    *  IDs are saved too. The app offers one only when its build can. */
   native_sign_in_providers?: string[];

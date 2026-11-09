@@ -114,7 +114,7 @@ test('the Skin module runs before the first stylesheet', () => {
 test('Settings › Experimental carries the New look switch, last of the switches', () => {
   const src = experimentalSrc();
   assert.match(src, /<SwitchRow id="new-look-enabled">/);
-  assert.ok(src.indexOf('id="review-flow-enabled"') < src.indexOf('id="new-look-enabled"'));
+  assert.doesNotMatch(src, /review-flow-enabled/, 'the Needs you switch is gone');
   assert.ok(src.indexOf('id="new-look-enabled"') < src.indexOf('id="settings-local-agents-section"'));
   assert.match(src, /settings:experimental\.newLook\.label/);
   assert.match(src, /settings:experimental\.newLook\.description/);
@@ -149,7 +149,9 @@ function lookBlock() {
 }
 
 test('every rule of the new look is scoped to the flag, in light mode only', () => {
-  const block = lookBlock().replace(/\/\*[\s\S]*?\*\//g, '');
+  // A media query only narrows where a rule applies, so its wrapper is
+  // dropped and the rules inside it are read like the others.
+  const block = lookBlock().replace(/\/\*[\s\S]*?\*\//g, '').replace(/@media[^{]*\{/g, '');
   const rules = block.split('}').map((r) => r.trim()).filter(Boolean);
   let selectors = 0;
   for (const rule of rules) {
@@ -197,4 +199,44 @@ test('Geist is served from our own origin with its licence beside it', () => {
   assert.ok(fs.statSync(path.join(dir, 'Geist-Variable.woff2')).size > 10_000, 'the font file is committed');
   assert.match(read('public', 'fonts', 'geist', 'LICENSE.txt'), /SIL Open Font License/,
     'the OFL travels with the font');
+});
+
+test('Geist Mono and Young Serif load from our own origin, with their licences beside them', () => {
+  const block = lookBlock();
+  for (const [family, file] of [
+    ['Geist Mono', '/fonts/geist-mono/GeistMono-Variable.woff2'],
+    ['Young Serif', '/fonts/young-serif/young-serif-latin-400-normal.woff2'],
+  ]) {
+    const face = new RegExp(`@font-face\\s*\\{[^}]*font-family:\\s*'${family}'[^}]*url\\('${file.replace(/[.]/g, '\\.')}'\\)`);
+    assert.match(block, face, `${family} points at the self-hosted file by an absolute, same-origin path`);
+    assert.ok(fs.statSync(path.join(ROOT, 'public', file)).size > 10_000, `${file} is committed`);
+    const licence = path.join(ROOT, 'public', path.dirname(file), 'LICENSE.txt');
+    assert.match(fs.readFileSync(licence, 'utf8'), /SIL Open Font License/, `the OFL travels with ${family}`);
+  }
+  const css = read('public', 'css', 'app.css');
+  const before = css.slice(0, css.indexOf('/* ── THE NEW LOOK, AN EXPERIMENT'));
+  assert.ok(!/Young Serif/.test(before), 'nothing outside the new look names Young Serif');
+});
+
+test("a community's header keeps its own colour in the new look", () => {
+  const block = lookBlock().replace(/\/\*[\s\S]*?\*\//g, '');
+  const heads = block.split('}').map((r) => r.slice(0, r.indexOf('{')).trim()).filter((h) => h.includes('#platform-header'));
+  assert.ok(heads.length >= 2, 'the top-level bar is restyled');
+  for (const head of heads) {
+    for (const sel of head.split(',').map((x) => x.trim()).filter((x) => x.includes('#platform-header'))) {
+      if (/#platform-header h1/.test(sel) && !/#platform-header#platform-header/.test(sel)) continue; // the title rule only skips the header
+      assert.match(sel, /:not\(\[data-community-tint\]\)/, `"${sel}" must leave a project's bar its community's colour`);
+    }
+  }
+});
+
+test('the empty-state figures are committed beside their provenance, and drawn only by the new look', () => {
+  for (const name of ['phone.png', 'log.png']) {
+    assert.ok(fs.statSync(path.join(ROOT, 'public', 'illustrations', 'people', name)).size > 2_000, `${name} is committed`);
+    assert.match(lookBlock(), new RegExp(`url\\('/illustrations/people/${name.replace('.', '\\.')}'\\)`), `${name} is drawn by the new look by an absolute path`);
+  }
+  assert.match(read('public', 'illustrations', 'people', 'README.md'), /onhomeroom\.com/, 'where the figures come from');
+  const css = read('public', 'css', 'app.css');
+  const before = css.slice(0, css.indexOf('/* ── THE NEW LOOK, AN EXPERIMENT'));
+  assert.ok(!before.includes('/illustrations/people/'), 'nothing outside the new look loads them');
 });

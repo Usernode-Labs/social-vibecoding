@@ -126,9 +126,11 @@ test('the transcript\'s rows use the folding Body, not a copy of the old one', (
   const src = read(TRANSCRIPT);
   assert.match(src, /import \{ Body \} from '\.\/long-body';/);
   assert.doesNotMatch(src, /function Body\(/);
-  // MessageRow (channels, reply threads, request and change streams) and
+  // MessageRow (channels, reply threads, request and change streams), which
+  // hands it Homeroom bot's laid-out reply too (task 2020 follow-up), and
   // GitHubRow (a request's GitHub comments).
-  assert.equal((src.match(/<Body html=\{msg\.bodyHtml\} \/>/g) || []).length, 2);
+  assert.equal((src.match(/<Body html=\{msg\.bodyHtml\} rich=\{msg\.botHtml\} \/>/g) || []).length, 1);
+  assert.equal((src.match(/<Body html=\{msg\.bodyHtml\} \/>/g) || []).length, 1);
 });
 
 // ── 4. Opening holds the reader's place; folded links are no hidden tab stops ──

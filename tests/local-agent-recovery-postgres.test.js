@@ -131,3 +131,45 @@ test('a turn its work item dispatched is its item\'s: no pass takes it, and the 
   assert.ok(await localAgent.claimTail(client, taken.id, taken.waiter_id));
   assert.equal(await localAgent.takeOverOwnedTurn(client, workId), null, 'a claimed tail is never taken over');
 });
+
+test('a turn nothing picked up is released at the offer timeout, and the change can be dispatched again', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  const queued = await enqueue(client);
+  // The machine is attached (its lease heartbeats) but never claims the turn:
+  // exactly the state that used to answer session_busy forever.
+  await client.query(
+    `UPDATE local_agent_turns SET created_at = NOW() - INTERVAL '100 seconds' WHERE id = $1`,
+    [queued.turn.id]
+  );
+  assert.equal(await localAgent.sweepUnclaimedTurns(client), 1);
+  const { rows: [swept] } = await client.query(
+    'SELECT status, error_detail FROM local_agent_turns WHERE id = $1', [queued.turn.id]
+  );
+  assert.equal(swept.status, 'abandoned');
+  assert.match(swept.error_detail, /Nothing picked up the turn within 90 seconds\./);
+
+  // Its waiter wakes to a terminal row and claims the tail exactly once.
+  const result = await localAgent.awaitTurnResult(client, queued.turn.id, { waiterId: queued.waiterId });
+  assert.equal(result.outcome, 'abandoned');
+  assert.ok(result.turn.tail_claimed_at);
+  const second = await localAgent.awaitTurnResult(client, queued.turn.id, { waiterId: queued.waiterId });
+  assert.equal(second.outcome, 'adopted', 'the tail is not run twice');
+
+  // The live-turn unique index is free again: a retry inserts a new turn
+  // rather than colliding and being reported as a busy session.
+  const retry = await enqueue(client, '22222222-2222-3333-4444-555555555555');
+  assert.ok(retry, 'the change is buildable again');
+
+  // A fresh turn is not old enough, and an accepted one belongs to its
+  // machine: neither is swept.
+  assert.equal(await localAgent.sweepUnclaimedTurns(client), 0);
+  await client.query(
+    `UPDATE local_agent_turns SET status = 'accepted', accepted_at = NOW(),
+            created_at = NOW() - INTERVAL '10 minutes' WHERE id = $1`,
+    [retry.turn.id]
+  );
+  assert.equal(await localAgent.sweepUnclaimedTurns(client), 0);
+  const { rows: [accepted] } = await client.query('SELECT status FROM local_agent_turns WHERE id = $1', [retry.turn.id]);
+  assert.equal(accepted.status, 'accepted', 'a running turn keeps its one-hour limit');
+});

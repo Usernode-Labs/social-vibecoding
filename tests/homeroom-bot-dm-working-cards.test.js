@@ -47,7 +47,7 @@ test('the client keeps Invite people, and draws a first version\'s live news wit
   assert.deepEqual(meta.actions.map((a) => [a.id, a.type, a.style]), [
     ['open_app', 'open', 'primary'], ['open_community', 'open', 'secondary'], ['invite_people', 'invite', 'secondary'],
   ]);
-  assert.equal(meta.actions[1].target, '#app/plant-pal/workshop');
+  assert.equal(meta.actions[1].target, '#app/plant-pal/dev/hub');
   assert.equal('target' in meta.actions[2], false, 'an invite goes nowhere by address: it is answered in place');
 
   const { BotQuestion, inviteMade } = loadTsx(QUESTION, {
@@ -109,18 +109,14 @@ test('a plan\'s "Building it" spins while its build runs, and is a check once it
     'the newest card says');
 });
 
-test('the DM is read again while a card spins or a ready card goes live, as while work goes', () => {
-  const { stillMoving } = loadTsx(STORE);
-  const snap = (cards, ready = []) => ({
-    cards: new Map(cards.map((c, i) => [i + 1, c])), ready: new Map(ready.map((r, i) => [i + 1, r])),
-  });
-  assert.equal(stillMoving(snap([{ state: 'working' }])), true);
-  assert.equal(stillMoving(snap([{ state: 'done', outcome: 'checking' }])), true);
-  assert.equal(stillMoving(snap([{ state: 'done', outcome: 'going_live' }])), true);
-  assert.equal(stillMoving(snap([{ state: 'done', outcome: 'proposed' }])), false);
-  assert.equal(stillMoving(snap([{ state: 'done', outcome: 'needs_look' }])), false, 'a person looks: nothing to wait for');
-  assert.equal(stillMoving(snap([], [{ state: 'going_live' }])), true);
-  assert.equal(stillMoving(snap([], [{ state: 'live' }])), false);
+test('the DM\'s cards are read again when a stage moves, never on a timer', () => {
+  // 5 Nov 2026: every step of the bot's work is a stage change, pushed as
+  // `work_state` (services/work-state.js), which public/js/app.js turns into
+  // the window event the store listens for.
+  const src = read(STORE);
+  assert.doesNotMatch(src, /setInterval|POLL_MS/, 'no timer');
+  assert.match(src, /window\.addEventListener\(WORK_CHANGED_EVENT, changed\);/);
+  assert.match(read('public/js/app.js'), /case 'homeroom_bot_work_changed':\s+case 'work_state':/);
 });
 
 // ── #4242: "needs a look" ──
@@ -148,4 +144,10 @@ test('a change nothing will offer without a person rings its requester, once, an
   const checks = bot.slice(bot.indexOf('async function queueChecksFix('), bot.indexOf('async function runChecksFix('));
   assert.match(checks, /if \(followup\.checksLookLikeInfra\(due\)\) \{[\s\S]*if \(due\.failing\.length\) await require\('\.\/homeroom-bot-dm'\)\.noteNeedsLook\(pool, \{ sessionId: row\.id, why: 'checks', strict: true \}\);\n\s+return \{ queued: false, why: 'infra' \};/);
   assert.match(bot, /\.sweepUnproposedBuilds\?\.\(pool, \{ ws: deps\.ws \|\| null \}\)\);/);
+  // #6388: the other path that leaves an infra failure alone tells the
+  // requester too, there without failing the turn on the send.
+  const owed = bot.slice(bot.indexOf('async function oweChecksFix('), bot.indexOf('/**', bot.indexOf('async function oweChecksFix(')));
+  assert.match(owed, /if \(followup\.checksLookLikeInfra\(out\.due\)\) \{[\s\S]*if \(out\.due\.failing\.length\) await require\('\.\/homeroom-bot-dm'\)\.noteNeedsLook\(pool, \{ sessionId, why: 'checks' \}\);/);
+  assert.doesNotMatch(dm.needsLookText(line, 'checks'), /Homeroom runs them again/);
+  assert.match(dm.needsLookText(line, 'checks'), /An admin can run them again from the change's page/);
 });

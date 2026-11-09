@@ -27,6 +27,7 @@ import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Check, DomainWrite, Event, Json, Machine, MessageRequest, Outcome, TransitionContext, Tx } from '../kernel/index.ts';
 import { NO_FACTS, readFacts } from './facts.ts';
 import type { Candidate, Facts } from './facts.ts';
+import { forceWaivesChecks } from '../rules/merge-claim.ts';
 
 export const MACHINE = 'merge-queue';
 export const appKey = (appId: number) => `app:${appId}`;
@@ -120,6 +121,10 @@ export function admission(c: Candidate, now: number): { admit: boolean; reason: 
 const LANE_REASONS: ReadonlySet<string> = new Set(['awaiting_approval', 'unresolvable', 'fork_head', 'checks_failing', 'checks_error']);
 
 const free = (c: Candidate) => c.state === 'in_review' && !c.busy;
+// A force skips the votes and the lock wherever it stands, the checks only on
+// the commit it was given on (or one a mechanical merge of main moved it to).
+const waived = (c: Candidate) => forceWaivesChecks(c.forced, c.forcedHead, c.head);
+const blocked = (c: Candidate) => !!c.unmergeable && !(c.forced && (c.unmergeable === 'lock' || waived(c)));
 // The proposal states that can hold a slot of the queue's.
 const HOLDING: ReadonlySet<string> = new Set(['in_review', 'merging', 'underway']);
 
@@ -138,13 +143,16 @@ function pick(d: Data, f: Facts, ctx: TransitionContext): Outcome<QState> {
   const tried = new Set(data.tried);
   const named = new Set(data.named);
   // GitHub refused this very head against this main: not asked again until
-  // something changes (its head, main, or an ask that names it).
+  // something changes (its head, main, an ask that names it, or — for a
+  // refusal that may simply be met again, like GitHub still finishing an
+  // earlier merge — its retry time).
   const refusedHere = (c: Candidate) => !!c.refused && c.refused.head === c.head
-    && (c.refused.main == null || c.integrationMain == null || c.refused.main === c.integrationMain) && !named.has(c.id);
+    && (c.refused.main == null || c.integrationMain == null || c.refused.main === c.integrationMain) && !named.has(c.id)
+    && !(c.refused.retryAt && Date.parse(c.refused.retryAt) <= ctx.now.getTime());
 
   // Direct lane.
   const direct = line
-    .filter((c) => (c.approved || c.forced) && c.mergesClean !== false && (c.forced || !c.unmergeable))
+    .filter((c) => (c.approved || c.forced) && c.mergesClean !== false && !blocked(c))
     .sort(compare);
   let directWaiting = 0;
   if (data.attempt) directWaiting++;
@@ -153,7 +161,7 @@ function pick(d: Data, f: Facts, ctx: TransitionContext): Outcome<QState> {
       if (!free(c)) { if (c.busy) directWaiting++; continue; }
       if (tried.has(triedKey(c)) || refusedHere(c)) continue;
       // Its run reports on its own (the verdict asks again).
-      if (!c.forced && c.runInFlight) { directWaiting++; continue; }
+      if (!waived(c) && c.runInFlight) { directWaiting++; continue; }
       const n = data.n + 1;
       data = { ...data, n, attempt: { n, sessionId: c.id }, tried: [...data.tried, triedKey(c)] };
       messages.push(toProposal(data, c.id, 'MergeRequested', { queueN: n, force: c.forced }));
@@ -161,7 +169,7 @@ function pick(d: Data, f: Facts, ctx: TransitionContext): Outcome<QState> {
       break;
     }
   } else {
-    directWaiting += direct.filter((c) => free(c) && !c.forced && c.runInFlight).length;
+    directWaiting += direct.filter((c) => free(c) && !waived(c) && c.runInFlight).length;
   }
 
   // The conflict lane: every conflicting head's admission is said on its
@@ -289,6 +297,9 @@ export function mergeQueue(): Machine<QState, Facts> {
     version: 1,
     events: EVENTS,
     create: ['MergeWanted'],
+    // What web appends: a vote or a demo that leaves a change ready to merge, and
+    // Check for updates.
+    web: ['MergeWanted'],
     terminal: [],
     decode: (row) => ({ name: row.state, data: row.data } as QState),
     facts: (tx: Tx, state: QState, event: Event<any>, ctx: TransitionContext) => {

@@ -99,6 +99,7 @@
 
 const crypto = require('crypto');
 const platformJwt = require('./platform-jwt');
+const offlineCache = require('./offline-cache');
 const appAccess = require('./app-access');
 const log = require('./logger');
 const { USERNODE_DOMAIN } = require('./caddy');
@@ -270,7 +271,7 @@ let captureId = { at: 0, id: null };
 
 function resetCachesForTest() {
   liveSessions.clear(); identities.clear(); upstreams.clear();
-  guestTokens.clear();
+  guestTokens.clear(); appAccess.resetOfflineOptOutsForTest?.();
   captureId = { at: 0, id: null };
 }
 
@@ -460,6 +461,13 @@ async function handleAccess(pool, req, res) {
   // Every 2xx goes out through here, so what an edge copies onto the
   // request is decided in one place.
   const allow = async ({ identityFor = null, guest = false } = {}) => {
+    // A request that reaches a preview is a use of it: a preview in use
+    // does not go to sleep (#6157). At most once a minute per preview, and
+    // never awaited.
+    if (!isProduction) {
+      const named = require('./preview-sleep').previewSessionOfHost(host);
+      if (named) require('./preview-sleep').touchActivity(pool, named.sessionId, { slug: named.slug }).catch(() => {});
+    }
     if (identityFor != null) {
       const token = await mintIdentity(pool, vis.appId, identityFor, { publicApp: !vis.viewPrivate, platformPreview: !isProduction && slug === require('./platform-preview-data-policy').PLATFORM_SLUG });
       if (token) res.set('X-Usernode-Identity', token);
@@ -467,10 +475,24 @@ async function handleAccess(pool, req, res) {
       res.set('X-Usernode-Identity', guestToken(vis.appId));
     }
     if (viaKubernetesGate) {
+      if (isProduction) {
+        const runtime = await require('./production-sleep').access(pool, vis.appId, uri);
+        if (runtime.eligible) res.set('X-Usernode-Runtime-Sleep', runtime.ready ? 'eligible' : runtime.waking ? 'waking' : 'asleep');
+        if (!runtime.ready) {
+          res.set('Retry-After', '5');
+          return res.status(503).json({ error: 'app_starting', message: 'This app is starting. Try again shortly.' });
+        }
+      }
       const upstream = await upstreamFor(pool, parsed, vis);
       if (!upstream) return res.status(404).send('Not found');
       res.set('X-Usernode-Upstream', upstream);
       if (isProduction) res.set('X-Usernode-Applink', chromelessUrl(slug));
+      // Offline apps (services/offline-cache.js): the gate gives this app's
+      // pages and files a long fresh lifetime. A production address only (a
+      // preview runs unmerged code), and only while the switch is on.
+      if (isProduction && offlineCache.enabled() && !(await appAccess.offlineOptedOut(pool, vis.appId))) {
+        res.set(offlineCache.DECISION_HEADER, offlineCache.DECISION_APP);
+      }
     } else if (viaCaddyCustom) {
       // The docker runtime's production container name (application-runtime).
       res.set('X-Usernode-Upstream', `usernode-app-${slug}`);

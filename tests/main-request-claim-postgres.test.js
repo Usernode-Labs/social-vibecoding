@@ -240,3 +240,53 @@ test('a flake request: the attempt after a crash at any point files it, once, an
   const { rows: [r] } = await pool.query('SELECT request_filed_at, request_claimed_by FROM main_test_flakes');
   assert.deepEqual(r, { request_filed_at: null, request_claimed_by: null });
 });
+
+// The test-durations baseline is never a failure (tests/test-shard-plan.test.js
+// prints a diagnostic), so main watch asks for a refresh instead: one
+// low-priority request once missing plus placeholder entries pass a tenth of
+// the test files, and no second one while it is open or inside its window.
+test('a baseline refresh request is filed once past a tenth, and not while one is open', async (t) => {
+  const db = await database(t); if (!db) return;
+  const { pool, app } = db;
+
+  // Past a tenth, not at it: 2 of 20 is a tenth, 3 of 20 is past.
+  assert.equal(mainWatch.baselineNeedsRefresh({ total: 20, missing: 2, unmeasured: 0 }), false);
+  assert.equal(mainWatch.baselineNeedsRefresh({ total: 20, missing: 1, unmeasured: 1 }), false);
+  assert.equal(mainWatch.baselineNeedsRefresh({ total: 20, missing: 2, unmeasured: 1 }), true);
+  assert.equal(mainWatch.baselineNeedsRefresh({ total: 0, missing: 1 }), false, 'no test files: nothing to say');
+
+  const gaps = (n) => ({
+    total: 20,
+    missing: Array.from({ length: n }, (_, i) => `tests/new-${i}.test.js`),
+    unmeasured: [],
+  });
+  const file = (g) => mainWatch.fileBaselineRefreshRequest({}, pool, app, g, {
+    fileBotIssue: mainWatch.fileBotIssue, strict: true,
+  });
+
+  assert.equal(await file(gaps(2)), null, 'a tenth is not past it');
+  assert.equal(created.length, 0);
+
+  const filed = await file(gaps(3));
+  assert.ok(filed > 0, 'past a tenth: a request is filed');
+  assert.equal(created.length, 1);
+  assert.equal(created[0].title, mainWatch.BASELINE_REQUEST_TITLE);
+  assert.match(created[0].body, /npm run test:durations/);
+  assert.match(created[0].body, /tests\/new-0\.test\.js/, 'it names the files with no entry');
+
+  // Still open: never a second one, however stale the baseline is.
+  assert.equal(await file(gaps(9)), null);
+  assert.equal(created.length, 1);
+
+  // Closed inside the window: still none.
+  await pool.query("UPDATE issues SET status = 'closed' WHERE github_issue_number = $1", [filed]);
+  assert.equal(await file(gaps(9)), null);
+  assert.equal(created.length, 1);
+
+  // Closed and past the window: a new one, once the baseline is asked about again.
+  await pool.query("UPDATE issues SET created_at = NOW() - ($2::int * interval '1 day') WHERE github_issue_number = $1",
+    [filed, mainWatch.BASELINE_REQUEST_DAYS + 1]);
+  const again = await file(gaps(3));
+  assert.ok(again > 0, 'past the window: a new request');
+  assert.equal(created.length, 2);
+});

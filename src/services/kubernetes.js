@@ -401,6 +401,7 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
       // (GIT_HOST_INTERNAL_URL, else the public one); GitHub's as before.
       source: { git: { url: repoRef.isHosted(app.repo_url) ? repoRef.cloneUrl(app.repo_url) : app.repo_url.replace(/\.git$/, ''), revision } },
       activeDeadlineSeconds: cfg.activeDeadlineSeconds,
+      ...batchWorkPlacement(cfg),
       env: buildEnv,
       resources: {
         requests: { cpu: process.env.BUILD_REQUESTS_CPU || '500m', memory: process.env.BUILD_REQUESTS_MEMORY || '1Gi', 'ephemeral-storage': process.env.BUILD_REQUESTS_EPHEMERAL_STORAGE || '2Gi' },
@@ -423,6 +424,7 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
   }
   // A different revision can still supply cached dependency/launch layers.
   if (completed.length) body.spec.lastBuild = { image: completed[0].status.latestImage };
+  await waitForCheckPool(config);
   const { custom } = getClients();
   const createDeadline = Date.now() + 60000;
   while (true) {
@@ -772,6 +774,8 @@ function platformAssetEnv(config) {
     { name: 'USERNODE_DOMAIN', value: String(cfg.platformDomain || '') },
     { name: 'USERNODE_APPS_DOMAIN', value: String(cfg.appDomain || cfg.platformDomain || '') },
     { name: 'MARKETING_BASE_URL', value: String(config?.marketingBaseUrl || '') },
+    // Offline apps (services/offline-cache.js): how the shared files are cached.
+    { name: 'APP_OFFLINE_CACHE', value: require('./offline-cache').enabled() ? 'on' : 'off' },
   ];
 }
 
@@ -1092,8 +1096,9 @@ function appGateDeploymentManifest({ namespace, image, cfg, platformUrl }) {
             env: [
               { name: 'GATE_PLATFORM_URL', value: String(platformUrl || '') },
               { name: 'GATE_UPSTREAM_PORT', value: '3000' },
+              { name: 'GATE_POD_UID', valueFrom: { fieldRef: { fieldPath: 'metadata.uid' } } },
             ],
-            ports: [{ name: 'http', containerPort: 3000 }],
+            ports: [{ name: 'http', containerPort: 3000 }, { name: 'activity', containerPort: 3001 }],
             startupProbe: { ...health, periodSeconds: 1, failureThreshold: 60 },
             readinessProbe: { ...health, periodSeconds: 2, failureThreshold: 3 },
             livenessProbe: { ...health, periodSeconds: 15, failureThreshold: 3 },
@@ -1285,6 +1290,7 @@ async function deployApplication(config, {
     : `${app.slug}--s${sessionId}.${cfg.appDomain}`;
   // Check before creating or updating any Kubernetes resources.
   require('./caddy').assertAppHostname(hostname, cfg.platformDomain);
+  const resourceProfile = require('./app-resource-profiles').forApp(config, app, environment, { cpus, internalOnly });
   const { core, apps, networking } = getClients();
   // The Deployment as this attempt found it (the fence). When its rollout
   // fails, what goes back is the template of the attempt that serves
@@ -1317,7 +1323,10 @@ async function deployApplication(config, {
       template: {
         metadata: {
           labels: { ...resourceLabels, ...selectorLabels },
-          annotations: { 'social.usernode.io/env-checksum': envChecksum(env) },
+          annotations: {
+            'social.usernode.io/env-checksum': envChecksum(env),
+            [require('./app-resource-profiles').ANNOTATION]: resourceProfile.profile,
+          },
         },
         spec: {
           serviceAccountName: cfg.generatedAppServiceAccount,
@@ -1335,7 +1344,7 @@ async function deployApplication(config, {
               : [],
             envFrom: [{ secretRef: { name: secretName } }],
             ...httpProbes({ startupFailureThreshold: 120 }),
-            resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: String(cpus || '1'), memory: '1Gi' } },
+            resources: resourceProfile.resources,
             securityContext: containerSecurityContext(),
           }],
         },
@@ -1602,6 +1611,112 @@ async function restorePreviewAttempt(config, name, attempt, servingN, claim = 0)
   return await deleteAttemptDeployment(config, name, own) ? 'deleted' : 'superseded';
 }
 
+// ── A preview asleep (#6157) ─────────────────────────────────────────────
+//
+// A preview nobody has used for a while sleeps (services/preview-sleep.js):
+// its Deployment is scaled to no replicas and everything else stays, its
+// image, its Service, its Ingress, its env Secret and the database clone it
+// uses, so waking it is a scale back to one and a wait for the pod. No
+// rebuild, and no checks run again: the same image serves the same head.
+
+// Pure: the Deployment as it was read, with `replicas` changed and nothing
+// else (its template, its fence, the version it was read at). A preview
+// runs one replica awake and none asleep.
+function scaledPreviewDeployment(deployment, replicas) {
+  if (replicas !== 0 && replicas !== 1) throw new Error('A preview runs one replica awake and none asleep');
+  const body = structuredClone(deployment);
+  body.spec = { ...(body.spec || {}), replicas };
+  delete body.status;
+  return body;
+}
+
+// Scale a preview's Deployment to `replicas`. Only the Deployment is
+// written. It is replaced on the version read and never retried on a
+// conflict: a write in between is an attempt's deploy, which sets its own
+// replicas, or another sleep or wake, and either is newer than this one.
+// `attempt`: the attempt the caller read as serving; a Deployment another
+// attempt has written since (its fence) is left alone. Answers 'scaled',
+// 'unchanged' (already so), 'missing', 'superseded' or 'conflict'.
+async function scalePreview(config, runtimeName, replicas, { attempt = null } = {}) {
+  const namespace = config.kubernetes.appNamespace;
+  const { apps } = getClients();
+  let current;
+  try { current = await apps.readNamespacedDeployment({ name: runtimeName, namespace }); }
+  catch (err) { if (isNotFound(err)) return 'missing'; throw err; }
+  if (!current?.metadata || current.metadata.deletionTimestamp) return 'missing';
+  if (attempt != null && (fenceOf(current)?.attempt ?? 0) !== attempt) return 'superseded';
+  if ((current.spec?.replicas ?? 1) === replicas) return 'unchanged';
+  try {
+    await apps.replaceNamespacedDeployment({ name: runtimeName, namespace, body: scaledPreviewDeployment(current, replicas) });
+  } catch (err) {
+    if (isConflict(err)) return 'conflict';
+    if (isNotFound(err)) return 'missing';
+    throw err;
+  }
+  return 'scaled';
+}
+
+// Wait until the preview's one replica serves (the rollout contract every
+// deploy waits for). Throws when it does not within `timeoutMs`.
+async function waitForPreview(config, runtimeName, { timeoutMs = 3 * 60 * 1000 } = {}) {
+  await waitForDeployment(config.kubernetes.appNamespace, runtimeName, { timeoutMs });
+}
+
+// Pure: where a sleeping preview's direct link goes while it has no pod.
+// With the app-host gate on, its Ingress already sends every request to the
+// gate, which asks the platform; the platform answers a sleeping preview's
+// host with the waking page (routes/app-error.js), so nothing changes. With
+// the gate off the Ingress goes straight to the preview's Service, which has
+// no endpoints asleep, and the ingress controller (Cilium's Envoy, which
+// takes no custom error backend) would answer a bare 503: so while it
+// sleeps, its catch-all path goes to the shared asset backend in the same
+// namespace, which serves the waking page for a preview's host
+// (scripts/serve-platform-assets.js), and back to the Service when it wakes.
+// The asset prefixes and every other path are left as they are. Answers the
+// Ingress to write, or null when there is nothing to change (already so, or
+// a catch-all this does not recognise).
+function ingressForSleep(ingress, { name, asleep, gateBackend = null }) {
+  const from = asleep ? name : PLATFORM_ASSET_NAME;
+  const to = asleep ? PLATFORM_ASSET_NAME : (gateBackend || name);
+  let changed = false;
+  const rules = (ingress?.spec?.rules || []).map((rule) => {
+    if (!rule?.http || !Array.isArray(rule.http.paths)) return rule;
+    const paths = rule.http.paths.map((item) => {
+      if (item?.path !== '/' || item?.backend?.service?.name !== from) return item;
+      changed = true;
+      return { ...item, backend: { ...item.backend, service: { ...item.backend.service, name: to } } };
+    });
+    return { ...rule, http: { ...rule.http, paths } };
+  });
+  return changed ? { ...ingress, spec: { ...ingress.spec, rules } } : null;
+}
+
+// Apply ingressForSleep to a preview's Ingress. With the gate on, a sleeping
+// preview keeps its route (the gate serves the waking page); waking sends a
+// catch-all left on the asset backend to the gate when it serves, else to
+// the preview's own Service. Answers 'routed', 'unchanged' or 'missing'.
+async function routePreviewForSleep(config, runtimeName, { asleep }) {
+  const namespace = config.kubernetes.appNamespace;
+  const { networking } = getClients();
+  if (typeof networking?.readNamespacedIngress !== 'function') return 'missing';
+  const gate = appGateMode(config) === 'on';
+  if (asleep && gate) return 'unchanged';
+  const gateBackend = !asleep && gate && await sharedBackendServing(config, APP_GATE_NAME) ? APP_GATE_NAME : null;
+  for (let i = 0; ; i++) {
+    let ingress;
+    try { ingress = await networking.readNamespacedIngress({ name: runtimeName, namespace }); }
+    catch (err) { if (isNotFound(err)) return 'missing'; throw err; }
+    const body = ingressForSleep(ingress, { name: runtimeName, asleep, gateBackend });
+    if (!body) return 'unchanged';
+    try {
+      await networking.replaceNamespacedIngress({ name: runtimeName, namespace, body });
+      return 'routed';
+    } catch (err) {
+      if (!isConflict(err) || i >= UPSERT_CONFLICT_ATTEMPTS) throw err;
+    }
+  }
+}
+
 // A preview attempt's own Deployment, as it read it, deleted only if nobody
 // has written it since: the precondition carries its UID and the version it
 // read, so a successor's update in between (same UID) makes the delete
@@ -1745,7 +1860,7 @@ async function inspectApplication(config, runtimeName) {
     const state = deploymentState(deployment);
     const status = state === 'creating' ? 'created' : state;
     const desired = deployment.spec?.replicas ?? 1;
-    return { status, labels: deployment.spec?.template?.metadata?.labels || {},
+    return { status, asleep: require('./production-sleep').isAsleep(deployment), labels: deployment.spec?.template?.metadata?.labels || {},
       imageRef: deployment.spec?.template?.spec?.containers?.find(c => c.name === 'app')?.image,
       rolloutReady: desired > 0 && !deployment.metadata?.deletionTimestamp
         && deployment.status?.observedGeneration >= deployment.metadata?.generation
@@ -1757,6 +1872,76 @@ async function inspectApplication(config, runtimeName) {
     if (isNotFound(err)) return { status: 'not_found', labels: {} };
     throw err;
   }
+}
+
+// Production sleep uses the same immutable image and a resourceVersion fence,
+// while every address must already be behind the gate that tracks activity.
+async function readProductionForSleep(config, app, { waking = false } = {}) {
+  const { apps, networking } = getClients();
+  let deployment;
+  try { deployment = await apps.readNamespacedDeployment({ name: app.runtime_name, namespace: config.kubernetes.appNamespace }); }
+  catch (err) { if (isNotFound(err)) return null; throw err; }
+  const l = deployment.metadata?.labels || {};
+  if (!deployment.metadata?.uid || !deployment.metadata?.resourceVersion || deployment.metadata.deletionTimestamp
+    || l['app.kubernetes.io/managed-by'] !== MANAGED_BY || l['social.usernode.io/app-id'] !== String(app.id)
+    || l['social.usernode.io/environment'] !== 'production' || ![0, 1].includes(deployment.spec?.replicas ?? 1)) return null;
+  if (waking) return deployment;
+  if ((deployment.spec?.replicas ?? 1) !== 1 || deployment.status?.readyReplicas !== 1
+    || deployment.status?.updatedReplicas !== 1 || deployment.status?.observedGeneration < deployment.metadata.generation) return null;
+  const ingresses = await networking.listNamespacedIngress({ namespace: config.kubernetes.appNamespace,
+    labelSelector: `social.usernode.io/app-id=${app.id}` });
+  const routes = (ingresses.items || []).flatMap((i) => (i.spec?.rules || []).flatMap((r) =>
+    (r.http?.paths || []).filter((p) => p.path === '/')));
+  if (!routes.length || routes.some((r) => r.backend?.service?.name !== APP_GATE_NAME)) return null;
+  return deployment;
+}
+
+async function scaleProductionForSleep(config, deployment, replicas, asleepAt = null) {
+  if (![0, 1].includes(replicas)) throw new Error('A production sleep runtime has zero or one replica');
+  const body = structuredClone(deployment);
+  body.spec.replicas = replicas;
+  body.metadata.annotations ||= {};
+  const { ANNOTATION } = require('./production-sleep');
+  if (replicas === 0) body.metadata.annotations[ANNOTATION] = new Date(asleepAt).toISOString();
+  else {
+    delete body.metadata.annotations[ANNOTATION];
+    // Even if already at one: fence an older in-flight sleep before recording
+    // the app awake. A lost coordinator lock cannot let it scale down later.
+    body.metadata.annotations['social.usernode.io/production-wake-at'] = new Date().toISOString();
+  }
+  delete body.status;
+  try {
+    await getClients().apps.replaceNamespacedDeployment({ name: body.metadata.name,
+      namespace: config.kubernetes.appNamespace, body });
+    return 'scaled';
+  } catch (err) {
+    if (isConflict(err)) return 'conflict';
+    if (isNotFound(err)) return 'missing';
+    throw err;
+  }
+}
+
+async function appGateActivity(config) {
+  const { core } = getClients();
+  const pods = await core.listNamespacedPod({ namespace: config.kubernetes.appNamespace,
+    labelSelector: `app.kubernetes.io/managed-by=${APP_GATE_MANAGED_BY},app.kubernetes.io/name=${APP_GATE_NAME}` });
+  // Include draining gateways: their existing streams still count. Pending,
+  // unreachable and old gateways without telemetry prevent new sleeps.
+  const live = (pods.items || []).filter((p) => !['Succeeded', 'Failed'].includes(p.status?.phase));
+  if (!live.length) throw new Error('No app gateway observations');
+  return Promise.all(live.map(async (pod) => {
+    const ip = pod.status?.podIP;
+    const ipKind = require('node:net').isIP(ip || '');
+    if (!ipKind || !pod.metadata?.uid) throw new Error('Gateway has no live telemetry address');
+    const host = ipKind === 6 ? `[${ip}]` : ip;
+    const response = await fetch(`http://${host}:3001/activity`, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) throw new Error('Gateway telemetry refused');
+    const text = await response.text();
+    if (text.length > 1024 * 1024) throw new Error('Gateway telemetry too large');
+    const snapshot = JSON.parse(text);
+    if (snapshot.podUid !== pod.metadata.uid) throw new Error('Gateway telemetry identity changed');
+    return snapshot;
+  }));
 }
 
 async function getApplicationLogs(config, runtimeName, tailLines = 200) {
@@ -2395,8 +2580,8 @@ async function retirePlatformPreviewPolicy(config, appId, digest, { timeoutMs = 
   const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/app-id=${appId},social.usernode.io/environment=staging`;
   const { apps, core } = getClients();
   // Use the runtime's existing get/update-Service, list Deployment/RS/Pod,
-  // and foreground-delete-Deployment permissions. It deliberately cannot
-  // list Services or directly delete ReplicaSets/Pods.
+  // and foreground-delete-Deployment permissions. This retirement needs no
+  // Service list or direct ReplicaSet/Pod-delete permission.
   const ours = object => object.metadata?.labels?.['social.usernode.io/app-id'] === String(appId)
     && object.metadata.labels['social.usernode.io/environment'] === 'staging'
     && object.metadata.labels['app.kubernetes.io/managed-by'] === MANAGED_BY;
@@ -2452,12 +2637,13 @@ async function retirePlatformPreviewPolicy(config, appId, digest, { timeoutMs = 
   }
 }
 
-async function listPreviews(config) {
+async function listPreviews(config, { strict = false } = {}) {
   const namespace = config.kubernetes.appNamespace;
   const deployments = await getClients().apps.listNamespacedDeployment({
     namespace,
     labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/environment=staging`,
   });
+  if (strict && !Array.isArray(deployments?.items)) throw new Error('Invalid Deployment preview inventory');
   const previews = [];
   for (const deployment of deployments.items || []) {
     const name = deployment.metadata?.name || '';
@@ -2475,6 +2661,75 @@ async function listPreviews(config) {
     });
   }
   return previews;
+}
+
+function previewRoutingIdentity(metadata) {
+  const match = PREVIEW_NAME_RE.exec(metadata?.name || '');
+  const tags = metadata?.labels || {};
+  if (!match || tags['app.kubernetes.io/managed-by'] !== MANAGED_BY
+      || tags['social.usernode.io/environment'] !== 'staging'
+      || tags['social.usernode.io/app-id'] !== match[1]
+      || tags['social.usernode.io/session-id'] !== match[2]
+      || tags['social.usernode.io/shots-run'] || tags['social.usernode.io/evidence-run']) return null;
+  const appId = Number(match[1]), sessionId = Number(match[2]);
+  return Number.isSafeInteger(appId) && appId > 0 && Number.isSafeInteger(sessionId) && sessionId > 0
+    ? { appId, sessionId } : null;
+}
+
+// Cleanup also sees routing left after a Deployment disappeared. Runtime
+// status and env recovery still use listPreviews: routing alone is no pod.
+// Read every list before returning anything; an unreadable list is not an
+// empty one on which a garbage collector may base a deletion.
+async function listPreviewResources(config) {
+  const { core, networking } = getClients();
+  const namespace = config.kubernetes.appNamespace;
+  const labelSelector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/environment=staging`;
+  const all = async (api, method) => {
+    const items = [];
+    let next;
+    do {
+      const page = await api[method]({ namespace, labelSelector, limit: 500, _continue: next });
+      if (!Array.isArray(page?.items)) throw new Error(`Invalid ${method} preview inventory`);
+      items.push(...page.items);
+      next = page.metadata?.continue;
+    } while (next);
+    return items;
+  };
+  const [previews, services, ingresses] = await Promise.all([
+    listPreviews(config, { strict: true }), all(core, 'listNamespacedService'), all(networking, 'listNamespacedIngress'),
+  ]);
+  const deployments = new Set(previews.map((p) => p.name));
+  const byName = new Map(previews.map((p) => [p.name, p]));
+  for (const [kind, objects] of [['service', services], ['ingress', ingresses]]) {
+    for (const object of objects) {
+      const metadata = object.metadata;
+      const identity = previewRoutingIdentity(metadata);
+      if (!identity || deployments.has(metadata.name)) continue;
+      if (!byName.has(metadata.name)) byName.set(metadata.name, {
+        name: metadata.name, ...identity, state: 'not_found', image: null,
+        labels: metadata.labels, routingResources: [],
+      });
+      byName.get(metadata.name).routingResources.push({ kind, metadata: {
+        name: metadata.name, uid: metadata.uid, resourceVersion: metadata.resourceVersion, labels: metadata.labels,
+      } });
+    }
+  }
+  return [...byName.values()];
+}
+
+// Only the routing object the sweep judged, never a same-named replacement
+// or one updated by a new build after inventory. A missing object is done;
+// a precondition failure is retried from a fresh inventory next time.
+async function deletePreviewRoutingResource(config, kind, metadata) {
+  const { name, uid, resourceVersion } = metadata || {};
+  if (!previewRoutingIdentity(metadata) || !uid || !resourceVersion) {
+    throw new Error('Preview routing deletion requires matching ownership labels, UID and resourceVersion');
+  }
+  const { core, networking } = getClients();
+  const target = { service: [core, 'deleteNamespacedService'], ingress: [networking, 'deleteNamespacedIngress'] }[kind];
+  if (!target) throw new Error(`Unknown preview routing kind: ${kind}`);
+  await deleteIfPresent(target[0], target[1], name, config.kubernetes.appNamespace,
+    { body: { preconditions: { uid, resourceVersion } } });
 }
 
 // Shots fixtures use the production environment label; paired runtimes use
@@ -2941,15 +3196,23 @@ const NODE_POOL_PAIR = new RegExp(
   `^((?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?/)?${LABEL_NAME})=(${LABEL_NAME})$`);
 const warnedNodePools = new Set();
 
+function checkPoolConfigurationError(message) {
+  return Object.assign(new Error(message), { code: 'CHECK_POOL_CONFIG', infrastructure: true });
+}
+
 // CHECK_NODE_POOL as { key, value }, or null when it is empty or is not a
 // valid label pair. An invalid one is said once and ignored: a Job the API
 // refuses for a malformed toleration is a check that cannot start, and
 // running where checks always ran is the better failure.
 function checkNodePool(cfg) {
   const raw = String(cfg.checkNodePool || '').trim();
-  if (!raw) return null;
+  if (!raw) {
+    if (cfg.checkNodePoolRequired) throw checkPoolConfigurationError('CHECK_NODE_POOL_REQUIRED needs a valid CHECK_NODE_POOL');
+    return null;
+  }
   const match = NODE_POOL_PAIR.exec(raw);
   if (!match) {
+    if (cfg.checkNodePoolRequired) throw checkPoolConfigurationError('CHECK_NODE_POOL_REQUIRED needs a valid CHECK_NODE_POOL');
     if (!warnedNodePools.has(raw)) {
       warnedNodePools.add(raw);
       log.warn('kubernetes', 'CHECK_NODE_POOL is not a label key=value; checks keep the default placement', { value: raw });
@@ -2987,11 +3250,135 @@ function checkPlacement(cfg, checkSelector) {
   }
   return {
     tolerations: [{ key: pool.key, operator: 'Equal', value: pool.value, effect: 'NoSchedule' }],
+    ...(cfg.checkNodePoolRequired ? {
+      affinity: { nodeAffinity: { requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [{
+        matchExpressions: [{ key: pool.key, operator: 'In', values: [pool.value] }],
+      }] } } },
+    } : {
     affinity: { nodeAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
       weight: 100,
       preference: { matchExpressions: [{ key: pool.key, operator: 'In', values: [pool.value] }] },
     }] } },
+    }),
   };
+}
+
+function batchWorkPlacement(cfg) {
+  if (!cfg.checkNodePoolRequired) return {};
+  const pool = checkNodePool(cfg);
+  return { nodeSelector: { [pool.key]: pool.value },
+    tolerations: [{ key: pool.key, operator: 'Equal', value: pool.value, effect: 'NoSchedule' }] };
+}
+
+async function checkPoolCapacity(config = null) {
+  const checkPool = require('./check-pool');
+  if (!checkPool.required(config)) return { available: true, cap: Infinity };
+  const cfg = config?.kubernetes || {
+    checkNodePool: process.env.CHECK_NODE_POOL, checkNodePoolRequired: true,
+    checkPoolMetricsUrl: process.env.CHECK_POOL_METRICS_URL,
+  };
+  const pool = checkNodePool(cfg);
+  if (!pool) throw checkPoolConfigurationError('A required checks pool is missing');
+  if (cfg.checkPoolMetricsUrl) {
+    let url;
+    try { url = new URL('/api/v1/query', cfg.checkPoolMetricsUrl); }
+    catch { throw checkPoolConfigurationError('Invalid check-pool metrics URL'); }
+    if (!['http:', 'https:'].includes(url.protocol)) throw checkPoolConfigurationError('Invalid check-pool metrics URL');
+    url.searchParams.set('query', checkPool.metricsQuery(pool));
+    const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) throw new Error('Check-pool metrics unavailable');
+    const data = await response.json();
+    if (data.status !== 'success' || data.data?.resultType !== 'vector' || !Array.isArray(data.data.result)) {
+      throw new Error('Invalid check-pool metrics response');
+    }
+    return checkPool.fromMetrics(data.data.result);
+  }
+  const nodes = await getClients().core.listNode({ labelSelector: `${pool.key}=${pool.value}` });
+  // Tolerate exactly the configured pool taint (including a non-default key).
+  const allowed = (nodes.items || []).filter((n) => !(n.spec?.taints || []).some((t) =>
+    ['NoSchedule', 'NoExecute'].includes(t.effect)
+      && !(t.effect === 'NoSchedule' && t.key === pool.key && t.value === pool.value)));
+  return checkPool.plan(allowed.map((n) => ({ ...n, spec: { ...n.spec,
+    taints: (n.spec?.taints || []).filter((t) => t.key !== pool.key),
+  } })));
+}
+
+async function reconcileAppResourceProfiles(config, appRows, { maxChanges = 1 } = {}) {
+  const profiles = require('./app-resource-profiles');
+  const assignments = profiles.assignments(config.kubernetes?.appResourceProfiles ?? {});
+  const { apps } = getClients();
+  const namespace = config.kubernetes.appNamespace;
+  const deployments = await apps.listNamespacedDeployment({ namespace,
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/environment=production` });
+  const byId = new Map(appRows.map((app) => [String(app.id), app]));
+  let changed = 0;
+  for (const deployment of deployments.items || []) {
+    const app = byId.get(deployment.metadata?.labels?.['social.usernode.io/app-id']);
+    if (!app || deployment.metadata?.deletionTimestamp) continue;
+    const previousProfile = deployment.spec?.template?.metadata?.annotations?.[profiles.ANNOTATION];
+    if (!Object.hasOwn(assignments, String(app.id)) && previousProfile !== 'small') continue;
+    if (app.self_hosted || app.slug === config.selfAppSlug
+      || Number(app.id) === require('../../worker/shots-hosted-app-contract').HOSTED_APP_ID) continue;
+    const replicas = deployment.spec?.replicas ?? 1;
+    if (![0, 1].includes(replicas) || (replicas === 1 && (
+      deployment.status?.observedGeneration < deployment.metadata.generation
+      || deployment.status?.replicas !== 1 || deployment.status?.updatedReplicas !== 1
+      || deployment.status?.readyReplicas !== 1))) continue;
+    const container = deployment.spec?.template?.spec?.containers?.find((c) => c.name === 'app');
+    if (!container) continue;
+    const selected = profiles.forApp(config, app, 'production');
+    const current = container.resources?.requests || {};
+    const annotation = deployment.spec.template.metadata?.annotations?.[profiles.ANNOTATION] || 'standard';
+    if (current.cpu === selected.resources.requests.cpu && current.memory === selected.resources.requests.memory
+      && annotation === selected.profile) continue;
+    // Preserve all hard limits and storage settings, including explicit
+    // workload exceptions. Refuse a profile that exceeds an existing ceiling.
+    const quantity = require('./check-pool').quantity;
+    const cpuLimit = quantity(container.resources?.limits?.cpu);
+    const memoryLimit = quantity(container.resources?.limits?.memory);
+    if (!Number.isFinite(cpuLimit) || !Number.isFinite(memoryLimit)
+      || quantity(selected.resources.requests.cpu) > cpuLimit
+      || quantity(selected.resources.requests.memory) > memoryLimit) continue;
+    const body = structuredClone(deployment);
+    const target = body.spec.template.spec.containers.find((c) => c.name === 'app');
+    target.resources.requests = { ...target.resources.requests, ...selected.resources.requests };
+    body.spec.template.metadata ||= {};
+    body.spec.template.metadata.annotations ||= {};
+    body.spec.template.metadata.annotations[profiles.ANNOTATION] = selected.profile;
+    delete body.status;
+    try {
+      await apps.replaceNamespacedDeployment({ namespace, name: body.metadata.name, body });
+      changed += 1;
+    } catch (err) { if (!isConflict(err) && !isNotFound(err)) throw err; }
+    if (changed >= maxChanges) break;
+  }
+  return { examined: deployments.items?.length || 0, changed };
+}
+
+async function waitForCheckPool(config, { signal = null, waitMs = 15 * 60 * 1000, pollMs = 3000 } = {}) {
+  if (!require('./check-pool').required(config)) return;
+  const deadline = Date.now() + waitMs;
+  let reported = false;
+  for (;;) {
+    signal?.throwIfAborted();
+    try {
+      if ((await checkPoolCapacity(config)).available) return;
+    } catch (err) {
+      signal?.throwIfAborted();
+      if (err.code === 'CHECK_POOL_CONFIG') throw err;
+      // Monitoring can roll independently of the platform. Wait before
+      // creating resources, so its transient failures consume no Job deadline.
+      if (!reported) {
+        log.warn('kubernetes', 'Batch capacity metrics unavailable; waiting before resource creation');
+        reported = true;
+      }
+    }
+    if (Date.now() >= deadline) {
+      throw Object.assign(new Error('The dedicated checks pool is unavailable'), { infrastructure: true });
+    }
+    const delayMs = Math.max(1, Math.min(pollMs, deadline - Date.now()));
+    await observeCheck(new Promise((resolve) => setTimeout(resolve, delayMs)), signal);
+  }
 }
 
 // `namePrefix` names a Job outside the preview's own check Jobs: an early
@@ -3130,6 +3517,9 @@ async function runCheckJob(config, {
   };
   try {
     signal?.throwIfAborted();
+    // Covers early and main-watch Jobs too. Their execution deadlines begin
+    // only once the dedicated pool exists, not while waiting for its return.
+    await create(() => waitForCheckPool(config, { signal }));
     if (inputSecretName) {
       inputSecret = await create(() => core.createNamespacedSecret({ namespace, body: {
         apiVersion: 'v1', kind: 'Secret',
@@ -3768,8 +4158,13 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 }
 
 module.exports = {
+  batchWorkPlacement, waitForBatchPool: waitForCheckPool,
+  reconcileAppResourceProfiles,
+  readProductionForSleep, scaleProductionForSleep, appGateActivity,
+  checkPoolCapacity,
   previewServesAttempt,
   restorePreviewAttempt,
+  scaledPreviewDeployment, scalePreview, waitForPreview, ingressForSleep, routePreviewForSleep,
   dnsName, withSuffix, labels, appResourceName, createBuild, buildReadsBelowSourceRoot,
   deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
@@ -3781,7 +4176,7 @@ module.exports = {
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker,
   workerIdentity, deleteWorkerIdentity, workerIdentityGone, listWorkers,
-  listWorkerVolumes, retirePlatformPreviewPolicy, listPreviews, listShotsRuntimes, isQuotaExceeded,
+  listWorkerVolumes, retirePlatformPreviewPolicy, listPreviews, listPreviewResources, deletePreviewRoutingResource, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   readPlatformPod, stopCheckJobs,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum, _upsertForTest: upsert,

@@ -174,7 +174,8 @@ test('linked issues are stored by the route and projected into the body by the c
     changed: true, prBodyUpdated: true, prBodyStatus: 'updated',
   });
   assert.deepEqual(state.row.linked_issues, [27]);
-  assert.match(host.body, /Closes #27/);
+  // The platform's repository is on GitHub: the request by its page, never `#27`.
+  assert.match(host.body, /^Closes \[request 27\]\([^)]+\/app\/homeroom\/dev\/issues\/27\)$/m);
   assert.deepEqual(host.order, ['lock', 'unlock', 'lock', 'getPR', 'updatePR', 'unlock']);
   assert.deepEqual(state.row.pr_linked_issues_applied, [27]);
 });
@@ -185,7 +186,7 @@ test('a browser admin repairs links through the conductor, which reads that it m
   const out = await patch(s, 'linked-issues', { addIssues: [30] });
   assert.equal(out.status, 200);
   assert.equal(out.body.prBodyStatus, 'updated');
-  assert.match(host.body, /Closes #30/);
+  assert.match(host.body, /^Closes \[request 30\]\([^)]+\/app\/homeroom\/dev\/issues\/30\)$/m);
 });
 
 test('an imported pull request takes no projection, and nothing is asked of a conductor', async (t) => {

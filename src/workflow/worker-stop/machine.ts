@@ -38,7 +38,8 @@ export function requested(p: any, { allowSystem = false }: { allowSystem?: boole
 export function workerStop() {
   const failed = { to: () => done(failure()) };
   return defineMachine<State, Facts>({
-    name: MACHINE, version: 1, retainDays: 1, events: { Requested: requested }, create: ['Requested'], terminal: ['done'],
+    // A force-stop is the Stop routes' (web's).
+    name: MACHINE, version: 1, retainDays: 1, events: { Requested: requested }, create: ['Requested'], web: ['Requested'], terminal: ['done'],
     decode: row => ({ name: row.state, data: row.data }) as State,
     async facts(tx, _s, e, ctx) {
       if (e.type !== 'Requested') return { target: null, reason: null };

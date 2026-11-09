@@ -124,7 +124,7 @@ function closeTwinRows({ pool, appId, prNumber, numbers, strict = false }) {
         WHERE app_id = $1 AND kind = 'general' AND status = 'open'
           AND github_issue_number = ANY($2::int[])`,
       [appId, numbers]
-    )).then(() => {}, (err) => {
+    )).then(() => require('./work-state').touched(pool, numbers.map((n) => ({ appId, issueNumber: n }))).then(() => {}), (err) => {
       if (strict) throw err;
       log.warn('issue-close-watcher', 'Closing request twin rows failed', {
         pr: prNumber, issues: numbers, err: err.message,
@@ -151,7 +151,7 @@ function withdrawBotProposals({ pool, appId, prNumber, numbers, strict = false }
   if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return Promise.resolve();
   try {
     const { noteRequestsClosed } = require('./homeroom-bot-closed-requests');
-    return noteRequestsClosed(pool, { appId, closed: numbers, strict, tellStrict: false }).then(() => {}, (err) => {
+    return noteRequestsClosed(pool, { appId, closed: numbers, strict, tellStrict: false, deps: { closedHow: 'merged' } }).then(() => {}, (err) => {
       if (strict) throw err;
       log.warn('issue-close-watcher', 'Withdrawing the bot\'s proposals for closed requests failed', {
         pr: prNumber, issues: numbers, err: err.message,

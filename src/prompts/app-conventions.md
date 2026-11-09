@@ -65,7 +65,7 @@ Ordered by how badly an agent working offline gets each one wrong.
    creates and `staging:private` tables are EMPTY. Seed what a testing
    step needs in the same commit, in a boot-time block gated on
    `IS_STAGING`: idempotent (`ON CONFLICT DO NOTHING`), obviously fake
-   ("Staging demo …"), a handful of rows, never cloned from real users.
+   ("Sample data …"), a handful of rows, never cloned from real users.
    Seed FAKE identities only — never rows owned by whoever opened the
    preview, and never a signal your own logic reads ("has this user
    done X?"). Every check runs against staging, so seeding that
@@ -223,6 +223,16 @@ RS256 JWT for the logged-in Homeroom user, scoped to **your app**, and
 injects it as a `?token=…` query param on the initial iframe load. The
 app's own frontend forwards that token on subsequent fetches via the
 `x-usernode-token` request header.
+
+**Read the token in a script AFTER the bridge tag.** Inside Homeroom a
+public app is framed with the token after `#` (`#un-token=…`), and the
+bridge's first step moves it into `?token=` (see "Offline" below). A
+script placed before `<script src="/usernode-bridge/v1/bridge.js">` that
+reads `location.search` finds no token, and the app opens signed out
+inside Homeroom. The bridge never removes `?token=` from the address, so
+there is nothing to capture early: put the read, and any fetch wrapper
+that forwards it, after the bridge tag. A proposal check flags a change
+that adds a token read before the bridge tag.
 
 Tokens are asymmetric and per-app: you hold only the public key, and
 the token's audience names your `USERNODE_APP_ID`. Verification must
@@ -541,7 +551,7 @@ above:
   if (IS_STAGING) {
     await pool.query(
       `INSERT INTO posts (id, username, title)
-       VALUES (900001, 'staging-demo-user', 'Staging demo post #1')
+       VALUES (900001, 'staging-demo-user', 'Sample data post #1')
        ON CONFLICT (id) DO NOTHING`
     );
   }
@@ -557,22 +567,29 @@ Seed rules:
 - **Idempotent.** Staging containers rebuild on every push, so seeds
   re-run on each boot — use an existence check or
   `ON CONFLICT DO NOTHING`.
-- **Obviously fake.** Give seeded rows a consistent "Staging demo …"
+- **Obviously fake.** Give seeded rows a consistent "Sample data …"
   prefix so they can't be mistaken for real user content. (A first
   version's `?demo=1` demo, and any rows it seeds on boot, are
   labelled once instead, on an element marked
   `data-usernode-demo-note`: see "A first version's populated demo"
-  below.)
+  below.) The people trying a preview never see the word "staging":
+  it names Homeroom's environment, not anything on their screen.
 - **Small.** A handful of rows — just enough for the testing steps.
   (A project's first version is the one exception: see "A first
   version's populated demo" below.)
 - **Never reference real users.** Use fake usernames/IDs
   (e.g. `staging-demo-user`), never rows cloned from prod.
+- **Made-up people read as people.** Where the screen prints a
+  seeded person's name, it prints a plain made-up name ("Priya",
+  "Sam"), never an id-shaped handle such as `staging-demo-priya`:
+  the people trying the preview read those names, and the screen's
+  one label already says the rows are made up. Keep any prefix to
+  ids and usernames the screen does not print.
 - **Strictly a no-op outside staging.** The whole block is gated on
   `USERNODE_ENV === 'staging'`; production data is never touched.
 
 Tie-in with testing instructions: the testing steps you emit must
-reference the seeded entities by name ("Open the thread 'Staging demo
+reference the seeded entities by name ("Open the thread 'Sample data
 thread' and …"), so a tester knows exactly what they should be seeing.
 
 ### A first version's populated demo
@@ -586,13 +603,13 @@ seed rules change. Every later change keeps the rules above.
 - **Enough to look lived in.** Varied, realistic rows filling about a
   screen and a half of the main screen at phone width (390×844), not
   a handful.
-- **Labelled once, not on every row.** The screen says "Staging demo"
+- **Labelled once, not on every row.** The screen says "Sample data"
   once, plainly and visibly: a banner or a line of its own at the top
   of the screen (never the app's name, nor in place of its tagline),
   or the name of the list or collection the rows belong to.
-  Each row needs no label of its own (a "Staging demo" pill or prefix
+  Each row needs no label of its own (a "Sample data" pill or prefix
   on every row only clutters the screen), and this replaces the
-  "Staging demo …" prefix above for these rows. The rows themselves
+  "Sample data …" prefix above for these rows. The rows themselves
   stay obviously made up: no real people and no real private data.
   The element that carries the label gets the attribute
   `data-usernode-demo-note`: the banner or the line itself, or, in a
@@ -2491,43 +2508,64 @@ Rules:
 
 ## Offline — apps that open with no connection
 
-The shell opens an app while the device is offline **only when that app's
-own service worker was serving its document on a previous online visit.**
-Everything else gets a placeholder — "This app needs a connection —
-reconnect to open it." — because the app lives on its own subdomain, which
-the platform's service worker cannot cache. That placeholder is the
-correct, expected outcome for an app with no worker of its own; it is not
-a platform bug.
+There are two ways an app opens while the device is offline.
 
-Nothing here is self-declared. The bridge reads
-`navigator.serviceWorker.controller` inside the app frame — the browser's
-own statement that a worker served this document — and announces it to the
-shell, which remembers it per app and reads it back on the next offline
-load. An app cannot claim the capability, and one that loses its worker
-stops being opened offline on its next load.
+**1. The browser's own cache (most apps, no code needed).** Where the
+platform has it switched on, the app gate keeps an app's pages and files
+fresh in the browser's cache for 30 days, and the shell frames the app at
+one address whatever the token. An app opened online once then opens again
+offline, on any number of apps, with no service worker. It needs only that:
 
-To earn it:
+- **Load the bridge, first.** The shell puts the token after `#` and the
+  bridge moves it into the query before your code runs, so
+  `new URLSearchParams(location.search).get('token')` works as it always
+  has, as long as the bridge tag comes before your scripts. The bridge is
+  also how the frame tells the shell it opened; without that, the shell
+  frames the app the old way on that device, and once frames on two
+  people's devices have not said so on the same build, on every device
+  until the app's next deploy.
+- **Your page loads without a token.** The page itself must answer 200 with
+  no token and no signed-in person (the starters and the Empty template
+  already do: data comes from `/api/*`). A page that answers 401 without a
+  token keeps the old address and does not open offline.
+- **A page that differs per person says so.** Send
+  `Cache-Control: no-store` (or `private`) on any page or file built for one
+  person; the gate never keeps those, nor any `/api/*` answer, nor a
+  response that sets a cookie.
+- **A merged change shows on the next open.** When your app's build
+  changes, the bridge fetches the page and the files it has seen again
+  before the app runs. A file fetched only on some screens is refreshed
+  once that screen has been opened.
+- **Keep your own copy of the data.** The cache brings back your code, not
+  your data: offline, `/api/*` fails. Keep the last reads in your own
+  storage and show them, as below, or the app opens to its own "couldn't
+  load" state.
+- **Opting out.** `"offline": false` in `dapp.json` keeps the app's pages
+  out of the cache (a game, or a page that must never be a day old).
 
-- **Load the bridge.** Without the tag the app has no channel to announce
-  on, and the shell will never open it offline no matter what else it
-  does. See the section above.
-- **Register a service worker that precaches your shell**, and let it take
-  control (`skipWaiting()` + `clients.claim()`), so the first visit
-  announces rather than waiting for a second one. Registration can fail
-  outright in a third-party iframe — some WebViews refuse storage to a
-  cross-origin frame — and that is a normal degradation, not something to
-  work around: no worker means no announcement means the placeholder.
-- **Never serve `/api/*` from the worker.** Writes and event streams must
-  always reach the network; keep the app's own read cache separate.
+**2. Your own service worker.** The shell also opens an app offline when
+that app's own service worker was serving its document on a previous online
+visit. Nothing here is self-declared: the bridge reads
+`navigator.serviceWorker.controller` inside the app frame and announces it
+to the shell, which remembers it per app. To use it, register a worker that
+precaches your shell and let it take control (`skipWaiting()` +
+`clients.claim()`), and never serve `/api/*` from it. **On iPhone at most
+two apps can have one:** the iOS app's web view allows three service workers
+in all, Homeroom's own among them, and a third app's registration is
+refused. Prefer the cache above unless the app truly needs a worker.
 
-Two consequences worth designing for:
+An app that has neither, or was never opened online on that device, gets the
+placeholder "This app needs a connection — reconnect to open it." That is
+the expected outcome, not a platform bug.
 
-- **An offline load carries NO `?token=`.** The shell cannot mint one with
-  no network, so the iframe src has no token at all. Recover identity from
-  the app's own storage, remembered from a load that did have one — and
-  never destroy per-user data when the token is absent. An app that keys
-  its cache on "the current user" and falls back to an anonymous namespace
-  will delete the real user's saved data on the first offline boot.
+Two consequences worth designing for, either way:
+
+- **An offline load carries NO token.** The shell cannot mint one with
+  no network. Recover identity from the app's own storage, remembered from
+  a load that did have one — and never destroy per-user data when the token
+  is absent. An app that keys its cache on "the current user" and falls back
+  to an anonymous namespace will delete the real user's saved data on the
+  first offline boot.
 - **The frame reloads when the connection returns.** The shell mints a
   token and re-points the frame, so anything unsent must be persisted, not
   held in memory. Queue mutations durably and replay them on reconnect.
@@ -2535,6 +2573,56 @@ Two consequences worth designing for:
 Be honest in the UI about which of the two worlds the app is in. A device
 that refuses durable storage cannot promise "3 changes will sync", and
 saying so is better than a queue that silently disappears.
+
+## Offline data: `usernode.offline` keeps your last reads
+
+An app that opens offline has its code but not its data: every `/api/*`
+read fails. The bridge keeps the last answer of each read you wrap and
+gives it back when the read cannot be answered. Wrap each screen's opening
+read:
+
+```js
+usernode.offline.read('chores', () => api('GET', '/api/chores'))
+  .then(({ value, fromCopy, savedAt }) => {
+    render(value);
+    showSaved(fromCopy, savedAt); // "Offline. Showing what was saved at 10:42."
+  })
+  .catch(showError); // no copy either: the app's own error state
+```
+
+- **`readFn` returns the data itself**, as a promise, and it must survive
+  JSON. Render after, not inside it. A read that resolves `undefined`
+  keeps nothing.
+- **When the copy is used:** when the read fails without a "no" from the
+  server: a network error, a timeout, an error with no `status`, a 5xx, a
+  408 or 429, or a 401 on a load that carried no token (an offline mount).
+  **Set `err.status` on an error the server answered.** A 403, 404 or 410
+  deletes the copy and the error stands; any other 4xx stands too. An
+  `api()` that throws a plain `Error` for a server answer has its 403
+  covered over with an old copy.
+- **Whose it is.** The copy is kept in your app's own storage, sealed with
+  a key the shell holds for the person signed in. When they sign out, no
+  copy of theirs can be opened again, in any app, and another account on
+  the device never sees it. You do not key anything by user yourself, and
+  an offline load needs no remembered identity for it. With no shell (the
+  app opened at its own address, a staging preview) nothing is kept and a
+  read is just the read.
+- **Caps.** A copy is at most 250,000 characters of JSON and all of an
+  app's copies at most 1,000,000 (about 2 MB of your origin's ~5 MB of
+  localStorage); the copies kept longest ago make room. A copy older than
+  30 days is not given back. Keep what the opening screen needs, not
+  everything the app has ever read.
+- **Say so.** While `fromCopy` is true, show it under the title with how
+  old it is (`savedAt` is milliseconds since the epoch), and clear the line
+  on the next read that works. The starters' `showSaved` is the pattern.
+- **Names** are 1 to 100 characters and are not secret (they sit in
+  storage as keys): `'chores'`, `'challenge:2026-11'`, never a person's
+  name or anything typed in.
+- Also `usernode.offline.get(name)` (`{ value, savedAt }` or `null`),
+  `put(name, value)` (true when kept), `remove(name)` and `available()`
+  (whether anything can be kept here), all promises, for an app that keeps
+  its own state, such as a list with changes queued on it. Writes made
+  offline are still the app's own queue, as above.
 
 ## User language preference
 
@@ -3920,7 +4008,9 @@ cannot override them.
   advertising or session-recording SDKs, pixels or beacons, and no
   `<script>` from another origin. An app loads its own code and the
   centrally hosted Homeroom assets only. A legacy `cdn.tailwindcss.com`
-  tag (rule 1) is tolerated; new code adds none.
+  tag (rule 1) is tolerated; new code adds none. One exception:
+  the platform's own Google Analytics tag, isolated in
+  `public/analytics-frame.html`. It is no precedent: no app may add a tracker.
 - **Special-category data.** Never ask for, infer or store health,
   religious beliefs, sexual orientation, racial or ethnic origin, political
   opinions, trade-union membership, genetic or biometric data, whether

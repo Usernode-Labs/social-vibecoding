@@ -4,13 +4,16 @@ const events = require('./events');
 // Counts are unique messages, grouped by send day (UTC) and kind, not
 // HTTP requests. Repeated pixel fetches and scanners cannot inflate a rate.
 //
-// Delivered, bounced and complained arrive only through Resend's webhook,
-// which matches only mail the `http` transport sent (events.ingestResend).
-// Gmail has no delivery webhook, so on any other transport, or without the
-// webhook secret, those three counts can only ever be 0: the report says
-// so (`deliveryEvents: false`) and the card leaves them out.
+// Delivered, bounced and complained arrive only through a provider's webhook:
+// Resend's matches only mail the `http` transport sent (events.ingestResend),
+// Brevo's only mail the `brevo` transport sent (events.ingestBrevo). Gmail has
+// no delivery webhook, so on any other transport, or without that provider's
+// webhook secret, those three counts can only ever be 0: the report says so
+// (`deliveryEvents: false`) and the card leaves them out.
 function deliveryEventsAvailable(provider, env = process.env) {
-  return provider === 'http' && !!env.PLATFORM_MAIL_RESEND_WEBHOOK_SECRET;
+  if (provider === 'http') return !!env.PLATFORM_MAIL_RESEND_WEBHOOK_SECRET;
+  if (provider === 'brevo') return !!env.BREVO_MAIL_WEBHOOK_TOKEN;
+  return false;
 }
 
 async function readReports(pool, { provider = null } = {}) {

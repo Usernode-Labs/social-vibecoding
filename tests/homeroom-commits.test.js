@@ -32,7 +32,7 @@ test('Homeroom made a move when it committed every commit; a fix round when each
   assert.deepEqual(classify([c(m.broken(12)), c(m.shots(12)), c(m.review(2))]), { madeByHomeroom: true, fixOnly: true });
   assert.deepEqual(classify([c('Changes via Homeroom')]), { madeByHomeroom: true, fixOnly: false }, 'a coding turn of anybody\'s');
   assert.deepEqual(classify([c('Add the poll page', 'cli@usernodelabs.org')]), { madeByHomeroom: true, fixOnly: false }, 'an upload from someone\'s own agent');
-  assert.deepEqual(classify([c(m.checks(12)), c('Homeroom bot: follow-up on #12')]), { madeByHomeroom: true, fixOnly: false });
+  assert.deepEqual(classify([c(m.checks(12)), c('Homeroom bot: follow-up on request 12')]), { madeByHomeroom: true, fixOnly: false });
   assert.deepEqual(classify([c(m.checks(12)), c('Tweak', 'ada@example.com')]), { madeByHomeroom: false, fixOnly: false });
   assert.deepEqual(classify([c(m.checks(12), 'noreply@github.com')]), { madeByHomeroom: false, fixOnly: false }, 'the words alone are not enough');
   assert.deepEqual(classify([c(`${m.checks(12)} and more`)]), { madeByHomeroom: true, fixOnly: false });
@@ -69,6 +69,25 @@ test('the bot\'s fix rounds commit with these messages', () => {
   for (const message of Object.values(commits.FIX_COMMIT_MESSAGES).map((f) => f(7))) {
     assert.match(message, commits.FIX_SUBJECT, message);
   }
+});
+
+// 30 Oct 2026: on GitHub `#6050` is GitHub's own number, and "Homeroom bot:
+// #6050 …" on main linked an unrelated pull request. The bot's commits name
+// a request in words now; a fix round committed before still reads as one.
+test('the bot\'s commits name a request as "request N", never #N', () => {
+  for (const message of Object.values(commits.FIX_COMMIT_MESSAGES).map((f) => f(6050))) {
+    assert.doesNotMatch(message, /#\d/, message);
+  }
+  for (const before of [
+    'Homeroom bot: fix the failing checks on #12',
+    'Homeroom bot: fix what did not work on #12',
+    'Homeroom bot: seed what the before and after shots of #12 need',
+  ]) assert.match(before, commits.FIX_SUBJECT, before);
+  assert.equal(commits.buildCommitMessage(6050, 'Make sign-up opt-in checkbox more visible'),
+    'Homeroom bot: Make sign-up opt-in checkbox more visible (request 6050)');
+  const long = commits.buildCommitMessage(6050, `${'word '.repeat(40)}`);
+  assert.equal(long.length <= 120, true, 'a subject line still fits');
+  assert.match(long, / \(request 6050\)$/, 'and a long title never cuts the request off');
 });
 
 function git(dir, args, env = {}) {

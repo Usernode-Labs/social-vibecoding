@@ -418,3 +418,39 @@ test('the story keeps the landing bar', () => {
   const bar = BARS.find((b) => b.id === 'landing-header').slice;
   assert.doesNotMatch(openingTag(bar), /\bhidden\b/, 'the bar is not hidden in the markup');
 });
+
+// #6070: the unfolded iPhone Duo held upright puts the system chrome in a
+// band across the top, and the header's row moves up into it. The bar stays
+// 28px of controls and keeps its rounded foot; what changes is padding, from
+// one rule for BOTH bars, so the two shells cannot drift apart there either.
+// Its height below becomes whichever is taller, the band or the ordinary
+// 52px, so nothing on the screen jumps.
+test('#6070: the Duo\'s top band lays both bars into the band, in parity', () => {
+  const start = css.indexOf('THE TOP BAND — iPhone Duo');
+  const end = css.indexOf('/* ── #platform-parked — the app you left', start);
+  assert.ok(start > 0 && end > start, 'the top band block is in app.css');
+  const block = css.slice(start, end);
+
+  // ONE rule, both bars: the same padding pair as each other, whatever the
+  // band turns out to be. A rule written for one bar and not the other is
+  // the parity break this file exists for.
+  const bars = block.match(/html\[data-top-band\] :is\(#platform-header, #landing-header\)\.un-safe-top-extend,[^{]*\{([^}]*)\}/);
+  assert.ok(bars, 'both bars take the band override from one rule');
+  // The 28px row sits on the clock's line, whose middle is 34px above the
+  // band's foot (1 Nov 2026): a 20px foot under the row and the rest of the
+  // band over it, so the bar is still exactly the band's height.
+  assert.match(bars[1], /padding-top: max\(0\.5rem, calc\(var\(--platform-band-h\) - 3rem\)\) !important;/,
+    'the inset leaves the top padding, the band less row and foot over the row, the 8px pad the floor (the #2305 rule is !important)');
+  assert.match(bars[1], /padding-bottom: 1\.25rem;/,
+    'a 20px foot under the row puts its middle on the clock\'s, and the bar\'s foot meets the band\'s foot');
+  assert.doesNotMatch(bars[1], /align-items: flex-start;/,
+    'the row is on the clock\'s line, not pinned to the band\'s top');
+  assert.match(bars[1], /padding-right: calc\(0\.5rem \+ 130px\);/,
+    'the right group keeps clear of the clock and Wi-Fi pill, about 130px across the band\'s corner');
+  assert.doesNotMatch(bars[1], /\bheight:/, 'the row still sets the height; no fixed box');
+
+  // Everything below is placed by this token, so it loses exactly what the
+  // band now covers: header-h plus the safe inset stays max(52px, band).
+  assert.match(block, /html\[data-top-band\] \{\s*--platform-header-h: max\(0px, calc\(3\.25rem - var\(--platform-band-h\)\)\);/,
+    'the height below is re-derived from the band in the same block');
+});

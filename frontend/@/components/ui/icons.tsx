@@ -117,14 +117,40 @@ function filled(name: string, d: string) {
   return Icon;
 }
 
+/**
+ * A glyph whose meaning is the direction it points: back, forward, send,
+ * expand sideways. It mirrors with the reading direction, so in Arabic the
+ * back chevron points right and the send arrow points left. Glyphs that are
+ * not about direction (bell, check, people, search) never take this.
+ */
+function directional(name: string, Icon: (props: IconProps) => React.ReactElement) {
+  // The caller's class string comes FIRST, unchanged: markup tests across the
+  // shell pin `<svg class="…chev"` by its opening, and a prefix here rewrote
+  // every one of them. The mirroring utility rides at the end.
+  const Directional = ({ className, ...rest }: IconProps) => (
+    <Icon {...rest} className={className ? `${className} rtl:-scale-x-100` : 'rtl:-scale-x-100'} />
+  );
+  Directional.displayName = name;
+  return Directional;
+}
+
 // ── Navigation and chrome ────────────────────────────────────────────────
 
-export const ChevronLeftIcon = strokedPath('ChevronLeftIcon', 'M15 19l-7-7 7-7');
+export const ChevronLeftIcon = directional('ChevronLeftIcon', strokedPath('ChevronLeftIcon', 'M15 19l-7-7 7-7'));
+
+/**
+ * Heroicons v1 outline arrow-left: the header's back button on Android
+ * (overnight audit G01), where the platform's convention is a plain arrow
+ * with no disc rather than iOS's chevron. platform-header.tsx ships it beside
+ * ChevronLeftIcon and app.css shows one or the other off the kit's
+ * `html.un-android`.
+ */
+export const ArrowLeftIcon = stroked('ArrowLeftIcon', 'M10 19l-7-7m0 0l7-7m-7 7h18');
 
 /** The tighter back chevron used in the mobile Messages thread header. */
-export const ChevronLeftInsetIcon = stroked('ChevronLeftInsetIcon', 'M15 18l-6-6 6-6');
+export const ChevronLeftInsetIcon = directional('ChevronLeftInsetIcon', stroked('ChevronLeftInsetIcon', 'M15 18l-6-6 6-6'));
 
-export const ChevronRightIcon = stroked('ChevronRightIcon', 'M9 5l7 7-7 7');
+export const ChevronRightIcon = directional('ChevronRightIcon', stroked('ChevronRightIcon', 'M9 5l7 7-7 7'));
 
 // Heroicons v1 outline view-grid — the drawer's "Your apps" row (owner
 // review round 2: the section header is a nav item of its own).
@@ -154,7 +180,7 @@ export const PencilSparklesIcon = stroked('PencilSparklesIcon', [
   'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
 ]);
 
-export const ArrowRightIcon = stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H3');
+export const ArrowRightIcon = directional('ArrowRightIcon', stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H3'));
 
 /**
  * The SHORT right arrow, drawn on a tighter inset than ArrowRightIcon. Not a
@@ -162,7 +188,7 @@ export const ArrowRightIcon = stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H
  * where it sits beside a word inside a pill and the long arrow's 3→21 span
  * would crowd the label. Two spellings on purpose, each with one caller.
  */
-export const ArrowRightShortIcon = stroked('ArrowRightShortIcon', 'M13 7l5 5m0 0l-5 5m5-5H6');
+export const ArrowRightShortIcon = directional('ArrowRightShortIcon', stroked('ArrowRightShortIcon', 'M13 7l5 5m0 0l-5 5m5-5H6'));
 
 export const XIcon = stroked('XIcon', 'M6 18L18 6M6 6l12 12');
 
@@ -172,12 +198,12 @@ export const XIcon = stroked('XIcon', 'M6 18L18 6M6 6l12 12');
  * from the navigation prototype the panel comes from, which draws exactly
  * these four strokes; the panel's header row is its only caller.
  */
-export const ExpandIcon = stroked('ExpandIcon', [
+export const ExpandIcon = directional('ExpandIcon', stroked('ExpandIcon', [
   'M14 4h6v6',
   'M20 4l-7 7',
   'M10 20H4v-6',
   'M4 20l7-7',
-]);
+]));
 
 /**
  * The dev composer's send mark (Streamlined Concept). Its button is a 44px
@@ -305,7 +331,7 @@ export const SaveDraftIcon = stroked('SaveDraftIcon', [
   'M17 21v-8H7v8',
   'M7 3v5h8',
 ]);
-export const DraftSendIcon = stroked('DraftSendIcon', ['M22 2 11 13', 'M22 2 15 22l-4-9-9-4z']);
+export const DraftSendIcon = directional('DraftSendIcon', stroked('DraftSendIcon', ['M22 2 11 13', 'M22 2 15 22l-4-9-9-4z']));
 export const DraftEditIcon = stroked('DraftEditIcon', [
   'M12 20h9',
   'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
@@ -514,10 +540,10 @@ export const DownloadIcon = stroked(
   'M12 3v12m0 0l-4-4m4 4l4-4M5 13v7h14v-7',
 );
 
-export const SendIcon = stroked(
+export const SendIcon = directional('SendIcon', stroked(
   'SendIcon',
   'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
-);
+));
 
 export const UserGroupIcon = stroked(
   'UserGroupIcon',
@@ -547,6 +573,14 @@ export const HashIcon = stroked('HashIcon', 'M7 20l4-16m2 16l4-16M6 9h14M4 15h14
  * module exists to prevent — so it became an export rather than a duplicate.
  */
 export const BoardIcon = stroked('BoardIcon', 'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z');
+
+/** A push pin (One Home, #6361): the sidebar's Recents keeps a pinned row at
+    its top. Drawn outlined; app.css fills it (`.platform-rail-pin[aria-pressed="true"]`)
+    while the row is pinned. */
+export const PushPinIcon = stroked('PushPinIcon', [
+  'M12 17v5',
+  'M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z',
+]);
 
 /**
  * A PANEL WITH A RAIL DOWN ITS LEFT — the desktop sidebar's own toggle.
@@ -911,10 +945,10 @@ export const FaceSmileIcon = stroked('FaceSmileIcon', [
 ]);
 
 /** Reply — the curved arrow back, Discord's glyph for quoting a message. */
-export const ReplyArrowIcon = stroked('ReplyArrowIcon', [
+export const ReplyArrowIcon = directional('ReplyArrowIcon', stroked('ReplyArrowIcon', [
   'M9 17l-5-5 5-5',
   'M20 18v-2a4 4 0 0 0-4-4H4',
-]);
+]));
 
 /** A thread: two overlapping bubbles, the conversation under a message. */
 export const ThreadIcon = stroked(
@@ -983,3 +1017,58 @@ export const CupIcon = stroked('CupIcon', [
   'M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8Z',
   'M7 2v2M11 2v2M15 2v2',
 ]);
+
+// ── The channel composer's formatting row (#6035) ──────────────────────
+// Six marks in the field's own grey, sitting above the message as a label
+// bar rather than a toolbar with a fill. Each is drawn on the same 24 grid
+// and stroke as the rest of the set; the letterforms are line drawings so
+// they read as glyphs, not as bold text beside lighter text.
+export const BoldIcon = stroked('BoldIcon', [
+  'M7 4.5h6.25a3.75 3.75 0 0 1 0 7.5H7V4.5Z',
+  'M7 12h7a3.75 3.75 0 0 1 0 7.5H7V12Z',
+]);
+
+export const ItalicIcon = stroked('ItalicIcon', 'M10 4.5h7.5M6.5 19.5H14M14.5 4.5l-5 15');
+
+export const UnderlineIcon = stroked('UnderlineIcon', 'M7 4.5v6.75a5 5 0 0 0 10 0V4.5M5 20h14');
+
+export const HeadingIcon = stroked('HeadingIcon', 'M6 4.5v15M18 4.5v15M6 12h12');
+
+export const QuoteIcon = stroked(
+  'QuoteIcon',
+  'M7.5 7.5H11V11H7.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75M16.5 7.5H20V11h-3.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75',
+);
+
+export const ListBulletIcon = stroked(
+  'ListBulletIcon',
+  'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',
+);
+
+// ── The ⋯ menu's line icons (overnight UI audit D08, 2 Nov 2026) ─────────
+//
+// A card's or a request's ⋯ menu drew a text glyph or a colour emoji per
+// row (AppView.MENU_ICONS). Its rows wear these now, keyed by meaning in
+// features/dev-board/menu-icons.tsx; every other row reuses a glyph above.
+// These five are the shapes the set did not have, Heroicons outline
+// verbatim: v1 star, archive and chart-bar, v2 bell-slash and
+// arrows-right-left.
+export const StarIcon = stroked(
+  'StarIcon',
+  'M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z',
+);
+export const ArchiveBoxIcon = stroked(
+  'ArchiveBoxIcon',
+  'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4',
+);
+export const ChartBarIcon = stroked(
+  'ChartBarIcon',
+  'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
+);
+export const BellSlashIcon = stroked(
+  'BellSlashIcon',
+  'M9.143 17.082a24.248 24.248 0 0 0 3.844.148m-3.844-.148a23.856 23.856 0 0 1-5.455-1.31 8.964 8.964 0 0 0 2.3-5.542m3.155 6.852a3 3 0 0 0 5.667 1.97m1.965-2.277L21 21m-4.225-4.225a23.81 23.81 0 0 0 3.536-1.003A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6.53 6.53m10.245 10.245L6.53 6.53M3 3l3.53 3.53',
+);
+export const ArrowsRightLeftIcon = stroked(
+  'ArrowsRightLeftIcon',
+  'M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5',
+);

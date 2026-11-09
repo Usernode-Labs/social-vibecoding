@@ -1400,6 +1400,7 @@ const PERSON_APPS_SQL = `SELECT ap.id, ap.slug, ap.name, ap.created_by = $1::int
            ORDER BY a1.date LIMIT 1) AS first_day_seconds,
          COUNT(*) FILTER (WHERE aa.seconds_spent >= 30)::int AS days_used,
          (EXISTS (SELECT 1 FROM app_favorites f WHERE f.user_id = $1::int AND f.app_id = ap.id AND f.hidden IS NOT TRUE)
+          OR EXISTS (SELECT 1 FROM home_community_pins hp WHERE hp.user_id = $1::int AND hp.community_id = ap.community_id)
           OR (ap.created_by = $1::int)
           OR EXISTS (SELECT 1 FROM app_collaborators c WHERE c.user_id = $1::int AND c.app_id = ap.id
                        AND c.accepted_at IS NOT NULL)) AS on_home
@@ -2241,8 +2242,23 @@ const INVITE_FUNNEL_SQL = `WITH real AS (
            WHERE x.status = 'joined'
              AND COALESCE(x.applied_at, x.created_at) >= w.from_at
              AND COALESCE(x.applied_at, x.created_at) < $2::timestamptz
-             AND x.user_id IN (SELECT r.id FROM real r)) AS joined
+             AND x.user_id IN (SELECT r.id FROM real r)) AS joined,
+         l.landed_since, l.landed_card, l.landed_dead, l.landed_failed, l.landed_timeout
     FROM win w
+    CROSS JOIN LATERAL (
+      SELECT (SELECT MIN(e.created_at) FROM events e
+               WHERE e.event_type = 'ui_experience' AND e.metadata->>'kind' = 'invite_settlement') AS landed_since,
+             (COUNT(DISTINCT k.src) FILTER (WHERE e.metadata->>'settled' = 'card'))::int AS landed_card,
+             (COUNT(DISTINCT k.src) FILTER (WHERE e.metadata->>'settled' = 'dead'))::int AS landed_dead,
+             (COUNT(DISTINCT k.src) FILTER (WHERE e.metadata->>'settled' = 'failed'))::int AS landed_failed,
+             (COUNT(DISTINCT k.src) FILTER (WHERE e.metadata->>'settled' = 'timeout'))::int AS landed_timeout
+        FROM events e
+        CROSS JOIN LATERAL (SELECT COALESCE('u:' || e.user_id::text, 's:' || (e.metadata->>'source')) AS src) k
+       WHERE e.event_type = 'ui_experience' AND e.metadata->>'kind' = 'invite_settlement'
+         AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz
+         AND k.src IS NOT NULL
+         AND (e.user_id IS NULL OR e.user_id IN (SELECT r.id FROM real r))
+    ) l
     CROSS JOIN LATERAL (
       SELECT COUNT(*)::int AS signed_in,
              (COUNT(*) FILTER (WHERE e.metadata->>'how' IN ('signed_up', 'signed_in')))::int AS signed_in_by_invite,
@@ -2276,6 +2292,30 @@ function inviteFunnelReading(row, { week, cohort = false } = {}) {
     signedInByInvite: Number(row.signed_in_by_invite || 0),
     signedInAlready: Number(row.signed_in_already || 0),
     joined: Number(row.joined || 0),
+    landed: inviteLandedReading(row, week),
+  };
+}
+
+/**
+ * Pure: where invite pages first settled (#6002), beside the opens: the
+ * card, the dead-link page, or the pitch after the read failed or took too
+ * long. Each outcome counts its distinct SOURCES, not its reports: a
+ * signed-in person once, and a signed-out page once per network and day
+ * (ui-telemetry.js anonymousSource), since anybody can send a signed-out
+ * report. Never read for a cohort (inviteFunnelReading answers notRecorded
+ * there, and firstSession does not run the query). Not recorded before the
+ * first landing was.
+ */
+function inviteLandedReading(row, week) {
+  const since = row && row.landed_since ? new Date(row.landed_since) : null;
+  if (!since || since.getTime() >= new Date(week.end).getTime()) {
+    return notRecorded('Not recorded before invite pages reported where they landed.');
+  }
+  return {
+    card: Number(row.landed_card || 0),
+    dead: Number(row.landed_dead || 0),
+    failed: Number(row.landed_failed || 0),
+    timeout: Number(row.landed_timeout || 0),
   };
 }
 

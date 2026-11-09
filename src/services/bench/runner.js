@@ -378,18 +378,23 @@ async function runTurn({
   reasoningEffort = null,
 }) {
   const { worker, sessions, agentTurn } = deps;
+  // The trial's session takes its slot for the turn (the proposal machine;
+  // never a closed one: bug 21), BEFORE its worker is ensured (B15, as
+  // runTriage does): the last turn's rest owes its worker's removal as
+  // durable work, which an ensure made first could lose its worker to.
+  // Taking the slot cancels a removal still owed and waits for one under way.
+  await require('../session-lifecycle').takeSlot({ pool, sessionId: session.id, source: 'bench' });
   let containerName;
   try {
     containerName = await require('../homeroom-bot-live').ensureBuildWorker({
       worker, session, repo, branchName: session.branch_name, steps,
     });
   } catch (err) {
+    // Back to rest: the slot was taken for a turn that never ran.
+    await require('../session-lifecycle').restSession({ pool, sessionId: session.id }).catch(() => {});
     durableSteps.rethrowStop(err, 'worker');
     return { routed: { error: `worker: ${err.message}` }, result: {}, stopped: false, infra: true, costUsd: null, usage: {} };
   }
-  // The trial's session takes its slot for the turn (the proposal machine;
-  // never a closed one: bug 21).
-  await require('../session-lifecycle').takeSlot({ pool, sessionId: session.id, source: 'bench' });
   await pool.query('UPDATE chat_sessions SET agent_thread_id = NULL, agent_model = $2 WHERE id = $1', [session.id, model]);
   session.agent_thread_id = null;
   session.agent_model = model;
@@ -549,10 +554,16 @@ function triagePrompt(snapshot, seed, readsImages = false, guidance = null) {
     seed, issueNumber: snapshot.issueNumber, firstVersion: !!snapshot.extra?.firstVersion, readsImages,
     // #3772: who decided on the project when the original look ran.
     decider: snapshot.extra?.decider || null,
+    // #6252: a go-ahead said in the person's chat, recorded on that look.
+    goAhead: snapshot.extra?.goAhead || null,
     // A first version's people when the original look ran (membersNote).
     members: snapshot.extra?.members || null,
     // The game starter its first version builds on (firstVersionNote).
     starter: snapshot.extra?.starter || null,
+    // #6383: the newest plan a person posted on the request, as the read saw it.
+    personPlan: snapshot.extra?.personPlan || null,
+    // #6211: the board the read was given, so the replay says the same.
+    overlapCandidates: snapshot.extra?.overlapCandidates || null,
     // A studio trial's context pack (services/bench/packs.js).
     guidance,
   });

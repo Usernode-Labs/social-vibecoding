@@ -422,7 +422,7 @@ test('the ⋯ menu carries Details as a row of its own, which opens the sheet', 
   const menu = av._cardMenuItems(v.card.rail.menuKey);
   assert.equal(menu[0].label, 'Details');
   assert.equal(menu[0].icon, 'details');
-  assert.ok(av.MENU_ICONS.details, 'the glyph resolves');
+  assert.ok(av.MENU_ICONS.includes('details'), 'the icon key resolves');
   assert.ok(!menu.some((a) => a.label === 'Open on GitHub'), 'B10b: GitHub is in Details');
   assert.ok(menu.some((a) => a.label === 'View PR on GitHub'), '#4455: and a ⋯ row, now the page has no PR link');
   // The sheet is body-mounted: the page itself renders none of it.
@@ -450,6 +450,7 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   // In flight: the build done, the checks a third of the way, about 6 minutes left.
   const live = testing({
     check_state: 'pending', check_phase: 'testing',
+    checks_checked_at: new Date().toISOString(),
     checks_estimate: { buildMs: 180000, checksMs: 540000, runs: 12 },
     checks_progress: {
       ran: 284, expected: 840, unit: { ran: 6900, expected: 19240, done: false },
@@ -466,6 +467,7 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   // and the time left say the same.
   const unitDone = testing({
     check_state: 'pending', check_phase: 'testing',
+    checks_checked_at: new Date().toISOString(),
     checks_estimate: { buildMs: 180000, checksMs: 540000, runs: 12 },
     checks_progress: {
       ran: 620, expected: 840, unit: { ran: 19240, expected: 19240, done: true },
@@ -483,7 +485,8 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   assert.deepEqual(threeQuarters.note, ['Preview built, checks three quarters done.']);
   // Still building: the build's step, and no checks yet.
   const building = testing({
-    check_state: 'pending', check_phase: 'building', checks_estimate: { buildMs: 180000, checksMs: 540000 },
+    check_state: 'pending', check_phase: 'building', checks_checked_at: new Date().toISOString(),
+    checks_estimate: { buildMs: 180000, checksMs: 540000 },
     checks_progress: { build: { step: 'clone', steps: [{ key: 'source_fetch', ms: 1 }, { key: 'image_build', ms: 1 }] } },
   });
   assert.equal(building.segments[1].pct, 0);
@@ -508,8 +511,8 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   // A failure says so in the same card, with the door to what failed.
   const failed = testing({ check_state: 'failing', test_results: [{ name: 'Home loads', status: 'fail' }] });
   assert.deepEqual([failed.figure, failed.tone, failed.details], ['Found a problem', 'bad', true]);
-  assert.deepEqual(failed.note, ['One of the app’s checks failed.']);
-  assert.equal(failed.authorNote, 'Its author needs to fix this before it can go live.');
+  assert.deepEqual(failed.note, ['One of this change’s checks failed on its preview.']);
+  assert.equal(failed.authorNote, 'maya made this change and needs to fix this before it can go live.');
   assert.equal(testing({ check_state: 'skipped' }).figure, 'Not tested');
   assert.equal(testing({ check_state: 'error' }).figure, 'Couldn’t finish');
   assert.equal(testing({ check_state: null, staging_url: null }).figure, 'Not started');
@@ -542,10 +545,12 @@ test('a failed run says what went wrong in plain words, and offers its author Fi
   const own = context({ id: 7, username: 'maya' });
   const card = plain(own._changeTestingView(FAILED));
   assert.deepEqual([card.figure, card.tone], ['Found a problem', 'bad']);
-  assert.deepEqual(card.note, ['One of the app’s tests failed.']);
+  assert.deepEqual(card.note, ['One of this change’s tests failed.']);
+  // The unit suite opened no page: the card words the failure, but links nothing.
   assert.deepEqual(card.explain, {
     id: 4090, at: '2026-09-18T12:00:00Z',
     fallback: 'The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don\'t remember.',
+    page: null,
   });
   // What the dev chat's own Fix it card sends: the blocking failures, each
   // with what it reported, and the conversation it goes to.
@@ -562,7 +567,7 @@ test('a failed run says what went wrong in plain words, and offers its author Fi
   // Preview stays in the corner; the re-run moves beside Fix it, under the sentence.
   assert.match(testing, /<div class="dev-change-gate-act"><button type="button" class="gc-vote-btn gc-vote-btn-preview"/);
   assert.doesNotMatch(testing.slice(0, testing.indexOf('dev-change-gate-why')), /castRecheck/);
-  assert.match(testing, /<p class="dev-change-gate-why" data-change-gate-why="own-words">One of the app’s tests failed\. The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don't remember\.<\/p>/);
+  assert.match(testing, /<p class="dev-change-gate-why" data-change-gate-why="own-words">One of this change’s tests failed\. The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don't remember\.<\/p>/);
   assert.match(testing, /<div class="dev-change-gate-fix"><button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><button class="gc-vote-btn" title="[^"]*" data-act="castRecheck">Re-run checks<\/button><\/div>/);
   assert.match(testing, /<p class="dev-change-gate-note">Fix it asks the agent that built this change to fix what failed, using your credits\. You can stay on this page: the checks run again by themselves when it’s done\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
 
@@ -577,8 +582,65 @@ test('a failed run says what went wrong in plain words, and offers its author Fi
   assert.ok(!text.includes('on package.json') && !text.includes('# tests 26'), 'no platform plumbing in the row');
   // Fix it leads the step's buttons; the re-run beside it is the quieter one.
   assert.match(text, /<span class="dev-ledger-ops"><button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><button class="gc-vote-btn" title="[^"]*" data-act="castRecheck">Re-run checks<\/button>/);
-  // "What went wrong" waits for the sentence: the rows already say what failed.
-  assert.ok(!text.includes('data-checks-explained'));
+  // "What went wrong" opens with the failure's own words, and shows
+  // Homeroom's reading only once it has replaced them.
+  assert.match(text, /<div class="dev-ledger-explain" data-checks-explained="">\s*<div class="dev-ledger-unit-k">What went wrong<\/div>\s*<p class="dev-ledger-explain-text">The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don't remember\.<\/p>\s*<\/div>/);
+  assert.ok(!text.includes('dev-ledger-explain-source'), 'no reading of the output yet');
+});
+
+test('a unit suite that stopped before any test ran says what it reported', () => {
+  const own = context({ id: 7, username: 'maya' });
+  const EARLY = {
+    ...FAILED,
+    test_results: [{
+      index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',
+      failureReason: 'The unit suite stopped before any test ran: npm install exited with code 1 | # tests 0',
+      failureDetails: [],
+    }],
+  };
+  const said = '“Repo unit suite (npm test) passes” reported: The unit suite stopped before any test ran: npm install exited with code 1';
+  // The Testing card's second sentence, where the row has no per-test excerpt.
+  const card = plain(own._changeTestingView(EARLY));
+  assert.equal(card.explain.fallback, said);
+  const { page, details } = render(own, EARLY);
+  assert.ok(unescape(page).includes(`<p class="dev-change-gate-why" data-change-gate-why="own-words">One of this change’s tests failed. ${said}</p>`));
+  // And the Checks step's "What went wrong" pane, which used to stay blank.
+  const text = unescape(details);
+  assert.match(text, /<div class="dev-ledger-explain" data-checks-explained="">/);
+  assert.ok(text.includes(`<p class="dev-ledger-explain-text">${said}</p>`));
+});
+
+// #6234: a change Homeroom bot built, whose checks it is fixing itself: the
+// card says so where "Its author needs to fix this" was, reads "Fixing",
+// carries the state, and its re-run is there but disabled.
+test('#6234: the card of a change the bot is fixing says so, and its re-run is disabled', () => {
+  const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const botChange = (bot_fix) => ({ ...FAILED, user_id: 77, username: 'homeroom_bot', agent_session_id: null, bot_fix });
+  // An admin, who could press Re-run checks.
+  const admin = context({ id: 42, username: 'ada', canAdminWrite: true });
+  const card = plain(admin._changeTestingView(botChange({ state: 'fixing', since, reason: null })));
+  assert.deepEqual([card.figure, card.tone, card.botFix], ['Fixing', 'muted', 'fixing']);
+  const page = unescape(render(admin, botChange({ state: 'fixing', since, reason: null })).page);
+  const testing = page.slice(page.indexOf('data-change-gate="testing"'));
+  assert.match(testing, /^data-change-gate="testing" data-done="false" data-tone="muted" data-change-bot-fix="fixing"/);
+  assert.match(testing, /<span class="dev-change-gate-figure">Fixing<\/span>/);
+  assert.match(testing, /<button class="gc-vote-btn gc-vote-btn-accent" disabled="" title="Homeroom bot is fixing this\. Re-running now would restart its fix\.">Re-run checks<\/button>/);
+  assert.match(testing, /<p class="dev-change-gate-note">Homeroom bot is fixing this, started 10 min ago\. Re-running the checks now would restart its fix\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
+  assert.doesNotMatch(testing, /Its author needs to fix this/);
+  // Given up: who takes it from here, on the red card, with a live re-run.
+  const handed = unescape(render(admin, botChange({ state: 'handed_off', since: null, reason: null })).page);
+  const handedCard = handed.slice(handed.indexOf('data-change-gate="testing"'));
+  assert.match(handedCard, /^data-change-gate="testing" data-done="false" data-tone="bad" data-change-bot-fix="handed_off"/);
+  assert.match(handedCard, /<p class="dev-change-gate-note">Homeroom bot couldn’t fix this on its own\. The person who asked for it, or any member of this project, can take it from here\. <button/);
+  assert.match(handedCard, /<button class="gc-vote-btn gc-vote-btn-accent" title="[^"]*" data-act="castRecheck">Re-run checks<\/button>/);
+  // A member, who could not: the same line without the re-run's sentence, and no button.
+  const member = unescape(render(context(), botChange({ state: 'fixing', since, reason: null })).page);
+  const memberCard = member.slice(member.indexOf('data-change-gate="testing"'));
+  assert.match(memberCard, /<p class="dev-change-gate-note">Homeroom bot is fixing this, started 10 min ago\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
+  assert.doesNotMatch(memberCard, /Re-run checks/);
+  // A person's failed change, and the bot's with nothing recorded: as before.
+  assert.doesNotMatch(unescape(render(admin, FAILED).page), /data-change-bot-fix/);
+  assert.doesNotMatch(unescape(render(admin, botChange(null)).page), /data-change-bot-fix/);
 });
 
 test('a failed run, read by anybody else: the same words, who has to fix it, and no buttons', () => {
@@ -586,10 +648,10 @@ test('a failed run, read by anybody else: the same words, who has to fix it, and
   const card = plain(av._changeTestingView(FAILED));
   assert.equal(card.fix, null);
   assert.deepEqual(card.actions, []);
-  assert.equal(card.authorNote, 'Its author needs to fix this before it can go live.');
+  assert.equal(card.authorNote, 'maya made this change and needs to fix this before it can go live.');
   const testing = unescape(render(av, FAILED).page);
-  assert.match(testing, /data-change-gate-why="own-words">One of the app’s tests failed\. The test “every message/);
-  assert.match(testing, /<p class="dev-change-gate-note">Its author needs to fix this before it can go live\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
+  assert.match(testing, /data-change-gate-why="own-words">One of this change’s tests failed\. The test “every message/);
+  assert.match(testing, /<p class="dev-change-gate-note">maya made this change and needs to fix this before it can go live\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
   assert.ok(!testing.includes('data-change-fix-checks') && !testing.includes('dev-change-gate-fix'));
   // Its author, on a change with no conversation to ask: the re-run, as before.
   const own = context({ id: 7, username: 'maya' });
@@ -603,17 +665,49 @@ test('a failed run, read by anybody else: the same words, who has to fix it, and
 test('a declared check that failed is named with what it reported; several are counted', () => {
   const av = context();
   const one = plain(av._changeTestingView({ ...PR, check_state: 'failing', test_results: [{ name: 'Home loads', path: '/', status: 'fail', failureReason: 'Expected #home to exist' }] }));
-  assert.deepEqual(one.note, ['One of the app’s checks failed.']);
+  assert.deepEqual(one.note, ['One of this change’s checks failed on its preview.']);
   assert.equal(one.explain.fallback, '“Home loads” reported: Expected #home to exist');
   const quiet = plain(av._changeTestingView({ ...PR, check_state: 'failing', test_results: [{ name: 'Home loads', status: 'fail' }] }));
   assert.equal(quiet.explain.fallback, 'The check that failed is “Home loads”.');
   const two = plain(av._changeTestingView({ ...PR, check_state: 'failing', test_results: [
     { name: 'Home loads', status: 'fail' }, { name: 'Vote opens', status: 'fail' }, { name: 'Advisory', status: 'fail', advisory: true },
   ] }));
-  assert.deepEqual(two.note, ['2 of the app’s checks failed.'], 'blocking failures are counted');
+  assert.deepEqual(two.note, ['2 of this change’s checks failed on its preview.'], 'blocking failures are counted');
   // The suite failed on three tests: counted from its tally.
   const three = plain(av._changeTestingView({ ...FAILED, test_results: [{ ...UNIT_ROW, failureReason: 'tests/a.test.js (3): x | # tests 40 | # pass 37 | # fail 3' }] }));
-  assert.deepEqual(three.note, ['3 of the app’s tests failed.']);
+  assert.deepEqual(three.note, ['3 of this change’s tests failed.']);
+});
+
+test('a failed page check opens the page it checked on the change’s preview', () => {
+  const av = context();
+  const path = '/?demo=1#app/x';
+  const item = {
+    ...PR, check_state: 'failing',
+    test_results: [
+      { name: 'Home loads', path: '/', status: 'pass' },
+      {
+        name: 'A merge stuck behind a red release says what blocked it', path, status: 'fail',
+        failureReason: 'Expected text "is blocked at “Audit all three lockfiles”" was not found on the page; the page text was: "Release blocked"',
+      },
+    ],
+  };
+  const card = plain(av._changeTestingView(item));
+  assert.deepEqual(card.note, ['One of this change’s checks failed on its preview.']);
+  assert.deepEqual(card.explain.page, { path, stagingUrl: 'https://preview.example' });
+  const page = unescape(render(av, item).page);
+  const testing = page.slice(page.indexOf('data-change-gate="testing"'));
+  assert.match(testing, /data-change-gate-why="own-words">One of this change’s checks failed on its preview\./);
+  assert.match(testing, /<button type="button" class="dev-change-gate-link" data-change-gate-page="">Open the page it checked<\/button><\/p>/);
+
+  // Nothing to reopen: the unit suite opened no page, and a change whose
+  // preview is gone links nothing either.
+  assert.equal(plain(av._changeTestingView(FAILED)).explain.page, null);
+  assert.equal(plain(av._changeTestingView({ ...item, staging_url: null })).explain.page, null);
+  assert.ok(!render(av, { ...item, staging_url: null }).page.includes('data-change-gate-page'));
+
+  // The link opens the preview the way the Preview button does.
+  const tsx = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  assert.match(tsx, /ensureStaging\?\.\(id, page\.stagingUrl, \{ path: page\.path \}, \{\}\)/);
 });
 
 test('a failing test’s line and message are read off its excerpt', () => {
@@ -1257,4 +1351,64 @@ test('#4455: the Votes card: one part per yes, the figure in the accent when the
   // The roster keeps the names the card reads.
   const src = read('public/js/app-view.js');
   assert.match(src, /earlierYes,\n\s+earlierNo,\n\s+yesNames: Array\.isArray\(data\.yes\) \? data\.yes\.slice\(\) : \[\],\n\s+approvers: Array\.isArray\(data\.approvers\) \? data\.approvers\.length : 0,/);
+});
+
+// #6140: a request's page draws a change's two cards from the row
+// GET /proposals/:id answers (tests/proposal-by-id.test.js), with no board
+// row under it: the same ChangeGates, the Testing card's button from the row.
+test('the Testing card on a request\'s page offers the preview its row says it has', () => {
+  const { ChangeGates } = loadTsx('frontend/src/features/dev-board/topic/change-head.tsx');
+  const testing = (av, over) => {
+    const built = av._topicViewFor('proposal', { ...PR, ...over });
+    const html = renderToHtml(createElement(ChangeGates, { id: PR.id, card: built.card, v: built.body.thread }));
+    return html.slice(html.indexOf('data-change-gate="testing"'));
+  };
+  const av = context();
+  const label = message('project:card.preview.label');
+  const open = /<button[^>]*gc-vote-btn-preview/;
+
+  const live = testing(av, { staging_url: 'https://preview.example', can_preview: true, preview_state: 'ready' });
+  assert.match(live, open);
+  assert.ok(live.includes(label));
+  // A row with neither field is what this page had before.
+  assert.doesNotMatch(testing(av, { staging_url: undefined }), open);
+  // Asleep: it can be woken, and the title says so.
+  const asleep = testing(av, { staging_url: null, can_preview: true, preview_state: 'unavailable' });
+  assert.match(asleep, open);
+  assert.ok(asleep.includes(message('changes:frame.open.proposalRebuild')));
+  // A failed preview is never offered, however wakeable: the card retries it.
+  const failed = testing(av, {
+    staging_url: null, can_preview: true, preview_state: 'failed', staging_error: 'did not boot',
+    check_state: 'error', check_error_detail: 'did not boot', test_results: [],
+  });
+  assert.doesNotMatch(failed, open);
+  assert.ok(failed.includes(message('changes:page.actions.retryPreview')));
+  // Being built: the disabled pill, not a rebuild.
+  const building = testing(av, {
+    staging_url: null, can_preview: false, staging_building: true, preview_state: 'building',
+    check_state: 'pending', check_phase: 'building', test_results: [],
+  });
+  assert.doesNotMatch(building, open);
+  assert.match(building, /gc-vote-btn-building/);
+  // A read-only viewer cannot wake one, and opens one that is up.
+  av.appData.can_collaborate = false;
+  assert.doesNotMatch(testing(av, { staging_url: null, can_preview: true }), open);
+  assert.match(testing(av, { staging_url: 'https://preview.example', can_preview: true }), open);
+});
+
+// #6389: the Votes card says who has to fix a change that has its votes and
+// fails its checks: the viewer, in the tool they made it in; or whoever made
+// it, by name. A change Homeroom bot built keeps today's sentence.
+test('#6389: the Votes card names who fixes a failing change that has its votes', () => {
+  const av = context({ id: 42, username: 'evan' });
+  const card = { pill: { state: { yes: 1, majority: 1 } } };
+  const row = { ...PR, status: 'promoted', check_state: 'failing', user_id: 42, username: 'evan', external_agent: 'claude-code' };
+  const note = (over) => av._changeVotesView({ ...row, ...over }, card).note.join(' ');
+  assert.match(note({}), new RegExp(message('changes:page.votes.note.liveOnceYouFixIn', { agent: 'Claude Code' }).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(note({ external_agent: 'other-agent' }), /once you fix it where you made it/);
+  assert.match(note({ external_agent: null }), /once you fix it and the fix passes testing/);
+  assert.match(note({ user_id: 7, username: 'snait' }), /once snait fixes it/);
+  assert.match(note({ user_id: 7, username: 'homeroom_bot' }), /once a fix passes testing/);
+  // Passing checks still say testing passes, not a fix.
+  assert.match(note({ check_state: 'pending' }), /once testing passes/);
 });

@@ -27,8 +27,8 @@ hole at the top of every screen.
 
 `homeroom-logotype-black.png` (below) is the one exception to "no image tooling
 at all": email HTML has no `currentColor` and no inline SVG support worth
-relying on across mail clients, so the mail frame in
-`src/services/mail/templates.js` (#2673) needs an actual raster file at a
+relying on across mail clients, so the mail frame (the standard email layout
+first written by `src/db/email-template-seeds.js`, #2673) needs an actual raster file at a
 fixed color, not the scalable source the app UI uses.
 
 ## Provenance
@@ -80,12 +80,12 @@ recorded.
   `frontend/src/features/auth/landing.tsx`, drawn as a plain `<img>` above the
   activity chips. Decorative: the heading beside it carries the meaning, so it
   ships with an empty `alt`. The waitlist release email also draws it, as an
-  absolute `${PRODUCTION_ORIGIN}/brand/people.png` URL in
-  `src/services/mail/templates.js`'s `waitlistReleased` (#4570), with the same
+  absolute `${PRODUCTION_ORIGIN}/brand/people.png` URL in the
+  `waitlist_released` template's first version (`src/db/email-template-seeds.js`, #4570), with the same
   empty `alt` — the headline under it carries the meaning there too.
 - **homeroom-logotype-black.png** — the logo at the top of every
-  transactional email (#2908), referenced by `src/services/mail/templates.js`'s
-  `HTML_SHELL` as an absolute
+  transactional email (#2908), referenced by the standard email layout's first
+  version (`src/db/email-template-seeds.js`) as an absolute
   `${PRODUCTION_ORIGIN}/brand/homeroom-logotype-black.png` URL (a mail client
   has no page context to resolve a relative one against) with
   `alt="Homeroom"`. It is the app's own script logotype, rasterized.

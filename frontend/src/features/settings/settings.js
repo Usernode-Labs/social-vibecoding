@@ -210,6 +210,7 @@
     _localAgents: [],
     _connectors: [],
     _connectorLoadId: 0,
+    _connectorSteps: null,
     _githubLink: null,
     _openRouterModels: [],
     _openRouterSelectedModelId: '',
@@ -279,10 +280,16 @@
     _chromeSuspended: false,
 
     // The single source of truth in JS for where the sidebar layout starts.
-    // Must stay in step with the `md:` classes in index.html's
-    // #settings-screen markup (Tailwind's md breakpoint IS 768px) — same
+    // Must stay in step with the `lg:` classes in index.html's
+    // #settings-screen markup (Tailwind's lg breakpoint IS 1024px) — same
     // discipline as AdminConsole.DESKTOP_MEDIA.
-    DESKTOP_MEDIA: '(min-width: 768px)',
+    //
+    // 1024, not the shell's 768 (overnight audit W01, 1 Nov 2026): from 768
+    // the app's own 212px rail is open too, so at 800 the section list and
+    // the pane shared ~560px and the pane was ~260px wide, cutting your own
+    // name to "A." and "@.". Below 1024 Settings is the phone's two levels,
+    // the list and then the page, each with the column to itself.
+    DESKTOP_MEDIA: '(min-width: 1024px)',
 
     // ── Parts and pages ───────────────────────────────────────────────────
     //
@@ -333,8 +340,10 @@
       // stateful pane; settings.js binds nothing inside it.
       { key: 'contact-privacy', label: 'settings:nav.part.contactPrivacy', group: 'settings:nav.group.account' },
       // #4938: the phones signed in with the Homeroom app, and Unlink for
-      // each. Also about who can use your account, so it sits with Privacy.
-      // A stateful pane; settings.js binds nothing inside it.
+      // each; #5974 adds the browsers signed in on the web, with Sign out,
+      // under the name Linked devices (the key stays `phones`). Also about
+      // who can use your account, so it sits with Privacy. A stateful pane;
+      // settings.js binds nothing inside it.
       { key: 'phones', label: 'settings:nav.part.phones', group: 'settings:nav.group.account' },
       { key: 'wallet', label: 'settings:nav.part.wallet', group: 'settings:nav.group.account', gate: 'wallet-section' },
 
@@ -406,6 +415,8 @@
       // them — the Improve panel is where the same facts turn into something
       // to act on (a build in flight, a reload waiting). See sections/about.tsx.
       { key: 'tour', label: 'settings:nav.part.tour', group: 'settings:nav.group.helpAbout' },
+      // #5973: the tour's places and how a change gets voted in, to read.
+      { key: 'guide', label: 'settings:nav.part.guide', group: 'settings:nav.group.helpAbout' },
       { key: 'usernode', label: 'settings:nav.part.usernode', group: 'settings:nav.group.helpAbout', gate: 'settings-usernode-section' },
       { key: 'about', label: 'settings:nav.part.about', group: 'settings:nav.group.helpAbout' },
 
@@ -468,6 +479,7 @@
       'app-permissions': 'lock',
       developer: 'code',
       tour: 'compass',
+      guide: 'lines',
       usernode: 'window',
       about: 'info',
       experimental: 'bulb',
@@ -478,14 +490,18 @@
     // id's last segment). Per device, like Messages' folded sections
     // (usernode:messages-folded): a convenience, not an account setting.
     PINNED_KEY: 'usernode:settings-pinned',
+    // #6136: the setup steps a person has ticked, on this device, by account:
+    // { "<user id>": { "chatgpt": [1, 2] } }. A convenience, like the two keys
+    // here: Homeroom cannot see what happens inside another product.
+    CONNECTOR_STEPS_KEY: 'usernode:connector-steps',
     FOLDED_KEY: 'usernode:settings-folded',
 
     // #5995: how much is set up behind a row, said in words at its trailing
     // edge ("2 linked"), keyed by page: [message, the counts summed]. The
     // counts come from the lists the pages already load when Settings opens
     // (_setNavStatus); a count never reported, or a zero, shows nothing.
-    // Connectors & CLI counts the connected chat apps alone: that list is
-    // active grants only, while the CLI list is paged credential history
+    // Connectors & CLI counts the connected chat apps alone: that list's live
+    // rows are active grants, while the CLI list is paged credential history
     // (revoked and expired rows included), so it cannot give a whole count.
     STATUS: {
       'linked-accounts': ['settings:nav.status.linked', ['socialIdentities']],
@@ -522,6 +538,7 @@
       'app-ai': 'settings:nav.keywords.appAi',
       'blocked-apps': 'settings:nav.keywords.blockedApps',
       tour: 'settings:nav.keywords.tour',
+      guide: 'settings:nav.keywords.guide',
       usernode: 'settings:nav.keywords.usernode',
       about: 'settings:nav.keywords.about',
       'admin-preview': 'settings:nav.keywords.adminPreview',
@@ -607,6 +624,14 @@
         },
       });
 
+      this._wireConnectorStepCopy();
+
+      // Test the connector: this site's MCP server and this account's own
+      // connection. Read-only, and beside Copy rather than replacing it —
+      // Copy is the thing the user came here to do.
+      const testConnector = document.getElementById('connector-url-test');
+      if (testConnector) testConnector.addEventListener('click', () => this._testConnector());
+
       // Copy the read-only allow rules. Two blocks with identical content and
       // different destinations: the user's PERSONAL ~/.claude/settings.json,
       // which covers every repo on their machine, and the per-repo
@@ -682,6 +707,7 @@
       }
 
       this._wireConnectorNameSpelling();
+      this._wireConnectorStepTicks();
 
       // #5281: the Account page's sign-in rows. Each row's Change opens its
       // own form under it and Cancel closes it; one is open at a time.
@@ -758,18 +784,6 @@
       const bridgeToggle = document.getElementById('session-bridge-enabled');
       if (bridgeToggle) {
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
-      }
-
-      // New Needs you (an experiment), kept on the account
-      // (features/review-flow/settings.ts): the change is the save, and a
-      // failed save puts the switch back to what the account has.
-      const reviewToggle = document.getElementById('review-flow-enabled');
-      if (reviewToggle) {
-        reviewToggle.addEventListener('change', async (e) => {
-          const pref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
-          const ok = pref ? await pref.setEnabled(e.target.checked) : false;
-          if (!ok) reviewToggle.checked = !!pref?.enabled();
-        });
       }
 
       // New look (an experiment), kept on the device by the head's
@@ -1558,7 +1572,7 @@
         key: p.key,
         label: Settings.str(p.label),
         active: p.key === active,
-        className: 'settings-nav-item flex w-full items-center gap-2.5 text-left rounded-lg pl-3 pr-9 py-2 text-sm transition-colors '
+        className: 'settings-nav-item flex w-full items-center gap-2.5 text-start rounded-lg ps-3 pe-9 py-2 text-sm transition-colors '
           + (p.key === active
             ? 'font-semibold bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)]'
             : 'font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
@@ -1894,9 +1908,6 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
-      const review = document.getElementById('review-flow-enabled');
-      const reviewPref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
-      if (review) review.checked = !!reviewPref?.enabled();
       const look = document.getElementById('new-look-enabled');
       if (look) look.checked = window.Skin?.get?.() === 'brand';
       this._renderLocalAgentsSection();
@@ -2128,6 +2139,153 @@
       } catch { return null; }
     },
 
+    // Pressing Test connection. Read-only, and nothing is kept: every press
+    // is a fresh test and the line goes away with the page.
+    //
+    // The SERVER runs every leg it can. A leg it could not reach over its own
+    // public origin comes back 'unknown', and this settles that one with a
+    // same-origin fetch — the origin the address field shows is the page's
+    // own, which is exactly what a browser here can reach.
+    async _testConnector() {
+      const btn = document.getElementById('connector-url-test');
+      const status = document.getElementById('connector-test-status');
+      if (!btn || !status) return;
+
+      // A load-generation guard, like _connectorLoadId: a slow answer must
+      // never repaint over a newer test's.
+      const runId = (this._connectorTestRun || 0) + 1;
+      this._connectorTestRun = runId;
+      const current = () => this._connectorTestRun === runId;
+
+      btn.disabled = true;
+      btn.textContent = tr('settings:connectors.test.running');
+      status.textContent = '';
+      status.classList.add('hidden');
+      status.classList.remove(...STATUS_PALETTE.error);
+
+      let result = null;
+      try {
+        const demo = this._connectorsDemo();
+        const suffix = demo ? `?demo=${encodeURIComponent(demo)}` : '';
+        const response = await fetch(`/api/me/connectors/test${suffix}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: { accept: 'application/json' },
+        });
+        // Staging, and a deployment with connectors switched off, answer 404
+        // through the surface gate.
+        if (response.status === 404) result = { code: 'unavailable_here', enabled: false };
+        else if (!response.ok) result = { code: 'test_failed' };
+        else result = await response.json();
+      } catch {
+        result = { code: 'test_failed' };
+      }
+      if (!current()) return;
+      if (!result) result = { code: 'test_failed' };
+
+      if (result.discovery === 'unknown' || result.mcp === 'unknown') {
+        result = await this._settleConnectorTest(result);
+        if (!current()) return;
+      }
+
+      const KNOWN = [
+        'ok', 'not_connected', 'connection_expired', 'unavailable_here',
+        'discovery_failed', 'server_unreachable', 'test_failed',
+      ];
+      const code = KNOWN.indexOf(result.code) !== -1 ? result.code : 'test_failed';
+      const connection = result.connection || {};
+      const params = {};
+      let id = `settings:connectors.test.result.${code}`;
+      if (code === 'ok') {
+        // The same product name the Connected list shows, and the same date
+        // format it uses.
+        params.product = connection.client_name || tr('settings:connectors.test.unknownProduct');
+        if (connection.last_used_at) {
+          params.lastUsed = new Date(connection.last_used_at).toLocaleString();
+          id = 'settings:connectors.test.result.okUsed';
+        } else {
+          id = 'settings:connectors.test.result.ok';
+        }
+      }
+
+      paintStatus(status, tr(id, params), code === 'ok' ? 'info' : 'error');
+      btn.disabled = false;
+      btn.textContent = tr('settings:connectors.test.button');
+    },
+
+    // The browser's half of a test: only the legs the server reported as
+    // 'unknown' are tried, and only against the page's own origin. A network
+    // failure here is the one thing the person can act on, so it becomes
+    // test_failed rather than a claim about the server.
+    async _settleConnectorTest(result) {
+      const origin = window.location.origin;
+      const probe = async (fn) => {
+        try {
+          const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+            ? AbortSignal.timeout(3000)
+            : undefined;
+          return await fn(signal);
+        } catch { return 'unknown'; }
+      };
+
+      if (result.discovery === 'unknown') {
+        result.discovery = await probe(async (signal) => {
+          const headers = { accept: 'application/json' };
+          const [resource, issuer] = await Promise.all([
+            fetch(`${origin}/.well-known/oauth-protected-resource/mcp`, {
+              headers, credentials: 'same-origin', cache: 'no-store', signal,
+            }),
+            fetch(`${origin}/.well-known/oauth-authorization-server`, {
+              headers, credentials: 'same-origin', cache: 'no-store', signal,
+            }),
+          ]);
+          if (!resource.ok || !issuer.ok) return 'failed';
+          const [resourceDoc, issuerDoc] = await Promise.all([
+            resource.json().catch(() => null),
+            issuer.json().catch(() => null),
+          ]);
+          return resourceDoc && issuerDoc
+            && resourceDoc.resource === `${origin}/mcp`
+            && issuerDoc.issuer === origin
+            ? 'ok'
+            : 'failed';
+        });
+      }
+
+      if (result.mcp === 'unknown') {
+        result.mcp = await probe(async (signal) => {
+          const response = await fetch(`${origin}/mcp`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'same-origin',
+            cache: 'no-store',
+            body: '{}',
+            signal,
+          });
+          const challenge = (response.headers && response.headers.get
+            ? response.headers.get('www-authenticate')
+            : '') || '';
+          return response.status === 401
+            && challenge.startsWith('Bearer')
+            && challenge.indexOf('resource_metadata=') !== -1
+            ? 'ok'
+            : 'failed';
+        });
+      }
+
+      const connection = result.connection || {};
+      if (result.discovery === 'unknown' || result.mcp === 'unknown') {
+        result.code = 'test_failed';
+      } else {
+        result.code = result.discovery === 'failed' ? 'discovery_failed'
+          : result.mcp === 'failed' ? 'server_unreachable'
+            : !connection.active && !connection.inactive ? 'not_connected'
+              : !connection.active ? 'connection_expired'
+                : 'ok';
+      }
+      return result;
+    },
+
     // ── Rewriting the allow rules for a different connector name ─────────
     //
     // The two blocks ship covering `homeroom` and `Homeroom` plus the
@@ -2261,8 +2419,13 @@
       // the field shows, filled here the way the Codex blocks below are:
       // the prerendered interior ships a fill-in placeholder, and a fork or
       // a config change cannot leave a stale host behind.
-      const stepUrl = document.querySelector('[data-connector-step-url]');
+      const stepUrl = document.querySelector('#connectors-section [data-connector-step-url]');
       if (stepUrl) stepUrl.textContent = connectorUrl;
+
+      // The ticks answer from this device alone, so they do not wait on the
+      // fetch, and a failed one cannot leave another account's ticks showing.
+      this._connectorSteps = this._connectorStepsRead() || this._connectorSteps;
+      this._renderConnectorProgress();
 
       // #1607: the "set it up in <product>" links open a new chat pre-loaded
       // with the job. Built HERE, from the same derived origin the field
@@ -2305,7 +2468,7 @@
 
       this._connectorLoadId = (this._connectorLoadId || 0) + 1;
       const loadId = this._connectorLoadId;
-      this._publishConnectors({ phase: 'loading', connectors: [] });
+      this._publishConnectors({ phase: 'loading', tools: [] });
       status.classList.add('hidden');
 
       try {
@@ -2330,18 +2493,94 @@
         }
         section.classList.remove('hidden');
         this._connectors = data.connectors;
-        this._setNavStatus('connectors', data.connectors.length);
+        // Live connections only: an expired row is news on its card, not
+        // something this account has connected.
+        this._setNavStatus('connectors', data.connectors.filter((c) => this._connectorIsLive(c)).length);
         this._connectorHint = data.hint || null;
         this._renderConnectors();
       } catch (err) {
         if (loadId !== this._connectorLoadId) return;
         // A failed reload says nothing rather than an old count.
         this._setNavStatus('connectors', null);
-        this._publishConnectors({ phase: 'idle', connectors: [] });
+        this._publishConnectors({ phase: 'idle', tools: [] });
         status.textContent = err.message || tr('settings:connectors.load.failed');
         status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
         status.classList.add('text-red-700', 'dark:text-red-400');
       }
+    },
+
+    // A connection still working, as opposed to one whose sign-in ran out and
+    // that the server lists so its tool's card can say so (#6134).
+    _connectorIsLive(connector) {
+      return connector.status !== 'expired';
+    },
+
+    // Which card a connection sits on (#6134). Like _connectorFamilies below,
+    // this reads a name the client chose, so it only decides where to DRAW a
+    // row. Codex has its own card here and stays in the ChatGPT family there:
+    // the family decides advice about permission prompts, which Codex shares.
+    _connectorTool(name) {
+      const lower = String(name || '').toLowerCase();
+      if (/claude|anthropic/.test(lower)) return 'claude';
+      if (/codex/.test(lower)) return 'codex';
+      if (/chatgpt|openai/.test(lower)) return 'chatgpt';
+      return 'generic';
+    },
+
+    // What a connection was approved for, from the two scopes consent offers
+    // (services/mcp-connect-constants.js). An expired one says what it COULD do.
+    _connectorCapabilities(connector, expired) {
+      const scopes = Array.isArray(connector.scopes) ? connector.scopes : [];
+      const read = scopes.includes('usernode:apps:read');
+      const write = scopes.includes('usernode:proposals:write');
+      if (expired) {
+        if (read && write) return tr('settings:connectors.capabilities.expiredReadWrite');
+        if (read) return tr('settings:connectors.capabilities.expiredRead');
+        return write ? tr('settings:connectors.capabilities.expiredWrite') : null;
+      }
+      if (read && write) return tr('settings:connectors.capabilities.readWrite');
+      if (read) return tr('settings:connectors.capabilities.read');
+      return write ? tr('settings:connectors.capabilities.write') : null;
+    },
+
+    // One connection's row on its card: one whole line per case of what is
+    // known, in the date format this page uses everywhere.
+    _connectorRowView(connector) {
+      const stamp = (value) => (value && Number.isFinite(Date.parse(value))
+        ? new Date(value).toLocaleString() : null);
+      const expired = !this._connectorIsLive(connector);
+      const connected = stamp(connector.connected_at);
+      const lastUsed = stamp(connector.last_used_at);
+      const ranOut = stamp(connector.expired_at);
+      let detail;
+      if (expired) {
+        detail = ranOut
+          ? tr('settings:connectors.row.expired', { when: ranOut })
+          : tr('settings:connectors.row.expiredUnknownDate');
+      } else if (lastUsed) detail = tr('settings:connectors.row.lastActive', { lastUsed });
+      else if (connected) detail = tr('settings:connectors.row.notUsedYet', { connected });
+      else detail = tr('settings:connectors.row.unknownDate');
+      return {
+        id: String(connector.id),
+        title: connector.client_name || tr('settings:connectors.row.unnamedClient'),
+        detail,
+        capabilities: this._connectorCapabilities(connector, expired),
+      };
+    },
+
+    // The four cards, in the page's order. A card says its best state: one
+    // working connection beside an expired one still reads Working, and the
+    // expired row carries its own line.
+    _connectorToolViews(connectors) {
+      return ['claude', 'chatgpt', 'codex', 'generic'].map((key) => {
+        const held = connectors.filter((c) => this._connectorTool(c.client_name) === key);
+        const live = held.filter((c) => this._connectorIsLive(c));
+        let status = 'none';
+        if (live.some((c) => c.last_used_at)) status = 'working';
+        else if (live.length) status = 'unused';
+        else if (held.length) status = 'attention';
+        return { key, status, connections: held.map((c) => this._connectorRowView(c)) };
+      });
     },
 
     // Which of the three "stop the prompts" cases apply to what is actually
@@ -2442,10 +2681,9 @@
       line.classList.remove('hidden');
     },
 
-    // Publish the connector cards. Was a `document.createElement` tree per
-    // connection — card, top row, title, metadata, Disconnect and its listener
-    // — and is ./connectors-list.tsx's markup now. The two date formats and
-    // the "never used" fallback are resolved here, where the payload is.
+    // Publish the connector cards. The markup is ./connectors-list.tsx's; the
+    // date formats and the sorting onto cards are resolved here, where the
+    // payload is.
     _publishConnectors(next) {
       const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
         ? window.UsernodeReact.settingsConnectors : null;
@@ -2453,35 +2691,126 @@
     },
 
     _renderConnectors() {
-      const connectors = this._connectors || [];
-      // Two SIBLINGS of the list host, both still this module's: the static
-      // "stop the prompts" prose blocks, whose visibility follows which client
-      // families are connected, and the read-only tip status.
+      const all = this._connectors || [];
+      const connectors = all.filter((c) => this._connectorIsLive(c));
+      // Two SIBLINGS of the cards, both still this module's: the static "stop
+      // the prompts" prose blocks, whose visibility follows which client
+      // families are connected, and the read-only tip status. Both are about
+      // what is connected now, so an expired row counts for neither.
       this._renderConnectorCases(connectors);
       this._renderConnectorHint(connectors);
-      this._publishConnectors({
-        phase: 'ready',
-        connectors: connectors.map((connector) => {
-          // One whole line per combination of what is known: when it was
-          // connected, and whether it was ever used.
-          const connected = Number.isFinite(Date.parse(connector.connected_at))
-            ? new Date(connector.connected_at).toLocaleString() : null;
-          const lastUsed = connector.last_used_at
-            && Number.isFinite(Date.parse(connector.last_used_at))
-            ? new Date(connector.last_used_at).toLocaleString()
-            : null;
-          let detail;
-          if (connected && lastUsed) detail = tr('settings:connectors.row.connectedUsed', { connected, lastUsed });
-          else if (connected) detail = tr('settings:connectors.row.connectedNeverUsed', { connected });
-          else if (lastUsed) detail = tr('settings:connectors.row.unknownDateUsed', { lastUsed });
-          else detail = tr('settings:connectors.row.unknownDateNeverUsed');
-          return {
-            id: String(connector.id),
-            title: connector.client_name || tr('settings:connectors.row.unnamedClient'),
-            detail,
-          };
-        }),
+      this._publishConnectors({ phase: 'ready', tools: this._connectorToolViews(all) });
+    },
+
+    // ── Ticking off the setup steps (#6136) ──────────────────────────────
+    //
+    // The tick buttons and progress lines are static markup React rendered once
+    // (connector-setup-steps.tsx, sections/connectors.tsx), and this module owns
+    // their `aria-pressed`, `hidden` and text. Nothing here writes a class: the
+    // done look is `group-aria-pressed:` on a constant class string.
+    //
+    // this._connectorSteps is what the buttons show. Storage only follows it, so
+    // ticks still work for the visit where storage throws or nobody is signed in.
+
+    // The stored map, cleaned: positive whole step numbers under the four
+    // guides. Unparseable JSON is empty; null means storage itself refused.
+    _connectorStepsRead() {
+      let raw;
+      try { raw = localStorage.getItem(Settings.CONNECTOR_STEPS_KEY); } catch { return null; }
+      const clean = Object.create(null);
+      let parsed = null;
+      try { parsed = JSON.parse(raw); } catch { /* treated as empty */ }
+      if (!parsed || typeof parsed !== 'object') return clean;
+      for (const account of Object.keys(parsed)) {
+        const guides = parsed[account];
+        if (!guides || typeof guides !== 'object') continue;
+        const kept = Object.create(null);
+        for (const guide of ['claude', 'chatgpt', 'codex', 'generic']) {
+          if (!Array.isArray(guides[guide])) continue;
+          const steps = [...new Set(guides[guide])].filter((n) => Number.isInteger(n) && n > 0);
+          if (steps.length) kept[guide] = steps;
+        }
+        if (Object.keys(kept).length) clean[account] = kept;
+      }
+      return clean;
+    },
+
+    _connectorStepsWrite(map) {
+      try {
+        if (Object.keys(map).length) localStorage.setItem(Settings.CONNECTOR_STEPS_KEY, JSON.stringify(map));
+        else localStorage.removeItem(Settings.CONNECTOR_STEPS_KEY);
+      } catch { /* storage unavailable: the ticks last this visit */ }
+    },
+
+    // Whose ticks these are. With nobody signed in they live under '' for the
+    // visit and are never saved.
+    _connectorStepsAccount() {
+      const id = typeof App !== 'undefined' && App.user ? App.user.id : null;
+      return id == null ? '' : String(id);
+    },
+
+    // #6136: the MCP server URL again, from the ChatGPT step that asks for it.
+    // Read at click time because _loadConnectors fills the step after this runs.
+    _wireConnectorStepCopy() {
+      const stepUrl = () => document.querySelector('#connectors-section [data-connector-step-url]');
+      this._wireCopyControl('connector-chatgpt-url-copy', {
+        read: () => {
+          const code = stepUrl();
+          return code ? code.textContent : null;
+        },
+        successMessage: 'settings:connectors.copy.urlCopied',
+        failureMessage: 'settings:connectors.copy.urlFailed',
+        selectOnFail: () => {
+          const code = stepUrl();
+          const selection = window.getSelection && window.getSelection();
+          if (!code || !selection) return;
+          const range = document.createRange();
+          range.selectNodeContents(code);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        },
       });
+    },
+
+    _wireConnectorStepTicks() {
+      const section = document.getElementById('connectors-section');
+      if (!section) return;
+      section.addEventListener('click', (event) => {
+        const tick = event.target && event.target.closest
+          ? event.target.closest('[data-connector-step-tick]') : null;
+        if (!tick) return;
+        const [guide, number] = tick.getAttribute('data-connector-step-tick').split(':');
+        const step = Number(number);
+        const account = this._connectorStepsAccount();
+        const map = this._connectorSteps || (this._connectorSteps = Object.create(null));
+        const guides = map[account] || (map[account] = Object.create(null));
+        const steps = guides[guide] || [];
+        const next = steps.includes(step) ? steps.filter((n) => n !== step) : [...steps, step];
+        if (next.length) guides[guide] = next;
+        else delete guides[guide];
+        if (!Object.keys(guides).length) delete map[account];
+        if (account) this._connectorStepsWrite(map);
+        this._renderConnectorProgress();
+      });
+    },
+
+    // Paint every tick and progress line for the account on this device. A
+    // stored step above a guide's current total counts for nothing, so a guide
+    // that loses a step cannot read "7 of 6".
+    _renderConnectorProgress() {
+      const guides = (this._connectorSteps || {})[this._connectorStepsAccount()] || {};
+      for (const tick of document.querySelectorAll('[data-connector-step-tick]')) {
+        const [guide, number] = tick.getAttribute('data-connector-step-tick').split(':');
+        const done = (guides[guide] || []).includes(Number(number));
+        tick.setAttribute('aria-pressed', done ? 'true' : 'false');
+      }
+      for (const line of document.querySelectorAll('[data-connector-progress]')) {
+        const total = Number(line.getAttribute('data-total')) || 0;
+        const done = (guides[line.getAttribute('data-connector-progress')] || [])
+          .filter((n) => n <= total).length;
+        line.hidden = done === 0;
+        line.textContent = done ? tr('settings:connectors.progress.done', { done, total }) : '';
+      }
     },
 
     async _disconnectConnector(id, button) {
@@ -5501,9 +5830,25 @@
     // precisely "tapping it does nothing". The row must still offer the
     // ask. `ios-denied` renders the other dead end (determined-denied,
     // where iOS presents no prompt however often it is asked).
+    // `foreground-only` renders an Android build that produces blocks only
+    // while it is open: no permission rows, and the note saying so.
     _unDemoMode() {
       const v = this._demoParam('usernodedemo');
-      return (v === 'ios' || v === 'ios-denied') ? v : null;
+      return (v === 'ios' || v === 'ios-denied' || v === 'foreground-only') ? v : null;
+    },
+
+    DEMO_FOREGROUND_ONLY_STATE: {
+      buildInfo: { appVersion: '0.0.0-demo', buildNumber: '0' },
+      debugMode: false,
+      facematchStrict: true,
+      authStatus: 'authenticated',
+      permissions: {
+        platform: 'android',
+        exactAlarmGranted: false,
+        batteryOptDisabled: false,
+        deviceManufacturer: null,
+        backgroundProduction: false,
+      },
     },
 
     DEMO_USERNODE_STATE: {
@@ -5745,7 +6090,9 @@
       if (demo) {
         // Fixed snapshot, no bridge call: this link exists to make the
         // notification row reachable from a browser.
-        this._usernodeState = this.DEMO_USERNODE_STATE;
+        this._usernodeState = demo === 'foreground-only'
+          ? this.DEMO_FOREGROUND_ONLY_STATE
+          : this.DEMO_USERNODE_STATE;
         this._unPushStatus = demo === 'ios-denied' ? 'denied' : 'undetermined';
         this._unPushProbed = true;
         this._unCanOpenNotifSettings = true;
@@ -6421,6 +6768,7 @@
         belowDemoCut: !demo,
         socialPush: this._socialPushView(),
         blockProduction: this._bpView(),
+        foregroundOnly: this._unForegroundOnly(),
         privacy: s ? {
           facematch: {
             label: tr('settings:usernode.privacy.strictFacematch'),
@@ -6552,6 +6900,12 @@
       dialog.open({ userId });
     },
 
+    // Older builds omit the field and still produce in the background.
+    _unForegroundOnly() {
+      const perms = this._usernodeState && this._usernodeState.permissions;
+      return !!perms && perms.backgroundProduction === false;
+    },
+
     _usernodeBodyView() {
       const s = this._usernodeState;
       if (!s) {
@@ -6567,6 +6921,10 @@
       }
       const perms = s.permissions || {};
       const isAndroid = perms.platform === 'android';
+      // Android's rows here are the exact-alarm and battery permissions, and a
+      // build that produces only while open has neither. iOS keeps its
+      // notification row.
+      if (isAndroid && this._unForegroundOnly()) return null;
       // iOS row truth: `exactAlarmGranted` is a lagging proxy for the
       // notification permission (there are no exact alarms on iOS), so once a
       // request has settled through NativeChrome.settleIosPushGrant that
@@ -6670,6 +7028,10 @@
     },
 
     _bpView() {
+      // The demo link reads no account, and must not offer a live ask.
+      if (this._unDemoMode() === 'foreground-only') {
+        return { kind: 'note', text: tr('settings:usernode.blockProduction.released') };
+      }
       const state = this._bpState;
       if (state === undefined) return { kind: 'checking' };
       if (!state) return { kind: 'note', text: tr('settings:usernode.blockProduction.checkFailed') };
@@ -7007,6 +7369,7 @@
       repaint(() => Settings._normalizeOpenRouterCopy());
       repaint(() => Settings._renderBody());
       repaint(() => { if (Settings._connectors.length) Settings._renderConnectors(); });
+      repaint(() => Settings._renderConnectorProgress());
       repaint(() => { if (Settings._githubLink) Settings._renderGithubLink(); });
       repaint(() => { if (Settings._cliTokens.length) Settings._renderCliTokens(); });
       repaint(() => {

@@ -11,6 +11,21 @@ const schemaContract = require('./debug-access-schema.json');
 // deparsed definitions differently; compare both lists in locale-free order.
 const sameChecks = (actual, expected) => JSON.stringify([...actual].sort()) === JSON.stringify([...expected].sort());
 
+// The database operator installs pg_stat_statements in every database, and
+// the extension grants SELECT on its two views to PUBLIC, so every login,
+// this one included, can read them. Without pg_read_all_stats (a membership,
+// refused below) PostgreSQL shows such a role the statistics of other roles'
+// queries but not their text or query id: no application data. Reading those
+// views is the one access outside the reviewed columns accepted here, and
+// only for relations the extension itself owns (pg_depend), never for a
+// relation that merely shares the name. Any other privilege on them is still
+// refused.
+const OPERATOR_STATISTICS = 'pg_stat_statements';
+const MEMBER_OF_OPERATOR_STATISTICS = `EXISTS (SELECT 1 FROM pg_depend d
+            JOIN pg_extension e ON e.oid = d.refobjid
+           WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'
+             AND d.refclassid = 'pg_extension'::regclass AND e.extname = '${OPERATOR_STATISTICS}')`;
+
 async function verifyDebugRole(pool, { role, readableColumns, requireAllColumns = false }) {
   const started = performance.now();
   const problems = [];
@@ -38,6 +53,7 @@ async function verifyDebugRole(pool, { role, readableColumns, requireAllColumns 
         has_column_privilege($1::oid, c.oid, a.attnum, 'SELECT') AS readable,
         (has_table_privilege($1::oid, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
          OR has_column_privilege($1::oid, c.oid, a.attnum, 'INSERT,UPDATE,REFERENCES')) AS writable,
+        ${MEMBER_OF_OPERATOR_STATISTICS} AS operator_statistics,
         CASE WHEN n.nspname = 'public' AND (c.relname || '.' || a.attname) = ANY($2::text[])
           THEN ARRAY(SELECT pg_get_constraintdef(k.oid) FROM pg_constraint k
             WHERE k.conrelid = c.oid AND k.contype = 'c' AND a.attnum = ANY(k.conkey)
@@ -56,7 +72,9 @@ async function verifyDebugRole(pool, { role, readableColumns, requireAllColumns 
       JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
         AND CASE WHEN c.relkind IN ('r', 'p', 'v', 'm', 'f') THEN
-          has_table_privilege($1::oid, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') ELSE FALSE END
+          has_table_privilege($1::oid, c.oid, CASE WHEN ${MEMBER_OF_OPERATOR_STATISTICS}
+            THEN 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+            ELSE 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER' END) ELSE FALSE END
       UNION ALL
       SELECT 'sequence', n.nspname || '.' || c.relname FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -83,7 +101,9 @@ async function verifyDebugRole(pool, { role, readableColumns, requireAllColumns 
   for (const column of columns.rows) {
     const key = `${column.table}.${column.column}`;
     const allowed = column.schema === 'public' && ['r', 'p'].includes(column.kind) && approved.has(key);
-    if (column.readable !== allowed) problems.push(`${column.readable ? 'unexpected' : 'missing'} SELECT: ${column.schema}.${key}`);
+    if (column.readable !== allowed && !(column.operator_statistics && column.kind === 'v')) {
+      problems.push(`${column.readable ? 'unexpected' : 'missing'} SELECT: ${column.schema}.${key}`);
+    }
     if (column.writable) problems.push(`write privilege: ${column.schema}.${key}`);
     if (!allowed) continue;
     found.add(key);

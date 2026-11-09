@@ -82,6 +82,9 @@ export function planState(meta: HomeroomBotMeta, pressed = false): PlanCardState
   if (meta.replaced) return 'replaced';
   if (meta.stopped) return 'stopped';
   if (meta.changing) return 'changing';
+  // B05 (audit 2 Nov 2026): a change to it waits for Post it; Build it would
+  // build the plan that change replaces.
+  if (meta.changeDrafted) return 'drafted';
   if (meta.status === 'closed' || !meta.actionId) return 'closed';
   return 'open';
 }
@@ -133,6 +136,16 @@ export function planProgress(card: HomeroomBotActivity | null | undefined, state
     : lead === 'step' ? translate('messages:bot.plan.step', values)
       : lead === 'doing' ? values.doing : translate('messages:bot.plan.working');
   return { line: time ? translate(PROGRESS_LINES[lead][time.kind], { ...values, from: time.from, count: time.count }) : what, step: stepped?.step ?? null, of: stepped?.of ?? null };
+}
+
+/**
+ * #6404: whether a message asks with a Questions card (open, answered or
+ * skipped). Its card is the one set of answers, so the suggested replies
+ * beside it are not drawn, even on a message stored before this rule.
+ */
+export function asksWithQuestionsCard(message: ConversationMessage): boolean {
+  const meta = botMeta(message);
+  return !!meta && !message.deleted && meta.card?.type === 'questions';
 }
 
 /**
@@ -262,11 +275,21 @@ function quote(message: ConversationMessage, conversationId: number) {
  * first version's switch, on from Make it, whatever this device chose
  * before; a complicated change's plan keeps the one-time offer.
  */
-export function notifyFooter(meta: HomeroomBotMeta, offer: boolean, userId: number | null) {
+export function notifyFooter(meta: HomeroomBotMeta, offer: boolean, userId: number | null, conversationId?: number, messageId?: number) {
   if (!meta.plan?.complicated && meta.appSlug) {
     return <div className="mt-3"><NotifyLive appSlug={meta.appSlug} /></div>;
   }
-  return offer ? <div className="mt-3"><NotifyMe userId={userId} /></div> : null;
+  return offer ? (
+    <div className="mt-3">
+      <NotifyMe
+        userId={userId}
+        appSlug={meta.appSlug}
+        issueNumber={meta.issueNumber}
+        conversationId={conversationId}
+        threadRootId={messageId}
+      />
+    </div>
+  ) : null;
 }
 
 export function BotPlanCard({ message, conversationId, cardId = null }: {
@@ -313,8 +336,9 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
       onChange={() => quote(message, conversationId)}
       progress={planProgress(card, state)}
       planSpec={spec && Number(spec.sessionId) > 0 && Number(spec.version) > 0 ? <PlanSpec sessionId={Number(spec.sessionId)} version={Number(spec.version)} /> : null}
+      card={meta.plan.card || null}
       footer={state === 'built' && card && card.state !== 'done'
-        ? notifyFooter(meta, offer, userId)
+        ? notifyFooter(meta, offer, userId, conversationId, Number(message.id))
         : null}
     />
   );
@@ -362,7 +386,7 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
           </div>
         </div>
       )) : pairs ? <AnsweredChoices items={pairs} className="mt-2" /> : (
-        <ol className="mt-1.5 list-decimal space-y-0.5 pl-5 text-[0.9375rem] text-zinc-900 dark:text-zinc-100">
+        <ol className="mt-1.5 list-decimal space-y-0.5 ps-5 text-[0.9375rem] text-zinc-900 dark:text-zinc-100">
           {questions.map((q) => <li key={q.question}>{q.question}</li>)}
         </ol>
       )}

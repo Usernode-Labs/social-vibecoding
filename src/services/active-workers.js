@@ -76,12 +76,35 @@ async function recordStart(sessionId, id, kind) {
   return true;
 }
 
+// A record's end can fail when the workflow database is briefly away, and
+// the record outlives this process's memory: it is written again a few times
+// before the work is left to this process's presence, which a reader counts
+// as ended anyway. Its request key (`op:<id>:end`) makes a repeat a replay.
+const END_RETRY_MS = Object.freeze([1000, 5000, 30000]);
+
+async function endRecorded(platform, sessionId, id) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await platform.operationEnded({ sessionId, id });
+      return;
+    } catch (err) {
+      if (attempt >= END_RETRY_MS.length) throw err;
+      await new Promise((resolve) => setTimeout(resolve, END_RETRY_MS[attempt]).unref());
+    }
+  }
+}
+
 function recordEnd(sessionId, id, started) {
-  Promise.resolve(started).then((ok) => {
+  Promise.resolve(started).then(async (ok) => {
     if (!ok) return undefined;
     const platform = previews();
-    const ended = platform ? platform.operationEnded({ sessionId, id }) : Promise.resolve();
-    return ended.finally(() => require('./process-presence').release());
+    try {
+      if (platform) await endRecorded(platform, sessionId, id);
+    } finally {
+      // Once, after the last try: a record left by a process that has gone is
+      // ended by its presence, which a reader no longer sees.
+      require('./process-presence').release();
+    }
   }).catch((err) => {
     require('./logger').warn('active-workers', 'Could not record the end of work on a session; it ends with this process', {
       sessionId, err: err.message,

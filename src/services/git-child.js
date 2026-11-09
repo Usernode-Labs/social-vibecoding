@@ -55,18 +55,22 @@ function childEnv(home, { credential = null, extra = {} } = {}) {
   };
 }
 
-function invocation(args, { home, credential = null, env: extra = {} } = {}) {
-  // All platform git transports use this boundary, including direct pushes
-  // by fork, patch, upstream and bench helpers.
+function subcommand(args) {
   let i = 0;
   while (i < args.length && String(args[i]).startsWith('-')) {
     const option = args[i++];
     if (['-C', '-c', '--git-dir', '--work-tree', '--config-env'].includes(option)) i++;
   }
-  if (['push', 'send-pack', 'http-push', 'receive-pack'].includes(args[i])) {
-    require('./code-host-write').requireCodeHostWrite('git.' + args[i]);
+  return args[i];
+}
+function isWrite(args) { return ['push', 'send-pack', 'http-push', 'receive-pack'].includes(subcommand(args)); }
+
+function invocation(args, { home, credential = null, env: extra = {} } = {}) {
+  // All platform git transports use this boundary.
+  if (isWrite(args)) {
+    require('./code-host-write').requireCodeHostWrite('git.' + subcommand(args));
   }
   return { args: [...configArgs(credential), ...args], env: childEnv(home, { credential, extra }) };
 }
 
-module.exports = { HELPER, invocation };
+module.exports = { HELPER, invocation, isWrite };

@@ -49,6 +49,9 @@ export const GOVERNANCE_KINDS: readonly string[] = Object.freeze([
   'secret_change',
   'rename',
   'close_issue',
+  // #6000: a closed request the group is asked to bring back, mirroring
+  // close_issue. Decided by the same rule that closes one.
+  'reopen_issue',
   'maintenance_campaign',
   'featured_illustration',
   // #6019: a merge or split of threads somebody objected to, so it went to

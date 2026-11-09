@@ -157,10 +157,14 @@ function fakePool({ existing = null, failOn = null } = {}) {
   };
 }
 
-function fakeDeps({ cardThrows = false, commentThrows = false } = {}) {
-  const sent = { cards: [], comments: [] };
+function fakeDeps({ cardThrows = false, commentThrows = false, planUpdates = null } = {}) {
+  const sent = { cards: [], comments: [], newerPlans: [] };
   return {
     sent,
+    // #6406: the bot is told about a newer plan after the post is stored.
+    planUpdates: planUpdates || {
+      async noticeNewerPlan(pool, args) { sent.newerPlans.push(args); return null; },
+    },
     ws: {
       async sendBotMessage(pool, appId, msg) {
         if (cardThrows) throw new Error('ws down');
@@ -211,7 +215,15 @@ test('the first post opens a paused, branchless record linked to the request, an
     'another app\'s screens draw with the native kit, as the scout\'s do');
   const version = pool.calls.find((c) => /INSERT INTO chat_session_specs/.test(c.sql));
   assert.match(version.sql, /shared_to_group_at\)[\s\S]*NOW\(\)/, 'shared with the group on the way in');
-  assert.match(sqls[sqls.length - 1], /^COMMIT$/);
+  // The transaction ends the record's writes; after it, a plan on the
+  // request is what Homeroom bot waits for while its requester works on it
+  // in a private thread, so the wait lifts (private-threads.js liftHold).
+  const committed = sqls.lastIndexOf('COMMIT');
+  assert.ok(committed > 0);
+  assert.ok(sqls.slice(committed + 1).every((sql) => /^UPDATE private_threads\b/.test(sql)), 'nothing else after the commit');
+  const lift = pool.calls.find((c) => /^UPDATE private_threads\b/.test(c.sql));
+  assert.match(lift.sql, /SET hold_lifted_at = NOW\(\), hold_lifted_by = \$3/);
+  assert.deepEqual(lift.params, [9, 4041, 'plan', null]);
 
   assert.equal(deps.sent.cards.length, 1);
   assert.deepEqual(deps.sent.cards[0].thread, { type: 'issue', ref: 4041 });
@@ -270,8 +282,25 @@ test('a failed write stores nothing, and a failed card or comment never takes th
   assert.match(deps.sent.comments[0].body, /<details><summary>The plan<\/summary>[\s\S]*Spinner on the being-made screen/);
 });
 
-test('a refused spec reaches no database', async () => {
+test('#6406: a post tells the bot about the version, and never fails on it', async () => {
   const pool = fakePool();
+  const d = fakeDeps();
+  const out = await specs.postRequestSpec(pool, {
+    app: APP, repo: REPO, issueNumber: 4041, user: ADA, text: HTML,
+  }, d);
+  assert.equal(d.sent.newerPlans.length, 1);
+  assert.equal(d.sent.newerPlans[0].posted.sessionId, out.sessionId);
+  assert.equal(d.sent.newerPlans[0].posted.version, out.version);
+  assert.equal(d.sent.newerPlans[0].posted.user.username, 'ada');
+
+  const throwing = fakeDeps({ planUpdates: { async noticeNewerPlan() { throw new Error('bot down'); } } });
+  const ok = await specs.postRequestSpec(fakePool(), {
+    app: APP, repo: REPO, issueNumber: 4041, user: ADA, text: HTML,
+  }, throwing);
+  assert.equal(ok.version, 1, 'the plan was stored and shared anyway');
+});
+
+test('a refused spec reaches no database', async () => {  const pool = fakePool();
   await assert.rejects(() => specs.postRequestSpec(pool, {
     app: APP, repo: REPO, issueNumber: 1, user: ADA, text: '',
   }, fakeDeps()), (err) => err instanceof specs.SpecError && err.code === 'invalid_request');

@@ -89,7 +89,15 @@ export function iconTileFor(app) {
 // chips a record earns, renderAppPillsHtml turns that decision into the string
 // the launcher grid and the app view still splice in. One decision, two
 // renderers — the same shape the notifications rows landed in.
-export function appPillsFor(app) {
+// A "New" chip's window (#5928 item 9): an app CREATED within this many days.
+// The same fortnight as Discover's New filter (browse.js NEW_WINDOW_DAYS, which
+// cannot be imported here without a cycle; a test holds the two equal).
+export const NEW_PILL_DAYS = 14;
+
+// `opts.newBadge` asks for the "New" chip, which Discover's rows want (a
+// directory is where "new" means something) and Home's tiles do not: your own
+// project is not news to you for a fortnight. `opts.now` is for the tests.
+export function appPillsFor(app, opts = {}) {
   const openPrs = parseInt(app.open_prs || 0);
   const activeSessions = parseInt(app.active_sessions || 0);
   const openIssues = parseInt(app.open_issues || 0);
@@ -127,6 +135,20 @@ export function appPillsFor(app) {
       tip: PlatformI18n.t('discover:pill.issuesTip', { count: openIssues }),
     });
   }
+  // #5928 item 9: a trust signal on a directory row. The quietest chip, after
+  // anything that asks for attention, so a brand-new app with nothing going on
+  // still says one true thing about itself.
+  if (opts.newBadge && app.created_at) {
+    const created = new Date(app.created_at).getTime();
+    const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+    if (!Number.isNaN(created) && now - created <= NEW_PILL_DAYS * 24 * 60 * 60 * 1000) {
+      chipDefs.push({
+        cls: 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400',
+        label: PlatformI18n.t('discover:pill.new'),
+        tip: PlatformI18n.t('discover:pill.newTip', { count: NEW_PILL_DAYS }),
+      });
+    }
+  }
   // Visibility chip for non-default settings. View-private dominates (it
   // implies collab-private); collab-private alone reads as "invite-only
   // build" since anyone can still see/use the app.
@@ -155,8 +177,8 @@ export function appPillsFor(app) {
 // tint measured 2.3:1, which is a colour you can see but not read. The tint
 // behind it is unchanged — it is the same 10% wash in both themes, and it is
 // the ink that has to move.
-export const CHIP_BASE_CLS = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
-export const VIS_CHIP_CLS = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-700 dark:text-violet-400';
+export const CHIP_BASE_CLS = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium';
+export const VIS_CHIP_CLS = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-violet-500/10 text-violet-700 dark:text-violet-400';
 // Heroicons v1 outline paths, drawn as inline currentColor SVGs (rather than
 // emoji) so the glyphs tint violet with the chip in both themes.
 export const VIS_CHIP_PATHS = {
@@ -180,7 +202,7 @@ export function renderAppPillsHtml(app) {
 }
 
 export const AppCard = {
-  iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor,
+  iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor, NEW_PILL_DAYS,
 };
 
 // Published for the legacy half of the split. Both in-bundle consumers

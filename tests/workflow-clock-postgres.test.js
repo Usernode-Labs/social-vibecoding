@@ -41,8 +41,8 @@ test('the clock machine runs each job once at a time, wherever the workflow runs
   const { MACHINE, clock, clockKey } = require('../src/workflow/clock/machine.ts');
   const { clockServices } = require('../src/workflow/clock/services.ts');
 
-  const make = (jobs) => {
-    const r = createRuntime({ pool, machines: [clock()], services: clockServices(jobs, { config: {}, pool }), pollMs: 50 });
+  const make = (jobs, config = {}) => {
+    const r = createRuntime({ pool, machines: [clock()], services: clockServices(jobs, { config, pool }), pollMs: 50 });
     runtimes.push(r);
     return r;
   };
@@ -105,6 +105,64 @@ test('the clock machine runs each job once at a time, wherever the workflow runs
     const dueIn = Date.parse(data.due) - Date.parse(data.last.at);
     assert.ok(dueIn > 0 && dueIn <= 60 * 1000, `retried sooner than its hour (${dueIn} ms)`);
     await r.stop();
+  });
+
+  await t.test('published GitHub reads survive clock failures and rollouts until expiry', async (t) => {
+    const github = require('../src/services/github');
+    const reads = require('../src/services/github-read-access');
+    const { JOBS } = require('../src/workflow/clock/services.ts');
+    const cfg = { githubAppId: 'test-app', dataEncryptionKey: 'test-data-key' };
+    const priorRole = process.env.PROCESS_ROLE, priorSha = process.env.GIT_SHA;
+    process.env.PROCESS_ROLE = 'conductor';
+    t.after(async () => {
+      if (priorRole === undefined) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = priorRole;
+      if (priorSha === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = priorSha;
+      await pool.query('DELETE FROM platform_processes WHERE id = $1', ['test-read-newer']);
+      await reads.init(null, null);
+    });
+    let fail = false, minted = 0;
+    t.mock.method(github, 'hasApp', () => true);
+    t.mock.method(github, 'readInstallationId', async () => 100);
+    t.mock.method(github, 'mintReadToken', async () => {
+      minted++;
+      return { token: 'test-published-read-token', expiresAt: new Date(Date.now() + 3600_000).toISOString() };
+    });
+    t.mock.method(github, 'listActionsSecrets', async () => {
+      if (fail) throw new Error('test refresh unavailable');
+      return { ok: true, secrets: [], source: 'installation' };
+    });
+    const job = JOBS.find((j) => j.name === reads.JOB);
+    const r = make([job], cfg);
+    await arm(r, reads.JOB, 3600_000);
+    await r.start({ loops: true });
+    await until(async () => (await instance(reads.JOB))?.data?.last?.ok, 'read access published');
+    const published = (await instance(reads.JOB)).data;
+    assert.equal(JSON.stringify(published).includes('test-published-read-token'), false);
+    assert.match(published.kept.tokenEnc, /^v1:/);
+    fail = true;
+    const asked = await r.appendAndWait(MACHINE, clockKey(reads.JOB), { type: 'RunNow', payload: {} },
+      { requestKey: 'test:read-refresh', source: { kind: 'admin', name: 'test' } });
+    assert.equal(asked.status, 'accepted');
+    await until(async () => (await instance(reads.JOB))?.data?.last?.n === 2, 'failed refresh recorded');
+    assert.equal((await instance(reads.JOB)).data.last.ok, false);
+    process.env.GIT_SHA = 'a'.repeat(40);
+    await pool.query(`INSERT INTO platform_processes (id, release, role)
+      VALUES ($1, $2, 'conductor')`, ['test-read-newer', 'b'.repeat(40)]);
+    const skipped = await r.appendAndWait(MACHINE, clockKey(reads.JOB), { type: 'RunNow', payload: {} },
+      { requestKey: 'test:read-rollout', source: { kind: 'admin', name: 'test' } });
+    assert.equal(skipped.status, 'accepted');
+    await until(async () => (await instance(reads.JOB))?.data?.last?.n === 3, 'rollout skip recorded');
+    const after = (await instance(reads.JOB)).data;
+    assert.deepEqual(after.last.result, { skipped: 'older_build' });
+    assert.deepEqual(after.kept, published.kept, 'a process that did no refresh cannot discard the publication');
+    await r.stop();
+    process.env.PROCESS_ROLE = 'web';
+    await reads.init(cfg, pool);
+    assert.equal(reads.installed(), true);
+    assert.equal(await reads.token(github.actingOwner()), 'test-published-read-token');
+    assert.equal(minted, 1, 'the retry did not mint again with unexpired access');
+    t.mock.method(Date, 'now', () => Date.parse(published.kept.expiresAt) + 60_000);
+    await assert.rejects(reads.token(github.actingOwner()), { code: 'github_read_unavailable' });
   });
 
   await t.test('targets: each an item of its own, asked again by each run, once per generation it names, none while one is outstanding', async () => {

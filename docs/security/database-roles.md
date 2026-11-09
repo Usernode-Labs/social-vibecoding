@@ -1,0 +1,171 @@
+# Database identities
+
+`databaseRoles.enabled` opts the Kubernetes release into PostgreSQL 16+
+identities. It requires external PostgreSQL, the conductor and the migration
+Job. Defaults remain compatible with local development and existing charts.
+
+| Login | Purpose | Database authority |
+| --- | --- | --- |
+| `homeroom_web` | HTTP and WebSockets | Platform DML; no schema, database or role creation |
+| `homeroom_conductor` | Workflow and maintenance scheduling | Platform DML; no schema, database or role creation |
+| `homeroom_migrator` | Schema migrations and grants | Owns the platform database and its `public` and `credentials` objects; no cluster role/database creation |
+| `homeroom_provisioner` | Tenant database lifecycle and copies | Non-superuser with CREATEDB, CREATEROLE and BYPASSRLS; delegated tenant ownership, no membership in the platform owner/runtime identities |
+
+The conductor holds the provisioner URL separately from its normal pool.
+The migration Job also holds the primary provisioner URL for tenant-role
+repair and read-only capability setup. Web receives neither URL. The preview
+server has a separate provisioner password and a maintenance-catalog reader
+password; its reader cannot connect to tenant copies. Each primary login
+keeps access to reserved connections within the existing platform budget.
+
+BYPASSRLS is intentional for the trusted provisioner: a complete logical
+source copy must include rows protected by forced row-level security. Restore
+and redaction still authenticate as the copy's own unprivileged owner. This
+split does not make the provisioner a tenant-isolated service. Between web and
+the conductor, only the workflow kernel's relations are separated: public's
+`wf_*` tables and sequences, found by name in the catalog, so a new one is
+covered without a list to update. Web may append to `wf_events`, naming only
+a producer's columns, read the rest and draw sequence values; it may write
+none of them nor set a sequence (`restrictWebWorkflow`), so the database can
+tell which login appended an event (docs/workflows.md "Who produced it").
+Startup refuses a web login that can write them and a conductor login that
+cannot. The application tables stay writable by both.
+
+The bootstrap only adds web's narrow workflow grants. The migration Job takes
+the rest, in this order: before it migrates anything, it waits up to eight
+minutes for every live web process to record
+`platform_processes.web_restriction_ready` (`awaitWebRestrictionReady`), since
+a web process of an earlier build still writes those tables and could not
+restart without them; if one still serves, the Job fails having changed
+nothing, and the running release stays as it is. Then it migrates, and in its
+grants' transaction counts the registered processes once more and takes web's
+writes (`takeWebWorkflowWrites`). That count sees only processes already
+registered: one still booting is kept out by the wait and by the earlier
+build's rollout having finished, not by the count. The moment web's writes go
+is recorded (`wf_settings` `web_restricted_at`), so a request web appended
+just before still reads as the platform's and web may withdraw it
+(`wf_refuse_pending`). Deploy the release that records
+`web_restriction_ready` first and let it finish rolling out.
+
+## Web is the authentication boundary
+
+The separation above limits what a compromised web process can do with its
+own credentials: it holds no code-host writer, no Kubernetes writes, no
+migration or provisioning login, and it cannot decide a workflow event or
+pass one off as the platform's. It does not limit what web can do as a
+person. Web terminates every request, checks every session and names who
+asks for each action: a workflow event's `actor`, a platform operation's
+requester. The conductor rechecks that person's current authority
+(`src/workflow/event-authority.ts`, each operation's `authorize`), but it
+cannot tell whether that person really asked. A compromised web process can
+therefore do anything any signed-in person could, an administrator
+included. The application tables that authority is read from (`users`,
+`app_admins`, a change's or request's project, `apps.created_by`) stay
+writable by web for the same reason: protecting them would not stop it from
+naming an existing administrator as the actor. Closing this needs
+administrator actions authenticated outside web: a separate administrator
+service whose requests never pass through web, or a per-action proof the
+conductor verifies itself.
+
+What is not left silent is a lasting grant. `privilege_changes`
+(`src/db/migrations/privilege-changes.sql`) records every change to who is
+a platform admin, a view-only admin or a project's admin, with the database
+login that made it, when and the values before and after. Only its triggers
+write it, running as its owner. Web and the conductor may read it and
+write none of it (`EVIDENCE` in `database-role-grants.js`), and only the
+owner could disable the triggers. A grant web made is a row with web's
+login; check it after any suspected compromise:
+
+```sql
+SELECT changed_at, login, change, user_id, app_id, before, after
+  FROM privilege_changes ORDER BY changed_at DESC LIMIT 50;
+```
+
+## Release order
+
+1. Sync only bootstrap/migrator input Secrets at wave -3. Keep the existing
+   serving Secrets unchanged until the bootstrap succeeds, so an old Pod
+   can still restart during a refused or failed bootstrap.
+2. Run the bounded database bootstrap Sync hook at wave -2. It first checks
+   tenant ownership on both servers before changing any login or schema.
+   Unresolved legacy/restore ownership refuses cutover; complete the existing
+   tenant ownership migration through the approved operator procedure first.
+   Only this Job
+   imports the bootstrap Secret containing the legacy cluster-admin URLs.
+   It creates/updates logins, transfers platform object ownership, applies
+   grants and default grants, and prepares empty extension templates.
+3. Publish the shared/conductor runtime Secrets at wave -1, after successful
+   bootstrap. Argo orders Secrets before the migration Job in that wave.
+   Run ordinary migrations as the migrator. Read-only debug and
+   SQL-console role DDL uses the provisioner; object grants use the migrator.
+4. Start serving Deployments at wave 0. Startup checks both authenticated and
+   active identities, attributes, schema authority and inherited authority.
+
+The bootstrap is repeatable. Template preparation uses a unique attempt
+name and publishes the complete, locked template by atomic rename. A killed
+Job can leave an empty attempt, but the next retry can prepare a new one.
+Ordinary failures remove only their own attempt. Obsolete templates and
+interrupted empty attempts are retained for operator cleanup after draining;
+unknown databases are never adopted or deleted. The bootstrap never
+reassigns ownership cluster-wide.
+Extension objects retain their operator ownership and ACLs. Only platform
+objects in the two reviewed schemas change ownership; update
+`PLATFORM_SCHEMAS` and the real-schema test when adding a platform schema.
+
+Two bounded administrator-owned helpers remain. The maintenance database's
+role-adoption function pins administrative catalog names, serializes callers,
+is callable only by the provisioner login and can delegate only unprivileged tenant/read-only roles. It handles roles created
+by an older conductor during a rollout. The platform and preview maintenance
+databases' connection count functions expose aggregate counts, preserving connection-budget
+diagnostics without granting access to other sessions' SQL text. Neither
+function permits arbitrary SQL or accepts a caller-selected target.
+
+Untrusted extensions are installed only by bootstrap in empty, locked
+templates. Runtime copies select the template matching the source's required
+extensions and the target server's default versions. Missing preparation
+fails the copy; there is no superuser fallback. A source that gains a new
+untrusted extension requires another bootstrap before it can be copied.
+The managed statistics-extension combination is prepared in advance.
+
+## Configuration and recovery
+
+Set the six independent password values documented in `values.yaml` using
+encrypted GitOps values. Keep existing administrator passwords available only
+for the bootstrap Secret. Do not remove those encrypted values yet. With
+`secrets.create=false`, supply distinct existing conductor, migrator and
+bootstrap Secrets; the shared existing Secret must contain the web URL and
+preview reader. External Secret publishers must preserve the same ordering:
+leave active serving URLs unchanged until bootstrap succeeds, then publish
+the new runtime URLs before ordinary migration/serving rollout. Never put
+a bootstrap credential in any serving Secret.
+
+The serving env explicitly masks retained legacy administrator fields. Helm
+also replaces retained conductor URLs when the feature is disabled. Reverting
+to a legacy chart/configuration restores its former credentials; treat that
+as an explicit rollback, and do not delete the new roles or change passwords
+while a release is draining. A failed bootstrap or migration stops the new
+release before serving Pods start. Correct the failing stage and sync again;
+do not bypass the hook or change the runtime login to an administrator.
+
+Infra values, encrypted passwords and the narrow bootstrap network peers must
+land before the companion app/chart release. Older charts ignore the new
+values. An operator merges and verifies these changes; agents do not merge
+or mutate production.
+
+## Verification
+
+`tests/database-role-split-postgres.test.js` uses two explicit disposable
+PostgreSQL servers. It exercises real grants and default grants, startup
+refusals, both-server ownership preflight, interrupted template publication,
+concurrent adoption and temporary catalog-name isolation, read-only
+capability setup, primary/preview connection counts, tenant copies with
+forced RLS, a full platform preview, and a web export with a stale admin URL.
+The existing PostgreSQL 17/18 CI job supplies those servers and matching client
+tools. `tests/helm-database-roles.test.js` checks rendered effective identities,
+Secret isolation, hook order, external Secrets and disabled-feature recovery.
+
+Post-rollout checks are separate from local tests: confirm hook success and
+the exact release; verify the effective web/conductor/migrator identities and
+credential isolation, then verify a reader operation and normal workflow
+operation. Production verification must follow the operator's access policy;
+do not print passwords, database URLs or Secret contents.

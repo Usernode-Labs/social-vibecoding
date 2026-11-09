@@ -30,7 +30,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const { asTransition } = require('./lib/as-transition');
 
@@ -66,9 +65,9 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   // The stored OpenRouter catalog a current version's models are checked
   // against: GLM reads text, Opus reads images too.
   const CATALOG = [

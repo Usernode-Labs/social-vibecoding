@@ -31,6 +31,14 @@
     "text": "Unread messages from the Homeroom bot",
     "description": "Spoken name of the small count on the AI tab in the main navigation: how many messages from the Homeroom bot the person has not read."
   },
+  "tabs.unreadAiTitle_one": {
+    "text": "{{count}} unread message from the Homeroom bot",
+    "description": "Tooltip on the count badge of the Homeroom bot tab in the main navigation: how many messages from the Homeroom bot the person has not read."
+  },
+  "tabs.unreadAiTitle_other": {
+    "text": "{{count}} unread messages from the Homeroom bot",
+    "description": "Tooltip on the count badge of the Homeroom bot tab in the main navigation: how many messages from the Homeroom bot the person has not read."
+  },
   "tabs.messages": {
     "text": "Messages",
     "description": "Tab in the main navigation: opens the person's conversations with people and agents."
@@ -96,8 +104,8 @@
     "description": "Accessible name and tooltip of the cog at the foot of the desktop rail: opens Settings."
   },
   "rail.communities": {
-    "text": "Communities",
-    "description": "Heading over the person's communities in the desktop sidebar (a window 1024px or wider), above the five they opened last. A community is a group that owns projects."
+    "text": "Recents",
+    "description": "Heading over the desktop sidebar's list of communities: the ones pinned to its top, then the ones the viewer opened lately, each staying where it first arrived."
   },
   "rail.search": {
     "text": "Search your communities",
@@ -105,23 +113,15 @@
   },
   "rail.all_one": {
     "text": "All {{count}} community",
-    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in. {{count}} is how many there are (here 1)."
+    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in, shown only when they are in more than the five the sidebar lists. {{count}} is how many there are (here 1)."
   },
   "rail.all_other": {
     "text": "All {{count}} communities",
-    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in. {{count}} is how many there are."
+    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in, shown only when they are in more than the five the sidebar lists. {{count}} is how many there are."
   },
   "rail.allPlain": {
     "text": "All communities",
-    "description": "Row under the person's communities in the desktop sidebar, before their communities have loaded: opens the list of every community they are in."
-  },
-  "rail.conversations": {
-    "text": "Conversations",
-    "description": "Accessible name of the conversations nested under Messages in the desktop sidebar (a window 1024px or wider) while Messages is open: the five most recent, then All messages."
-  },
-  "rail.allMessages": {
-    "text": "All messages",
-    "description": "Last row under Messages in the desktop sidebar (a window 1024px or wider), under the five most recent conversations: opens the full list of conversations, with its search."
+    "description": "Row under the person's communities in the desktop sidebar, before their communities have loaded or when the sidebar already lists every one of them: opens the list of every community they are in."
   },
   "rail.hideSidebar": {
     "text": "Hide sidebar",
@@ -136,8 +136,8 @@
     "description": "Link shown only to keyboard users at the top of the page: moves focus to the main navigation."
   },
   "rail.pinned": {
-    "text": "Pinned",
-    "description": "Heading in the desktop sidebar (a window 768px or wider) over the communities the person pinned there, above their other communities."
+    "text": "Recents",
+    "description": "Heading over the desktop sidebar's list of communities when some are pinned to its top; the same heading as the list under it."
   },
   "rail.app": {
     "text": "App",
@@ -149,7 +149,7 @@
   },
   "rail.pin.here": {
     "text": "Pin here",
-    "description": "The dashed slot the desktop sidebar draws under Pinned while an app's tile is dragged over from My apps: dropping the tile there pins the app's community to the sidebar."
+    "description": "The dashed slot the desktop sidebar draws under Pinned while an app's tile is dragged over from Pinned apps: dropping the tile there pins the app's community to the sidebar."
   },
   "rail.pin.already": {
     "text": "Already pinned",
@@ -219,10 +219,6 @@
     "text": "Unread notifications",
     "description": "Accessible name of the number badge on the header's bell button."
   },
-  "header.communitiesSwitch": {
-    "text": "Communities: all of yours, or open one",
-    "description": "Accessible name of the header button on the Communities screen: opens the list for switching between all communities and a single one."
-  },
   "header.communities": {
     "text": "Communities",
     "description": "Title in the header on the screen that lists all of the person's communities."
@@ -266,6 +262,10 @@
   "banner.offline.text": {
     "text": "Reconnecting to Homeroom. Showing saved content",
     "description": "Banner across the top while the device cannot reach Homeroom's servers and the screens show what was saved earlier. Homeroom is the product's name. No full stop at the end."
+  },
+  "banner.restart.text": {
+    "text": "Updating Homeroom...",
+    "description": "Banner across the top for a moment while Homeroom restarts for an update; the screen reconnects by itself. Homeroom is the product's name. No full stop at the end."
   },
   "list.pair": {
     "text": "{{first}}, {{second}}",
@@ -615,13 +615,17 @@
     "text": "Your recording could not be transcribed. Your existing text is safe. Try again.",
     "description": "Dictation error for an unsuccessful transcription request."
   },
-  "header.drawer.toCommunities": {
-    "text": "Back to your communities",
-    "description": "On a phone, the header's back arrow while a community's places are on screen: slides back to the list of all the person's communities."
+  "header.drawer.toHub": {
+    "text": "Back to {{community}}'s Hub",
+    "description": "On a phone, the header's back arrow on one of a community's places (Needs you, Workshop, a channel): goes up to the community's Hub, the page that leads to all of them. {{community}} is the community's name. Its accessible name and tooltip."
   },
-  "header.drawer.toPlaces": {
-    "text": "Back to {{community}}'s places",
-    "description": "On a phone, the header's back arrow on a community's page: slides back to that community's places (Hub, Needs you, Workshop, its channels). {{community}} is the community's name."
+  "header.drawer.toPlace": {
+    "text": "Back to {{place}}",
+    "description": "On a phone, the header's back arrow on a page under one of a community's places (All items, under the Workshop): goes up to that place. {{place}} is the place's name, such as Workshop. Its accessible name and tooltip."
+  },
+  "header.drawer.toBot": {
+    "text": "Back to the list",
+    "description": "On a phone, the header's back arrow in Main Chat, the person's private chat with Homeroom bot: slides back to the Homeroom bot tab's list of what needs them and what is in progress. Its accessible name and tooltip."
   },
   "header.drawer.messages": {
     "text": "Messages",
@@ -630,5 +634,229 @@
   "header.drawer.toMessages": {
     "text": "Back to your messages",
     "description": "On a phone, the header's back arrow in a conversation: slides back to the list of the person's conversations."
+  },
+  "work.stage.reading": {
+    "text": "Reading it",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: Homeroom bot, the platform's builder bot, is reading the request, or it waits to be read."
+  },
+  "work.stage.notStarted": {
+    "text": "Not started yet",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: nobody has started on the request yet: it waits in Homeroom bot's line, or for anyone to pick it up."
+  },
+  "work.stage.readyToBuild": {
+    "text": "Ready to build",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: Homeroom bot read it and will build it, but it waits its turn among the project's builds."
+  },
+  "work.stage.planning": {
+    "text": "Planning",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: Homeroom bot is writing its plan for the request."
+  },
+  "work.stage.waitingForYou": {
+    "text": "Waiting for you",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: it is the requester's move (shown to them)."
+  },
+  "work.stage.building": {
+    "text": "Building",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: the change for it is being built."
+  },
+  "work.stage.checking": {
+    "text": "Checking",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change's tests are running, or some failed."
+  },
+  "work.stage.upForVote": {
+    "text": "Up for a vote",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change is waiting for the group's votes."
+  },
+  "work.stage.goingLive": {
+    "text": "Going live",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change was approved and is being put live."
+  },
+  "work.stage.live": {
+    "text": "Live",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change is live."
+  },
+  "work.stage.stopped": {
+    "text": "Stopped",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: Homeroom bot stopped working on it; a person can start it again."
+  },
+  "work.stage.closed": {
+    "text": "Closed",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: the request or the change was closed."
+  },
+  "work.why.question": {
+    "text": "Waiting for your answer",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Shown to the requester: Homeroom bot asked them a question and waits for the answer."
+  },
+  "work.why.plan": {
+    "text": "Waiting for you to OK the plan",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Shown to the requester: Homeroom bot wrote a plan and waits for them to say build it."
+  },
+  "work.why.decide": {
+    "text": "Waiting for you to decide",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Shown to the requester: Homeroom bot handed it back because a person must decide what to do."
+  },
+  "work.why.alreadyWorks": {
+    "text": "It may already work: close it?",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Shown to the requester: Homeroom bot found that what was asked for is already there, so it can be closed."
+  },
+  "work.why.needsDetail": {
+    "text": "Waiting for more detail from you",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Shown to the requester: Homeroom bot could not tell what to build and needs more detail."
+  },
+  "work.whyOthers.question": {
+    "text": "Waiting for an answer",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Shown to someone other than the requester: Homeroom bot asked the requester a question."
+  },
+  "work.whyOthers.plan": {
+    "text": "Waiting for the plan to be OK'd",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Shown to someone other than the requester: Homeroom bot's plan waits for the requester's go-ahead."
+  },
+  "work.whyOthers.decide": {
+    "text": "Waiting for a decision",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Shown to someone other than the requester: a person must decide what to do with it."
+  },
+  "work.whyOthers.alreadyWorks": {
+    "text": "It may already work",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Shown to someone other than the requester: Homeroom bot found what was asked for already there."
+  },
+  "work.whyOthers.needsDetail": {
+    "text": "Waiting for more detail",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Shown to someone other than the requester: Homeroom bot needs more detail to build it."
+  },
+  "work.reason.buildFailed": {
+    "text": "Stopped: the build didn't finish",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Homeroom bot's build of it did not finish."
+  },
+  "work.reason.fixStopped": {
+    "text": "Stopped: its tests still fail",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Homeroom bot stopped fixing its change's failing tests, at its own limit."
+  },
+  "work.reason.lookFailed": {
+    "text": "Stopped: it couldn't be read",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Homeroom bot's read of the request failed."
+  },
+  "work.reason.changeClosed": {
+    "text": "Stopped: its change was closed",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). the change made for the request was closed while the request is still open."
+  },
+  "work.reason.stalled": {
+    "text": "Stopped: the build didn't start",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). the build was queued but never started."
+  },
+  "work.line.queued": {
+    "text": "Waiting its turn",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: it waits in Homeroom bot's line on its project."
+  },
+  "work.line.firstVersionWait": {
+    "text": "Waiting for the first version to go live",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, a request's page, a project's chat, the bell). The second line under Not started yet: the request was filed while its project's first version is not live yet, and Homeroom bot starts on it as soon as that version goes live."
+  },
+  "work.line.queuedAt": {
+    "text": "Number {{place}} in line",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: its place in Homeroom bot's line on its project. {{place}} is a number, 1 for next."
+  },
+  "work.line.heldBuilds": {
+    "text": "Waiting for one of the project's builds to finish",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: ready to build, but the project's builds are all under way."
+  },
+  "work.line.heldWaiting": {
+    "text": "Waiting for changes up for a vote to be decided",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: ready to build, but the project's changes waiting for votes hold its slots."
+  },
+  "work.line.onHold": {
+    "text": "On hold until Monday: this week's building time is used up",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: the project's building time for the week is used up."
+  },
+  "work.line.cooldown": {
+    "text": "Paused after repeated errors: Homeroom bot tries again later",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot's tries at reading the request failed several times in a row, so it waits a day before trying again. Nothing to do with building time."
+  },
+  "work.line.reply": {
+    "text": "Reading your reply",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot is reading what the person replied."
+  },
+  "work.line.retryPlan": {
+    "text": "Trying the plan again",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: the plan could not be written, and Homeroom bot is trying again."
+  },
+  "work.line.reviewing": {
+    "text": "Reviewing, round {{round}} of {{of}}",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot reviews its own change before putting it up. {{round}} and {{of}} are numbers."
+  },
+  "work.line.starting": {
+    "text": "Starting",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: the build is starting."
+  },
+  "work.line.proposing": {
+    "text": "Putting it up for a vote",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: the change is being put up for the group's vote."
+  },
+  "work.line.fixing": {
+    "text": "Fixing what its tests found",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot is fixing its change's failing tests."
+  },
+  "work.line.revising": {
+    "text": "Updating the change",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: the change is being updated with what was asked for."
+  },
+  "work.line.updateQueued": {
+    "text": "An update is on its way",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: an update to the change waits its turn, so the vote waits for it."
+  },
+  "work.line.checksFailing": {
+    "text": "Tests are failing",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: some of its change's tests failed."
+  },
+  "work.line.checksFailingCount_one": {
+    "text": "{{count}} test failing",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: how many of its change's tests failed. {{count}} is a number."
+  },
+  "work.line.checksFailingCount_other": {
+    "text": "{{count}} tests failing",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: how many of its change's tests failed. {{count}} is a number."
+  },
+  "work.line.checksRunning_one": {
+    "text": "About {{count}} min left",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Checking: about how long its tests have left, from the same estimate its Testing card shows. {{count}} is a number of minutes, at least 1."
+  },
+  "work.line.checksRunning_other": {
+    "text": "About {{count}} min left",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Checking: about how long its tests have left, from the same estimate its Testing card shows. {{count}} is a number of minutes, at least 1."
+  },
+  "work.line.syncWait": {
+    "text": "Waiting to sync with main",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Checking: the change conflicts with main, so its tests wait until it is synced, and nobody is asked to vote on it yet."
+  },
+  "work.line.firstVersion": {
+    "text": "First version: it goes live without a vote",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: a project's first version is put live once its tests pass, with no vote."
+  },
+  "work.line.claimed": {
+    "text": "{{username}} is building it",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: a person pressed Claim on the request. {{username}} is their username."
+  },
+  "work.line.planningWithYou": {
+    "text": "Planning it with you in a private thread",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: the requester is shaping the plan with Homeroom bot in a thread of their own."
+  },
+  "work.line.waiting": {
+    "text": "Waiting to be read",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: nobody has started on it yet."
+  },
+  "work.line.said": {
+    "text": "Homeroom bot: {{reason}}",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot's own one-line reason. {{reason}} is its sentence, already in the person's language or English."
+  },
+  "rail.pin.keepTop": {
+    "text": "Keep {{name}} at the top of Recents",
+    "description": "Accessible name of the pin button on a row of the desktop sidebar's Recents. {{name}} is the community's name."
+  },
+  "rail.pin.unpinTop": {
+    "text": "Unpin {{name}} from the top of Recents",
+    "description": "Accessible name of the pin button on a pinned row of the desktop sidebar's Recents. {{name}} is the community's name."
+  },
+  "header.drawer.toHome": {
+    "text": "Back to Home",
+    "description": "Accessible name of the back button in the header on a community's Hub on a phone: returns to Home, where the viewer's communities are."
   }
 }

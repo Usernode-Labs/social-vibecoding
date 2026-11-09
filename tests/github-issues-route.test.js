@@ -225,7 +225,7 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 18 appended mocks (900008 joined in #556, 900009 in
+    // 5 live issues + 21 appended mocks (900008 joined in #556, 900009 in
     // #617, 900010 in #683, 900011/900012 in #1010 as the targets of the
     // applying / retry-pending mock close proposals, 900013 with the
     // card-as-pointer revision — the deliberately BARE row, which the
@@ -236,8 +236,24 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     // mock proposal 9000013 links to, so "an issue with an open proposal
     // is still on the board" is reviewable without any other work state
     // muddying it, and 900018 for the request the Homeroom bot is building,
-    // which carries a synthetic `bot` and nothing else).
-    assert.strictEqual(body.issues.length, 23);
+    // which carries a synthetic `bot` and nothing else, and 9103 for #6213,
+    // the request the bot handed back to a person whose discussion carries
+    // the seeded note and its suggested replies, and 9107 for #6264, the
+    // request whose discussion carries the bot's promise to tell someone
+    // when the update was in and the line it posted when it was, and 9112
+    // for #6399, the request whose hand-back reason a later release lifted,
+    // and 9114/9115 for #6211, the pair whose discussions show the overlap
+    // note, its three choices and the line saying what was chosen).
+    assert.strictEqual(body.issues.length, 28);
+
+    // #6399: and opened by its address, as the shots do, the request whose
+    // hand-back reason a later release lifted is there without ?demo=1.
+    const lifted = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/9112`);
+    assert.strictEqual(lifted.status, 200);
+    assert.strictEqual(
+      (await lifted.json()).issue.title,
+      'Staging demo: a request handed back over a plan the bot could not read',
+    );
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');
@@ -472,6 +488,9 @@ test('myPrSessionId is populated from the viewer proposal session lookup', async
     assert.ok(prSql, 'Create-PR session query was issued');
     assert.match(prSql, /user_id = \$2/);
     assert.match(prSql, /status <> 'archived'/);
+    // #6385: the viewer's posted plan is not their session (unaliased here,
+    // this query reads chat_sessions directly).
+    assert.match(prSql, /AND NOT \(source IS NOT DISTINCT FROM 'request_spec' AND branch_name IS NULL\)/);
     assert.deepStrictEqual(prParams, [1, 7]); // [app.id, req.user.id]
   } finally {
     poolQueryHandler = async () => ({ rows: [] });
@@ -924,6 +943,9 @@ test('in_progress session query filters to live rows only (status + paused windo
     assert.match(ipSql, /status IN \('active','promoted','merging'\)/);
     assert.match(ipSql, /status = 'paused'/);
     assert.match(ipSql, /make_interval\(days => \$2\)/);
+    // #6385: a person's posted plan (a planning record with no branch) is
+    // not work, the rule issue-proposal-ref.js already applies.
+    assert.match(ipSql, /AND NOT \(cs\.source IS NOT DISTINCT FROM 'request_spec' AND cs\.branch_name IS NULL\)/);
     assert.deepStrictEqual(ipParams, [1, 7]); // [app.id, IN_PROGRESS_PAUSED_WINDOW_DAYS]
   } finally {
     poolQueryHandler = async () => ({ rows: [] });
@@ -974,6 +996,58 @@ test('in_progress serializes count/users/mine and targets the viewer\'s own sess
     for (const n of [1, 3, 4, 5]) {
       assert.strictEqual(byNumber.get(n).in_progress, null, `#${n} not in progress`);
     }
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+// #6385: posting a plan on a request writes a `chat_sessions` row with
+// source 'request_spec', no branch, paused (request-specs.js). That record is
+// not work on the request, so it is neither in_progress nor the viewer's own
+// session — the page then offers a start instead of "Continue your work".
+// A planning record that carries a branch still counts.
+test('a request whose only linked session is a branchless planning record shows no work in progress', async () => {
+  const PLANNING = {
+    n: 1, id: 70, user_id: 7, status: 'paused', shared_at: null,
+    last_activity_at: '2026-06-12T00:00:00Z', created_at: '2026-06-11T00:00:00Z',
+    username: 'tester', source: 'request_spec', branch_name: null,
+  };
+  const REAL = { ...PLANNING, n: 2, id: 71, status: 'active', branch_name: 'dev/x' };
+  const rows = [PLANNING, REAL];
+  // The mock applies each query's own exclusion, so the assertions below fail
+  // as the page would if either query stopped carrying it.
+  const excluded = (s) => /AND NOT \((cs\.)?source IS NOT DISTINCT FROM 'request_spec' AND (cs\.)?branch_name IS NULL\)/.test(s);
+  const live = (s) => rows.filter((r) => !(excluded(s) && r.source === 'request_spec' && r.branch_name === null));
+  let ipSql = null;
+  let prSql = null;
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/UNNEST\(cs\.linked_issues\)/.test(s)) {
+      ipSql = s;
+      return { rows: live(s) };
+    }
+    if (/created_from_issue_number IS NOT NULL/.test(s)) {
+      prSql = s;
+      return { rows: live(s).map((r) => ({ n: r.n, id: r.id })) };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    const byNumber = new Map(body.issues.map((i) => [i.number, i]));
+
+    assert.ok(ipSql && prSql, 'both session reads were issued');
+    assert.strictEqual(byNumber.get(1).in_progress, null, 'a posted plan is not work in progress');
+    assert.strictEqual(byNumber.get(1).myPrSessionId, null, 'and not the viewer\'s own session');
+    // A planning record that carries a branch is real work, as before.
+    assert.strictEqual(byNumber.get(2).in_progress.count, 1);
+    assert.deepStrictEqual(byNumber.get(2).in_progress.users, ['tester']);
+    assert.strictEqual(byNumber.get(2).myPrSessionId, 71);
   } finally {
     poolQueryHandler = async () => ({ rows: [] });
     server.close();

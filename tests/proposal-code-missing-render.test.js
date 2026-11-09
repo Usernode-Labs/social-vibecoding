@@ -154,8 +154,8 @@ test('the Workshop row says it as its red tag, with the sentence as its tooltip'
   const brief = AppView._workshopBrief('proposal', PR(), card);
   const bad = brief.tags.filter((t) => t.tone === 'bad');
   assert.deepEqual(JSON.parse(JSON.stringify(bad)), [{ label: 'Code missing', tone: 'bad', title: SENTENCE }]);
-  const { lineTags } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
-  assert.equal(lineTags(brief, card).ranked[0].label, 'Code missing', 'first on the row: what is wrong leads');
+  // (5 Nov 2026: Your work's one-line rows, which ranked it first on their
+  // tags line, went with Your work; the board's rows draw the brief's tags.)
 });
 
 test('the change\'s page: the notice above Votes and Testing, in the project page\'s amber', () => {

@@ -1,6 +1,10 @@
 import { useSyncExternalStore } from 'react';
 
 import { t } from '../../lib/i18n/runtime';
+import { ACTION_OUTBOX_EVENT, actionOutbox, type ActionOutcome } from '../../lib/action-outbox';
+import { KEPT_DRAW_MS } from '../../lib/kept-copies';
+import { isOffline, probe } from '../../lib/offline';
+import { botTabAddress, botTabFromMessages, goBotAddress, knownBotConversation, noteBotConversation, openBotTab } from '../ai/door';
 import { navStore } from '../nav/nav-store.js';
 import { messagesDrawerApplies } from '../nav-drawer/messages-drawer';
 import * as api from './api';
@@ -8,6 +12,8 @@ import { WORK_CHANGED_EVENT, inMainStream, openAppTarget, threadsAllowed } from 
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
 import { type AppDiscussion, type InboxSection } from './inbox';
+import { MAX_UNSENT, messagesOutbox, type PendingSend, type UnsentState } from './outbox';
+import { openRequestPage, requestPageOf, type RequestPage } from './request-page';
 import { markFor } from './unread-anchor';
 import type {
   ConversationDetail,
@@ -16,6 +22,8 @@ import type {
   ConversationMessage,
   ConversationSummary,
   HomeroomBotAction,
+  MessageAttachment,
+  MessageReaction,
   MessagesAgentThread,
   MessagesSnapshot,
   ReplyThreadState,
@@ -25,16 +33,6 @@ import type {
 
 const MAX_ID = 2_147_483_647;
 
-interface PendingSend {
-  content: string;
-  replyToId?: number;
-  /** #2387: a reply inside this thread rather than the conversation's own transcript. */
-  threadRootId?: number;
-  attachmentIds?: string[];
-  object?: SharedObjectReference;
-  idempotencyKey: string;
-}
-
 /**
  * A name on the typing line. The line shows each name once, as it always has:
  * two people shown by the same word are one entry, and that word leaves when
@@ -42,10 +40,118 @@ interface PendingSend {
  * the stand-in for a member with no username; it is worked out from who is
  * typing under the word now, so it leaves with that person.
  */
-export interface Typist { name: string; unnamed: boolean }
+export interface Typist {
+  name: string;
+  unnamed: boolean;
+  /**
+   * 1 Nov 2026: the Homeroom bot, whose typing is drawn as its working card
+   * at the transcript's foot (./bot-working.tsx), not as a name on the line.
+   */
+  bot?: boolean;
+  /** What the bot says it is doing now (its typing event's `doing`); null while it thinks. */
+  doing?: BotDoing | null;
+  /**
+   * 4 Nov 2026 (#6302): the answer written so far, held across the doing
+   * changes that follow it (a tool step, a wordless "thinking"), so the card
+   * does not drop the words and draw them again as each round streams. It
+   * goes with the entry when the typing stops, or when a newer answer
+   * replaces it.
+   */
+  draft?: string;
+}
+
+/**
+ * 1 Nov 2026: what the Homeroom bot is doing as it answers, as its typing
+ * event carries it (services/homeroom-bot-dm.js typingDoing): a kind and
+ * what it names. The words are this screen's (./bot-working.tsx).
+ */
+export interface BotDoing {
+  kind: string;
+  number?: number;
+  project?: string;
+  /** Homeroom bot parity, P1: the answer so far, while it is written (kind 'writing'). */
+  text?: string;
+  /**
+   * #6405: where `text` starts in the whole answer, when the server sent only
+   * its newest part (kind 'writing'). Absent when `text` is all of it.
+   */
+  from?: number;
+}
+
+/** The longest answer-so-far a working card shows (the server sends its newest 1800 characters). */
+export const MAX_BOT_DRAFT_CHARS = 2000;
+
+/** #6405: the most of an answer the card holds, the server's own reply limit (homeroom-bot-mayor.js MAX_REPLY_CHARS). */
+export const MAX_BOT_HELD_DRAFT_CHARS = 8000;
+
+/** The `doing` of a typing event, or null: only a kind word, a request number, a short name, and the answer being written. */
+export function botDoingOf(raw: unknown): BotDoing | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as Record<string, unknown>;
+  const kind = typeof value.kind === 'string' && /^[a-z_]{1,32}$/.test(value.kind) ? value.kind : null;
+  if (!kind) return null;
+  const number = Number(value.number);
+  const project = typeof value.project === 'string' ? value.project.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+  const text = kind === 'writing' && typeof value.text === 'string' ? value.text.trim().slice(-MAX_BOT_DRAFT_CHARS) : '';
+  // #6405: where a cut answer's newest words start in the whole answer.
+  const from = kind === 'writing' && Number.isSafeInteger(value.from) && Number(value.from) > 0 ? Number(value.from) : null;
+  return {
+    kind,
+    ...(Number.isSafeInteger(number) && number > 0 ? { number } : {}),
+    ...(project ? { project } : {}),
+    ...(text ? { text } : {}),
+    ...(text && from !== null ? { from } : {}),
+  };
+}
+
+/**
+ * 4 Nov 2026 (#6302): the Homeroom bot's entry on the typing line, from what
+ * its newest event says, with the answer written so far kept from `prior`
+ * unless this event writes a newer one. The server names a new doing as each
+ * tool step starts (and sends none while it thinks), so building the entry
+ * from the event alone erased the draft between rounds and the card flashed
+ * between its words and "Thinking"/"Reading request #…". The draft leaves
+ * with the entry when typing stops, which is also when the bot's message
+ * takes the card's place.
+ *
+ * #6405: the answer only ever grows. A tail the server cut from part-way
+ * through is stitched under the words already held (`from`), so the card
+ * keeps the answer's first word instead of sliding its opening with every
+ * update; and a shorter rewrite (the correction pass's "Ref", at first)
+ * leaves the fuller answer up until it overtakes it. A step with no words of
+ * its own keeps the last one named, rather than dropping back to "Thinking".
+ */
+export function botTypist(prior: Typist | undefined, shown: string, doing: BotDoing | null): Typist {
+  const priorDraft = prior?.draft || '';
+  let draft = priorDraft;
+  const written = doing?.kind === 'writing' && doing.text ? doing.text : '';
+  if (written) {
+    const from = typeof doing?.from === 'number' ? doing.from : null;
+    if (from !== null && priorDraft.length >= from) {
+      // A cut tail continues the answer held.
+      draft = priorDraft.slice(0, from) + written.replace(/^…\s*/, '');
+    } else if (from !== null && priorDraft.length >= MAX_BOT_HELD_DRAFT_CHARS) {
+      // Past what the card holds: keep all of it, rather than drop to a tail.
+      draft = priorDraft;
+    } else {
+      // A whole answer, or one whose tail starts past what this reader has.
+      draft = written;
+    }
+    // Never shrink: a rewrite shorter than the words held, and the start of
+    // them, leaves the held words in place.
+    if (priorDraft && draft.length < priorDraft.length && priorDraft.startsWith(draft)) draft = priorDraft;
+    draft = draft.slice(0, MAX_BOT_HELD_DRAFT_CHARS);
+  }
+  // The furthest step named this turn, kept through a wordless one.
+  const held = doing ?? prior?.doing ?? null;
+  return { name: shown, unnamed: false, bot: true, doing: held, ...(draft ? { draft } : {}) };
+}
 
 interface InternalState extends MessagesSnapshot {
-  typing: Record<number, Typist[]>;
+  // By composer scope (scopeKey): a conversation's main stream under its id,
+  // a thread under `<id>:t<root>` (31 Oct 2026: typing in a thread is drawn
+  // in that thread's pane).
+  typing: Record<ComposerScope, Typist[]>;
 }
 
 type Listener = () => void;
@@ -103,23 +209,49 @@ function scopeThread(scope: ComposerScope): number | null {
 
 const drafts = new Map<ComposerScope, string>();
 const replyTargets = new Map<ComposerScope, ConversationMessage>();
-const pendingByConversation = new Map<number, PendingSend[]>();
 /*
  * THE SENDER'S OWN ROWS OUTLIVE A REFRESH (#2907). A send draws its message
- * at once, faded, and nothing else: no spinner, no "sending…" line. The
- * realtime echo of that same send re-reads the thread, and the page it reads
- * back must not take the row away (it is still in flight) nor draw it twice
- * (the server already has it). `unsent` holds each local row's payload by its
- * client key — what a failed row's Retry sends again, under the same
- * idempotency key so the server never stores it twice — and `sentKeys` maps a
- * confirmed server id back to the client key the row was drawn under, so the
- * row keeps its React key and is updated in place rather than remounted.
- * `after` is the newest server id the transcript held when the row was drawn:
- * the server's copy of that send can only be newer (withLocalRows).
+ * at once, faded. The realtime echo of that same send re-reads the thread,
+ * and the page it reads back must not take the row away (it is still in
+ * flight) nor draw it twice (the server already has it). `unsent` holds each
+ * local row by its client key: its payload, which a failed row's Retry sends
+ * again under the same idempotency key so the server never stores it twice,
+ * and the row itself as last drawn. `sentKeys` maps a confirmed server id back
+ * to the client key the row was drawn under, so the row keeps its React key
+ * and is updated in place rather than remounted. `after` is the newest server
+ * id the transcript held when the row was drawn: the server's copy of that
+ * send can only be newer (withLocalRows).
+ *
+ * AND THEY OUTLIVE THE SCREEN (offline test, 2 Nov 2026, finding 1). A
+ * message sent on a network that connects but passes nothing looked sent and
+ * then vanished: the transcript was the only place its row was kept, so
+ * opening the conversation again, or any re-read that started from an empty
+ * one, dropped it. Every page read now draws its conversation's unsent rows
+ * from here, in the order they were written, until the server confirms each
+ * or the sender discards it; and each one written on a row is kept on the
+ * device too (./outbox.ts), so a reload brings it back.
  */
-const unsent = new Map<string, { conversationId: number; payload: PendingSend; after: number }>();
+interface LocalSend {
+  conversationId: number;
+  payload: PendingSend;
+  after: number;
+  /** The row as last drawn, with its state's flags (rowIn). */
+  row: ConversationMessage;
+  state: UnsentState;
+  /**
+   * Drawn on a row the sender can see. An answer tapped on a moment of the
+   * chat with Homeroom bot whose thread is not open has none (send
+   * `anyThread`): it is sent once, never queued or kept, and a failure is
+   * the caller's to say.
+   */
+  drawn: boolean;
+  /** The account that wrote it; 0 when none was signed in, and then it is not kept. */
+  viewer: number;
+  savedAt: number;
+}
+const unsent = new Map<string, LocalSend>();
 const sentKeys = new Map<number, string>();
-const typingSentAt = new Map<number, number>();
+const typingSentAt = new Map<ComposerScope, number>();
 const typingExpiry = new Map<string, number>();
 /**
  * #4220: a "stopped typing" that waits for its message. The bot sends its
@@ -132,7 +264,7 @@ const typingExpiry = new Map<string, number>();
  * key) until that read publishes, and never longer than TYPING_HOLD_MS.
  */
 const landing = new Map<number, number>();
-const heldTyping = new Map<string, { conversationId: number; shown: string }>();
+const heldTyping = new Map<string, { conversationId: number; scope: ComposerScope; shown: string }>();
 /**
  * Who is typing under each shown word: `conversationId:word` to user id to
  * whether that person has no username. The word is the stand-in only while
@@ -271,7 +403,20 @@ function errorMessage(error: unknown, fallback: string): string {
     if (error.status === 429) return t('messages:store.error.tooFast');
     return error.message || fallback;
   }
-  return error instanceof Error && error.message ? error.message : fallback;
+  // Anything but the server's answer is said in the screen's own words, never
+  // as the exception: offline, the browser's was "FetchEvent.respondWith
+  // received an error: TypeError: Load failed", drawn in red (offline test,
+  // 2 Nov 2026).
+  return fallback;
+}
+
+/**
+ * Whether a read failed without an answer from the server: offline, a
+ * connection that dropped, a read given up on, the service worker's own
+ * failure. Every answer, a refusal or a server error, is a MessagesApiError.
+ */
+function unreachable(error: unknown): boolean {
+  return !(error instanceof api.MessagesApiError);
 }
 
 /** The sections that can fold from their headings: the bot's never does. */
@@ -412,6 +557,39 @@ function channelToHub(): boolean {
   return true;
 }
 
+/**
+ * The person's chat with Homeroom bot, when anything has said which it is:
+ * the list, the conversation on screen, or the bot tab that opened it.
+ */
+function botConversationId(): number | null {
+  return state.conversations.find((item) => item.homeroomBot && item.kind !== 'channel')?.id
+    || (state.active?.homeroomBot && state.active.kind !== 'channel' ? state.active.id : null)
+    || knownBotConversation();
+}
+
+/**
+ * 1 Nov 2026: the conversation on this screen turned out to be the chat with
+ * Homeroom bot (its detail or the list landed), which is its tab's alone
+ * (../ai/door.ts): take the reader there, at the thread or the message the
+ * address named, replacing the address. The router does the same at once
+ * when it already knows; this is a cold link's half, as channelToHub is.
+ */
+function botToTab(): boolean {
+  if (typeof window === 'undefined' || !state.route.open || state.route.embedded) return false;
+  const conversationId = state.route.conversationId;
+  if (!conversationId || conversationId !== botConversationId()) return false;
+  if (!new RegExp(`^#messages/${conversationId}(?:/|$)`).test(window.location.hash)) return false;
+  const href = botTabAddress({ threadRootId: state.route.threadRootId, focusMessageId: state.route.focusMessageId });
+  try {
+    history.replaceState(null, '', `${window.location.pathname}${window.location.search}${href}`);
+  } catch {
+    window.location.replace(href);
+    return true;
+  }
+  (window as { App?: { restoreFromHash?: () => void } }).App?.restoreFromHash?.();
+  return true;
+}
+
 function resolvePendingChannel(): void {
   if (!pendingChannel || typeof window === 'undefined') return;
   const found = channels().find((item) => item.handle === pendingChannel);
@@ -460,6 +638,12 @@ export async function loadConversations(force = false): Promise<void> {
   if (state.listLoaded && !force) return;
   const request = ++listRequest;
   publish({ loadingList: true, error: null, demo: browserDemo() });
+  // Nothing on screen and no answer yet: the list this device kept, while
+  // the read goes on (kept-copies.ts KEPT_DRAW_MS). Its answer replaces it.
+  const early = setTimeout(() => {
+    if (request !== listRequest || !state.loadingList || state.conversations.length) return;
+    if (drawKeptList()) slowRead();
+  }, KEPT_DRAW_MS);
   try {
     // A forced read follows a change, so it asks the server (api.ts ReadOptions).
     const conversations = await api.listConversations({ fresh: force });
@@ -471,18 +655,58 @@ export async function loadConversations(force = false): Promise<void> {
       listLoaded: true,
       online: true,
     });
+    noteBotConversation(conversations.find((item) => item.homeroomBot && item.kind !== 'channel')?.id);
     resolvePendingChannel();
     channelToHub();
+    botToTab();
   } catch (error) {
     if (request !== listRequest) return;
+    const online = typeof navigator === 'undefined' ? true : navigator.onLine;
+    // A read with no answer (offline test, 2 Nov 2026) keeps the list on
+    // screen, or draws the one this device kept (api.ts keptConversations),
+    // and says nothing over it: the shell's own banner says it is offline.
+    // With neither, it says so in words, with Try again. A server that is
+    // down draws the kept one too, as an open does (loadThread); any other
+    // answer is the server's word.
+    const noAnswer = unreachable(error);
+    const answered = error instanceof api.MessagesApiError && error.status < 500;
+    if (!answered && !state.conversations.length && drawKeptList(online)) return;
     publish({
       loadingList: false,
       listLoaded: true,
-      online: typeof navigator === 'undefined' ? true : navigator.onLine,
-      error: errorMessage(error, t('messages:store.error.loadList')),
+      online,
+      error: !noAnswer ? errorMessage(error, t('messages:store.error.loadList'))
+        : state.conversations.length ? null : t('messages:store.error.unreachableList'),
     });
     resolvePendingChannel();
+  } finally {
+    clearTimeout(early);
   }
+}
+
+/**
+ * Draw the conversation list this device kept (api.ts keptConversations).
+ * True when there was one to draw. `online` is the browser's word, kept on
+ * the state as an answered read sets it.
+ */
+function drawKeptList(online = state.online): boolean {
+  const kept = api.keptConversations?.();
+  if (!kept) return false;
+  publish({ conversations: sortConversations(kept), loadingList: false, listLoaded: true, online, error: null });
+  noteBotConversation(kept.find((item) => item.homeroomBot && item.kind !== 'channel')?.id);
+  resolvePendingChannel();
+  channelToHub();
+  botToTab();
+  return true;
+}
+
+/**
+ * A read drew its kept copy before it was answered: ask the connectivity
+ * probe now rather than when the read gives up, so a network that carries
+ * nothing raises the shell's "showing saved content" banner within seconds.
+ */
+function slowRead(): void {
+  if (!isOffline()) void probe();
 }
 
 /**
@@ -545,12 +769,7 @@ function pageSize(conversation: Pick<ConversationDetail, 'homeroomBot'> | null):
   return conversation?.homeroomBot === true ? 100 : 50;
 }
 
-/**
- * `offlineCopy` is the retry of an open whose read from the server failed
- * (#4243): the one read that takes the service worker's offline copy while
- * the browser says it is online.
- */
-export async function loadThread(conversationId: number, force = false, offlineCopy = false): Promise<void> {
+export async function loadThread(conversationId: number, force = false): Promise<void> {
   if (!validId(conversationId)) return;
   if (leftConversations.has(conversationId)) {
     threadRequest += 1;
@@ -593,10 +812,18 @@ export async function loadThread(conversationId: number, force = false, offlineC
   // offline copy is the last visit's transcript: on a read slower than the
   // worker's second it was drawn, and the newest messages snapped in under
   // the reader when the worker's correction came. The skeleton stays a beat
-  // longer instead. Offline, or once that read has failed, the open takes
-  // the copy (`offlineCopy`, from the catch below).
-  const fresh = force || (!offlineCopy && !browserOffline());
+  // longer instead. An open that gets no answer draws the copy this device
+  // kept: two seconds in (`early`, below), or when it fails (the catch).
+  const fresh = force || !browserOffline();
   const read = { fresh };
+  // An open with nothing drawn and no answer yet draws the copy this device
+  // kept, while the read goes on (kept-copies.ts KEPT_DRAW_MS); the answer
+  // replaces it. Not a refresh of what is on screen, and not a message
+  // link's open: the copy is the newest page, not the window the link asks for.
+  const early = preserveVisibleThread || focus ? null : setTimeout(() => {
+    if (request !== threadRequest || !state.loadingThread || state.messages.length) return;
+    if (drawKeptThread(conversationId)) slowRead();
+  }, KEPT_DRAW_MS);
   try {
     // Invitation metadata is deliberately readable before acceptance, but
     // retained history is not. Resolve membership first and never request
@@ -616,6 +843,14 @@ export async function loadThread(conversationId: number, force = false, offlineC
     if (active.kind === 'channel' && state.route.open && !state.route.embedded) {
       publish({ active });
       if (channelToHub()) return;
+    }
+    // 1 Nov 2026: and the chat with Homeroom bot to its tab, the same way.
+    if (active.homeroomBot && active.kind !== 'channel') {
+      noteBotConversation(active.id);
+      if (state.route.open && !state.route.embedded) {
+        publish({ active });
+        if (botToTab()) return;
+      }
     }
     const member = active.membershipStatus === 'member';
     const anchor = focus || reading;
@@ -669,22 +904,80 @@ export async function loadThread(conversationId: number, force = false, offlineC
   } catch (error) {
     if (request !== threadRequest) return;
     // An open that failed on the network or the server, not with an answer
-    // like a 404, reads again and takes the offline copy (#4243).
+    // like a 404, draws the conversation as this device kept it (offline
+    // test, 2 Nov 2026). It used to read again for the service worker's
+    // offline copy (#4243), which these reads no longer have: they answer
+    // `private, no-store` (api.ts ReadOptions).
     const answered = error instanceof api.MessagesApiError && error.status < 500;
-    if (fresh && !force && !answered) {
-      await loadThread(conversationId, false, true);
-      return;
-    }
+    if (!answered && !preserveVisibleThread && drawKeptThread(conversationId)) return;
+    const noAnswer = unreachable(error);
     publish({
-      // A failed open says so on its own, as it did before the inbox row
-      // stood in: no header or composer for a conversation that did not load.
-      ...(preserveVisibleThread ? {} : { active: null }),
+      // A failed open says so on its own, with no composer under it
+      // (index.tsx). With no answer at all, the conversation is still named
+      // in the header, as the inbox (or its kept copy) knows it: the reader
+      // tapped a person's name, and a blank header read as a broken screen
+      // (offline test, 2 Nov 2026). An answer, a 404 or a server error,
+      // takes the header away as it did before.
+      ...(preserveVisibleThread ? {} : { active: noAnswer ? listedConversation(conversationId) : null }),
       loadingThread: false,
-      threadError: errorMessage(error, t('messages:store.error.loadThread')),
+      threadError: noAnswer ? t('messages:store.error.unreachableThread') : errorMessage(error, t('messages:store.error.loadThread')),
       // A 404 is an answer, not a failure: trying again reads the same one.
       threadGone: error instanceof api.MessagesApiError && error.status === 404 ? 'missing' : null,
     });
+  } finally {
+    if (early) clearTimeout(early);
   }
+}
+
+/** The conversation as the inbox knows it, or as this device kept it; null when neither does. */
+function listedConversation(conversationId: number): ConversationDetail | null {
+  return state.conversations.find((item) => item.id === conversationId)
+    || api.keptConversation?.(conversationId)?.detail
+    || api.keptConversations?.()?.find((item) => item.id === conversationId)
+    || null;
+}
+
+/**
+ * Draw a conversation from the copy this device kept of it (api.ts
+ * keptConversation), when its open got no answer. True when it was drawn,
+ * or when, kept as a channel or as the chat with Homeroom bot, it went to
+ * where those are drawn, as an answered open does.
+ *
+ * Only what was kept is drawn: no read cursor moves (the server is not
+ * there to move it), no "New" line is placed, and the viewer's own sends
+ * that are still on their way stay on the end (withLocalRows). The next
+ * read that has an answer, a reconnect's or Try again's, replaces it all.
+ */
+function drawKeptThread(conversationId: number): boolean {
+  if (state.route.conversationId !== conversationId) return false;
+  const kept = api.keptConversation?.(conversationId);
+  if (!kept) return false;
+  const { detail, page } = kept;
+  const member = detail.membershipStatus === 'member';
+  if (member && !page) return false;
+  if (detail.kind === 'channel' && state.route.open && !state.route.embedded) {
+    publish({ active: detail });
+    if (channelToHub()) return true;
+  }
+  if (detail.homeroomBot && detail.kind !== 'channel') {
+    noteBotConversation(detail.id);
+    if (state.route.open && !state.route.embedded) {
+      publish({ active: detail });
+      if (botToTab()) return true;
+    }
+  }
+  const rows = member && page ? [...page.messages].sort((a, b) => a.id - b.id) : [];
+  publish({
+    active: detail,
+    messages: withLocalRows(conversationId, rows, member),
+    nextBefore: member && page ? page.nextBefore : null,
+    nextAfter: null,
+    loadingThread: false,
+    threadError: null,
+    threadGone: null,
+    unreadMark: null,
+  });
+  return true;
 }
 
 /**
@@ -708,6 +1001,12 @@ export async function loadThread(conversationId: number, force = false, offlineC
  * before the send landed — a refresh already in flight, or a cached copy —
  * and taking its word took the sender's message away until a reload. A
  * later page that holds it, or anything newer, settles it as usual.
+ *
+ * The local rows come from `unsent`, not from the transcript on screen
+ * (offline test, finding 1): an open starts from an empty transcript, and
+ * reading them from there lost every one still in flight, waiting for a
+ * connection or not sent. They follow the server's rows in the order they
+ * were written.
  */
 function withLocalRows(conversationId: number, page: ConversationMessage[], reachesPresent = true): ConversationMessage[] {
   const me = currentUser().id;
@@ -719,21 +1018,19 @@ function withLocalRows(conversationId: number, page: ConversationMessage[], reac
   const newest = newestServerId(messages);
   const local: ConversationMessage[] = [];
   for (const row of state.messages) {
-    if (row.conversationId !== conversationId || !row.clientKey) continue;
-    if (row.id > 0) {
-      if (reachesPresent && row.id > newest && sentKeys.get(row.id) === row.clientKey) local.push(row);
+    if (row.conversationId !== conversationId || !row.clientKey || row.id <= 0) continue;
+    if (reachesPresent && row.id > newest && sentKeys.get(row.id) === row.clientKey) local.push(row);
+  }
+  for (const [key, entry] of unsent) {
+    if (entry.conversationId !== conversationId || !entry.drawn || entry.payload.threadRootId || claimed.has(key)) continue;
+    const match = messages.find((item) => !item.clientKey && item.id > entry.after
+      && item.sender.id === me && item.content === entry.row.content);
+    if (match && entry.state === 'sending') {
+      sentKeys.set(match.id, key);
+      match.clientKey = key;
       continue;
     }
-    if (claimed.has(row.clientKey)) continue;
-    const after = unsent.get(row.clientKey)?.after || 0;
-    const match = messages.find((item) => !item.clientKey && item.id > after
-      && item.sender.id === me && item.content === row.content);
-    if (match && row.pending) {
-      sentKeys.set(match.id, row.clientKey);
-      match.clientKey = row.clientKey;
-      continue;
-    }
-    local.push(row);
+    local.push(entry.row);
   }
   return messages.concat(local.sort(transcriptOrder));
 }
@@ -755,22 +1052,28 @@ async function refreshActiveAfterMembershipChange(conversationId: number): Promi
 /**
  * #2387: the newer half of a transcript a message link opened part-way back.
  * Reaching the present marks it read, as opening it normally would have.
+ * #6148: read as the reader scrolls down to the window's foot, one page at a
+ * time (the same `loadingOlder` flag as the top's). Resolves `true` when a
+ * page was read (or there was nothing to read), `false` only when the
+ * request failed: the foot then offers "Load newer messages" as the retry.
  */
-export async function loadNewer(): Promise<void> {
+export async function loadNewer(): Promise<boolean> {
   const conversationId = state.route.conversationId;
-  if (!conversationId || !state.nextAfter || state.loadingOlder) return;
+  if (!conversationId || !state.nextAfter || state.loadingOlder) return true;
   publish({ loadingOlder: true });
   try {
     const page = await api.listMessagesAfter(conversationId, state.nextAfter);
-    if (state.route.conversationId !== conversationId) return;
+    if (state.route.conversationId !== conversationId) return true;
     const known = new Set(state.messages.map((message) => message.id));
     const newer = page.messages.filter((message) => !known.has(message.id));
     const messages = [...state.messages, ...newer].sort(transcriptOrder);
     publish({ messages, nextAfter: page.nextAfter, loadingOlder: false });
     const last = newestMainId(messages);
     if (!page.nextAfter && last && unreadHold !== conversationId) readMainWhenThere(conversationId);
+    return true;
   } catch (error) {
     publish({ loadingOlder: false, threadError: errorMessage(error, t('messages:store.error.loadNewer')) });
+    return false;
   }
 }
 
@@ -1110,8 +1413,7 @@ export function isMobile(): boolean {
 
 /**
  * One pane at a time: a phone. (#4229's strip too narrow for both is gone:
- * on a desktop the list is in the sidebar, never beside the conversation,
- * ./index.tsx `messages-list-in-rail`.)
+ * from 768px the list sits beside the conversation, ./index.tsx.)
  */
 function listAside(): boolean {
   return isMobile();
@@ -1128,7 +1430,8 @@ function listAside(): boolean {
  * its hub rather than off this list.
  */
 export function channelHub(): string | null {
-  if (state.route.appSlug) return `#app/${encodeURIComponent(state.route.appSlug)}/workshop`;
+  // The project's Hub (App._placeAddress `dev/hub`), not its Workshop.
+  if (state.route.appSlug) return `#app/${encodeURIComponent(state.route.appSlug)}/dev/hub`;
   const id = state.route.conversationId;
   if (!id) return null;
   const row = state.active && state.active.id === id
@@ -1138,7 +1441,7 @@ export function channelHub(): string | null {
   // The same read the pane's own disc draws from (channel-hub.ts), so the
   // header's arrow and the disc name one hub.
   const platform = typeof window !== 'undefined' ? platformSlug() : null;
-  return platform ? `#app/${encodeURIComponent(platform)}/workshop` : '#communities';
+  return platform ? `#app/${encodeURIComponent(platform)}/dev/hub` : '/';
 }
 
 /**
@@ -1284,6 +1587,8 @@ function turnsPageInPlace(href: string): boolean {
 
 export function open(conversationId?: number | null): void {
   if (typeof window === 'undefined') return;
+  // 1 Nov 2026: the chat with Homeroom bot opens on its tab, as Main Chat.
+  if (validId(conversationId) && conversationId === botConversationId()) { openBotTab(null); return; }
   const target = validId(conversationId) ? `#messages/${conversationId}` : '#messages';
   if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(conversationId || null);
@@ -1292,13 +1597,14 @@ export function open(conversationId?: number | null): void {
 
 /**
  * B8: open the signed-in person's chat with Homeroom bot, from any door that
- * says "ask Homeroom bot". It is made the first time; until the server
- * answers, Messages opens on its list.
+ * says "ask Homeroom bot". It is made the first time. 1 Nov 2026: it opens
+ * on the bot's tab, as Main Chat (../ai/door.ts), never on this screen.
  */
 export async function openBot(reference?: StagedObject | null): Promise<void> {
-  let id: number | null = state.conversations.find((item) => item.homeroomBot)?.id || null;
+  let id: number | null = botConversationId();
   if (!id) {
     try { id = await api.openBotConversation(); } catch { id = null; }
+    noteBotConversation(id);
   }
   // B8: a change to write about ("Ask for changes"). One that names its
   // project and itself is attached on the composer as it is, with the caret
@@ -1309,7 +1615,7 @@ export async function openBot(reference?: StagedObject | null): Promise<void> {
   if (attach && id && reference) pendingAttach = { conversationId: id, object: reference, placeholder: t(ASK_FOR_CHANGES_PLACEHOLDER) };
   else if (reference) pendingShare = reference;
   const already = !!id && state.route.conversationId === id;
-  open(id);
+  openBotTab(null);
   if (reference && already && typeof window !== 'undefined') {
     if (attach) window.dispatchEvent(new CustomEvent('usernode:messages-attach'));
     else window.dispatchEvent(new CustomEvent('usernode:messages-share', { detail: pendingShare }));
@@ -1318,18 +1624,31 @@ export async function openBot(reference?: StagedObject | null): Promise<void> {
 
 /**
  * 16 Oct 2026 (C4): "See progress" on a request's page. The chat with the
- * bot, opened at that request's story: its thread, at the message waiting
- * on the person when there is one, read off the request's track
- * (services/homeroom-bot-track.js). Before, it opened the chat alone, and
- * the person had to find the request in it. A request with no thread yet
- * opens the chat, as before.
+ * bot, opened at that request: at the message waiting on the person when
+ * there is one, read off the request's track (services/homeroom-bot-track.js),
+ * else at the last thing the chat said about it. Before, it opened the chat
+ * alone, and the person had to find the request in it. 31 Oct 2026: never
+ * in a thread of the request's: its story is the page this was pressed on
+ * (./request-page.ts), so a message in one of the old ones is passed over.
  */
 export async function openBotRequest(slug: string, number: number): Promise<void> {
   await openBot();
   try {
     const work = await api.getHomeroomBotWork({ fresh: true });
     const track = (work.tracks || []).find((item) => item.appSlug === slug && item.issueNumber === Number(number));
-    if (track?.rootId) openThreadAt(track.rootId, track.askId || null);
+    const known = track?.askId ? state.messages.find((item) => item.id === track.askId) : null;
+    const ask = track?.askId && !known?.threadRootId ? track.askId : null;
+    const about = (item: ConversationMessage) => !item.threadRootId && item.sender.bot
+      && item.metadata?.homeroomBot?.appSlug === slug && Number(item.metadata?.homeroomBot?.issueNumber) === Number(number);
+    const last = [...state.messages].reverse().find(about);
+    // A plan said in the private thread its request started in (never a
+    // request's card's: the server leaves those out) opens there, at the plan.
+    if (track?.askId && track.askThreadId) {
+      openBotTab({ threadRootId: track.askThreadId, focusMessageId: track.askId });
+      return;
+    }
+    const at = ask || last?.id || null;
+    if (at) openBotTab({ threadRootId: null, focusMessageId: at });
   } catch { /* the chat itself, then */ }
 }
 
@@ -1358,6 +1677,18 @@ export function takePendingAttach(conversationId: number): { object: StagedObjec
   return { object, placeholder };
 }
 
+/**
+ * Attach `object` to `conversationId`'s composer when it next reads its
+ * one-shot, for a page that names what Main Chat is about before that composer
+ * has mounted (a request reopened from its bot-page address, features/ai/,
+ * 3 Nov 2026). A composer already mounted takes it when the caller also sends
+ * `usernode:messages-attach`, as openBot does.
+ */
+export function stashObject(conversationId: number, object: StagedObject): void {
+  if (!validId(conversationId)) return;
+  pendingAttach = { conversationId, object, placeholder: '' };
+}
+
 // B6: a message of the bot's to quote in the composer once its chat has
 // loaded: the App tab's Change something, under a first version's plan.
 let pendingQuote: { conversationId: number; messageId: number } | null = null;
@@ -1369,12 +1700,15 @@ let pendingQuote: { conversationId: number; messageId: number } | null = null;
  */
 export async function quoteBotMessage(conversationId?: number | null, messageId?: number | null): Promise<void> {
   let id: number | null = validId(conversationId) ? Number(conversationId) : null;
-  if (!id) id = state.conversations.find((item) => item.homeroomBot)?.id || null;
+  if (!id) id = botConversationId();
   if (!id) {
     try { id = await api.openBotConversation(); } catch { id = null; }
   }
+  noteBotConversation(id);
   pendingQuote = id && validId(messageId) ? { conversationId: id, messageId: Number(messageId) } : null;
-  open(id);
+  // 1 Nov 2026: on the bot's tab, as Main Chat (open() sends it there).
+  if (id) openBotTab(null);
+  else open(id);
   applyPendingQuote();
 }
 
@@ -1405,7 +1739,12 @@ let revealedAppFocus: string | null = null;
  * is already current, the router runs on it again instead.
  */
 export function openAddress(href: string): void {
-  if (typeof window === 'undefined' || !/^#messages(?:\/|$)/.test(href)) return;
+  if (typeof window === 'undefined') return;
+  // 1 Nov 2026: the chat with Homeroom bot is its tab's, by either address.
+  if (/^#homeroom-bot(?:\/|$)/.test(href)) { goBotAddress(href); return; }
+  if (!/^#messages(?:\/|$)/.test(href)) return;
+  const botTab = botTabFromMessages(href, botConversationId());
+  if (botTab) { goBotAddress(botTab); return; }
   if (turnsPageInPlace(href)) return;
   if (sidePanelTakes(href)) return;
   if (window.location.hash !== href) { window.location.hash = href; return; }
@@ -1527,6 +1866,7 @@ export async function leave(): Promise<void> {
   if (!id) return;
   await api.leaveConversation(id);
   leftConversations.add(id);
+  api.forgetKeptConversation?.(id);
   publish({ conversations: state.conversations.filter((item) => item.id !== id) });
   open(null);
 }
@@ -1539,6 +1879,8 @@ export async function leave(): Promise<void> {
 export async function finishDirectBlock(conversationId: number): Promise<void> {
   if (!validId(conversationId)) return;
   threadRequest += 1;
+  // And the copy this device kept to draw offline (api.ts keptConversation).
+  api.forgetKeptConversation?.(conversationId);
   publish({
     conversations: state.conversations.filter((item) => item.id !== conversationId),
     active: null,
@@ -1597,6 +1939,108 @@ export function setDraft(scope: ComposerScope, value: string): void {
   // on a phone made typing in a long chat visibly lag.
 }
 
+/*
+ * ATTACHED FILES ARE KEPT WITH THE DRAFT (#6249). The composer used to drop
+ * its chips whenever its scope changed, so a screenshot attached and then
+ * left behind had to be uploaded again. They follow the words: one saved
+ * list per composer scope, on this device, holding what the server answered
+ * when each file was uploaded — so coming back re-shows the same chips
+ * without uploading anything.
+ *
+ * THEY AGE OUT ON READ. Homeroom deletes an upload no message took after a
+ * day (src/services/upload-retention.js), so an entry older than
+ * DRAFT_ATTACHMENT_MAX_AGE_MS is dropped rather than drawn as a chip whose
+ * send could only fail.
+ */
+interface SavedDraftAttachment {
+  attachment: MessageAttachment;
+  savedAt: number;
+}
+
+/** A little under the 24-hour cleanup in src/services/upload-retention.js. */
+export const DRAFT_ATTACHMENT_MAX_AGE_MS = 23 * 60 * 60 * 1000;
+
+const draftAttachments = new Map<ComposerScope, SavedDraftAttachment[]>();
+
+function draftAttachmentsKey(scope: ComposerScope): string {
+  return `usernode:messages-draft-attachments:${scope}`;
+}
+
+/** Pure: the saved files a stored value names, and whether any entry was dropped. */
+function readSavedAttachments(raw: string | null): { kept: SavedDraftAttachment[]; dropped: boolean } {
+  if (!raw) return { kept: [], dropped: false };
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return { kept: [], dropped: false }; }
+  if (!Array.isArray(parsed)) return { kept: [], dropped: false };
+  const now = Date.now();
+  const kept: SavedDraftAttachment[] = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as Record<string, unknown>;
+    const item = record.attachment;
+    const savedAt = record.savedAt;
+    if (!item || typeof item !== 'object') continue;
+    const file = item as Record<string, unknown>;
+    if (typeof file.id !== 'string' || !file.id) continue;
+    if (typeof file.name !== 'string' || typeof file.url !== 'string') continue;
+    if (typeof savedAt !== 'number' || !Number.isFinite(savedAt)) continue;
+    if (now - savedAt > DRAFT_ATTACHMENT_MAX_AGE_MS) continue;
+    kept.push({
+      attachment: {
+        id: file.id,
+        name: file.name,
+        size: Number(file.size) || 0,
+        contentType: typeof file.contentType === 'string' ? file.contentType : '',
+        kind: typeof file.kind === 'string' ? file.kind : null,
+        url: file.url,
+        viewUrl: typeof file.viewUrl === 'string' ? file.viewUrl : null,
+      },
+      savedAt,
+    });
+  }
+  return { kept, dropped: kept.length !== parsed.length };
+}
+
+function writeDraftAttachments(scope: ComposerScope, saved: SavedDraftAttachment[]): void {
+  try {
+    if (saved.length) localStorage.setItem(draftAttachmentsKey(scope), JSON.stringify(saved));
+    else localStorage.removeItem(draftAttachmentsKey(scope));
+  } catch { /* storage unavailable */ }
+}
+
+function savedAttachmentsFor(scope: ComposerScope): SavedDraftAttachment[] {
+  const known = draftAttachments.get(scope);
+  if (known) return known;
+  let saved: SavedDraftAttachment[] = [];
+  try {
+    const raw = localStorage.getItem(draftAttachmentsKey(scope));
+    const read = readSavedAttachments(raw);
+    saved = read.kept;
+    // The key is rewritten now, so an entry that has aged out is not read
+    // again by the next open or another tab.
+    if (read.dropped) writeDraftAttachments(scope, saved);
+  } catch { return []; }
+  draftAttachments.set(scope, saved);
+  return saved;
+}
+
+export function draftAttachmentsFor(scope: ComposerScope): MessageAttachment[] {
+  return savedAttachmentsFor(scope).map((entry) => entry.attachment);
+}
+
+/**
+ * Save a composer's attached files. An attachment already saved keeps the
+ * time it was first saved, so a re-save does not give it another day.
+ * NOT published, for the reason setDraft is not.
+ */
+export function setDraftAttachments(scope: ComposerScope, items: MessageAttachment[]): void {
+  const previous = new Map(savedAttachmentsFor(scope).map((entry) => [entry.attachment.id, entry.savedAt]));
+  const now = Date.now();
+  const saved = items.map((attachment) => ({ attachment, savedAt: previous.get(attachment.id) ?? now }));
+  draftAttachments.set(scope, saved);
+  writeDraftAttachments(scope, saved);
+}
+
 export function replyFor(scope: ComposerScope): ConversationMessage | null {
   return replyTargets.get(scope) || null;
 }
@@ -1614,7 +2058,14 @@ export function setReply(scope: ComposerScope, message: ConversationMessage | nu
  */
 function botThreadOf(message: ConversationMessage): number | null {
   if (!message.sender.bot || !threadsAllowed(state.active) || state.active?.kind !== 'direct') return null;
-  return validId(message.threadRootId) ? message.threadRootId as number : null;
+  const root = validId(message.threadRootId) ? message.threadRootId as number : null;
+  if (!root || state.route.threadRootId === root) return root;
+  // 31 Oct 2026: a request's story thread from before is not drawn any more
+  // (./request-page.ts), so what answers a moment from one, shown in the
+  // main stream, is said there. A thread of the person's own keeps its own.
+  const rootRow = findRow(root);
+  if (rootRow) return requestPageFor(rootRow) ? null : root;
+  return requestPageOf(message) ? null : root;
 }
 
 /**
@@ -1654,10 +2105,12 @@ export async function answerBotQuestion(question: ConversationMessage, answer: s
   const rootId = botThreadOf(question);
   const scope = scopeKey(conversationId, rootId);
   const draft = draftFor(scope);
+  const files = draftAttachmentsFor(scope);
   const staged = replyFor(scope);
   replyTargets.set(scope, question);
   const sending = send({ content: answer, threadRootId: rootId, anyThread: true });
   if (draft) setDraft(scope, draft);
+  if (files.length) setDraftAttachments(scope, files);
   if (staged && staged.id !== question.id) setReply(scope, staged);
   await sending;
 }
@@ -1703,6 +2156,80 @@ function idempotencyKey(): string {
   return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+/**
+ * How long a send may go unanswered before it is given up (offline test,
+ * finding 1). A network that connects but passes nothing never fails a
+ * request: the POST waited for as long as the web view let it, a minute and
+ * more, with the row looking sent. Its idempotency key makes giving up safe:
+ * if the server did store it, sending it again returns that message.
+ */
+export const SEND_TIMEOUT_MS = 15_000;
+
+/**
+ * Whether the app takes itself to be offline: the browser's word, or the
+ * shell's own probe of /health (../../lib/offline.ts), which also hears a
+ * network that connects but passes nothing, and is what the offline banner
+ * shows.
+ */
+function offlineNow(): boolean {
+  return browserOffline() || isOffline();
+}
+
+/** A send the server never answered: it did not go, or went unanswered until SEND_TIMEOUT_MS. */
+function unanswered(error: unknown): boolean {
+  return !(error instanceof api.MessagesApiError);
+}
+
+/** A row drawn for an unconfirmed message in `next` state: faded on its way, a note when waiting or not sent. */
+function rowIn(row: ConversationMessage, next: UnsentState): ConversationMessage {
+  return { ...row, pending: next === 'sending', queued: next === 'queued', failed: next === 'failed' };
+}
+
+/** Keep an unconfirmed message on the device (./outbox.ts): one drawn on a row, written by somebody signed in. */
+function keepOnDevice(key: string): void {
+  const entry = unsent.get(key);
+  if (!entry || !entry.drawn || !entry.viewer) return;
+  messagesOutbox().save({
+    key, viewer: entry.viewer, conversationId: entry.conversationId, payload: entry.payload,
+    row: entry.row, after: entry.after, state: entry.state, savedAt: entry.savedAt,
+  });
+}
+
+function forgetLocal(key: string): void {
+  const entry = unsent.get(key);
+  unsent.delete(key);
+  if (entry?.drawn) messagesOutbox().drop(key);
+}
+
+/** The server has this message, as `messageId`. */
+function confirmLocal(key: string, messageId: number): void {
+  forgetLocal(key);
+  sentKeys.set(messageId, key);
+}
+
+/** Move an unconfirmed message to `next`, on the device and on every row that draws it. */
+function settleLocal(key: string, next: UnsentState): void {
+  const entry = unsent.get(key);
+  if (!entry) return;
+  entry.state = next;
+  entry.row = rowIn(entry.row, next);
+  keepOnDevice(key);
+  const paint = (item: ConversationMessage) => (item.clientKey === key && item.id < 0 ? rowIn(item, next) : item);
+  const thread = state.thread;
+  publish({
+    messages: state.messages.map(paint),
+    ...(thread ? { thread: { ...thread, messages: thread.messages.map(paint) } } : {}),
+  });
+}
+
+function queuedCount(conversationId?: number): number {
+  let count = 0;
+  for (const entry of unsent.values()) {
+    if (entry.state === 'queued' && (conversationId === undefined || entry.conversationId === conversationId)) count += 1;
+  }
+  return count;
+}
+
 export async function send(input: {
   content: string; attachmentIds?: string[]; object?: SharedObjectReference; attachments?: ConversationMessage['attachments']; threadRootId?: number | null;
   /**
@@ -1727,7 +2254,14 @@ export async function send(input: {
     ...(threadRootId ? { threadRootId } : {}),
     idempotencyKey: idempotencyKey(),
   };
-  const optimistic: ConversationMessage = {
+  const drawn = !threadRootId || (open && !!state.thread);
+  // OFFLINE, IT WAITS INSTEAD OF GOING (offline test, finding 1): when the
+  // app says it has no connection, which a network passing nothing makes it
+  // say once its probe has looked, and not only when the browser says so.
+  // And behind anything of this conversation's already waiting, so the
+  // messages arrive in the order they were written.
+  const wait = drawn && (offlineNow() || queuedCount(conversationId) > 0) && queuedCount() < MAX_UNSENT;
+  const optimistic: ConversationMessage = rowIn({
     id: -Date.now(),
     conversationId,
     sender: currentUser(),
@@ -1736,11 +2270,16 @@ export async function send(input: {
     reply: reply ? { id: reply.id, sender: reply.sender, content: reply.content } : null,
     // The files already uploaded draw with the row, so a file-only send is
     // not an empty line while it is in flight.
-    reactions: [], attachments: input.attachments || [], objects: [], pending: true, clientKey: pending.idempotencyKey,
+    reactions: [], attachments: input.attachments || [], objects: [], clientKey: pending.idempotencyKey,
     threadRootId,
-  };
-  unsent.set(pending.idempotencyKey, { conversationId, payload: pending, after: newestServerId(state.messages) });
+  }, wait ? 'queued' : 'sending');
+  unsent.set(pending.idempotencyKey, {
+    conversationId, payload: pending, after: newestServerId(state.messages), row: optimistic,
+    state: wait ? 'queued' : 'sending', drawn, viewer: currentUser().id, savedAt: Date.now(),
+  });
+  keepOnDevice(pending.idempotencyKey);
   setDraft(scope, '');
+  setDraftAttachments(scope, []);
   setReply(scope, null);
   if (threadRootId && open && state.thread) {
     publish({ thread: { ...state.thread, messages: [...state.thread.messages, optimistic], error: null } });
@@ -1753,8 +2292,17 @@ export async function send(input: {
     // where the message lands — the way every messenger does it.
     if (state.nextAfter) jumpToPresent();
   }
+  if (wait) {
+    const offline = offlineNow();
+    publish({ online: !offline, ...(offline ? { threadError: t('messages:store.error.queued') } : {}) });
+    if (!offline) void flushQueued();
+    return;
+  }
   await deliver(conversationId, pending);
 }
+
+/** How a send settled: the server has it, it waits for a connection, it was not sent, or it is no longer there to settle. */
+type Delivery = 'sent' | 'queued' | 'failed' | 'gone';
 
 /**
  * Send a local row's payload and settle the row: the server's message in its
@@ -1762,13 +2310,12 @@ export async function send(input: {
  * row marked failed with its Retry. The row is found by client key, not by
  * its temporary id, because a refresh can have re-read the thread meanwhile.
  */
-async function deliver(conversationId: number, pending: PendingSend): Promise<void> {
+async function deliver(conversationId: number, pending: PendingSend): Promise<Delivery> {
   const key = pending.idempotencyKey;
-  if (pending.threadRootId) { await deliverToThread(conversationId, pending); return; }
+  if (pending.threadRootId) return deliverToThread(conversationId, pending);
   try {
-    const message = await api.sendMessage(conversationId, pending);
-    unsent.delete(key);
-    sentKeys.set(message.id, key);
+    const message = await api.sendMessage(conversationId, pending, { timeoutMs: SEND_TIMEOUT_MS });
+    confirmLocal(key, message.id);
     if (state.route.conversationId === conversationId) {
       // The member-scoped WS event can win the race with this HTTP response
       // and refresh the real row into the thread first. Remove both the
@@ -1781,6 +2328,7 @@ async function deliver(conversationId: number, pending: PendingSend): Promise<vo
       publish({ messages });
     }
     await loadConversations(true);
+    return 'sent';
   } catch (error) {
     if (isAwaitingAcceptance(error)) {
       // QA 2026-09-24 Q2: a send that cannot go through until the other
@@ -1788,25 +2336,46 @@ async function deliver(conversationId: number, pending: PendingSend): Promise<vo
       // succeed, and a reload dropped it. The words go back to the draft
       // (unless a new one has been started) and the conversation is re-read,
       // so the thread says who it is waiting for in place of the composer.
-      unsent.delete(key);
+      forgetLocal(key);
       const scope = scopeKey(conversationId, null);
       if (!draftFor(scope) && pending.content) setDraft(scope, pending.content);
       publish({ messages: state.messages.filter((item) => item.clientKey !== key) });
       if (state.route.conversationId === conversationId) void loadThread(conversationId, true);
-      return;
+      return 'gone';
     }
-    const offline = typeof navigator !== 'undefined' && !navigator.onLine;
-    if (offline) {
-      const queue = pendingByConversation.get(conversationId) || [];
-      queue.push(pending);
-      pendingByConversation.set(conversationId, queue.slice(-50));
-    }
-    publish({
-      online: !offline,
-      messages: state.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
-      threadError: offline ? t('messages:store.error.queued') : errorMessage(error, t('messages:store.error.send')),
-    });
+    return settleFailed(key, error, t('messages:store.error.send'));
   }
+}
+
+/**
+ * A send that did not go through. One the server answered is not sent, with
+ * its Retry. One it never answered asks the shell's connectivity probe first
+ * (offline test, finding 1: nothing else would have noticed a network that
+ * passes nothing): when the connection is gone the message waits for it and
+ * goes by itself when it is back, and when the connection is there it is not
+ * sent, with its Retry. Either way it keeps its idempotency key, so nothing
+ * that sends it again can post it twice.
+ */
+async function settleFailed(key: string, error: unknown, words: string): Promise<Delivery> {
+  // A re-read already drew the server's copy (withLocalRows): it went, and
+  // only its answer was lost.
+  for (const claimed of sentKeys.values()) {
+    if (claimed === key) { forgetLocal(key); return 'sent'; }
+  }
+  const network = unanswered(error);
+  if (network && !offlineNow()) {
+    try { await probe(); } catch { /* the state it leaves is the answer */ }
+  }
+  if (!unsent.has(key)) return 'gone';
+  const offline = network && offlineNow();
+  const queue = offline && queuedCount() < MAX_UNSENT;
+  settleLocal(key, queue ? 'queued' : 'failed');
+  // Plain words for a network that did not answer, never its exception's.
+  publish({
+    online: !offline,
+    threadError: queue ? t('messages:store.error.queued') : network ? words : errorMessage(error, words),
+  });
+  return queue ? 'queued' : 'failed';
 }
 
 /**
@@ -1815,13 +2384,12 @@ async function deliver(conversationId: number, pending: PendingSend): Promise<vo
  * settled in the thread's own page; the conversation's transcript is then
  * re-read for the reply count on the message the thread hangs off.
  */
-async function deliverToThread(conversationId: number, pending: PendingSend): Promise<void> {
+async function deliverToThread(conversationId: number, pending: PendingSend): Promise<Delivery> {
   const key = pending.idempotencyKey;
   const rootId = pending.threadRootId as number;
   try {
-    const message = await api.sendMessage(conversationId, pending);
-    unsent.delete(key);
-    sentKeys.set(message.id, key);
+    const message = await api.sendMessage(conversationId, pending, { timeoutMs: SEND_TIMEOUT_MS });
+    confirmLocal(key, message.id);
     const thread = state.thread;
     if (thread && thread.conversationId === conversationId && thread.rootId === rootId) {
       const messages = thread.messages
@@ -1831,23 +2399,25 @@ async function deliverToThread(conversationId: number, pending: PendingSend): Pr
       publish({ thread: { ...thread, messages } });
     }
     if (state.route.conversationId === conversationId) void loadThread(conversationId, true);
+    return 'sent';
   } catch (error) {
-    const thread = state.thread;
-    if (thread && thread.rootId === rootId) {
-      publish({
-        thread: {
-          ...thread,
-          messages: thread.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
-          error: errorMessage(error, t('messages:store.error.sendReply')),
-        },
-      });
-    } else if (state.route.conversationId === conversationId) {
+    if (unsent.get(key)?.drawn === false) {
       // Sent into a thread that is not open (send `anyThread`): it has no
       // row of its own to fail on, so the conversation says it.
-      unsent.delete(key);
-      publish({ threadError: errorMessage(error, t('messages:store.error.sendReply')) });
-      throw error;
+      forgetLocal(key);
+      if (state.route.conversationId === conversationId) {
+        publish({ threadError: errorMessage(error, t('messages:store.error.sendReply')) });
+        throw error;
+      }
+      return 'gone';
     }
+    const outcome = await settleFailed(key, error, t('messages:store.error.sendReply'));
+    const thread = state.thread;
+    if (outcome === 'failed' && thread && thread.rootId === rootId) {
+      const words = t('messages:store.error.sendReply');
+      publish({ thread: { ...thread, error: unanswered(error) ? words : errorMessage(error, words) } });
+    }
+    return outcome;
   }
 }
 
@@ -1867,26 +2437,28 @@ function findRow(messageId: number): ConversationMessage | undefined {
     || state.thread?.messages.find((item) => item.id === messageId);
 }
 
-/** Send a failed row again, in place (#2907). */
+/**
+ * Send a failed row again, in place (#2907). Offline, it waits for the
+ * connection instead, and the shell's probe looks again, since a Retry is
+ * somebody saying the connection may be back.
+ */
 export async function retrySend(clientKey: string): Promise<void> {
   const entry = unsent.get(clientKey);
   if (!entry) return;
-  const queue = pendingByConversation.get(entry.conversationId);
-  if (queue) pendingByConversation.set(entry.conversationId, queue.filter((item) => item.idempotencyKey !== clientKey));
   publish({ threadError: null });
-  mapRows((item) => item.clientKey === clientKey ? { ...item, pending: true, failed: false } : item);
+  if (offlineNow()) {
+    settleLocal(clientKey, 'queued');
+    void probe().catch(() => {});
+    return;
+  }
+  settleLocal(clientKey, 'sending');
   await deliver(entry.conversationId, entry.payload);
 }
 
-/** Drop a failed row the sender no longer wants to send. */
+/** Drop a row the sender no longer wants to send: not sent, or waiting for a connection. */
 export function discardFailed(clientKey: string): void {
-  const entry = unsent.get(clientKey);
-  unsent.delete(clientKey);
-  if (entry) {
-    const queue = pendingByConversation.get(entry.conversationId);
-    if (queue) pendingByConversation.set(entry.conversationId, queue.filter((item) => item.idempotencyKey !== clientKey));
-  }
-  const keep = (item: ConversationMessage) => !(item.clientKey === clientKey && item.failed);
+  forgetLocal(clientKey);
+  const keep = (item: ConversationMessage) => !(item.clientKey === clientKey && (item.failed || item.queued));
   const thread = state.thread;
   publish({
     messages: state.messages.filter(keep),
@@ -1894,24 +2466,108 @@ export function discardFailed(clientKey: string): void {
   });
 }
 
-export async function retryPending(): Promise<void> {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-  publish({ online: true });
-  for (const [conversationId, queue] of [...pendingByConversation]) {
-    const remaining: PendingSend[] = [];
-    for (const pending of queue) {
-      try {
-        const message = await api.sendMessage(conversationId, pending);
-        unsent.delete(pending.idempotencyKey);
-        sentKeys.set(message.id, pending.idempotencyKey);
+let flushing: Promise<void> | null = null;
+let flushAgain = false;
+
+/**
+ * Send what waited for a connection, oldest first, under the keys it was
+ * written with. Run when the connection is back: the browser's `online`, the
+ * shell's probe saying so (`usernode:offline-change`), the events socket
+ * reopening (resync), and a reload that brought messages back. One run at a
+ * time; a message queued while it runs is sent by the same run. A message
+ * that finds the connection gone again stops it, and the rest wait with it.
+ */
+export function flushQueued(): Promise<void> {
+  if (offlineNow()) return Promise.resolve();
+  if (flushing) { flushAgain = true; return flushing; }
+  if (!queuedCount()) return Promise.resolve();
+  flushing = (async () => {
+    publish({ online: true });
+    do {
+      flushAgain = false;
+      for (const [key, entry] of [...unsent]) {
+        if (entry.state !== 'queued' || unsent.get(key) !== entry) continue;
+        if (offlineNow()) return;
+        settleLocal(key, 'sending');
+        if (await deliver(entry.conversationId, entry.payload) === 'queued') return;
       }
-      catch { remaining.push(pending); }
-    }
-    if (remaining.length) pendingByConversation.set(conversationId, remaining);
-    else pendingByConversation.delete(conversationId);
+    } while (flushAgain && !offlineNow());
+  })().finally(() => { flushing = null; });
+  return flushing;
+}
+
+/**
+ * The unconfirmed messages this account left on the device, back in their
+ * conversations (offline test, finding 1): one that was waiting waits again,
+ * and goes once the connection allows; one not sent keeps its Retry; one
+ * that was on its way when the app closed waits too, since sending it again
+ * under its key cannot post it twice. Once per account per document.
+ */
+let restoredFor = 0;
+export async function restoreUnsent(): Promise<void> {
+  const viewer = currentUser().id;
+  if (!viewer || restoredFor === viewer) return;
+  restoredFor = viewer;
+  const records = await messagesOutbox().load(viewer);
+  if (currentUser().id !== viewer || restoredFor !== viewer) return;
+  let restored = 0;
+  for (const record of records) {
+    if (unsent.has(record.key)) continue;
+    const next: UnsentState = record.state === 'failed' ? 'failed' : 'queued';
+    unsent.set(record.key, {
+      conversationId: record.conversationId, payload: record.payload, after: record.after,
+      row: rowIn(record.row, next), state: next, drawn: true, viewer, savedAt: record.savedAt,
+    });
+    restored += 1;
   }
-  if (state.route.conversationId) await loadThread(state.route.conversationId, true);
-  await loadConversations(true);
+  if (!restored) return;
+  drawLocalRows();
+  void flushQueued();
+}
+
+/**
+ * Put the open conversation's unsent rows on screen when they arrived after
+ * its page did (a restore). A page still loading draws them itself
+ * (withLocalRows, loadReplyThread).
+ */
+function drawLocalRows(): void {
+  const conversationId = state.route.conversationId;
+  if (!conversationId || state.loadingThread || state.active?.id !== conversationId) return;
+  const shown = new Set(state.messages.map((item) => item.clientKey).filter(Boolean));
+  const thread = state.thread;
+  const threadShown = new Set((thread?.messages || []).map((item) => item.clientKey).filter(Boolean));
+  const main: ConversationMessage[] = [];
+  const replies: ConversationMessage[] = [];
+  for (const [key, entry] of unsent) {
+    if (entry.conversationId !== conversationId || !entry.drawn) continue;
+    if (!entry.payload.threadRootId) { if (!shown.has(key)) main.push(entry.row); continue; }
+    if (thread && !thread.loading && thread.conversationId === conversationId && thread.rootId === entry.payload.threadRootId
+        && !threadShown.has(key)) replies.push(entry.row);
+  }
+  if (!main.length && !replies.length) return;
+  publish({
+    ...(main.length ? { messages: [...state.messages, ...main].sort(transcriptOrder) } : {}),
+    ...(replies.length && thread ? { thread: { ...thread, messages: [...thread.messages, ...replies] } } : {}),
+  });
+}
+
+/**
+ * Forget every unconfirmed message, on screen and on the device: the session
+ * is over (App._dropCachedSession, on sign-out or another account), and what
+ * one account wrote is never left for the next.
+ */
+export function clearUnsent(): void {
+  const keys = new Set(unsent.keys());
+  unsent.clear();
+  restoredFor = 0;
+  messagesOutbox().clear();
+  if (!keys.size) return;
+  const keep = (item: ConversationMessage) => !(item.id < 0 && item.clientKey && keys.has(item.clientKey));
+  const thread = state.thread;
+  publish({
+    messages: state.messages.filter(keep),
+    ...(thread ? { thread: { ...thread, messages: thread.messages.filter(keep) } } : {}),
+  });
 }
 
 export async function edit(messageId: number, content: string): Promise<void> {
@@ -1923,11 +2579,69 @@ export async function edit(messageId: number, content: string): Promise<void> {
   mapRows((item) => item.id === message.id ? { ...item, ...message, thread: item.thread, clientKey: item.clientKey } : item);
 }
 
+/**
+ * React to a message, or take the reaction back. It asks for the state the
+ * tap means (on when the viewer has not reacted with it, off when they
+ * have) rather than a flip, so it can be sent again safely.
+ *
+ * With no answer (offline, or a network that passes nothing: offline
+ * follow-up, 2 Nov 2026) it is kept on the device and sent once the
+ * connection is back (../../lib/action-outbox.ts), and drawn at once as if
+ * it had gone. A refusal is the server's word, said under the row as before.
+ */
 export async function react(messageId: number, emoji: string): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
-  const reactions = await api.toggleReaction(conversationId, messageId, emoji);
-  mapRows((item) => item.id === messageId ? { ...item, reactions } : item);
+  const on = !(findRow(messageId)?.reactions || []).some((item) => item.emoji === emoji && item.reacted);
+  const key = `reaction:${messageId}:${emoji}`;
+  try {
+    const reactions = await api.toggleReaction(conversationId, messageId, emoji, on);
+    actionOutbox().drop(key);
+    mapRows((item) => item.id === messageId ? { ...item, reactions } : item);
+  } catch (error) {
+    if (error instanceof api.MessagesApiError) throw error;
+    const kept = await actionOutbox().queue({
+      key, kind: 'reaction', url: api.reactionPath(conversationId, messageId), body: { emoji, on },
+    }).catch(() => false);
+    // Said in words: the browser's own text ("Load failed") is not a sentence.
+    if (!kept) throw new Error(t('messages:row.error.reaction'));
+    mapRows((item) => item.id === messageId ? { ...item, reactions: withReaction(item.reactions, emoji, on) } : item);
+  }
+}
+
+/** `reactions` with the viewer's `emoji` on or off, as the server would draw it. */
+export function withReaction(reactions: MessageReaction[], emoji: string, on: boolean): MessageReaction[] {
+  const me = typeof window !== 'undefined' ? (window as { App?: { user?: { username?: string } } }).App?.user?.username || null : null;
+  const at = reactions.findIndex((item) => item.emoji === emoji);
+  if (at < 0) return on ? [...reactions, { emoji, count: 1, reacted: true, users: me ? [me] : [] }] : reactions;
+  const current = reactions[at];
+  if (current.reacted === on) return reactions;
+  const count = Math.max(0, current.count + (on ? 1 : -1));
+  if (!count) return reactions.filter((_, index) => index !== at);
+  const others = (current.users || []).filter((name) => name !== me);
+  const next = { ...current, count, reacted: on, users: on && me ? [...others, me] : others };
+  return reactions.map((item, index) => (index === at ? next : item));
+}
+
+/**
+ * A reaction kept while offline was answered (ACTION_OUTBOX_EVENT). Sent,
+ * the row takes the server's reactions; refused (the message was deleted,
+ * the viewer left), the conversation on screen is read again, which takes
+ * the reaction drawn for it away.
+ */
+function reactionAnswered(detail: ActionOutcome | null | undefined): void {
+  const record = detail?.record;
+  if (!record || record.kind !== 'reaction') return;
+  const messageId = Number(record.key.split(':')[1]);
+  if (!Number.isSafeInteger(messageId) || messageId <= 0 || !findRow(messageId)) return;
+  if (detail.outcome === 'sent') {
+    const reactions = api.reactionsOf(detail.data);
+    mapRows((item) => item.id === messageId ? { ...item, reactions } : item);
+    return;
+  }
+  if (detail.outcome !== 'refused') return;
+  const open = state.route.conversationId;
+  if (open) void loadThread(open, true);
 }
 
 /**
@@ -2014,10 +2728,23 @@ export function clearThreadFocus(): void {
   if (state.threadFocusId) publish({ threadFocusId: null });
 }
 
+/**
+ * 31 Oct 2026: in the chat with Homeroom bot, the page a thread off `root`
+ * stands for, when it is a request's story rather than a thread of the
+ * person's own (./request-page.ts). Null anywhere else.
+ */
+function requestPageFor(root: ConversationMessage | null | undefined): RequestPage | null {
+  if (!root || state.active?.kind !== 'direct' || !threadsAllowed(state.active)) return null;
+  return requestPageOf(root);
+}
+
 /** Open the thread that hangs off a message of the open conversation. */
 export function openThread(rootId: number): void {
   const conversationId = state.route.conversationId;
   if (typeof window === 'undefined' || !conversationId || !validId(rootId)) return;
+  // A request's story opens on the request's page, never as a thread here.
+  const page = requestPageFor(findRow(rootId));
+  if (page) { openRequestPage(page, conversationId); return; }
   // #3494: in its community's page the thread opens beside the room there,
   // with no address of its own: the page's address is the page's.
   if (state.route.embedded) {
@@ -2052,6 +2779,20 @@ export function closeThread(): void {
 }
 
 /**
+ * The sender's unconfirmed replies in a thread, from `unsent` as
+ * withLocalRows draws a conversation's (offline test, finding 1): a thread
+ * opened again starts empty. One still on its way gives way to the server's
+ * copy of the same words in `page`; one waiting or not sent is not there.
+ */
+function localReplies(conversationId: number, rootId: number, page: ConversationMessage[]): ConversationMessage[] {
+  const claimed = new Set(sentKeys.values());
+  return [...unsent].filter(([key, entry]) => entry.conversationId === conversationId && entry.drawn
+    && entry.payload.threadRootId === rootId && !claimed.has(key)
+    && !(entry.state === 'sending' && page.some((row) => row.sender.id === entry.row.sender.id && row.content === entry.row.content)))
+    .map(([, entry]) => entry.row);
+}
+
+/**
  * A reply thread's page (#2387): the message it hangs off and its replies.
  * Its own request counter, so a slow thread cannot paint over the next one.
  */
@@ -2081,12 +2822,19 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
       openAddress(threadAddress(conversationId, page.root.id));
       return;
     }
-    const local = (state.thread?.messages || []).filter((item) => item.id < 0 && item.threadRootId === rootId
-      && !page.messages.some((row) => row.sender.id === item.sender.id && row.content === item.content));
+    const local = localReplies(conversationId, rootId, page.messages);
     const known = page.messages.map((item) => {
       const key = sentKeys.get(item.id);
       return key ? { ...item, clientKey: key } : item;
     });
+    // A link to a request's story from before (a bookmark, a notification)
+    // lands on the request's page: the thread is not drawn.
+    const story = requestPageFor(page.root || findRow(rootId));
+    if (story) {
+      closeThread();
+      openRequestPage(story, conversationId);
+      return;
+    }
     publish({
       thread: {
         conversationId, rootId, root: page.root || findRow(rootId) || null,
@@ -2094,6 +2842,8 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
         loading: false, error: null, nextBefore: page.nextBefore,
         // #5219: the request's public discussion behind a bot-card thread, merged in by the pane.
         discussion: page.discussion,
+        // B19 follow-up: where it opens, taken once, before the open reads it.
+        firstUnreadId: same && current && current.firstUnreadId !== undefined ? current.firstUnreadId : page.firstUnreadId,
       },
     });
     const newest = known.reduce((top, item) => Math.max(top, item.id), 0);
@@ -2114,15 +2864,22 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
   }
 }
 
-/** The thread's earlier replies. */
-export async function loadOlderReplies(): Promise<void> {
+/**
+ * The thread's earlier replies. #6148: read as the reader scrolls up to the
+ * top of the replies, one page at a time. Resolves `true` when a page was
+ * read (or there was nothing to read), `false` only when the request failed.
+ * A failed page leaves the replies drawn as they are, with no error in their
+ * place: the pane offers "Load earlier replies" back as the retry, as a
+ * conversation's top does (#5019).
+ */
+export async function loadOlderReplies(): Promise<boolean> {
   const thread = state.thread;
-  if (!thread || !thread.nextBefore || thread.loading) return;
+  if (!thread || !thread.nextBefore || thread.loading) return true;
   publish({ thread: { ...thread, loading: true } });
   try {
     const page = await api.listThread(thread.conversationId, thread.rootId, thread.nextBefore);
     const now = state.thread;
-    if (!now || now.rootId !== thread.rootId) return;
+    if (!now || now.rootId !== thread.rootId) return true;
     const known = new Set(now.messages.map((item) => item.id));
     publish({
       thread: {
@@ -2132,9 +2889,12 @@ export async function loadOlderReplies(): Promise<void> {
         nextBefore: page.nextBefore,
       },
     });
-  } catch (error) {
+    return true;
+  } catch {
     const now = state.thread;
-    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, t('messages:store.error.loadEarlierReplies')) } });
+    if (!now || now.rootId !== thread.rootId) return true;
+    publish({ thread: { ...now, loading: false } });
+    return false;
   }
 }
 
@@ -2306,8 +3066,12 @@ function showing(): boolean {
  * "Working on…" for work long done. Through the window event both already
  * re-read on, fresh: this module cannot import them, since the cards' store
  * imports this one.
+ *
+ * A reconnect is the connection back, too: what waited for it goes now
+ * (flushQueued, which does nothing while the app is offline).
  */
 export async function resync(): Promise<void> {
+  void flushQueued();
   void loadAppDiscussions();
   const reads = [loadConversations(true)];
   const conversationId = state.route.conversationId;
@@ -2335,6 +3099,10 @@ export function handleEvent(raw: ConversationEvent): void {
       const rootId = api.strictId(event.threadRootId ?? event.thread_root_id);
       if (onScreen(conversationId)) {
         const load = loadThread(conversationId, true);
+        // The open thread's own read, when the message is in it: a stop
+        // typed there holds its line until that read has drawn it too.
+        const threadLoad = rootId && state.thread?.rootId === rootId
+          ? loadReplyThread(conversationId, rootId, true) : null;
         if (event.type === 'conversation_message_created') {
           landing.set(conversationId, (landing.get(conversationId) || 0) + 1);
           const landed = () => {
@@ -2343,9 +3111,8 @@ export function handleEvent(raw: ConversationEvent): void {
             landing.delete(conversationId);
             releaseHeldTyping(conversationId);
           };
-          void load.then(landed, landed);
+          void Promise.all([load, threadLoad]).then(landed, landed);
         }
-        if (rootId && state.thread?.rootId === rootId) void loadReplyThread(conversationId, rootId, true);
       }
       void loadConversations(true);
       break;
@@ -2401,8 +3168,10 @@ export function handleEvent(raw: ConversationEvent): void {
       const botPeer = state.active?.id === conversationId && state.active.peer?.bot && state.active.peer.id === userId
         ? state.active.peer.displayName || '' : '';
       if (!userId || userId === currentUser().id || !username) break;
-      const current = state.typing[conversationId] || [];
-      const expiryKey = `${conversationId}:${userId}`;
+      // Where they type: the main stream, or the thread the event names.
+      const scope = scopeKey(conversationId, api.strictId(event.threadRootId ?? event.thread_root_id) || null);
+      const current = state.typing[scope] || [];
+      const expiryKey = `${scope}:${userId}`;
       const existingExpiry = typingExpiry.get(expiryKey);
       if (existingExpiry && typeof window !== 'undefined') window.clearTimeout(existingExpiry);
       typingExpiry.delete(expiryKey);
@@ -2412,15 +3181,15 @@ export function handleEvent(raw: ConversationEvent): void {
       // #4220: a stop while the message it typed is still being read keeps
       // the line until that read publishes (releaseHeldTyping), or the cap.
       if (event.typing === false && landing.get(conversationId) && isShown && typeof window !== 'undefined') {
-        heldTyping.set(expiryKey, { conversationId, shown });
+        heldTyping.set(expiryKey, { conversationId, scope, shown });
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
           heldTyping.delete(expiryKey);
-          dropTyping(conversationId, shown);
+          dropTyping(scope, shown);
         }, TYPING_HOLD_MS));
         break;
       }
-      const holdersKey = `${conversationId}:${shown}`;
+      const holdersKey = `${scope}:${shown}`;
       let next: Typist[];
       if (event.typing === false) {
         // The word leaves the line, and with it everybody typing under it.
@@ -2431,14 +3200,19 @@ export function handleEvent(raw: ConversationEvent): void {
         holders.set(userId, !botPeer && !!typist?.unnamed);
         typingHolders.set(holdersKey, holders);
         // The stand-in only while every holder is nameless: a real account under the same word is named.
-        const entry: Typist = { name: shown, unnamed: [...holders.values()].every(Boolean) };
+        // 1 Nov 2026: the bot, with what it says it is doing (its card's words);
+        // nobody else's event carries that.
+        const prior = current.find((each) => each.name === shown);
+        const entry: Typist = botPeer
+          ? botTypist(prior?.bot ? prior : undefined, shown, botDoingOf(event.doing))
+          : { name: shown, unnamed: [...holders.values()].every(Boolean) };
         next = isShown ? current.map((each) => (each.name === shown ? entry : each)) : [...current, entry];
       }
-      publish({ typing: { ...state.typing, [conversationId]: next } });
+      publish({ typing: { ...state.typing, [scope]: next } });
       if (event.typing !== false && typeof window !== 'undefined') {
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
-          dropTyping(conversationId, shown);
+          dropTyping(scope, shown);
         }, 6000));
       }
       break;
@@ -2446,12 +3220,12 @@ export function handleEvent(raw: ConversationEvent): void {
   }
 }
 
-function dropTyping(conversationId: number, shown: string): void {
-  const now = state.typing[conversationId] || [];
+function dropTyping(scope: ComposerScope, shown: string): void {
+  const now = state.typing[scope] || [];
   const next = now.filter((entry) => entry.name !== shown);
   if (next.length === now.length) return;
-  typingHolders.delete(`${conversationId}:${shown}`);
-  publish({ typing: { ...state.typing, [conversationId]: next } });
+  typingHolders.delete(`${scope}:${shown}`);
+  publish({ typing: { ...state.typing, [scope]: next } });
 }
 
 /** #4220: the message the held names were typing has been drawn. */
@@ -2462,29 +3236,31 @@ function releaseHeldTyping(conversationId: number): void {
     const timer = typingExpiry.get(key);
     if (timer && typeof window !== 'undefined') window.clearTimeout(timer);
     typingExpiry.delete(key);
-    dropTyping(conversationId, held.shown);
+    dropTyping(held.scope, held.shown);
   }
 }
 
-/** The names on a conversation's typing line, in the order they came. */
-export function typingUsers(conversationId: number): Typist[] {
-  return state.typing[conversationId] || [];
+/** The names on a conversation's typing line, or a thread's in it, in the order they came. */
+export function typingUsers(conversationId: number, threadRootId: number | null = null): Typist[] {
+  return state.typing[scopeKey(conversationId, threadRootId)] || [];
 }
 
-export function notifyTyping(typing: boolean): void {
+/** That the viewer is typing, or stopped, in the open conversation, or in a thread of it (`threadRootId`). */
+export function notifyTyping(typing: boolean, threadRootId: number | null = null): void {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
+  const scope = scopeKey(conversationId, threadRootId);
   const now = Date.now();
-  if (typing && now - (typingSentAt.get(conversationId) || 0) < 1800) return;
+  if (typing && now - (typingSentAt.get(scope) || 0) < 1800) return;
   // "Stopped typing" is only news after "typing" was sent. The composer
   // says it on blur and on unmount, and its unmount for one conversation
   // runs after the route has already moved to the next one — so without
   // this a hop between threads pinged a conversation nobody had typed in,
   // which the demo routes answer with a 404 and the check harness counts
   // as a console error.
-  if (!typing && !typingSentAt.get(conversationId)) return;
-  typingSentAt.set(conversationId, typing ? now : 0);
-  void api.setTyping(conversationId, typing).catch(() => { /* ephemeral */ });
+  if (!typing && !typingSentAt.get(scope)) return;
+  typingSentAt.set(scope, typing ? now : 0);
+  void api.setTyping(conversationId, typing, threadRootId).catch(() => { /* ephemeral */ });
 }
 
 export async function share(reference?: SharedObjectReference): Promise<void> {
@@ -2512,11 +3288,12 @@ export async function share(reference?: SharedObjectReference): Promise<void> {
  */
 export async function shareToConversation(conversationId: number, object: SharedObjectReference, note = ''): Promise<void> {
   if (!validId(conversationId)) throw new Error(t('messages:store.error.chooseConversation'));
+  // Bounded like the composer's sends: the dialog says it failed rather than waiting on a dead network.
   const message = await api.sendMessage(conversationId, {
     content: note.trim().slice(0, 8000),
     object,
     idempotencyKey: idempotencyKey(),
-  });
+  }, { timeoutMs: SEND_TIMEOUT_MS });
   if (state.route.conversationId === conversationId && message.id > 0) {
     publish({
       messages: state.messages
@@ -2561,8 +3338,8 @@ export const messagesController = {
   openBot: (reference?: StagedObject | null) => { void openBot(reference); },
   // 16 Oct 2026: a request's page's See progress, at the request's own thread.
   openBotRequest: (slug: string, number: number) => { void openBotRequest(slug, number); },
-  // #6019: `#homeroom-bot/thread/<id>`, one of the bot chat's threads (app.js).
-  openBotThread: (rootId: number) => { void openBot().then(() => openThreadAt(rootId, null)); },
+  // #6019: one of the bot chat's threads, on the bot's tab (1 Nov 2026: ../ai/door.ts).
+  openBotThread: (rootId: number) => { openBotTab({ threadRootId: rootId, focusMessageId: null }); },
   // B6: the App tab's Change something, under a first version's plan.
   quoteBotMessage: (conversationId?: number | null, messageId?: number | null) => { void quoteBotMessage(conversationId, messageId); },
   openAddress,
@@ -2593,16 +3370,33 @@ export const messagesController = {
   // #3705: the inbox AND the conversation on screen (see resync).
   resync,
   showing,
+  // Offline test, finding 1: App._dropCachedSession's sweep, when a session ends.
+  clearUnsent,
 };
 
 export function initializeMessagesStore(): () => void {
-  const onOnline = () => { void retryPending(); };
+  const onOnline = () => { void flushQueued(); };
   const onOffline = () => publish({ online: false });
+  // Offline test, finding 1: the shell's own probe of the connection
+  // (../../lib/offline.ts), which also hears a network that connects and
+  // passes nothing, where the browser never fires `online`. Back online by
+  // its word, what waited goes.
+  const onConnectivity = (event: Event) => {
+    const offline = (event as CustomEvent<{ offline?: boolean }>).detail?.offline;
+    if (typeof offline !== 'boolean') return;
+    publish({ online: !offline });
+    if (!offline) void flushQueued();
+  };
   // #2783: the app channels too, so a `#name` for one chips in any chat — an
   // app's own discussion included — before Messages has ever been opened.
-  const onAuthed = () => { void loadConversations(); void loadAppDiscussions(); };
+  // And the messages this account left unsent on the device (restoreUnsent).
+  const onAuthed = () => { void loadConversations(); void loadAppDiscussions(); void restoreUnsent(); };
+  // A reaction kept while offline was answered (reactionAnswered).
+  const onAction = (event: Event) => { reactionAnswered((event as CustomEvent<ActionOutcome>).detail); };
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
+  window.addEventListener('usernode:offline-change', onConnectivity);
+  window.addEventListener(ACTION_OUTBOX_EVENT, onAction);
   // 5 October: somebody using the page, or coming back to it, is somebody
   // there to read what is open (notePresence, readWhenThere). Captured and
   // passive: it only notes the time, and never stands in a gesture's way.
@@ -2625,6 +3419,7 @@ export function initializeMessagesStore(): () => void {
   if (window.App?.user) void loadConversations();
   else document.addEventListener('sv:authed', onAuthed, { once: true });
   if (window.App?.user) void loadAppDiscussions();
+  if (window.App?.user) void restoreUnsent();
   // #2387 / #2967: the two layout preferences, read after mount so the first
   // render matches the prerendered shell. The folded sections are the third,
   // remembered the same way.
@@ -2640,6 +3435,8 @@ export function initializeMessagesStore(): () => void {
   return () => {
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOffline);
+    window.removeEventListener('usernode:offline-change', onConnectivity);
+    window.removeEventListener(ACTION_OUTBOX_EVENT, onAction);
     for (const type of PRESENCE_EVENTS) window.removeEventListener(type, onPresence, presence);
     document.removeEventListener('visibilitychange', onPresence);
     document.removeEventListener('homeroom:language-changed', onLanguage);

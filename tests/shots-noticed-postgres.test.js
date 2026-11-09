@@ -1,4 +1,5 @@
 'use strict';
+require('./lib/media-store').useMemoryMedia(require('node:test'));
 
 // The staging fixture that makes the before & after card's "Also noticed"
 // reachable on a preview (src/db/migrate.js seedStagingShotsNoticed),

@@ -46,6 +46,12 @@ const NAMESPACE = /^[a-z][a-z-]*$/;
 const KEY = /^[A-Za-z][A-Za-z0-9_.-]*$/;
 const PARAMETER = /^[a-z][A-Za-z0-9]*$/;
 const PLURAL_SUFFIX = /_(zero|one|two|few|many|other)$/;
+// Namespaces only the server reads (push: the words of a phone push; email: the
+// words of an email; errors: a server error's `error_message`). They are
+// translated with the rest and are in .source.json, but no screen reads them, so
+// they stay out of the shell's bundle, its packs and the languages' manifest.
+const SERVER_NAMESPACES = new Set(['push', 'email', 'errors']);
+const isServerNamespace = (namespace) => SERVER_NAMESPACES.has(namespace);
 
 const parameters = (text) => [...text.matchAll(/{{\s*([^}]*?)\s*}}/g)].map((match) => match[1]).sort();
 
@@ -295,7 +301,9 @@ function collectCatalogs(root) {
       const unusable = new Set();
       const countedKeys = new Set([...groups.values()].flat());
       for (const [key, text] of Object.entries(required)) {
-        tally.total += 1;
+        // Server-only text is translated like the rest but no screen shows it,
+        // so its being behind cannot take a language off the screens.
+        if (!isServerNamespace(namespace)) tally.total += 1;
         const problem = translationProblem(translation[key], text, countedKeys.has(key));
         if (problem) { tally[problem].push(`${namespace}:${key}`); unusable.add(key); } else messages[key] = translation[key].text;
       }
@@ -307,7 +315,7 @@ function collectCatalogs(root) {
       for (const key of Object.keys(translation)) {
         if (!(key in required)) tally.unknown.push(`${namespace}:${key}`);
       }
-      tally.translated += Object.keys(messages).length;
+      if (!isServerNamespace(namespace)) tally.translated += Object.keys(messages).length;
       catalogs[language][namespace] = messages;
     }
     tally.ships = covered(tally, config);
@@ -335,6 +343,7 @@ function buildLanguagePacks(root) {
     if (!(language in languages)) continue;
     manifest[language] = {};
     for (const [namespace, messages] of Object.entries(packs)) {
+      if (isServerNamespace(namespace)) continue;
       const bytes = JSON.stringify(messages);
       const digest = hash(bytes);
       const name = `${language}.${namespace}.${digest}.json`;
@@ -350,7 +359,9 @@ function buildLanguagePacks(root) {
   }
   const generated = path.join(root, 'frontend/src/lib/i18n/catalogs.generated.json');
   fs.mkdirSync(path.dirname(generated), { recursive: true });
-  fs.writeFileSync(generated, JSON.stringify({ languages, namespaces, english, manifest }));
+  const shellNamespaces = namespaces.filter((namespace) => !isServerNamespace(namespace));
+  const shellEnglish = Object.fromEntries(shellNamespaces.map((namespace) => [namespace, english[namespace]]));
+  fs.writeFileSync(generated, JSON.stringify({ languages, namespaces: shellNamespaces, english: shellEnglish, manifest }));
   writeSource(root, output);
   return { manifest, report, languages };
 }
@@ -377,6 +388,18 @@ function writeSource(root, output = path.join(root, 'public/locales')) {
   const target = path.join(output, SOURCE_FILE);
   fs.writeFileSync(target, JSON.stringify({ files }));
   return target;
+}
+
+/**
+ * One namespace's English entries as a checkout holds them, or null: expected
+ * in a runtime image, which has no frontend/ and reads writeSource's document.
+ */
+function readCheckoutEnglish(namespace, root = path.join(__dirname, '..')) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(root, 'frontend/locales/en', `${namespace}.json`), 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 /** Writes a source document's files back out as root/frontend/locales, for collectCatalogs and the translation step. */
@@ -436,7 +459,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  PACK_NAME, SOURCE_FILE, buildLanguagePacks, collectCatalogs, componentTags, formatReport, hash, materializeSource,
-  minimumCoverage, parameters, readConfig, requiredMessages, shippedLanguages, translationProblem, writeSource,
+  PACK_NAME, SOURCE_FILE, buildLanguagePacks, collectCatalogs, componentTags, formatReport, hash, isServerNamespace,
+  materializeSource, minimumCoverage, parameters, readCheckoutEnglish, readConfig, requiredMessages, shippedLanguages, translationProblem, writeSource,
   writtenOutEscape,
 };

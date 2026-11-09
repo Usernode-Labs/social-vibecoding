@@ -69,11 +69,11 @@ function weekStartUtc(date = new Date()) {
 //            aggregation, so an unlimited call costs the same as limit=20 —
 //            which is what makes ranking the viewer against the whole board
 //            affordable for the home widget.
-//   slim     true drops the three DISPLAY-ONLY LATERALs (kudos_given,
-//            issues_created, active_apps). None of them appears in the
-//            ORDER BY, so a slim call ranks IDENTICALLY — it just doesn't pay
-//            for columns the caller won't render. The endpoint never uses it;
-//            the widget always does.
+//   slim     true drops the four DISPLAY-ONLY columns (kudos_given,
+//            issues_created, active_apps, avatar_url). None of them appears in
+//            the ORDER BY, so a slim call ranks IDENTICALLY — it just doesn't
+//            pay for columns the caller won't render. The endpoint never uses
+//            it; the widget always does.
 //
 // Returns the raw rows in ranked order. Shaping (`fields` projection,
 // zero/null filtering) stays with the endpoint that owns those params.
@@ -121,6 +121,17 @@ async function rankedUsers(pool, opts = {}) {
                 COALESCE(ic.cnt, 0)::int AS issues_created,`;
   const activeAppsSelect = slim ? '' : `,
                 aa.active_apps`;
+  // The member's profile picture, as the public profile card sends it. A
+  // display-only extra: `user_avatars.user_id` is UNIQUE, so this join adds at
+  // most one row per user and cannot fan out the kudos counts. A profile whose
+  // moderation disabled it gets NULL, exactly as src/routes/profiles.js treats
+  // it. Slim emits neither the join nor the column.
+  const avatarSelect = slim ? '' : `,
+                CASE WHEN av.id IS NULL THEN NULL ELSE '/avatars/' || av.id END AS avatar_url`;
+  const avatarJoin = slim
+    ? ''
+    : `
+           LEFT JOIN user_avatars av ON av.user_id = u.id AND u.profile_disabled_at IS NULL`;
   // `kudos_given` is a GIVEN-side metric (rows where the user is the
   // giver), orthogonal to every other column here (all RECEIVED-side,
   // keyed off the user's authored sessions). Folding it into the main
@@ -198,7 +209,7 @@ async function rankedUsers(pool, opts = {}) {
            ) aa ON true`;
   const groupBy = slim
     ? 'GROUP BY u.id, u.username, u.usernode_pubkey, ab.received, ab.last_at'
-    : 'GROUP BY u.id, u.username, u.usernode_pubkey, kg.kudos_given, ab.received, ab.last_at, ic.cnt, aa.active_apps';
+    : 'GROUP BY u.id, u.username, u.usernode_pubkey, kg.kudos_given, ab.received, ab.last_at, ic.cnt, aa.active_apps, av.id';
 
   const { rows } = await pool.query(
     // `ab` (awarded bounties) is RECEIVED-side credit that resolves on
@@ -217,8 +228,8 @@ async function rankedUsers(pool, opts = {}) {
                 COUNT(pk.id) FILTER (WHERE cs.status <> 'merged')::int AS kudos_received_prs_unmerged,
                 COUNT(DISTINCT cs.id) FILTER (WHERE cs.status = 'merged')::int AS prs_merged,
                 GREATEST(MAX(pk.created_at), ab.last_at) AS last_kudos_at,${givenSelect}${issuesSelect}
-                u.usernode_pubkey AS address${activeAppsSelect}
-           FROM users u
+                u.usernode_pubkey AS address${activeAppsSelect}${avatarSelect}
+           FROM users u${avatarJoin}
            LEFT JOIN chat_sessions cs ON cs.user_id = u.id
              AND EXISTS (SELECT 1 FROM apps ap
                          WHERE ap.id = cs.app_id AND ap.view_visibility = 'public')

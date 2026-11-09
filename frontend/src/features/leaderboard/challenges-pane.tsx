@@ -47,6 +47,7 @@ import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { CreditList, type CreditView } from './challenge-credits';
 import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
 import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
@@ -167,6 +168,10 @@ type DetailView = {
   fill: number | null;
   counted: boolean;
   cta: CtaView | null;
+  // #3247: the viewer's credits behind the count, and whether it is this
+  // week's count (the heading says so).
+  credits?: CreditView[];
+  creditsWeekly?: boolean;
   // #3186: the Me screen's "Your feedback", on the feedback challenge only.
   feedbackLink?: boolean;
   // #4036: on the feedback challenge, what makes a report count, under the
@@ -314,7 +319,19 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
   if (view.kind === 'loading') return <GridSkeleton />;
   if (view.kind === 'error') return <div className={GRID_ERROR}>{view.message}</div>;
   if (view.kind === 'empty') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400 py-8 text-center">{t('leaderboard:challenges.empty')}</p>;
+    // W07 (overnight audit, 1 Nov 2026): the same state Home's Challenges
+    // section draws, a card with a title and a hint, and on the tabs' left
+    // edge. It was one grey line centred across the page, under a control
+    // pinned left, so the two did not share an edge at any width.
+    return (
+      <GroupedList className="mx-0 mt-4" data-challenges-empty="">
+        <ListRow
+          chevron={false}
+          title={t('leaderboard:challenges.empty')}
+          subtitle={t('leaderboard:challenges.emptyHint')}
+        />
+      </GroupedList>
+    );
   }
   // The card's own threshold, so a count it would not draw never hides the note.
   const locked = Math.floor(Number(view.lockedCount) || 0) >= 1;
@@ -626,6 +643,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
           count yet — before "What counts", the same way the feedback link is
           the viewer's own records beside the count. */}
       {view.invites ? <InviteList view={view.invites} /> : null}
+      <CreditList credits={view.credits} weekly={view.creditsWeekly} />
       {view.requirements ? <PageSection heading={t('leaderboard:challenges.detail.requirements')}>{view.requirements}</PageSection> : null}
     </>
   );

@@ -508,7 +508,7 @@ test('the tab takes the target and opens a project\'s own reply thread in place'
   assert.match(PD, /<div ref=\{host\} className="dev-ws-discussion-host" \/>/);
   assert.match(PD, /className=\{`dev-ws-discussion dev-ws-general-channel\$\{thread \? ' dev-ws-discussion-threaded' : ''\}`\}/);
   assert.match(CSS, /\.dev-ws-discussion-threaded > \.messages-reply-pane \{ margin: 0; \}/);
-  assert.match(CSS, /\.messages-layout,\s*\.dev-ws-discussion,\s*#ai-screen \.ai-askbar \{/, 'the pane\'s surface tokens reach the tab (and the AI tab\'s Ask bar)');
+  assert.match(CSS, /\.messages-layout,\s*\.dev-ws-discussion,[\s\S]*?\.side-panel-head,\s*#ai-screen \.ai-askbar \{/, 'the pane\'s surface tokens reach the tab (the AI tab\'s Ask bar, and the column\'s heading, #6431)');
 });
 
 test('the group chat opens a reply thread in the page it is on, not in Messages', () => {
@@ -526,6 +526,7 @@ test('the group chat opens a reply thread in the page it is on, not in Messages'
 
 test('the bell still uses the room\'s address, which the page takes; the store turns a page already open', () => {
   assert.match(NOTIFICATIONS, /messages\.openDiscussion\(slug\)/);
-  assert.match(STORE, /export function openAddress\(href: string\): void \{\s*if \([^\n]*\) return;\s*if \(turnsPageInPlace\(href\)\) return;\s*if \(sidePanelTakes\(href\)\) return;/);
+  // 1 Nov 2026: after the chat with Homeroom bot, which is its tab's by either address.
+  assert.match(STORE, /export function openAddress\(href: string\): void \{\s*if \([^\n]*\) return;[\s\S]{0,420}if \(botTab\) \{ goBotAddress\(botTab\); return; \}\s*if \(turnsPageInPlace\(href\)\) return;\s*if \(sidePanelTakes\(href\)\) return;/);
   assert.match(STORE, /const target = `#messages\/app\/\$\{encodeURIComponent\(safe\)\}`;\s*if \(turnsPageInPlace\(target\)\) return;/);
 });

@@ -76,7 +76,7 @@ export const AppContext = Object.assign(
      * From About's Invite the sheet is already open, and `back: 'about'`
      * makes its back disc return there.
      *
-     * @param {{ back?: 'menu' | 'about' }} [opts]
+     * @param {{ back?: 'about' }} [opts]
      */
     openInvite(opts = {}) {
       const { slug } = improveStore.get();
@@ -89,7 +89,10 @@ export const AppContext = Object.assign(
       return ready.then(() => {
         // Somewhere else by now (a tab, Back): its project is not in context.
         if (improveStore.get().slug !== slug) return;
-        appContextStore.set({ back: opts.back === 'about' ? 'about' : 'menu' });
+        // Audit D07: from About, Back retraces the step. From anywhere else
+        // (the hub's Invite, the Share dialog) the sheet opened on this pane,
+        // so there is no menu behind it to go back to: only the close.
+        appContextStore.set({ back: opts.back === 'about' ? 'about' : 'none' });
         openAt('invite');
       });
     },

@@ -336,7 +336,13 @@ const LEGACY_GATING_HEAD = 12;
 // rather than `undefined`.
 const MAX_TESTS = LEGACY_GATING_HEAD;
 const MAX_TEST_NAME_LEN = 120;
-const MAX_TEST_SELECTOR_LEN = 256;
+// How long a declared check's `expectSelector` may be. The old 256 cut a
+// 286-character selector of this repo's side-panel check mid-token, which
+// left invalid CSS and made the check report "was not found" on every build.
+// capture/capture.js repeats this number because the capture image cannot
+// require the platform's code; tests/proposal-tests-manifest.test.js holds
+// the two equal. `expectText` keeps its own, smaller cap below.
+const MAX_TEST_SELECTOR_LEN = 512;
 const MAX_TEST_TEXT_LEN = 256;
 // How many times one check may load its page (`repeat`). Each load is a
 // fresh browser context, so this is a wall-clock budget as much as a repair
@@ -926,6 +932,15 @@ function readVisibility(parsed) {
   return { build, view };
 }
 
+// Normalize the optional top-level `offline` switch:
+//   "offline": false
+// The browser-cache opt-out offlineCache.optedOut reads. Only a literal
+// false means anything; an absent key or any other value stays null, so a
+// manifest that says nothing keeps today's behaviour. Never throws.
+function readOffline(parsed) {
+  return parsed?.offline === false ? false : null;
+}
+
 // Human description of a (collab, view) visibility pair — shared by the
 // reconcile chat message and the visibility-PR title so every surface
 // describes the same state with the same words. Matches the wording the
@@ -1506,9 +1521,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null };
+    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null, offline: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null, offline: null };
   }
 
   let parsed;
@@ -1516,7 +1531,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null, offline: null };
   }
 
   const platformEnv = readPlatformEnv(parsed);
@@ -1538,6 +1553,7 @@ function read(cloneDir) {
     topics: readTopics(parsed),
     category: readCategory(parsed),
     followOriginal: readFollowOriginal(parsed),
+    offline: readOffline(parsed),
   };
 }
 
@@ -2645,6 +2661,7 @@ module.exports = {
   MAX_PLATFORM_ENV,
   MAX_TESTS,
   MAX_DECLARED_TESTS,
+  MAX_TEST_SELECTOR_LEN,
   MAX_CHECK_REPEAT,
   LEGACY_GATING_HEAD,
   MAX_APP_ADMINS,

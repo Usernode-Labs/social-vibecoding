@@ -25,11 +25,17 @@ test('a plan row is the bot\'s sentence: building it now, or waiting for its req
   assert.equal(building.metadata.specShare.botNote, 'building');
   assert.equal(building.metadata.specShare.waitingFor, undefined);
   const asking = live.specCard({ sessionId: 7, version: 1, spec: SPEC, bot: BOT, asking: true, requester: 'sam' });
-  assert.equal(asking.content, '📋 Plan v1: Dark mode. Waiting for @sam to say Build it.');
+  assert.equal(asking.content, '📋 Plan v1: Dark mode. Nothing is built yet. Waiting for @sam to say Build it.');
   assert.equal(asking.metadata.specShare.botNote, 'waiting');
   assert.equal(asking.metadata.specShare.waitingFor, 'sam');
   assert.equal(live.specCard({ sessionId: 7, version: 2, spec: SPEC, bot: BOT, asking: true }).content,
-    '📋 Plan v2: Dark mode. Waiting for the person who asked for it to say Build it.');
+    '📋 Plan v2: Dark mode. Nothing is built yet. Waiting for the person who asked for it to say Build it.');
+  // #6280: a plan that waits for Build it is posted in the waiting form, by
+  // its own state (`waiting`), never in the building form.
+  const waits = live.specCard({ sessionId: 7, version: 1, spec: SPEC, bot: BOT, waiting: true, requester: 'sam' });
+  assert.equal(waits.content, '📋 Plan v1: Dark mode. Nothing is built yet. Waiting for @sam to say Build it.');
+  assert.equal(waits.metadata.specShare.botNote, 'waiting');
+  assert.equal(waits.metadata.specShare.waitingFor, 'sam');
   // On its change: the plan itself.
   const proposed = live.specCard({ sessionId: 7, version: 1, spec: SPEC, bot: BOT, proposed: true });
   assert.equal(proposed.content, '📋 Plan v1: Dark mode.');
@@ -303,14 +309,14 @@ test('only what asks people something tags them', () => {
   }
 });
 
-test('held: one of my changes on the project, or the daily limit, in whole sentences', () => {
+test('held: one of my changes on the project, or my turn there, in whole sentences', () => {
   assert.equal(firstPerson(live.heldText({ cap: 'proposals_per_app', limit: 3, project: 'Plant Pal' })),
     'I\'ll build this when one of my 3 changes on Plant Pal is voted in or closed.');
   assert.equal(firstPerson(live.heldText({ cap: 'proposals_total', limit: 40 })),
     'I\'ll build this when one of my 40 changes across Homeroom is voted in or closed.');
-  assert.equal(firstPerson(live.heldText({ cap: 'question_tripwire', verdict: 'question', limit: 10, project: 'Plant Pal' })),
-    'I have a question about this request, but I\'ve already posted 10 questions and notes on Plant Pal today. '
-    + 'I\'ll come back to it once some of those are a day old.');
+  // #6156: held for its turn among the project's builds.
+  assert.equal(firstPerson(live.heldText({ cap: 'builds_per_app', limit: 5, project: 'Plant Pal' })),
+    'I\'ll build this when one of the 5 changes I\'m building on Plant Pal at once is done.');
 });
 
 test('decide: who can say Go ahead is named in Homeroom, and nobody on GitHub', () => {
@@ -319,19 +325,27 @@ test('decide: who can say Go ahead is named in Homeroom, and nobody on GitHub', 
   assert.equal(live.personHomeroomText({ reason: 'x.', deciders: ['ada', 'bo'] }),
     'I think a person needs to decide this one: x. @ada or @bo can say Go ahead in a chat with me, or reply here.');
   assert.doesNotMatch(live.personText({ reason: 'x' }), /@/);
+  // #6306: a request already found working says so, and offers the close
+  // vote, never Go ahead and never "a person needs to decide".
+  assert.equal(live.personHomeroomText({ reason: 'Visitors get the lobby and play as a guest', done: true }),
+    'Already works: Visitors get the lobby and play as a guest. Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.');
+  assert.doesNotMatch(live.personHomeroomText({ reason: 'x', done: true }), /Go ahead|person needs to decide/);
+  assert.equal(live.personText({ reason: 'x', done: true }),
+    'Homeroom bot found this already works: x.\n\nAnyone in the project can propose to close it, or reply here if something is missing.');
   assert.equal(firstPerson(live.personText({ reason: 'It is a platform setting', platform: true, project: 'Plant Pal' })),
     'I think this is about Homeroom itself, not Plant Pal: It is a platform setting.\n\n'
-    + 'Whoever asked for it, or Plant Pal\'s creator or admins, can have me move it to Homeroom\'s own board.');
+    // #6311: the copy is an option too, and the original stays open.
+    + 'Whoever asked for it, or Plant Pal\'s creator or admins, can have it filed on Homeroom\'s own board too, or moved there.');
 });
 
 test('the checks hand-off says why in whole sentences, in the first person', () => {
   const said = (why, failingCount = 2) => firstPerson(followup.checksPersonText({ why, failingCount }));
   assert.match(said('it has already updated this change 3 times, as many as it may on its own'),
-    / I've already updated it 3 times, as many as I may on my own\. A person/);
-  assert.match(said('its attempt to fix them ran out of time'), / My attempt to fix them ran out of time\. A person/);
-  assert.match(said('its attempt to fix them failed (exit 2)'), / My attempt to fix them failed \(exit 2\)\. A person/);
-  assert.match(said('its attempt to fix them changed nothing'), / My attempt to fix them changed nothing\. A person/);
-  assert.match(said('the seed data is missing'), / The seed data is missing\. A person/);
+    / I've already updated it 3 times, as many as I may on my own\. The person who asked for it, or any member of this project, can take it from here\.$/);
+  assert.match(said('its attempt to fix them ran out of time'), / My attempt to fix them ran out of time\. The person who asked for it, or any member of this project, can take it from here\.$/);
+  assert.match(said('its attempt to fix them failed (exit 2)'), / My attempt to fix them failed \(exit 2\)\. The person who asked for it, or any member of this project, can take it from here\.$/);
+  assert.match(said('its attempt to fix them changed nothing'), / My attempt to fix them changed nothing\. The person who asked for it, or any member of this project, can take it from here\.$/);
+  assert.match(said('the seed data is missing'), / The seed data is missing\. The person who asked for it, or any member of this project, can take it from here\.$/);
   assert.equal(firstPerson(followup.checksNotChangeText({ failingCount: 1 })),
     'The failing check on this change isn\'t caused by it: it fails without it too. I\'ve flagged it to Homeroom\'s admins, who look after the checks.');
   assert.match(followup.checksNotChangeText({ failingCount: 3 }), /^The failing checks on this change aren't caused by it: they fail without it too\./);

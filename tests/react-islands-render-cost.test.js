@@ -151,13 +151,6 @@ test('the topic head draws its markup blocks through Html, which keeps the { __h
 
 // ── 4. Workshop Needs-you deck ──────────────────────────────────────────
 
-test('a Needs-you item does not re-render for the Ask sheet\'s keystrokes or streamed answer', () => {
-  const src = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(src, /^const FeedItem = memo\(function FeedItem\(/m);
-  const feed = src.slice(src.indexOf('function NeedsFeed('), src.indexOf('function GroupStrip('));
-  assert.match(feed, /const openFull = useCallback\(\(el: HTMLElement\) => callAppView\(/, 'the one callback an item takes is stable');
-  assert.match(feed, /onFull=\{openFull\}/);
-});
 
 // ── 6. Auto-growing text boxes ──────────────────────────────────────────
 

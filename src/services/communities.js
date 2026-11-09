@@ -26,7 +26,9 @@
 
 const log = require('./logger');
 const appAccess = require('./app-access');
+const appAdmins = require('./app-admins');
 const { positiveId } = require('./row-id');
+const homePins = require('./home-pins');
 
 // The three audiences, in the order the Workshop lists them.
 const AUDIENCES = Object.freeze(['open', 'invited', 'solo']);
@@ -100,12 +102,11 @@ async function getMembership(pool, app, userId) {
   };
 }
 
-// Join the community `app` belongs to. Also pins the app to Home, which is
-// what "Add" did before it was "Join": the directory's one-tap button keeps
-// putting the app where you will find it again. The pin would join you by
-// itself (the app_favorites trigger in schema.sql), but the membership row
-// is written first and explicitly so it records 'joined' rather than
-// 'favorite'.
+// Join the community `app` belongs to, and pin the COMMUNITY to Home (One
+// Home, #6361: services/home-pins.js). Its app is not pinned: pinning an app
+// is its own act now, and the client offers "Pin its app too" once the join
+// lands. Neither pin joins anybody any more (one-home-pins.sql dropped the
+// app_favorites trigger).
 async function join(pool, app, userId) {
   await pool.query(
     `INSERT INTO community_members (community_id, user_id, source)
@@ -114,16 +115,23 @@ async function join(pool, app, userId) {
      ON CONFLICT (community_id, user_id) DO NOTHING`,
     [app.id, userId]
   );
-  await pool.query(
-    `INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)
-     ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE`,
-    [app.id, userId]
-  );
+  if (app.community_id) {
+    await homePins.pinCommunity(pool, app.community_id, userId);
+  } else {
+    await pool.query(
+      `INSERT INTO home_community_pins (community_id, user_id, position)
+       SELECT a.community_id, $2, COALESCE((SELECT MAX(position) + 1 FROM home_community_pins WHERE user_id = $2), 0)
+         FROM apps a WHERE a.id = $1 AND a.community_id IS NOT NULL
+       ON CONFLICT (user_id, community_id) DO NOTHING`,
+      [app.id, userId]
+    );
+  }
 }
 
 // Leave. One transaction, three rows: the membership, the collaborator row
 // (on a private app that is your access — leaving it is the point, and the
-// confirm says so), and the Home pin. The creator cannot leave: an app with
+// confirm says so), and the community's pin on Home. The app's own pin
+// (app_favorites) stays: One Home (#6361) keeps a pinned app where it is. The creator cannot leave: an app with
 // no creator in its community would have nobody who can invite anyone back,
 // which is a state no screen explains. Returns { ok } or { error, status }.
 async function leave(pool, app, userId) {
@@ -143,7 +151,8 @@ async function leave(pool, app, userId) {
       [app.id, userId]
     );
     await client.query(
-      'DELETE FROM app_favorites WHERE app_id = $1 AND user_id = $2',
+      `DELETE FROM home_community_pins p USING apps a
+        WHERE a.id = $1 AND p.community_id = a.community_id AND p.user_id = $2`,
       [app.id, userId]
     );
     await client.query('COMMIT');
@@ -237,28 +246,34 @@ function joinRequiredBody(app) {
 
 // The columns every gate below reads, off an `apps` row aliased `a`, with
 // `$2` the caller's user id.
-const GATE_COLUMNS = `a.id, a.slug, a.name, a.community_id, a.collab_visibility, a.view_visibility,
+const GATE_COLUMNS = `a.id, a.slug, a.name, a.community_id, a.created_by, a.collab_visibility, a.view_visibility,
                 EXISTS (SELECT 1 FROM community_members m
                          WHERE m.community_id = a.community_id AND m.user_id = $2) AS is_member`;
 
 // Whether `app` (a row carrying GATE_COLUMNS) should be refused with
 // join_required for `user`. Only ever TRUE for someone who could otherwise
 // take part — see the notes on requireSessionMembership (below) for the
-// three ways it answers false.
-async function refusesToJoin(pool, app, user) {
+// three ways it answers false. `manage` is for a write only the creator or
+// an app admin may make (a proposal about who sees, builds or decides): they
+// are the ones asked, whether or not they build here, since joining needs
+// only view access (POST /api/apps/:slug/membership); anyone else gets the
+// route's own refusal.
+async function refusesToJoin(pool, app, user, { manage = false } = {}) {
   if (!app || user?.isAdmin) return false;
   if (app.community_id == null || app.is_member) return false;
-  return appAccess.checkAppAccess(pool, app, user, 'collab');
+  if (!manage) return appAccess.checkAppAccess(pool, app, user, 'collab');
+  return (await appAccess.checkAppAccess(pool, app, user, 'view'))
+    && appAdmins.canManageApp(pool, app, user);
 }
 
 // The same gate as middleware over a resolved row, for the three route
 // gates below, which differ only in how they find the app.
-function gate(pool, findApp, what) {
+function gate(pool, findApp, what, opts) {
   return async (req, res, next) => {
     if (req.user?.isAdmin) return next();
     try {
       const app = await findApp(req);
-      if (await refusesToJoin(pool, app, req.user)) return res.status(403).json(joinRequiredBody(app));
+      if (await refusesToJoin(pool, app, req.user, opts)) return res.status(403).json(joinRequiredBody(app));
       return next();
     } catch (err) {
       log.error('communities', `membership guard failed (${what})`, { err: err.message });
@@ -268,9 +283,11 @@ function gate(pool, findApp, what) {
 }
 
 // For `/api/apps/:slug/...` write routes: starting a change, filing a
-// request, importing a pull request, posting to the app's chat over HTTP.
+// request, importing a pull request, posting to the app's chat over HTTP,
+// proposing a settings change (`{ manage: true }` for the ones only the
+// creator or an app admin may propose).
 // A slug that does not resolve falls through to the route's own 404.
-function requireAppMembership(pool) {
+function requireAppMembership(pool, opts = {}) {
   return gate(pool, async (req) => {
     if (!req.params.slug) return null;
     const { rows } = await pool.query(
@@ -278,7 +295,7 @@ function requireAppMembership(pool) {
       [req.params.slug, req.user?.id || null]
     );
     return rows[0] || null;
-  }, 'app');
+  }, 'app', opts);
 }
 
 // For `/api/issues/:id/...` write routes: voting on a request or a
@@ -299,14 +316,14 @@ function requireIssueMembership(pool) {
 // B8: Suggest an improvement (POST /api/feedback) files a request on the app its
 // body names rather than one in the path: the same gate, by slug. Returns the
 // join_required body to answer with, or null to let it through.
-async function appNeedsJoin(pool, slug, user) {
+async function appNeedsJoin(pool, slug, user, opts = {}) {
   if (!slug || user?.isAdmin) return null;
   const { rows } = await pool.query(
     `SELECT ${GATE_COLUMNS} FROM apps a WHERE a.slug = $1`,
     [slug, user?.id || null]
   );
   const app = rows[0];
-  return (await refusesToJoin(pool, app, user)) ? joinRequiredBody(app) : null;
+  return (await refusesToJoin(pool, app, user, opts)) ? joinRequiredBody(app) : null;
 }
 
 // The WebSocket chat write (src/services/ws.js, a 'chat' message). Returns

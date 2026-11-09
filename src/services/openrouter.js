@@ -17,7 +17,11 @@ const { REASONING_EFFORT_SET } = require('./reasoning-efforts');
 // retries.
 const DEFAULT_TIMEOUT_MS = 25_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 800;
-const MAX_OUTPUT_TOKENS = 4_096;
+// Homeroom bot parity, P1: room for a long, structured answer. Task 2020:
+// the bot's chat asks for 8000, and 16000 once a reply was cut off at its
+// limit, since a long answer carries its laid-out copy beside its words
+// (bot-profiles.js CHAT_LIMITS). Every provider of its model takes far more.
+const MAX_OUTPUT_TOKENS = 16_384;
 const MAX_MESSAGES = 100;
 const MAX_TOOLS = 80;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -25,6 +29,12 @@ const MAX_CONTENT_CHARS = 512 * 1024;
 const MAX_TOOL_ARGUMENT_CHARS = 256 * 1024;
 
 const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
+// 31 Oct 2026: a provider a caller asks the route to leave out (`ignore`),
+// by its slug. A response names its provider ("Together", "Inference.net");
+// providerSlug turns that into the slug the routing takes ("together",
+// "inference-net"). At most this many on one request.
+const PROVIDER_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,40}(?:\/[a-z0-9._-]{1,40})?$/;
+const MAX_IGNORED_PROVIDERS = 8;
 
 class OpenRouterProviderError extends Error {
   constructor(code, message, {
@@ -108,6 +118,7 @@ function buildRequest({
   temperature = 0.1,
   parallelToolCalls = null,
   toolChoice = 'auto',
+  ignoreProviders = null,
 }) {
   const copiedTools = jsonArray(tools, 'tools', MAX_TOOLS);
   const availableToolNames = new Set(copiedTools.map((tool) => tool?.function?.name).filter(Boolean));
@@ -164,6 +175,13 @@ function buildRequest({
   // allows several tool calls in one reply. The DM (#3772) and the model
   // helpers (#3949) each hit this through a default or an explicit false.
   if (parallelToolCalls === true) request.parallel_tool_calls = true;
+  // 31 Oct 2026: a retry sent away from the provider that just failed it.
+  // A fresh session alone went back to the same one: sorted by latency,
+  // three tries of one DM answer all went to Together and all ran out of
+  // output there.
+  const ignore = [...new Set((Array.isArray(ignoreProviders) ? ignoreProviders : [])
+    .map(providerSlug).filter(Boolean))].slice(0, MAX_IGNORED_PROVIDERS);
+  if (ignore.length) request.provider = noTrainingProvider({ ...request.provider, ignore });
   if (temperature != null) {
     request.temperature = boundedNumber(temperature, 0.1, 0, 2, 'temperature');
   }
@@ -175,6 +193,18 @@ function buildRequest({
     request.session_id = normalized;
   }
   return request;
+}
+
+/**
+ * Pure: a provider's routing slug from the name a response gives it, or null
+ * for one that does not make a slug ("Together" → "together", "Google AI
+ * Studio" → "google-ai-studio"). A slug passes through unchanged.
+ */
+function providerSlug(name) {
+  if (typeof name !== 'string') return null;
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9/._-]+/g, '-').replace(/\.(?=[a-z])/g, '-')
+    .replace(/-+/g, '-').replace(/^-|-$/g, '');
+  return PROVIDER_SLUG_RE.test(slug) ? slug : null;
 }
 
 function nonnegative(value) {
@@ -275,6 +305,119 @@ async function readJsonBody(body, { startedAt, state }) {
   }
 }
 
+// Homeroom bot parity, P1 (streamed replies): a caller that passes `onDelta`
+// is answered as a stream (`stream: true`), so the words the person will get
+// can be shown while the model writes them. Every other caller keeps the
+// atomic response above. The raw stream carries a JSON wrapper per token, so
+// its byte budget is larger than an atomic body's; what is kept (the content
+// and the tool arguments) keeps its own limits.
+const MAX_STREAM_BYTES = 16 * 1024 * 1024;
+const MAX_STREAM_LINE_CHARS = 1024 * 1024;
+
+/**
+ * The server-sent events of a streamed completion, folded into the shape an
+ * atomic one has ({ id, model, provider, choices: [{ finish_reason, message }],
+ * usage, error }). `onDelta({ content, toolCalls })` is called after each
+ * read with what has arrived so far (the caller must not change it); a throw
+ * there costs the request nothing.
+ */
+async function readEventStream(body, { startedAt, state, onDelta }) {
+  if (!body || typeof body[Symbol.asyncIterator] !== 'function') {
+    throw new OpenRouterProviderError('invalid_response', 'Provider returned no response body', {
+      dispatched: true,
+      timings: timingSnapshot(startedAt, state),
+    });
+  }
+  const decoder = new TextDecoder('utf-8');
+  const out = { id: null, model: null, provider: null, usage: null, error: null, finish: null };
+  const toolCalls = new Map();
+  let content = '';
+  let buffer = '';
+  let bytes = 0;
+  let done = false;
+  const tooLarge = () => new OpenRouterProviderError('response_too_large', 'Provider response exceeded the limit', {
+    dispatched: true,
+    timings: timingSnapshot(startedAt, state),
+  });
+  const take = (line) => {
+    if (!line.startsWith('data:')) return; // a comment (": OPENROUTER PROCESSING"), an event name, a blank line
+    const data = line.slice(5).trim();
+    if (!data) return;
+    if (data === '[DONE]') { done = true; return; }
+    let chunk;
+    try { chunk = JSON.parse(data); } catch { return; }
+    if (!chunk || typeof chunk !== 'object') return;
+    if (typeof chunk.id === 'string' && !out.id) out.id = chunk.id;
+    if (typeof chunk.model === 'string') out.model = chunk.model;
+    if (typeof chunk.provider === 'string') out.provider = chunk.provider;
+    if (chunk.usage && typeof chunk.usage === 'object') out.usage = chunk.usage;
+    if (chunk.error) out.error = chunk.error;
+    const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : null;
+    if (!choice) return;
+    const delta = choice.delta || choice.message || {};
+    const piece = contentDelta(delta.content);
+    if (piece) {
+      content += piece;
+      if (content.length > MAX_CONTENT_CHARS) throw tooLarge();
+    }
+    for (const call of Array.isArray(delta.tool_calls) ? delta.tool_calls : []) {
+      // A provider that repeats a call's id or name on every delta (rather
+      // than sending it once) must not have them joined: "replyreply".
+      // One with no index continues the call before it, unless it names a new id.
+      if (!call || typeof call !== 'object') continue;
+      const last = toolCalls.size ? Math.max(...toolCalls.keys()) : null;
+      const at = Number.isInteger(call.index) && call.index >= 0 ? call.index
+        : last === null ? 0
+          : (typeof call.id === 'string' && call.id && toolCalls.get(last).id && call.id !== toolCalls.get(last).id ? last + 1 : last);
+      const before = toolCalls.get(at);
+      const fn = call.function && typeof call.function === 'object' ? { ...call.function } : call.function;
+      if (before && fn && before.function.name && fn.name === before.function.name) delete fn.name;
+      appendToolCall(toolCalls, { ...call, index: at, ...(before && before.id && call.id === before.id ? { id: undefined } : {}), function: fn });
+    }
+    if (choice.finish_reason) out.finish = choice.finish_reason;
+  };
+  for await (const chunk of body) {
+    if (state.firstByteMs == null) state.firstByteMs = Math.max(0, Date.now() - startedAt);
+    const value = typeof chunk === 'string' ? Buffer.from(chunk) : (Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    bytes += value.byteLength;
+    if (bytes > MAX_STREAM_BYTES) throw tooLarge();
+    buffer += decoder.decode(value, { stream: true });
+    let at;
+    while ((at = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, at).replace(/\r$/, '');
+      buffer = buffer.slice(at + 1);
+      take(line);
+    }
+    if (buffer.length > MAX_STREAM_LINE_CHARS) throw tooLarge();
+    if (typeof onDelta === 'function') {
+      try {
+        const said = onDelta({ content, toolCalls: [...toolCalls.values()] });
+        if (said && typeof said.catch === 'function') said.catch(() => {});
+      } catch {
+        // What the caller shows as it streams never fails the request.
+      }
+    }
+    if (done) break;
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) take(buffer.replace(/\r$/, ''));
+  return {
+    id: out.id,
+    model: out.model,
+    provider: out.provider,
+    ...(out.error ? { error: out.error } : {}),
+    choices: [{
+      finish_reason: out.finish,
+      message: {
+        role: 'assistant',
+        content,
+        tool_calls: [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call),
+      },
+    }],
+    usage: out.usage,
+  };
+}
+
 // How much of a refused request's body is read for its provider's name.
 const MAX_ERROR_BODY_BYTES = 16 * 1024;
 // The longest Retry-After a caller is told about; anything longer is a
@@ -332,6 +475,9 @@ async function streamChat({
   origin,
   signal,
   onContent,
+  // Homeroom bot parity, P1: what has arrived so far, as it streams
+  // (readEventStream). Given, the request is a stream.
+  onDelta,
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   ...requestInput
@@ -346,6 +492,8 @@ async function streamChat({
     throw new OpenRouterProviderError('invalid_request', 'Fetch implementation is unavailable');
   }
   const body = buildRequest(requestInput);
+  const streamed = typeof onDelta === 'function';
+  if (streamed) body.stream = true;
   const startedAt = Date.now();
   const timingState = { headersMs: null, firstByteMs: null };
   const timeoutController = new AbortController();
@@ -401,7 +549,9 @@ async function streamChat({
   let generationId = response.headers?.get?.('x-generation-id') || null;
 
   try {
-    const completion = await readJsonBody(response.body, { startedAt, state: timingState });
+    const completion = streamed
+      ? await readEventStream(response.body, { startedAt, state: timingState, onDelta })
+      : await readJsonBody(response.body, { startedAt, state: timingState });
     generationId ||= typeof completion?.id === 'string' ? completion.id : null;
     servedModel = typeof completion?.model === 'string' ? completion.model : null;
     provider = typeof completion?.provider === 'string' ? completion.provider : null;
@@ -495,6 +645,7 @@ module.exports = {
   modelId,
   reasoningEffort,
   buildRequest,
+  providerSlug,
   usageFrom,
   retryAfterMs,
   streamChat,

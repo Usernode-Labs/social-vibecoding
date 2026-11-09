@@ -1,7 +1,6 @@
 'use strict';
 // test:changed: when public/js/app-view.js (production-directory relay)
-// test:changed: when src/services/platform-preview-data-policy.json (policy epoch)
-// test:changed: when src/services/platform-preview-schema.json (schema epoch)
+// test:changed: when src/services/db-manager.js (policy epoch)
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -200,11 +199,31 @@ test('platform deployment refuses a clone without current policy attestation', a
   }),{noFallback:true});
 });
 
-test('synthetic preview identity preserves only exact capture names and resets other claims', () => {
+test('synthetic preview identity preserves only exact capture names, at their fixed ids, and resets other claims', () => {
   assert.deepEqual(policy.previewIdentity({id:21,username:'private-handle',usernode_pubkey:'private-wallet',locale:'es'}),
     {id:21,username:'preview-user-21',usernode_pubkey:null,locale:null});
-  assert.equal(policy.previewIdentity({id:22,username:'usernode-capture'}).username,'usernode-capture');
-  assert.equal(policy.previewIdentity({id:24,username:'usernode-capture-lookalike'}).username,'preview-user-24');
+  assert.deepEqual(policy.previewIdentity({id:22,username:'usernode-capture'}),
+    {id:2147482996,username:'usernode-capture',usernode_pubkey:null,locale:null});
+  assert.equal(policy.previewIdentity({id:23,username:'usernode-capture-admin'}).id,2147482997);
+  assert.deepEqual(policy.previewIdentity({id:24,username:'usernode-capture-lookalike'}),
+    {id:24,username:'preview-user-24',usernode_pubkey:null,locale:null});
+  // The shots fixtures' own ids are theirs; nothing maps onto them.
+  const fixtures = require('../src/services/shots-fixtures');
+  for (const id of policy.PREVIEW_PERSONA_IDS.values()) {
+    assert.ok(![fixtures.FULL_ADMIN_USER_ID, fixtures.INVITED_MEMBER_USER_ID, fixtures.INVITED_MEMBER_LISTED_USER_ID].includes(id));
+  }
+});
+
+test('a persona token for a platform preview carries the persona\'s fixed id; anywhere else its own', () => {
+  require('./platform-keys').setPlatformKeys();
+  const platformJwt = require('../src/services/platform-jwt');
+  const visuals = require('../src/services/visuals');
+  const claims = (token, appId) => platformJwt.verifyAppIdentityToken(token, { appId, allowPreview: true });
+  const member = { id: 22, username: 'usernode-capture' };
+  assert.equal(claims(visuals.mintCaptureToken(member, 10, { previewOnly: true }), 10).id, 2147482996);
+  assert.equal(claims(visuals.mintCaptureToken(member, 11), 11).id, 22);
+  const fixture = { id: 2147483000, username: 'usernode-shots-full-admin' };
+  assert.equal(claims(visuals.mintCaptureToken(fixture, 10, { previewOnly: true }), 10).id, 2147483000);
 });
 
 test('platform preview cannot use the parent cookie directory relay, including Messages and stale context', async () => {
@@ -231,4 +250,67 @@ test('platform preview cannot use the parent cookie directory relay, including M
     assert.equal(fetched,context.blocked?0:1);
     if(context.blocked) assert.equal(JSON.stringify(responses).includes('production-secret-handle'),false);
   }
+});
+
+test('code that cannot start a platform preview empty is refused before any database is made', () => {
+  const os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-boot-'));
+  try {
+    assert.equal(policy.startsEmpty(dir), false, 'no marker');
+    fs.mkdirSync(path.join(dir, 'src', 'db'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'src', 'db', 'preview-boot.json'), '{"startsEmpty":0}');
+    assert.equal(policy.startsEmpty(dir), false, 'not this support');
+    fs.writeFileSync(path.join(dir, 'src', 'db', 'preview-boot.json'), 'not json');
+    assert.equal(policy.startsEmpty(dir), false, 'unreadable');
+    fs.writeFileSync(path.join(dir, 'src', 'db', 'preview-boot.json'), '{"startsEmpty":1}');
+    assert.equal(policy.startsEmpty(dir), true);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  assert.equal(policy.startsEmpty(path.join(__dirname, '..')), true, 'this code can');
+  // Both builders ask before they make a database.
+  const staging = fs.readFileSync(path.join(__dirname, '../src/services/staging.js'), 'utf8');
+  const refuse = staging.indexOf('previewPolicy.sourceIdentity(prodDbName) && !await commitStartsEmpty(cloneDir)');
+  assert.ok(refuse > 0 && refuse < staging.indexOf('dbManager.cloneDatabase(prodDbName'), 'the preview build refuses before it clones');
+  const shots = fs.readFileSync(path.join(__dirname, '../src/services/shots-environment.js'), 'utf8');
+  const both = shots.indexOf('[baseCheckout, headCheckout].every((checkout) => previewPolicy.startsEmpty(checkout.dir))');
+  assert.ok(both > 0 && both < shots.indexOf('dbManager.prepareStagingCloneSource('), 'shots refuse before preparing a source');
+  assert.match(shots, /'shots_preview_needs_update', previewPolicy\.NEEDS_UPDATE/);
+});
+
+// On Kubernetes the preview build's clone carries only the root's files
+// (staging.js rootOnly: --filter=blob:none --sparse), so the marker under
+// src/db is never on disk there: the build reads it from the commit
+// (3 Nov 2026: read from disk, it refused every platform preview).
+test('a preview build reads the marker from the commit, which a root-only clone has', async () => {
+  const os = require('node:os');
+  const { execFileSync } = require('node:child_process');
+  const staging = require('../src/services/staging');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-boot-git-'));
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { stdio: 'pipe' });
+  const origin = path.join(root, 'origin');
+  const cloneAs = (name) => {
+    const dir = path.join(root, name);
+    git('clone', '-q', '--depth', '1', '--filter=blob:none', '--sparse', `file://${origin}`, dir);
+    return dir;
+  };
+  try {
+    fs.mkdirSync(path.join(origin, 'src', 'db'), { recursive: true });
+    git('-C', origin, 'init', '-q');
+    git('-C', origin, 'config', 'uploadpack.allowFilter', 'true');
+    fs.writeFileSync(path.join(origin, 'dapp.json'), '{}');
+    fs.writeFileSync(path.join(origin, 'src', 'db', 'preview-boot.json'), '{"startsEmpty":1}');
+    git('-C', origin, 'add', '-A');
+    git('-C', origin, 'commit', '-qm', 'can start empty');
+    const marked = cloneAs('marked');
+    assert.equal(fs.existsSync(path.join(marked, 'dapp.json')), true, 'root files are there');
+    assert.equal(fs.existsSync(path.join(marked, 'src', 'db', 'preview-boot.json')), false, 'src/ is not, as on Kubernetes');
+    assert.equal(policy.startsEmpty(marked), false, 'so the working tree cannot tell');
+    assert.equal(await staging.commitStartsEmpty(marked), true, 'the commit can');
+    fs.writeFileSync(path.join(origin, 'src', 'db', 'preview-boot.json'), '{"startsEmpty":0}');
+    git('-C', origin, 'commit', '-qam', 'not this support');
+    assert.equal(await staging.commitStartsEmpty(cloneAs('unsupported')), false);
+    git('-C', origin, 'rm', '-q', 'src/db/preview-boot.json');
+    git('-C', origin, 'commit', '-qm', 'from before');
+    assert.equal(await staging.commitStartsEmpty(cloneAs('before')), false, 'no marker');
+    assert.equal(await staging.commitStartsEmpty(path.join(root, 'nowhere')), false, 'git cannot say: refused');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

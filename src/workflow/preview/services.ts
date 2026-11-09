@@ -125,6 +125,14 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
   };
 
   return {
+    [WORK.wake]: {
+      maxAttempts: 2, leaseMs: 60000, concurrency: 2,
+      async run({ input }): Promise<Json> {
+        return legacy('services/preview-sleep').wake(config, pool, Number(input.sessionId), {
+          reason: String(input.reason), repairRoute: input.repairRoute === true,
+        });
+      },
+    },
     // Build attempt n of the head into its own checkout, database and env
     // Secret, then update the session's runtime to it (fenced by attempt,
     // the serving template restored on a failed rollout). A build or boot
@@ -175,14 +183,23 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           // lease ran out, or the machine cancelled it) reports nothing and
           // sets nothing off: checkpoint throws for it.
           await ctx.checkpoint({ step: 'failed', db });
-          const detail = visuals().summarizeBootFailure(err);
-          const infrastructure = !!legacy('services/deploy-failure').bootFailureIsInfrastructure(err);
+          // #6149: a database or runtime stamped by another build of the
+          // platform is the release window, not the change's fault, while a
+          // newer build is serving: retry it as a platform fault, and say so
+          // in words. With no newer build it stays the immediate refusal it
+          // is (an unreviewed change, or this build is the newest).
+          const refusal = err as { previewDatabaseServerFault?: boolean; policySkew?: boolean };
+          const policy = legacy('services/platform-preview-data-policy');
+          const rollout = refusal.policySkew === true && await policy.newerBuildServing(pool);
+          if (rollout) policy.markRollout(err);
+          const detail = rollout ? policy.ROLLOUT_DETAIL : visuals().summarizeBootFailure(err);
+          const infrastructure = rollout || !!legacy('services/deploy-failure').bootFailureIsInfrastructure(err);
           const sync = legacy('services/boot-failure-sync');
           const catchUp = infrastructure ? null
             : await sync.afterBootFailure({ config, pool, session: row, commitHash: input.head, err }).catch(() => null);
           return {
             ok: false, detail, infrastructure, aboutMain: sync.explain(catchUp) || null, sync: !!catchUp?.sync,
-            platformFault: (err as { previewDatabaseServerFault?: boolean }).previewDatabaseServerFault === true,
+            platformFault: rollout || refusal.previewDatabaseServerFault === true,
             servingRemoved: !!(err as { servingRemoved?: boolean }).servingRemoved,
           };
         }
@@ -199,6 +216,9 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
     // only while fewer unit suites run than the checks queue lets runs go at
     // once, so a burst of builds cannot fill the worker namespace's quota
     // ahead of the runs the queue admits. EARLY_UNIT_SUITE=0 turns it off.
+    // A required batch pool admits whole runs, not speculative early suites:
+    // those would bypass its shared budget. Their suite runs after the build,
+    // inside the admitted checks run instead.
     [WORK.unitEarly]: {
       // Its Jobs outlive a lost claim, and a retry finds them.
       maxAttempts: 2,
@@ -207,7 +227,8 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       async run({ input, signal }): Promise<Json> {
         const off = ['0', 'false', 'off'].includes(String(process.env.EARLY_UNIT_SUITE ?? '1').trim().toLowerCase());
         const unitSuite = legacy('services/unit-suite');
-        if (off || config.workerRuntime !== 'kubernetes' || !unitSuite.isEnabled()) return { started: false, why: 'off' };
+        if (off || config.kubernetes?.checkNodePoolRequired || config.workerRuntime !== 'kubernetes'
+          || !unitSuite.isEnabled()) return { started: false, why: 'off' };
         // Only while its attempt is still being built: once it serves, its
         // checks run is under way and runs a suite of its own if it finds
         // none; once it is superseded or failed, nothing will read one.
@@ -274,6 +295,12 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           // starts over under this claim's own id.
           await clearRun(input.sessionId, input.runId);
         }
+        // The preview it checks, awake (#6157: a preview nobody used sleeps,
+        // services/preview-sleep.js). One that slept and did not wake in time
+        // is the platform's fault, never the change's: its error lane runs
+        // it again.
+        const awake = await legacy('services/preview-sleep').wakeForRun(config, pool, input.sessionId);
+        if (!awake.ok) return { outcome: 'blocked', reason: awake.detail, platformFault: true };
         const stagingResult = { runtimeName: input.runtimeName, runtimeKind: input.runtimeKind, stagingUrl: input.url, timings: null };
         const report: { uiAffecting?: boolean } = {};
         const result = await visuals().captureForSession(config, row, a, input.head, stagingResult, {

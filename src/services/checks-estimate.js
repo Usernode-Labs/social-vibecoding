@@ -22,8 +22,12 @@ const RECENT_RUNS = 15;
 const MIN_RUNS = 3;
 // A few seconds' answer is shared by every change page open on the app.
 const CACHE_MS = 60 * 1000;
+// The fallback across the platform is asked at most this often, and only over
+// finished runs from the last month.
+const PLATFORM_CACHE_MS = 10 * 60 * 1000;
 
 const cache = new Map();
+let platformCache = { value: null, until: 0 };
 
 function median(values) {
   const list = values.filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
@@ -59,14 +63,17 @@ function estimateFrom(snapshots) {
   };
 }
 
-// The app's estimate, or null when it has too few finished runs. Best-effort:
-// a failed read is no estimate, never a failed page.
+// The app's estimate, or null when neither it nor the platform has enough
+// finished runs. A project with too few runs of its own borrows the median
+// across recent runs everywhere, marked `rough`, and gets the checks queue's
+// slot count so a queued run can say how long its wait should be.
+// Best-effort: a failed read is no estimate, never a failed page.
 async function forApp(pool, appId) {
   const id = Number(appId);
   if (!Number.isInteger(id) || id <= 0) return null;
   const hit = cache.get(id);
   if (hit && hit.until > Date.now()) return hit.value;
-  let value = null;
+  let own = null;
   try {
     const { rows } = await pool.query(
       `SELECT checks_progress
@@ -78,16 +85,70 @@ async function forApp(pool, appId) {
         LIMIT $2`,
       [id, RECENT_RUNS]
     );
-    value = estimateFrom(rows.map((r) => r.checks_progress));
+    own = estimateFrom(rows.map((r) => r.checks_progress));
   } catch (_) {
-    value = null;
+    own = null;
+  }
+  let value = null;
+  if (own) {
+    value = { ...own, rough: false, slots: queueSlots() };
+  } else {
+    const platform = await forPlatform(pool);
+    if (platform) value = { ...platform, rough: true, slots: queueSlots() };
   }
   cache.set(id, { value, until: Date.now() + CACHE_MS });
   return value;
 }
 
+// How many proposal runs Homeroom tests at once, read from the checks queue
+// (at least one, so the wait estimate never divides by zero). Lazy: the queue
+// is a larger module and this estimate is read on page loads.
+function queueSlots() {
+  try {
+    const cap = Number(require('./checks-queue').maxConcurrentRuns());
+    return Number.isFinite(cap) && cap >= 1 ? cap : 1;
+  } catch (_) {
+    return 1;
+  }
+}
+
+// The median across every project's recent finished runs, for a project with
+// too few of its own. Cached for ten minutes in one slot: this read scans the
+// whole table, and the answer moves slowly. Best-effort: null on failure.
+async function forPlatform(pool) {
+  if (platformCache.until > Date.now()) return platformCache.value;
+  let value = null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT checks_progress
+         FROM chat_sessions
+        WHERE checks_progress ? 'checksMs'
+          AND checks_progress #>> '{build,step}' = 'done'
+          AND checks_checked_at > NOW() - INTERVAL '30 days'
+        ORDER BY checks_checked_at DESC NULLS LAST
+        LIMIT $1`,
+      [RECENT_RUNS]
+    );
+    value = estimateFrom(rows.map((r) => r.checks_progress));
+  } catch (_) {
+    value = null;
+  }
+  platformCache = { value, until: Date.now() + PLATFORM_CACHE_MS };
+  return value;
+}
+
+// Tests read the fallback with their own fake pools, so each case starts with
+// no shared answer.
+function resetCaches() {
+  cache.clear();
+  platformCache = { value: null, until: 0 };
+}
+
 // The staging demo's estimate (?demo=1): about 3 minutes to build the
 // preview and 9 to check it, the numbers the design was drawn with.
-const DEMO_ESTIMATE = Object.freeze({ buildMs: 180000, checksMs: 540000, runs: 12 });
+const DEMO_ESTIMATE = Object.freeze({ buildMs: 180000, checksMs: 540000, runs: 12, rough: false, slots: 4 });
 
-module.exports = { forApp, estimateFrom, median, buildMsOf, DEMO_ESTIMATE, RECENT_RUNS, MIN_RUNS };
+module.exports = {
+  forApp, forPlatform, estimateFrom, median, buildMsOf, resetCaches,
+  DEMO_ESTIMATE, RECENT_RUNS, MIN_RUNS,
+};

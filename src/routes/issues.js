@@ -26,6 +26,7 @@ const repoRef = require('../services/repo-ref');
 // reports as `busy`, so an issue's work-state chip and the session card it
 // points at can never disagree about whether an agent is actually running.
 const { isSessionBusy } = require('../services/active-workers');
+const { planRecordSql } = require('../services/request-specs');
 const { workedOnSql } = require('../workflow/session-work.ts');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -41,6 +42,61 @@ const { isGovernanceKind } = require('../services/governance-kinds');
 // browser only ever intersects it with the cards it already holds.
 const BOARD_SEARCH_MIN_CHARS = 2;
 const BOARD_SEARCH_MAX_HITS = 200;
+
+// #6440: where a governance vote belongs, when it is about one request or
+// thread rather than the project. `reopen_issue` is about the request it
+// would bring back; `thread_move` is about the thread it would merge or
+// split. Both are drawn on that page, and `dev/governance/<id>` forwards
+// there. Every other kind (and a row whose target cannot be resolved) is
+// `null`: the vote has a page of its own.
+async function governanceHome(pool, proposal) {
+  const payload = (proposal && proposal.payload) || {};
+  if (proposal.kind === 'reopen_issue') {
+    const n = Number(payload.issueNumber);
+    return Number.isInteger(n) && n > 0 ? { kind: 'request', number: n } : null;
+  }
+  if (proposal.kind === 'thread_move') {
+    // The thread the move is about, through any merges, and its number: a
+    // request's and a change's numbers are one sequence (app-numbers), so
+    // the client opens the page that number names.
+    let thread = null;
+    if (payload.moveId != null && pool) {
+      try {
+        const { rows } = await pool.query('SELECT thread_id FROM thread_moves WHERE id = $1', [Number(payload.moveId)]);
+        const threadId = rows[0] && rows[0].thread_id;
+        if (threadId != null) thread = await require('../services/threads').threadById(pool, threadId);
+      } catch (err) {
+        log.warn('issues', 'Could not resolve a thread move\'s thread', { message: err.message });
+      }
+    }
+    const n = Number(thread && thread.number != null ? thread.number : payload.threadNumber);
+    return Number.isInteger(n) && n > 0 ? { kind: 'request', number: n } : null;
+  }
+  return null;
+}
+
+// #6440: how a governance vote stands or ended, in one word the decision
+// page reads: `open`, `applying` (passed, being carried out), `applied`,
+// `refused`, `withdrawn` or `superseded`. The same facts `_govApplyState`
+// reads on the client, so the page never says "waiting for votes" once the
+// vote has ended.
+function governanceOutcome(proposal) {
+  if (!proposal) return 'open';
+  const p = proposal.payload || {};
+  if (p.appliedAt) {
+    return String(p.appliedBy || '').startsWith('refused:') ? 'refused' : 'applied';
+  }
+  if (p.withdrawnAt || proposal.status === 'withdrawn') return 'withdrawn';
+  if (p.supersededAt) return 'superseded';
+  if (proposal.status && proposal.status !== 'open') return 'applied';
+  const yes = Number(proposal.qualified_yes_count != null ? proposal.qualified_yes_count : proposal.up_count) || 0;
+  const need = Number(proposal.approvals_required != null ? proposal.approvals_required : proposal.votes_required) || 0;
+  const ends = proposal.merge_window_ends_at ? Date.parse(proposal.merge_window_ends_at) : NaN;
+  if (need > 0 && yes >= need && !proposal.contested && Number.isFinite(ends) && ends <= Date.now()) {
+    return 'applying';
+  }
+  return 'open';
+}
 
 // An issue id from the path, or null when it is not a positive integer that
 // fits `issues.id` (SERIAL). Answered as 404 rather than handed to Postgres
@@ -99,7 +155,7 @@ async function isIssueAuthor(pool, appId, parsed, issueNumber, user, currentBody
 // maintenance_campaign (#853's generalization) is self-app-only,
 // admin-proposed fleet maintenance — see the create branch below and
 // services/fleet-maintenance.js for the engine the apply path starts.
-const VALID_KINDS = ['general', 'secret_change', 'close_issue', 'maintenance_campaign'];
+const VALID_KINDS = ['general', 'secret_change', 'close_issue', 'reopen_issue', 'maintenance_campaign'];
 const MAX_SECRET_VALUE_LENGTH = 4096;
 // Campaign instructions are an LLM prompt, not an essay — but audits
 // with embedded code snippets are legitimate, so the cap is generous.
@@ -122,6 +178,7 @@ const {
 // #2431: which proposal closed an issue, or is working on it. One query for
 // the whole list, so the board pays for it once and not per card.
 const { resolveIssueProposalRefs } = require('../services/issue-proposal-ref');
+const threadsService = require('../services/threads');
 const { botWorkByIssue } = require('../services/homeroom-bot-progress');
 const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
@@ -174,8 +231,8 @@ async function botWorkFor(pool, appId) {
 // PRs the engine opens are the repo-visible artifact; a twin issue on
 // the PLATFORM repo would be noise.
 function shouldCreateGithubTwin(kind) {
-  return kind !== 'secret_change' && kind !== 'close_issue' && kind !== 'maintenance_campaign'
-    && kind !== 'featured_illustration';
+  return kind !== 'secret_change' && kind !== 'close_issue' && kind !== 'reopen_issue'
+    && kind !== 'maintenance_campaign' && kind !== 'featured_illustration';
 }
 
 // Staging-only mock issues for GET /api/apps/:slug/github-issues. A
@@ -374,6 +431,48 @@ function stagingMockIssues(repoUrl) {
       + 'building. Nobody has claimed it yet. The page says the bot is on it, '
       + 'and still offers Claim for anyone who wants to work on it alongside '
       + 'the bot, but not Start work.', 2),
+    // 3 Nov 2026 (#6213): the request Homeroom bot handed back to a person.
+    // Its discussion carries the note with the suggested replies the person
+    // it names taps (the seeded thread, seedStagingBotWaitingRows in
+    // src/db/migrate.js). A staging copy has no GitHub to read the request
+    // from, so its page's own fetch finds it here, and only the after copy
+    // has it. Nothing else reads this row; the note is the stored message.
+    mk(9103, 'Staging demo: a request handed back to a person',
+      'Staging demo: obviously fake. The bot handed this back because a '
+      + 'person must decide which of the two columns to keep.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 26),
+    // 4 Nov 2026 (#6264): the request whose discussion shows the bot
+    // keeping its word, "I'll tell you here when it's in." then the line it
+    // posted when the update was in (seedStagingBotFollowUp in
+    // src/db/migrate.js stores those messages). A staging copy has no
+    // GitHub to read the request from, so its page's own fetch finds it
+    // here, and only the after copy has it.
+    mk(9107, 'Staging demo: a request where the bot kept its word',
+      'Staging demo: obviously fake. An update to this request was asked '
+      + 'for, and the bot said it would tell the person when it was in.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 46),
+    // #6399: the request whose hand-back reason a later release lifted. Its
+    // track (seedStagingBotOutdatedReason in src/db/migrate.js) is
+    // waiting_for_you/decide with a reason given before 6 Nov 2026 13:05 UTC,
+    // so its status card says the reason may be out of date and offers
+    // "Ask Homeroom bot to read this again". A staging copy has no GitHub to
+    // read the request from, so its page's own fetch finds it here.
+    mk(9112, 'Staging demo: a request handed back over a plan the bot could not read',
+      'Staging demo: obviously fake. The bot handed this back because it '
+      + 'could not read a plan a person posted, and Homeroom can read one now.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 26),
+    // #6211: the pair whose discussions show an overlap note. 9115 is the
+    // smaller request the bot read as part of 9114: its thread carries the
+    // note and the three choices (seedStagingBotOverlap in src/db/migrate.js
+    // stores them), and 9114's thread carries the line saying what was
+    // chosen. A staging copy has no GitHub to read either request from, so
+    // each page's own fetch finds it here.
+    mk(9114, 'Staging demo: Main Chat keeps only what you said there',
+      'Staging demo: obviously fake. A request a smaller one was found to '
+      + 'be part of.\n\n**Source:** Homeroom user (usernode-capture)', 30),
+    mk(9115, 'Staging demo: a plan row opens Main Chat',
+      'Staging demo: obviously fake. One piece of the larger request.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 30),
   ];
 }
 
@@ -412,6 +511,12 @@ function stagingMockClosedIssues(repoUrl) {
     mk(900032, '[Mock] Retire the old tips banner',
       'Staging-only closed mock request. A close vote closed it, so its page '
       + 'says so in a grey band at the top of the card.', 9, { mockClosedVia: 'vote' }),
+    // #6000: the request #6000 was filed about, closed by vote with no linked
+    // change, so its page offers "Propose reopening" in the status card and
+    // the ⋯ menu. A closed mock like the two above; no-op in production.
+    mk(5841, 'Add tier list features: per-person picks, item comments with @mentions, and help tooltip',
+      'Staging-only closed mock request for #6000. A close vote closed it, so '
+      + 'its page offers asking the group to reopen it.', 1, { mockClosedVia: 'vote' }),
   ];
 }
 
@@ -1097,7 +1202,7 @@ function issueRoutes(config) {
          FROM issues i
          LEFT JOIN users u ON i.created_by = u.id
          WHERE i.app_id = $1 AND i.id = $2
-           AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign',
+           AND i.kind IN ('secret_change', 'rename', 'close_issue', 'reopen_issue', 'maintenance_campaign',
                           'featured_illustration', 'thread_move')
          LIMIT 1`,
         [appId, id, userId]
@@ -1195,6 +1300,13 @@ function issueRoutes(config) {
       }
 
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+      // #6440: where this vote belongs. A vote about one request or thread is
+      // drawn on that page, not on a page of its own: the client forwards
+      // `dev/governance/<id>` there. Every other kind stays here (`null`).
+      proposal.home = await governanceHome(pool, proposal);
+      // #6440: how it ended, in one word the page's Votes card reads, so it
+      // never says "waiting for votes" after the vote ended.
+      proposal.outcome = governanceOutcome(proposal);
       res.json({ proposal });
     } catch (err) {
       log.error('issues', 'Failed to get governance proposal by id', { message: err.message });
@@ -1272,7 +1384,9 @@ function issueRoutes(config) {
           pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`,
         );
         if (!app) return res.status(404).json({ error: 'App not found' });
-        const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, { app, user: req.user, issueNumber: n });
+        const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, {
+          app, user: req.user, issueNumber: n, readAgain: req.body?.readAgain === true,
+        });
         if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
         return res.json(out);
       } catch (err) {
@@ -1280,6 +1394,31 @@ function issueRoutes(config) {
         return res.status(500).json({ error: 'Internal server error' });
       }
     });
+
+  // 1 Nov 2026 (threads, one loop: phase B): "Let the bot build it now"
+  // under "Homeroom bot is waiting for your plan." on a request's page: the
+  // viewer's own private thread about their request no longer holds the
+  // bot (services/private-threads.js liftHold, by 'go'), and the lane looks
+  // again. Their own tap only: same-origin, on no connector's list.
+  //
+  //   POST /api/apps/:slug/issues/:number/bot-go → { ok, lifted }
+  router.post('/api/apps/:slug/issues/:number/bot-go', issueKindLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
+      const n = Number(req.params.number);
+      if (!Number.isInteger(n) || n <= 0) return res.status(400).json({ error: 'Invalid request number' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const out = await require('../services/private-threads').liftHold(pool, {
+        appId: app.id, issueNumber: n, by: 'go', userId: req.user.id,
+      });
+      return res.json({ ok: true, lifted: out.lifted });
+    } catch (err) {
+      log.error('issues', 'Letting Homeroom bot build failed', { message: err.message, slug: req.params.slug });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   router.post('/api/apps/:slug/issues', issueKindLimiter, communities.requireAppMembership(pool), async (req, res) => {
     let { title, description, kind = 'general', payload = {} } = req.body || {};
@@ -1473,6 +1612,69 @@ function issueRoutes(config) {
         payload = { issueNumber, issueTitle, reason: reason || null };
         title = `Close issue #${issueNumber}: "${issueTitle}"`.slice(0, 512);
         description = reason || null;
+      } else if (kind === 'reopen_issue') {
+        // #6000: a closed request the group is asked to bring back. The
+        // target's current state is read from GitHub, raw, so a closed issue
+        // that is not on the public list (or a pull request number) is
+        // refused rather than turned into a vote with no effect.
+        const issueNumber = Number(payload?.issueNumber);
+        if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+          return res.status(400).json({ error: 'payload.issueNumber must be a positive integer' });
+        }
+        const reason = typeof payload?.reason === 'string' ? payload.reason.trim() : '';
+        if (reason.length > MAX_CLOSE_REASON_LENGTH) {
+          return res.status(400).json({
+            error: `payload.reason must be ≤ ${MAX_CLOSE_REASON_LENGTH} chars`,
+          });
+        }
+
+        const parsed = parseOwnerRepo(app.repo_url);
+        if (!requestsOn() || !parsed) {
+          return res.status(422).json({
+            error: 'Cannot verify the request right now: requests are unavailable for this app.',
+          });
+        }
+        let target;
+        try {
+          target = await github.getIssue(parsed.owner, parsed.repo, issueNumber);
+        } catch (err) {
+          if (err?.status === 404) {
+            return res.status(404).json({
+              error: `Issue #${issueNumber} isn't an issue on this repo.`,
+            });
+          }
+          return res.status(422).json({
+            error: "Couldn't confirm this issue is closed right now. Try again in a moment.",
+          });
+        }
+        if (!target || target.pull_request) {
+          return res.status(404).json({
+            error: `Issue #${issueNumber} isn't an issue on this repo.`,
+          });
+        }
+        if (target.state !== 'closed') {
+          return res.status(409).json({
+            error: `Issue #${issueNumber} is already open`,
+          });
+        }
+
+        // Dedupe: one open reopen proposal per issue per app, as close is.
+        const { rows: dupRows } = await pool.query(
+          `SELECT id FROM issues
+            WHERE app_id = $1 AND kind = 'reopen_issue' AND status = 'open'
+              AND (payload->>'issueNumber')::int = $2`,
+          [app.id, issueNumber]
+        );
+        if (dupRows.length) {
+          return res.status(409).json({
+            error: `A reopen proposal for issue #${issueNumber} is already open`,
+          });
+        }
+
+        const issueTitle = String(target.title || '').slice(0, 300);
+        payload = { issueNumber, issueTitle, reason: reason || null };
+        title = `Reopen issue #${issueNumber}: "${issueTitle}"`.slice(0, 512);
+        description = reason || null;
       } else if (kind === 'maintenance_campaign') {
         // Fleet maintenance (#853): only proposable on the self-hosted
         // platform app (the campaign's blast radius is EVERY child app,
@@ -1643,6 +1845,8 @@ function issueRoutes(config) {
           : `${req.user.username} proposed setting secret ${payload.key}`;
       } else if (kind === 'close_issue') {
         chatPrefix = `${req.user.username} proposed closing issue #${payload.issueNumber}: "${payload.issueTitle}"`;
+      } else if (kind === 'reopen_issue') {
+        chatPrefix = `${req.user.username} proposed reopening issue #${payload.issueNumber}: "${payload.issueTitle}"`;
       } else if (kind === 'maintenance_campaign') {
         chatPrefix = `${req.user.username} proposed a maintenance campaign: "${payload.title}"`;
       } else {
@@ -1676,10 +1880,10 @@ function issueRoutes(config) {
       // thread yet). A close_issue proposal ALSO posts into its target
       // issue's thread so followers of the issue see the vote start.
       if (kind === 'secret_change' || kind === 'rename' || kind === 'close_issue'
-          || kind === 'maintenance_campaign' || kind === 'featured_illustration') {
+          || kind === 'reopen_issue' || kind === 'maintenance_campaign' || kind === 'featured_illustration') {
         await sendSystemMessage(pool, app.id, createdMsg, 'system',
           null, { type: 'governance', ref: rows[0].id }).catch(() => {});
-        if (kind === 'close_issue' && payload.issueNumber) {
+        if ((kind === 'close_issue' || kind === 'reopen_issue') && payload.issueNumber) {
           await sendSystemMessage(pool, app.id, createdMsg, 'system',
             null, { type: 'issue', ref: payload.issueNumber }).catch(() => {});
         }
@@ -2015,15 +2219,25 @@ function issueRoutes(config) {
       // thread_type='issue'). The badge count covers human messages only
       // (msg_type='message') so dual-posted lifecycle system rows don't
       // inflate it; last_at stays over all rows so system activity still
-      // freshens the feed sort.
+      // freshens the feed sort. 1 Nov 2026 (one page per thread): a
+      // request that leads its thread counts its changes' replies too,
+      // since its page is where they are read now.
       const { rows: chatRows } = await pool.query(
-        `SELECT thread_ref AS n,
-                (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt,
+        `SELECT thread_ref AS n, (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt,
                 MAX(created_at) AS last_at
-           FROM chat_messages
-          WHERE app_id = $1 AND thread_type = 'issue'
+           FROM (SELECT thread_ref, msg_type, created_at
+                   FROM chat_messages
+                  WHERE app_id = $1 AND thread_type = 'issue'
+                 UNION ALL
+                 SELECT t.number, m.msg_type, m.created_at
+                   FROM chat_messages m
+                   JOIN chat_sessions s ON s.id = m.thread_ref AND s.thread_id = m.thread_id
+                   JOIN threads t ON t.id = m.thread_id AND t.number IS NOT NULL
+                  WHERE m.app_id = $1 AND m.thread_type = 'session' AND s.is_headless = FALSE
+                    AND ${threadsService.visibleChangeSql('s', '$2')}
+                    AND EXISTS (SELECT 1 FROM requests r WHERE r.thread_id = t.id AND r.number = t.number)) said
           GROUP BY thread_ref`,
-        [app.id]
+        [app.id, req.user.id]
       );
       const chatByNumber = new Map(chatRows.map((r) => [r.n, r]));
 
@@ -2098,6 +2312,9 @@ function issueRoutes(config) {
       // session must not flip the label) and 'archived' rows are excluded
       // so the button reverts to "Create proposal" after the viewer
       // abandons their session. Independent of the headless lookup above.
+      // A person's posted plan (request-specs.js) is not work: it has no
+      // branch, so it never counts as the viewer's own session here — the
+      // same rule as issue-proposal-ref.js (1 Nov 2026, #6385).
       const { rows: prSessionRows } = await pool.query(
         `SELECT DISTINCT ON (created_from_issue_number)
                 created_from_issue_number AS n, id
@@ -2105,6 +2322,7 @@ function issueRoutes(config) {
           WHERE app_id = $1 AND user_id = $2
             AND created_from_issue_number IS NOT NULL
             AND status <> 'archived'
+            AND NOT ${planRecordSql('')}
           ORDER BY created_from_issue_number, created_at DESC`,
         [app.id, req.user.id]
       );
@@ -2119,7 +2337,10 @@ function issueRoutes(config) {
       // in 'merged', so those exclude themselves). Headless runs are
       // deliberately NOT part of this field — they already ship as
       // issue.headless above, and the FE ORs the two (keeps the 8s
-      // headless poller's field-scoped merge correct).
+      // headless poller's field-scoped merge correct). A person's posted
+      // plan (request-specs.js) is not work: a planning record with no
+      // branch never counts, the same rule as issue-proposal-ref.js
+      // (1 Nov 2026, #6385).
       const { rows: inProgressRows } = await pool.query(
         `SELECT UNNEST(cs.linked_issues) AS n,
                 cs.id, cs.user_id, cs.status, cs.shared_at,
@@ -2129,6 +2350,7 @@ function issueRoutes(config) {
           WHERE cs.app_id = $1 AND cs.is_headless = FALSE
             AND cardinality(cs.linked_issues) > 0
             AND u.is_synthetic IS NOT TRUE
+            AND NOT ${planRecordSql('cs')}
             AND (cs.status IN ('active','promoted','merging')
                  OR (cs.status = 'paused'
                      AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,
@@ -2200,6 +2422,13 @@ function issueRoutes(config) {
       const botWaiting = botDoor && !botDoor.demo
         ? await botDm.botWaitingByIssue(pool, app.id, (result.issues || []).filter((i) => !botByNumber.has(i.number)))
         : new Map();
+      // 1 Nov 2026: the open requests the viewer's own private thread holds
+      // the bot on (services/private-threads.js holdsFor): "Homeroom bot is
+      // waiting for your plan." with Let the bot build it now.
+      const planHolds = await require('../services/private-threads').holdsFor(pool, {
+        appId: app.id, userId: req.user.id,
+        numbers: (result.issues || []).filter((i) => i.state !== 'closed').map((i) => i.number),
+      }).catch(() => new Map());
 
       const issues = (result.issues || []).map((issue) => {
         const b = byNumber.get(issue.number);
@@ -2230,6 +2459,7 @@ function issueRoutes(config) {
           // #4530: the bot's note there that nobody has answered yet
           // ({ kind: 'question' | 'person' | 'empty', messageId }), or null.
           botAwaits: botWaiting.get(issue.number) || null,
+          botHold: planHolds.get(issue.number) || null,
           // #287: per-viewer proposal session id, or null. Drives the
           // "Create proposal" → "Create new proposal" swap on the issue row.
           myPrSessionId: myPrSessionByNumber.get(issue.number) || null,
@@ -2504,26 +2734,6 @@ function issueRoutes(config) {
       const used = await countWeeklyBountiesUsed(pool, req.user.id, weekStartUtc());
       const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
-      // #4772: what Homeroom bot waits on this viewer for here (its plans
-      // waiting for their Build it and its open questions to them), for the
-      // Workshop's Waiting on you. A back and forth with it is not listed
-      // (#5229). Best-effort: services/workshop-waiting.js never throws. The
-      // staging demo shows one of each on the mock requests.
-      const workshopWaiting = require('../services/workshop-waiting');
-      const waitingOnYou = IS_STAGING && req.query.demo === '1'
-        ? workshopWaiting.demoWaiting()
-        : await workshopWaiting.waitingOnViewer(pool, { appId: app.id, userId: req.user.id });
-
-      // #5385: what Homeroom bot has in hand for this viewer on THIS
-      // project, and where it needs them, as the Activity drawer's tracks
-      // (services/homeroom-bot-tray.js workFor, already keyed to the signed-
-      // in person), so the Workshop's What's happening draws the work as it
-      // happens and cannot disagree with the drawer. The staging demo shows
-      // the two mock requests' rows.
-      const homeroomBotWork = IS_STAGING && req.query.demo === '1'
-        ? workshopWaiting.demoBotWork(app)
-        : await workshopWaiting.botWorkOnApp(pool, { app, user: req.user });
-
       res.json({
         issues,
         truncatedList: !!result.truncatedList,
@@ -2537,8 +2747,6 @@ function issueRoutes(config) {
         myRemaining,
         limit: WEEKLY_BOUNTY_LIMIT,
         ...(botDoor ? { homeroomBot: botDoor } : {}),
-        waitingOnYou,
-        homeroomBotWork,
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });
@@ -2637,12 +2845,21 @@ function issueRoutes(config) {
           LIMIT 1`,
         [app.id, number, parsed?.owner || null, parsed?.repo || null]
       );
+      // 1 Nov 2026: with its changes' replies, as the board's count (above).
       const { rows: chatRows } = await pool.query(
         `SELECT (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt,
                 MAX(created_at) AS last_at
-           FROM chat_messages
-          WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2`,
-        [app.id, number]
+           FROM (SELECT msg_type, created_at FROM chat_messages
+                  WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2
+                 UNION ALL
+                 SELECT m.msg_type, m.created_at
+                   FROM chat_messages m
+                   JOIN chat_sessions s ON s.id = m.thread_ref AND s.thread_id = m.thread_id
+                   JOIN threads t ON t.id = m.thread_id AND t.number = $2
+                  WHERE m.app_id = $1 AND m.thread_type = 'session' AND s.is_headless = FALSE
+                    AND ${threadsService.visibleChangeSql('s', '$3')}
+                    AND EXISTS (SELECT 1 FROM requests r WHERE r.thread_id = t.id AND r.number = t.number)) said`,
+        [app.id, number, req.user.id]
       );
       const b = bountyRows[0];
       const chat = chatRows[0];
@@ -2686,6 +2903,12 @@ function issueRoutes(config) {
       const botAwaits = issue.state !== 'closed' && !bot && issue !== mock
         ? (await require('../services/homeroom-bot-dm').botWaitingByIssue(pool, app.id, [issue])).get(number) || null
         : null;
+      // 1 Nov 2026: and whether the viewer's own private thread about it
+      // holds the bot, as the list says it.
+      const botHold = issue.state !== 'closed' && req.user?.id
+        ? (await require('../services/private-threads').holdsFor(pool, { appId: app.id, userId: req.user.id, numbers: [number] })
+          .catch(() => new Map())).get(number) || null
+        : null;
       // #4244: a closed issue no merged change closed was closed by a
       // close_issue vote, or an admin forcing one through. The applied row's
       // audit payload says which, so the page's status band can too.
@@ -2725,6 +2948,7 @@ function issueRoutes(config) {
           in_progress: null,
           bot,
           botAwaits,
+          botHold,
           track,
           myPrSessionId: null,
           addressed_by: addressed,
@@ -3230,6 +3454,7 @@ function issueRoutes(config) {
         [app.id, issueNumber, targetUserId]
       );
       const cleared = rows.length > 0;
+      if (cleared) await require('../services/work-state').touched(pool, [{ appId: app.id, issueNumber }]);
 
       if (cleared) {
         const content = targetUserId === req.user.id
@@ -3311,8 +3536,9 @@ function issueRoutes(config) {
       // The machine answers a closed proposal itself (a retry of an apply
       // that succeeded replays its result).
       if (issue.kind !== 'secret_change' && issue.kind !== 'close_issue'
+          && issue.kind !== 'reopen_issue'
           && issue.kind !== 'maintenance_campaign' && issue.kind !== 'featured_illustration') {
-        return res.status(400).json({ error: 'Only secret-change, close-issue, maintenance-campaign, and featured-illustration proposals can be admin-applied' });
+        return res.status(400).json({ error: 'Only secret-change, close-issue, reopen-issue, maintenance-campaign, and featured-illustration proposals can be admin-applied' });
       }
       // Campaigns are self-app governance with fleet-wide blast radius:
       // only a FULL platform admin may force one, never an app admin.

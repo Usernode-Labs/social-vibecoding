@@ -214,6 +214,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // count glyphs are the same pair the app's own Workshop tab uses, which is
   // the point: the number on a row and the pane it counts wear one mark.
   const expected = [
+    // ── One Home (#6361) retired Discover's screen and its tab ──────────
+    //
+    // The rail's Discover tab drew CompassIcon (two paths) in the static
+    // document; the compass still draws behind state (a Settings row). Its
+    // filter sheet's button drew FilterIcon there too.
+    'M12 3.5a8.5 8.5 0 110 17 8.5 8.5 0 010-17z',
+    'M15.5 8.5l-2 5-5 2 2-5z',
+    'M4 6h16M7 12h10M10 18h4',
     // ── The create dialog is retired ───────────────────────────────────
     //
     // Its "A private community" row drew LockIcon in the static document;
@@ -268,6 +276,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // LockIcon and UserGroupIcon LEFT this list with communities, stage 3:
     // the create dialog's first step (who it is for) draws them on its
     // "A group" and "A community" rows, and the dialog prerenders every step.
+    // DraftEditIcon is back on this list: the Homeroom menu's Design this
+    // screen row (#6071) left the menu for Homeroom bot's new thread.
     'M12 20h9',
     // DownloadIcon (#4055): the image viewer's Download and a message's
     // "Download image", both drawn only after a tap.
@@ -337,7 +347,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // behind state too.
     'M4 6h16M4 12h16M4 18h16',
     'M4.5 12.75l6 6 9-13.5',
-    'M5 13l4 4L19 7',
+    // CheckIcon ('M5 13l4 4L19 7') left this list with #6136: every setup step's
+    // tick in Settings > Connectors carries one, hidden until it is pressed.
     'M5 15l7-7 7 7',
     'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
@@ -463,6 +474,35 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // Ask Homeroom bot bar draws MicrophoneIcon in the static document
     // again, so only ArrowUpIcon is behind state.)
     'M12 19V5M5 12l7-7 7 7',
+    // ── #6035: the channel composer's formatting row ───────────────────
+    //
+    // Bold (two paths), Italic, Underline, Heading, Quote and Bulleted list
+    // draw above a community channel's message box, which mounts only once a
+    // channel conversation is open, so none of them is in the prerendered
+    // document.
+    'M7 4.5h6.25a3.75 3.75 0 0 1 0 7.5H7V4.5Z',
+    'M7 12h7a3.75 3.75 0 0 1 0 7.5H7V12Z',
+    'M10 4.5h7.5M6.5 19.5H14M14.5 4.5l-5 15',
+    'M7 4.5v6.75a5 5 0 0 0 10 0V4.5M5 20h14',
+    'M6 4.5v15M18 4.5v15M6 12h12',
+    'M7.5 7.5H11V11H7.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75M16.5 7.5H20V11h-3.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75',
+    'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',    // ── Audit D08: the ⋯ menu's line icons ────────────────────────────
+    //
+    // Star (kudos), archive, chart-bar (campaign), bell-slash (mute) and
+    // arrows-right-left (merge, split, break up) draw only in an open ⋯ menu
+    // (features/dev-board/menu-icons.tsx), never in the static document.
+    'M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z',
+    'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4',
+    'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
+    'M9.143 17.082a24.248 24.248 0 0 0 3.844.148m-3.844-.148a23.856 23.856 0 0 1-5.455-1.31 8.964 8.964 0 0 0 2.3-5.542m3.155 6.852a3 3 0 0 0 5.667 1.97m1.965-2.277L21 21m-4.225-4.225a23.81 23.81 0 0 0 3.536-1.003A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6.53 6.53m10.245 10.245L6.53 6.53M3 3l3.53 3.53',
+    'M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5',
+    // ── One Home (#6361): the sidebar's pin ───────────────────────────
+    //
+    // PushPinIcon (two paths, the needle and the head) draws on each row of
+    // the sidebar's Recents, which render once the list of yours is read,
+    // never in the static document.
+    'M12 17v5',
+    'M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

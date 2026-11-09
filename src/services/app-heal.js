@@ -61,7 +61,11 @@ async function scan(config, pool, { n, shouldStop = () => false,
     const ref = applicationRuntime.productionRef(config, app);
     let state;
     try {
-      state = await applicationRuntime.status({ ...config, appRuntime: ref.runtimeKind }, ref);
+      if (ref.runtimeKind === 'kubernetes') {
+        const inspected = await applicationRuntime.inspect({ ...config, appRuntime: ref.runtimeKind }, ref);
+        if (inspected.asleep) continue;
+        state = inspected.status;
+      } else state = await applicationRuntime.status({ ...config, appRuntime: ref.runtimeKind }, ref);
     } catch (err) {
       log.warn('app-heal', 'Runtime state unknown', { slug: app.slug, err: err.message });
       continue;
@@ -106,7 +110,11 @@ async function heal(config, pool, appId, { probe = false, via = 'sweep', signal 
   if (await appTeardown.isTearingDown(pool, { id: app.id })) return { status: 'deleting' };
   const runtimeRef = applicationRuntime.productionRef(config, app);
   const cfg = { ...config, appRuntime: runtimeRef.runtimeKind };
-  const state = await applicationRuntime.status(cfg, runtimeRef);
+  const inspected = runtimeRef.runtimeKind === 'kubernetes' ? await applicationRuntime.inspect(cfg, runtimeRef) : null;
+  if (inspected?.asleep) {
+    return { status: 'healthy' }; // Planned sleep is woken by app.wake, never healed as an outage.
+  }
+  const state = inspected?.status ?? await applicationRuntime.status(cfg, runtimeRef);
   const result = runtimeRef.runtimeKind === 'kubernetes'
     ? await healKubernetes(cfg, pool, app, runtimeRef, state, { probe, signal })
     : await healDocker(cfg, pool, app, state, { probe });

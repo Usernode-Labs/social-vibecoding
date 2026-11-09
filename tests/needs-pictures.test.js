@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const appManifest = require('../src/services/app-manifest');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -193,7 +194,7 @@ test('the project list and a change’s page carry the diagram; a moved head is 
   assert.match(read('frontend/src/features/dev-board/topic/change-head.tsx'), /<ChangeDiagram value=\{body\.diagram\} \/>\s*<RequestWords/);
 });
 
-test('staging holds each picture under ?demo=1, and ?shot= opens the feed on it', () => {
+test('staging holds each picture under ?demo=1', () => {
   const votes = require('../src/routes/votes');
   void votes;
   const src = read('src/routes/votes.js');
@@ -206,12 +207,14 @@ test('staging holds each picture under ?demo=1, and ?shot= opens the feed on it'
   assert.ok(demo.some((it) => it.decision && it.decision.kind === 'rename'));
   const diagram = require('../src/services/diagram');
   for (const it of demo) if (it.diagram) assert.ok(diagram.storedDiagram(it.diagram), `${it.title}: a valid record`);
-  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(ws, /shot === 'needs-diagram' \? 'diagram' : shot === 'needs-touches' \? 'touches'/);
-  const check = require('../dapp.json').tests.find((t) => /author's diagram as that picture/.test(t.name));
-  assert.ok(check, 'folded into the existing Needs-you item check');
-  assert.match(check.expectSelector, /:has\(\[data-ws-diagram=rename\] ~ \.dev-ws-item-caption\)/, 'the rename is the picture the caption lies over');
-  assert.ok(check.expectSelector.length <= 256, "the runner clips selectors at 256 characters");
+  // The reel's `?shot=needs-diagram`/`needs-touches` and the picture check
+  // it opened went with the reel (#6276); the review flow draws its own
+  // pictures. The demo rows above are still what the feed serves, and the
+  // flow's change page is what a declared check covers now.
+  const check = require('../dapp.json').tests.find((t) => /change page in place in the pane/.test(t.name));
+  assert.ok(check, 'the review flow’s change page is covered by a declared check');
+  assert.ok(check.expectSelector.length <= appManifest.MAX_TEST_SELECTOR_LEN,
+    `the selector fits the runner's cap (${appManifest.MAX_TEST_SELECTOR_LEN} characters)`);
 });
 
 test('#5039: an area\'s name stays whole, and the columns size to their longest entry', () => {

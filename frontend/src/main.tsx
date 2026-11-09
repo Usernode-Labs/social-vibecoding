@@ -66,6 +66,7 @@ import { Shell } from './Shell';
 import './lib/overlay-scrim-bridge';
 import { bootStep } from './lib/boot-guard';
 import { initOffline } from './lib/offline';
+import { installActionOutbox } from './lib/action-outbox';
 import { registerServiceWorker } from './lib/service-worker';
 import { applyNavSnapshot, applyShellSnapshot } from './lib/shell-snapshot-apply';
 import { installFirstPaintReserve } from './lib/first-paint-reserve';
@@ -73,6 +74,12 @@ import { installJoinRequired } from './lib/join-required';
 import { installAdultGate } from './features/auth/adult-gate';
 import { installSessionRenewalRetry } from './lib/session-renewal-retry';
 import { installApiCacheIdentity } from './lib/api-cache-identity';
+import { installReadTimeout } from './lib/read-timeout';
+import { installGoogleAnalytics } from './lib/google-analytics';
+// #6233: publishes window.UsernodeReact.tabBuild at module scope. app.js's
+// /api/version poll writes the build this tab loaded and its merge boundary
+// here, and screens read it to say "Live · reload to get it".
+import './lib/tab-build';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
 // because the Dev surfaces are runtime-injected into an empty #app-content and
@@ -135,6 +142,9 @@ import './lib/visual-viewport';
 // …and whether the screen has a column of system chrome down one side
 // (iPhone Duo): the tab bar and the back button move into it (app.css).
 import './lib/side-strip';
+// …and, folded, a tap at the very top of that cover is finished by the page:
+// iOS turns no touch in its top band into a tap there.
+import './lib/top-band-taps';
 // …and whether the keyboard is open on a phone at all, including in the
 // Homeroom app, whose web view is resized for it so the kit never sees it
 // covered: the tab bar and the Resume strip step aside (app.css).
@@ -174,9 +184,6 @@ import './lib/file-drop-guard';
 // bridge's message from inside an app); the comment itself
 // (features/comment-pin/) loads on the first C.
 import './features/improve/suggest-shortcut';
-// New Needs you (an experiment, Settings, Experimental): the switch's bridge
-// for settings.js, window.UsernodeReact.reviewFlow.
-import './features/review-flow/settings';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at
@@ -226,6 +233,16 @@ bootStep('installAdultGate', () => installAdultGate());
 // mobile app a request refused 401 while the native bridge renewed the web
 // session is sent again once it lands (./lib/session-renewal-retry.ts, #5049).
 bootStep('installSessionRenewalRetry', () => installSessionRenewalRetry());
+// Outermost: a page read that has no answer in 15s is given up as a network
+// failure and nudges the connectivity probe (./lib/read-timeout.ts). Last, so
+// its limit covers everything the wrappers above make a read wait on (the
+// identity confirmation, a native renewal and its one retry), and its signal
+// reaches the request that goes out.
+bootStep('installReadTimeout', () => installReadTimeout());
+bootStep('installGoogleAnalytics', () => installGoogleAnalytics());
+// Votes and reactions with no answer wait on the device for the connection
+// (./lib/action-outbox.ts), and go once the shell says it is back.
+bootStep('installActionOutbox', () => installActionOutbox());
 
 // document.body is the hydration container, not a wrapper <div>, because the
 // body element itself is the flex column the layout depends on

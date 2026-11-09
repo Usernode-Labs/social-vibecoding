@@ -129,7 +129,7 @@ import { notificationsSheetStore } from './notifications-sheet-store.js';
 import { NotificationsSheet } from './notifications-sheet-controller.js';
 import { NotificationsPinnedSections } from './notifications-list';
 import type { NotificationRowView } from './notifications-list';
-import { CardHistory, ProjectStack, foldStories, type CardPlace } from './notification-stacks';
+import { CardHistory, ProjectStack, foldLive, foldStories, type CardPlace, type LiveItem } from './notification-stacks';
 
 type ScreenRowView = NotificationRowView & {
   /** The unelided instant for the `<time>`'s title (#1808, stampFields). */
@@ -139,7 +139,7 @@ type ScreenRowView = NotificationRowView & {
   appLine: string;
   /**
    * #5406: the app the row came from, for the Unread tab's per-app groups.
-   * Conversation kinds carry no app — they group under "Other".
+   * Conversation kinds carry no app — they group under "Across Homeroom".
    */
   appId?: number | null;
   /**
@@ -180,6 +180,10 @@ type ScreenRowView = NotificationRowView & {
   count?: number;
   /** #5580: the project's own name, for its stack's heading. */
   appName?: string | null;
+  /** #5929: the row waits on the reader (rowView): its project's group comes first on Unread. */
+  needsYou?: boolean;
+  /** #5929: where an unread row stands (rowView): its label is drawn as this tone's chip. */
+  tone?: RowTone;
   /** #5877: that project's icon, so its bot row wears the project's tile. */
   appIconUrl?: string | null;
   appIconEmoji?: string | null;
@@ -189,7 +193,11 @@ type ScreenRowView = NotificationRowView & {
   storyRef?: { number: number; title: string | null } | null;
   /** #5580: set on a card standing for one story's notifications (foldStories), newest first. */
   story?: { members: ScreenRowView[] } | null;
+  /** #6441: set on a row standing for several requests that went live together (foldLive). */
+  liveItems?: LiveItem[] | null;
 };
+
+type RowTone = 'needs' | 'blocked' | 'hold';
 
 type Tab = 'all' | 'unread';
 
@@ -277,11 +285,40 @@ export function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
   );
 }
 
-function SectionHead({ children }: { children: ReactNode }): ReactNode {
+function SectionHead({ children, ...rest }: { children: ReactNode } & Record<`data-${string}`, string>): ReactNode {
   return (
-    <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
+    <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500" {...rest}>
       {children}
     </div>
+  );
+}
+
+/**
+ * #5929 item 13: one line over the Unread groups, "3 need you · 96 unread",
+ * so the shape of a backlog reads before its rows do.
+ *
+ * Its two numbers come from different places and neither pretends otherwise.
+ * The total is the bell's own (`badgeTotal`), printed through the bell's cap
+ * (#5289), and it INCLUDES the ones that need you: it is never the total less
+ * the asks, because the asks are only counted in the rows paged in, and that
+ * subtraction would state a figure nobody knows. So the asks say "At least"
+ * while the Unread pager still has rows to bring up (`partial`), and the
+ * total says nothing when it could only repeat them. Zero says nothing.
+ */
+function CatchUpLine({ needs, total, partial }: { needs: number; total: number; partial: boolean }): ReactNode {
+  const t = useMessages('notifications');
+  // Nothing asks: the total alone only repeats the Unread tab's own number.
+  if (!needs) return null;
+  const needsWords = t(partial ? 'notifications:sheet.catchUp.needsYouAtLeast' : 'notifications:sheet.catchUp.needsYou', { count: needs });
+  const totalWords = total <= needs ? null
+    : total > 99 ? t('notifications:sheet.catchUp.unreadCapped')
+      : t('notifications:sheet.catchUp.unread', { count: total });
+  return (
+    <p className="px-4 pt-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400" data-notif-catch-up="">
+      {needsWords}
+      {totalWords ? <span aria-hidden="true"> · </span> : null}
+      {totalWords}
+    </p>
   );
 }
 
@@ -291,7 +328,7 @@ function SectionHead({ children }: { children: ReactNode }): ReactNode {
  * (the same words each row's meta line already carries); the pill is the
  * sheet's own "Mark all read" pill in miniature, and clears that app's every
  * unread notification — including ones the sheet has not paged in — through
- * the controller's markAppRead. The "Other" group (notifications that belong
+ * the controller's markAppRead. The app-less group (notifications that belong
  * to no app) renders no button: nothing but Mark all read owns those.
  *
  * #5580: the heading of a project's stack. While the stack is open it also
@@ -310,7 +347,7 @@ function AppGroupHead({ groupKey, label, appId, onRead, onShowLess }: {
   const [busy, setBusy] = useState(false);
   return (
     <div className="flex items-center gap-2 px-4 pt-4 pb-1.5" data-notif-app-group={groupKey}>
-      <span className="flex-1 min-w-0 truncate text-xs font-medium text-zinc-500 dark:text-zinc-500">
+      <span className="flex-1 min-w-0 truncate text-xs font-medium text-zinc-500 dark:text-zinc-400">
         {label}
       </span>
       {onShowLess ? (
@@ -339,9 +376,13 @@ function AppGroupHead({ groupKey, label, appId, onRead, onShowLess }: {
         <button
           type="button"
           data-notif-app-read={appId}
-          className={'inline-flex items-center h-8 px-3 rounded-full text-xs font-semibold '
-            + 'bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 '
-            + 'disabled:opacity-40 disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800 un-touch-target'}
+          // #5929: quieter than Mark all read, whose pill it would otherwise
+          // repeat down the sheet: words in the secondary ink until hovered.
+          className={'inline-flex items-center h-8 px-3 rounded-full text-xs font-medium '
+            + 'bg-transparent text-zinc-500 enabled:hover:bg-zinc-100 enabled:hover:text-zinc-900 '
+            + 'dark:text-zinc-400 enabled:dark:hover:bg-zinc-800 enabled:dark:hover:text-zinc-100 '
+            + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 '
+            + 'disabled:opacity-40 un-touch-target'}
           disabled={busy}
           aria-busy={busy ? 'true' : undefined}
           aria-label={t('notifications:sheet.markAppReadLabel', { app: label })}
@@ -365,22 +406,86 @@ function AppGroupHead({ groupKey, label, appId, onRead, onShowLess }: {
   );
 }
 
+/** #5929 (item 13): seven whole days, the window `markOlderRead` sends. */
+const OLDER_WINDOW_DAYS = 7;
+const OLDER_WINDOW_MS = OLDER_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+/** A row still unread and created more than a week before `now`. */
+export function olderThanWeek(view: { unread?: boolean; createdAtMs?: number }, now: number = Date.now()): boolean {
+  return !!view.unread && !!view.createdAtMs && view.createdAtMs < now - OLDER_WINDOW_MS;
+}
+
+/**
+ * #5929 (item 13): the foot of the Unread tab's list offers "Mark everything
+ * older than a week as read" while an unread row that old is listed — the
+ * way through a 99+ backlog that keeps this week's news. Quiet words, like
+ * a group's Mark read: the title row's Mark all read is the one pill, and
+ * this is a narrower version of it, not a second one.
+ */
+function MarkOlderRead({ onRead }: {
+  /** Before the clear: let the old rows go, so they leave Unread (useHeldUnread). */
+  onRead: () => void;
+}): ReactNode {
+  const t = useMessages('notifications');
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="px-4 py-2">
+      <button
+        id="notifications-mark-older"
+        type="button"
+        data-notif-mark-older=""
+        className={'inline-flex w-full items-center justify-center h-9 px-3 rounded-full text-sm font-medium '
+          + 'bg-transparent text-zinc-500 enabled:hover:bg-zinc-100 enabled:hover:text-zinc-900 '
+          + 'dark:text-zinc-400 enabled:dark:hover:bg-zinc-800 enabled:dark:hover:text-zinc-100 '
+          + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 '
+          + 'disabled:opacity-40 un-touch-target'}
+        disabled={busy}
+        aria-busy={busy ? 'true' : undefined}
+        onClick={(event) => {
+          // Stopped for the reason every handler in this sheet stops its
+          // click: a click that re-renders the list would otherwise bubble
+          // to an outside-click listener that dismisses the sheet.
+          event.stopPropagation();
+          if (busy) return;
+          setBusy(true);
+          onRead();
+          Promise.resolve(controller()?.markOlderRead(OLDER_WINDOW_DAYS))
+            .catch(() => false)
+            .then(() => setBusy(false));
+        }}
+      >
+        {t('notifications:sheet.markOlder')}
+      </button>
+    </div>
+  );
+}
+
 /**
  * The Unread tab's groups (#5406): rows bucketed by app, in feed order.
  * The first time an app is seen is its newest notification, so the groups
  * are ordered by their newest row and the rows keep their order inside a
- * group. Rows that belong to no app (messages, friends, account) share one
- * "Other" group, under the key `'other'`; `appId` 0 counts as an app, so the
+ * group. #5929: urgency comes before recency: a group holding a row that
+ * waits on the reader (`needsYou`: a vote asked of them, Homeroom bot's
+ * needs-you, a friend request) goes above every group that holds none, each
+ * side keeping its newest-first order. A row read or answered while the
+ * sheet is open keeps its group where it was (useHeldUnread lists it, and
+ * `asked` still counts it, until the sheet closes), so nothing jumps under
+ * the reader's finger. Rows that belong to no app (account, people, the cross-project vote
+ * reminder, which vote-digest files with no app whenever several changes
+ * wait, even all in one project) share one group, "Across Homeroom" (#5929
+ * renamed it from the vague "Other"), under the key `'other'`; `appId` 0 counts as an app, so the
  * staging demo mocks group and show the button.
  */
 type AppGroup = {
   key: string;
   appId: number | null;
-  /** The first row's appLine, before the "Other" fallback the renderer applies. */
+  /** The first row's appLine, before the app-less heading the renderer falls back to. */
   appLine: string;
   /** #5580: the project's own name, from the first row that carries it. */
   appName?: string | null;
   entries: Entry[];
+  /** #5929: one of its rows waits on the reader. */
+  needsYou?: boolean;
 };
 
 /**
@@ -392,7 +497,11 @@ function groupName(group: AppGroup): string {
   return group.appName || group.appLine;
 }
 
-export function groupUnreadByApp(rows: ScreenRowView[], t: Translate): AppGroup[] {
+export function groupUnreadByApp(
+  rows: ScreenRowView[],
+  t: Translate,
+  asked: (view: ScreenRowView) => boolean = (view) => !!view.needsYou,
+): AppGroup[] {
   const groups: AppGroup[] = [];
   const byKey = new Map<string, AppGroup>();
   for (const view of rows) {
@@ -404,15 +513,17 @@ export function groupUnreadByApp(rows: ScreenRowView[], t: Translate): AppGroup[
       groups.push(group);
     }
     if (!group.appName && view.appName) group.appName = view.appName;
+    if (asked(view)) group.needsYou = true;
     group.entries.push({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view });
   }
   // #5580: one story's notifications become one card first (foldStories in
   // ./notification-stacks.tsx); the rows about nothing in particular still
-  // fold by kind.
+  // fold by kind. #6441: the requests that went live close together are one
+  // row before that, so the fold by kind cannot split them.
   for (const group of groups) {
-    if (group.appId != null) group.entries = foldRepeats(foldStories(group.entries), t);
+    if (group.appId != null) group.entries = foldRepeats(foldLive(foldStories(group.entries), t), t);
   }
-  return groups;
+  return [...groups.filter((group) => group.needsYou), ...groups.filter((group) => !group.needsYou)];
 }
 
 /** The older rows' sections on Unread, newest first. */
@@ -484,7 +595,7 @@ export function groupOlderByTime(rows: ScreenRowView[], t: Translate, now: Date 
     const at = card.at;
     sections[at >= today ? 0 : at >= yesterday ? 1 : at >= week ? 2 : 3].entries.push(card);
   }
-  for (const section of sections) section.entries = foldEachProject(section.entries, (list) => foldRepeats(list, t));
+  for (const section of sections) section.entries = foldEachProject(section.entries, (list) => foldRepeats(foldLive(list, t), t));
   return sections.filter((section) => section.entries.length > 0);
 }
 
@@ -520,7 +631,10 @@ export function foldRepeats(entries: Entry[], t: Translate): Entry[] {
   for (const entry of entries) {
     const view = entry.view;
     // #5580: a story card is already several notifications; it folds no further.
-    const foldable = !!view.kind && !view.conversation && !(view.actions && view.actions.length) && !view.story;
+    // #6441: nor does a folded "went live" row, which stands for several of
+    // its own and says how many.
+    const foldable = !!view.kind && !view.conversation && !(view.actions && view.actions.length)
+      && !view.story && !(view.liveItems && view.liveItems.length);
     const key = foldable ? `${view.kind}\n${view.label}` : null;
     const at = key != null ? firstAt.get(key) : undefined;
     if (at == null) {
@@ -543,7 +657,9 @@ export function foldRepeats(entries: Entry[], t: Translate): Entry[] {
         ...entry.view,
         count,
         label: labelled && words ? t(words.many, { count }) : entry.view.label,
-        groupLabelled: labelled,
+        // #6441: a folded live row has already put its number in its
+        // subject, so it keeps its kind's plain label and no count pill.
+        groupLabelled: labelled || !!entry.view.groupLabelled,
       },
     };
   });
@@ -593,8 +709,56 @@ function RowActions({ view, actions }: {
       {a.key === 'still_yes' && busy ? t('notifications:row.sending') : a.label}
     </Button>
   ));
-  if (actions.length > 1) return <div className="flex items-center gap-2 pl-[3.75rem]">{buttons}</div>;
+  if (actions.length > 1) return <div className="flex items-center gap-2 ps-[3.75rem]">{buttons}</div>;
   return <>{buttons}</>;
+}
+
+/**
+ * #6441: the requests a folded "went live" row stands for, one line each,
+ * under its words ("#6435 · Communities: Featured wraps into the same grid").
+ * Each line is a button of its own, so a tap opens that request and reads
+ * the whole group; the card's own tap opens the newest. This is why the row
+ * is shaped like a card with its own actions: nothing may be a button inside
+ * a button.
+ */
+function LiveItems({ view, items, groupIds }: {
+  view: ScreenRowView;
+  items: LiveItem[];
+  groupIds: number[] | null;
+}): ReactNode {
+  const t = useMessages('notifications');
+  const ids = groupIds && groupIds.length ? groupIds : [view.id];
+  // The tile's left edge lines up with the words above it (the row's tile is
+  // 36px plus its 16px gap, inside the row's own 16px), so the list reads as
+  // part of the row. Each line may wrap to two and then ends in an ellipsis:
+  // on a phone a long request title must not scroll the panel sideways, and
+  // a line is a tap target, so it is at least 44px tall.
+  return (
+    <ul className="flex min-w-0 flex-col gap-1 ps-12">
+      {items.map((item) => (
+        <li key={item.id} className="min-w-0">
+          <button
+            type="button"
+            data-notif-live-item={item.id}
+            data-notif-live-unread={item.unread ? '' : undefined}
+            className={'block min-h-[44px] w-full rounded-xl bg-zinc-100 px-2.5 py-2 '
+              + 'text-start text-[13px] leading-snug line-clamp-2 break-words '
+              + (item.unread ? 'font-semibold text-zinc-900 dark:text-zinc-50 ' : 'text-zinc-800 dark:text-zinc-200 ')
+              + 'hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 '
+              + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
+            onClick={(event) => {
+              event.stopPropagation();
+              controller()?.openGroupRow(item.id, ids);
+            }}
+          >
+            {item.number
+              ? t('notifications:row.group.liveItem', { number: item.number, title: item.title })
+              : t('notifications:row.group.liveItemUnnumbered', { title: item.title })}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /**
@@ -649,9 +813,20 @@ type HeldUnread = {
   listed: (view: ScreenRowView) => boolean;
   /** Let these rows go, so clearing them takes them off Unread. */
   release: (ids: Iterable<ScreenRowView['id']>) => void;
+  /**
+   * #5929: waited on the reader at some point while the sheet has been open,
+   * so answering it (a friend request accepted, the digest's last vote cast)
+   * leaves its group where it was until the sheet closes.
+   */
+  asked: (view: ScreenRowView) => boolean;
 };
 
-type HoldSets = { held: Set<ScreenRowView['id']>; released: Set<ScreenRowView['id']> };
+type HoldSets = {
+  held: Set<ScreenRowView['id']>;
+  released: Set<ScreenRowView['id']>;
+  /** #5929: rows that have been `needsYou` during this visit. */
+  asked?: Set<ScreenRowView['id']>;
+};
 
 /**
  * One render of useHeldUnread: closed, nothing is held; open, every row
@@ -662,9 +837,13 @@ export function holdUnread(sets: HoldSets, open: boolean, all: readonly ScreenRo
   if (!open) {
     sets.held.clear();
     sets.released.clear();
+    sets.asked?.clear();
     return;
   }
-  for (const view of all) if (view.unread && !sets.released.has(view.id)) sets.held.add(view.id);
+  for (const view of all) {
+    if (view.unread && !sets.released.has(view.id)) sets.held.add(view.id);
+    if (view.needsYou && sets.asked) sets.asked.add(view.id);
+  }
 }
 
 /** Let rows go (useHeldUnread's `release`). */
@@ -676,7 +855,7 @@ export function releaseHeld(sets: HoldSets, ids: Iterable<ScreenRowView['id']>):
 }
 
 export function useHeldUnread(open: boolean, all: ScreenRowView[]): HeldUnread {
-  const sets = useRef<HoldSets>({ held: new Set(), released: new Set() });
+  const sets = useRef<HoldSets>({ held: new Set(), released: new Set(), asked: new Set() });
   // Kept in step with the render, not in an effect: an effect runs after the
   // frame that drew the list, and that frame would already be missing the row.
   holdUnread(sets.current, open, all);
@@ -684,6 +863,7 @@ export function useHeldUnread(open: boolean, all: ScreenRowView[]): HeldUnread {
   return {
     listed: (view) => view.unread || sets.current.held.has(view.id),
     release,
+    asked: (view) => !!view.needsYou || !!sets.current.asked?.has(view.id),
   };
 }
 
@@ -771,8 +951,17 @@ type ScreenRowProps = {
  */
 function ScreenRow({ view, touch, removes, held = false, onRelease, card = null }: ScreenRowProps): ReactNode {
   const t = useMessages('notifications');
-  const clearable = view.unread;
-  const shape = view.actions && view.actions.length ? 'actions' : 'plain';
+  // #6498: a row the sheet was showing unread when it opened stays exactly as
+  // it was, dimmed, until the sheet closes — clearing the bell on open must
+  // not take the row's own controls out from under the pointer. A held row is
+  // already read, so its clear is the no-op the code already handles for "a
+  // refresh got there first" (clearNotification re-renders and answers true).
+  const clearable = view.unread || held;
+  // #6441: several requests that went live together: one row, each listed
+  // under its words. It takes the row shape a card with its own buttons
+  // does, because the list under the words is made of buttons.
+  const liveItems = view.liveItems && view.liveItems.length ? view.liveItems : null;
+  const shape = (view.actions && view.actions.length) || liveItems ? 'actions' : 'plain';
   // #5289: a row standing for several notifications of one kind clears,
   // opens and reads as all of them (see foldRepeats).
   const groupIds = view.groupIds && view.groupIds.length > 1 ? view.groupIds : null;
@@ -855,7 +1044,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       <span className="relative flex shrink-0">
         {view.unread ? (
           <span
-            className="absolute -left-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100"
+            className="absolute -start-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100"
             aria-label={t('notifications:row.unreadDot')}
           >
           </span>
@@ -874,7 +1063,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
             heading over nothing is worse than either line alone. */}
         {view.segments.length ? (
           <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
-            {view.label}
+            <RowLabel view={view} />
           </span>
         ) : null}
         {/* WHICH ONE — the PR's title, the conversation, the message. The
@@ -974,6 +1163,9 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
   // #1688: a row with an action of its own ("Still yes" on a re-confirm ask)
   // keeps the row as the tap that opens the thing, and puts the action
   // beside it as a real button — never a button inside a button.
+  // The node the kit holds on desktop, for the folded "went live" shape's own
+  // branch below (the two shapes that predate it spell it out in place).
+  const desktopRef = touch ? undefined : setRow;
   const actions = view.actions || [];
   const row = actions.length ? (
     <div
@@ -981,17 +1173,17 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       data-notif-id={view.id}
       // #2386: two actions (a friend request's Accept and Decline) stack
       // under the text; see RowActions.
-      // #4769: the row's right padding is pr-16, not the px-4 it was, so the
+      // #4769: the row's right padding is pe-16, not the px-4 it was, so the
       // bookmark button (16px in from the slot's edge, N6) never sits over
       // the text.
       className={card
-        ? 'notifications-row col-start-1 row-start-1 w-full pl-5 pr-4 py-3 flex flex-col gap-2'
-        : actions.length > 1
-          ? 'notifications-row w-full pl-4 pr-16 py-3.5 flex flex-col gap-2'
-          : 'notifications-row w-full pl-4 pr-16 py-3.5 flex items-center gap-3'}
+        ? 'notifications-row col-start-1 row-start-1 w-full ps-5 pe-4 py-3 flex flex-col gap-2'
+        : actions.length > 1 || liveItems
+          ? 'notifications-row w-full ps-4 pe-16 py-3.5 flex flex-col gap-2'
+          : 'notifications-row w-full ps-4 pe-16 py-3.5 flex items-center gap-3'}
     >
       <button
-        className={card ? 'min-w-0 flex-1 w-full text-left flex items-start gap-3' : 'min-w-0 flex-1 text-left flex items-center gap-4'}
+        className={card ? 'min-w-0 flex-1 w-full text-start flex items-start gap-3' : 'min-w-0 flex-1 text-start flex items-center gap-4'}
         aria-expanded={closedTop ? 'false' : expands ? (historyOpen ? 'true' : 'false') : undefined}
         onClick={(event) => {
           event.stopPropagation();
@@ -1003,8 +1195,34 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       </button>
       {/* #5580: on a card one action sits under the words too, as two do. */}
       {card && actions.length === 1 ? (
-        <div className="flex items-center gap-2 pl-[3.75rem]"><RowActions view={view} actions={actions} /></div>
+        <div className="flex items-center gap-2 ps-[3.75rem]"><RowActions view={view} actions={actions} /></div>
       ) : <RowActions view={view} actions={actions} />}
+      {liveItems ? <LiveItems view={view} items={liveItems} groupIds={groupIds} /> : null}
+    </div>
+  ) : liveItems ? (
+    // #6441: a folded "went live" row has no action of its own, but the list
+    // under its words is made of buttons, so it takes the same outer <div>
+    // and inner <button> shape as a row with actions: never a button inside
+    // a button.
+    <div
+      ref={desktopRef}
+      data-notif-id={view.id}
+      className={card
+        ? 'notifications-row col-start-1 row-start-1 w-full ps-5 pe-4 py-3 flex flex-col gap-2'
+        : 'notifications-row w-full ps-4 pe-16 py-3.5 flex flex-col gap-2'}
+    >
+      <button
+        className={card ? 'min-w-0 flex-1 w-full text-start flex items-start gap-3' : 'min-w-0 flex-1 text-start flex items-center gap-4'}
+        aria-expanded={closedTop ? 'false' : expands ? (historyOpen ? 'true' : 'false') : undefined}
+        onClick={(event) => {
+          event.stopPropagation();
+          open();
+        }}
+        {...hold}
+      >
+        {card ? <CardWords view={view} card={card} hasHistory={hasHistory} saveOnHover={cardSave && !touch} /> : body}
+      </button>
+      <LiveItems view={view} items={liveItems} groupIds={groupIds} />
     </div>
   ) : (
     <button
@@ -1012,9 +1230,9 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       data-notif-id={view.id}
       data-notif-group-size={groupIds ? groupIds.length : undefined}
       className={card
-        ? 'notifications-row col-start-1 row-start-1 w-full text-left pl-5 pr-4 py-3 rounded-[20px] '
+        ? 'notifications-row col-start-1 row-start-1 w-full text-start ps-5 pe-4 py-3 rounded-[20px] '
           + 'hover:bg-black/[.02] dark:hover:bg-white/[.03] transition-colors flex items-start gap-3'
-        : 'notifications-row w-full text-left pl-4 pr-16 py-3.5 '
+        : 'notifications-row w-full text-start ps-4 pe-16 py-3.5 '
           + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
       aria-expanded={closedTop ? 'false' : expands ? (historyOpen ? 'true' : 'false') : undefined}
       onClick={(event) => {
@@ -1051,13 +1269,13 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       // bookmark said nothing about what it does.
       title={t(view.saved ? 'notifications:row.unsave' : 'notifications:row.save')}
       className={card
-        ? 'absolute right-2 top-1.5 flex h-8 w-8 items-center justify-center rounded-full '
+        ? 'absolute end-2 top-1.5 flex h-8 w-8 items-center justify-center rounded-full '
           + 'transition-opacity hover:bg-black/[.04] dark:hover:bg-white/[.06] '
           + 'pointer-events-none opacity-0 '
           + 'group-hover/notif:pointer-events-auto group-hover/notif:opacity-100 '
           + 'group-has-[:focus-visible]/notif:pointer-events-auto group-has-[:focus-visible]/notif:opacity-100 '
           + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'
-        : 'absolute right-4 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center '
+        : 'absolute end-4 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center '
           + 'rounded-full transition-colors hover:bg-black/[.04] dark:hover:bg-white/[.06] '
           + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
       onClick={(event) => {
@@ -1080,7 +1298,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
         data-notif-history={view.id}
         aria-expanded={historyOpen ? 'true' : 'false'}
         aria-label={t(historyOpen ? 'notifications:history.hide' : 'notifications:history.show')}
-        className={'relative z-[1] col-start-1 row-start-1 self-end justify-self-end mr-2.5 mb-2.5 '
+        className={'relative z-[1] col-start-1 row-start-1 self-end justify-self-end me-2.5 mb-2.5 '
           + 'flex h-6 w-6 items-center justify-center rounded-full text-zinc-500 dark:text-zinc-400 '
           + 'hover:bg-black/[.04] hover:text-zinc-900 dark:hover:bg-white/[.06] dark:hover:text-zinc-100 '
           + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 un-touch-target'}
@@ -1140,7 +1358,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
           // corner of the tile opens the row as it always did.
           // #5929: on a card it sits inside the corner of the card, not across
           // its edge, where it read as a rendering glitch.
-          className={(card ? 'absolute left-1.5 top-1.5 z-[2] flex h-5 w-5 items-center justify-center rounded-full ' : 'absolute left-1.5 top-2 flex h-5 w-5 items-center justify-center rounded-full ')
+          className={(card ? 'absolute start-1.5 top-1.5 z-[2] flex h-5 w-5 items-center justify-center rounded-full ' : 'absolute start-1.5 top-2 flex h-5 w-5 items-center justify-center rounded-full ')
             + 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/10 hover:bg-zinc-50 '
             + 'dark:bg-zinc-900 dark:text-zinc-100 dark:ring-white/15 dark:hover:bg-zinc-800 '
             + 'pointer-events-none opacity-0 transition-opacity '
@@ -1228,7 +1446,7 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
       <span className="relative flex shrink-0 self-start mt-0.5">
         {view.unread ? (
           <span
-            className="absolute -left-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100"
+            className="absolute -start-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100"
             aria-label={t('notifications:row.unreadDot')}
           >
           </span>
@@ -1237,7 +1455,7 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
       </span>
       <span className="flex-1 min-w-0">
         <span className="flex items-baseline gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-          <span className="flex-1 min-w-0 truncate">{view.segments.length ? view.label : null}</span>
+          <span className="flex-1 min-w-0 truncate">{view.segments.length ? <RowLabel view={view} hideCount={closedTop} /> : null}</span>
           {view.saved ? (
             <BookmarkSolidIcon aria-hidden="true" className="h-3 w-3 shrink-0 self-center text-violet-700 dark:text-violet-400" />
           ) : null}
@@ -1245,7 +1463,7 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
             <time
               title={view.timeTitle}
               className={saveOnHover
-                ? 'shrink-0 group-hover/notif:mr-7 group-has-[:focus-visible]/notif:mr-7'
+                ? 'shrink-0 group-hover/notif:me-7 group-has-[:focus-visible]/notif:me-7'
                 : 'shrink-0'}
             >
               {view.time}
@@ -1260,7 +1478,7 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
             {view.note}
           </span>
         ) : null}
-        <span className={hasHistory ? 'block text-xs text-zinc-500 truncate pr-8' : 'block text-xs text-zinc-500 truncate'}>
+        <span className={hasHistory ? 'block text-xs text-zinc-500 truncate pe-8' : 'block text-xs text-zinc-500 truncate'}>
           {project && meta ? (
             <RichMessage id="notifications:story.projectMeta" values={{ project, meta }} components={[<span className={PROJECT_INK} />]} />
           ) : project ? <span className={PROJECT_INK}>{project}</span> : meta}
@@ -1301,6 +1519,39 @@ function subjectOf(view: ScreenRowView): ReactNode {
   )) : view.label;
 }
 
+/**
+ * #5929 item 4: a row's status, first on the row. A row with a tone wears its
+ * label as a chip: amber waits on the reader, red is stuck, grey is on hold.
+ * There is no green: a settled state gets no fill. A row with no tone keeps
+ * its label as the plain grey words. The chip is the row's one pill, so a
+ * folded row's count goes inside it instead of beside it (RunCount).
+ */
+const ROW_TONE_CLASSES: Record<RowTone, string> = {
+  needs: 'bg-amber-500/15 text-amber-800 dark:text-amber-300',
+  blocked: 'bg-red-500/15 text-red-700 dark:text-red-300',
+  hold: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
+};
+
+function RowLabel({ view, hideCount = false }: { view: ScreenRowView; hideCount?: boolean }): ReactNode {
+  const t = useMessages('notifications');
+  if (!view.tone) return view.label;
+  const count = !hideCount && view.count && view.count > 1 && !view.groupLabelled ? view.count : 0;
+  return (
+    <span
+      data-notif-tone={view.tone}
+      className={'inline-block max-w-full truncate align-middle rounded-full px-2 py-0.5 text-[11px] font-semibold '
+        + ROW_TONE_CLASSES[view.tone]}
+    >
+      {view.label}
+      {count ? (
+        <span className="ms-1.5" aria-label={t('notifications:row.runCount', { count })}>
+          {count > 99 ? '99+' : count}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 /*
  * A collapsed conversation run says how many it stands for. Only ever
  * rendered above 1, so an ordinary row is unchanged — and it is a COUNT, not
@@ -1310,7 +1561,7 @@ function subjectOf(view: ScreenRowView): ReactNode {
  */
 function RunCount({ view }: { view: ScreenRowView }): ReactNode {
   const t = useMessages('notifications');
-  if (!view.count || view.count < 2 || view.groupLabelled) return null;
+  if (!view.count || view.count < 2 || view.groupLabelled || view.tone) return null;
   return (
     <span
       className={'shrink-0 min-w-[1.5rem] px-2 h-6 rounded-full text-[11px] font-semibold '
@@ -1339,6 +1590,8 @@ export function NotificationsSheetView() {
     loadingMore: boolean;
     /** #5289: the bell's number, which the Unread tab prints too. */
     badgeTotal?: number;
+    /** Pending invites, pinned above the list: the bell counts them too. */
+    invites?: unknown[] | null;
     /** #5527: the Unread tab's own pager — see loadMoreUnread(). */
     unreadCanLoadMore?: boolean;
     loadingUnread?: boolean;
@@ -1471,6 +1724,9 @@ export function NotificationsSheetView() {
   // has them.
   const unread = all.filter((view) => held.listed(view) && !view.plainMessage);
   const unreadNow = all.filter((view) => view.unread && !view.plainMessage);
+  // #5929 (item 13): the rows a week-old window would clear. While one is
+  // listed, collapsed Unread offers to mark everything that old read.
+  const olderUnread = unreadNow.filter((view) => olderThanWeek(view));
   // #3206: a kind chip narrows All only; Unread is grouped by project instead.
   const kindOn = tab === 'all' ? kindFilter : null;
   const rows = tab === 'unread' ? unread
@@ -1485,6 +1741,11 @@ export function NotificationsSheetView() {
   // sum the unread rows paged in so far, which on a backlog was a count of
   // the list ("Unread (81)") under a bell saying 99+ and a title saying 300.
   const unreadCount = snap.badgeTotal || 0;
+  // #5929 item 13: what still waits on the reader, in what is known of it:
+  // the unread rows in hand (one answered here stops counting at once, though
+  // its row stays until the sheet closes) and the pending invites, every one
+  // of which the bell's number holds too.
+  const needsCount = unreadNow.filter((view) => view.needsYou).length + (snap.invites || []).length;
   const boundary = startOfToday();
   const entries: Entry[] = shown.map((view) => (
     { type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
@@ -1507,7 +1768,7 @@ export function NotificationsSheetView() {
   // and once the older rows are revealed on Unread the tab is the archive
   // again, so it draws Today/Earlier as it always did. `unread` is feed
   // order (newest first), so groupUnreadByApp's insertion order keeps the
-  // groups newest-first too.
+  // groups newest-first too, once the ones waiting on the reader lead (#5929).
   const groupedUnread = tab === 'unread' && !olderShown;
   // Evan, 21 Oct 2026: the older rows were a flat list, so revealing them
   // undid the stacks the tab opened on. Revealed, Unread keeps its stacks.
@@ -1518,13 +1779,17 @@ export function NotificationsSheetView() {
   // (groupOlderByTime), each naming its project on its meta line. Nothing
   // there is to be cleared, so nothing there needs piling up.
   const olderGrouped = tab === 'unread' && olderShown;
-  const appGroups = groupedUnread || olderGrouped ? groupUnreadByApp(unread, t) : [];
+  const appGroups = groupedUnread || olderGrouped ? groupUnreadByApp(unread, t, held.asked) : [];
   const listedIds = new Set(unread.map((view) => view.id));
   const olderSections = olderGrouped ? groupOlderByTime(all.filter((view) => !listedIds.has(view.id)), t) : [];
   // #5580: each project is a stack of cards (./notification-stacks.tsx),
   // under the same heading and its Mark read.
   const renderAppGroup = (group: AppGroup): ReactNode => {
-    const label = group.key === 'other' || !group.appLine ? t('notifications:sheet.group.other') : groupName(group);
+    // #5929: a project's group whose name is not known is still one
+    // project's, so it is never headed as the app-less group.
+    const label = group.key === 'other'
+      ? t('notifications:sheet.group.other')
+      : groupName(group) || t('notifications:sheet.group.unnamedProject');
     return (
       <ProjectStack
         key={group.key}
@@ -1546,6 +1811,27 @@ export function NotificationsSheetView() {
         )}
         renderCard={renderCard}
       />
+    );
+  };
+  // #5929 item 1: the groups with something waiting on the reader already
+  // come first (groupUnreadByApp); when the tab holds both kinds, a small
+  // "Needs you" label sits over them and "Everything else" over the rest, so
+  // an approval and a "Voted yes" no longer read with the same weight. One
+  // kind alone needs no label: there is nothing to tell apart. The labels are
+  // siblings of the stacks, never inside one, so the stack checks
+  // ([data-notif-stack] > [data-stack-top], [data-notif-app-group] ~ .notifications-row-slot)
+  // read exactly what they did.
+  const renderAppGroups = (): ReactNode => {
+    const needs = appGroups.filter((group) => group.needsYou);
+    const rest = appGroups.filter((group) => !group.needsYou);
+    if (!needs.length || !rest.length) return appGroups.map(renderAppGroup);
+    return (
+      <>
+        <SectionHead data-notif-groups-head="needs">{t('notifications:sheet.needsYou')}</SectionHead>
+        {needs.map(renderAppGroup)}
+        <SectionHead data-notif-groups-head="rest">{t('notifications:sheet.everythingElse')}</SectionHead>
+        {rest.map(renderAppGroup)}
+      </>
     );
   };
   // An older section: its heading, then one card per change. The cards are
@@ -1677,6 +1963,7 @@ export function NotificationsSheetView() {
           className={'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm '
             + 'hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 un-touch-target'}
           aria-label={t('core:common.close')}
+          title={t('core:common.close')}
           onClick={() => NotificationsSheet.close()}
         >
           <XIcon className="w-5 h-5" />
@@ -1684,7 +1971,8 @@ export function NotificationsSheetView() {
       </div>
       {/*
           #5405: the search field, between the title and the tab strip — the
-          Discover field's shape (browse-screen.tsx): a white rounded field,
+          Discover field's shape (Discover's search, retired with One Home,
+          #6361): a white rounded field,
           a magnifying glass on its left, grey hint text, filtering as you
           type with no button to press. Escape with text in it empties the
           field instead of reaching whatever else would hear it; an empty
@@ -1693,7 +1981,7 @@ export function NotificationsSheetView() {
       <div id="notifications-search" className="px-4 pt-1 pb-2 shrink-0">
         <div className="relative">
           <SearchIcon
-            className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
+            className="w-4 h-4 absolute start-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
             aria-hidden="true"
           />
           <input
@@ -1713,7 +2001,7 @@ export function NotificationsSheetView() {
             autoComplete="off"
             spellCheck={false}
             enterKeyHint="search"
-            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
+            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
           />
         </div>
       </div>
@@ -1808,9 +2096,12 @@ export function NotificationsSheetView() {
           </p>
         )
       ) : null}
-      {!searching && (groupedUnread ? appGroups.map(renderAppGroup) : olderGrouped ? (
+      {!searching && appGroups.length ? (
+        <CatchUpLine needs={needsCount} total={unreadCount} partial={!!snap.unreadCanLoadMore} />
+      ) : null}
+      {!searching && (groupedUnread ? renderAppGroups() : olderGrouped ? (
         <>
-          {appGroups.map(renderAppGroup)}
+          {renderAppGroups()}
           {olderSections.map(renderOlderSection)}
         </>
       ) : (
@@ -1838,6 +2129,14 @@ export function NotificationsSheetView() {
           {tab === 'unread' ? t('notifications:sheet.empty.unread')
             : kindOn ? t('notifications:sheet.empty.kind') : t('notifications:sheet.empty.other')}
         </p>
+      ) : null}
+      {/* #5929 (item 13): under the groups, above the way on — only on the
+          collapsed Unread tab, and only while an unread row older than a
+          week is listed, so a tab with nothing that old never offers it. */}
+      {!searching && groupedUnread && olderUnread.length ? (
+        <MarkOlderRead
+          onRead={() => held.release(olderUnread.flatMap((view) => view.groupIds || [view.id]))}
+        />
       ) : null}
       {/*
           THE WAY ON, and it depends on which tab you are standing on.

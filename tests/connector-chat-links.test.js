@@ -59,7 +59,7 @@ test('#2370: the guided chat is offered INSIDE its route, not beside the routes'
   const chatgptLink = at('<GuidedSetup id="connector-open-chatgpt"');
   assert.ok(claudeRow < claudeLink && claudeLink < chatgptRow, 'Claude\'s link is inside the Claude.ai row');
   assert.ok(chatgptRow < chatgptLink && chatgptLink < codexRow, 'ChatGPT\'s link is inside the ChatGPT row');
-  assert.ok(claudeLink < at('<ClaudeSetupSteps />'),
+  assert.ok(claudeLink < at('<ClaudeSetupSteps track="claude" />'),
     'and it comes before the written steps');
   assert.doesNotMatch(tsx.replace(/\/\*[\s\S]*?\*\//g, ''), /Set it up in (Claude|ChatGPT)/,
     'the old labels are gone from the markup');
@@ -122,20 +122,20 @@ test('#1607: the written walkthroughs stay, because a chat cannot click a settin
   // row rather than the old <h4>. It is a slightly stronger check than before:
   // the hint states the step COUNT, so a walkthrough quietly losing steps now
   // fails here too. Whether the route starts open was never the point.
-  assert.match(tsx, /<Disclosure title="Claude\.ai" hint=\{t\('settings:connectors\.claude\.hint'\)\}>/);
+  assert.match(tsx, /<Disclosure title="Claude\.ai" hint=\{t\('settings:connectors\.claude\.hint'\)\}\s/);
   assert.equal(message('settings:connectors.claude.hint'), '6 steps · also sets up Claude Code');
   // #4431 moved ChatGPT's route to the plugins directory; #4433 opened it
   // at the directory's own address, and the Developer-mode gate it used to
   // warn about is gone from the flow.
-  assert.match(tsx, /<Disclosure title="ChatGPT" hint=\{t\('settings:connectors\.chatgpt\.hint'\)\}>/);
+  assert.match(tsx, /<Disclosure title="ChatGPT" hint=\{t\('settings:connectors\.chatgpt\.hint'\)\}\s/);
   assert.equal(message('settings:connectors.chatgpt.hint'), '4 steps · in the plugins directory');
   // #2706: still complete, still authoritative, one module further out —
   // and the pane still renders both, which is what the counts above are a
   // promise about. tests/connector-setup-shared.test.js holds the counts
   // themselves to the module.
   const steps = read(STEPS_TSX);
-  assert.match(tsx, /<ClaudeSetupSteps \/>/);
-  assert.match(tsx, /<ChatgptSetupSteps \/>/);
+  assert.match(tsx, /<ClaudeSetupSteps track="claude" \/>/);
+  assert.match(tsx, /<ChatgptSetupSteps track="chatgpt" \/>/);
   assert.match(steps, /title=\{t\('settings:connectors\.chatgptSteps\.directory\.title'\)\}/);
   assert.equal(message('settings:connectors.chatgptSteps.directory.title'), 'Open the plugins directory.');
   assert.match(steps, /chatgpt\.com\/plugins/);

@@ -66,7 +66,19 @@ export interface RequestSpecCard {
  *     or another version, never stands in for it: without its line, a
  *     comment that carries the plan is that plan's card, and a link-only one
  *     stays as it was written.
+ *   - Overnight audit R02 (2 Nov 2026): the platform's record that the
+ *     request was filed ("evan created issue: "Dark mode" (#4)", written in
+ *     the GitHub era's words and still parsed by the server) leaves too. The
+ *     root post the page opens on already says who asked, what and when, so
+ *     the line only repeated it, in a word the product no longer uses.
  */
+const FILED_LINE = /^\S+ created issue: ".*" \(#\d+\)$/s;
+
+/** Whether a row is the platform's "X created issue: …" record of the request being filed. */
+export function isFiledLine(m: TranscriptMessage): boolean {
+  return m.kind === 'system' && FILED_LINE.test((m.systemText || '').trim());
+}
+
 export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMessage[]; specs: RequestSpecCard[] } {
   const shared = rows.some((m) => m.kind === 'spec_share' && !!m.specShare);
   const announced = (mirror: { author: string; version: number }) => rows.some((m) => m.kind === 'spec_share'
@@ -74,6 +86,7 @@ export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMess
     && String(m.specShare.sharedBy).toLowerCase() === mirror.author.toLowerCase()
     && Number(m.specShare.version) === mirror.version);
   const kept = rows.filter((m) => {
+    if (isFiledLine(m)) return false;
     if (m.kind !== 'github') return true;
     if (m.planMirror) return !announced(m.planMirror);
     return !(shared && m.githubSpec);
@@ -128,14 +141,29 @@ export function eventText(m: TranscriptMessage): string {
   return claimed ? t('project:topic.request.stream.claimedPlain', { member: claimed[1] }) : text;
 }
 
-/** Open a spec card's Read in the spec reader beside the page. */
+/**
+ * Open a spec card's Read in the detail column beside the thread (#6230).
+ * A shared spec is fetched by its session and version; a plan that exists
+ * only in the card carries its own words.
+ */
 export function openRequestSpec(card: RequestSpecCard): Promise<void> | void {
-  const gc = typeof window !== 'undefined' ? (window as any).GroupChat : null;
-  if (!gc) return;
+  const detail = typeof window !== 'undefined' ? (window as any).UsernodeReact?.detail : null;
+  if (!detail) return;
   if (card.read.kind === 'shared') {
-    return gc.openSharedSpec?.(card.read.sessionId, card.read.version, card.read.previewTitle);
+    detail.open({
+      kind: 'plan',
+      ref: { sessionId: card.read.sessionId },
+      version: card.read.version,
+      payload: { title: card.read.previewTitle },
+    });
+    return;
   }
-  gc._showSpecPanel?.({ title: card.read.title, version: null, content: card.read.markdown, html: card.read.html });
+  detail.open({
+    kind: 'plan',
+    ref: {},
+    version: null,
+    payload: { title: card.read.title, markdown: card.read.markdown, html: card.read.html },
+  });
 }
 
 /** Where a request is: the stepper's four stops. */
@@ -183,4 +211,37 @@ export function publishRequestThread(number: number, rows: TranscriptMessage[]):
     && prev.specs.every((s, i) => s.key === specs[i].key && s.version === specs[i].version && s.title === specs[i].title && s.time === specs[i].time
       && s.ended === specs[i].ended);
   if (!same) requestThreadStore.set({ number, specs });
+}
+
+/**
+ * 1 Nov 2026 (one page per thread): the changes in the open request's
+ * thread, by session id, with their numbers: what a row written on one of
+ * them is tagged with in the request's one discussion (RequestRows).
+ * Published by the request's head (./request-head.tsx) once its thread is
+ * read.
+ */
+export interface RequestChangesState {
+  number: number | null;
+  numbers: Record<number, number | null>;
+  /**
+   * #6236: each change's title, by session id, for the line under the
+   * bot's "It's up for a vote" post that names the change and offers See
+   * the vote (../../group-chat/vote-card.tsx VoteLine).
+   */
+  titles: Record<number, string | null>;
+}
+
+export const requestChangesStore = createStore<RequestChangesState>({ number: null, numbers: {}, titles: {} });
+
+export function publishRequestChanges(number: number, changes: readonly { id: number; number: number | null; title?: string | null }[]): void {
+  const numbers: Record<number, number | null> = {};
+  const titles: Record<number, string | null> = {};
+  for (const c of changes) {
+    numbers[Number(c.id)] = c.number == null ? null : Number(c.number);
+    titles[Number(c.id)] = c.title ? String(c.title) : null;
+  }
+  const prev = requestChangesStore.get();
+  if (prev.number === number && JSON.stringify(prev.numbers) === JSON.stringify(numbers)
+    && JSON.stringify(prev.titles) === JSON.stringify(titles)) return;
+  requestChangesStore.set({ number, numbers, titles });
 }

@@ -11,7 +11,7 @@
 // and the platform executes the reads on its side:
 //
 //   - SQL runs through a dedicated `usernode_debug_ro` Postgres role
-//     whose password each release's migration step regenerates
+//     whose password each release's migration step verifies and repairs
 //     (services/db-roles.js), and whose grants expose only reviewed
 //     operational columns (READABLE_COLUMNS below). Every process
 //     reads it from platform_db_roles, encrypted with the data key as app
@@ -29,6 +29,7 @@ const { getPool } = require('../db/pool');
 const log = require('./logger');
 const secrets = require('./secrets');
 const { verifyDebugRole } = require('./debug-role-policy');
+const { readOnlyRoleCurrent, repairReadOnlyDrift } = require('./readonly-role-state');
 
 const ROLE = 'usernode_debug_ro';
 const SAFE_IDENT = /^[a-z_][a-z0-9_]*$/;
@@ -130,6 +131,7 @@ const DENIED_TABLES = new Set([
   'global_chat_tool_runs', // private action inputs and authoritative results
   'global_chat_action_tokens', // one-use action capabilities and sealed payloads
   'agent_session_actions', // the agent-session Mayor's sealed confirmation cards (#2779)
+  'homeroom_bot_admin_actions', // Homeroom bot's sealed admin confirm cards (bot parity P7)
   'private_requests',         // admin-only confidential and security requests, kept off GitHub (#5048)
   'private_request_comments', // their discussion (#5048)
   'platform_db_roles',   // this role's own password, encrypted (AES blob, still deny)
@@ -186,6 +188,12 @@ const DENIED_COLUMNS = {
   ],
   agent_session_actions: [
     // The sealed exact input of a pending write and its fingerprint (#2779).
+    'input_hash',
+    'sealed_input',
+  ],
+  homeroom_bot_admin_actions: [
+    // The same for an admin's confirm card in their chat with Homeroom bot
+    // (homeroom-bot-thread-tools/admin.js).
     'input_hash',
     'sealed_input',
   ],
@@ -254,6 +262,23 @@ const READABLE_COLUMNS = Object.freeze(Object.fromEntries(Object.entries({
   session_workers: ['session_id', 'last_used_at', 'created_at'],
   check_runs: ['run_id', 'session_id', 'commit_sha', 'kind', 'app_id', 'queued_at',
     'admitted_at', 'started_at', 'heartbeat_at'],
+  // #6427: Homeroom bot's own records, for debugging it (Homeroom bot's
+  // query_prod_db, homeroom-bot-thread-tools/admin.js, reads these as dev
+  // sessions do). Ids, numbers, timestamps and the platform's own short codes
+  // only: never a title, a body, a label, a GitHub login, the model's words
+  // (runs.reason, question, error, first_step, …) or JSON (work_states.line).
+  homeroom_bot_queue: ['id', 'app_id', 'issue_number', 'priority', 'reason', 'thread_seen_at',
+    'requested_by', 'enqueued_at', 'started_at', 'held_until', 'held_reason', 'payer_user_id',
+    'changed_by', 'wait_reason', 'wait_until'],
+  homeroom_bot_runs: ['id', 'app_id', 'issue_number', 'session_id', 'mode', 'verdict', 'determined',
+    'posted_at', 'model', 'cost_usd', 'input_tokens', 'output_tokens', 'duration_ms', 'created_at',
+    'budget_stop', 'limit_stop', 'read_reason', 'proposal_session_id', 'build_ok', 'build_queued_at',
+    'build_at', 'build_attempts', 'build_cost_usd', 'build_session_id', 'live_build_waiting_at',
+    'go_ahead_at', 'awaiting_go_at', 'go_ahead_decides', 'charged', 'payer_user_id'],
+  work_states: ['app_id', 'item_kind', 'item_ref', 'issue_number', 'session_id', 'stage', 'why',
+    'reason', 'whose_move', 'requester_id', 'since', 'updated_at', 'checked_at'],
+  requests: ['id', 'app_id', 'number', 'state', 'state_reason', 'created_by', 'created_at',
+    'updated_at', 'closed_at', 'closed_by', 'source', 'recovered_partial', 'thread_id', 'part_of'],
 }).map(([table, columns]) => [table, Object.freeze(columns)])));
 
 // ── Container-log allowlist (used by the prod-debug logs endpoint) ─────
@@ -363,10 +388,10 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 // NOTE: this runs exactly once per boot and `_available` is latched by it,
 // so a permanent failure here disables prod-debug until the next deploy.
 // That is why the retry above exists.
-async function ensureRole(config) {
+async function ensureRole(config, { admin = null } = {}) {
   for (let attempt = 1; attempt <= BOOTSTRAP_ATTEMPTS; attempt++) {
     try {
-      await bootstrapRole(config);
+      if (!await reuseVerifiedRole(config)) await bootstrapRole(config, admin);
       await recordBootstrap(config, { ok: true, password: _roPassword });
       return;
     } catch (err) {
@@ -388,6 +413,37 @@ async function ensureRole(config) {
       await recordBootstrap(config, { ok: false, reason: _unavailableReason });
     }
   }
+}
+
+async function reuseVerifiedRole(config) {
+  const pool = getPool(config);
+  const { rows: [row] } = await pool.query(
+    'SELECT ok, reason, secret_enc FROM platform_db_roles WHERE role = $1', [ROLE]);
+  if (!row?.ok || !row.secret_enc) return false;
+  if (!await readOnlyRoleCurrent(pool, { role: ROLE, login: true, timeoutMs: QUERY_TIMEOUT_MS })) return false;
+  try { await verifyDebugRole(pool, { role: ROLE, readableColumns: READABLE_COLUMNS }); }
+  catch (err) { if (err.code === 'DEBUG_POLICY_MISMATCH') return false; throw err; }
+  let password;
+  try { password = secrets.decrypt(row.secret_enc, config && config.dataEncryptionKey); }
+  catch { return false; }
+  if (!password) return false;
+  // Catalogs do not expose password verifiers to the migrator. Authenticate
+  // once as the saved role, so a manual password change still gets repaired.
+  closePool();
+  _roPassword = password;
+  const probe = _getRoPool(config);
+  try { await probe.query('SELECT 1'); }
+  catch (err) {
+    if (['28P01', '28000'].includes(err.code)) return false;
+    throw err;
+  } finally {
+    await probe.end();
+    if (_roPool === probe) _roPool = null;
+  }
+  _available = true;
+  _unavailableReason = null;
+  log.info('prod-debug', 'Read-only debug role verified; permissions unchanged');
+  return true;
 }
 
 // What the migration step made, for every process (loadShared): whether the
@@ -466,25 +522,31 @@ async function loadShared(config, { force = false } = {}) {
 
 // One bootstrap attempt. Throws on any failure so ensureRole can retry;
 // sets `_available` only on the success path.
-async function bootstrapRole(config) {
+async function bootstrapRole(config, admin = null) {
   const pool = getPool(config);
+  const roleAdmin = admin || pool;
   // 48 hex chars — no SQL/URL-special characters, safe to inline.
   _roPassword = crypto.randomBytes(24).toString('hex');
 
-  await pool.query(`DO $$ BEGIN
+  await roleAdmin.query(`DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${ROLE}') THEN
       CREATE ROLE ${ROLE} LOGIN PASSWORD '${_roPassword}';
     ELSE
       ALTER ROLE ${ROLE} WITH LOGIN PASSWORD '${_roPassword}';
     END IF;
   END $$;`);
-  await pool.query(
-    `ALTER ROLE ${ROLE} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`
-  );
+  if (admin) {
+    await require('./database-role-access').assertReadonlyRole(roleAdmin, ROLE);
+    await roleAdmin.query(`ALTER ROLE ${ROLE} NOCREATEDB NOCREATEROLE NOINHERIT`);
+  } else {
+    await pool.query(`ALTER ROLE ${ROLE} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
+  }
   // Role-level read-only: even a COMMIT-smuggling or multi-statement
   // query starts read-only, and the role has no write grants anyway.
-  await pool.query(`ALTER ROLE ${ROLE} SET default_transaction_read_only = on`);
-  await pool.query(`ALTER ROLE ${ROLE} SET statement_timeout = '${QUERY_TIMEOUT_MS}ms'`);
+  await roleAdmin.query(`ALTER ROLE ${ROLE} SET default_transaction_read_only = on`);
+  await roleAdmin.query(`ALTER ROLE ${ROLE} SET statement_timeout = '${QUERY_TIMEOUT_MS}ms'`);
+  await roleAdmin.query(`ALTER ROLE ${ROLE} VALID UNTIL 'infinity'`);
+  await repairReadOnlyDrift(pool, ROLE, roleAdmin);
 
   const { rows: dbRows } = await pool.query('SELECT current_database() AS db');
   const dbName = dbRows[0].db;
@@ -498,7 +560,6 @@ async function bootstrapRole(config) {
   // PostgreSQL also clears corresponding column ACLs with this table-level
   // revoke, including grants on views and foreign tables. Reapply only the
   // reviewed base-table columns below.
-  await pool.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE}`);
   const { rows: tableRows } = await pool.query(
     `SELECT c.relname AS table, c.relkind AS kind,
             array_agg(a.attname::text ORDER BY a.attnum) AS columns
@@ -510,12 +571,13 @@ async function bootstrapRole(config) {
       GROUP BY c.relname, c.relkind`
   );
   const grants = buildGrantStatements(tableRows);
-  for (const stmt of grants) {
-    await pool.query(stmt);
-  }
+  await pool.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE};\n${grants.join(';\n')}`);
   // No shared success record or credential is published until the effective
   // privileges and reviewed column definitions match the current policy.
   const verified = await verifyDebugRole(pool, { role: ROLE, readableColumns: READABLE_COLUMNS });
+  if (!await readOnlyRoleCurrent(pool, { role: ROLE, login: true, timeoutMs: QUERY_TIMEOUT_MS })) {
+    throw new Error('Debug role authority could not be repaired');
+  }
 
   // Rebuild the RO pool so it picks up the fresh password.
   if (_roPool) {

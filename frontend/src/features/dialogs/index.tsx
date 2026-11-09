@@ -33,6 +33,7 @@ import { AppSettingsDialog } from './app-settings';
 import { AppNotificationsDialog } from './app-notifications';
 import { RenameAppDialog } from './rename-app';
 import { CloseIssueDialog } from './close-issue';
+import { ReopenIssueDialog } from './reopen-issue';
 import { ForkAppDialog } from './fork-app';
 import { ImportPrDialog } from './import-pr';
 import { MembersDialog } from './members';
@@ -77,6 +78,8 @@ export function Dialogs() {
       <TopicsDialog />
       {/* #4666: who can see a project and how its changes are approved. New markup, appended last. */}
       <WhoDecidesDialog />
+      {/* #6000: propose reopening a closed request. New markup, appended last. */}
+      <ReopenIssueDialog />
     </>
   );
 }

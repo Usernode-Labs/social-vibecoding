@@ -70,6 +70,7 @@ const crypto = require('crypto');
 const log = require('./logger');
 const githubService = require('./github');
 const repoRef = require('./repo-ref');
+const { labelledAsPullRequest } = require('./request-mentions');
 const githubBudget = require('./github-budget');
 const externalAgentHead = require('./external-agent-head');
 const externalAgentPatch = require('./external-agent-patch');
@@ -4837,12 +4838,16 @@ async function submitWorkLocked(deps, params) {
 
 // `#123` references in a brief, in order, deduplicated. The brief is the
 // caller's own text on a job that names no request; this only ever feeds a
-// suggestion, so a number that turns out to be a pull request or a closed
-// request costs nothing — the connector checks them against the open list.
+// suggestion, and the connector checks the numbers against the open list,
+// so a closed request costs nothing. A number written as a pull request's
+// ("PR #6048") is left out: on a project still on GitHub a pull request can
+// hold an open request's number (request-mentions.js).
 function mentionedIssueNumbers(brief) {
   const text = stripEnvelope(brief);
   const found = [];
-  for (const m of text.matchAll(/(?:^|[^\w&#/])#(\d{1,9})\b/g)) found.push(m[1]);
+  for (const m of text.matchAll(/(?:^|[^\w&#/])#(\d{1,9})\b/g)) {
+    if (!labelledAsPullRequest(text, m.index + m[0].indexOf('#'))) found.push(m[1]);
+  }
   return normalizeIssueNumbers(found);
 }
 
@@ -4990,9 +4995,9 @@ function linkedIssuesFor(task) {
 // Two things close a request when the work lands, and a connector submission
 // carried neither (#1217):
 //
-//   1. the `Closes #N` keyword in the PR body — GitHub is what actually
-//      closes the issue on merge, and the platform's post-merge watcher only
-//      polls for it having happened; and
+//   1. the closing line in the PR body (`Closes #N`, or on GitHub the
+//      request's page: pr-metadata.js closingLine), which says on the pull
+//      request what it closes; and
 //   2. chat_sessions.linked_issues — what the watcher expects to close, what
 //      the merge path suppresses optimistically, and what the Dev board reads
 //      to show a request as being worked on.
@@ -5005,7 +5010,7 @@ function linkedIssuesFor(task) {
 function prBodyFor({ body, task }) {
   const { buildClosingBlock } = require('./pr-metadata');
   const text = stripEnvelope(body).slice(0, 4000);
-  const closing = buildClosingBlock(linkedIssuesFor(task));
+  const closing = buildClosingBlock(linkedIssuesFor(task), { repoUrl: task?.repo_url || null, appSlug: task?.app_slug || null });
   return closing ? `${text}\n\n${closing}` : text;
 }
 

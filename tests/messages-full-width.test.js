@@ -68,7 +68,7 @@ test('a conversation, a group and #general: at the right of the header, just bef
   const at = header.indexOf('<FullWidthToggle />');
   assert.ok(at > 0, 'the conversation header carries it');
   assert.equal(header.indexOf('<FullWidthToggle />', at + 1), -1, 'once');
-  assert.ok(at > header.indexOf('className="min-w-0 text-left flex-1"'), 'after the title, which takes the free width');
+  assert.ok(at > header.indexOf('className="min-w-0 text-start flex-1"'), 'after the title, which takes the free width');
   assert.equal(message('messages:header.groupMembers'), 'Group members');
   assert.ok(at > header.indexOf("aria-label={t('messages:header.groupMembers')}"), 'after a group\'s members disc');
   // The ⋯ is a keyboard menu button with refs of its own (QA 2026-09-24 Q18).
@@ -114,7 +114,7 @@ test('the list folds for an agent thread too; a reply thread still belongs to a 
   assert.match(SCREEN, /const chatOpen = !!\(snap\.route\.conversationId \|\| snap\.route\.appSlug\);\s*const discussionOpen = chatOpen \|\| !!snap\.route\.agent;/);
   assert.match(SCREEN, /\$\{\(snap\.listCollapsed && discussionOpen\) \|\| channelOpen \? ' messages-list-collapsed' : ''\}/,
     'a toggle that does nothing on half the panes is worse than none; a channel has no list beside it');
-  assert.match(SCREEN, /\$\{chatOpen && snap\.route\.threadRootId \? ' messages-has-reply-thread' : ''\}/);
+  assert.match(SCREEN, /\$\{chatOpen && \(snap\.route\.threadRootId \|\| blankThread\) \? ' messages-has-reply-thread' : ''\}/);
 });
 
 test('app.css: a desktop control that keeps its ink, and stays under the pointer', () => {

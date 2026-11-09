@@ -25,20 +25,14 @@
  * component renders it through `dangerouslySetInnerHTML` with a memoised
  * wrapper — see the note there about object identity.
  *
- * Three things are NOT modelled and stay module-filled hosts, which is the
- * documented controller-host seam in AGENTS.md — the same one `#dev-body` runs
- * under:
- *
- *   * vote controls, whose markup comes from `AppView.voteState`. That arrives
- *     on its own schedule and is re-filled in place, so modelling it would mean
- *     re-rendering every row whenever any vote changed. What the row DOES
- *     model is `voteRef` — the (sessionId, prNumber) pair
- *     `refreshVoteControls` resolves against that state — because those come
- *     off the message and nothing else can supply them;
- *   * the spec-share card, a whole second renderer.
- *
- * That is a second copy of logic that already exists, for markup that changes
- * only when the message does.
+ * Nothing under a row is a module-filled host any more. The vote controls
+ * were the last one (the `[data-vote-controls]` span group-chat.js filled
+ * with AppView's Yes/No/Admin-merge markup from `AppView.voteState`); since
+ * #6236 a row models the vote as data instead — `voteRef`, the (sessionId,
+ * prNumber) pair that comes off the message, and `vote`, the facts
+ * `GroupChat.refreshVoteControls` resolves against the vote snapshot and
+ * patches in when it moves — and ./vote-card.tsx draws it. The spec-share
+ * card went the same way earlier (SpecShareRow).
  *
  * The attachment row was on that list and should not have been. Its hrefs are
  * derived from the app slug and its markdown chips go through a delegated
@@ -64,14 +58,41 @@ export interface Reaction {
  *
  * `sessionId` is the precise tag newer servers put in the message metadata;
  * `prNumber` is parsed out of the row's own text and covers rows that predate
- * it. Either may be `''`. They travel onto the controls host as
- * `data-session-id` / `data-pr-number`, which is exactly where
- * `GroupChat.refreshVoteControls` reads them back — the host is module-filled,
- * so the attributes it fills FROM are part of that contract.
+ * it. Either may be `''`. The row renders them as `data-vote-session` /
+ * `data-vote-pr`, which is where `GroupChat.refreshVoteControls` reads them
+ * back to resolve the row against the vote snapshot and patch `vote` below:
+ * the module reads the attributes and writes the model, never the DOM.
  */
 export interface VoteRef {
   sessionId: string;
   prNumber: string;
+}
+
+/**
+ * #6236: the facts a vote card says in words, as the module resolves them
+ * from one row of `AppView.voteState` (group-chat.js `_voteView`). Plain
+ * data: the card words it from the catalog, so the module holds no copy.
+ */
+export interface VoteView {
+  /** The change's session id, when the snapshot named it. */
+  sessionId: number | null;
+  /** Its pull request number, when it has one. */
+  number: number | null;
+  /** Its title, when the snapshot row carries one. */
+  title: string | null;
+  /** Where the vote stands: open, crossing the line, or landed. */
+  status: 'promoted' | 'merging' | 'merged';
+  /** Yes votes that count, and how many it needs; null on a settled row. */
+  yes: number | null;
+  needed: number | null;
+  /** #788: the yes votes are in, but one must come from another member. */
+  needsOtherMember: boolean;
+  /** The viewer's own vote on it, if any. */
+  myVote: 'yes' | 'no' | null;
+  /** The checks' state as the row carries it; null when unknown or not run. */
+  checks: 'passing' | 'failing' | 'pending' | 'error' | 'skipped' | null;
+  /** The preview: live at a URL, still building, or none to offer. */
+  preview: { kind: 'live'; url: string } | { kind: 'building' } | { kind: 'unavailable' } | null;
 }
 
 /**
@@ -102,18 +123,6 @@ export interface Quote {
 export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share' | 'github';
 
 /**
- * B9: a request's chip on its message (homeroom-bot-chat.js setStatus).
- * `fixing`: a fix asked for on one of the bot's changes still waiting for
- * approval, until that change is ready again. `waiting_first_version`: a
- * request held until the project's first version is live.
- */
-export interface BotRequestChip {
-  status: 'reading' | 'building' | 'ready' | 'live' | 'fixing' | 'waiting_first_version';
-  issueNumber: number | null;
-  sessionId: number | null;
-}
-
-/**
  * 10 October: what Homeroom bot offered to do in its reply in a thread
  * (homeroom-bot-voice.js): file a request, withdraw one of its changes, or
  * open a vote on closing a request. Nothing happens until the person it was
@@ -123,7 +132,31 @@ export interface BotRequestChip {
 export interface BotOfferView {
   status: 'open' | 'deciding' | 'done' | 'declined' | 'failed';
   forMe: boolean;
-  actions: { id: 'yes' | 'no'; label: string; primary: boolean }[];
+  actions: { id: 'yes' | 'no' | 'first'; label: string; primary: boolean }[];
+  /** #6305: 'file_many' when one request is offered on several projects. */
+  kind?: string;
+  rows?: BotOfferRow[] | null;
+}
+
+/** #6305: one project's row on a many-project offer in a thread. */
+export interface BotOfferRow {
+  named: string;
+  match: 'exact' | 'guess' | 'none';
+  slug: string | null;
+  name: string;
+  choices: { slug: string; name: string }[];
+  done: string | null;
+  disabled: 'not_member' | null;
+  ticked: boolean;
+}
+
+/** 3 Nov 2026: suggested replies under Homeroom bot's message in a thread. */
+export interface BotSuggestView {
+  status: 'open' | 'closed';
+  forMe: boolean;
+  /** #6391: whose set this is: the people the reply answered, or the other members. */
+  audience: 'answered' | 'others' | null;
+  actions: { id: string; label: string; primary: boolean }[];
 }
 
 /**
@@ -324,6 +357,8 @@ export interface TranscriptMessage {
   at?: string | null;
   /** Sanitized markdown for an ordinary message; plain text for a system row. */
   bodyHtml: string;
+  /** Task 2020 follow-up: Homeroom bot's reply laid out (group-chat.js _botHtmlOf), drawn in place of `bodyHtml` by ./long-body.tsx. */
+  botHtml?: string | null;
   systemText: string;
   /** Set by transcript.tsx's foldRepeats: how many identical lines this one stands for. */
   repeat?: number;
@@ -339,6 +374,12 @@ export interface TranscriptMessage {
    * `postedVia` live) and never off anything the composer sent.
    */
   postedVia?: 'agent' | null;
+  /**
+   * #6268: Homeroom bot will not answer this connector message, and the row
+   * says so in one quiet line. Decided by the server when the message was
+   * posted (`metadata.homeroomBotSkip`), so the line never changes later.
+   */
+  botSkipped?: boolean;
   /**
    * The 1.5s highlight a jump-to-original lands on. On the MODEL because the
    * row is React's: `_handleQuotedClick` used to `classList.add` it, which the
@@ -365,14 +406,20 @@ export interface TranscriptMessage {
   attachments: Attachment[];
   /** Vote rows only: the tint class the module derives from the viewer's vote. */
   voteRowClass: string;
-  /** Vote rows only: what the controls host is about. Null on every other kind. */
+  /**
+   * The change this row is about: a vote row, or a message whose metadata
+   * names the proposal (Homeroom bot's "It's up for a vote" post). Null on
+   * every other kind. The row draws ./vote-card.tsx for it.
+   */
   voteRef: VoteRef | null;
   /**
-   * B9: how a request asked of Homeroom bot on this message is going, which
-   * everybody in the room sees (metadata the server alone sets): reading,
-   * building, ready (with its change to try), live. Null for none.
+   * #6236: where that change's vote and checks stand, resolved by
+   * `GroupChat._voteView` from `AppView.voteState` — at build time when the
+   * snapshot is already there, and patched by `refreshVoteControls` each
+   * time it moves. Null or absent while the change is unknown to the
+   * snapshot, when the card shows the change's name and its doors alone.
    */
-  botRequest?: BotRequestChip | null;
+  vote?: VoteView | null;
   /** B9: the card under the viewer's own message about it, theirs alone. */
   botCard?: BotRequestCard | null;
   /** B9: "Make this a request" is offered on this message (theirs, and the bot answers them here). */
@@ -384,12 +431,25 @@ export interface TranscriptMessage {
   openApp?: { label: string; target: string } | null;
   /** 10 October: the buttons under Homeroom bot's offer in a thread. Absent or null on every other row. */
   botOffer?: BotOfferView | null;
+  /** 3 Nov 2026: the suggested replies under Homeroom bot's message in a thread. */
+  botSuggest?: BotSuggestView | null;
   /**
    * #4455: a system row that announces the preview build, from its metadata:
    * `started` (a change's page leaves it out: its Testing card says so) or
    * `ready` ("The preview is ready · Try it"). Absent on every other row.
    */
   stagingBuild?: 'started' | 'ready';
+  /**
+   * 1 Nov 2026 (one page per thread): on a request's page, a row written on
+   * one of its changes (GroupChat._messageView), which the stream tags with
+   * that change. Absent on every other row.
+   */
+  changeOf?: { sessionId: number | null };
+  /**
+   * #6421: on a request's page, a message written on another request of a
+   * merged thread, tagged with that request's number ("on #6212").
+   */
+  requestOf?: { number: number | null };
   /** Spec-share rows only — see SpecShareView. Null on every other kind. */
   specShare: SpecShareView | null;
   /**
@@ -400,7 +460,7 @@ export interface TranscriptMessage {
    * arrived and reads as open, since a vote shown as over when it is not is
    * the failure that matters. Written by `_messageView` and patched by
    * `refreshVoteControls` in public/js/group-chat.js, which is where
-   * `AppView.voteState` lives. Absent on every other kind.
+   * `AppView.voteState` is read. Absent on every other kind.
    */
   votePhase?: 'open' | 'settled' | 'unknown';
   /**

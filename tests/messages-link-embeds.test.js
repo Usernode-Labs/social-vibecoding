@@ -197,6 +197,15 @@ test('Share to… lists where the sharer can write, and posts a discussion share
     ['c:3', 'channel', '#general', 'Everyone on Homeroom'],
     ['d:recipes', 'discussion', 'Recipes', '#recipes · Discussion'],
   ], 'no invitation, no request waiting on acceptance, nothing archived, and Homeroom’s own room is #general');
+  // #6112: a discussion row carries its project's icon for the picker's
+  // tile, so every app is not the same grey "#".
+  const iconed = dialog.shareDestinations([], [
+    { slug: 'recipes', name: 'Recipes', channel: 'recipes', iconUrl: '/app-icons/abc', iconEmoji: null },
+    { slug: 'notes', name: 'Notes', channel: 'notes', iconUrl: null, iconEmoji: '📝' },
+    { slug: 'plain', name: 'Plain', channel: 'plain' },
+  ], { me: 3, platform: 'homeroom' });
+  assert.deepEqual(iconed.map((row) => [row.key, row.iconUrl, row.iconEmoji]),
+    [['d:recipes', '/app-icons/abc', null], ['d:notes', null, '📝'], ['d:plain', null, null]]);
 
   // The link a discussion share posts is one the discussion draws as the
   // same card.
@@ -211,6 +220,28 @@ test('Share to… lists where the sharer can write, and posts a discussion share
   }
   assert.equal(dialog.itemLink({ type: 'issue', appSlug: 'recipes', issueNumber: 12 }, 'https://app.onhomeroom.com'),
     'https://app.onhomeroom.com/app/recipes/dev/issues/12');
+  // #6110: a change or a request whose number did not come with it is never
+  // the app's home. It is the page the share was pressed on when that is an
+  // item's page of the same app (a change built for a request lives on the
+  // request's page); otherwise there is no link, and the send says so.
+  const origin = 'https://app.onhomeroom.com';
+  assert.equal(dialog.itemLink({ type: 'proposal', appSlug: 'recipes' }, origin, 'app/recipes/dev/proposals/41'),
+    'https://app.onhomeroom.com/app/recipes/dev/proposals/41', 'the fragment\u2019s spelling');
+  assert.equal(dialog.itemLink({ type: 'proposal', appSlug: 'recipes' }, origin, '/app/recipes/dev/changes/77?ws=needs'),
+    'https://app.onhomeroom.com/app/recipes/dev/changes/77', 'the clean path, less its query');
+  assert.equal(dialog.itemLink({ type: 'proposal', appSlug: 'recipes' }, origin, '/app/recipes/dev/issues/12'),
+    'https://app.onhomeroom.com/app/recipes/dev/issues/12', 'a change on its request\u2019s page');
+  assert.equal(dialog.itemLink({ type: 'issue', appSlug: 'recipes' }, origin, '/app/recipes/workshop'), null, 'the Workshop is not the request');
+  assert.equal(dialog.itemLink({ type: 'issue', appSlug: 'recipes' }, origin, '/app/other/dev/issues/12'), null, 'another app\u2019s page is not it either');
+  assert.equal(dialog.itemLink({ type: 'proposal', appSlug: 'recipes' }, origin, '/app/recipes'), null, 'never the app\u2019s home');
+  assert.equal(dialog.itemLink({ type: 'proposal', appSlug: 'recipes' }, origin, null), null);
+  assert.equal(dialog.itemLink({ type: 'app', appSlug: 'recipes' }, origin, '/app/recipes/dev/issues/12'),
+    'https://app.onhomeroom.com/app/recipes', 'only the app itself shares the app');
+  assert.equal(dialog.pageRoute({ pathname: '/app/recipes/dev/issues/12', hash: '' }), '/app/recipes/dev/issues/12');
+  assert.equal(dialog.pageRoute({ pathname: '/', hash: '#app/recipes/dev/issues/12' }), 'app/recipes/dev/issues/12', 'the fragment outranks the path, as the router reads it');
+  const dialogSource = read('frontend/src/features/messages/share-to-dialog.tsx');
+  assert.match(dialogSource, /const link = itemLink\(reference, window\.location\.origin, pageRoute\(window\.location\)\);\s*if \(!link\) throw new Error\(translate\('messages:shareTo\.error\.failed'\)\);/,
+    'a discussion share with no page to link refuses, through the dialog\u2019s own error line');
   const refused = (status, message) => new (loadTsx('frontend/src/features/messages/api.ts').MessagesApiError)(status, message);
   assert.equal(dialog.shareError(refused(404, 'App not found'), { kind: 'discussion', label: 'Recipes' }),
     'You can’t post in the Recipes discussion.', 'a discussion that hides who may post reads as the place');
@@ -222,6 +253,10 @@ test('Share to… lists where the sharer can write, and posts a discussion share
 
 test('Share to… is wired: the dialog, its sends, and the card menus that open it', () => {
   const source = read('frontend/src/features/messages/share-to-dialog.tsx');
+  // #6112: the picker draws a discussion's tile with the app's own icon (the
+  // inbox's AppIconContent, its kind on data-icon), never a fixed "#" for it.
+  assert.match(source, /if \(row\.kind === 'discussion'\) \{[\s\S]*?data-icon=\{appIconKind\(record as never\)\}[\s\S]*?<AppIconContent app=\{record as never\} \/>/);
+  assert.match(source, /import \{ AppIconContent, appIconKind \} from '\.\.\/apps\/app-card-view';/);
   assert.match(source, /useDialog<ShareToPayload>\('shareTo'/);
   assert.match(source, /<DialogRoot id="share-to-dialog" layout="scroll"/);
   assert.match(source, /await shareToConversation\(choice\.conversation\.id, reference, note\)/,

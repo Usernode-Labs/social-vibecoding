@@ -84,8 +84,12 @@
     "description": "Accessible name of the grey placeholder shown on the Challenges tab while the challenges are being fetched."
   },
   "challenges.empty": {
-    "text": "No challenges right now.",
-    "description": "Shown on the Challenges tab when no challenge is running."
+    "text": "No challenges right now",
+    "description": "Title of the one card on the Challenges tab when no challenge is running."
+  },
+  "challenges.emptyHint": {
+    "text": "New ones will show up here.",
+    "description": "Line under \"No challenges right now\" on the Challenges tab: new challenges will appear on this tab."
   },
   "challenges.loadFailed": {
     "text": "Failed to load challenges.",
@@ -211,6 +215,10 @@
     "text": "Go",
     "description": "Button on a challenge's page that leads to where the challenge is done, when the challenge supplies no label of its own."
   },
+  "challenges.detail.openLinkedAccounts": {
+    "text": "Open linked accounts",
+    "description": "Button on the Connect X and GitHub challenge's page: opens Settings, Linked accounts, where an X or GitHub account is linked. X and GitHub are product names."
+  },
   "challenges.detail.linkUnavailable": {
     "text": "{{label}} <0>(link unavailable)</0>",
     "description": "On a challenge's page, in place of its button when the challenge's link cannot be used. {{label}} is the button's text; the note in the tag is shown in italics."
@@ -218,6 +226,14 @@
   "challenges.detail.seeFeedback": {
     "text": "See your feedback",
     "description": "Link on the page of the feedback challenge: opens the list of feedback the viewer has sent."
+  },
+  "challenges.detail.counted": {
+    "text": "What counted",
+    "description": "Heading on a challenge's page over the list of the viewer's own credits that make up its count."
+  },
+  "challenges.detail.countedWeek": {
+    "text": "What counted this week",
+    "description": "The same heading on a weekly challenge's page, whose count starts again every Monday: the list holds this week's credits only."
   },
   "challenges.detail.requirements": {
     "text": "What counts",
@@ -312,8 +328,8 @@
     "description": "On a challenge's page, under the points it pays or the viewer has earned in it: what points are for."
   },
   "challenges.countNote.onPropose": {
-    "text": "Counts when you press Propose to group, which puts your change to a vote.",
-    "description": "Note on the page of a challenge that is completed by proposing a change. \"Propose to group\" is a button's label; \"change\" is a noun."
+    "text": "Counts when a change of yours goes to a vote. A change Homeroom bot builds is the bot's own, even if you asked for it, so it doesn't count here.",
+    "description": "Note on the page of a challenge that is completed by proposing a change. \"Homeroom bot\" is the name of the platform's assistant; \"change\" is a noun."
   },
   "challenges.countNote.weekAccepted_one": {
     "text": "This challenge counts up to {{cap}} each week, and you have {{cap}} this week. More accepted changes this week don't add to it. It starts again on Monday.",
@@ -618,22 +634,6 @@
   "standings.orderNote": {
     "text": "Place is worked out from points, plus a lift for work that was judged useful and for scoring on more of the season's challenges. Ties go to the better block success rate.",
     "description": "Note under the Standings table: how a participant's place is worked out, and who wins a tie. \"Place\" is a position in the ranking; \"challenges\" are the season's tasks."
-  },
-  "standings.page_one": {
-    "text": "Page {{page}} of {{pages}} · {{count}} total",
-    "description": "Under the Standings table: which page is shown, how many pages there are, and how many participants in all."
-  },
-  "standings.page_other": {
-    "text": "Page {{page}} of {{pages}} · {{count}} total",
-    "description": "Under the Standings table: which page is shown, how many pages there are, and how many participants in all."
-  },
-  "standings.prev": {
-    "text": "Prev",
-    "description": "Button under the Standings table: shows the previous page. Short for \"previous\"."
-  },
-  "standings.next": {
-    "text": "Next",
-    "description": "Button under the Standings table: shows the next page."
   },
   "drill.activities": {
     "text": "Activities",
@@ -1050,6 +1050,10 @@
   "kudos.history.kind.closeIssue": {
     "text": "Close issue",
     "description": "Small label on a vote row of the Kudos tab's \"My history\" list: the decision was about closing a request. \"Close\" is a verb."
+  },
+  "kudos.history.kind.reopenIssue": {
+    "text": "Reopen issue",
+    "description": "Small label on a vote row of the Kudos tab's \"My history\" list: the decision was about reopening a closed request. \"Reopen\" is a verb."
   },
   "kudos.history.kind.maintenance": {
     "text": "Maintenance campaign",

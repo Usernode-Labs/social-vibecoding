@@ -120,8 +120,9 @@ export function HeaderPlace({ slug, name }: { slug: string | null; name: string 
   const phone = usePhoneHeader();
   const { screen } = useStoreState(navStore);
   const { slug: mounted, owed, unread, tray } = useStoreState(placeStore);
-  // The phone's drawer holds the places now (../../nav-drawer/), and the
-  // header draws its back arrow here instead (header-drawer.tsx DrawerBack).
+  // On a phone the Hub's rows lead to the places now (../../nav-drawer/), and
+  // the header draws its grid or its arrow here instead (header-drawer.tsx
+  // DrawerBack).
   const { on: drawerOn } = useStoreState(drawerStore);
   const button = useRef<HTMLButtonElement | null>(null);
   if (drawerOn) return null;

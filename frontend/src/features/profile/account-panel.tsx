@@ -5,8 +5,9 @@
  *
  * ── Your work ──────────────────────────────────────────────────────────
  *
- * Your record of what you did here, one row each, every one a drill-in to
- * the Your work screen (./my-proposals.tsx) on its view:
+ * Your record of what you did here, one row each, every one a door to the
+ * Homeroom bot tab's History on that kind of work (5 Nov 2026: it was the
+ * Your work screen, which listed the same things by authorship alone):
  *
  *   Your changes    "12 merged · 2 in progress". It was "Your proposals"
  *                   (#5310), and it took the Communities tab's "What you are
@@ -14,6 +15,9 @@
  *   Your requests   "2 open · 1 done": what you asked for, from the Ask for a
  *                   change dialog or a board. It was "Your feedback" (#3186),
  *                   a card over this screen that listed only the dialog's.
+ *   Your feedback   "6 sent · 4 counted": the sheet the feedback challenge's
+ *                   "See your feedback" link opens, reachable from here at any
+ *                   time (#6452).
  *   Your votes      "Latest: …": what you voted on. It was a filter of Kudos ›
  *                   My history.
  *
@@ -28,14 +32,16 @@
  *
  * Friends and App slots, the rows about the account itself. App slots (#3250)
  * is the one place the allowance shows outside the create dialog, so a "your
- * app quota changed" notice has somewhere to point: "1 of 2 app slots used",
- * from the session's allowance store. A plain click opens the create dialog in
- * place, whose allowance card offers "Request more" once one slot or none is
- * left (#23); a modified click keeps `#create`. Friends was a section of its
- * own under these rows (#2386); it is a row now, with the one number it is
- * allowed ("1 request waiting": friends themselves are never counted), and it
- * opens the same section as a card over this screen (./friends-sheet.tsx), at
- * its own address, `#profile?friends`. "Your contributions", the newest
+ * app quota changed" notice has somewhere to point: "1 app slot free of 2",
+ * from the session's allowance store (#6466). A plain click always opens the
+ * App allowance card (./app-slots-sheet.tsx), at its own address,
+ * `#profile?slots`, so the row says how much room is left and offers
+ * "Request more"; a modified click keeps that address (#6446). Projects are
+ * made from Home. Friends
+ * was a section of its own under these rows (#2386); it is a row now, with
+ * the one number it is allowed ("1 request waiting": friends themselves are
+ * never counted), and it opens the same section as a card over this screen
+ * (./friends-sheet.tsx), at its own address, `#profile?friends`. "Your contributions", the newest
  * merged changes under everything, is gone: Your changes lists them all.
  *
  * ── Settings ───────────────────────────────────────────────────────────
@@ -77,9 +83,9 @@
  *
  * Real anchors, not buttons: cmd/ctrl-click, middle-click, "open in new tab",
  * the context menu and drag-to-bookmark are the browser's to give, and only an
- * anchor with an href gets them. Friends is the one row with a handler: a
- * plain click opens its card in place, and every modified click keeps the
- * browser's behaviour on its address.
+ * anchor with an href gets them. Friends, Your feedback and the Edit profile
+ * row have a handler: a plain click opens their card in place, and every
+ * modified click keeps the browser's behaviour on its address.
  *
  * Nothing here is in the prerendered shell: ProfileRoot returns null until its
  * store has data, so the admin flag read below cannot disagree with a first
@@ -91,7 +97,7 @@ import { type ReactNode } from 'react';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import { Skeleton } from '@/components/ui/skeleton';
-import { AppWindowIcon, BallotIcon, BellIcon, ChatIcon, CogIcon, HandRaisedIcon, ShieldCheckIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon, UserPenIcon } from '@/components/ui/icons';
+import { AppWindowIcon, BallotIcon, BellIcon, ChatIcon, CogIcon, HandRaisedIcon, LightBulbIcon, ShieldCheckIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon, UserPenIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
@@ -110,6 +116,7 @@ type ProfileRows = {
   changes?: string | null;
   requests?: string | null;
   requestsPending?: boolean;
+  feedback?: string | null;
   votes?: string | null;
   friends?: string | null;
 };
@@ -147,7 +154,7 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
         <ListRow
           as="a"
           id="profile-row-proposals"
-          href="#profile/your-changes"
+          href="#homeroom-bot/history?kind=change"
           leading={<IconTile size="sm"><BallotIcon /></IconTile>}
           title={t('profile:work.changes.title')}
           titleClassName={TITLE}
@@ -157,7 +164,7 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
         <ListRow
           as="a"
           id="profile-row-feedback"
-          href="#profile/your-requests"
+          href="#homeroom-bot/history?kind=request"
           leading={<IconTile size="sm"><ChatIcon /></IconTile>}
           title={t('profile:work.requests.title')}
           titleClassName={TITLE}
@@ -169,8 +176,23 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
         />
         <ListRow
           as="a"
+          id="profile-row-feedback-history"
+          href="#profile?feedback"
+          onClick={(event) => {
+            if (!plainClick(event)) return;
+            event.preventDefault();
+            Profile.showFeedback();
+          }}
+          leading={<IconTile size="sm"><LightBulbIcon /></IconTile>}
+          title={t('profile:work.feedback.title')}
+          titleClassName={TITLE}
+          subtitle={rows.feedback || t('profile:work.feedback.hint')}
+          subtitleClassName={SUBTITLE}
+        />
+        <ListRow
+          as="a"
           id="profile-row-votes"
-          href="#profile/your-votes"
+          href="#homeroom-bot/history?kind=vote"
           leading={<IconTile size="sm"><HandRaisedIcon /></IconTile>}
           title={t('profile:work.votes.title')}
           titleClassName={TITLE}
@@ -248,11 +270,14 @@ export function AccountPanel({ rows }: {
         <ListRow
           as="a"
           id="profile-row-app-slots"
-          href="#create"
+          href="#profile?slots"
           onClick={(event) => {
             if (!plainClick(event)) return;
             event.preventDefault();
-            (window as unknown as { App?: { showCreateModal?: () => void } }).App?.showCreateModal?.();
+            // #6466: the row says how much room there is and opens the
+            // allowance card, which offers "Request more". Projects are made
+            // from Home, never from here.
+            Profile.showAppSlots();
           }}
           leading={<IconTile size="sm"><AppWindowIcon /></IconTile>}
           title={t('profile:more.appSlots.title')}

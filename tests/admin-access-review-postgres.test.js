@@ -11,7 +11,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const express = require('express');
 
@@ -32,7 +31,6 @@ test('the access review reads admins, records reviews and notes role changes', {
   const dbUrl = String(url);
   const config = { databaseUrl: dbUrl };
   const routePool = require('../src/db/pool').getPool(config);
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   const pool = new Pool({ connectionString: dbUrl, max: 8 });
   t.after(async () => {
     await routePool.end();
@@ -41,9 +39,10 @@ test('the access review reads admins, records reviews and notes role changes', {
     await admin.end();
   });
 
-  await pool.query(schema);
-  // Applying the schema a second time is what every boot does.
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  // A second boot verifies the recorded migrations without replaying DDL.
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   await pool.query(
     `INSERT INTO users (id, username, password, is_admin, admin_readonly) VALUES

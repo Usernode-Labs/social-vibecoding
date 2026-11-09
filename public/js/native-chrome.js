@@ -371,6 +371,14 @@
         }
         if (!NativeChrome._isCurrentRealm(userId, generation)) return null;
 
+        if (capabilities.includes('prepareProvingParameters')) {
+          if (typeof bridge.prepareProvingParameters !== 'function') {
+            throw new Error('The native proof preparation bridge must be updated');
+          }
+          await bridge.prepareProvingParameters();
+          if (!NativeChrome._isCurrentRealm(userId, generation)) return null;
+        }
+
         const attempt = NativeChrome._attemptFor(userId);
         lease.attemptId = attempt.attemptId;
         await NativeChrome._prepareNativeHandoff(
@@ -993,6 +1001,10 @@
         return;
       }
       const perms = state.permissions || {};
+      // This build produces blocks only while it is open, so there are no
+      // exact alarms or battery exemption to ask for. Presents nothing and
+      // records nothing, so the sheet can return if that changes.
+      if (perms.backgroundProduction === false) return;
       const isAndroid = perms.platform === 'android';
       let needsAlarm = !perms.exactAlarmGranted;
 

@@ -75,7 +75,8 @@ test('the composer takes the attached change: its chip, its prompt, the caret, a
   const composer = read('frontend/src/features/messages/composer.tsx');
   assert.match(composer, /window\.addEventListener\('usernode:messages-attach', attachPending\);/);
   assert.match(composer, /const pending = takePendingAttach\(conversationId\);/);
-  assert.match(composer, /setObject\(pending\.object\); setPrompt\(pending\.placeholder\); setFocusWanted\(true\);/);
+  // #6212: the item is the person's own, so moving around never takes it off.
+  assert.match(composer, /setChip\(pending\.object, 'person'\); setPrompt\(pending\.placeholder\); setFocusWanted\(true\);/);
   assert.equal(message('messages:composer.placeholderThread'), 'Reply in thread…');
   assert.equal(message('messages:composer.placeholder'), 'Message…');
   // One request, one story: a thread's placeholder is chosen apart (a

@@ -114,11 +114,12 @@ function isStaging() {
 }
 
 function postgresEnv(dbName) {
-  const value = process.env.DB_ADMIN_URL || process.env.DATABASE_URL;
-  if (!value) throw new Error('DB_ADMIN_URL or DATABASE_URL is required');
-  const url = new URL(value);
+  const split = require('./database-role-access').enabled();
+  const value = split ? process.env.DATABASE_URL : process.env.DB_ADMIN_URL || process.env.DATABASE_URL;
+  if (!value) throw new Error('DATABASE_URL is required for database export');
+  const url = split ? require('./database-role-access').parseUrl(value, 'DATABASE_URL') : new URL(value);
   return {
-    ...process.env,
+    ...(split ? Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^PG/i.test(key))) : process.env),
     PGHOST: url.hostname,
     PGPORT: url.port || '5432',
     PGUSER: decodeURIComponent(url.username || DB_USER),

@@ -76,7 +76,7 @@ test('a ready-made app\'s card opens on its example: the phone, "Example", no no
   assert.match(html, /<button type="button" data-card-view="app" aria-current="page" class="[^"]*bg-white text-zinc-900">App<\/button>/);
   assert.match(html, /data-first-session-app-screen="example"/);
   assert.match(html, /<img src="\/illustrations\/starters\/tier-list-restaurants\.png" alt="An example of Restaurant Tier List&#x27;s main screen, with sample entries" draggable="false"/);
-  assert.match(html, /<span data-first-session-example-tag="" class="pointer-events-none absolute left-3 top-3 [^"]*">Example<\/span>/);
+  assert.match(html, /<span data-first-session-example-tag="" class="pointer-events-none absolute start-3 top-3 [^"]*">Example<\/span>/);
   // The picture shows the app, so its name and description are not said
   // over it; and there is no note under it (20 Oct 2026: "It works as it
   // is..." read as random).
@@ -99,11 +99,11 @@ test('Invite is today\'s card: the icon tile, the name and the description, with
   // switch over its corner and the icon below it (pt-10), so the two never
   // meet (Evan, sign-up test, 19 Oct 2026: switching moved the screen).
   assert.match(invite, /^<div data-first-session-card="invite" class="relative flex flex-col items-center overflow-hidden rounded-\[20px\] bg-white px-6 pb-6 /);
-  assert.match(invite, /<div data-first-session-card-top="" class="relative -mx-6 flex flex-col items-center justify-center self-stretch px-6 pt-10 h-\[264px\]"><div class="absolute right-3 top-3 z-10"><div role="group" aria-label="Show the invite or the app" data-first-session-card-switch="invite"/);
+  assert.match(invite, /<div data-first-session-card-top="" class="relative -mx-6 flex flex-col items-center justify-center self-stretch px-6 pt-10 h-\[264px\]"><div class="absolute end-3 top-3 z-10"><div role="group" aria-label="Show the invite or the app" data-first-session-card-switch="invite"/);
   assert.match(invite, /data-card-view="invite" aria-current="page"/);
   // Past the switch, the same tile, name and description as today's card,
   // each of the two clamped to two lines so a long one stays in the box.
-  const face = invite.replace(/^<div [^>]*><div [^>]*>/, '').replace(/^<div class="absolute right-3 top-3 z-10">.*?<\/div><\/div>/, '');
+  const face = invite.replace(/^<div [^>]*><div [^>]*>/, '').replace(/^<div class="absolute end-3 top-3 z-10">.*?<\/div><\/div>/, '');
   assert.match(face, /^<span class="app-icon-tile[^"]*"[^>]*>📊<\/span><p class="mt-3 line-clamp-2 text-\[22px\] font-extrabold leading-tight">Restaurant Tier List<\/p><p class="mt-1 line-clamp-2 text-\[15px\] /);
   assert.equal(face.replace(/ line-clamp-2/g, '').replace(/<\/div><\/div>$/, '</div>'), today.replace(/^<div [^>]*>/, ''));
   assert.doesNotMatch(invite, /data-first-session-app-screen|<img /);
@@ -159,7 +159,7 @@ test('the first look is the App side of a project Homeroom bot builds: in the sk
   const app = renderToHtml(createElement(SketchCard, { made: BOT, sketch, line: null, band, bandClassName: made.APP_BAND, bandCorner: switchOf('app') }));
   assert.match(app, /h-\[264px\]">/);
   assert.match(app, /data-first-session-app-screen="own"/);
-  assert.match(app, /<div class="absolute right-3 top-3 z-10"><div role="group" aria-label="Show the invite or the app" data-first-session-card-switch="app"/);
+  assert.match(app, /<div class="absolute end-3 top-3 z-10"><div role="group" aria-label="Show the invite or the app" data-first-session-card-switch="app"/);
   assert.doesNotMatch(app, /Water reminders for the whole flat\.|>Plant Pal<\/p>/);
   const invite = renderToHtml(createElement(SketchCard, { made: BOT, sketch, line: null, bandClassName: made.APP_BAND, bandCorner: switchOf('invite') }));
   assert.match(invite, /h-\[148px\] pt-10">/, 'the icon below the switch');
@@ -233,7 +233,7 @@ test('the switch never meets the icon: on the Invite side the icon starts below 
   // 40px (pt-10) in a top as tall as the App side's band; the sketch's band
   // puts its icon below 40px (pt-10) in a band 16px taller; the App side's
   // phone stands 50px down (264 - 10 - 204), its 4px frame 46px.
-  assert.equal(made.CARD_CORNER, 'absolute right-3 top-3 z-10');
+  assert.equal(made.CARD_CORNER, 'absolute end-3 top-3 z-10');
   assert.match(MADE_SRC, /const CARD_SWITCH_SIDE = 'min-h-\[24px\] rounded-full px-2\.5 py-1';/);
   assert.match(made.CARD_SWITCH, / p-0\.5 /);
   assert.match(made.PLAIN_INVITE_TOP, / justify-center [^]* pt-10 h-\[264px\]$/);

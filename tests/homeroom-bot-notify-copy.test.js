@@ -27,7 +27,8 @@ const BODIES = [
   ['needs_you', 'decide_others', { deciders: '@ada and @ben' }, 'This needs a decision from @ada and @ben before I build it.'],
   ['needs_you', 'blocked', {}, 'I can\'t build it as written. Add detail and I\'ll look again.'],
   ['needs_you', 'empty', {}, 'I couldn\'t find anything to build. Add detail and I\'ll look again.'],
-  ['needs_you', 'done', {}, 'This looks done already. Close it, or tell me what\'s missing.'],
+  // #6306: nothing is left to build; the ask already works.
+  ['needs_you', 'done', {}, 'Already works. Propose to close it, or tell me what\'s missing.'],
   ['needs_you', 'platform', {}, 'This is about Homeroom itself. Move it to Homeroom\'s own board?'],
   ['ready', 'ready', {}, 'Ready to try. Try it, and approve it if you\'re happy.'],
   ['ready', 'ready_group', { waiting: 'you and @ada' }, 'Ready to try. It goes live once you and @ada say yes.'],
@@ -40,12 +41,21 @@ const BODIES = [
   ['stopped', 'build_not_proposed', {}, 'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.'],
   ['stopped', 'build_no_start', {}, 'Stopped: I couldn\'t get started. Tap Try again.'],
   ['stopped', 'build_other', {}, 'Stopped: something went wrong while I was building. Tap Try again.'],
+  // #6313: the plan could not be written; nothing was built, and the bot is
+  // trying again by itself, so no tap is asked for.
+  ['stopped', 'build_no_plan', {}, 'Stopped: I couldn\'t write the plan for it. I\'m trying again.'],
+  // #6267: the build finished and GitHub refused the upload.
+  ['stopped', 'build_push', {}, 'Built, but GitHub refused the upload. I\'ll try again soon.'],
+  ['stopped', 'build_push_permanent', {}, 'Built, but GitHub wouldn\'t take the upload. Reply to try again.'],
+  ['stopped', 'build_push_gave_up', {}, 'Built, but GitHub kept refusing the upload. Reply to send it.'],
   ['stopped', 'update_failed', {}, 'Stopped: I couldn\'t update it. It\'s as it was.'],
   ['stopped', 'needs_look', {}, 'Stopped: it\'s built, but a person needs to look at it before you can try it.'],
   ['stopped', 'checks', {}, 'Stopped: its checks still fail. A person needs to look.'],
   ['on_hold', 'allowance', {}, 'On hold until Monday: your building time for this week is used up.'],
   ['on_hold', 'paused', {}, 'On hold until Monday: I\'ve used my budget for this week.'],
   ['on_hold', 'slots', {}, 'Waiting for a slot: all of this project\'s are in use. I\'ll start when one frees.'],
+  // #6156: its builds are all under way: it waits for the bot's turn.
+  ['on_hold', 'builds', {}, 'Waiting for my turn: I\'m building as much on this project as I may at once. I\'ll start when one is done.'],
   // 16 Oct 2026: a person took on what the bot had promised.
   ['on_hold', 'taken', { takenBy: 'maya' }, 'On hold: @maya has taken it on, so I\'m leaving it to them.'],
   ['on_hold', 'taken', {}, 'On hold: somebody has taken it on, so I\'m leaving it to them.'],
@@ -71,7 +81,7 @@ const LABELS = { needs_you: 'Needs you', ready: 'Ready to try', stopped: 'Stoppe
 const ASKS = {
   question: 'Question for you', questions: 'Questions for you', followup_ask: 'Question for you', plan: 'Plan to approve',
   decide: 'Your decision', decide_others: 'Waiting on @ada and @ben', blocked: 'Needs more detail', empty: 'Needs more detail',
-  done: 'Looks done already', platform: 'Move it to Homeroom\'s board?',
+  done: 'Already works', platform: 'Move it to Homeroom\'s board?',
 };
 const labelOf = (moment, said) => (moment === 'needs_you' ? ASKS[said] : LABELS[moment]);
 
@@ -97,6 +107,18 @@ test('every variant of the contract is worded, with the request and its project 
   for (const [moment, saids] of Object.entries(copy.SAID_BY_MOMENT)) {
     for (const said of saids) assert.ok(covered.has(said), `${moment}/${said} is pinned here`);
   }
+});
+
+test('#6306: an already-done verdict says what works, and offers to close it', () => {
+  const got = words({ moment: 'needs_you', kind: 'person', said: 'done', reason: 'Visitors get the lobby and play as a guest' });
+  assert.equal(got.bellLabel, 'Already works');
+  assert.equal(got.body, 'Already works: Visitors get the lobby and play as a guest. Propose to close it?');
+  // A reason that already ends in a full stop is not given a second one.
+  assert.equal(words({ moment: 'needs_you', kind: 'person', said: 'done', reason: 'It already ships.' }).body,
+    'Already works: It already ships. Propose to close it?');
+  // The detail carries it, so the bell and the push say the same.
+  const detail = copy.botNotificationDetail({ ...BASE, moment: 'needs_you', kind: 'person', said: 'done', reason: 'It already ships.' });
+  assert.equal(copy.parseBotDetail(detail).reason, 'It already ships.');
 });
 
 test('a request whose title is not known is named by its number, never by its project alone', () => {
@@ -187,6 +209,24 @@ test('a quiet message carries no detail, and an answer keeps its old token', () 
   assert.deepEqual([reply.title, reply.body], ['Homeroom bot', 'Yes, Pin notes is up.']);
 });
 
+test('4 Nov 2026 (#6290): a request\'s detail carries its project, so the bell opens its thread', () => {
+  // The bell opens `#homeroom-bot/request/<slug>/<n>` from the row's own
+  // project, or else the detail's `p` (src/services/notifications.js sends
+  // appSlug on the bot rows it knows a project for).
+  const detail = copy.botNotificationDetail({ ...BASE, moment: 'stopped', said: 'build_other' });
+  assert.equal(copy.parseBotDetail(detail).appSlug, 'plant-pal');
+  // Only beside a request number: a quiet row does not grow by it.
+  const noIssue = copy.botNotificationDetail({ ...BASE, issueNumber: null, moment: 'needs_you', said: 'decide' });
+  assert.equal(copy.parseBotDetail(noIssue).appSlug, '');
+  assert.ok(!noIssue.includes('"p"'), noIssue);
+  // A slug that is not the address's shape is neither stored nor read.
+  const bad = copy.botNotificationDetail({ ...BASE, appSlug: 'Not A Slug', moment: 'needs_you', said: 'decide' });
+  assert.equal(copy.parseBotDetail(bad).appSlug, '');
+  assert.ok(!bad.includes('"p"'), bad);
+  // A row from before "one story" carries none.
+  assert.equal(copy.parseBotDetail('hrbot:question:Plant Pal').appSlug, '');
+});
+
 test('the detail fits its column whatever it is given, and a broken one reads as nothing', () => {
   const long = 'x'.repeat(5000);
   const detail = copy.botNotificationDetail({
@@ -273,4 +313,14 @@ test('the email\'s button opens the request\'s thread, or the message, or the ch
   assert.match(mail.openUrl({ conversationId: 9, messageId: 80 }), /\/#messages\/9\/m\/80$/);
   assert.match(mail.openUrl({ conversationId: 9 }), /\/#messages\/9$/);
   assert.match(mail.openUrl({ appSlug: 'plant-pal' }), /\/app\/plant-pal$/);
+});
+
+test('a long reply ends its bell subject at a whole word with an ellipsis (audit D04)', () => {
+  const words = "I've drafted that as a new request on Watering Rota: a weekly schedule where each person picks the days they water. Tap File it under my message to send it.";
+  const reply = copy.botMomentCopy('hrbot:reply:', words);
+  assert.equal(reply.body, words, 'the push keeps every word');
+  assert.ok(reply.bellSubject.length <= 140, reply.bellSubject);
+  assert.match(reply.bellSubject, /under my…$/, 'cut after a whole word, marked with …');
+  assert.equal(copy.bellSubjectOf('Short and whole.'), 'Short and whole.');
+  assert.equal(copy.bellSubjectOf('x'.repeat(200)), `${'x'.repeat(139)}…`, 'one long word is cut where it must be');
 });

@@ -60,6 +60,36 @@ async function platformApp(pool, deps = {}) {
   return mayorModule().findApp(pool, botModule(deps).PLATFORM_SELF_APP_SLUG);
 }
 
+/**
+ * #6311: whether this request is "theirs" to move or copy: a person who
+ * asked for it (homeroom_bot_requesters), who filed its row (issues.
+ * created_by), or the project's creator or an admin (app-admins.js
+ * canManageApp). No GitHub read: the requester check of moveGate, on its
+ * own. Never throws; a check that cannot be made is false.
+ */
+async function asksForRequest(pool, { app, issueNumber, user, deps = {} }) {
+  try {
+    const n = Number(issueNumber);
+    if (!app?.id || !user?.id || !Number.isInteger(n) || n <= 0) return false;
+    const { rows: asked } = await pool.query(
+      'SELECT 1 FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2 AND user_id = $3 LIMIT 1',
+      [app.id, n, user.id],
+    );
+    if (asked.length) return true;
+    const { rows: filed } = await pool.query(
+      'SELECT 1 FROM issues WHERE app_id = $1 AND github_issue_number = $2 AND created_by = $3 LIMIT 1',
+      [app.id, n, user.id],
+    );
+    if (filed.length) return true;
+    return !!(await require('./app-admins').canManageApp(pool, app, user));
+  } catch (err) {
+    log.warn('homeroom-bot-move', 'Could not check whether a request is theirs', {
+      app: app?.slug, issueNumber, err: err.message,
+    });
+    return false;
+  }
+}
+
 /** Whether `app` is Homeroom's own project (or another on its repository). */
 async function isPlatformApp(pool, app, deps = {}) {
   const slugs = await botModule(deps).platformAppSlugs(pool);
@@ -81,6 +111,17 @@ function movedFooter({ app, issueNumber, link, author }) {
   const who = author ? `, first asked by @${author}` : '';
   if (app.view_visibility && app.view_visibility !== 'public') return `Moved from a private project's request #${issueNumber}${who}.`;
   return `Moved from ${app.name || app.slug} #${issueNumber} (${link})${who}.`;
+}
+
+/**
+ * Pure (#6311): the footer of the request a copy files: the same link back
+ * to where it came from and who asked, without ever saying it moved. A
+ * private project is not named on Homeroom's public board, nor linked.
+ */
+function copiedFooter({ app, issueNumber, link, author, asked }) {
+  const who = asked || author ? `, asked by @${asked || author}` : '';
+  if (app.view_visibility && app.view_visibility !== 'public') return `Also filed from a private project's request #${issueNumber}${who}.`;
+  return `Also filed from ${app.name || app.slug} #${issueNumber} (${link})${who}.`;
 }
 
 /**
@@ -121,13 +162,12 @@ async function moveGate(pool, { app, issueNumber, user, deps = {} }) {
     const { rows } = await pool.query('SELECT id, username FROM users WHERE username = $1', [poster]);
     if (rows[0]) author = { userId: Number(rows[0].id), username: rows[0].username };
   }
-  const { rows: asked } = await pool.query(
-    'SELECT 1 FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2 AND user_id = $3',
-    [app.id, n, user.id],
-  );
   // The project's creator and admins may move it too: HOMESTEAD #33 and #35
   // stayed on its board because only their requester could, and never did.
-  if (!asked.length && author?.userId !== Number(user.id) && !(await require('./app-admins').canManageApp(pool, app, user))) {
+  // #6311: the rest of "theirs" is asksForRequest, read the same at a copy.
+  const theirs = author?.userId === Number(user.id)
+    || await asksForRequest(pool, { app, issueNumber: n, user, deps });
+  if (!theirs) {
     return { ok: false, code: 'not_theirs', error: 'Only the person who filed it or asked for it, or the project\'s creator or admins, can move it.' };
   }
   return { ok: true, app, repo, issueNumber: n, issue, author };
@@ -264,6 +304,7 @@ async function closeNow(pool, { app, repo, issueNumber, user, newNumber, deps = 
     `UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open' AND kind = 'general'`,
     [app.id, n],
   ).catch(() => {});
+  await require('./work-state').touched(pool, [{ appId: app.id, issueNumber: n }]);
   await ws.sendSystemMessage(pool, app.id, `${user.username} moved this request to Homeroom as #${newNumber} and closed it here`,
     'system', null, { type: 'issue', ref: n }).catch(() => {});
   try {
@@ -286,26 +327,27 @@ function closedWords({ how, appName, reasons = [], author }) {
 }
 
 /**
- * A tap under a move offer (homeroom-bot-mayor.js settleOffer). Move it to
- * Homeroom files it there, links it from the original and closes the
- * original, directly or by a vote. `ack` sends the answer. Resolves what
- * was sent.
+ * Move a request about Homeroom itself to Homeroom's own board: file it
+ * there with its title and words and a footer naming where it came from and
+ * who asked (credited to its author when they are on Homeroom), link it from
+ * the original, and close the original: at once for its author when nobody
+ * else is in it, else by a vote of its group. `fileKey` files it once per
+ * move, whoever retries. Resolves { ok: true, target, issueNumber, title,
+ * how ('closed' | 'vote' | 'already_proposed' | 'failed'), reasons, mine,
+ * appName } or { ok: false, code, error }. Throws only what a retry can
+ * cure (mayor.retryAct), so the caller's work tries again.
  */
-async function decideMove(pool, config, { bot = null, user, settings, action, yes, ack, deps = {} }) {
-  if (!yes) return ack('OK, I\'ll leave it where it is.');
+async function moveToHomeroom(pool, config, {
+  bot = null, user, app, issueNumber, fileKey, fallbackTitle = null, settings, deps = {},
+}) {
   const github = deps.github || require('./github');
   const mayor = mayorModule();
-  const failed = async (error, text) => {
-    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
-    return ack(text);
-  };
-  const app = await appById(pool, action.app_id);
-  const gate = await moveGate(pool, { app, issueNumber: action.source_issue_number, user, deps });
-  if (!gate.ok) return failed(gate.code, `I couldn't move it: ${gate.error}`);
+  const gate = await moveGate(pool, { app, issueNumber, user, deps });
+  if (!gate.ok) return { ok: false, code: gate.code, error: gate.error };
   const target = await platformApp(pool, deps);
-  if (!target) return failed('no_platform', 'I couldn\'t move it: Homeroom\'s own board isn\'t available right now.');
+  if (!target) return { ok: false, code: 'no_platform', error: 'Homeroom\'s own board isn\'t available right now.' };
   if (!(await mayor.canFile(pool, target, user))) {
-    return failed('not_allowed', 'I couldn\'t move it: you need to join Homeroom\'s own community first. You can join it from its page.');
+    return { ok: false, code: 'not_allowed', error: 'you need to join Homeroom\'s own community first. You can join it from its page.' };
   }
   const appName = app.name || app.slug;
   const n = gate.issueNumber;
@@ -320,11 +362,10 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
   try {
     filed = await mayor.fileRequest(pool, config, {
       user: credited, app: target, settings, deps,
-      // Filed once per move: a retry of its act finds it (the tap's work).
-      fileKey: `dm-action:${action.id}`,
-      title: clip(gate.issue.title || action.title, MAX_TITLE_CHARS),
+      fileKey,
+      title: clip(gate.issue.title || fallbackTitle, MAX_TITLE_CHARS),
       details: clip(gate.issue.body, MAX_BODY_CHARS),
-      askedText: gate.issue.title || action.title,
+      askedText: gate.issue.title || fallbackTitle,
       footer: movedFooter({ app, issueNumber: n, link: requestLink(domain, app.slug, n), author }),
       reason: 'moved_request',
     });
@@ -332,9 +373,8 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
     log.warn('homeroom-bot-move', 'Could not file a moved request', { app: app.slug, issueNumber: n, err: err.message });
     // A failure a retry can cure: the act's work tries again, its claim kept.
     if (mayor.retryAct(err, deps.actKey)) throw err;
-    return failed(err.message, 'I couldn\'t move it just now. Try again in a minute.');
+    return { ok: false, code: 'file_failed', error: 'it could not be filed just now. Try again in a minute.' };
   }
-  await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
   const newLink = requestLink(domain, target.slug, filed.issueNumber);
   try {
     await github.createIssueComment(gate.repo.owner, gate.repo.repo, n,
@@ -369,18 +409,167 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
   log.info('homeroom-bot-move', 'Moved a request to Homeroom', {
     app: app.slug, issueNumber: n, movedTo: filed.issueNumber, original: how, userId: user.id,
   });
-  const line = dmModule(deps).requestLine({ appName: target.name || target.slug, issueNumber: filed.issueNumber, issueTitle: gate.issue.title });
+  return { ok: true, target, issueNumber: filed.issueNumber, title: gate.issue.title, how, reasons, mine, appName };
+}
+
+/**
+ * A tap under a move offer in their chat with the bot (homeroom-bot-mayor.js
+ * settleOffer), made before 5 Nov 2026: moveToHomeroom, its action row
+ * marked. `ack` sends the answer. Resolves what was sent.
+ */
+async function decideMove(pool, config, { bot = null, user, settings, action, yes, ack, deps = {} }) {
+  if (!yes) return ack('OK, I\'ll leave it where it is.');
+  const app = await appById(pool, action.app_id);
+  const moved = await moveToHomeroom(pool, config, {
+    bot, user, app, issueNumber: action.source_issue_number, fileKey: `dm-action:${action.id}`,
+    fallbackTitle: action.title, settings, deps,
+  });
+  if (!moved.ok) {
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(moved.code, 300)]);
+    return ack(moved.code === 'file_failed' ? 'I couldn\'t move it just now. Try again in a minute.' : `I couldn't move it: ${moved.error}`);
+  }
+  await pool.query('UPDATE bot_cards SET issue_number = $2 WHERE id = $1', [action.id, moved.issueNumber]);
+  const line = dmModule(deps).requestLine({ appName: moved.target.name || moved.target.slug, issueNumber: moved.issueNumber, issueTitle: moved.title });
   return ack(
     `${line}\n\nMoved. It's on Homeroom's own board now, with a link to it left on the original. `
-      + closedWords({ how, appName, reasons, author: mine }),
+      + closedWords({ how: moved.how, appName: moved.appName, reasons: moved.reasons, author: moved.mine }),
     {
-      objects: [{ type: 'issue', appId: Number(target.id), issueNumber: filed.issueNumber }],
+      objects: [{ type: 'issue', appId: Number(moved.target.id), issueNumber: moved.issueNumber }],
       metadata: {
-        kind: 'filed', appSlug: target.slug, appName: target.name || target.slug,
-        issueNumber: filed.issueNumber, issueTitle: gate.issue.title,
+        kind: 'filed', appSlug: moved.target.slug, appName: moved.target.name || moved.target.slug,
+        issueNumber: moved.issueNumber, issueTitle: moved.title,
       },
     },
   );
+}
+
+/**
+ * #6311: "put it on Homeroom's board too". Files a new request on Homeroom's
+ * own board with the original's title and words, a footer naming where it
+ * came from and who asked, credited to its author when they are on Homeroom.
+ * Leaves a link on the original. Never closes it and never proposes a close:
+ * this request stays open here. Resolves
+ * { ok: true, issueNumber, link, target, title } or { ok: false, code, error }.
+ */
+async function copyToHomeroom(pool, config, {
+  user, app, issueNumber, fileKey = null, settings = null, deps = {},
+}) {
+  const github = deps.github || require('./github');
+  const mayor = mayorModule();
+  const gate = await moveGate(pool, { app, issueNumber, user, deps });
+  if (!gate.ok) return { ok: false, code: gate.code, error: gate.error };
+  const target = await platformApp(pool, deps);
+  if (!target) return { ok: false, code: 'no_platform', error: 'Homeroom\'s own board isn\'t available right now.' };
+  if (!(await mayor.canFile(pool, target, user))) {
+    return { ok: false, code: 'not_allowed', error: 'You need to join Homeroom\'s own community first. You can join it from its page.' };
+  }
+  const domain = domainOf(deps);
+  const n = gate.issueNumber;
+  // Its GitHub author when nobody on Homeroom filed it: never the platform's
+  // own account, which files for everybody.
+  const login = /\[bot\]$|^usernode-bot$/i.test(String(gate.issue.login || '')) ? null : gate.issue.login;
+  const author = gate.author?.username || login || null;
+  // Credited to whoever first asked, when they are on Homeroom.
+  const credited = gate.author ? { id: gate.author.userId, username: gate.author.username } : user;
+  let filed;
+  try {
+    filed = await mayor.fileRequest(pool, config, {
+      user: credited, app: target, settings, deps,
+      // Filed once per ask: a retry finds the copy (the tap's or turn's work).
+      fileKey,
+      title: clip(gate.issue.title, MAX_TITLE_CHARS),
+      details: clip(gate.issue.body, MAX_BODY_CHARS),
+      askedText: gate.issue.title,
+      footer: copiedFooter({
+        app, issueNumber: n, link: requestLink(domain, app.slug, n), author, asked: user.username,
+      }),
+      reason: 'copied_request',
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-move', 'Could not file a copy of a request', { app: app.slug, issueNumber: n, err: err.message });
+    // A failure a retry can cure: the act's work tries again, its claim kept.
+    if (mayor.retryAct(err, deps.actKey)) throw err;
+    return { ok: false, code: 'file_failed', error: 'It could not be filed just now. Try again in a minute.' };
+  }
+  const link = requestLink(domain, target.slug, filed.issueNumber);
+  // A retry of the same ask finds the copy (fileRequest's fileKey) and does
+  // not leave a second link on the original.
+  if (!filed.again) {
+    const ws = deps.ws || require('./ws');
+    await ws.sendSystemMessage(pool, app.id,
+      `Also filed on Homeroom's own board as request #${filed.issueNumber}: ${link}. This request stays open here.`,
+      'system', null, { type: 'issue', ref: n }).catch(() => {});
+    try {
+      await github.createIssueComment(gate.repo.owner, gate.repo.repo, n,
+        `Also on Homeroom's own board as request #${filed.issueNumber}: ${link}\n\nThis request stays open here.`);
+    } catch (err) {
+      log.warn('homeroom-bot-move', 'Could not link a copied request from the original', { app: app.slug, issueNumber: n, err: err.message });
+    }
+  }
+  log.info('homeroom-bot-move', 'Filed a copy of a request on Homeroom', {
+    app: app.slug, issueNumber: n, copiedTo: filed.issueNumber, userId: user.id,
+  });
+  return { ok: true, issueNumber: filed.issueNumber, link, target, title: gate.issue.title };
+}
+
+/**
+ * A tap under a copy offer in the person's chat with the bot
+ * (homeroom-bot-mayor.js settleOffer). Files the copy, links it from the
+ * original and leaves the original open. `ack` sends the answer.
+ */
+async function decideCopy(pool, config, { user, settings, action, yes, ack, deps = {} }) {
+  if (!yes) return ack('OK, I\'ll leave it where it is.');
+  const app = await appById(pool, action.app_id);
+  let filed;
+  try {
+    filed = await copyToHomeroom(pool, config, {
+      user, app, issueNumber: action.source_issue_number, fileKey: `dm-action:${action.id}`, settings, deps,
+    });
+  } catch (err) {
+    // A failure a retry can cure: the act's work tries again, its claim kept.
+    if (mayorModule().retryAct(err, deps.actKey)) throw err;
+    filed = { ok: false, code: 'file_failed', error: err.message };
+  }
+  if (!filed.ok) {
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1',
+      [action.id, clip(filed.error || filed.code, 300)]);
+    return ack(`I couldn't file it there: ${filed.error}`);
+  }
+  await pool.query('UPDATE bot_cards SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
+  const name = filed.target.name || filed.target.slug;
+  const line = dmModule(deps).requestLine({ appName: name, issueNumber: filed.issueNumber, issueTitle: filed.title });
+  return ack(
+    `${line}\n\nFiled on Homeroom's own board, with a link to it left on the original. This request stays open here.`,
+    {
+      objects: [{ type: 'issue', appId: Number(filed.target.id), issueNumber: filed.issueNumber }],
+      metadata: {
+        kind: 'filed', appSlug: filed.target.slug, appName: name,
+        issueNumber: filed.issueNumber, issueTitle: filed.title,
+      },
+    },
+  );
+}
+
+/** Pure: the words of a copy offer in the person's chat with the bot. */
+function copyOfferText({ name, issueNumber, text = null, title = null, why = null }) {
+  return [
+    text || `Want me to file request #${issueNumber} on Homeroom's own board too? The people who work on Homeroom look there, and this request stays open here.`,
+    '',
+    `**${name}** · request #${issueNumber}${title ? `: ${clip(title, 140)}` : ''}`,
+    ...(why ? ['', `Why: ${clip(why, 600)}`] : []),
+  ].join('\n');
+}
+
+/** Pure: a copy offer's metadata: its question and buttons (homeroom-bot-mayor.js offerActions). */
+function copyOfferMeta({ app, actionId }) {
+  const name = app.name || app.slug;
+  return {
+    kind: 'confirm', appSlug: app.slug, appName: name, actionId: Number(actionId),
+    question: `File this request on Homeroom's own board too, and keep it here?`,
+    // `answers` for a client that predates `actions`.
+    answers: [...mayorModule().OFFER_ANSWERS.copy_request], actions: mayorModule().offerActions('copy_request'),
+    status: 'open', mirrors: false,
+  };
 }
 
 // What became of a platform verdict's move offer (homeroom_bot_runs
@@ -419,7 +608,7 @@ async function moveOfferSummary(pool, { days = MOVE_OFFER_DAYS } = {}) {
             COUNT(*) FILTER (WHERE status = 'declined')::int AS kept,
             COUNT(*) FILTER (WHERE status = 'open')::int AS open,
             COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
-       FROM homeroom_bot_dm_actions
+       FROM bot_cards
       WHERE kind = 'move_request' AND created_at > NOW() - make_interval(days => $1)`,
     [days],
   );
@@ -431,7 +620,7 @@ async function moveOfferSummary(pool, { days = MOVE_OFFER_DAYS } = {}) {
         AND r.created_at > NOW() - make_interval(days => $1)
         AND r.move_offer IS DISTINCT FROM 'sent'
         AND (r.move_offer IS NOT NULL OR NOT EXISTS (
-          SELECT 1 FROM homeroom_bot_dm_actions x
+          SELECT 1 FROM bot_cards x
            WHERE x.kind = 'move_request' AND x.app_id = r.app_id AND x.source_issue_number = r.issue_number))
       ORDER BY r.id DESC`,
     [days],
@@ -484,7 +673,7 @@ async function foldOffer(pool, { kind, userId, app, issueNumber, title, reason =
       return null;
     }
     const { rows: before } = await pool.query(
-      `SELECT 1 FROM homeroom_bot_dm_actions
+      `SELECT 1 FROM bot_cards
         WHERE user_id = $1 AND app_id = $2 AND kind = $4 AND source_issue_number = $3
           AND status IN ('open', 'done')
        UNION ALL
@@ -498,7 +687,7 @@ async function foldOffer(pool, { kind, userId, app, issueNumber, title, reason =
       return null;
     }
     const { rows: [action] } = await pool.query(
-      `INSERT INTO homeroom_bot_dm_actions (user_id, app_id, kind, title, details, source_issue_number)
+      `INSERT INTO bot_cards (user_id, app_id, kind, title, details, source_issue_number)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
       [userId, app.id, kind, clip(title || `Request #${n}`, MAX_TITLE_CHARS), reason ? clip(reason, 600) : null, n],
     );
@@ -526,12 +715,12 @@ async function foldedOfferSent(pool, offer, sent) {
   if (!offer) return;
   try {
     if (!sent?.messageId || sent.duplicate) {
-      await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1 AND message_id IS NULL', [offer.actionId]);
+      await pool.query('DELETE FROM bot_cards WHERE id = $1 AND message_id IS NULL', [offer.actionId]);
       if (offer.kind === 'move_request') await noteMoveOffer(pool, offer.runId, sent?.duplicate ? 'already_offered' : 'not_sent');
       return;
     }
     await pool.query(
-      'UPDATE homeroom_bot_dm_actions SET message_id = $2, conversation_id = $3 WHERE id = $1',
+      'UPDATE bot_cards SET message_id = $2, conversation_id = $3 WHERE id = $1',
       [offer.actionId, sent.messageId, sent.conversationId],
     );
     if (offer.kind === 'move_request') await noteMoveOffer(pool, offer.runId, 'sent');
@@ -573,11 +762,19 @@ module.exports = {
   DONE_ACTIONS,
   requestLink,
   movedFooter,
+  copiedFooter,
   moveGate,
+  asksForRequest,
+  platformApp,
+  copyToHomeroom,
+  decideCopy,
+  copyOfferText,
+  copyOfferMeta,
   othersInvolved,
   proposeClose,
   closeNow,
   closedWords,
+  moveToHomeroom,
   decideMove,
   moveOfferText,
   moveOfferMeta,

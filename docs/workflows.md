@@ -103,6 +103,31 @@ row into `wf_events` and notifies the slots. An undeclared type is refused right
 3 s for the outcome. If the outcome is not there yet, the route answers `202` with the
 request key, and a retry with the same key returns the original result once it exists.
 
+**Who produced it.** `source` is what the producer says; `producer` is what the database
+recorded (`src/db/migrations/0011-workflow-producers.sql`). A login that may update the
+event stream (the conductor's, the migrator's, the one login of a database whose roles
+are not split) appends as `platform`. One that may only append, web's
+(`services/database-role-grants.js restrictWebWorkflow`), appends as `web`. The release
+that adds the stamp leaves web its writes, so a web Pod of the build before it can still
+restart; the release after it takes them, once no web process of an earlier build serves
+(`platform_processes.web_restriction_ready`). Until then web's events read as
+`platform`, and nothing below binds web yet. Web names
+only what a producer says (machine, key, app, type, payload, source, actor, request key);
+an event's status, outcome, retry time and cause are the kernel's. The database refuses
+web's rows that claim a `service`, `timer` or `message` source, and a refused web event
+the conductor asks again (`reaskRefused`) is still web's. Each machine lists the events
+web may append (`web` in its definition, required): what its routes ask for, and what a
+row web inserts sets off (an enrolment trigger). A slot refuses any other event web
+appended as `not_a_producer` (a type it does not know as `unknown_event`, so a newer
+build asks it again), before admission, a replay or any machine code. A rule that trusts
+a `system` source does not trust web's claim of one where that would let web choose
+what only the platform chooses: web asks app delivery for an admin's redeploy of main,
+never for an image or a commit. Web writes nothing else of the kernel's tables: a route
+that stops waiting withdraws its own pending request through `wf_refuse_pending` (only
+one its own login appended, or one it appended just before its writes were taken, and
+only as `expired`, `operation_unavailable` or `stop_unavailable`), and an admin's
+release of a faulted instance is a platform operation a conductor runs.
+
 **Answers.** A route answers from the outcome's `reply`, never by reading the tables
 afterwards. A machine that answers routes defines `reply(tx, event, after, ctx, facts)`:
 - **When it runs.** In the event's transaction, after the writes and the projection. It
@@ -156,11 +181,16 @@ Internal cleanup reports itself as `system`, not as a human admin. The HTTP perm
 checks remain necessary: ordinary commands still depend on their callers and their
 machine's rules. Admission does not cancel external work already authorized and queued.
 
-This admission boundary does not authenticate an arbitrary process that can forge
-actors or write workflow rows. `PROCESS_ROLE` separates loops, not credentials; database
-login privileges, migration/provisioning credentials and Kubernetes service accounts
-need independent isolation. All deciding processes must run the updated code before a
-new admission rule applies across the fleet.
+Admission trusts the actor its producer names: web authenticates people, so a route's
+`user:<id>` is web's word. What web cannot do is speak for the conductor: its login
+appends only the events its machines list (`producer` above) and writes no machine
+state, receipt, work item or outcome. Web can still write the application tables that
+admission and machine facts read (`users`, `app_admins`, a check's result): since it
+can name any person as the actor anyway, protecting them would not stop a compromised
+web from acting as an administrator (docs/security/database-roles.md, "Web is the
+authentication boundary"). A change to who is an administrator is recorded where
+neither runtime login can alter it (`privilege_changes`). All deciding processes must
+run the updated code before a new admission rule applies across the fleet.
 
 **Pushes.** What browsers should hear is part of the transition. A transition returns
 `push`, and a domain write adds what it inserted with `ctx.push` (a thread line with its
@@ -329,7 +359,8 @@ event.
   data.
 - **Actions** (full admins, runtime running). The admin view never edits rows. Each
   action is an event on the timeline, like any other:
-  - release a faulted instance;
+  - release a faulted instance (a `workflow.release` platform operation: a conductor
+    releases it, since web writes no instance);
   - "Re-check now" (`Evaluate`);
   - "Apply" (`AdminApply`);
   - "Retry follow-up".
@@ -362,7 +393,9 @@ they cannot drift from the instance.
 
 **Ownership.** Every pipeline transaction runs `SET LOCAL app.wf_writer = 'transition'`.
 
-- **Kernel tables.** Triggers refuse writes to them made without that marker.
+- **Kernel tables.** Triggers refuse writes to them made without that marker. Web's login
+  has no write on them at all but appending an event (`producer` above), so the marker
+  guards the conductor's own code against accidents, and privileges guard against web.
 - **Legacy columns.** A machine claims the legacy columns it owns with
   `wf_guard_owned_columns()`, for example on `issues`:
 
@@ -469,6 +502,10 @@ always `unknown_event`.
 9. **A machine replaces its old paths.** The step that moves a flow onto a machine
    deletes the old flow in the same change: no flag, no second path. Rollback is a
    release revert.
+10. **List what web may append.** An event a route appends, or a row web inserts sets off,
+    goes in the machine's `web` list; one only the conductor produces (a work result, a
+    timer, a message, a clock's tick, a service's report) never does. Leave one out and
+    that route's request is refused as `not_a_producer` wherever the roles are split.
 
 **Wiring it in.** `src/workflow/platform.ts` owns the process's runtime: its own pool,
 the machines, the services and the boot backfill. It also exports the helpers routes
@@ -744,6 +781,8 @@ A new machine brings the same two layers:
 | `release` | `release:<GIT_SHA>`, one per release of the platform | `adopting` → `done`, `failed` or `abandoned` | Runs the boot adoptions once per release (`release.adopt`), in that release's own processes |
 | `clock` | `clock:<job>`, one per scheduled platform job | `waiting` ⇄ `running`; `retired` | Runs each job on its schedule (`clock.<job>`), wherever the workflow runs; its old leader timers are deleted |
 | `turn` | `agent:<id>` for a conversation, `session:<id>` for a change | `idle` ⇄ `running` | A person's turn is its `turn.run` work item; the leader's turn recovery, its watchdog, the conversation lease's renewal and the process holds' mirror are deleted |
+| `bot-look` | `look:<id>`, for each look into a project's code a chat with the Homeroom bot asked for (`look_into`) | `looking` → `done` / `failed` | New: the look is its `look.run` work item, a read-only turn on durable steps |
+| `bot-investigation` | `investigation:<id>`, for each investigation the Homeroom bot runs for a person, from its Start | `checking` ⇄ `waiting` → `ended` | New: each check-in is its `investigation.checkIn` work item, the next one its deadline |
 
 ### turn
 
@@ -848,7 +887,10 @@ projection, guarded so only its transitions write a row it holds.
   are read again by the next refresh. `NotOwed` from the refresh prunes what it no longer
   wants.
 - **A look** starts when the lane grants a slot (`Granted`): `bot.look` (`homeroom-bot.js
-  lookAt`), a read on the project's triage session or a reply or fix on its change. Its
+  lookAt`), a read on the triage session of the read slot its grant names (`readSlot`:
+  slot 0 is the project's triage session, each further slot a session of its own, made
+  on its first read and marked with its slot, `source` `homeroom_bot_read:<slot>`), or a
+  reply or fix on its change. Its
   turns are durable steps naming the item, and every effect (the run, the spend, the
   notes, the act, the asks' tag) is a keyed step, so a restart follows the turn and says
   and spends nothing twice. A project's first read is granted before its triage session
@@ -886,11 +928,19 @@ projection, guarded so only its transitions write a row it holds.
 
 How much the Homeroom bot runs at once, and when it looks at GitHub
 (`src/workflow/bot-lane/`). One instance (`bot`), so the caps hold however many processes
-run the workflow: `liveAtOnce` looks and builds, `perPerson`, one read at a time on a
-project's triage session, three builds per project.
+run the workflow: `liveAtOnce` looks and builds, `perPerson`, `readsPerApp` reads at once
+on a project (`homeroom_bot_reads_per_app`, 3 unless an admin sets 1 to 6), each on a read
+slot no other read holds while it runs, three builds per project.
 - **Grants** under its lock, in the queue's order (a person's ask, follow-ups, priority,
   age), as `Granted` messages; what is in use is read from the requests (their `slot`, and
-  grants not applied yet), never kept here.
+  grants not applied yet), never kept here. A read takes its project's lowest free read
+  slot. bot-request is at version 2 since read slots: an older release runs every read of
+  a project on its newest triage session whatever its grant says, so a read an older
+  release may run (its request last written by version 1, or granted with no slot) holds
+  all its project's read slots, and is granted only while nothing else reads it. Older
+  code leaves the requests version 2 wrote, and their looks, alone; a rollback past it
+  lowers them (`UPDATE wf_instances SET machine_version = 1 WHERE machine = 'bot-request'`,
+  in a transition, once no process of the newer release is live).
 - **Pauses**: a fault (a look's platform failure) pauses every grant 2 minutes doubling to
   an hour, ended by a look that ran; the bot's weekly cap a minute at a time; GitHub's
   hourly budget nearly used up (`services/github-budget.js`: a look, a build's start, the
@@ -1274,6 +1324,15 @@ release built is known, and retired by identity once a newer attempt serves).
   (`EnvStale`, once per attempt and environment), and is built again if it backs a vote,
   else given back. An older Pod during a rollout never judges the new build's previews by
   its own fingerprint.
+- **Sleep** (#6157) is outside the machine: the `preview-sleep` clock scales a Kubernetes
+  preview unused for `PREVIEW_SLEEP_AFTER_MS` (1 h) to no replicas, vote-backed ones
+  included, only while the instance rests in a state where an attempt serves
+  (`settled`, `deferred`, `failed`) and nothing works on the session; the row records it
+  (`staging_asleep_at`). The machine is not told: its `checks.run` wakes the preview
+  before it starts (a wake that times out is the platform's fault), a build deploys one
+  replica, and `published`/`unpublished` end the sleep. A sleeping preview is neither lost
+  (`preview-runtimes`) nor judged for its environment by `preview-env`: it is rebuilt when
+  something wakes it instead.
 - **What people read.** The transitions write the lines: the dev chat's "Staging
   deployed!" when a new attempt serves, and "Staging build failed" when a build fails
   while a turn's "Building staging preview..." card is still open; an imported pull
@@ -1702,6 +1761,46 @@ board's banner read them.
   `enabled:main-check` row of `wf_settings` after such a rollback (the same holds for every
   machine's guard).
 
+### bot-look
+
+A look into a project's code that a person's chat with the Homeroom bot asked for
+(`src/workflow/bot-look/`, the look's own code in
+`services/homeroom-bot-thread-tools/look-into.js`). One instance per look (`look:<id>`, its
+row in `homeroom_bot_looks`).
+
+- **Asked** by the chat's `look_into` tool, keyed by the look, after it wrote the look's row
+  (one running per person at a time, by the table's unique index).
+- **The look** is one resumable work item (`look.run`): a read-only scout turn of the bot's,
+  on the platform's default model, in the person's look session on the project's main, on
+  the item's steps (`services/durable-turn.js`), so a restart follows the turn rather than
+  starting another. Its end is a compare-and-set on the row.
+- **The chat waits** on the row for up to three minutes. One that stopped waiting set the
+  row's `deliver` to `post`, and the findings are posted in that chat once the look ends,
+  under the look's idempotency key. A run that fails for good is recorded and, when the
+  chat stopped waiting, said there (`look.failed`).
+
+### bot-investigation
+
+An investigation the Homeroom bot runs for a person over days
+(`src/workflow/bot-investigation/`, its rules in `rules/investigation.ts`, its work in
+`services/homeroom-bot-thread-tools/investigate.js`). One instance per investigation
+(`investigation:<id>`), created by its owner's tap on Start; while it is only offered, it is
+a row in `homeroom_bot_investigations` and a card, and nothing runs.
+
+- **A check-in** is one work item (`investigation.checkIn`, keyed by its sequence number):
+  a look into the project's code (the same turn as `bot-look`'s) asked the goal, the notes
+  so far and what changed since the last check-in, its notes written once and its short
+  update said once in the investigation's thread. The first runs at Start; each next one is
+  the instance's deadline (`CheckInDue`), one interval after the last ended.
+- **The money** is added up here from each check-in's result, against the budget it was
+  started with; every check-in also counts toward the person's weekly building time.
+- **It ends** when a check-in says the question is answered, the budget or the days run
+  out, its owner taps Stop (a check-in under way is cancelled), the bot is turned off or
+  stops working on the project, or three check-ins in a row fail. Its end is said once
+  (`investigation.ended`), and its card is drawn from every decision
+  (`investigation.card`).
+- **The row's** `state`, `spent_cents`, `next_at` and `ended_*` are its projection.
+
 ### clock
 
 The platform's scheduled jobs (`src/workflow/clock/`): what the leader's timers ran, now on
@@ -1791,12 +1890,13 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
 - **People's round trips and limits.** `wallet-links` reads the explorer for wallet-link
   memos (continuous, resting 4 s, longer while the explorer fails), its chain, cursor and
   outage streak carried in its result; `rate-limit-retention` deletes the shared limiters'
-  spent windows (`rate_limit_hits`); `notice-mail` sends the email a notice owes when no
+  spent windows (`rate_limit_hits`); `ui-telemetry-anonymous-retention` deletes signed-out
+  pages' anonymous telemetry 30 days on; `notice-mail` sends the email a notice owes when no
   phone could take its push (an invite moment, a project opening:
   `notifications.mailed_at` NULL, written with the notice); `workshop-changes` (every 10 s) runs each
   Workshop pass a board change owed.
 - **Previews and proposals.** `preview-runtimes`, `preview-gc`, `preview-env`,
-  `preview-orphan-dbs`, `preview-pressure` and `worker-volumes` read the runtimes
+  `preview-sleep`, `preview-orphan-dbs`, `preview-pressure` and `worker-volumes` read the runtimes
   and the database servers;
   `imported-prs`, `merged-by-hand`, `proposal-revisions`, `proposal-measure` and
   `fixed-check-sync` read GitHub and the mirrors. Each hands what it found to the preview or

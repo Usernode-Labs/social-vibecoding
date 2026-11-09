@@ -16,7 +16,7 @@ const HOME = read('frontend/src/features/home/index.tsx');
 const CSS = read('public/css/app.css');
 
 function wrapperClasses() {
-  const m = HOME.match(/<div className="home-column px-3 pt-3 pb-2">\s*<div className="([^"]*)">\s*<SearchIcon/);
+  const m = HOME.match(/<div className="home-column px-3 pt-3 md:pt-5 pb-2">\s*<div className="([^"]*)">\s*<SearchIcon/);
   assert.ok(m, 'the search field sits in a wrapper inside the bar\'s .home-column');
   return m[1].split(/\s+/);
 }
@@ -33,8 +33,8 @@ test('the column it spans is capped and centred', () => {
   assert.ok(i >= 0);
   const body = CSS.slice(i, CSS.indexOf('\n}', i));
   assert.match(body, /max-width: 64rem;/);
-  assert.match(body, /margin-left: auto;/);
-  assert.match(body, /margin-right: auto;/);
+  assert.match(body, /margin-inline-start: auto;/);
+  assert.match(body, /margin-inline-end: auto;/);
   // Same column as the content below, so the edges line up.
   assert.match(HOME, /<div id="home-body" className="home-column /);
 });

@@ -949,10 +949,16 @@ owned entirely by the authenticated Social session.
     "exactAlarmGranted": true,
     "batteryOptDisabled": false,  // Android only, else null
     "deviceManufacturer": "samsung", // Android only, else null
-    "notificationPermission": "notDetermined" // notDetermined | denied | authorized; optional
+    "notificationPermission": "notDetermined", // notDetermined | denied | authorized; optional
+    "backgroundProduction": false // false: produces only while open; older builds omit it
   }
 }
 ```
+
+`permissions.backgroundProduction` is `false` on a build that produces blocks
+only while it is open (additive). SV tests it with a strict `=== false`: such a
+build has no exact-alarm or battery permission to ask for, so the first-run
+sheet stays away and Settings hides those rows.
 
 `permissions.notificationPermission` is the OS notification permission as
 the OS reports it, read independently of push configuration (additive;
@@ -1001,9 +1007,22 @@ recoverable rather than a dead end.
 | `openBatterySettings()` | Android: shows the one-tap system "let this app always run in the background?" dialog while battery optimization is on, else the app's App info page |
 | `openNotificationSettings()` | opens the OS notification settings page for the app. The only way back from a **determined-denied** iOS notification permission: once the user has answered the OS prompt, `requestPermissions()` resolves immediately and presents no dialog, so a screen offering only "request" is a tap that does nothing forever. Capability-gated, and fails fast (probe timeout, not the 120 s permission timeout) — an *inconclusive* probe still calls through, per issue #978. |
 | `prepareForLogin()` | from an anonymous trusted shell, closes and drains any privately recovered native session before Social receives a session-mint request; no-op when native is already signed out |
+| `prepareProvingParameters()` | prepares and caches public proof parameters before native establishment; trusted top frame only, with no session claim or action timeout; native shows download progress and Retry |
 | `logout()` | performs the bounded hard native logout (node stop/drain plus identity and credential cleanup); attempt web revocation and clear caches first, then invoke this as the terminal operation; `offlineLogout` permits API failure and guarantees native WebView cleanup |
 
 ### Platform login + node lifecycle (semantic protocol 2)
+
+When native advertises `prepareProvingParameters`, Social awaits it before
+creating an establishment attempt or requesting its short-lived handoff.
+Native downloads missing public parameters in the foreground and retains them
+across launches and logout; a ready cache returns immediately. Preparation
+does not hold the session lifecycle queue or delay logout. Realm closure or
+navigation cancels the web wait, and a stale preparation cannot create a
+handoff. Older native builds skip this capability. Deploy this web support
+before the native build: an older cached web client on an unprepared new app
+receives `native_proving_parameters_required` before its handoff is consumed
+and must refresh. Until wallet assignment can be known before credential
+exchange, this preflight also runs for walletless sign-ins.
 
 The native realm starts closed. Before Social publishes a web identity it
 synchronously clears any old realm claim, then creates or reloads one exact

@@ -34,11 +34,18 @@ import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import { prepareAgentDraft } from '../agent-session/store';
 import { headerTitleStore } from '../header/header-title-store.js';
 import type { PanelHint } from './controller';
-import { appTabSlug, embeddedAllows, isShellAddress, routeFromUrl } from './routes';
+import { panelHeadStore, type PanelHead } from './head-store';
+import { appTabSlug, embeddedAllows, isShellAddress, routeFromUrl, samePage } from './routes';
 
 interface TopPanel {
   ready?: (route: string, title: string) => void;
   navigated?: (route: string, title: string, push: boolean) => void;
+  /**
+   * What the page on screen publishes for its column (#6431): its status pill
+   * and its own ⋯ key. Sent after every report, and with the same route the
+   * report names, so the top document can ignore one that is not its page's.
+   */
+  head?: (route: string, head: PanelHead | null) => void;
   openApp?: (slug: string) => void;
   leave?: (route: string) => void;
   back?: () => void;
@@ -108,6 +115,8 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
   let timer = 0;
   // The address of the page on screen, for a forward to put back.
   let lastUrl = loc.href;
+  // The route the head store's value was published on (see `flush`).
+  let headRoute = '';
 
   const route = () => routeFromUrl(loc.href);
   // Has a page titled the header yet? Until one has, the store holds the
@@ -129,7 +138,16 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
     fromTop = false;
     if (!booted) return;
     lastUrl = loc.href;
-    top()?.navigated?.(route(), title(), push);
+    const now = route();
+    top()?.navigated?.(now, title(), push);
+    // A page that has just been navigated to has not published its head yet:
+    // the store still holds the one we left. Reporting it under the NEW
+    // route would put last page's pill on this one until its own page
+    // publishes — so a route the store was not set on reports none, and the
+    // page's own publish schedules this again. The same page under another
+    // of its addresses (`change 7` landing on the request it belongs to) is
+    // still that page, and keeps what it published.
+    top()?.head?.(now, samePage(now, headRoute) ? panelHeadStore.get() : null);
   }
   // One report per turn of the event loop, after the router's own
   // synchronous rewrites (a canonical app path, a healed mixed address) have
@@ -241,6 +259,12 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
     titled = true;
     schedule();
   });
+  // A page that publishes a head (a request's or a change's bar, #6431) is
+  // reported on the same turn as a title: the two are the same page's.
+  panelHeadStore.subscribe(() => {
+    headRoute = route();
+    schedule();
+  });
 
   // A hint rides with the navigation it was given for, and is in place
   // before that page routes: New change's "what a proposal is", and what an
@@ -268,6 +292,8 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
       fromTop = false;
       lastUrl = loc.href;
       top()?.ready?.(route(), title());
+      headRoute = route();
+      top()?.head?.(route(), panelHeadStore.get());
     }, 0);
   }, { once: true });
 

@@ -17,6 +17,10 @@ function databaseName(connectionString) {
 }
 
 async function ensureTargetDatabase(config) {
+  if (require('../src/services/database-role-access').enabled()) {
+    await require('../src/services/database-role-access').assertLogin(getPool(config), 'migrator');
+    return; // The bootstrap job creates/owns the platform database first.
+  }
   const adminUrl = process.env.DB_ADMIN_URL;
   if (!adminUrl) throw new Error('DB_ADMIN_URL is required for the Kubernetes migration Job');
 
@@ -41,6 +45,10 @@ async function ensureServerBudget(config, pool) {
   const client = new Client({ connectionString: process.env.DB_ADMIN_URL, application_name: connectionName('admin') });
   try {
     await client.connect();
+    if (require('../src/services/database-role-access').enabled()) {
+      await require('../src/services/database-role-access').assertLogin(client, 'provisioner');
+      await client.query('SELECT public.homeroom_adopt_app_roles()');
+    }
     const out = await require('../src/services/server-budget').ensureServerBudget(config, { admin: client, pool });
     console.log('[migration] connection budget', JSON.stringify({ capped: out.capped.length }));
   } catch (error) {
@@ -50,12 +58,48 @@ async function ensureServerBudget(config, pool) {
   }
 }
 
+// The Job is where production seeds the email templates; pods never do. A seed
+// that failed or was skipped (it logs and lets the boot go on) would leave the
+// release sending plain mail or none for a kind, so the Job stops instead: the
+// release does not roll out and the running pods keep sending. A preview seeds
+// during its boot like any other database, but is not checked here: its mail is
+// not production's, and a reviewer may have deleted a template or a layout on
+// purpose to see the failure path, which must not stop the preview deploying.
+async function requireEmailTemplates(pool, env = process.env) {
+  if (env.USERNODE_ENV === 'staging') return;
+  const missing = await require('../src/db/email-template-seeds').kindsWithoutTemplate(pool);
+  if (missing.length) {
+    throw new Error(`Email templates are missing, or their layout is not live, for: ${missing.join(', ')}. `
+      + 'The seed did not complete (see "Could not seed email templates" above, or an admin deleted a layout a new kind needs). '
+      + 'The release stops here so the running pods keep sending mail.');
+  }
+}
+
 async function main() {
   const config = loadConfig();
   const pool = getPool(config);
   try {
+    const grants = require('../src/services/database-role-grants');
     await ensureTargetDatabase(config);
+    // Web's writes on the workflow kernel's tables go only once no web
+    // process of a build that needs them serves: wait for that before
+    // changing anything, so a release refused for it leaves the running one
+    // as it was.
+    await grants.awaitWebRestrictionReady(pool);
     await migrate(config);
+    await requireEmailTemplates(pool);
+    // One transaction, after the schema web's withdrawals use is in place: no
+    // login sees a grant half made, and web's writes go last.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await grants.ensureRuntimeGrants(client);
+      await grants.takeWebWorkflowWrites(client);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally { client.release(); }
     // The read-only database roles, by the new build over the new schema,
     // before any Pod of the release starts (services/db-roles.js).
     await require('../src/services/db-roles').ensureRoles(config);
@@ -72,4 +116,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { databaseName, ensureTargetDatabase, ensureServerBudget, main };
+module.exports = { databaseName, ensureTargetDatabase, ensureServerBudget, requireEmailTemplates, main };

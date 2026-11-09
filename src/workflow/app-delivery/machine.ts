@@ -40,7 +40,7 @@ import type { Facts } from './facts.ts';
 export const MACHINE = 'app-delivery';
 export const appKey = (appId: number) => `app:${appId}`;
 
-export const WORK = Object.freeze({ deploy: 'app.deploy', heal: 'app.heal' });
+export const WORK = Object.freeze({ deploy: 'app.deploy', heal: 'app.heal', wake: 'app.wake' });
 
 // The machines that may ask by message, and are answered.
 const ASKERS: ReadonlySet<string> = new Set(['merge-followups', 'governance-proposal', 'app-creation']);
@@ -152,6 +152,7 @@ const EVENTS = {
   // A person reached the error page instead of the app: it may be down, or
   // up and not answering (a probe tells).
   Unreachable: (p: any) => ({ appId: int(p?.appId, 'appId') }),
+  WakeRequested: (p: any) => ({ appId: int(p?.appId, 'appId') }),
   // The drift retry's deadline.
   RetryDue: () => ({}),
 };
@@ -374,7 +375,8 @@ function failed(s: Going, e: Event<any>, f: Facts, ctx: TransitionContext): Outc
 const ofAttempt = (s: any, e: Event<WorkResultPayload>): Check =>
   (e.payload.kind === WORK.deploy && s.data.attempt && e.payload.workKey === `deploy:${s.data.attempt.n}` ? ok() : reject('stale_result'));
 const ofHeal = (s: any, e: Event<WorkResultPayload>): Check =>
-  (e.payload.kind === WORK.heal && s.data.healing && e.payload.workKey === `heal:${s.data.healing.n}` ? ok() : reject('stale_result'));
+  (e.payload.kind === (s.data.healing?.via === 'wake' ? WORK.wake : WORK.heal)
+    && s.data.healing && e.payload.workKey === `heal:${s.data.healing.n}` ? ok() : reject('stale_result'));
 
 // The retry's deadline: the open drift requests are deployed again.
 function retryDue(s: Going, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<DeliveryState> {
@@ -413,6 +415,13 @@ type Verdict = 'grace' | 'heal' | { refuse: string };
 function judgeReport(s: DeliveryState, e: Event<any>, f: Facts, ctx: TransitionContext, deps: Deps): Verdict {
   const p = e.payload as { appId: number; state?: string };
   const d = dataOf(s, p.appId, f);
+  // Intentional sleep is not an outage and inherits no outage backoff. A
+  // failed wake still waits ten seconds before another visitor can retry it.
+  if (e.type === 'WakeRequested') {
+    if (f.runtimeKind !== 'kubernetes') return { refuse: 'unsupported_wake' };
+    return d.heal?.via === 'wake' && ctx.now.getTime() - Date.parse(d.heal.at) < 10000
+      ? { refuse: 'wake_backoff' } : 'heal';
+  }
   // Docker's own restart policy is usually mid-backoff: a container seen
   // restarting is given its grace, and healed only if it still is.
   if (p.state === 'restarting' && f.runtimeKind === 'docker') {
@@ -427,7 +436,7 @@ function reported(deps: Deps) {
   return (s: DeliveryState, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<DeliveryState> => {
     const p = e.payload as { appId: number; state?: string };
     const d = dataOf(s, p.appId, f);
-    const via = e.type === 'Unreachable' ? 'visit' : 'sweep';
+    const via = e.type === 'WakeRequested' ? 'wake' : e.type === 'Unreachable' ? 'visit' : 'sweep';
     if (judgeReport(s, e, f, ctx, deps) === 'grace') {
       const heal: Heal = { ...(d.heal ?? { n: 0, at: ctx.now.toISOString(), streak: 0, via }), seenRestarting: ctx.now.toISOString() };
       return { next: { name: 'idle', data: { ...d, heal } } };
@@ -436,8 +445,8 @@ function reported(deps: Deps) {
     const quiet = prev?.streak ? ctx.now.getTime() - Date.parse(prev.at) - backoffMs(prev, deps) : Infinity;
     const streak = prev?.streak && quiet < QUIET_MS ? prev.streak + 1 : 1;
     const n = (prev?.n ?? 0) + 1;
-    const heal: Heal = { n, at: ctx.now.toISOString(), streak, via, seenRestarting: null };
-    const work: WorkRequest[] = [{ kind: WORK.heal, key: `heal:${n}`,
+    const heal: Heal = { n, at: ctx.now.toISOString(), streak: via === 'wake' ? 0 : streak, via, seenRestarting: null };
+    const work: WorkRequest[] = [{ kind: via === 'wake' ? WORK.wake : WORK.heal, key: `heal:${n}`,
       input: { appId: d.appId, via, probe: e.type === 'Unreachable', state: p.state ?? null } }];
     return { next: { name: 'healing', data: { ...d, heal, healing: { n, via } } }, work, timer: null };
   };
@@ -468,6 +477,14 @@ function healed(s: Going, e: Event<any>, f: Facts, ctx: TransitionContext): Outc
 
 export function appDelivery(deps: Deps = {}): Machine<DeliveryState, Facts> {
   const mayAsk = (e: Event<any>): Check => {
+    // Web asks for one thing only: an admin's redeploy of what main holds.
+    // Which image or commit runs (`reuse`, `revision`, a PR) is the platform's
+    // choice alone, whatever source web claims.
+    if (e.producer === 'web') {
+      const p = e.payload;
+      return e.source.kind === 'admin' && p.reason === 'redeploy'
+        && p.prNumber == null && p.revision == null && p.reuse == null ? ok() : reject('not_a_producer');
+    }
     if (e.source.kind === 'system' || e.source.kind === 'admin') return ok();
     if (e.source.kind === 'message' && ASKERS.has(e.source.from.machine)) return ok();
     return reject('internal_only');
@@ -516,9 +533,12 @@ export function appDelivery(deps: Deps = {}): Machine<DeliveryState, Facts> {
 
   return defineMachine<DeliveryState, Facts>({
     name: MACHINE,
-    version: 2,
+    version: 3,
     events: EVENTS,
-    create: ['DeployRequested', 'MainMoved', 'Unhealthy', 'Unreachable'],
+    create: ['DeployRequested', 'MainMoved', 'Unhealthy', 'Unreachable', 'WakeRequested'],
+    // What web appends: an admin's redeploy, Check for updates, a visitor finding the
+    // app down, and the admin console's End deploy.
+    web: ['EndDeploy', 'DeployRequested', 'MainMoved', 'Unreachable', 'WakeRequested'],
     decode: (row) => ({ name: row.state, data: row.data } as DeliveryState),
     facts: (tx, state, event) => readFacts(tx, state.name === NONE ? event.payload.appId : (state as Going).data.appId,
       { githubOn: deps.githubOn ? deps.githubOn() : true, runtimeMode: deps.runtimeMode ?? null },
@@ -528,16 +548,18 @@ export function appDelivery(deps: Deps = {}): Machine<DeliveryState, Facts> {
       MainMoved: (e) => (e.source.kind === 'system' || e.source.kind === 'admin' ? ok() : reject('system_only')),
       Unhealthy: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),
       Unreachable: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),
+      WakeRequested: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),
       RetryDue: (e) => (e.source.kind === 'timer' ? ok() : reject('timer_only')),
       EndDeploy: (e) => (e.source.kind === 'admin' ? ok() : reject('admin_only')),
     },
     transitions: {
-      [NONE]: { DeployRequested: request, MainMoved: main, Unhealthy: report, Unreachable: report },
+      [NONE]: { DeployRequested: request, MainMoved: main, Unhealthy: report, Unreachable: report, WakeRequested: report },
       idle: {
         DeployRequested: request,
         MainMoved: main,
         Unhealthy: report,
         Unreachable: report,
+        WakeRequested: report,
         RetryDue: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => retryDue(s, e, f, ctx) },
         EndDeploy: { ignore: 'not_deploying' },
         WorkSucceeded: noAttempt,
@@ -550,6 +572,7 @@ export function appDelivery(deps: Deps = {}): Machine<DeliveryState, Facts> {
         // The deploy replaces the runtime.
         Unhealthy: { ignore: 'deploying' },
         Unreachable: { ignore: 'deploying' },
+        WakeRequested: { ignore: 'deploying' },
         RetryDue: { ignore: 'deploying' },
         // Its work is given up too, so the next deploy or heal never runs
         // beside it.
@@ -564,10 +587,13 @@ export function appDelivery(deps: Deps = {}): Machine<DeliveryState, Facts> {
         MainMoved: main,
         Unhealthy: { ignore: 'healing' },
         Unreachable: { ignore: 'healing' },
+        WakeRequested: { ignore: 'healing' },
         RetryDue: { ignore: 'healing' },
         // An admin ends a heal that never answers: the cure did not happen.
         EndDeploy: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) =>
-          ({ ...healed(s, { ...e, type: 'WorkFailed' }, f, ctx), cancel: [{ kind: WORK.heal, key: `heal:${s.data.healing.n}` }] }) },
+          ({ ...healed(s, { ...e, type: 'WorkFailed' }, f, ctx), cancel: [{
+            kind: s.data.healing.via === 'wake' ? WORK.wake : WORK.heal, key: `heal:${s.data.healing.n}`,
+          }] }) },
         WorkSucceeded: heal,
         WorkFailed: heal,
         WorkExhausted: heal,

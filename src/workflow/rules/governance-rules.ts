@@ -383,13 +383,142 @@ export function storedForm(value: Partial<RulesValue>, idsByGroup: Map<string, n
   };
 }
 
-/** "You or the group"; a project's own rules are "its own rules". */
+// ── Saying the rules in words ───────────────────────────────────────────
+//
+// The sheet's wording (frontend/locales/en/dialogs.json, whoDecides.rule.
+// phrase.*), so a change's title and description say what the rule screen
+// says. Pure: `groups` is the value's own `{ name, people }` list (or a
+// stored group, matched by groupKey).
+
+/** A rule's group, in the sheet's words: "the creator", "All members", "App admins", a name. */
+export function groupLabel(key: string, groups: readonly Group[] = []): string {
+  if (key === 'creator') return 'the creator';
+  if (key === 'members') return 'All members';
+  if (key === 'admins') return 'App admins';
+  const g = groups.find((x) => groupKey(x.name) === key);
+  return g ? g.name : key;
+}
+
+/** A rule as a title names it: "the creator's yes", "2 yeses from Lifeguards", "a vote of All members". */
+export function ruleShort(rule: Rule, groups: readonly Group[] = []): string {
+  const g = groupLabel(rule.group, groups);
+  if (rule.kind === 'atLeast') {
+    if (rule.group === 'creator' && rule.n === 1) return "the creator's yes";
+    return rule.n === 1 ? `1 yes from ${g}` : `${rule.n} yeses from ${g}`;
+  }
+  if (rule.kind === 'percentOfActive') return `${rule.n}% of active ${g}`;
+  if (rule.kind === 'percentOfEveryone') return `${rule.n}% of ${g}`;
+  return `a vote of ${g}`;
+}
+
+/** A rule as a sentence, as the rule screen says it, with no full stop. */
+export function ruleSentence(rule: Rule, groups: readonly Group[] = []): string {
+  const g = groupLabel(rule.group, groups);
+  let sentence: string;
+  if (rule.kind === 'atLeast') {
+    if (rule.group === 'creator' && rule.n === 1) sentence = 'The creator says yes';
+    else if (rule.n === 1) sentence = `At least 1 person in ${g} says yes`;
+    else sentence = `At least ${rule.n} people in ${g} say yes`;
+  } else if (rule.kind === 'percentOfActive') {
+    sentence = `${rule.n}% of the active people in ${g} say yes`;
+  } else if (rule.kind === 'percentOfEveryone') {
+    sentence = `${rule.n}% of everyone in ${g} says yes`;
+  } else {
+    sentence = `Most active people in ${g} say yes, over time`;
+  }
+  if (rule.kind !== 'atLeast' && rule.min != null) sentence += `, and at least ${rule.min} of them`;
+  return sentence;
+}
+
+function joinOr(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts[0] || '';
+  return `${parts.slice(0, -1).join(', ')}, or ${parts[parts.length - 1]}`;
+}
+
+// A title reads a list of short rules; past this it names the first two.
+const OR_LIST_LIMIT = 90;
+
+export interface RulesInFull { sentences: string[]; groups: Group[] }
+
+/** Every rule as a sentence, and every named group with its people. */
+export function describeRulesInFull(value: Partial<RulesValue> | null | undefined): RulesInFull {
+  if (!value) return { sentences: [], groups: [] };
+  const groups = value.groups || [];
+  const preset = value.preset || matchPreset(value.rules);
+  const rules = preset ? PRESETS[preset].map((r) => ({ ...r })) : (value.rules || []);
+  return { sentences: rules.map((r) => `${ruleSentence(r, groups)}.`), groups: [...groups] };
+}
+
+export interface RulesDiff {
+  added: Rule[];
+  removed: Rule[];
+  groupsAdded: Group[];
+  groupsRemoved: Group[];
+  peopleChanged: { name: string; added: string[]; removed: string[] }[];
+}
+
+function rulesOf(value: { preset?: PresetKey | null; rules?: readonly Rule[] } | null | undefined): Rule[] {
+  if (!value) return [];
+  if (value.preset) return PRESETS[value.preset].map((r) => ({ ...r }));
+  return [...(value.rules || [])];
+}
+
+/**
+ * What a new rules value changes against today's (`was`, a stored rules
+ * value or null). Rules compare by signature, groups by groupKey, people
+ * case-insensitively. Null when there is no today to compare with.
+ */
+export function diffRules(
+  was: { preset?: PresetKey | null; groups?: readonly Group[]; rules?: readonly Rule[] } | null | undefined,
+  now: Partial<RulesValue>,
+): RulesDiff | null {
+  if (!was) return null;
+  const wasRules = rulesOf(was);
+  const nowRules = rulesOf(now);
+  const wasSignatures = new Set(wasRules.map(ruleSignature));
+  const nowSignatures = new Set(nowRules.map(ruleSignature));
+  const wasGroups = was.groups || [];
+  const nowGroups = now.groups || [];
+  const wasByKey = new Map(wasGroups.map((g) => [groupKey(g.name), g]));
+  const nowByKey = new Map(nowGroups.map((g) => [groupKey(g.name), g]));
+  const peopleChanged: RulesDiff['peopleChanged'] = [];
+  for (const g of nowGroups) {
+    const before = wasByKey.get(groupKey(g.name));
+    if (!before) continue;
+    const wasPeople = new Set(before.people.map((p) => p.toLowerCase()));
+    const nowPeople = new Set(g.people.map((p) => p.toLowerCase()));
+    const added = g.people.filter((p) => !wasPeople.has(p.toLowerCase()));
+    const removed = before.people.filter((p) => !nowPeople.has(p.toLowerCase()));
+    if (added.length || removed.length) peopleChanged.push({ name: g.name, added, removed });
+  }
+  return {
+    added: nowRules.filter((r) => !wasSignatures.has(ruleSignature(r))),
+    removed: wasRules.filter((r) => !nowSignatures.has(ruleSignature(r))),
+    groupsAdded: nowGroups.filter((g) => !wasByKey.has(groupKey(g.name))),
+    groupsRemoved: wasGroups.filter((g) => !nowByKey.has(groupKey(g.name))),
+    peopleChanged,
+  };
+}
+
+/**
+ * "You or the group" for a preset; a project's own rules as their short
+ * list ("the creator's yes, or a vote of All members"), the first two when
+ * that is longer than a title.
+ */
 export function describeRules(value: Partial<RulesValue> | null | undefined): string {
   if (!value) return 'the default time-&-majority vote';
+  const groups = value.groups || [];
   const preset = value.preset || matchPreset(value.rules);
-  if (preset && !(value.groups || []).length) return PRESET_NAMES[preset];
-  const n = (value.rules || []).length;
-  return `its own rules (${n} rule${n === 1 ? '' : 's'})`;
+  if (preset && !groups.length) return PRESET_NAMES[preset];
+  const rules = value.rules || [];
+  if (!rules.length) return 'its own rules';
+  const parts = rules.map((r) => ruleShort(r, groups));
+  const joined = joinOr(parts);
+  if (joined.length > OR_LIST_LIMIT && parts.length > 2) {
+    const more = parts.length - 2;
+    return `${parts.slice(0, 2).join(', ')}, or ${more} more rule${more === 1 ? '' : 's'}`;
+  }
+  return joined;
 }
 
 // ── Evaluation ──────────────────────────────────────────────────────────
@@ -485,6 +614,9 @@ export interface EvalContext {
 export interface RuleResult {
   group: string; kind: Measure; n: number | null; size: number; yes: number; no: number;
   authorYes: boolean; empty: boolean; known: boolean;
+  // How many people this rule counts: the group, or its active people where
+  // the rule's measure reads them. Said on the Votes card, never decided by.
+  electorate: number;
   need: number | null; passed: boolean; gate: Gate | null;
   // The rule's minimum, and the yeses it asks for today (never more than the
   // group has); both null on a rule without one.
@@ -540,9 +672,11 @@ export function evaluateRule(rule: Rule, ctx: EvalContext): RuleResult {
   // size like atLeast, so a shrinking group never makes it impossible.
   const min = rule.kind !== 'atLeast' && rule.min != null ? rule.min : null;
   const minNeed = min != null ? Math.min(min, Math.max(tally.size, 1)) : null;
+  const readsActive = rule.kind === 'percentOfActive' || (rule.kind === 'majority' && rule.group === 'members');
   const base = {
     group: rule.group, kind: rule.kind, n: rule.n, size: tally.size, yes, no: tally.no,
     authorYes, empty: tally.size === 0, known: tally.known, min, minNeed,
+    electorate: readsActive ? Math.max(tally.active, 1) : tally.size,
   };
   if (tally.size === 0 && rule.group !== 'members') {
     return { ...base, need: null, passed: false, gate: null };
@@ -589,7 +723,13 @@ export function evaluateRules(opts: EvalContext & { value: { rules: readonly Rul
     gate = opts.atLeastGate(owner.need || 1, owner.yes, owner.no, opts.openedAt, opts.now);
     if (owner.need == null) gate = { ...gate, thresholdMet: false, mergeable: false };
   }
-  const passedBy = results.find((r) => r.passed) || null;
+  // The rule that let it in: the owner's own when it passed, else the first
+  // that did. When the group's vote and the creator's yes both pass (You or
+  // the group: the creator's yes was the group's second), the group's is the
+  // one the vote was shown against ("0 of 2", "1/2"), and the merge
+  // snapshots its threshold; reporting the creator's rule first recorded
+  // votes_required = 1 under two yes votes ("2 of 1", audit 2 Nov 2026).
+  const passedBy = (owner.passed ? owner : null) || results.find((r) => r.passed) || null;
   const mergeable = !!passedBy;
   // Let in by another rule than the one that owns the clocks (the creator's
   // yes on You or the group): the owner's wait and threshold no longer apply,

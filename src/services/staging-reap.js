@@ -285,16 +285,20 @@ async function listStagingContainers() {
  * Every preview Deployment in the app namespace, in the same item shape as
  * listStagingContainers. The slug is not part of a Deployment's name, so it
  * stays null until classify() reads it off the session's app.
+ * Cleanup also includes Services and Ingresses whose Deployment is gone.
  *
  * Same failure contract: [] when the API cannot be read, so an unreadable
  * cluster is a no-op sweep rather than a blind one.
  */
-async function listKubernetesPreviews(config) {
+async function listKubernetesPreviews(config, { includeRouting = false } = {}) {
   try {
-    const previews = await kubernetes.listPreviews(kubernetesConfig(config));
+    const previews = includeRouting
+      ? await kubernetes.listPreviewResources(kubernetesConfig(config))
+      : await kubernetes.listPreviews(kubernetesConfig(config));
     return previews.map((preview) => ({
       name: preview.name,
       slug: null,
+      appId: preview.appId,
       sessionId: preview.sessionId,
       state: preview.state || null,
       image: preview.image || null,
@@ -302,6 +306,7 @@ async function listKubernetesPreviews(config) {
       // mean the Deployment carries none.
       fingerprint: preview.labels?.[stagingEnv.LABEL_ENV_FP] || null,
       runtimeKind: 'kubernetes',
+      ...(preview.routingResources ? { routingResources: preview.routingResources } : {}),
     }));
   } catch (err) {
     log.warn('staging-reap', 'Kubernetes preview list failed', { err: err.message });
@@ -310,9 +315,9 @@ async function listKubernetesPreviews(config) {
 }
 
 // The complete preview inventory for the runtime this platform deploys to.
-async function listPreviews(config) {
+async function listPreviews(config, options) {
   return applicationRuntime.mode(config) === 'kubernetes'
-    ? listKubernetesPreviews(config)
+    ? listKubernetesPreviews(config, options)
     : listStagingContainers();
 }
 
@@ -402,7 +407,7 @@ async function classify(pool, containers) {
   // the cluster, live or left for the harvest (selectStale).
   const { rows } = await pool.query(
     `SELECT cs.id, cs.app_id, cs.status, cs.pr_number, cs.staging_container_id, cs.staging_url,
-            cs.staging_runtime_kind, cs.staging_runtime_name, cs.staging_commit_sha,
+            cs.staging_runtime_kind, cs.staging_runtime_name, cs.staging_commit_sha, cs.staging_asleep_at,
             a.slug AS app_slug,
             EXISTS (SELECT 1 FROM check_runs cr WHERE cr.session_id = cs.id) AS check_run_open
        FROM chat_sessions cs
@@ -473,8 +478,8 @@ function staleSweepIntervalMs() {
  * inspect before such a reading is used. A Kubernetes label is read off the
  * API object itself, so there is nothing to verify.
  */
-async function inventory(config) {
-  const containers = await listPreviews(config);
+async function inventory(config, options) {
+  const containers = await listPreviews(config, options);
   if (!containers.length) return [];
   if (containers[0].runtimeKind === 'docker' && containers.every((c) => c.fingerprint === null)) {
     const probe = await docker.inspectContainer(containers[0].name);
@@ -504,7 +509,7 @@ async function leftovers(config, { after = null, limit = Infinity } = {}) {
   const out = { examined: 0, abandoned: 0, unlinked: 0, items: [], after: null };
   if (isStagingEnv()) return out;      // a preview manages no other previews
   try {
-    const items = await inventory(config);
+    const items = await inventory(config, { includeRouting: true });
     out.examined = items.length;
     if (!items.length) return out;
     const { rows } = await getPool(config).query(MACHINE_HELD_SESSIONS_SQL);
@@ -523,7 +528,9 @@ async function leftovers(config, { after = null, limit = Infinity } = {}) {
     out.after = rest.length > taken.length ? taken[taken.length - 1].name : null;
     out.items = taken.map((i) => ({
       target: i.name,
-      input: { name: i.name, sessionId: i.sessionId, slug: i.slug || null, image: i.image || null, runtimeKind: i.runtimeKind },
+      input: { name: i.name, sessionId: i.sessionId, slug: i.slug || null, image: i.image || null, runtimeKind: i.runtimeKind,
+        ...(i.appId != null ? { appId: i.appId } : {}),
+        ...(i.routingResources ? { routingResources: i.routingResources } : {}) },
     }));
   } catch (err) {
     log.warn('staging-reap', 'Leftover preview inventory failed', { err: err.message });
@@ -541,6 +548,7 @@ async function reapLeftover(item, config = {}) {
   const status = fresh.session ? fresh.session.status : null;
   // Its session opened again, and its row names it once more: it serves.
   if (status && !FINISHED_STATUSES.has(status) && namesPreview(fresh, fresh.session)) return { outcome: 'skipped_linked' };
+  if (status && !FINISHED_STATUSES.has(status) && fresh.session.check_run_open) return { outcome: 'skipped_checks' };
   // An open session somebody works on (a turn about to replace its
   // preview): its leftover waits for the next run.
   if (status && !FINISHED_STATUSES.has(status)
@@ -583,6 +591,10 @@ async function tellStaleEnv(config) {
  * Every preview built with another platform environment than this build's,
  * that its row still names (tellStaleEnv hands each to the preview
  * machine, which decides). Never throws.
+ *
+ * Not a sleeping one (#6157): rebuilding it now would wake it for nobody.
+ * It is rebuilt when something wakes it instead (staging-recovery
+ * stagingNeedsRebuild reads its labels), as this pass would have done.
  */
 async function staleEnvTargets(config) {
   const out = { examined: 0, stale: [] };
@@ -592,7 +604,8 @@ async function staleEnvTargets(config) {
     out.examined = items.length;
     const expected = stagingEnv.expectedStagingFingerprint(config);
     out.stale = items
-      .filter((i) => i.fingerprint !== expected && i.session && namesPreview(i, i.session))
+      .filter((i) => i.fingerprint !== expected && i.session && namesPreview(i, i.session)
+        && !i.session.staging_asleep_at)
       .map((i) => ({ sessionId: Number(i.sessionId), appId: i.session.app_id ?? null, name: i.name }));
   } catch (err) {
     log.warn('staging-reap', 'Stale preview inventory failed', { err: err.message });
@@ -696,6 +709,9 @@ function demoCounts() {
     stale: 4,
     abandoned: 2,
     expectedFingerprint: 'stagingdemofp0000',
+    // #6157: previews asleep, and what their database clones still hold.
+    asleep: { count: 3, bytes: 4_300_000_000, measured: 3 },
+    sleepAfterMs: 2 * 60 * 60 * 1000,
     automatic: {
       lastRunAt: '2026-01-01T11:45:00.000Z',
       examined: 9,
@@ -737,7 +753,7 @@ async function runJob(ctx, { config, pool }) {
     ...SHAPE,
     concurrency: concurrency(),
     list: async () => {
-      const containers = await listPreviews(config);
+      const containers = await listPreviews(config, { includeRouting: true });
       const classified = await classify(pool, containers);
       const busy = await require('./active-workers').busySessionsAnywhere(classified.map((item) => item.sessionId), { pool });
       const { stale, selected } = selectReapable(
@@ -755,7 +771,7 @@ async function runJob(ctx, { config, pool }) {
     // since the list was taken, and the preview may have been rebuilt with
     // the current environment meanwhile (same name, its new fingerprint).
     unit: async (item) => {
-      const now = (await listPreviews(config)).find((p) => p.name === item.name);
+      const now = (await listPreviews(config, { includeRouting: true })).find((p) => p.name === item.name);
       // Not in the runtime's list (gone, or the list could not be read):
       // nothing is torn down blind.
       if (!now) return { outcome: 'skipped_unseen' };
@@ -1109,6 +1125,118 @@ function selectPressureVictims({ rows, isBusy = null }) {
     .sort((a, b) => new Date(a.last_activity_at || 0) - new Date(b.last_activity_at || 0));
 }
 
+// ─── Sleep (#6157) ──────────────────────────────────────────────────────
+//
+// A preview nobody has used for PREVIEW_SLEEP_AFTER_MS is scaled to no
+// replicas instead of being torn down (services/preview-sleep.js has why and
+// how it wakes). Unlike the pressure pass this one takes vote-backed
+// previews too: the reason for sparing them was the dead link, and a
+// sleeping preview has none, since whatever opens it wakes it.
+
+// The sessions whose preview may sleep: the open ones, under review or not.
+const SLEEP_STATUSES = new Set(['active', 'paused', 'promoted', 'merging']);
+// How many previews one pass puts to sleep (the preview-sleep clock comes
+// round every few minutes): a fleet that goes quiet at once sleeps over a
+// few passes rather than in one burst of cluster writes.
+const DEFAULT_SLEEP_SWEEP_LIMIT = 25;
+
+/**
+ * Pure selection, beside selectPressureVictims and by its rules: which
+ * previews go to sleep, idle-longest first.
+ *
+ * A preview sleeps when it has served unused for `sleepAfterMs` (its
+ * session's last_activity_at, which a tab's heartbeat, a Preview click and
+ * a request through the app-host gate move) and nothing works on it: no
+ * worker turn, shots run or recorded operation (`isBusy`, the pressure
+ * pass's own predicate), no build or checks run of the preview machine's
+ * (its state is one in which an attempt only serves), and no checks run on
+ * the cluster (`check_run_open`). Vote-backed previews are taken too.
+ *
+ * @param rows   [{ id, status, last_activity_at, staging_asleep_at,
+ *                  machine_state, serving: { n, lost? }, check_run_open }]
+ * @param isBusy (sessionId) => boolean
+ */
+function selectSleepers({ rows, isBusy = null, now = Date.now(), sleepAfterMs }) {
+  if (!(Number(sleepAfterMs) > 0)) return [];
+  const at = (r) => new Date(r.last_activity_at || 0).getTime();
+  return (rows || [])
+    .filter((r) => {
+      if (r.staging_asleep_at) return false;
+      if (!SLEEP_STATUSES.has(String(r.status))) return false;
+      const last = r.last_activity_at ? at(r) : NaN;
+      if (!Number.isFinite(last) || now - last < Number(sleepAfterMs)) return false;
+      if (!require('./preview-sleep').SLEEP_STATES.has(String(r.machine_state))) return false;
+      if (!r.serving || r.serving.lost || !Number.isInteger(Number(r.serving.n))) return false;
+      if (r.check_run_open) return false;
+      if (isBusy && isBusy(Number(r.id))) return false;
+      return true;
+    })
+    .sort((a, b) => at(a) - at(b));
+}
+
+/**
+ * The preview-sleep clock's run (src/workflow/clock/services.ts): the
+ * Kubernetes previews unused past the window, chosen by selectSleepers, put
+ * to sleep a few at a time (preview-sleep.js sleep, which claims each again
+ * under its lock before it scales it down). NEVER THROWS.
+ */
+async function sweepSleep(config, { limit = DEFAULT_SLEEP_SWEEP_LIMIT } = {}) {
+  const summary = { examined: 0, eligible: 0, asleep: 0, skipped: 0, failed: 0, dbBytes: 0 };
+  try {
+    // A preview's chat_sessions is a stale copy, and it manages no previews.
+    if (isStagingEnv()) return summary;
+    const previewSleep = require('./preview-sleep');
+    const afterMs = previewSleep.sleepAfterMs(config);
+    if (!afterMs) return { ...summary, off: true };
+    const pool = getPool(config);
+    // Not while a process of another build still runs the workflow (a
+    // rollout, or a rollback): a build from before sleep would check a
+    // sleeping preview without waking it. The next run, once it is gone.
+    const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
+    const { rows: [others] } = await pool.query(
+      `SELECT count(*)::int AS n FROM platform_processes
+        WHERE state = 'serving' AND role <> 'web' AND heartbeat_at > now() - interval '45 seconds'
+          AND release IS DISTINCT FROM $1`, [own]);
+    if (Number(others?.n) > 0) return { ...summary, rollout: true };
+    const { rows } = await pool.query(
+      `SELECT cs.id, cs.app_id, cs.status, cs.last_activity_at, cs.staging_asleep_at, cs.staging_runtime_name,
+              w.state AS machine_state, w.data->'serving' AS serving,
+              EXISTS (SELECT 1 FROM check_runs cr WHERE cr.session_id = cs.id) AS check_run_open
+         FROM chat_sessions cs
+         JOIN wf_instances w ON w.machine = 'preview' AND w.key = 'session:' || cs.id
+                            AND w.state IN ('settled', 'deferred', 'failed')
+        WHERE cs.staging_url IS NOT NULL AND cs.staging_runtime_kind = 'kubernetes'
+          AND cs.staging_runtime_name IS NOT NULL AND cs.staging_asleep_at IS NULL
+          AND cs.status IN ('active', 'paused', 'promoted', 'merging')
+          AND cs.last_activity_at < now() - make_interval(secs => $1::double precision)
+        ORDER BY cs.last_activity_at ASC
+        LIMIT 200`, [afterMs / 1000]);
+    summary.examined = rows.length;
+    if (!rows.length) return summary;
+    const busy = await require('./active-workers').busySessionsAnywhere(rows.map((r) => r.id), { pool });
+    const chosen = selectSleepers({ rows, isBusy: (id) => busy.has(Number(id)), sleepAfterMs: afterMs });
+    summary.eligible = chosen.length;
+    for (const row of chosen.slice(0, limit)) {
+      try {
+        const out = await previewSleep.sleep(config, pool, row, { afterMs });
+        if (out.outcome === 'asleep') {
+          summary.asleep += 1;
+          summary.dbBytes += Number(out.bytes) || 0;
+        } else if (out.outcome === 'failed') summary.failed += 1;
+        else summary.skipped += 1;
+      } catch (err) {
+        summary.failed += 1;
+        log.warn('staging-reap', 'A preview could not be put to sleep', { sessionId: row.id, err: err.message });
+      }
+    }
+    if (summary.asleep || summary.failed) log.info('staging-reap', 'Preview sleep pass finished', summary);
+    return summary;
+  } catch (err) {
+    log.warn('staging-reap', 'Preview sleep pass errored', { err: err.message });
+    return summary;
+  }
+}
+
 /**
  * The automatic connection-pressure pass. NEVER THROWS.
  *
@@ -1184,6 +1312,8 @@ async function sweepConnectionPressure(config, { server = null, asked = [] } = {
         WHERE staging_url IS NOT NULL
           AND (staging_runtime_name IS NOT NULL OR staging_container_id IS NOT NULL)
           AND status NOT IN ('merged')
+          -- A sleeping preview has no pod, so it holds no connection (#6157).
+          AND staging_asleep_at IS NULL
         ORDER BY last_activity_at ASC
         LIMIT 50`
     );
@@ -1285,6 +1415,22 @@ async function reapOne(item, config = {}) {
   const linked = namesPreview(item, item.session);
   // A preview the machine holds is the machine's to retire, by identity.
   if (!linked && item.sessionId && await require('./preview-workflow').held(item.sessionId)) {
+    // A failed instance may still hold a finished or deleted session after
+    // its row lost the runtime pointer. Ask it to retire instead of leaving
+    // the leftover behind forever. An open session keeps its protection.
+    if ((!item.session || FINISHED_STATUSES.has(item.session.status))
+        && (item.session?.app_id != null || item.appId != null)) {
+      try {
+        const result = await require('./staging').teardownStaging(
+          item.session || { id: item.sessionId, app_id: item.appId },
+          { id: item.appId, slug: item.session?.app_slug || item.slug },
+          { terminal: true, reason: 'leftover' }
+        );
+        if (result?.leaked) return { outcome: FAILED, error: 'preview workflow refused leftover retirement' };
+      } catch (err) {
+        return { outcome: FAILED, error: err.message };
+      }
+    }
     return { outcome: 'skipped_workflow' };
   }
 
@@ -1314,9 +1460,16 @@ async function reapOne(item, config = {}) {
   // By-name path. The container is the only thing we are sure about.
   if (kube) {
     try {
-      await applicationRuntime.remove(kubernetesConfig(config), {
-        runtimeKind: 'kubernetes', runtimeName: item.name,
-      });
+      if (item.routingResources) {
+        for (const resource of item.routingResources) {
+          if (resource.metadata?.name !== item.name) throw new Error('Preview routing resource names another preview');
+          await kubernetes.deletePreviewRoutingResource(kubernetesConfig(config), resource.kind, resource.metadata);
+        }
+      } else {
+        await applicationRuntime.remove(kubernetesConfig(config), {
+          runtimeKind: 'kubernetes', runtimeName: item.name,
+        });
+      }
     } catch (err) {
       log.warn('staging-reap', 'Kubernetes preview removal failed', { name: item.name, err: err.message });
       return { outcome: FAILED, error: err.message };
@@ -1366,10 +1519,7 @@ async function reapOne(item, config = {}) {
 // "already gone", or a preview would be reported reaped while still running.
 async function kubernetesPreviewExists(config, name) {
   try {
-    const found = await applicationRuntime.inspect(kubernetesConfig(config), {
-      runtimeKind: 'kubernetes', runtimeName: name,
-    });
-    return found?.status !== 'not_found';
+    return (await kubernetes.previewResourcesPresent(kubernetesConfig(config), name)).length > 0;
   } catch (_) {
     return true;
   }
@@ -1408,6 +1558,9 @@ module.exports = {
   previewServerDrainStatus,
   selectPressureVictims,
   pressureSweepIntervalMs,
+  // Sleep (#6157).
+  selectSleepers,
+  sweepSleep,
   STAGING_DB_NAME_RE,
   reapOne,
   CONTAINER_NAME_RE,

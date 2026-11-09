@@ -6,8 +6,8 @@
 //
 //   - The server reserves a block of connections (reserved_connections, set
 //     with the server in infra) that ordinary roles cannot take. The
-//     platform's user is the chart's administrative user, a superuser, which
-//     PostgreSQL never holds to the reserve: in effect the reserve caps the
+//     split-role logins have pg_use_reserved_connections (the legacy login
+//     is a superuser). The reserve caps the
 //     apps' share, and the chart holds the platform's own pools inside it
 //     (postgresql.platformConnections).
 //   - Each production app's database is capped (db-manager

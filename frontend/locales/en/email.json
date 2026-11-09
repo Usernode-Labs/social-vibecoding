@@ -1,0 +1,38 @@
+{
+  "buildReady.unnamedProject": {
+    "text": "Your project",
+    "description": "Email saying a build is ready: stands where the project's name goes when it is not known, as a small label over the headline and before a colon in the subject."
+  },
+  "buildReady.subject.ready": {
+    "text": "{{app}}: Ready to try",
+    "description": "Email subject: a build somebody asked for is ready. {{app}} is the project's name."
+  },
+  "buildReady.subject.notWorking": {
+    "text": "{{app}}: Built, but something isn't working yet",
+    "description": "Email subject: a build somebody asked for was made, but part of it failed. {{app}} is the project's name."
+  },
+  "buildReady.lead.ready": {
+    "text": "Ready to try. Try it, and approve it if you're happy.",
+    "description": "Email saying a build is ready: the headline."
+  },
+  "buildReady.lead.notWorking": {
+    "text": "Built, but something isn't working yet. Try it to see.",
+    "description": "Email saying a build was made but part of it failed: the headline."
+  },
+  "inviteActivity.firstMessage": {
+    "text": "@{{actor}} said hi in {{app}}.",
+    "description": "Email to somebody whose invite link brought a person: that person wrote their first message. {{actor}} is a username, after its @. {{app}} is the project's name."
+  },
+  "inviteActivity.joined": {
+    "text": "@{{actor}} joined {{app}} through your invite.",
+    "description": "Email to somebody whose invite link brought a person. {{actor}} is a username, after its @. {{app}} is the project's name."
+  },
+  "inviteActivity.joinedSomeone": {
+    "text": "Someone joined {{app}} through your invite.",
+    "description": "Email to somebody whose invite link brought a person whose name is not known. {{app}} is the project's name."
+  },
+  "inviteActivity.joinedUnnamed": {
+    "text": "Someone joined your project through your invite.",
+    "description": "Email to somebody whose invite link brought a person, when neither the person nor the project is known."
+  }
+}

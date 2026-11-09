@@ -77,18 +77,5 @@ function body(src, start, end) {
   return src.slice(at, src.indexOf(end, at));
 }
 
-test('the saved-vote effect records the answer and moves nothing, tells nobody', () => {
-  const feed = body(WORKSHOP, 'function NeedsFeed(', '\nfunction GroupStrip(');
-  const block = body(feed, '// #5463: a saved vote that reaches this feed from the store', 'The vote sheet\'s send')
-    // Comments name what the effect deliberately does not touch; the code
-    // below them is what the assertion reads.
-    .replace(/\/\/.*$/mg, '');
-  assert.match(block, /useLayoutEffect\(\(\) => \{/, 'the effect is wired');
-  assert.match(block, /savedVoteFor\(r, savedAll\)/, 'the match is the pure helper');
-  assert.ok(!block.includes('advanceRef'), 'the feed does not move on a vote it did not cast');
-  assert.ok(!block.includes('onAnswered'), 'the controller already heard it from the store');
-  // The row holds the slot it had, so the confirmation does not shift the
-  // list under the viewer (the same rule a row answered here follows).
-  assert.match(feed, /if \(!savedVoteFor\(prior, savedAll\)\) continue;/,
-    'a row voted elsewhere is pinned at its old index');
-});
+
+// ── #6101: a change that merged under the card ─────────────────────────

@@ -44,6 +44,7 @@ import { cn } from '@/lib/utils';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { Message, RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
@@ -77,6 +78,7 @@ import {
 } from './sign-in-sheet';
 import { Story } from './story';
 import { cardCover, morph, projectHero } from '../guest/card-morph';
+import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../guest/device-pins';
 import { GuestDiscover } from '../guest/guest-discover';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
 import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, projectHash } from '../guest/guest-data';
@@ -306,7 +308,7 @@ function AccountRequiredBadge() {
   const t = useMessages('auth');
   return (
     <span
-      className="absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300"
+      className="absolute -top-1.5 -end-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300"
       title={t('auth:landing.tile.accountRequired')}
     >
       <LockIcon className="w-3.5 h-3.5" aria-hidden="true" />
@@ -446,7 +448,7 @@ export function LandingTile({
 const GUEST_BAR = 'md:px-[max(1rem,calc((100%_-_72rem)/2_+_1rem))] shadow-[inset_0_-1px_0_var(--app-sheet-line)] [&[data-guest-top]>div:first-child]:[display:none]';
 // The same right edge for Sign in and Sign up where they sit over the bar
 // (a project's page, whose title stays centred between them and the back).
-const GUEST_BAR_RIGHT = 'md:right-[max(1rem,calc((100%_-_72rem)/2_+_1rem))]';
+const GUEST_BAR_RIGHT = 'md:end-[max(1rem,calc((100%_-_72rem)/2_+_1rem))]';
 
 const LANDING_BACK_CLASS = 'inline-flex items-center justify-center w-7 h-7 rounded-full'
   + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
@@ -545,8 +547,8 @@ const SECONDARY_PILL = 'flex h-11 w-full items-center justify-center rounded-ful
  *
  * Complete literals throughout — the extractor is a regex over source text.
  */
-const CHIP = 'mr-2 inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap border'
-  + ' border-zinc-950 bg-white pl-0 pr-3 shadow-[2px_2px_4px_rgba(161,152,152,0.25)]'
+const CHIP = 'me-2 inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap border'
+  + ' border-zinc-950 bg-white ps-0 pe-3 shadow-[2px_2px_4px_rgba(161,152,152,0.25)]'
   + ' dark:border-zinc-600 dark:bg-zinc-900 dark:shadow-[2px_2px_4px_rgba(0,0,0,0.55)]';
 
 /**
@@ -957,6 +959,13 @@ export function LandingScreen() {
   // show, i.e. after hydration.
   const [session, setSession] = useState(false);
   const [openApp, setOpenApp] = useState<{ slug: string; name: string } | null>(null);
+  // #6433: what this device has pinned while signed out (features/guest/
+  // device-pins.ts), for the bar's Pin while an app is open. A visitor has no
+  // app menu and no About pane, so the bar is where an app is pinned; Home's
+  // Pinned apps reads the same store. Loaded in an effect, so the first
+  // render is the prerender's.
+  const devicePins = useStoreState(devicePinsStore);
+  useEffect(() => { loadDevicePins(); }, []);
   // The public directory (loadLandingApps), for the guest Discover and the
   // guest project pages: null until it has been read, and `appsFailed` when
   // it could not be.
@@ -1716,7 +1725,7 @@ export function LandingScreen() {
         */}
         <div
           id="landing-header-title"
-          className="flex-1 min-w-0 px-10 text-lg font-bold pointer-events-none truncate text-center [[data-guest-top]_&]:px-0 [[data-guest-top]_&]:text-left"
+          className="flex-1 min-w-0 px-10 text-lg font-bold pointer-events-none truncate text-center [[data-guest-top]_&]:px-0 [[data-guest-top]_&]:text-start"
         >
           {openApp || guestProject ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
         </div>
@@ -1753,8 +1762,25 @@ export function LandingScreen() {
         */}
         <div
           data-landing-actions=""
-          className={hiddenLast(session || !guestPages, guestTop ? 'flex shrink-0 items-center gap-1.5' : `absolute bottom-4 right-4 flex items-center gap-1.5 ${GUEST_BAR_RIGHT}`)}
+          className={hiddenLast(session || !guestPages, guestTop ? 'flex shrink-0 items-center gap-1.5' : `absolute bottom-4 end-4 flex items-center gap-1.5 ${GUEST_BAR_RIGHT}`)}
         >
+          {/* #6433: an app open for a visitor is pinned HERE, to this device,
+              because a visitor has no app menu or About pane. The same quiet
+              button as Sign in beside it, drawn at the row's 28px with a 44px
+              touch box, so the bar keeps its height. Not in the first render
+              (`openApp` starts null), so hydration is unaffected. */}
+          {openApp && !session ? (
+            <button
+              type="button"
+              data-landing-pin-app={openApp.slug}
+              aria-pressed={devicePins.apps.includes(openApp.slug)}
+              aria-label={t('auth:landing.pinAppNamed', { app: openApp.name })}
+              className="un-touch-target -my-2 min-h-11 rounded-full px-2 text-[15px] font-semibold text-zinc-950 hover:text-zinc-600 dark:text-white dark:hover:text-zinc-300"
+              onClick={() => { toggleDevicePin('apps', openApp.slug); }}
+            >
+              {devicePins.apps.includes(openApp.slug) ? t('auth:landing.pinnedApp') : t('auth:landing.pinApp')}
+            </button>
+          ) : null}
           <button
             type="button"
             data-landing-sign-in=""
@@ -1769,7 +1795,7 @@ export function LandingScreen() {
             size="none"
             ink="solid"
             data-landing-sign-up=""
-            className={guestTop ? 'un-touch-target -my-2 min-h-11 px-3.5 text-[15px] font-semibold' : 'un-touch-target hidden md:inline-flex -my-2 min-h-11 px-3.5 text-[15px] font-semibold'}
+            className={guestTop ? 'un-touch-target items-center justify-center -my-2 min-h-11 px-3.5 text-[15px] font-semibold' : 'un-touch-target items-center justify-center hidden md:inline-flex -my-2 min-h-11 px-3.5 text-[15px] font-semibold'}
             onClick={() => { noteSignUpFrom('header_sign_up'); setSheet('start'); }}
           >
             {t('auth:guest.header.signUp')}
@@ -1938,20 +1964,20 @@ export function LandingScreen() {
 
               The chips are rendered TWICE and the track walks exactly half
               its width, which is what makes the loop seamless. That halving
-              is only exact because each chip carries its 8px as `mr-2`
+              is only exact because each chip carries its 8px as `me-2`
               rather than the row carrying `gap-2`: eight chips and seven
               gaps do not halve cleanly, and the seam stutters once a cycle.
 
               This is a plain div, not `ChipRail`: that primitive exists to
               make a row finger-scrollable and hide its scrollbar, and a
-              track that moves on its own is not a control. `pl-4` sets the
+              track that moves on its own is not a control. `ps-4` sets the
               first chip on the gutter; nothing pads the right, because
               running off that edge is the whole idea.
 
               Board 1 draws the row as `padding: 20px 0 4px`: `mt-3` plus
               `pt-2` is the 20 above, `pb-1` the 4 below.
           */}
-          <div className={hiddenLast(pitchHidden, 'mt-3 overflow-hidden pt-2 pb-1 pl-4')}>
+          <div className={hiddenLast(pitchHidden, 'mt-3 overflow-hidden pt-2 pb-1 ps-4')}>
             <div className="landing-rail-track">
               {[0, 1].map((copy) => CHIPS.map(({ line, dot }) => (
                 <span
@@ -2236,6 +2262,8 @@ export function LandingScreen() {
               apps={apps}
               failed={appsFailed && !apps}
               signedIn={waitingGuest}
+              onIntent={askFor}
+              onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
               hero={waitingGuest ? (
                 <WaitlistCard email={sessionEmail()} />

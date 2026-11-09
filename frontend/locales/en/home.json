@@ -1,10 +1,10 @@
 {
   "search.placeholder": {
-    "text": "Search your apps…",
-    "description": "Placeholder inside the search field at the top of the Home screen, which filters the viewer's own app tiles."
+    "text": "Search apps and communities… (Ctrl+K)",
+    "description": "Placeholder inside the search field at the top of the Home screen, which filters the viewer's pinned apps and communities and the communities they can join. Ctrl+K is the keyboard shortcut that puts the cursor in this field (Command+K on a Mac, / also works); keep the key name as written."
   },
   "search.label": {
-    "text": "Search your apps",
+    "text": "Search apps and communities",
     "description": "Accessible name of the search field at the top of the Home screen."
   },
   "search.clear": {
@@ -20,15 +20,15 @@
     "description": "Small heading over the app tiles on Home while a search is active. {{count}} is how many of the viewer's apps match."
   },
   "grid.heading": {
-    "text": "My apps",
-    "description": "Heading over the grid of app tiles on the Home screen: the apps this person keeps a tile for. The same name is used in \"Add to My apps\"."
+    "text": "Pinned apps",
+    "description": "Heading over the grid of app tiles on the Home screen: the apps this person keeps a tile for. The same name is used in \"Pin to Home\"."
   },
   "grid.loading": {
     "text": "Loading your apps",
     "description": "Read by screen readers while the grid of app tiles on Home is still loading."
   },
   "grid.noMatches": {
-    "text": "No apps match “{{query}}”. Clear the search and try <0>Discover Communities</0> below.",
+    "text": "No apps match “{{query}}”. Clear the search and try <0>Discover communities</0> below.",
     "description": "Shown in place of Home's app tiles when the search finds none of the viewer's apps. {{query}} is what the person typed. The numbered tag highlights the name of the section further down the Home screen; use the same words as that section's heading."
   },
   "grid.showAll_one": {
@@ -108,32 +108,16 @@
     "description": "Tooltip and accessible name of the + tile at the end of Home's grid when the viewer cannot create another app right now — and of the small New project button beside \"Show all N apps\" that stands in for it there, in the same state. {{hint}} is one whole sentence saying what pressing it does (\"View your app allowance or request more slots.\")."
   },
   "myApps.added": {
-    "text": "Added to My apps",
-    "description": "Brief notice after an app's tile was added to the viewer's Home. \"My apps\" is the name of that section."
+    "text": "Pinned to Home",
+    "description": "Brief notice after an app's tile was added to the viewer's Home. \"Pinned apps\" is the name of that section."
   },
   "myApps.removed": {
-    "text": "Removed from My apps",
-    "description": "Brief notice after an app's tile was taken off the viewer's Home. \"My apps\" is the name of that section."
+    "text": "Unpinned from Home",
+    "description": "Brief notice after an app's tile was taken off the viewer's Home. \"Pinned apps\" is the name of that section."
   },
   "myApps.updateFailed": {
     "text": "Update failed: {{reason}}",
-    "description": "Brief notice when adding an app to My apps, or removing it, did not go through. {{reason}} is the server's own error message, or a code such as \"HTTP 500\"."
-  },
-  "unpin.ask.private": {
-    "text": "Remove {{community}} from your Home screen? Leaving it too ends your access until someone invites you back.",
-    "description": "Title of the sheet asked before an app's tile is taken off Home, when the viewer is a member of the app's private community. {{community}} is the app's name. Its choices are Remove from Home, Remove and leave, and Cancel."
-  },
-  "unpin.ask.public": {
-    "text": "Remove {{community}} from your Home screen? You can stay a member, or leave it too and stop proposing and voting on its changes.",
-    "description": "Title of the sheet asked before an app's tile is taken off Home, when the viewer is a member of the app's public community. {{community}} is the app's name. \"Changes\" is a noun."
-  },
-  "unpin.ask.remove": {
-    "text": "Remove from Home",
-    "description": "Choice in the sheet asked before an app's tile is taken off Home: take the tile off Home and stay a member of the app's community."
-  },
-  "unpin.ask.leave": {
-    "text": "Remove and leave {{community}}",
-    "description": "Destructive choice in the sheet asked before an app's tile is taken off Home: take the tile off Home and stop being a member of the app's community. {{community}} is the app's name."
+    "description": "Brief notice when adding an app to Pinned apps, or removing it, did not go through. {{reason}} is the server's own error message, or a code such as \"HTTP 500\"."
   },
   "leave.confirm.title": {
     "text": "Leave {{community}}?",
@@ -172,20 +156,20 @@
     "description": "Line in the header of an app tile's menu: when the app's latest version went live. {{when}} is a short relative time such as \"3d ago\" or \"just now\"."
   },
   "menu.details.label": {
-    "text": "App details",
-    "description": "Item in an app tile's menu on Home: opens the app's page in Discover."
+    "text": "Go to community",
+    "description": "Item in an app tile's menu on Home: opens the hub of the app's community, its project page."
   },
   "menu.details.tip": {
-    "text": "Version, status and everything you can do with this app",
-    "description": "Tooltip of the \"App details\" item in an app tile's menu."
+    "text": "Who it is for, what is changing, and how to join",
+    "description": "Tooltip of the \"Go to community\" item in an app tile's menu: what the community's hub shows."
   },
   "menu.editMyApps.label": {
-    "text": "Edit My apps",
-    "description": "Last item in the menu of an app tile in the My apps grid on Home: puts the grid into edit mode, where tiles can be moved and removed. \"Edit\" is a verb; \"My apps\" is the name of the section."
+    "text": "Edit Pinned apps",
+    "description": "Last item in the menu of an app tile in the Pinned apps grid on Home: puts the grid into edit mode, where tiles can be moved and removed. \"Edit\" is a verb; \"Pinned apps\" is the name of the section."
   },
   "menu.editMyApps.tip": {
-    "text": "Move and remove the apps in My apps",
-    "description": "Tooltip of the \"Edit My apps\" item in an app tile's menu on Home. \"Move\" and \"remove\" are verbs."
+    "text": "Move and remove the apps in Pinned apps",
+    "description": "Tooltip of the \"Edit Pinned apps\" item in an app tile's menu on Home. \"Move\" and \"remove\" are verbs."
   },
   "menu.github.label": {
     "text": "View on GitHub",
@@ -204,20 +188,20 @@
     "description": "Tooltip of the \"View code\" item in an app's menu. \"Open\" is a verb."
   },
   "menu.myApps.add": {
-    "text": "Add to My apps",
-    "description": "Item in an app's menu: puts a tile for the app on the viewer's Home. \"My apps\" is the name of that section."
+    "text": "Pin to Home",
+    "description": "Item in an app's menu: puts a tile for the app on the viewer's Home. \"Pinned apps\" is the name of that section."
   },
   "menu.myApps.remove": {
-    "text": "Remove from My apps",
-    "description": "Item in an app's menu: takes the app's tile off the viewer's Home. \"My apps\" is the name of that section."
+    "text": "Unpin from Home",
+    "description": "Item in an app's menu: takes the app's tile off the viewer's Home. \"Pinned apps\" is the name of that section."
   },
   "menu.myApps.showAgainTip": {
-    "text": "Show this app in My apps again. You keep your builder access either way.",
-    "description": "Tooltip of \"Add to My apps\" in an app's menu, for someone who builds the app and had hidden its tile."
+    "text": "Show this app in Pinned apps again. You keep your builder access either way.",
+    "description": "Tooltip of \"Pin to Home\" in an app's menu, for someone who builds the app and had hidden its tile."
   },
   "menu.myApps.hideTip": {
-    "text": "Hide this app from My apps. It stays live and you keep your builder access.",
-    "description": "Tooltip of \"Remove from My apps\" in an app's menu, for someone who builds the app. \"Live\" means still running for its users."
+    "text": "Hide this app from Pinned apps. It stays live and you keep your builder access.",
+    "description": "Tooltip of \"Unpin from Home\" in an app's menu, for someone who builds the app. \"Live\" means still running for its users."
   },
   "menu.notifications.label": {
     "text": "Notifications",
@@ -432,12 +416,12 @@
     "description": "Tooltip and accessible name of the \"Done\" button on the widget strip on Home: hides the strip."
   },
   "widget.hint.withTiles": {
-    "text": "Drag tiles to reorder. Drag cards from My apps here to add them.",
-    "description": "Hint under the app tiles in the widget strip on Home. \"My apps\" is the name of the grid below it."
+    "text": "Drag tiles to reorder. Drag cards from Pinned apps here to add them.",
+    "description": "Hint under the app tiles in the widget strip on Home. \"Pinned apps\" is the name of the grid below it."
   },
   "widget.hint.empty": {
-    "text": "Drag a card from My apps here (or use its menu) to add it to the Homeroom widget on your home screen.",
-    "description": "Hint in the widget strip on Home while it holds no apps. \"My apps\" is the name of the grid below; Homeroom is the product's name."
+    "text": "Drag a card from Pinned apps here (or use its menu) to add it to the Homeroom widget on your home screen.",
+    "description": "Hint in the widget strip on Home while it holds no apps. \"Pinned apps\" is the name of the grid below; Homeroom is the product's name."
   },
   "widget.tile.remove": {
     "text": "Remove from widget",
@@ -584,7 +568,7 @@
     "description": "Text under \"Verify your account\" on Home when phone verification is not offered; instructions to link other accounts follow it."
   },
   "discover.heading": {
-    "text": "Discover Communities",
+    "text": "Discover communities",
     "description": "Heading of the section of Home that shows a rail of app cards to try."
   },
   "discover.fallbackTitle": {
@@ -593,75 +577,75 @@
   },
   "discover.browseAll.text": {
     "text": "See all",
-    "description": "Link at the right end of the \"Discover Communities\" heading on Home: opens the Discover screen, which lists every community the person can join. The Challenges heading's link says the same."
+    "description": "Link at the right end of the \"Discover communities\" heading on Home: opens the Discover screen, which lists every community the person can join. The Challenges heading's link says the same."
   },
   "discover.browseAll.label": {
     "text": "See all communities",
-    "description": "Accessible name of the \"See all\" link beside the \"Discover Communities\" heading on Home: opens the Discover screen, which lists every community the person can join."
+    "description": "Accessible name of the \"See all\" link beside the \"Discover communities\" heading on Home: opens the Discover screen, which lists every community the person can join."
   },
   "discover.browseAll.tip": {
     "text": "See every community you can join in Discover",
-    "description": "Tooltip of the \"See all\" link beside the \"Discover Communities\" heading on Home. Discover is the name of the screen it opens."
+    "description": "Tooltip of the \"See all\" link beside the \"Discover communities\" heading on Home. Discover is the name of the screen it opens."
   },
   "discover.empty.title": {
     "text": "No communities to suggest right now",
-    "description": "First line of the card shown in Home's Discover Communities section when there is no community to suggest: none the person can join that they have not. The whole card links to the Discover screen."
+    "description": "First line of the card shown in Home's Discover communities section when there is no community to suggest: none the person can join that they have not. The whole card links to the Discover screen."
   },
   "discover.empty.detail": {
     "text": "Discover lists every community you can join.",
-    "description": "Second line of the card shown in Home's Discover Communities section when there is no community to suggest. Discover is the name of the screen the card opens."
+    "description": "Second line of the card shown in Home's Discover communities section when there is no community to suggest. Discover is the name of the screen the card opens."
   },
   "discover.card.addTip": {
-    "text": "Add to My apps",
-    "description": "Tooltip of the labelled pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is already a member but the app is not in My apps: puts a tile for the app in My apps."
+    "text": "Pin to Home",
+    "description": "Tooltip of the labelled pill in the corner of an app's card in Home's Discover communities rail, shown when the viewer is already a member but the app is not in Pinned apps: puts a tile for the app in Pinned apps."
   },
   "discover.card.addedTip": {
-    "text": "Added. Tap to remove from My apps",
-    "description": "Tooltip of the round check button on an app's card in Home's Discover Communities rail when the app is already in My apps."
+    "text": "Added. Tap to remove from Pinned apps",
+    "description": "Tooltip of the round check button on an app's card in Home's Discover communities rail when the app is already in Pinned apps."
   },
   "discover.card.removeNamed": {
-    "text": "Remove {{app}} from My apps",
-    "description": "Accessible name of the round check button on an app's card in Home's Discover Communities rail when the app is already in My apps. {{app}} is the app's name."
+    "text": "Remove {{app}} from Pinned apps",
+    "description": "Accessible name of the round check button on an app's card in Home's Discover communities rail when the app is already in Pinned apps. {{app}} is the app's name."
   },
   "discover.card.join": {
     "text": "Join",
-    "description": "Label of the pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer has not joined the app's community. Tapping it joins that community and puts a tile for the app in My apps."
+    "description": "Label of the pill in the corner of an app's card in Home's Discover communities rail, shown when the viewer has not joined the app's community. Tapping it joins that community and puts a tile for the app in Pinned apps."
   },
   "discover.card.joined": {
     "text": "Joined",
-    "description": "Label of the pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is a member and the app is in My apps. Tapping it asks whether to leave the community."
+    "description": "Label of the pill in the corner of an app's card in Home's Discover communities rail, shown when the viewer is a member and the app is in Pinned apps. Tapping it asks whether to leave the community."
   },
   "discover.card.add": {
     "text": "Add",
-    "description": "Label of the pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is already a member but the app is not in My apps. Tapping it puts a tile for the app in My apps."
+    "description": "Label of the pill in the corner of an app's card in Home's Discover communities rail, shown when the viewer is already a member but the app is not in Pinned apps. Tapping it puts a tile for the app in Pinned apps."
   },
   "discover.card.joinNamed": {
     "text": "Join {{app}}",
-    "description": "Accessible name of the Join pill on an app's card in Home's Discover Communities rail. {{app}} is the app's name."
+    "description": "Accessible name of the Join pill on an app's card in Home's Discover communities rail. {{app}} is the app's name."
   },
   "discover.card.joinedNamed": {
     "text": "Joined {{app}}",
-    "description": "Accessible name of the pill on an app's card in Home's Discover Communities rail when the viewer is a member and the app is in My apps; tapping it asks whether to leave. {{app}} is the app's name."
+    "description": "Accessible name of the pill on an app's card in Home's Discover communities rail when the viewer is a member and the app is in Pinned apps; tapping it asks whether to leave. {{app}} is the app's name."
   },
   "discover.card.joinTip": {
-    "text": "Join this community. It also goes on My apps",
-    "description": "Tooltip of the Join pill in the corner of an app's card in Home's Discover Communities rail. \"My apps\" is the name of the grid on Home."
+    "text": "Join this community. It also goes on Pinned apps",
+    "description": "Tooltip of the Join pill in the corner of an app's card in Home's Discover communities rail. \"Pinned apps\" is the name of the grid on Home."
   },
   "discover.card.joinedTip": {
     "text": "You're a member. Tap to leave",
-    "description": "Tooltip of the Joined pill in the corner of an app's card in Home's Discover Communities rail; tapping it opens the leave confirmation."
+    "description": "Tooltip of the Joined pill in the corner of an app's card in Home's Discover communities rail; tapping it opens the leave confirmation."
   },
   "discover.card.addNamed": {
-    "text": "Add {{app}} to My apps",
-    "description": "Accessible name of the Add pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is already a member. {{app}} is the app's name; \"My apps\" is the name of the grid on Home."
+    "text": "Add {{app}} to Pinned apps",
+    "description": "Accessible name of the Add pill in the corner of an app's card in Home's Discover communities rail, shown when the viewer is already a member. {{app}} is the app's name; \"Pinned apps\" is the name of the grid on Home."
   },
   "discover.card.contributors_one": {
     "text": "{{count}} contributor",
-    "description": "Small line at the bottom of an app's card in Home's Discover Communities rail. {{count}} is how many people have contributed to the app."
+    "description": "Small line at the bottom of an app's card in Home's Discover communities rail. {{count}} is how many people have contributed to the app."
   },
   "discover.card.contributors_other": {
     "text": "{{count}} contributors",
-    "description": "Small line at the bottom of an app's card in Home's Discover Communities rail. {{count}} is how many people have contributed to the app."
+    "description": "Small line at the bottom of an app's card in Home's Discover communities rail. {{count}} is how many people have contributed to the app."
   },
   "challenges.heading": {
     "text": "Challenges",
@@ -805,50 +789,190 @@
   },
   "edit.start": {
     "text": "Edit",
-    "description": "Button beside the My apps heading on Home: puts the grid into edit mode, where tiles can be moved and removed. \"Edit\" is a verb."
+    "description": "Button beside the Pinned apps heading on Home: puts the grid into edit mode, where tiles can be moved and removed. \"Edit\" is a verb."
   },
   "edit.startLabel": {
-    "text": "Edit My apps",
-    "description": "Accessible name of the Edit button beside the My apps heading on Home. \"Edit\" is a verb; \"My apps\" is the name of the section."
+    "text": "Edit Pinned apps",
+    "description": "Accessible name of the Edit button beside the Pinned apps heading on Home. \"Edit\" is a verb; \"Pinned apps\" is the name of the section."
   },
   "edit.done": {
     "text": "Done",
-    "description": "Button beside the My apps heading on Home while the grid is in edit mode: ends edit mode."
+    "description": "Button beside the Pinned apps heading on Home while the grid is in edit mode: ends edit mode."
   },
   "edit.removeNamed": {
-    "text": "Remove {{app}} from My apps",
-    "description": "Accessible name of the small round remove button on an app tile while the My apps grid on Home is in edit mode. {{app}} is the app's name."
+    "text": "Remove {{app}} from Pinned apps",
+    "description": "Accessible name of the small round remove button on an app tile while the Pinned apps grid on Home is in edit mode. {{app}} is the app's name."
   },
   "edit.addTile": {
     "text": "Add other apps",
-    "description": "Button beside the My apps heading on Home while the grid is in edit mode, next to Done: it opens the sheet of apps not yet in My apps, to add some."
+    "description": "Button beside the Pinned apps heading on Home while the grid is in edit mode, next to Done: it opens the sheet of apps not yet in Pinned apps, to add some."
   },
   "addSheet.title": {
-    "text": "Add to My apps",
-    "description": "Title of the sheet that lists apps to put on My apps, opened from the Add apps button beside the My apps heading in edit mode. The same words as the tile menu's add action."
+    "text": "Pin to Home",
+    "description": "Title of the sheet that lists apps to put on Pinned apps, opened from the Add apps button beside the Pinned apps heading in edit mode. The same words as the tile menu's add action."
   },
   "addSheet.yours": {
     "text": "Your other apps",
-    "description": "Small-caps section label in the Add to My apps sheet, over the apps this person belongs to that have no tile on My apps."
+    "description": "Small-caps section label in the Pin to Home sheet, over the apps this person belongs to that have no tile on Pinned apps."
   },
   "addSheet.popular": {
     "text": "Popular",
-    "description": "Small-caps section label in the Add to My apps sheet, over the popular public communities the person has not joined."
+    "description": "Small-caps section label in the Pin to Home sheet, over the popular public communities the person has not joined."
   },
   "addSheet.add": {
     "text": "Add",
-    "description": "Button on a row of the Add to My apps sheet: puts that app at the end of My apps."
+    "description": "Button on a row of the Pin to Home sheet: puts that app at the end of Pinned apps."
   },
   "addSheet.added": {
     "text": "Added",
-    "description": "What a row of the Add to My apps sheet reads once its app is on My apps."
+    "description": "What a row of the Pin to Home sheet reads once its app is on Pinned apps."
   },
   "addSheet.empty": {
     "text": "Nothing to add right now",
-    "description": "Shown in the Add to My apps sheet when there is no app to offer: everything the person can reach is already on My apps."
+    "description": "Shown in the Pin to Home sheet when there is no app to offer: everything the person can reach is already on Pinned apps."
   },
   "addSheet.browse": {
     "text": "Browse all apps",
-    "description": "Link under the empty line in the Add to My apps sheet, to the full app directory. The same words as the link beside the Discover heading."
+    "description": "Link under the empty line in the Pin to Home sheet, to the full app directory. The same words as the link beside the Discover heading."
+  },
+  "communities.heading": {
+    "text": "Pinned communities",
+    "description": "Heading over the grid of community tiles on Home, under Pinned apps. A community's tile opens its hub."
+  },
+  "communities.editLabel": {
+    "text": "Edit Pinned communities",
+    "description": "Accessible name of the Edit button beside the Pinned communities heading on Home. \"Edit\" is a verb."
+  },
+  "communities.all": {
+    "text": "All communities",
+    "description": "Tile at the end of Pinned communities on Home. Pressing it also shows the communities the viewer is in but has not pinned; pressing it again hides them."
+  },
+  "communities.new": {
+    "text": "New community",
+    "description": "Tile at the end of Pinned communities on Home that starts making a new project and its community."
+  },
+  "communities.newTip": {
+    "text": "Start a community and its app",
+    "description": "Tooltip of the New community tile at the end of Pinned communities on Home."
+  },
+  "communities.newLocked": {
+    "text": "New community. View app quota. {{hint}}",
+    "description": "Tooltip and accessible name of the New community tile on Home when the viewer cannot make another project right now. {{hint}} is one whole sentence saying what pressing it does ('View your app allowance or request more slots.')."
+  },
+  "communities.pinNamed": {
+    "text": "Pin {{community}} to Home",
+    "description": "Accessible name of the + on a community's tile shown under All communities on Home. {{community}} is the project's name."
+  },
+  "communities.unpinNamed": {
+    "text": "Unpin {{community}} from Home",
+    "description": "Accessible name of the remove badge on a community's tile while Pinned communities is being edited. {{community}} is the project's name."
+  },
+  "communities.pinned": {
+    "text": "{{community}} pinned to Home",
+    "description": "Brief notice after the viewer pinned a community to Home. {{community}} is the project's name."
+  },
+  "communities.unpinned": {
+    "text": "Unpinned {{community}}. You're still a member if you were.",
+    "description": "Brief notice after the viewer took a community off Home; it does not leave the community. {{community}} is the project's name."
+  },
+  "communities.failed": {
+    "text": "Couldn't update your Home: {{reason}}",
+    "description": "Brief notice when pinning or unpinning a community on Home failed. {{reason}} is the server's explanation."
+  },
+  "communities.needs": {
+    "text": "Needs you",
+    "description": "Name under the tile in Home's Pinned communities that opens Needs you, the page of every vote and decision waiting on the viewer across their projects. Shown only while something waits."
+  },
+  "communities.needsNamed_one": {
+    "text": "Needs you: {{count}} vote waiting on you",
+    "description": "Accessible name of the Needs you tile on Home, with how many votes wait on the viewer across their projects. Singular."
+  },
+  "communities.needsNamed_other": {
+    "text": "Needs you: {{count}} votes waiting on you",
+    "description": "Accessible name of the Needs you tile on Home, with how many votes wait on the viewer across their projects. Plural."
+  },
+  "join.heading": {
+    "text": "Communities to join",
+    "description": "Heading over the cards of public communities at the bottom of Home that the viewer has not joined."
+  },
+  "join.headingSignedOut": {
+    "text": "Communities",
+    "description": "Heading over the cards of public communities at the bottom of Home for a visitor who is not signed in."
+  },
+  "join.featured": {
+    "text": "Featured",
+    "description": "Small heading over the communities the platform features, the first group of cards in Communities to join on Home (signed in or out)."
+  },
+  "join.more": {
+    "text": "More communities",
+    "description": "Small heading over the rest of the community cards, after the Featured ones, in Communities to join on Home (signed in or out). Shown only when Featured is shown above it."
+  },
+  "join.votes_one": {
+    "text": "{{count}} up for a vote",
+    "description": "Line on a community's card in Communities to join: how many changes are waiting for its members' votes. Singular."
+  },
+  "join.votes_other": {
+    "text": "{{count}} up for a vote",
+    "description": "Line on a community's card in Communities to join: how many changes are waiting for its members' votes. Plural."
+  },
+  "join.members_one": {
+    "text": "{{count}} member",
+    "description": "Line on a community's card in Communities to join when nothing is up for a vote: how many people are in it. Singular."
+  },
+  "join.members_other": {
+    "text": "{{count}} members",
+    "description": "Line on a community's card in Communities to join when nothing is up for a vote: how many people are in it. Plural."
+  },
+  "join.button": {
+    "text": "Join",
+    "description": "Button on a community's card in Communities to join: becomes a member, which also pins the community to Home."
+  },
+  "join.buttonNamed": {
+    "text": "Join {{community}}",
+    "description": "Accessible name of the Join button on a community's card. {{community}} is the project's name."
+  },
+  "join.allJoined": {
+    "text": "You're in every community of this kind.",
+    "description": "Line in Communities to join when the chosen kind has no community the viewer is not already in."
+  },
+  "join.loadingMore": {
+    "text": "Loading more communities",
+    "description": "Accessible name of the placeholder cards shown while the next communities load at the end of the list."
+  },
+  "join.end": {
+    "text": "That's every public community.",
+    "description": "Line under the last card in Communities to join."
+  },
+  "join.endKind": {
+    "text": "That's every public community of this kind.",
+    "description": "Line under the last card in Communities to join when a kind is chosen."
+  },
+  "membership.joinedPinned": {
+    "text": "Joined {{community}} · pinned to Home",
+    "description": "Brief notice after the viewer joined a community; joining also pins the community to Home. {{community}} is the project's name."
+  },
+  "membership.pinAppToo": {
+    "text": "Pin its app too",
+    "description": "Button in the notice after joining a community: also pins the community's app to Home, where its tile opens the app."
+  },
+  "devicePins.moved_one": {
+    "text": "{{count}} pin from this device moved to your account",
+    "description": "Brief notice after signing in, when an app or community pinned on this device while signed out was moved to the account. Singular."
+  },
+  "devicePins.moved_other": {
+    "text": "{{count}} pins from this device moved to your account",
+    "description": "Brief notice after signing in, when apps or communities pinned on this device while signed out were moved to the account. Plural."
+  },
+  "guest.unpinApp": {
+    "text": "Unpin {{app}} from Home",
+    "description": "Accessible name of the remove badge on an app a visitor pinned on this device. {{app}} is the app's name."
+  },
+  "guest.pinCommunity": {
+    "text": "Pin",
+    "description": "Button on a project's page for a visitor who is not signed in: keeps the community on this device's Home."
+  },
+  "guest.pinnedCommunity": {
+    "text": "Pinned",
+    "description": "The same button once the community is on this device's Home; pressing it again unpins it."
   }
 }

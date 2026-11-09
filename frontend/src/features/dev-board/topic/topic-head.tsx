@@ -50,6 +50,7 @@ import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { TopicBack } from './topic-back';
 import { RequestHead, RequestWords } from './request-head';
 import { ChangeThreadHead } from './change-head';
+import { GovernanceHead } from './governance-head';
 import { ThreadItems, pageSlug } from './thread-items';
 import { changeDetailAsk, changeDetailRow, mergeChangePatch } from './change-detail-refresh';
 import { DescriptionEditor } from './description-editor';
@@ -121,7 +122,7 @@ export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
       <div className="font-medium">{box.spinner ? <Spinner /> : null}{box.heading}</div>
       {box.rows.map((r, i) => (r.t === 'list'
         ? (
-          <ul key={i} className={r.cls || 'mt-1 ml-4 list-disc space-y-0.5'}>
+          <ul key={i} className={r.cls || 'mt-1 ms-4 list-disc space-y-0.5'}>
             {r.items.map((it, j) => (
               <li key={j} className={(it.kind || it.mono) ? 'font-mono text-[0.7rem] break-all' : undefined}>
                 {it.kind ? <span className="opacity-70">{`[${it.kind}] `}</span> : null}
@@ -336,7 +337,7 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
   const t = useMessages('project');
   const names = usePassNames(v.passesFor);
   const passList = v.passes.length || v.passesFor ? (
-    <ul className="mt-1 ml-1 space-y-0.5">
+    <ul className="mt-1 ms-1 space-y-0.5">
       {v.passes.map((r) => <CheckRowView key={r.key} r={r} />)}
       {v.passesFor ? <PassNamesPending state={names.state} /> : null}
     </ul>
@@ -346,7 +347,7 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
       <div className="font-medium">{v.heading}</div>
       <div className="mt-0.5 opacity-80">{v.summary}</div>
       {v.failures.length ? (
-        <ul className="mt-1 ml-1 space-y-0.5">
+        <ul className="mt-1 ms-1 space-y-0.5">
           {v.failures.map((r) => <CheckRowView key={r.key} r={r} />)}
         </ul>
       ) : null}
@@ -485,7 +486,7 @@ function Progress({ p }: { p: LedgerProgress }): ReactNode {
  * and the policy's wording is the "How voting works" popover's — neither is
  * repeated here.
  */
-function Roster({ r }: { r: RosterView }): ReactNode {
+export function Roster({ r }: { r: RosterView }): ReactNode {
   const t = useMessages('project');
   if (r.phase === 'hidden') return null;
   if (r.phase === 'loading') return <span className="dev-ledger-roster">{t('project:topic.roster.loading')}</span>;
@@ -720,10 +721,14 @@ const GOVERNANCE_KINDS = new Set(['secret_change', 'rename', 'close_issue', 'mai
 
 export function TopicHead(): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);
-  if (!card || !body) return null;
+  if (!body) return null;
   // #4453: a request's page is a Messages reply thread with the request as
   // its root post, not the card and its sheets.
   if (body.request) return <RequestHead key={`request:${body.request.number}`} r={body.request} />;
+  // #6440: a governance vote's page is the same thread, the vote as its root
+  // post. It has no card: the head IS the page.
+  if (body.decision) return <GovernanceHead key={`decision:${body.decision.id}`} row={body.decision} />;
+  if (!card) return null;
   // `back`: this IS the topic page, whose one back control is the chip at the
   // top of the pane (#2916, ./topic-back.tsx). Every kind of topic comes
   // through here, a change page and an issue/governance thread head alike.
@@ -851,7 +856,7 @@ function IssueIdentity({ label, title }: { label: string; title: string }): Reac
       <span className="shrink-0 rounded-full bg-violet-500/10 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
         {label}
       </span>
-      <span className="min-w-0 flex-1 truncate text-sm text-zinc-800 dark:text-zinc-200">{title}</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-zinc-800 dark:text-zinc-200" title={title}>{title}</span>
     </>
   );
 }
@@ -973,6 +978,7 @@ export function IssueAssociations({
   editable,
   onSaved,
   thread,
+  editorOnly = false,
 }: {
   proposalId: number;
   issues: IssueLink[];
@@ -980,6 +986,12 @@ export function IssueAssociations({
   linkedIssues: number[];
   editable: boolean;
   onSaved: (issues: number[]) => void;
+  /**
+   * 1 Nov 2026 (one page per thread): on its request's page, a change's
+   * requests are the page itself, so only the editor ⋯ "Edit requests"
+   * opens is drawn, and nothing while it is shut.
+   */
+  editorOnly?: boolean;
   /**
    * #4455: a change's page draws the line as one row under the summary:
    * "Addresses", the first request, "+N more" (which opens the rest, one to a
@@ -1104,7 +1116,7 @@ export function IssueAssociations({
               <IssueIdentity label={`#${issue.n}`} title={issue.title} />
               <button
                 type="button"
-                className="-mr-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-red-500/10 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
+                className="-me-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-red-500/10 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
                 aria-label={t('project:topic.requests.remove', { number: issue.n, title: issue.title })}
                 onClick={() => removeIssue(issue.n)}
               ><XIcon className="h-4 w-4" aria-hidden="true" /></button>
@@ -1116,10 +1128,10 @@ export function IssueAssociations({
             {t('project:topic.requests.addAnother')}
           </label>
           <div className="relative mt-1.5">
-            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+            <SearchIcon className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
             <Input
               id={`linked-issues-${proposalId}`}
-              className="pl-10"
+              className="ps-10"
               value={query}
               onChange={(event) => { setQuery(event.target.value); setError(''); }}
               onKeyDown={handleSearchKey}
@@ -1133,14 +1145,14 @@ export function IssueAssociations({
               <button
                 key={issue.n}
                 type="button"
-                className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-start hover:bg-zinc-200 dark:hover:bg-zinc-700"
                 aria-label={t('project:topic.requests.addNamed', { number: issue.n, title: issue.title })}
                 onClick={() => addIssue(issue.n)}
               ><IssueIdentity label={`#${issue.n}`} title={issue.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button>
             ))}
             {exactOption ? <button
               type="button"
-              className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
+              className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-start hover:bg-zinc-200 dark:hover:bg-zinc-700"
               aria-label={t('project:topic.requests.addNumbered', { number: exactOption.n })}
               onClick={() => addIssue(exactOption.n)}
             ><IssueIdentity label={`#${exactOption.n}`} title={exactOption.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button> : null}
@@ -1169,6 +1181,13 @@ export function IssueAssociations({
     ><b>{`#${issue.n}`}</b><span>{issue.title}</span></a>
   );
   const [first, ...rest] = issues;
+  if (editorOnly) {
+    return editing || notice ? (
+      <aside className="dev-change-addresses" aria-label={t('project:topic.requests.region')}>
+        {editing ? editorForm() : <p role="status" className="dev-topic-note">{notice}</p>}
+      </aside>
+    ) : null;
+  }
   return (
     <aside className="dev-change-addresses" aria-label={t('project:topic.requests.region')}>
       {!editing && (first || thread.thanks) ? (
@@ -1224,7 +1243,7 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
   return (
     <li className={`dev-step dev-step-${r.state}`} data-note={r.key} {...gateAttrs} {...(row && row.attrs ? row.attrs : {})}>
       <span className={`dev-step-mark dev-step-mark-${r.state}`} aria-hidden="true">
-        {r.state === 'active' ? <Spinner /> : (STEP_MARK[r.state] || '·')}
+        {r.state === 'active' ? <Spinner /> : (r.skipped ? '–' : (STEP_MARK[r.state] || '·'))}
       </span>
       <span className="dev-step-label">{r.label}</span>
       {r.actor ? <span className="dev-step-actor">{r.actor}</span> : null}
@@ -1281,20 +1300,23 @@ function RunTrack({ c, busy }: {
 }
 
 /**
- * A failed run's "What went wrong", over its failures: the plain-words
- * sentence the Testing card shows (./failed-checks.ts), once it is read.
- * Nothing until then, and nothing when there is none: the rows under it
- * already say which tests failed and with what.
+ * A failed run's "What went wrong", over its failures: the failure's own
+ * words until the plain-words sentence the Testing card shows
+ * (./failed-checks.ts) is read, that sentence once it is, and the failure's
+ * own words again when there is none. Nothing when the run offers neither.
+ * The rows under it still say which tests failed and with what.
  */
 function WhatWentWrong({ ex }: { ex?: ChecksExplainView | null }): ReactNode {
   const t = useMessages('project');
   const text = useChecksExplanation(ex);
-  if (!ex || !text) return null;
+  const shown = text || (ex && ex.fallback) || null;
+  if (!ex || !shown) return null;
   return (
     <div className="dev-ledger-explain" data-checks-explained="">
       <div className="dev-ledger-unit-k">{t('project:topic.checks.explain.title')}</div>
-      <p className="dev-ledger-explain-text">{text}</p>
-      <div className="dev-ledger-explain-source">{t('project:topic.checks.explain.source')}</div>
+      {ex.mainLead ? <p className="dev-ledger-explain-text" data-checks-main-lead="">{ex.mainLead}</p> : null}
+      <p className="dev-ledger-explain-text">{shown}</p>
+      {text ? <div className="dev-ledger-explain-source">{t('project:topic.checks.explain.source')}</div> : null}
     </div>
   );
 }
@@ -1440,7 +1462,7 @@ function GateStepView({ r }: { r: StepRow }): ReactNode {
       {...(r.attrs || {})}
     >
       <span className={`dev-step-mark dev-step-mark-${r.state}`} aria-hidden="true">
-        {r.state === 'active' ? <Spinner /> : (STEP_MARK[r.state] || '·')}
+        {r.state === 'active' ? <Spinner /> : (r.skipped ? '–' : (STEP_MARK[r.state] || '·'))}
       </span>
       {run ? (
         <button
@@ -1563,7 +1585,7 @@ let detailsFromUrl = typeof window !== 'undefined'
  * shut, so the steps it carries are on the page for whoever reads them by
  * selector.
  */
-function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
+export function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
   id: number;
   prRef: HeroView['ref'];
   steps: StepsView | null | undefined;
@@ -1624,6 +1646,50 @@ function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
       </div>
     </div>,
     document.body,
+  );
+}
+
+/**
+ * 1 Nov 2026 (one page per thread): the sheets a change's ⋯ rows and its
+ * Testing card open (Details, Shot details, See what failed; Edit
+ * description), for a change drawn on its request's page
+ * (./thread-changes.tsx). Its own page mounts the same two in ChangeDetail.
+ * The description saved is cached the way its page caches it, which tells
+ * every reader of the change (`change-detail-refresh` with a patch).
+ */
+export function ChangeSheets({ id, row, body }: { id: number; row: any; body: TopicBody }): ReactNode {
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  return (
+    <>
+      <DetailsSheet
+        id={id}
+        prRef={body.hero?.ref || null}
+        steps={body.steps}
+        help={!!(body.details && body.details.help)}
+        html={body.proposalBody?.html || ''}
+        shotsHtml={av && row?.shots ? av.shotsHtml(row.shots, { sessionId: id, details: true }) : ''}
+      />
+      {av?._canEditDescription?.(row) ? (
+        <DescriptionEditor key={id} id={id} onSaved={(data) => av._cacheDescription(id, data)} />
+      ) : null}
+      {body.canEditIssues ? (
+        <IssueAssociations
+          proposalId={id}
+          issues={body.issues || []}
+          issueOptions={body.issueOptions || []}
+          linkedIssues={Array.isArray(row?.linked_issues) ? row.linked_issues : []}
+          editable
+          editorOnly
+          thread={{ thanks: null }}
+          onSaved={() => {
+            // The change is read again, and the thread with it: a change
+            // whose requests moved may now be on another request's page.
+            if (typeof av?._loadDevData === 'function') Promise.resolve(av._loadDevData()).catch(() => {});
+            window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(id) }));
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -1780,12 +1846,13 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
             {body.closedBand ? <ClosedBand b={body.closedBand} /> : null}
             {body.addressedBy ? <AddressedBy r={body.addressedBy} /> : null}
             <DevCard model={card} />
-            {/* #6019: a decision's thread, and the viewer's Notify me / Mute for it. */}
+            {/* #6019: a decision's thread; the viewer's Notify me / Mute for it is a row of the card's ⋯ when it has one. */}
             {GOVERNANCE_KINDS.has(item?.kind) && Number(item?.thread_id) > 0 ? (
               <ThreadItems
                 slug={pageSlug()}
                 threadId={Number(item.thread_id)}
                 here={{ type: item.kind === 'close_issue' ? 'close' : 'decision', id: Number(item.id) }}
+                menuKey={card.rail?.menuKey || null}
               />
             ) : null}
           </div>

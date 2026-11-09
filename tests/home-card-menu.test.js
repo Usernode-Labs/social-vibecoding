@@ -465,12 +465,12 @@ test('card: Retry renders inline only on errored cards, creator or full admin', 
 // Array.prototype, which deepStrictEqual rejects.
 const keys = (items) => Array.from(items, (i) => i.key);
 
-test('menu: plain user on a non-member app gets App details + the favorite toggle', () => {
+test('menu: plain user on a non-member app gets Go to community + the favorite toggle', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
     'nothing admin-gated leaks');
-  assert.equal(items[2].label, 'Add to My apps');
+  assert.equal(items[2].label, 'Pin to Home');
 });
 
 // "View on GitHub" was a row in the hamburger drawer's reference footer,
@@ -493,7 +493,7 @@ test('menu: favorited app flips the label to Remove', () => {
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_favorited: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(fav.label, 'Remove from My apps');
+  assert.equal(fav.label, 'Unpin from Home');
 });
 
 test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => {
@@ -506,7 +506,7 @@ test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => 
     .find((i) => i.key === 'favorite');
   assert.ok(fav, 'favorite entry present on member apps');
   assert.equal(fav.disabled, undefined, 'active, not the old inert row');
-  assert.equal(fav.label, 'Remove from My apps');
+  assert.equal(fav.label, 'Unpin from Home');
   assert.equal(typeof fav.run, 'function', 'action wired');
 });
 
@@ -514,7 +514,7 @@ test('menu: hidden member apps flip to Add to Your apps (#618)', () => {
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_collaborator: true, your_apps_hidden: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(fav.label, 'Add to My apps');
+  assert.equal(fav.label, 'Pin to Home');
   assert.equal(typeof fav.run, 'function');
 });
 
@@ -555,15 +555,13 @@ test('menu: the favorite entry IS toggleAdded now, so the menu paints like the r
   assert.deepEqual(calls, [['plain', true], ['mine', false], ['starred', false]]);
 });
 
-// ── App details ───────────────────────────────────────────────────
+// ── Go to community ───────────────────────────────────────────────
 //
-// The menu's way to the app's own page — the SAME destination a row in
-// the browse-all-apps list opens (#apps/<slug>), so the two entry points
-// share one screen. Browse.DETAIL_EXCLUDED_KEYS drops it again on that
-// page (pinned in tests/browse-screen.test.js) so it can't link to
-// itself.
+// The menu's way to the app's community (key `app-details`, which named
+// Discover's details page until One Home, #6361): its project's hub, by
+// the door that lands there (Home.openHub, AppView._landOnHub first).
 
-test('menu: App details leads the list, on every app and for every viewer', () => {
+test('menu: Go to community leads the list, on every app and for every viewer', () => {
   for (const user of [
     { id: ME },
     { id: ME, isAdmin: true, canAdminWrite: false },
@@ -581,28 +579,28 @@ test('menu: App details leads the list, on every app and for every viewer', () =
       const items = Home.menuItemsFor(baseApp(over));
       assert.equal(items[0].key, 'app-details',
         `first for ${JSON.stringify(over)} / ${JSON.stringify(user)}`);
-      assert.equal(items[0].label, 'App details');
+      assert.equal(items[0].label, 'Go to community');
     }
   }
 });
 
-test('menu: App details routes through the hash, like a browse row tap', () => {
-  // Assigning location.hash (rather than calling a navigate helper) is
-  // what keeps the browser/OS back gesture working.
+test('menu: Go to community opens the project\'s hub', () => {
+  // With the router loaded it is App.navigateToApp(slug, 'dev'); without
+  // it, the hub's own address, which keeps the back gesture working.
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   Home.menuItemsFor(baseApp({ slug: 'chess-arena' }))
     .find((i) => i.key === 'app-details').run();
-  assert.equal(sandbox.location.hash, '#apps/chess-arena');
+  assert.equal(sandbox.location.hash, '#app/chess-arena/dev/hub');
 });
 
-test('menu: App details escapes the slug into the hash', () => {
+test('menu: Go to community escapes the slug into the hash', () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   Home.menuItemsFor(baseApp({ slug: 'a b&c' }))
     .find((i) => i.key === 'app-details').run();
-  assert.equal(sandbox.location.hash, `#apps/${encodeURIComponent('a b&c')}`);
+  assert.equal(sandbox.location.hash, `#app/${encodeURIComponent('a b&c')}/dev/hub`);
 });
 
-test('menu: the inert ?demo=1 tiles get no App details row', () => {
+test('menu: the inert ?demo=1 tiles get no Go to community row', () => {
   // Their slugs 404 on GET /api/apps/:slug, so the page would open on an
   // inline "not available" state — same reason a demo row doesn't drill in.
   const Home = makeHome({ id: ME });
@@ -688,7 +686,7 @@ test('menu: check-updates hidden without repo / when not running / when self-hos
 test('menu: view-only admins (no canAdminWrite) get no mutating items (#311)', () => {
   const Home = makeHome({ id: ME, isAdmin: true, canAdminWrite: false });
   const items = Home.menuItemsFor(baseApp({ status: 'error' }));
-  // App details is navigation, not a mutation, so it survives the gate.
+  // Go to community is navigation, not a mutation, so it survives the gate.
   assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
     'no retry/check/lock/delete');
 });
@@ -934,7 +932,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   assert.doesNotMatch(empty, /widget-tile /);
   // The hint names "Your apps" as the drag source now: the home grid holds
   // that one section (every other app moved to the #apps browse screen).
-  assert.match(empty, /Drag a card from My apps here/);
+  assert.match(empty, /Drag a card from Pinned apps here/);
 });
 
 test('widget section: help icon toggles the add-widget instructions', () => {
@@ -2136,7 +2134,7 @@ test('app menus use an anchored popover even on touch', () => {
   const anchor = { getBoundingClientRect: () => ({ left: 20, top: 20, right: 76, bottom: 76 }) };
   Home.openCardMenu('demo-app', anchor);
   assert.equal(options.anchorEl, anchor);
-  assert.equal(options.headerEl.className, 'card-menu-header');
+  assert.equal(options.headerEl.className, 'card-menu-header interface-mode-advanced');
   assert.ok(options.items.length > 0);
 });
 
@@ -2414,4 +2412,16 @@ test('grid tile: Retry sits beside "Error" and the card is not greyed', () => {
   const other = render({ ...app, showRetry: false });
   assert.match(other.match(/class="(app-card [^"]*)"/)[1], /cursor-not-allowed grayscale-\[0\.75\]/);
   assert.doesNotMatch(other, /retry-btn/);
+});
+
+test('Basic Home header hides identifiers and vote/issue counts while shared actions remain available', () => {
+  const { Home, sandbox } = makeHomeEnv({ canAdminWrite: true });
+  sandbox.window.localStorage = { getItem: () => 'basic' };
+  const app = { slug: 'example-project', name: 'Example', open_prs: 11, open_issues: 49, status: 'running', repo_url: 'https://github.com/example/project' };
+  const basic = Home.renderMenuHeaderHtml(app);
+  assert.doesNotMatch(basic, /card-menu-slug|card-menu-version|11 to vote|49 issues/);
+  assert.match(basic, /Example/);
+  assert.ok(Home.menuItemsFor(app).some(item => item.key === 'github'));
+  sandbox.window.localStorage.getItem = () => 'advanced';
+  assert.match(Home.renderMenuHeaderHtml(app), /card-menu-slug/);
 });

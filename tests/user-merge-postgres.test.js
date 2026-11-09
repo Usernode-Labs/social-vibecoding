@@ -1,15 +1,14 @@
 'use strict';
 
 // Admin "Deduplicate user" (src/services/user-merge.js) against the REAL
-// schema in a throwaway PostgreSQL database: schema.sql applied twice (the
-// boot migration is idempotent), then real merges. Skipped when no server is
+// schema in a throwaway PostgreSQL database: tracked startup followed by
+// receipt verification on reboot, then real merges. Skipped when no server is
 // reachable, and required when TEST_DATABASE_URL is set — the same contract
 // as tests/account-deletion-postgres.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const merge = require('../src/services/user-merge');
@@ -32,9 +31,9 @@ test('user merge against the full PostgreSQL schema', { timeout: 180000 }, async
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   const password = 'disposable-fixture-password';
   const hash = await bcrypt.hash(password, 4);

@@ -47,10 +47,12 @@
 // `window.ScreenshotSelect`, which the capture path below reads by name.
 import './screenshot-select';
 
+import { arrowStep } from '../../lib/i18n/direction';
 import { t } from '../../lib/i18n/runtime';
 import { isRepoAddress } from '../../lib/repo-link.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import { publishVisibility } from '../../lib/visibility-store';
+import { openThreadAbout } from '../../lib/thread-about';
 
 // The shell globals this block reaches for. Resolved in `init()` rather than
 // at module scope because the SSG prerender pass evaluates this module in
@@ -337,6 +339,9 @@ export function init() {
       const hasBoard = typeof moment.appSlug === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(moment.appSlug);
       firstFix.disabled = !hasBoard || !moment.canFix || !Number.isSafeInteger(moment.issueNumber) || moment.issueNumber <= 0;
       firstBoard.disabled = !hasBoard;
+      // 1 Nov 2026: Work on it with Homeroom bot, where it has a board.
+      document.getElementById('feedback-first-work')?.classList.toggle('hidden',
+        !hasBoard || !Number.isSafeInteger(moment.issueNumber) || moment.issueNumber <= 0);
       firstFixNote.textContent = firstFix.disabled
         ? (hasBoard ? t('dialogs:feedback.first.fixNote.needAccess') : t('dialogs:feedback.first.fixNote.noBoard'))
         : t('dialogs:feedback.first.fixNote.default');
@@ -376,7 +381,9 @@ export function init() {
     // traversal and the viewer ended up back where they sent the report from.
     // Closing second finds the page already moved off the record, and
     // lib/back-stack.ts leaves a record it is not standing on alone.
-    const SEE_MINE_ROUTE = '#profile/your-requests';
+    // 5 Nov 2026: your requests are the Homeroom bot tab's (History lists the
+    // finished ones; the lists above it what is still moving).
+    const SEE_MINE_ROUTE = '#homeroom-bot';
     const openMine = () => {
       location.hash = SEE_MINE_ROUTE;
       closeFeedback();
@@ -395,6 +402,10 @@ export function init() {
     // ({ botWillBuild, typicalMinutes, canFix, appSlug, issueNumber }).
     const sentLine = document.getElementById('feedback-sent-line');
     const sentChat = document.getElementById('feedback-sent-chat');
+    // 1 Nov 2026: "Work on it with Homeroom bot", under Done, for the
+    // request just filed (the post's `filed`: { appSlug, issueNumber }).
+    const sentWork = document.getElementById('feedback-sent-work');
+    let sentFiled = null;
     const sentFix = document.getElementById('feedback-sent-fix');
     const sentMine = document.getElementById('feedback-sent-mine');
     // #3971: a first request the bot builds; see showSent's `firstApp`.
@@ -415,9 +426,12 @@ export function init() {
     // `firstApp`: `{ name }`, the app's name ('' when it has none), when this is the person's first request ever
     // and the bot builds it. The first-request moment used to be skipped for
     // the bot (B8), so the bot's confirmation carries it instead.
-    const showSent = (title, notice = '', bot = null, firstApp = null, edited = false) => {
+    const showSent = (title, notice = '', bot = null, firstApp = null, edited = false, filed = null) => {
       const building = !!bot?.botWillBuild;
       sentBot = building ? bot : null;
+      sentFiled = filed && typeof filed.appSlug === 'string' && Number.isSafeInteger(Number(filed.issueNumber))
+        && Number(filed.issueNumber) > 0 ? { appSlug: filed.appSlug, issueNumber: Number(filed.issueNumber) } : null;
+      sentWork?.classList.toggle('hidden', !sentFiled);
       if (sentTitle) sentTitle.textContent = building ? botTitle() : title;
       if (sentLine) {
         const minutes = Number(bot?.typicalMinutes) > 0 ? Number(bot.typicalMinutes) : 8;
@@ -445,13 +459,43 @@ export function init() {
       // Off the composer, as the first-feedback moment's focus() is: the
       // keyboard comes down once, now, rather than whenever the viewer closes.
       sentSection.focus();
-      offerEdit({ cancel: () => showSent(title, notice, bot, firstApp, edited),
-        saved: () => showSent(title, notice, bot, firstApp, true) });
+      offerEdit({ cancel: () => showSent(title, notice, bot, firstApp, edited, filed),
+        saved: () => showSent(title, notice, bot, firstApp, true, filed) });
     };
     const hideSent = () => {
       sentSection?.classList.add('hidden');
       window.UsernodeReact?.notifyAsk?.hideSuggestion?.();
     };
+    // 1 Nov 2026: a thread only they can see, about the request just filed
+    // (../../lib/thread-about.ts), opened on the Homeroom bot tab. It is
+    // their own request, so the bot waits for their plan before it builds.
+    sentWork?.addEventListener('click', async () => {
+      const filed = sentFiled;
+      if (!filed || sentWork.disabled) return;
+      sentWork.disabled = true;
+      try {
+        await openThreadAbout(filed.appSlug, filed.issueNumber, 'request', {
+          failed: t('dialogs:feedback.sent.workWithBotFailed'),
+          after: closeFeedback,
+        });
+      } finally {
+        sentWork.disabled = false;
+      }
+    });
+    const firstWork = document.getElementById('feedback-first-work');
+    firstWork?.addEventListener('click', async () => {
+      const moment = firstFeedback;
+      if (!moment || firstWork.disabled || Number(moment.userId) !== Number(App.user?.id)) return;
+      firstWork.disabled = true;
+      try {
+        await openThreadAbout(moment.appSlug, moment.issueNumber, 'request', {
+          failed: t('dialogs:feedback.sent.workWithBotFailed'),
+          after: closeFeedback,
+        });
+      } finally {
+        firstWork.disabled = false;
+      }
+    });
     // B8: Open chat is the chat with Homeroom bot, where the request's card is.
     sentChat?.addEventListener('click', () => {
       closeFeedback();
@@ -504,8 +548,6 @@ export function init() {
     const feedbackTextError = document.getElementById('feedback-text-error');
     const feedbackTargetApp = document.getElementById('feedback-target-app');
     const feedbackTargetPlatform = document.getElementById('feedback-target-platform');
-    const feedbackCaretApp = document.getElementById('feedback-caret-app');
-    const feedbackCaretPlatform = document.getElementById('feedback-caret-platform');
     const feedbackTargetGroup = document.getElementById('feedback-target');
     const feedbackTargetHint = document.getElementById('feedback-target-hint');
 
@@ -689,10 +731,6 @@ export function init() {
         feedbackTargetApp.classList.toggle(c, !onApp);
         feedbackTargetPlatform.classList.toggle(c, !onPlatform);
       });
-      // Move the caret under the selected option — and under neither while
-      // the question is still open.
-      feedbackCaretApp.classList.toggle('hidden', !onApp);
-      feedbackCaretPlatform.classList.toggle('hidden', !onPlatform);
       // #685: app state only travels with app-targeted feedback — the
       // shell has no provider of its own, so the row hides on Platform.
       stateRow.classList.toggle('hidden', !(stateAvailable && onApp) || privateChosen());
@@ -1108,6 +1146,18 @@ export function init() {
       feedbackText.removeAttribute('aria-describedby');
     };
 
+    // #6127: the pictures can be dragged into the order the request should
+    // show them in, and the first one is the one the request shows first.
+    // The line that says so lives inside the thumbnail row (basis-full wraps
+    // it under them), is created here rather than in feedback.tsx so no new
+    // prerendered shell id is needed, and carries no [data-feedback-screenshot]
+    // so the reorder kit ignores it.
+    const screenshotOrderHint = document.createElement('p');
+    screenshotOrderHint.id = 'feedback-screenshot-order-hint';
+    screenshotOrderHint.className = 'basis-full text-xs text-zinc-500 dark:text-zinc-400';
+    screenshotOrderHint.textContent = t('dialogs:feedback.screenshot.reorderHint');
+    screenshotOrderHint.classList.add('hidden');
+
     const paintScreenshotActions = () => {
       const count = screenshots.length;
       const full = count >= MAX_SCREENSHOTS;
@@ -1129,12 +1179,22 @@ export function init() {
       }
       screenshotPreview.classList.toggle('hidden', count === 0);
       screenshotPreview.classList.toggle('flex', count > 0);
+      // #6127: the hint appears once there is something to reorder, and once
+      // it is in the row it stays its last child, so it wraps under the
+      // pictures rather than sitting between them.
+      const canReorder = count >= 2;
+      screenshotOrderHint.classList.toggle('hidden', !canReorder);
+      if (canReorder || screenshotOrderHint.parentNode === screenshotPreview) {
+        screenshotPreview.appendChild(screenshotOrderHint);
+      }
       // Numbered from what is on screen now, so removing the middle image
       // renumbers the rest rather than leaving a gap in the labels.
       screenshots.forEach((shot, i) => {
         shot.img.alt = t('dialogs:feedback.screenshot.previewAlt', { number: i + 1 });
         shot.removeBtn.setAttribute('aria-label', t('dialogs:feedback.screenshot.remove', { number: i + 1 }));
         shot.openBtn.setAttribute('aria-label', t('dialogs:feedback.screenshot.view', { number: i + 1 }));
+        if (canReorder) shot.openBtn.setAttribute('aria-describedby', 'feedback-screenshot-order-hint');
+        else shot.openBtn.removeAttribute('aria-describedby');
       });
     };
 
@@ -1156,6 +1216,40 @@ export function init() {
     const removeScreenshot = (shot) => {
       discardScreenshot(shot);
       paintScreenshotActions();
+    };
+
+    // #6127: put the picture at `from` at `to`, thumbnail and all. The kit's
+    // onReorder arrives AFTER it has moved the node, so the node is only
+    // moved here when the DOM order does not already match — the keyboard
+    // path. The shot object travels whole, so an upload still in flight
+    // (which finds its shot by identity) lands at its new position.
+    const thumbnailNodes = () => {
+      const nodes = [];
+      const children = screenshotPreview.children;
+      for (let i = 0; i < children.length; i += 1) {
+        const child = children[i];
+        if (child.getAttribute && child.getAttribute('data-feedback-screenshot') !== null) nodes.push(child);
+      }
+      return nodes;
+    };
+    const moveScreenshot = (from, to) => {
+      const count = screenshots.length;
+      if (from === to || from < 0 || to < 0 || from >= count || to >= count) return false;
+      const shot = screenshots[from];
+      screenshots.splice(from, 1);
+      screenshots.splice(to, 0, shot);
+      const dom = thumbnailNodes();
+      const inOrder = dom.length === screenshots.length
+        && screenshots.every((entry, i) => dom[i] === entry.node);
+      if (!inOrder && shot.node) {
+        const next = screenshots[to + 1];
+        if (next && next.node) screenshotPreview.insertBefore(shot.node, next.node);
+        else if (screenshotOrderHint.parentNode === screenshotPreview) {
+          screenshotPreview.insertBefore(shot.node, screenshotOrderHint);
+        } else screenshotPreview.appendChild(shot.node);
+      }
+      paintScreenshotActions();
+      return true;
     };
 
     const resetScreenshotState = () => {
@@ -1186,6 +1280,21 @@ export function init() {
       openBtn.setAttribute('data-feedback-screenshot-open', '');
       openBtn.addEventListener('click', () => {
         Feedback._preview({ kind: 'image', src: shot.objectUrl, alt: shot.img.alt, pins: shot.pins || null });
+      });
+      // #6127: with a keyboard, a focused picture moves with the arrow keys.
+      // Up moves it earlier and down later; left and right move it that way
+      // on screen, which in Arabic, where the row starts on the right, is the
+      // other way through the list. At either end it stays put (so the page
+      // keeps its own scrolling there).
+      openBtn.addEventListener('keydown', (e) => {
+        const from = screenshots.indexOf(shot);
+        const step = arrowStep(e && e.key);
+        const to = step ? from + step : -1;
+        if (from < 0 || to < 0 || to >= screenshots.length) return;
+        if (e.preventDefault) e.preventDefault();
+        if (moveScreenshot(from, to)) {
+          try { openBtn.focus({ preventScroll: true }); } catch { /* detached in tests */ }
+        }
       });
       const stateEl = document.createElement('span');
       stateEl.className = 'text-xs text-zinc-500 dark:text-zinc-400';
@@ -1218,6 +1327,20 @@ export function init() {
       screenshotPreview.appendChild(item);
       Object.assign(shot, { node: item, img, stateEl, removeBtn, openBtn });
     };
+
+    // #6127: dragging a picture reorders the row. No handle: on touch the
+    // kit lifts on a long press (its default 400 ms), on a computer once the
+    // pointer passes the slop, and it suppresses the click after a drag, so
+    // a tap still opens the picture and the ✕ still removes it. onReorder
+    // arrives after the kit has moved the node; moveScreenshot splices the
+    // array (and repaints the labels) to match.
+    if (window.unNative && typeof window.unNative.attachReorder === 'function') {
+      window.unNative.attachReorder(screenshotPreview, {
+        grid: true,
+        itemSelector: '[data-feedback-screenshot]',
+        onReorder: (from, to) => { moveScreenshot(from, to); },
+      });
+    }
 
     const uploadScreenshot = (blob) => fetch('/api/feedback/screenshot', {
       method: 'POST',
@@ -2374,7 +2497,14 @@ export function init() {
             : t('dialogs:feedback.posted.platform');
           // The bounty outcome and the app-state note are sentences of their
           // own, said after it.
-          feedbackStatus.textContent = joinSentences([postedSentence, bountyNotice, stateNotice]);
+          // #6121: a picture whose upload failed earlier and failed again on
+          // the retry above kept its thumbnail until now and did not go with
+          // the request. Filing without it is deliberate; not saying so was not.
+          const lostPictures = screenshots.filter((shot) => !shot.id && shot.blob).length;
+          const picturesNotice = lostPictures
+            ? t('dialogs:feedback.screenshot.filedWithout', { count: lostPictures })
+            : '';
+          feedbackStatus.textContent = joinSentences([postedSentence, bountyNotice, stateNotice, picturesNotice]);
           feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           lastFiled = rememberEdit(data.edit);
@@ -2417,8 +2547,8 @@ export function init() {
             const first = !!data.firstFeedback && Number(data.firstFeedback.userId) === Number(App.user?.id);
             // A request sent to Homeroom names Homeroom, not the app that
             // happened to be open.
-            showSent(postedTo, joinSentences([bountyNotice, stateNotice]), data.homeroomBot,
-              first ? { name: target === 'platform' ? 'Homeroom' : appName } : null);
+            showSent(postedTo, joinSentences([bountyNotice, stateNotice, picturesNotice]), data.homeroomBot,
+              first ? { name: target === 'platform' ? 'Homeroom' : appName } : null, false, data.filed || null);
             return;
           }
           // B8: the bot is theirs but does not build here: it went to the group.
@@ -2431,7 +2561,7 @@ export function init() {
           // instead of closing itself (see showSent above). #3971: "Thanks!"
           // leads it again, as it did before #3400.
           if (!showFirstFeedback(data.firstFeedback, feedbackStatus.textContent)) {
-            showSent(thanks, joinSentences([bountyNotice, stateNotice]));
+            showSent(thanks, joinSentences([bountyNotice, stateNotice, picturesNotice]), null, null, false, data.filed || null);
           }
           return;
         }

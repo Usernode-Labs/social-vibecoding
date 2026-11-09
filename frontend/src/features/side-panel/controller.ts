@@ -52,6 +52,8 @@
  */
 
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
+import { isBotChatRoute } from '../ai/door';
+import { stashWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from '../dev-board/workshop/panel-target';
 import {
   embeddedAllows,
   expandRoute,
@@ -63,6 +65,7 @@ import {
   routeFromUrl,
   samePage,
   titleFor,
+  workshopItemOf,
 } from './routes';
 import { INITIAL, sidePanelRefs, sidePanelStore } from './store.js';
 
@@ -75,6 +78,37 @@ import { INITIAL, sidePanelRefs, sidePanelStore } from './store.js';
  * `(min-width: 1024px)` block in public/css/app.css.
  */
 export const DESKTOP_QUERY = '(min-width: 1024px)';
+
+/**
+ * 1 Nov 2026: beside the Homeroom bot tab's page the panel is the column
+ * Main Chat docks in, which the page draws from 768px (features/ai/), so it
+ * takes a page there from 768px too: there is no app beside it to keep
+ * 480px for. Keep in step with the `(max-width: 1023.98px)` rule for
+ * #platform-side-panel in public/css/app.css.
+ */
+export const BESIDE_AI_QUERY = '(min-width: 768px)';
+
+/**
+ * Whether a link to `route` opens in the panel: a panel page, and not the
+ * chat with Homeroom bot, which only its tab draws (features/ai/door.ts) and
+ * the router takes there.
+ */
+function panelTakes(route: string): boolean {
+  return isPanelRoute(route) && !isBotChatRoute(route);
+}
+
+/**
+ * What the page in the panel publishes for its column (#6431): its status
+ * pill, exactly as its own bar draws it, and the key its ⋯ lists its rows
+ * under in AppView's card menus. The panel's document (./embedded.ts) sends
+ * it with the route it was published on, so a pill never shows on a page it
+ * was not read from.
+ */
+export interface PanelHeadReport {
+  kind: 'request' | 'change';
+  pill: unknown | null;
+  menuKey: string | null;
+}
 
 /** A one-shot instruction that rides along with a navigation into the panel. */
 export interface PanelHint {
@@ -98,12 +132,19 @@ export interface PanelHint {
    * document's alone: the panel's document is not told.
    */
   place?: { slug: string; name: string; icon_url?: string | null; icon_emoji?: string | null } | null;
+  /**
+   * What the page being opened is called, as the door names it (the AI
+   * tab's row: a request's or a change's title). Beside that page the header
+   * row titles the column with it while the panel is still on that page. The
+   * top document's alone, as `place` is.
+   */
+  label?: string | null;
 }
 
 /**
  * The class on the panel DOCUMENT's <html> while the panel stands beside
  * the AI tab's page rather than an app. That page draws the panel as its
- * own column, with ‹ Main and the project over it (./side-panel.tsx), so
+ * own column, with ‹ Main Chat and the project over it (./side-panel.tsx), so
  * the page in it leaves out its own way back (app.css: the topic's
  * "‹ Workshop" chip), which would be a second one to somewhere else.
  */
@@ -155,6 +196,13 @@ let desiredHint: PanelHint | null = null;
 let bootHint: PanelHint | null = null;
 let ready = false;
 let reported = '';
+/**
+ * What the page on screen publishes for its column (#6431): its status pill
+ * and the key of its own ⋯ list, with the route it published them on. Null
+ * until a page that has them reports (a request's or a change's bar), and
+ * cleared wherever `reported` is, so one page's pill never shows on the next.
+ */
+let head: (PanelHeadReport & { route: string }) | null = null;
 // A reload's `?side=` being opened, once the app it stood beside is on screen.
 let restoring = false;
 // Set while this module navigates the TOP window itself (Expand, or a link the
@@ -175,6 +223,7 @@ function publish(route: string, extra?: Record<string, unknown>): void {
     route,
     title: titleFor(route, reported),
     reported,
+    head,
     canBack: stack.length > 0 || !!parentRoute(route),
     ...extra,
   });
@@ -318,9 +367,17 @@ function go(route: string, hint: PanelHint | null): void {
  * the AI tab's page is up (features/ai/: the panel takes the place of Main,
  * the chat docked beside the list, so a request opened from the list keeps
  * the list), only at desktop width, and not in chromeless mode or the native
- * app — the Homeroom app's WebView owns its own back stack and bridge relay,
- * and the panel is a desktop arrangement. Everywhere else every one of these
- * links navigates exactly as it always has.
+ * app beside an app — the Homeroom app's WebView owns its own back stack and
+ * bridge relay, and the panel is a desktop arrangement. Everywhere else every
+ * one of these links navigates exactly as it always has.
+ *
+ * BESIDE THE HOMEROOM BOT TAB, THE NATIVE APP TOO (1 Nov 2026). Unfolded and
+ * held sideways, iPhone Duo draws the tab's page with Main docked, and a
+ * request opened from its list took the whole screen instead of Main's
+ * place. That page is a root with no back arrow, so the WebView's back swipe
+ * is off there already (header/native-back-navigation.ts), and the column's
+ * own ‹ Main Chat is the way back. Beside an app the native app keeps the
+ * whole screen.
  */
 export function canTake(): boolean {
   if (typeof window === 'undefined' || isEmbeddedPanel()) return false;
@@ -331,8 +388,8 @@ export function canTake(): boolean {
   const besideAi = typeof A._isScreenVisible === 'function' && A._isScreenVisible('ai-screen');
   if (!besideApp && !besideAi) return false;
   try {
-    if (document.documentElement.classList.contains('in-native-webview')) return false;
-    return window.matchMedia(DESKTOP_QUERY).matches;
+    if (besideApp && document.documentElement.classList.contains('in-native-webview')) return false;
+    return window.matchMedia(besideApp ? DESKTOP_QUERY : BESIDE_AI_QUERY).matches;
   } catch {
     return false;
   }
@@ -344,7 +401,7 @@ export function canTake(): boolean {
  * navigation when it did not.
  */
 export function take(route: string, hint?: PanelHint | null): boolean {
-  if (!isPanelRoute(route) || !canTake()) return false;
+  if (!panelTakes(route) || !canTake()) return false;
   open(route, hint || null);
   return true;
 }
@@ -353,11 +410,12 @@ export function take(route: string, hint?: PanelHint | null): boolean {
 export function open(route: string, given?: PanelHint | null): void {
   const s = sidePanelStore.get();
   // The project is this document's to draw; the rest is the page's.
-  const { place = null, ...rest } = given || {};
+  const { place = null, label = null, ...rest } = given || {};
   const hint: PanelHint | null = given ? rest : null;
   if (!s.frameSrc) {
     stack = [];
     reported = '';
+    head = null;
     ready = false;
     desired = route;
     desiredHint = null;
@@ -370,18 +428,18 @@ export function open(route: string, given?: PanelHint | null): void {
       frameKey: s.frameKey + 1,
       loading: true,
     });
-    publish(route, { place });
+    publish(route, { place, label: label ? { route, text: label } : null });
     return;
   }
   // A panel the viewer had closed starts a fresh history; an open one keeps
   // the page it was on as somewhere to come back to.
   if (!s.open) stack = [];
   else if (s.route && !samePage(s.route, route)) remember(s.route);
-  if (!samePage(s.route, route)) reported = '';
+  if (!samePage(s.route, route)) { reported = ''; head = null; }
   desired = route;
   desiredHint = hint;
   sidePanelStore.set({ open: true });
-  publish(route, { place });
+  publish(route, { place, label: label ? { route, text: label } : null });
   markBeside();
   if (ready) {
     desiredHint = null;
@@ -405,6 +463,7 @@ export function drop(): void {
   bootHint = null;
   ready = false;
   reported = '';
+  head = null;
   // The address is cleared only when there was a panel (or a reload's panel
   // on its way) to clear: the router reports "no app on screen" on its way
   // through boot, before it reaches the app a reloaded address names, and
@@ -435,6 +494,7 @@ export function back(): void {
     return;
   }
   reported = '';
+  head = null;
   desired = target;
   desiredHint = null;
   publish(target);
@@ -477,6 +537,33 @@ export function expand(): void {
     carryAgentPane();
     navigateTop(expandRoute(route));
   }
+  if (sidePanelStore.get().open || sidePanelStore.get().frameSrc) drop();
+}
+
+/**
+ * Open in workshop (#6380): the project's Workshop, with this request, change
+ * or decision in the panel beside its list, the way its own row opens it
+ * there (frontend/src/features/dev-board/workshop/). The item is left for the
+ * Workshop tab (../dev-board/workshop/panel-target.ts), which takes it as
+ * it shows.
+ *
+ * A window too narrow for that panel would land on a Workshop with nothing
+ * open, so it opens the item's own page instead — what Expand does, with its
+ * "‹ Workshop" chip to get back. Either way the column goes with the page it
+ * was showing, as it does on Expand.
+ */
+export function openInWorkshop(): void {
+  const route = sidePanelStore.get().route;
+  const item = route ? workshopItemOf(route) : null;
+  if (!item) return;
+  const narrow = typeof window.matchMedia === 'function' && !window.matchMedia(WORKSHOP_SIDE_QUERY).matches;
+  if (narrow) {
+    expand();
+    return;
+  }
+  stashWorkshopPanelItem(item.slug, { ref: item.ref, pr: item.pr });
+  try { (window as any).AppView?._landOnTab?.(item.slug, 'workshop'); } catch { /* the page's own tab */ }
+  navigateTop(`app/${encodeURIComponent(item.slug)}/workshop`);
   if (sidePanelStore.get().open || sidePanelStore.get().frameSrc) drop();
 }
 
@@ -539,6 +626,7 @@ function embeddedReady(route: string, title: string): void {
     const hint = desiredHint;
     desiredHint = null;
     reported = '';
+    head = null;
     publish(desired);
     go(desired, hint);
     return;
@@ -594,6 +682,95 @@ function embeddedBack(): void {
   window.setTimeout(back, 0);
 }
 
+/**
+ * The page on screen publishes what its column draws (#6431): its status pill
+ * and its own ⋯ key. Taken only while the document can report at all, and
+ * null for a page that has neither (a decision, a private thread), so the
+ * column's heading falls back to what it drew before.
+ */
+function embeddedHead(route: string, report: PanelHeadReport | null): void {
+  const s = sidePanelStore.get();
+  if (!ready || !s.frameSrc || !route) return;
+  head = report && (report.kind === 'request' || report.kind === 'change')
+    ? { kind: report.kind, pill: report.pill || null, menuKey: report.menuKey || null, route }
+    : null;
+  sidePanelStore.set({ head });
+}
+
+/** The panel document's AppView, or null while its frame is elsewhere or gone. */
+function frameAppView(): any {
+  try {
+    return (sidePanelRefs.frame?.contentWindow as unknown as { AppView?: unknown } | null)?.AppView || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The ⋯ key of the page ON SCREEN, when the head it published is that page's. */
+function headMenuKey(): string | null {
+  const s = sidePanelStore.get();
+  if (!head || !head.menuKey || !samePage(head.route, s.route)) return null;
+  return head.menuKey;
+}
+
+/** One of the page's own ⋯ rows, as the column's menu lists it. */
+export interface PanelMenuRow {
+  label: string;
+  title: string | null;
+  disabled: boolean;
+}
+
+/**
+ * The page's own ⋯ rows (#6431), read from its AppView when the menu opens —
+ * the same list its own ⋯ would show, so a page that has moved on since (Notify
+ * me become Mute) says so the next time the menu is drawn. The rows stay in
+ * the page: this one only lists them.
+ */
+export function panelMenuRows(): PanelMenuRow[] {
+  const key = headMenuKey();
+  const av = key ? frameAppView() : null;
+  if (!av || typeof av._cardMenuItems !== 'function') return [];
+  try {
+    const list = av._cardMenuItems(key, null);
+    return (Array.isArray(list) ? list : [])
+      .map((it: any) => ({
+        label: String((it && it.label) || ''),
+        title: it && it.title ? String(it.title) : null,
+        disabled: !!(it && (it.disabled || typeof it.act !== 'function')),
+      }))
+      .filter((row) => !!row.label);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Run one of the page's rows IN the page (#6431). The list is read again, so a
+ * row that changed while the menu was open acts on the row whose label was
+ * pressed rather than on its neighbour (`AppView._cardMenuRowItem`), exactly as
+ * the page's own ⋯ does.
+ */
+export function runPanelMenuRow(index: number, label: string, event?: Event | null): void {
+  const key = headMenuKey();
+  const av = key ? frameAppView() : null;
+  if (!av || typeof av._cardMenuItems !== 'function') return;
+  try {
+    const list = av._cardMenuItems(key, null);
+    const it = typeof av._cardMenuRowItem === 'function'
+      ? av._cardMenuRowItem(list, index, label)
+      : (Array.isArray(list) ? list[index] : null);
+    if (!it || typeof it.act !== 'function' || it.disabled) return;
+    // The page's own menu stamps the click that ran a row, so the popover the
+    // row opens is not dismissed inside that same dispatch (app-view.js
+    // `_menuActEvent`). The click here is the column's, which the frame's
+    // document never sees, so the popover it opens stays up either way.
+    av._menuActEvent = event || null;
+    it.act();
+  } catch {
+    /* the row owns its errors */
+  }
+}
+
 /** The hint for the first page, once — ./embedded.ts asks as it installs. */
 function takeBootHint(): PanelHint | null {
   const hint = bootHint;
@@ -604,6 +781,7 @@ function takeBootHint(): PanelHint | null {
 export const embeddedApi = {
   ready: embeddedReady,
   navigated: embeddedNavigated,
+  head: embeddedHead,
   openApp: embeddedOpenApp,
   leave: embeddedLeave,
   back: embeddedBack,
@@ -644,7 +822,7 @@ export function onClickCapture(e: MouseEvent): void {
   if (a.hasAttribute('download')) return;
   if (!isShellAddress(a.href, origin)) return;
   const route = routeFromUrl(a.href);
-  if (!isPanelRoute(route) || !canTake()) return;
+  if (!panelTakes(route) || !canTake()) return;
   e.preventDefault();
   open(route, null);
 }
@@ -672,7 +850,7 @@ export function onNavigate(e: NavigateEventLike): void {
   const url = e.destination && e.destination.url;
   if (!url) return;
   const route = routeFromUrl(url);
-  if (!isPanelRoute(route) || !canTake()) return;
+  if (!panelTakes(route) || !canTake()) return;
   e.preventDefault();
   open(route, null);
 }
@@ -698,8 +876,11 @@ export const SidePanel = {
   drop,
   back,
   expand,
+  openInWorkshop,
   appPresence,
   isOpen,
+  panelMenuRows,
+  runPanelMenuRow,
   pend,
   clearPending,
   embedded: embeddedApi,
@@ -713,6 +894,7 @@ export function _resetForTests(): void {
   bootHint = null;
   ready = false;
   reported = '';
+  head = null;
   bypass = false;
   restoring = false;
   sidePanelStore.set({ ...INITIAL });

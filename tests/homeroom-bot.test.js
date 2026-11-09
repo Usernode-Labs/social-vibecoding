@@ -86,9 +86,10 @@ test('a request that is already there is `done`: on a person or empty verdict, n
   assert.equal(bot.parseVerdict('{"verdict":"person","done":true,"platform":true,"reason":"x"}').done, false,
     'about Homeroom itself is offered the move, not a close');
   const prompt = fs.readFileSync(path.join(__dirname, '..', 'src/prompts/homeroom-bot-triage.md'), 'utf8');
-  assert.match(prompt, /- `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its requester is offered a vote to close it\./);
+  assert.match(prompt, /- `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its members are offered a vote to close it\. When the requester, or somebody who decides on the project, says in the discussion that it works and can be closed \("you can propose closing this"\), and the code agrees, that is `done`\./);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
-  assert.match(src, /await say\('empty', live\.emptyText\(parsed\), \{ dm: \{ reason: parsed\.reason, \.\.\.\(parsed\.done \? \{ done: true \} : \{\}\), \.\.\.quiet \} \}\);/);
+  assert.match(src, /await say\('empty', closeWanted \? live\.personText\(parsed\) : live\.emptyText\(parsed\), \{/);
+  assert.match(src, /dm: \{\n\s+reason: parsed\.reason, \.\.\.\(parsed\.done \? \{ done: true \} : \{\}\),\n\s+\.\.\.\(withdrawnNote \? \{ withdrawn: true, quiet: true \} : \{\}\), \.\.\.quiet,/);
 });
 
 test('a request that names who builds it is `builder`: a person verdict only, a bare name, and its news rings nobody', () => {
@@ -124,7 +125,7 @@ test('an older request\'s first read rings only when it is ready to try (16 Oct 
 
 test('a re-read and the ask to repair a reply restate the verdict\'s keys (runs 1390, 1451, 1454 answered in keys of their own)', () => {
   const again = bot.continuedTriagePrompt({ seed: 'SEED', issueNumber: 30 });
-  assert.match(again, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #30, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}\nUse these keys and the others your instructions name \(such as `answers`, `blocker`, `assumptions`, `platform`\): a block with keys of its own, or no `verdict`, cannot be read\.$/);
+  assert.match(again, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #30, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false\}\nUse these keys and the others your instructions name \(such as `answers`, `blocker`, `assumptions`, `platform`\): a block with keys of its own, or no `verdict`, cannot be read\.$/);
   assert.match(bot.VERDICT_REPAIR_PROMPT, /with nothing before or after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person",[^\n]+\}\nUse these keys and the others your instructions name/);
   assert.ok(bot.triageClosing(30).endsWith(`in this format, and nothing after it:\n${bot.VERDICT_FORMAT}`), 'the first read says the same shape');
 });
@@ -298,6 +299,9 @@ test('settings default to off and clamp their numbers', () => {
     // Live work, 12 at once and 3 per person (raised from 6 and 2 when every
     // project went live); a DM is read.
     liveAtOnce: 12, perPerson: 3, dmChat: true,
+    // 3 Nov 2026: three of a project's requests read at once, each on a
+    // triage session of its own (it was one).
+    readsPerApp: 3,
     // Its voice answers in changes', requests' and chats' discussions, each
     // until an admin turns it off there (homeroom-bot-voice.js).
     voiceSession: true, voiceIssue: true, voiceChat: true,
@@ -306,6 +310,12 @@ test('settings default to off and clamp their numbers', () => {
     // The moment it went on for everyone is schema.sql's to write (readSettings
     // fills in a database without it); the proposal ceiling is automatic.
     everyoneSince: null, proposalCeiling: 0, liveBuildStream: true,
+    // #6156: no project has numbers of its own for its builds and its
+    // changes waiting for votes.
+    appCaps: {},
+    // Homeroom bot parity, P8: pictures on the default image model, 24 a
+    // person a week (services/bot-pictures.js).
+    imageModel: 'google/gemini-2.5-flash-image', pictureWeeklyCap: 24,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },
@@ -327,6 +337,10 @@ test('settings default to off and clamp their numbers', () => {
   assert.equal(u.perPerson, 1, 'clamped to the floor');
   assert.equal(u.dmChat, false);
   assert.equal(bot.parseSettings([{ key: bot.KEY_PER_PERSON, value: '99' }]).perPerson, 6, 'clamped to the ceiling');
+  assert.equal(bot.parseSettings([{ key: bot.KEY_READS_PER_APP, value: '99' }]).readsPerApp, 6, 'clamped to the ceiling');
+  assert.equal(bot.parseSettings([{ key: bot.KEY_READS_PER_APP, value: '0' }]).readsPerApp, 1, 'and the floor');
+  assert.equal(bot.parseSettings([{ key: bot.KEY_READS_PER_APP, value: '2' }]).readsPerApp, 2);
+  assert.equal(bot.parseSettings([{ key: bot.KEY_READS_PER_APP, value: 'many' }]).readsPerApp, 3, 'unreadable: the default');
   assert.deepEqual(bot.validateSettingsPatch({ liveAtOnce: 8, perPerson: 3, dmChat: false }).updates, [
     [bot.KEY_LIVE_AT_ONCE, '8'], [bot.KEY_PER_PERSON, '3'], [bot.KEY_DM_CHAT, 'off'],
   ]);
@@ -334,6 +348,13 @@ test('settings default to off and clamp their numbers', () => {
   assert.equal(bot.validateSettingsPatch({ liveAtOnce: 25 }).ok, false);
   assert.equal(bot.validateSettingsPatch({ perPerson: 6 }).ok, true);
   assert.equal(bot.validateSettingsPatch({ perPerson: 7 }).ok, false);
+  // A project's reads at once: a whole number from 1 to 6, as perPerson is.
+  assert.deepEqual(bot.validateSettingsPatch({ readsPerApp: 1 }).updates, [[bot.KEY_READS_PER_APP, '1']]);
+  assert.deepEqual(bot.validateSettingsPatch({ readsPerApp: 6 }).updates, [[bot.KEY_READS_PER_APP, '6']]);
+  for (const bad of [0, 7, 2.5, 'three', null, -1]) {
+    assert.deepEqual(bot.validateSettingsPatch({ readsPerApp: bad }), { ok: false, error: 'readsPerApp must be an integer from 1 to 6' }, String(bad));
+  }
+  assert.equal(bot.KEY_READS_PER_APP, 'homeroom_bot_reads_per_app');
   assert.equal(bot.validateSettingsPatch({ dmChat: 'yes' }).ok, false);
 });
 
@@ -356,14 +377,72 @@ test('the everyone moment and the proposal ceiling parse, clamp and validate', (
   assert.equal(bot.validateSettingsPatch({ audienceSince: '2020-01-01' }).ok, false);
 });
 
+test('#6156: a project\'s own numbers of builds and of changes waiting for votes parse, clamp, validate and merge', () => {
+  assert.deepEqual([bot.BUILDS_PER_APP, bot.WAITING_PER_APP, bot.MAX_BUILDS_PER_APP, bot.MAX_WAITING_PER_APP], [5, 50, 10, 100]);
+  const s = bot.parseSettings([{
+    key: bot.KEY_APP_CAPS,
+    value: JSON.stringify({ 9: { waiting: 30 }, 12: { building: 99, waiting: 0 }, 13: {}, x: { waiting: 4 }, 14: 'six' }),
+  }]);
+  assert.deepEqual(s.appCaps, { 9: { waiting: 30 }, 12: { building: 10, waiting: 1 } }, 'clamped; nothing set, or not a project, is left out');
+  assert.deepEqual(bot.appCapsOf(s, 9), { building: bot.BUILDS_PER_APP, waiting: 30 }, 'a number not set is the default');
+  assert.deepEqual(bot.appCapsOf(s, 12), { building: 10, waiting: 1 });
+  assert.deepEqual(bot.appCapsOf(s, 7), { building: bot.BUILDS_PER_APP, waiting: bot.WAITING_PER_APP });
+  assert.deepEqual(bot.appCapsOf(null, 9), { building: bot.BUILDS_PER_APP, waiting: bot.WAITING_PER_APP });
+  assert.deepEqual(bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: 'not json' }]).appCaps, {});
+
+  // A patch names projects by id or slug; a number is whole and in range,
+  // or null for the default; a project given null goes back to the defaults.
+  const ok = bot.validateSettingsPatch({ appCaps: { 'usernode-2d5619': { waiting: 30 }, 12: null, 13: { building: null } } });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.appCaps, { 'usernode-2d5619': { waiting: 30 }, 12: null, 13: { building: null } });
+  assert.deepEqual(ok.updates, [], 'written once merged (writeSettings)');
+  for (const bad of [
+    { appCaps: { 9: { waiting: 101 } } }, { appCaps: { 9: { waiting: 0 } } }, { appCaps: { 9: { building: 11 } } },
+    { appCaps: { 9: { building: 2.5 } } }, { appCaps: { 9: { later: 3 } } }, { appCaps: { 'Not A Slug': { waiting: 3 } } },
+    { appCaps: [] }, { appCaps: {} }, { appCaps: { 9: 7 } },
+  ]) assert.equal(bot.validateSettingsPatch(bad).ok, false, JSON.stringify(bad));
+  assert.equal(bot.validateSettingsPatch({ appCaps: { 9: { building: 10, waiting: 100 } } }).ok, true, 'the ceilings themselves');
+
+  assert.deepEqual(
+    bot.mergeAppCaps({ 9: { waiting: 30 }, 12: { building: 2 }, 13: { building: 3, waiting: 4 } },
+      { 9: { building: 6 }, 12: null, 13: { building: null, waiting: null }, 14: { waiting: 20 } }),
+    { 9: { waiting: 30, building: 6 }, 14: { waiting: 20 } },
+    'the others are kept; a project with neither goes back to the defaults',
+  );
+});
+
+test('#6156: a save of a project\'s own numbers merges them into the others\', by its id, and asks the lane to look again', async () => {
+  const writes = [];
+  let stored = JSON.stringify({ 12: { building: 2 } });
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      if (/SELECT id, slug FROM apps WHERE slug = ANY/.test(s)) {
+        return { rows: [{ id: 9, slug: 'usernode-2d5619' }, { id: 12, slug: 'gym-tracker' }]
+          .filter((a) => params[0].includes(a.slug) || params[1].includes(a.id)) };
+      }
+      if (/SELECT value FROM platform_settings WHERE key = \$1/.test(s)) return { rows: params[0] === bot.KEY_APP_CAPS ? [{ value: stored }] : [] };
+      if (/INSERT INTO platform_settings/.test(s)) { writes.push([params[0], params[1]]); if (params[0] === bot.KEY_APP_CAPS) stored = params[1]; return { rows: [] }; }
+      return { rows: [] };
+    },
+  };
+  assert.deepEqual(await bot.writeSettings(pool, { appCaps: { 'usernode-2d5619': { waiting: 30 } } }, 1), { ok: true });
+  assert.deepEqual(writes, [[bot.KEY_APP_CAPS, JSON.stringify({ 9: { waiting: 30 }, 12: { building: 2 } })]]);
+  assert.deepEqual(await bot.writeSettings(pool, { appCaps: { 12: null } }, 1), { ok: true });
+  assert.equal(stored, JSON.stringify({ 9: { waiting: 30 } }));
+  assert.deepEqual(await bot.writeSettings(pool, { appCaps: { 'no-such-app': { waiting: 3 } } }, 1), { ok: false, error: 'appCaps: no project no-such-app' });
+  assert.equal(stored, JSON.stringify({ 9: { waiting: 30 } }), 'nothing written for a project there is not');
+});
+
 test('the proposal ceiling: an admin\'s number, else a fixed one, since every app is live', () => {
   assert.equal(bot.botProposalCeiling({}), bot.EVERYONE_PROPOSAL_CEILING);
-  assert.equal(bot.EVERYONE_PROPOSAL_CEILING, 100);
-  assert.equal(bot.botProposalCeiling(null), 100);
-  assert.equal(bot.botProposalCeiling({ liveApps: ['a', 'b'], firstVersionApps: ['c'] }), 100,
+  // #6157: 500 since a proposal waiting for votes keeps a sleeping preview.
+  assert.equal(bot.EVERYONE_PROPOSAL_CEILING, 500);
+  assert.equal(bot.botProposalCeiling(null), 500);
+  assert.equal(bot.botProposalCeiling({ liveApps: ['a', 'b'], firstVersionApps: ['c'] }), 500,
     'the retired lists do not count: "per live app" would be no ceiling at all');
   assert.equal(bot.botProposalCeiling({ proposalCeiling: 30 }), 30);
-  assert.equal(bot.botProposalCeiling({ proposalCeiling: 0 }), 100, 'unset is automatic');
+  assert.equal(bot.botProposalCeiling({ proposalCeiling: 0 }), 500, 'unset is automatic');
 });
 
 test('a settings save never writes the everyone moment, and more room asks the lane to grant again', async () => {
@@ -386,7 +465,7 @@ test('a settings save never writes the everyone moment, and more room asks the l
   assert.doesNotMatch(write, /KEY_EVERYONE_SINCE/, 'the moment is schema.sql\'s, written once');
   // The lane (bot-lane) grants and refreshes; a save tells it, and wakes no
   // loop of this process's.
-  assert.match(write, /\[KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_PAUSED_APPS\]\.includes\(key\)\)[\s\S]{0,120}?\{\s+await platform\(\)\.botRefresh\(null\)/);
+  assert.match(write, /\[KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_READS_PER_APP, KEY_PAUSED_APPS, KEY_APP_CAPS\]\.includes\(key\)\)[\s\S]{0,120}?\{\s+await platform\(\)\.botRefresh\(null\)/);
   assert.doesNotMatch(write, /wakeAll/);
 });
 
@@ -929,12 +1008,10 @@ test('clearStaleTurn: clears an old record with no container, and never a live o
 
 // ── The fourth verdict (#2737) ───────────────────────────────────────────
 
-test('parseVerdict accepts empty, and it shares the question tripwire', () => {
+test('parseVerdict accepts empty', () => {
   const parsed = bot.parseVerdict('```json\n{"verdict":"empty","determined":false,"missing_fact":"none","reason":"A test issue with no request in it; close it."}\n```');
   assert.equal(parsed.verdict, 'empty');
   assert.equal(parsed.reason, 'A test issue with no request in it; close it.');
-  assert.deepEqual([...bot.TRIPWIRE_VERDICTS], ['question', 'empty'],
-    'both are a demand on somebody attention, so they share one daily allowance');
   assert.ok(bot.VERDICTS.includes('empty'));
   const schema = read('src/db/schema.sql');
   assert.match(schema, /CHECK \(verdict IN \('question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'\)\)/);
@@ -1057,7 +1134,7 @@ test('the everyone moment: what the bot never read live before it went on for ev
     },
   };
   const app = { id: 9, slug: 'todo', repo_url: 'https://github.com/usernode-bot/todo' };
-  const capRoom = { proposals_per_app: 5, proposals_total: 50, question_tripwire: 10 };
+  const capRoom = { proposals_per_app: 5, proposals_total: 50 };
   await bot.refreshApp(pool, app, { github, capRoom, everyoneSince: since });
   assert.deepEqual(owedOf(events).map((e) => e.payload.issueNumber), [3, 4, 5]);
 
@@ -1072,7 +1149,7 @@ test('the everyone moment: what the bot never read live before it went on for ev
   assert.match(SRC, /function everyoneSinceOf\(settings\) \{\n  return settings\?\.everyoneSince \|\| null;\n\}/);
 });
 
-test('a new request on a live app gets its card when it is queued, under the key its read starts from, whatever it is', async () => {
+test('a first version on a live app gets its card when it is queued, under the key its read starts from; an ordinary request none', async () => {
   const started = [];
   const events = [];
   const pool = {
@@ -1106,14 +1183,14 @@ test('a new request on a live app gets its card when it is queued, under the key
     async sendDm(_pool, args) { started.push(args); return { messageId: 1, conversationId: 2 }; },
   };
   const app = { id: 9, slug: 'todo', name: 'Todo', repo_url: 'https://github.com/usernode-bot/todo' };
-  const capRoom = { proposals_per_app: 5, proposals_total: 50, question_tripwire: 10 };
-  // One story: a request filed on the board gets its card too.
+  const capRoom = { proposals_per_app: 5, proposals_total: 50 };
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request filed on
+  // the board gets no card in its requester's chat with the bot; where it
+  // stands is on its page.
   let firstVersion = null;
   await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
-  assert.equal(started.length, 1);
-  assert.equal(started[0].idempotencyKey, 'hrbot-activity-r9-1', 'the request\'s own card (bot-loop lookCardKey)');
-  started.length = 0;
-  // So does a project's first version.
+  assert.equal(started.length, 0);
+  // A project's first version does.
   firstVersion = 1;
   await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
   assert.equal(started.length, 1);
@@ -1125,9 +1202,12 @@ test('a new request on a live app gets its card when it is queued, under the key
   assert.equal(started.length, 0);
 });
 
-function heldPool({ events }) {
-  // #10 and #11 were held by the proposals cap (#10 first), #12 by the
-  // question tripwire, #13 is unchanged and was never held.
+function heldPool({ events, builds = false }) {
+  // #10 and #11 were held by the proposals cap (#10 first), #12 by the daily
+  // limit on questions and notes ('question_tripwire', gone since 3 Nov
+  // 2026: a row it wrote before stays in the ledger), #13 is unchanged and
+  // was never held. With `builds` (#6156), #14 and #15 were held by the
+  // project's builds (#14 first).
   return {
     async query(sql, params) {
       const s = String(sql);
@@ -1141,6 +1221,10 @@ function heldPool({ events }) {
           { issue_number: 11, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: 'proposals_per_app', created_at: '2026-09-04T00:00:00Z' },
           { issue_number: 12, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: 'question_tripwire', created_at: '2026-09-04T00:00:00Z' },
           { issue_number: 13, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: null, created_at: '2026-09-03T00:00:00Z' },
+          ...(builds ? [
+            { issue_number: 14, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: 'builds_per_app', created_at: '2026-09-03T00:00:00Z' },
+            { issue_number: 15, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: 'builds_per_app', created_at: '2026-09-05T00:00:00Z' },
+          ] : []),
         ] };
       }
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
@@ -1159,16 +1243,57 @@ const HELD_APP = { id: 9, slug: 'rss-reader-4113da', repo_url: 'https://github.c
 test('refreshApp brings back held issues once their cap has room, oldest first, no more than fit (#3152)', async () => {
   const events = [];
   await bot.refreshApp(heldPool({ events }), HELD_APP, {
-    github: HELD_GITHUB, capRoom: { proposals_per_app: 1, question_tripwire: 0 },
+    github: HELD_GITHUB, capRoom: { builds_per_app: 0, proposals_per_app: 1, proposals_total: 5 },
   });
-  assert.deepEqual(owedOf(events).map((e) => [e.payload.issueNumber, e.payload.priority, e.payload.reason]), [[10, 2, 'cap_freed']],
-    'one merged proposal frees one slot: the oldest held build comes back, the question tripwire is still full');
+  assert.deepEqual(owedOf(events).filter((e) => e.payload.issueNumber !== 12)
+    .map((e) => [e.payload.issueNumber, e.payload.priority, e.payload.reason]), [[10, 2, 'cap_freed']],
+  'one merged proposal frees one slot: the oldest held build comes back');
 
   events.length = 0;
   await bot.refreshApp(heldPool({ events }), HELD_APP, {
-    github: HELD_GITHUB, capRoom: { proposals_per_app: 2, question_tripwire: 3 },
+    github: HELD_GITHUB, capRoom: { builds_per_app: 0, proposals_per_app: 2, proposals_total: 5 },
   });
   assert.deepEqual(owedOf(events).map((e) => e.payload.issueNumber).sort(), [10, 11, 12], 'an unchanged issue nothing held stays out');
+});
+
+test('3 Nov 2026: a request the gone daily limit on questions and notes held comes back at once, taking no room', async () => {
+  const events = [];
+  const owed = async (capRoom) => {
+    events.length = 0;
+    await bot.refreshApp(heldPool({ events, builds: true }), HELD_APP, { github: HELD_GITHUB, capRoom });
+    return owedOf(events).map((e) => [e.payload.issueNumber, e.payload.priority, e.payload.reason]);
+  };
+  assert.deepEqual(await owed({ builds_per_app: 0, proposals_per_app: 0, proposals_total: 0 }), [[12, 2, 'cap_freed']],
+    'every cap full, and it still comes back: nothing holds it now');
+  assert.deepEqual((await owed({ builds_per_app: 0, proposals_per_app: 1, proposals_total: 5 })).map(([n]) => n).sort(), [10, 12],
+    'and it takes none of the room the caps that remain have: #10 still comes back beside it');
+  // A shadow app brings nothing back, this included (no capRoom).
+  events.length = 0;
+  await bot.refreshApp(heldPool({ events }), HELD_APP, { github: HELD_GITHUB });
+  assert.deepEqual(owedOf(events), []);
+});
+
+test('#6156: the cap_freed refresh brings a held request back when the cap that held it frees, either of the project\'s two', async () => {
+  const events = [];
+  const github = {
+    async fetchPublicIssues() {
+      return { issues: [15, 14, 13, 12, 11, 10].map((number) => ({ number, state: 'open', updatedAt: '2026-09-01T00:00:00Z' })) };
+    },
+  };
+  const owed = async (capRoom) => {
+    events.length = 0;
+    await bot.refreshApp(heldPool({ events, builds: true }), HELD_APP, { github, capRoom });
+    return owedOf(events).map((e) => [e.payload.issueNumber, e.payload.reason]).sort((a, b) => a[0] - b[0]);
+  };
+  // #12, held by the daily limit on questions that is gone, comes back each
+  // time whatever the room (the test above); these are about the two caps.
+  const slotted = async (capRoom) => (await owed(capRoom)).filter(([n]) => n !== 12);
+  assert.deepEqual(await slotted({ builds_per_app: 1, proposals_per_app: 0, proposals_total: 5 }), [[14, 'cap_freed']],
+    'a build done frees a build\'s slot: the oldest held for the bot\'s turn comes back, not one held for votes');
+  assert.deepEqual(await slotted({ builds_per_app: 0, proposals_per_app: 1, proposals_total: 5 }), [[10, 'cap_freed']],
+    'a change voted in frees a waiting slot: the oldest held for votes comes back, not one held for a build');
+  assert.deepEqual(await slotted({ builds_per_app: 2, proposals_per_app: 2, proposals_total: 5 }),
+    [[10, 'cap_freed'], [11, 'cap_freed'], [14, 'cap_freed'], [15, 'cap_freed']]);
 });
 
 test('refreshApp leaves held issues alone on a shadow app', async () => {
@@ -1209,7 +1334,7 @@ test('#3624: on a live import, the issues it came with wait until something happ
     },
   };
   const app = { id: 9, slug: 'imported', repo_url: 'https://github.com/usernode-bot/imported' };
-  await bot.refreshApp(pool, app, { github, capRoom: { proposals_per_app: 5, proposals_total: 5, question_tripwire: 3 } });
+  await bot.refreshApp(pool, app, { github, capRoom: { proposals_per_app: 5, proposals_total: 5 } });
   assert.deepEqual(reads, [9]);
   assert.deepEqual(owedOf(events).map((e) => [e.payload.issueNumber, e.payload.priority, e.payload.reason]),
     [[2, 2, 'changed'], [3, 1, 'new'], [4, 2, 'changed']],
@@ -1265,7 +1390,7 @@ test('papote #3: under a plan waiting for Build it, what people said to the bot 
       },
     };
     await bot.refreshApp(pool, { id: 9, slug: 'papote', repo_url: 'https://github.com/usernode-bot/papote' }, {
-      github, settings, bot: { id: 77 }, capRoom: { proposals_per_app: 5, proposals_total: 5, question_tripwire: 3 },
+      github, settings, bot: { id: 77 }, capRoom: { proposals_per_app: 5, proposals_total: 5 },
     });
     return { owed: owedOf(events).map((e) => [e.payload.issueNumber, e.payload.reason]), asked };
   };
@@ -1281,25 +1406,35 @@ test('papote #3: under a plan waiting for Build it, what people said to the bot 
   assert.deepEqual((await refresh({ settings: { mode: 'live' }, unaddressed: 'fails' })).owed, [[3, 'changed'], [4, 'changed']]);
 });
 
-test('capRoomFor counts the same two things the live check does', async () => {
+test('capRoomFor counts the same things the live check does', async () => {
   const pool = {
     async query(sql) {
       const s = String(sql);
-      if (s === bot.SLOT_HOLDERS_SQL) return { rows: [{ kind: 'build', issue_number: 3 }] };
+      if (s === bot.SLOT_HOLDERS_SQL) {
+        return { rows: [{ kind: 'build', issue_number: 3 }, { kind: 'proposal', issue_number: 4 }, { kind: 'proposal', issue_number: 5 }] };
+      }
       if (/FROM chat_sessions\s+WHERE user_id = \$1/.test(s)) return { rows: [{ cnt: 7 }] };
-      if (/FROM homeroom_bot_runs/.test(s)) return { rows: [{ cnt: 12 }] };
+      // 3 Nov 2026: what the bot said today is not counted any more.
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
     },
   };
+  // #6156: both of the project's rooms, its builds and its changes waiting for votes, each against its own cap.
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9),
-    { proposals_per_app: 4, proposals_total: 93, question_tripwire: 0 }, '#3576: the automatic ceiling across every app');
+    { builds_per_app: bot.BUILDS_PER_APP - 1, proposals_per_app: bot.WAITING_PER_APP - 2, proposals_total: bot.EVERYONE_PROPOSAL_CEILING - 7 },
+    '#3576: the automatic ceiling across every app');
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 10 }),
-    { proposals_per_app: 4, proposals_total: 3, question_tripwire: 0 }, 'an admin\'s ceiling, across them all');
+    { builds_per_app: 4, proposals_per_app: bot.WAITING_PER_APP - 2, proposals_total: 3 }, 'an admin\'s ceiling, across them all');
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 5 }),
-    { proposals_per_app: 4, proposals_total: 0, question_tripwire: 0 }, 'never below nothing');
-  const tripwire = SRC.slice(SRC.indexOf('async function tripwireCount'), SRC.indexOf('async function capRoomFor'));
-  assert.match(tripwire, /AND cap_suppressed IS NULL/,
-    'a held question is not a posted one; counting it would let every retry keep the window full');
+    { builds_per_app: 4, proposals_per_app: bot.WAITING_PER_APP - 2, proposals_total: 0 }, 'never below nothing');
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { appCaps: { 9: { building: 1, waiting: 30 } } }),
+    { builds_per_app: 0, proposals_per_app: 28, proposals_total: bot.EVERYONE_PROPOSAL_CEILING - 7 }, 'a project\'s own numbers');
+  // The cap_freed refresh brings back a held request by the name of the cap that held it.
+  const refreshSrc = SRC.slice(SRC.indexOf('async function refreshApp('), SRC.indexOf('function cardKeyOf('));
+  assert.match(refreshSrc, /if \(SLOT_CAPS\.includes\(h\.cap\)\) \{\n\s+if \(!\(room\[h\.cap\] > 0\)\) continue;/,
+    'a cap that remains needs room; one that is gone holds nothing');
+  assert.match(refreshSrc, /capRoom\.builds_per_app > 0 && capRoom\.proposals_per_app > 0 && capRoom\.proposals_total > 0/,
+    'an older request is read only while both of the project\'s caps have room');
+  assert.doesNotMatch(SRC, /tripwireCount|QUESTION_TRIPWIRE_PER_DAY|planTripwire/, '3 Nov 2026: no daily limit on questions and notes');
   const refresh = SRC.slice(SRC.indexOf('async function refreshQueue'), SRC.indexOf('// ── The triage turn'));
   assert.equal((refresh.match(/deps\.bot && live\.isLiveFor\(settings, app\)/g) || []).length, 2,
     'both the full refresh and a refresh of named projects ask for room, and only on a live app');
@@ -1476,7 +1611,7 @@ function triageHarness({ verdictText, routed = null, budgetError = null, session
     },
     worker: {
       async ensureWorkerImage() {},
-      async ensureWorker(id, opts) { calls.ensured.push({ id, opts }); return `usernode-worker-${sessionId}`; },
+      async ensureWorker(id, opts) { calls.ensured.push({ id, opts }); calls.moves.push(['ensureWorker', id, calls.exec.length]); return `usernode-worker-${sessionId}`; },
       async execInWorker(id, opts) { calls.exec.push({ id, opts }); return result || { lastResultText: verdictText, inputTokens: 1000, outputTokens: 50 }; },
       isInFlight: () => false,
       async clearActiveTurn() {},
@@ -1546,8 +1681,11 @@ test('runTriage: one scout turn, a fresh thread, a recorded verdict, a debited c
   assert.ok(!calls.queries.some((q) => /homeroom_bot_queue/.test(q.s)),
     'the lane granted the look, so nothing here claims, updates or deletes a queue row');
   // Through the proposal machine: the slot taken before the turn, given
-  // back after it.
-  assert.deepEqual(calls.moves, [['takeSlot', 501, 0], ['restSession', 501, 1]], 'active only while the turn runs');
+  // back after it. B15: taken before the worker is ensured, so a removal
+  // the last read's rest still owed is cancelled or waited for, never run
+  // under a worker this read already took as warm.
+  assert.deepEqual(calls.moves, [['takeSlot', 501, 0], ['ensureWorker', 501, 0], ['restSession', 501, 1]],
+    'the slot first, then the worker, and active only while the turn runs');
 });
 
 test('runTriage: an issue carrying the bot\'s own GitHub comment triages instead of throwing', async () => {
@@ -1614,9 +1752,27 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // request that names who builds it does not ring its requester. #5117:
   // the platform's data rules (about 1,600 more) ride beside the content
   // rules, so a request whose point breaks them goes to a person.
-  assert.ok(prompt.length < 24000, `a triage prompt stays small: ${prompt.length} chars`);
+  // 3 Nov 2026 (#6213): a person verdict may name the smaller first step it
+  // would build (`first_step`, about 300 more), offered as a reply to tap.
+  // #6321: a requester's or decider's "it works, you can propose closing
+  // this" is `done` (about 175 more), so its note carries the buttons.
+  // #6314: the data rules' one exception (about 150 more), so a request for
+  // a tracker in an app is still refused and the shell's own tag is named.
+  // #6383: the posted plan's rule (about 450 more), so a request whose plan
+  // says what to build is read from it rather than handed back as unreadable.
+  // 6 Nov 2026 (#6395): `go_ahead` (about 780 more), so a read can say that a
+  // go-ahead cannot settle a request and what part of it can still be built.
+  // 6 Nov 2026 (#6430): the reason's guidance (about 520 more), so it says a
+  // person has to build it, never names the reader in the third person and
+  // never says somebody has to approve it.
+  // 6 Nov 2026 (#6211): the board's overlap rule (about 1,250 more), so a read
+  // of a new request can name the open one it duplicates, is part of, or
+  // overlaps, and offer its requester the choice. The board itself is only
+  // added when the project has other open requests, so this read (no board)
+  // carries the rule alone.
+  assert.ok(prompt.length < 28400, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
-  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}$/);
+  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false\}$/);
 });
 
 test('the bot\'s GitHub login resolves to a string, or to null when it cannot be read', async () => {
@@ -1705,9 +1861,31 @@ test('runTriage: a reply that decided in words is asked once, on its own thread,
   assert.ok(Math.abs(insert.params[14] - 0.025) < 1e-9, 'the row costs both turns');
   assert.deepEqual([insert.params[15], insert.params[16]], [2200, 80], 'and carries both turns\' tokens');
   assert.deepEqual(h.calls.spend.map((s) => s.cents), [2, 0.5], 'each turn joins the weekly pool');
-  assert.deepEqual(h.calls.moves, [['takeSlot', 951, 0], ['restSession', 951, 1], ['takeSlot', 951, 1], ['restSession', 951, 2]],
+  // The repair takes the slot again and only then ensures its worker: the
+  // read's rest owed that worker's removal, which the slot cancels or waits
+  // for, so the repair never runs on a worker already gone (B15).
+  assert.deepEqual(h.calls.moves, [
+    ['takeSlot', 951, 0], ['ensureWorker', 951, 0], ['restSession', 951, 1],
+    ['takeSlot', 951, 1], ['ensureWorker', 951, 1], ['restSession', 951, 2],
+  ],
     'active only while each turn runs');
   assert.equal(look.out.queue, 'consume', 'the debt is consumed by the verdict');
+});
+
+test('runTriage: a verdict repair whose worker cannot start runs nothing and puts the session back at rest (B15)', async () => {
+  const h = repairHarness(953, [WORDS_ONLY]);
+  const ensure = h.deps.worker.ensureWorker;
+  let ensures = 0;
+  h.deps.worker.ensureWorker = async (id, opts) => {
+    ensures += 1;
+    if (ensures === 2) { h.calls.moves.push(['ensureWorker', id, h.calls.exec.length]); throw new Error('quota'); }
+    return ensure(id, opts);
+  };
+  const { out } = await triageInLook(h.pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.equal(out.verdict, 'failed', 'no verdict was recovered');
+  assert.equal(h.calls.exec.length, 1, 'nothing dispatched on a worker that is not there');
+  assert.deepEqual(h.calls.moves.slice(3), [['takeSlot', 953, 1], ['ensureWorker', 953, 1], ['restSession', 953, 1]],
+    'the slot first, the failed ensure, then back to rest');
 });
 
 test('runTriage: a reply still without its block after the one ask fails as it always did', async () => {

@@ -232,8 +232,8 @@ test('a session with a pull request offers it; one without says so', () => {
   const withPr = headerHtml(view({ ...SESSION, pr_number: 42 }));
   // #2821: it names where it goes, not the PR number.
   assert.match(withPr, /id="dc-pr-header-link"[^>]*>Open proposal card</);
-  assert.doesNotMatch(withPr, />PR #42</);
-  assert.match(withPr, /title="[^"]*goes to PR #42/);
+  assert.doesNotMatch(withPr, />PR 42</);
+  assert.match(withPr, /title="[^"]*goes to PR 42/);
 
   const without = headerHtml(view(SESSION));
   assert.doesNotMatch(without, /dc-pr-header-link/);

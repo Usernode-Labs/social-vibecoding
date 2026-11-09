@@ -70,6 +70,7 @@ const ALL_KEYS = [
   'issues_created',
   'address',
   'active_apps',
+  'avatar_url',
 ];
 
 // ─── In-memory mock pool ─────────────────────────────────────────
@@ -106,6 +107,8 @@ function makeMockPool() {
         { slug: 'demo-app', name: 'Demo App' },
         { slug: 'second-app', name: 'Second App' },
       ],
+      // A member with an uploaded picture; bob has none.
+      avatar_url: '/avatars/11',
     },
     {
       user_id: 2,
@@ -122,6 +125,7 @@ function makeMockPool() {
       // Active on nothing — empty array. Must be KEPT under include_0_values=0
       // (it's neither 0 nor null), mirroring the empty {} kudos_given map.
       active_apps: [],
+      avatar_url: null,
     },
   ];
 
@@ -194,6 +198,38 @@ test('fields=address → exactly username + address', async () => {
     const alice = body.items.find((i) => i.username === 'alice');
     assert.deepEqual(Object.keys(alice).sort(), ['address', 'username']);
     assert.equal(alice.address, 'ut1aliceaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  } finally { await srv.close(); }
+});
+
+test('avatar_url rides through the read, null for a member with no picture', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '');
+    const alice = body.items.find((i) => i.username === 'alice');
+    const bob = body.items.find((i) => i.username === 'bob');
+    assert.equal(alice.avatar_url, '/avatars/11');
+    assert.equal(bob.avatar_url, null);
+  } finally { await srv.close(); }
+});
+
+test('fields=avatar_url → exactly username + avatar_url', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '?fields=username,avatar_url');
+    const alice = body.items.find((i) => i.username === 'alice');
+    assert.deepEqual(Object.keys(alice).sort(), ['avatar_url', 'username']);
+    assert.equal(alice.avatar_url, '/avatars/11');
+  } finally { await srv.close(); }
+});
+
+test('include_0_values=0 → null avatar_url dropped, a present one kept', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '?include_0_values=0');
+    const alice = body.items.find((i) => i.username === 'alice');
+    const bob = body.items.find((i) => i.username === 'bob');
+    assert.ok('avatar_url' in alice, 'a present picture survives');
+    assert.ok(!('avatar_url' in bob), 'a missing picture is dropped like any null');
   } finally { await srv.close(); }
 });
 

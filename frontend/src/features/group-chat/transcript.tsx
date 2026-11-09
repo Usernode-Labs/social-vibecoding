@@ -18,19 +18,19 @@ import { openReport } from '../dialogs/report';
  * bookmark toggle swapped an icon element in place. All three are store
  * updates now.
  *
- * ONE thing stays a module-filled host, per the controller-host seam in
- * AGENTS.md: `[data-gc-vote-controls]`, the inline vote buttons on a vote row.
- * Its markup is `AppView.voteButtonsHtml` + `voteCountPill` + the merge
- * badges — the Dev screen's own vote renderers, sixteen call sites of them in
- * public/js/app-view.js — re-filled in place by `refreshVoteControls()` from
- * `AppView.voteState`, which arrives on its own schedule. So it is not
- * independently convertible: its ownership boundary is the Dev screen, not
- * this transcript. It is rendered ONCE as an empty host with a constant
- * `className`, so React never writes an attribute the module has since
- * changed — the same rule the dialog islands run under (see
- * ../../lib/legacy-dom.ts).
+ * Nothing under a row is a module-filled host any more. The last one was
+ * `[data-vote-controls]`, the inline vote buttons on a vote row, which
+ * `refreshVoteControls()` filled with AppView's own Yes/No/Admin-merge markup
+ * from `AppView.voteState`. #6236 retired it: the row models the vote
+ * (`voteRef`, and `vote` — the facts the module resolves from the snapshot
+ * and patches in when it moves) and ./vote-card.tsx draws it, as a line that
+ * names the change with See the vote on a request's page, and as a small
+ * card with Preview and Vote anywhere else. The module still READS the row
+ * (`data-vote-session` / `data-vote-pr`, `data-msg-id`) to know which rows
+ * to patch, which is the same arrangement the general chat's event rows
+ * have had since ./proposal-event.tsx.
  *
- * `[data-gc-spec-share]` used to be the second one, and it was never filled by
+ * `[data-gc-spec-share]` was an earlier one, and it was never filled by
  * anything — see SpecShareRow below.
  *
  * ── The inline editor is the third, and it is a different shape ───────
@@ -63,15 +63,17 @@ import {
 } from '@/components/ui/icons';
 
 import { confirmAction } from '../../lib/confirm';
+import { projectChangesOnGithub } from '../../lib/change-ref';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
-import { BotRequestCardView, BotStatusChip } from './bot-request';
+import { BotRequestCardView } from './bot-request';
 import { ImageViewer, openInViewer, useInlineImageViewer } from '../image-viewer/image-viewer';
 import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '../image-viewer/save-image';
 import { EventRow } from './proposal-event';
+import { VoteCard, VoteLine } from './vote-card';
 import { Body } from './long-body';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
@@ -80,8 +82,8 @@ import { BOT_AVATAR } from '../messages/format';
 import { openAppTarget } from '../messages/bot-shared';
 import { setUserBlocked } from '../messages/store';
 import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
-import { displayName, BOT_NAME, openRequestSpec, replyCount, requestStream } from '../dev-board/topic/request-model';
-import { changeLine, changeReplyCount, changeStream } from '../dev-board/topic/change-model';
+import { displayName, BOT_NAME, openRequestSpec, replyCount, requestChangesStore, requestStream } from '../dev-board/topic/request-model';
+import { changeLine, changeReplyCount, changeStream, keptOnRequest } from '../dev-board/topic/change-model';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
@@ -94,12 +96,14 @@ import {
   transcriptStore,
   type Attachment,
   type BotOfferView,
+  type BotSuggestView,
   type Quote,
   type TranscriptMarker,
   type TranscriptMessage,
   type TranscriptView,
 } from './transcript-store';
 import { MergedTopicCard } from '../dev-board/workshop/merged-topic-card';
+import { FileManyRows, picksOf, type FileManyRow } from '../messages/bot-cards/file-many';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).GroupChat : null) || null;
@@ -108,28 +112,83 @@ function controller(): any {
 /**
  * The buttons under Homeroom bot's offer in a thread (File it / Not now,
  * Withdraw it / Keep it, Propose to close / Keep it open), for the one
- * person it was offered to. A tap is sent once (GroupChat.decideBotOffer);
+ * person it was offered to (GroupChat._botOfferView says who). A tap is sent once (GroupChat.decideBotOffer);
  * the buttons then go for everybody when the room hears it was decided.
  */
 function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView }) {
   const [busy, setBusy] = useState(false);
+  // #6305: a many-project offer's rows, ticked here and sent with the tap.
+  const rows = (offer.rows || []) as unknown as FileManyRow[];
+  const [ticked, setTicked] = useState<boolean[]>(() => rows.map((r) => r.ticked));
+  const [chosen, setChosen] = useState<Record<number, string>>({});
   if (id == null) return null;
-  const decide = async (choice: 'yes' | 'no') => {
+  const many = offer.kind === 'file_many' && rows.length > 0;
+  const picks = many ? picksOf(rows, ticked, chosen) : [];
+  // #6211: an overlap note's three choices include `first` (this one first).
+  const decide = async (choice: 'yes' | 'no' | 'first') => {
     if (busy) return;
     setBusy(true);
     try {
-      await controller()?.decideBotOffer?.(id, choice);
+      await controller()?.decideBotOffer?.(id, choice, many ? picks : undefined);
     } finally {
       setBusy(false);
     }
   };
   return (
-    <div className="mt-2 flex flex-wrap gap-2" data-gc-bot-offer="">
-      {offer.actions.map((action) => (
+    <div className="mt-2 flex flex-col gap-2" data-gc-bot-offer="">
+      {many ? (
+        <FileManyRows
+          data={{ state: 'open', title: '', details: '', rows, forMe: true }}
+          ticked={ticked}
+          chosen={chosen}
+          onToggle={(i) => setTicked((was) => was.map((on, j) => (j === i ? !on : on)))}
+          onChoose={(i, slug) => {
+            setChosen((was) => ({ ...was, [i]: slug }));
+            setTicked((was) => was.map((on, j) => (j === i ? true : on)));
+          }}
+        />
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {offer.actions.map((action) => (
+          <Button
+            key={action.id}
+            type="button"
+            onClick={() => { void decide(action.id); }}
+            disabled={busy || (many && action.id === 'yes' && !picks.length)}
+            variant={action.primary ? 'pillAccent' : 'pillNeutral'}
+            ink={action.primary ? 'solid' : 'neutral'}
+            size="sm"
+            className="font-semibold"
+          >
+            {action.label}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 3 Nov 2026: the suggested replies under Homeroom bot's message in a
+ * request's or a change's discussion, for the people it names. A tap sends
+ * its words as that person's own reply (GroupChat.sendBotSuggestion), and
+ * the row waits for the room to retire it.
+ */
+export function BotSuggestButtons({ id, suggest }: { id: number | null; suggest: BotSuggestView }) {
+  const [busy, setBusy] = useState(false);
+  if (id == null) return null;
+  const send = (label: string) => {
+    if (busy) return;
+    setBusy(true);
+    controller()?.sendBotSuggestion?.(id, label);
+  };
+  return (
+    <div className="mt-2 flex flex-wrap gap-2" data-gc-bot-suggest={suggest.audience || ''}>
+      {suggest.actions.map((action) => (
         <Button
           key={action.id}
           type="button"
-          onClick={() => { void decide(action.id); }}
+          onClick={() => send(action.label)}
           disabled={busy}
           variant={action.primary ? 'pillAccent' : 'pillNeutral'}
           ink={action.primary ? 'solid' : 'neutral'}
@@ -360,20 +419,12 @@ export function Attachments({ items }: { items: Attachment[] }) {
  * the border width), so the affordance had quietly gone missing.
  */
 export function Reactions({ msg }: { msg: TranscriptMessage }) {
-  if (!msg.reactions.length && !msg.botRequest) return <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`} />;
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request asked of
+  // Homeroom bot here wears no status chip for the room any more; where it
+  // stands is on its own page.
+  if (!msg.reactions.length) return <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`} />;
   return (
     <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`}>
-      {/* B9: a request asked of Homeroom bot here, first and in its own colour (./bot-request.tsx). */}
-      {msg.botRequest ? (
-        <BotStatusChip
-          chip={msg.botRequest}
-          mine={msg.mine}
-          onTry={(sessionId) => controller()?.tryBotChange?.(sessionId)}
-          onProgress={() => (msg.botRequest?.status === 'fixing' && msg.botRequest.sessionId
-            ? controller()?.openBotChange?.(msg.botRequest.sessionId)
-            : controller()?.openBotChat?.(msg.botRequest?.issueNumber || null))}
-        />
-      ) : null}
       {msg.reactions.map((r) => (
         <ReactionPill
           key={r.emoji}
@@ -469,39 +520,42 @@ export function foldRepeats(messages: TranscriptMessage[]): TranscriptMessage[] 
 }
 
 /**
- * A system or vote row — one line of text, plus whatever the module fills in.
- * The topic threads' form; the general chat draws its two proposal events as
- * ./proposal-event.tsx's row instead, and nothing else of this kind.
+ * #6236: on a request's page, the change a row about a vote belongs to, as
+ * the page read it from its thread (requestChangesStore): the row then draws
+ * the line with See the vote rather than the card, since the change's own
+ * section is below. Null anywhere else.
  */
-export const SystemRow = memo(function SystemRow({ msg }: { msg: TranscriptMessage }) {
+export interface SeeVote {
+  sessionId: number;
+  number: number | null;
+  title: string | null;
+}
+
+/**
+ * A system or vote row — one line of text, and under a vote row the vote
+ * card (./vote-card.tsx). The topic threads' form; the general chat draws
+ * its two proposal events as ./proposal-event.tsx's row instead, and nothing
+ * else of this kind.
+ */
+export const SystemRow = memo(function SystemRow({ msg, seeVote = null }: { msg: TranscriptMessage; seeVote?: SeeVote | null }) {
   const t = useMessages('chat');
+  const vote = msg.kind === 'vote' && msg.voteRef ? msg.voteRef : null;
   return (
     <div
       className={`gc-msg-system ${msg.kind === 'vote' ? 'gc-msg-vote' : ''}${msg.voteRowClass ? ` ${msg.voteRowClass}` : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
       data-msg-id={msg.id ?? ''}
+      // What `GroupChat.refreshVoteControls` reads back to resolve the row
+      // against the vote snapshot, and patch `vote` and the tint onto its
+      // model. Only on a row that is about a change.
+      {...(vote ? { 'data-vote-session': vote.sessionId, 'data-vote-pr': vote.prNumber } : {})}
     >
       <span className="gc-msg-system-text">{msg.systemText}</span>
       {msg.repeat && msg.repeat > 1 ? (
         <span className="gc-msg-system-repeat" title={t('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
       ) : null}
-      {/*
-          The controls host, rendered once as an empty span with a constant
-          className and never looked inside — the controller-host seam. The
-          three attributes are the contract with `GroupChat.refreshVoteControls`:
-          it selects on `[data-vote-controls]` and resolves the pair beside it
-          against `AppView.voteState`. This span used to carry
-          `data-gc-vote-controls` and nothing else, which matched that selector
-          not at all, so the Yes/No pair and the tally pill were missing from
-          every vote row.
-      */}
-      {msg.kind === 'vote' && msg.voteRef ? (
-        <span
-          className="gc-vote-inline"
-          data-vote-controls=""
-          data-session-id={msg.voteRef.sessionId}
-          data-pr-number={msg.voteRef.prNumber}
-        />
-      ) : null}
+      {vote ? (seeVote
+        ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} />
+        : <VoteCard msg={msg} />) : null}
       {/*
           A system or vote row is savable and reactable, exactly as the string
           template had it — the same two buttons, in the same place, before the
@@ -759,13 +813,17 @@ export function messageMenuItems(
  * from the controller here, and a memo()'d row would have kept the answer
  * from its last render.
  */
-export const MessageRow = memo(function MessageRow({ msg, grouped = false, surface = 'main', threadOpen = false }: {
+export const MessageRow = memo(function MessageRow({ msg, grouped = false, surface = 'main', threadOpen = false, tag = null, seeVote = null }: {
   msg: TranscriptMessage;
   grouped?: boolean;
   /** #2387: `thread` inside a reply thread, where the row offers no thread of its own. */
   surface?: 'main' | 'thread';
   /** #2387: this row's reply thread is the one open beside the channel, which lights its chip. */
   threadOpen?: boolean;
+  /** 1 Nov 2026: on a request's page, the change a reply was written on ("on Change #6063"), after its time. */
+  tag?: string | null;
+  /** #6236: on a request's page, the change this post's vote is about, whose section is below: the line with See the vote, not the card. */
+  seeVote?: SeeVote | null;
 }) {
   const t = useMessages('chat');
   const [sheet, setSheet] = useState(false);
@@ -791,11 +849,18 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       grouped={grouped}
       gutter={grouped ? <span className="gc-msg-gutter-time" title={msg.timeTitle}>{timeOfDay(msg.at) || msg.time}</span> : undefined}
       data-msg-id={msg.id ?? ''}
+      // #6441: a dotted message on screen has been seen. The transcript's
+      // observer (TranscriptRows) reads these rows back by this attribute and
+      // clears the dot without waiting for a click.
+      data-gc-unread={msg.unread ? '' : undefined}
       data-username={msg.username}
       data-username-missing={msg.usernameMissing ? '' : undefined}
       // #2236: only when set, so an ordinary row's attribute set is exactly
       // what it was.
       {...(msg.postedVia ? { 'data-posted-via': msg.postedVia } : {})}
+      // #6236: what `GroupChat.refreshVoteControls` reads back to resolve a
+      // post about a change against the vote snapshot and patch its `vote`.
+      {...(msg.voteRef ? { 'data-vote-session': msg.voteRef.sessionId, 'data-vote-pr': msg.voteRef.prNumber } : {})}
       {...longPress}
       avatar={(
         displayName(msg.username) === BOT_NAME ? (
@@ -813,12 +878,17 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
         <>
           {msg.unread ? <span className="gc-unread-dot" aria-label={t('chat:group.row.unreadMention')} /> : null}
           <span className={msg.mine ? 'gc-msg-username-self' : undefined}>{displayName(msg.username)}</span>
-          <PostedViaChip via={msg.postedVia} className="ml-1.5" />
+          <PostedViaChip via={msg.postedVia} className="ms-1.5" />
         </>
       )}
       timestamp={(
         <>
           <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
+          {tag ? <span
+            className="gc-msg-on-change"
+            data-msg-on-change={msg.changeOf ? (msg.changeOf.sessionId ?? '') : undefined}
+            data-msg-on-request={msg.requestOf ? (msg.requestOf.number ?? '') : undefined}
+          >{tag}</span> : null}
           {msg.editedTitle && !msg.deleted ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>{t('chat:group.row.edited')}</span>
           ) : null}
@@ -829,7 +899,18 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       {msg.deleted ? <p className="gc-msg-deleted-text">{t('chat:group.row.deleted')}</p> : (
         <>
           {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
-          <Body html={msg.bodyHtml} />
+          {/* Task 2020 follow-up: Homeroom bot's reply laid out, in place of its words (./long-body.tsx). */}
+          <Body html={msg.bodyHtml} rich={msg.botHtml} />
+          {/*
+              #6268: a message posted for somebody by their own coding agent
+              that Homeroom bot will not answer says so under it, quietly, so
+              nobody waits for a reply that is not coming.
+          */}
+          {msg.botSkipped ? (
+            <p className="gc-msg-bot-skip mt-1 text-[12px] text-zinc-500 dark:text-zinc-400" data-bot-skip="">
+              {t('chat:group.row.botSkipped')}
+            </p>
+          ) : null}
           <Attachments items={msg.attachments} />
           {/*
               #3660: a link in the words to one of Homeroom's own pages —
@@ -841,18 +922,13 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           {/*
               #3288: a message that carries a proposal (the Homeroom bot's
               "built this" post, now an ordinary message from its user) hangs
-              the same vote card a vote row does. The same controller host as
-              SystemRow's: an empty span, never looked inside, filled by
-              GroupChat.refreshVoteControls from the two data-* attributes.
+              the same vote card a vote row does (#6236, ./vote-card.tsx): on
+              a request's page the line that names the change and offers See
+              the vote, elsewhere the small card with Preview and Vote.
           */}
-          {msg.voteRef ? (
-            <span
-              className="gc-vote-inline gc-vote-inline-block"
-              data-vote-controls=""
-              data-session-id={msg.voteRef.sessionId}
-              data-pr-number={msg.voteRef.prNumber}
-            />
-          ) : null}
+          {msg.voteRef ? (seeVote
+            ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} />
+            : <VoteCard msg={msg} />) : null}
           {/* #4238: Homeroom bot's first-version line opens the app. */}
           {msg.openApp ? (
             <Button
@@ -869,6 +945,10 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           {/* Homeroom bot's offer in a thread: its buttons, for the person it was offered to. */}
           {msg.botOffer && msg.botOffer.forMe && msg.botOffer.status === 'open' && msg.botOffer.actions.length ? (
             <BotOfferButtons id={msg.id} offer={msg.botOffer} />
+          ) : null}
+          {/* 3 Nov 2026: suggested replies under Homeroom bot's message in a thread. */}
+          {msg.botSuggest && msg.botSuggest.forMe && msg.botSuggest.status === 'open' && msg.botSuggest.actions.length ? (
+            <BotSuggestButtons id={msg.id} suggest={msg.botSuggest} />
           ) : null}
           {grouped && msg.editedTitle ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>{t('chat:group.row.edited')}</span>
@@ -935,7 +1015,9 @@ export function Transcript({ source = 'main' }: { source?: string }) {
   const view = state.byKey[source];
 
   /**
-   * Fill the vote rows' controls hosts once they exist.
+   * Resolve the rows about a change against the vote snapshot once they are
+   * on screen (#6236: their `vote` and tint, patched onto the model by
+   * `GroupChat.refreshVoteControls`, which reads the rows' data-vote-*).
    *
    * `AppView.loadVotePanel` calls `refreshVoteControls` whenever the vote
    * state moves, which covers a vote being cast — but not a vote row arriving
@@ -943,20 +1025,19 @@ export function Transcript({ source = 'main' }: { source?: string }) {
    * chat whose panel finished loading before it. The string renderer had no
    * such gap: it filled the wrapper inline as it built the row.
    *
-   * Keyed on WHICH vote rows are present, not on every render: filling is an
-   * `innerHTML` write per host, and the rows themselves repaint on every
-   * reaction. `refreshVoteControls` patches each row's tint back, and
-   * `patchTranscriptMessage` drops a patch that says nothing new — which is
-   * what keeps this from looping.
+   * Keyed on WHICH vote rows are present, not on every render: the rows
+   * themselves repaint on every reaction. `refreshVoteControls` patches
+   * each row's facts and tint back, and `patchTranscriptMessage` drops a
+   * patch that says nothing new — which is what keeps this from looping.
    */
   const voteRows = (view ? view.messages : [])
-    // #5458: a message row can carry the controls host too — an ordinary
-    // message whose metadata names the proposal (the Homeroom bot's "built
-    // this" post). Keying on vote rows alone left that host empty whenever
-    // the vote snapshot had already landed before the transcript rendered:
-    // refreshVoteControls had run against no host, and nothing called it
+    // #5458: a message row can be about a change too — an ordinary message
+    // whose metadata names the proposal (the Homeroom bot's "built this"
+    // post). Keying on vote rows alone left that card blank whenever the
+    // vote snapshot had already landed before the transcript rendered:
+    // refreshVoteControls had run against no row, and nothing called it
     // again, so returning to a chat whose card you had voted on drew
-    // nothing at all.
+    // nothing of the vote at all.
     .filter((m) => m.kind === 'vote' || m.voteRef)
     .map((m) => m.id)
     .join(',');
@@ -1132,7 +1213,11 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
  */
 export function RequestRows({ view }: { view: TranscriptView }) {
   const t = useMessages('project');
-  const stream = useMemo(() => requestStream(foldRepeats(view.messages)), [view.messages]);
+  // 1 Nov 2026 (one page per thread): the thread's one discussion. Its
+  // changes' rows are in it (`changeOf`), each tagged with its change, and
+  // of what happened to a change only what keptOnRequest keeps.
+  const changes = useStoreState(requestChangesStore);
+  const stream = useMemo(() => requestStream(foldRepeats(view.messages).filter((m) => !m.changeOf || keptOnRequest(m))), [view.messages]);
   const specs = stream.specs;
   const count = replyCount(stream.rows);
   const loaded = !!view.lead.request?.loaded;
@@ -1142,20 +1227,54 @@ export function RequestRows({ view }: { view: TranscriptView }) {
   const images = useInlineImageViewer();
   const drawn: ReactNode[] = [];
   let previous: TranscriptMessage | null = null;
+  const tagOf = (msg: TranscriptMessage): string | null => {
+    // #6421: a message written on another request of a merged thread says so.
+    if (msg.requestOf && Number(msg.requestOf.number)) {
+      return t('project:topic.request.stream.onRequest', { number: msg.requestOf.number });
+    }
+    const id = msg.changeOf ? Number(msg.changeOf.sessionId) : 0;
+    if (!id) return null;
+    const n = changes.numbers[id];
+    return n
+      ? t(projectChangesOnGithub() ? 'project:topic.request.stream.onChangePr' : 'project:topic.request.stream.onChange', { number: n })
+      : t('project:topic.request.stream.onChangeUnnumbered');
+  };
+  // #6236: a row about a vote on one of THIS request's changes draws the
+  // line with See the vote (the change's section is below); one about any
+  // other change draws the card. One object per change, so the memo()'d
+  // rows keep their props between renders.
+  const seeVotes = useMemo(() => {
+    const out = new Map<number, SeeVote>();
+    for (const key of Object.keys(changes.numbers)) {
+      const id = Number(key);
+      out.set(id, { sessionId: id, number: changes.numbers[id] ?? null, title: changes.titles?.[id] ?? null });
+    }
+    return out;
+  }, [changes]);
+  const seeVoteOf = (msg: TranscriptMessage): SeeVote | null => {
+    if (!msg.voteRef) return null;
+    const id = Number(msg.voteRef.sessionId) || Number(msg.changeOf?.sessionId) || 0;
+    return (id && seeVotes.get(id)) || null;
+  };
   stream.rows.forEach((msg, i) => {
     const key = msg.id != null ? `m${msg.id}` : (msg.key ? `g${msg.key}` : `i${i}`);
-    if (msg.kind === 'message') {
+    if (msg.changeOf && msg.kind !== 'message') {
+      drawn.push(<ChangeEvent key={key} msg={msg} changeId={msg.changeOf.sessionId} tag={tagOf(msg)} />);
+    } else if (msg.kind === 'message') {
+      // A reply on a change is not run into one on the request: its tag is
+      // on its own head.
       const grouped = !!previous && previous.kind === 'message' && !msg.deleted && !previous.deleted
         && !!msg.at && !!previous.at
+        && (previous.changeOf?.sessionId ?? null) === (msg.changeOf?.sessionId ?? null)
         && groupsWithPrevious(
           { author: previous.username, at: previous.at },
           { author: msg.username, at: msg.at, reply: !!msg.quote },
         );
-      drawn.push(<MessageRow key={key} msg={msg} grouped={grouped} surface="thread" />);
+      drawn.push(<MessageRow key={key} msg={msg} grouped={grouped} surface="thread" tag={tagOf(msg)} seeVote={seeVoteOf(msg)} />);
     } else if (msg.kind === 'github' && !msg.githubSpec) {
       drawn.push(<GitHubRow key={key} msg={msg} />);
     } else if (msg.kind === 'vote') {
-      drawn.push(<SystemRow key={key} msg={msg} />);
+      drawn.push(<SystemRow key={key} msg={msg} seeVote={seeVoteOf(msg)} />);
     } else {
       const card = msg.kind === 'spec_share' && msg.specShare
         ? specs.find((c) => c.read.kind === 'shared' && c.read.sessionId === Number(msg.specShare?.sessionId))
@@ -1214,14 +1333,19 @@ export function RequestRows({ view }: { view: TranscriptView }) {
  * the request page's own line (`.dev-request-event`), so the two pages read
  * alike. `.gc-msg-system` keeps the module's row hooks.
  */
-const ChangeEvent = memo(function ChangeEvent({ msg }: { msg: TranscriptMessage }) {
+const ChangeEvent = memo(function ChangeEvent({ msg, changeId = null, tag = null }: {
+  msg: TranscriptMessage;
+  /** 1 Nov 2026: on a request's page, the change the line happened to, and its tag ("on Change #6063"). */
+  changeId?: number | null;
+  tag?: string | null;
+}) {
   const t = useMessages('project');
   const tChat = useMessages('chat');
   const line = changeLine(msg);
   if (!line) return null;
-  const sessionId = Number(msg.event?.sessionId || msg.voteRef?.sessionId || controller()?.activeThread?.ref || 0);
+  const sessionId = Number(changeId || msg.event?.sessionId || msg.voteRef?.sessionId || controller()?.activeThread?.ref || 0);
   return (
-    <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-change-event={line.kind}>
+    <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-change-event={line.kind} data-change-event-on={changeId || undefined}>
       <span className="dev-request-event-glyph" aria-hidden="true">{line.glyph}</span>
       <span className="dev-request-event-text">
         {/* A line the page words is one whole message: <0> is who did it,
@@ -1240,6 +1364,7 @@ const ChangeEvent = memo(function ChangeEvent({ msg }: { msg: TranscriptMessage 
           <>{' · '}<button type="button" className="dev-request-event-link" onClick={() => controller()?.openSharedSpec?.(msg.specShare?.sessionId, msg.specShare?.version, msg.specShare?.previewTitle)}>{t('project:topic.request.stream.read')}</button></>
         ) : null}
         {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
+        {tag ? <span className="dev-request-event-time" data-change-event-tag="">{` · ${tag}`}</span> : null}
       </span>
     </div>
   );
@@ -1442,6 +1567,46 @@ export function TranscriptRows({ view, source }: {
   const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message' && !m.openApp)
     ? view.lead.quiet
     : null;
+  // #6441: SEEING IT READS IT. A message with an unread dot that is (mostly)
+  // on screen while the tab is in front has been seen, so its dot clears and
+  // the bell drops by one without a click. One observer per transcript,
+  // over the rows already drawn with `data-gc-unread`; it is re-armed when
+  // the message list changes, which is how a reply that arrives while the
+  // thread is open is read too. A row scrolled out of view, or a background
+  // tab, reads nothing: the visibility check is repeated when the tab comes
+  // back, in case the observer's own callback did not fire again.
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof IntersectionObserver !== 'function') return undefined;
+    const nodes = Array.from(document.querySelectorAll('[data-gc-unread]'));
+    if (!nodes.length) return undefined;
+    const seen = new Set<number>();
+    const showing = new Set<Element>();
+    const read = (el: Element) => {
+      showing.delete(el);
+      observer.unobserve(el);
+      const id = Number(el.getAttribute('data-msg-id'));
+      if (!Number.isSafeInteger(id) || id <= 0 || seen.has(id)) return;
+      seen.add(id);
+      controller()?._clearMessageDot?.(id);
+    };
+    const flush = () => {
+      if (document.visibilityState === 'hidden') return;
+      for (const el of [...showing]) read(el);
+    };
+    const observer = new IntersectionObserver((records) => {
+      for (const record of records) {
+        if (record.isIntersecting && record.intersectionRatio >= 0.6) showing.add(record.target);
+        else showing.delete(record.target);
+      }
+      flush();
+    }, { threshold: 0.6 });
+    for (const node of nodes) observer.observe(node);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', flush);
+      observer.disconnect();
+    };
+  }, [view.messages]);
   // The general chat's "New" line: above the first message after where
   // reading stood when the channel opened (`lead.unread`), or above the
   // first row drawn after it when that message is not drawn itself. The

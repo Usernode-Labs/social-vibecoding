@@ -5,6 +5,7 @@ const appAccess = require('../services/app-access');
 const repoRef = require('../services/repo-ref');
 const log = require('../services/logger');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { conversationActionLimiter } = require('../middleware/rate-limits');
 const communities = require('../services/communities');
 const threadMoves = require('../services/thread-moves');
 
@@ -75,10 +76,35 @@ function threadsRoutes() {
       const page = await threads.threadPage(pool, {
         thread, viewerId: req.user ? req.user.id : null, owner: found.owner, repo: found.repo,
       });
-      // Stage 6: a merge or split waiting on this thread.
-      return res.json({ ...page, moves: await threadMoves.openMoves(pool, { threadId: thread.id }) });
+      // Stage 6: a merge or split waiting on this thread. #6421: a change's
+      // consent question is drawn for the asker who may answer it.
+      return res.json({ ...page, moves: await threadMoves.openMoves(pool, {
+        threadId: thread.id, viewerId: req.user ? req.user.id : null,
+      }) });
     } catch (err) {
       log.error('threads', 'thread read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // 1 Nov 2026 (one page per thread): where a change lives. A change built
+  // for a request has no page of its own: its addresses (`dev/changes/<N>`,
+  // `dev/proposals/<id>`, `dev/shared/<id>`) open the request's page at it,
+  // and this says which request (services/threads.js requestHome). `request`
+  // is null for a change that keeps its own page, and for one this viewer
+  // may not read, whose own page answers for itself.
+  router.get('/api/apps/:slug/threads/change/:sessionId', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!/^[1-9][0-9]{0,15}$/.test(req.params.sessionId)) return res.json({ request: null });
+      const found = await visibleApp('slug', req.params.slug, req.user);
+      if (!found) return res.status(404).json({ error: 'App not found' });
+      const home = await threads.requestHome(pool, {
+        appId: found.app.id, sessionId: Number(req.params.sessionId), viewerId: req.user ? req.user.id : null,
+      });
+      return res.json({ request: home ? home.number : null });
+    } catch (err) {
+      log.error('threads', 'change home read failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -146,6 +172,7 @@ function threadsRoutes() {
       return answerMove(res, await act(pool, {
         app: found.app, user: req.user, moveId: req.params.id,
         reason: typeof req.body?.reason === 'string' ? req.body.reason : null,
+        answer: typeof req.body?.answer === 'string' ? req.body.answer : null,
       }));
     } catch (err) {
       log.error('threads', `move ${verb} failed`, { message: err.message });
@@ -154,6 +181,42 @@ function threadsRoutes() {
   };
   router.post('/api/apps/:slug/thread-moves/:id/agree', sameOriginBrowserOnly, member, decideMove('agree', threadMoves.agree));
   router.post('/api/apps/:slug/thread-moves/:id/object', sameOriginBrowserOnly, member, decideMove('object', threadMoves.object));
+  // #6421: a request's other asker answers a change's question: Yes gathers
+  // that thread into the change's, Keep separate leaves it linked where it is.
+  router.post('/api/apps/:slug/thread-moves/:id/consent', sameOriginBrowserOnly, member, decideMove('consent', threadMoves.consent));
+
+  // ── A private thread about it (threads, one loop: phase B) ──────────
+  //
+  // 1 Nov 2026: "Work on this with Homeroom bot" on a request's page or a
+  // change's: a thread in the viewer's own chat with the bot, about request
+  // or change `number` (services/private-threads.js startAbout), which the
+  // bot reads in every turn there. Opened by whoever asked for the request,
+  // the bot waits for their plan before it builds it. Anyone who may see
+  // the project may open one: it is private, and posts nothing. Their own
+  // tap only: same-origin, on no connector's list. Tapping again opens the
+  // same thread.
+  //
+  //   POST /api/apps/:slug/threads/:number/private   { kind: 'request' | 'change' } → { rootId, href, holds }
+  router.post('/api/apps/:slug/threads/:number/private', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
+      if (req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      if (!/^[1-9][0-9]{0,8}$/.test(req.params.number)) return res.status(404).json({ error: 'Thread not found' });
+      const kind = req.body?.kind === 'change' ? 'change' : req.body?.kind === 'request' || req.body?.kind == null ? 'request' : null;
+      if (!kind) return res.status(422).json({ error: 'kind must be request or change' });
+      const found = await visibleApp('slug', req.params.slug, req.user);
+      if (!found) return res.status(404).json({ error: 'App not found' });
+      const out = await require('../services/private-threads').startAbout(pool, {
+        user: req.user, app: found.app, kind, number: Number(req.params.number),
+      });
+      if (!out.ok) return res.status(out.status || 400).json({ error: out.error });
+      return res.json({ rootId: out.rootId, conversationId: out.conversationId, href: out.href, holds: out.holds, reused: out.reused });
+    } catch (err) {
+      log.error('threads', 'private thread start failed', { message: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   // `notify`: true is Notify me, false is Mute, null goes back to the rule
   // (followers are whoever asked, built, voted or posted). Answers the

@@ -120,13 +120,32 @@ test('tier 0 — a merged row is settled and reads ✓ Live, in green', () => {
   assert.equal(s.label, '✓ Live');
   assert.equal(s.tone, 'ok');
   assert.match(pillHtml(AppView, PR({ status: 'merged', yes_count: 5 })),
-    /class="gc-vote-count gc-vote-count-ok dev-status-pill dev-status-pill-block"[^>]*><span class="gc-vote-count-label">✓ Live<\/span>/,
-    'the block pill takes the green wash (app.css `.dev-status-pill-block.gc-vote-count-ok`)');
+    /class="gc-vote-count gc-vote-count-ok dev-status-pill dev-status-pill-block"[^>]*><span class="gc-vote-count-label">✓ Live<span class="gc-vote-count-suffix" title="5 yes and 0 no\. It needed 3 yes to pass\."> · 5 yes<\/span><\/span>/,
+    'the block pill takes the green wash (app.css `.dev-status-pill-block.gc-vote-count-ok`) and keeps its final tally');
+  // No counted votes: nothing follows the word, never "0/3".
+  assert.match(pillHtml(AppView, PR({ status: 'merged' })),
+    /<span class="gc-vote-count-label">✓ Live<\/span>/);
   // The card's spine, and the folded row's, follow the tone (edgeFor).
   const { edgeFor } = loadTsx('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.equal(edgeFor({ key: 'session:1', pill: { state: s } }), 'ok');
   const deployed = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deployed' }));
   assert.equal(edgeFor({ key: 'session:1', pill: { state: deployed } }), 'ok');
+});
+
+test('#6233: a Live change this tab is older than says so, and offers the reload', () => {
+  const AppView = makeAppView();
+  AppView.appData = { slug: 'usernode', self_hosted: true };
+  const item = PR({ status: 'merged', deployment_state: 'deployed', live_at: '2026-11-03T10:00:00Z' });
+  const plain = AppView.statusPillState(item);
+  assert.equal(plain.key, 'deployed', 'a tab on the running build reads plain Live');
+  assert.equal(plain.label, '✓ Live');
+  // The tab-build store (frontend/src/lib/tab-build.ts) says this tab's
+  // build is older than the change.
+  AppView.__sandbox.UsernodeReact = { tabBuild: { tabLacks: () => true } };
+  const stale = AppView.statusPillState(item);
+  assert.equal(stale.key, 'deployed_reload');
+  assert.equal(stale.label, '✓ Live · reload to get it');
+  assert.match(stale.title, /reload to get it here/);
 });
 
 test('tier 0 — derived deployment state distinguishes live, pending, and stalled merges', () => {
@@ -180,7 +199,7 @@ test('a live card wears the green pill and the green edge; one going live stays 
     deployment_state: 'deployed',
   }), 3);
   assert.match(live, /^<div class="gc-vote-item[^"]*"[^>]*data-edge="ok"[^>]*data-proposal-row="9100027"/);
-  assert.match(live, /<span class="gc-vote-count gc-vote-count-ok dev-status-pill dev-status-pill-block"[^>]*><span class="gc-vote-count-label">✓ Live<\/span>/);
+  assert.match(live, /<span class="gc-vote-count gc-vote-count-ok dev-status-pill dev-status-pill-block"[^>]*><span class="gc-vote-count-label">✓ Live<span class="gc-vote-count-suffix" title="3 yes and 0 no\. It needed 3 yes to pass\."> · 3 yes<\/span><\/span>/);
 
   const going = mergedCardHtml(AppView, PR({
     id: 9100000, status: 'merged', merged_at: '2026-06-01T00:00:00Z', yes_count: 3,
@@ -669,10 +688,10 @@ test('the two bars face each other at full height, and meet rather than overlap'
   const base = css.slice(css.indexOf('.gc-vote-fill {'), css.indexOf('.gc-vote-fill-full-yes'));
   assert.match(base, /\.gc-vote-fill \{[^}]*height: 100%/, 'both bars are the pill\'s full height');
   assert.doesNotMatch(base, /height: 50%/, 'no half-height lanes left');
-  assert.match(base, /\.gc-vote-fill-yes \{ left: 0;/, 'Yes grows from the left');
-  assert.match(base, /\.gc-vote-fill-no \{ right: 0;/, 'and No from the right');
+  assert.match(base, /\.gc-vote-fill-yes \{ inset-inline-start: 0;/, 'Yes grows from the start edge');
+  assert.match(base, /\.gc-vote-fill-no \{ inset-inline-end: 0;/, 'and No from the end edge');
   // The solid fill has no side of its own, so it needs an anchor to sit on.
-  assert.match(css, /\.gc-vote-fill-full \{ left: 0; top: 0; width: 100%; height: 100%; \}/);
+  assert.match(css, /\.gc-vote-fill-full \{ inset-inline-start: 0; top: 0; width: 100%; height: 100%; \}/);
 });
 
 test('facing bars can meet but never overlap, and keep their ratio when they would', () => {
@@ -862,7 +881,37 @@ test('blockReasons: severity order, labels, and the detail sentences', () => {
   assert.ok(!r[0].soft && !r[1].soft, 'a refused merge and a failing check do block');
 });
 
-// ── The invariant the whole change rests on ─────────────────────────────
+// Request 6265: an approved, passing change whose merge GitHub held back
+// (still finishing an earlier merge, or a plain refusal) draws an amber tag
+// that says so, with the queue's next try in the viewer's clock.
+test('blockReasons: a merge GitHub held back draws an amber "Waiting on GitHub" tag', () => {
+  const AppView = makeAppView();
+  const future = new Date(Date.now() + 3 * 60 * 1000).toISOString();
+  const time = new Date(Date.parse(future)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const pr = { status: 'promoted', check_state: 'passing',
+    integration: { blockReasons: ['github_busy'], heldUntil: future } };
+  const tag = AppView.statusTagSpecs(pr, {}).find((t) => t.key === 'tag-github_busy');
+  assert.ok(tag, 'the tag is drawn');
+  assert.equal(tag.label, 'Waiting on GitHub');
+  assert.equal(tag.cls, AppView.STATUS_TAG_CLS.soft, 'amber: nobody has to act on it');
+  assert.match(tag.title, /already in progress/);
+  assert.ok(tag.title.includes(time), `the tooltip names ${time}: ${tag.title}`);
+  assert.equal(tag.data['data-status-tag'], 'github_busy');
+
+  // A plain refusal says GitHub refused it, under the same label.
+  const refused = AppView.statusTagSpecs({ ...pr, integration: { blockReasons: ['github_refused'], heldUntil: future } }, {})
+    .find((t) => t.key === 'tag-github_refused');
+  assert.equal(refused.label, 'Waiting on GitHub');
+  assert.match(refused.title, /GitHub refused the merge/);
+
+  // Past its time, or no time recorded: "in a few minutes".
+  const soon = AppView.blockReasons({ ...pr, integration: { blockReasons: ['github_busy'], heldUntil: null } });
+  assert.match(soon.find((r) => r.key === 'github_busy').detail, /tries again in a few minutes/);
+
+  // Nothing served: no tag.
+  assert.equal(AppView.blockReasons({ status: 'promoted', check_state: 'passing' }).length, 0);
+});
+
 
 test('the bar can only ever be a vote state, whatever is wrong with the row', () => {
   const AppView = makeAppView();

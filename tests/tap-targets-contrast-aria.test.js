@@ -151,10 +151,10 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   const weeks = 'frontend/src/features/dev-board/workshop/week-pages.tsx';
   has(weeks, /className="dev-ws-reveal touch-target-32" data-ws-week=\{week\.key\} data-ws-week-all=""/, 'All of this week');
   has(ws, /className="dev-ws-reveal touch-target-32"\s+data-ws-weeks-more=""/, 'Earlier weeks');
-  has(ws, /className="dev-ws-reveal touch-target-32"\s+data-ws-fresh-more=""/, 'New for you\'s Show N more');
   has(weeks, /className="dev-ws-reveal touch-target-32" data-ws-week-group-more=""/, 'a week group\'s Show all N');
   has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Mark all seen');
-  has(ws, /className="dev-ws-since-clear un-touch-target"\s+data-ws-fresh-clear=""/, 'New for you\'s Mark all seen');
+  // New for you folded into What happened (5 Nov 2026): one Mark all seen,
+  // and no Show N more of its own.
   // After-Workshop-B: the Overview's Rules, and a row's one act (Vote,
   // Build it, the card's own), wear the kit's slop.
   has('frontend/src/features/dev-board/workshop/community-card.tsx', new RegExp(`className="dev-ws-hub-open dev-ws-ov-rule-edit ${KIT}"`), 'Rules');
@@ -167,7 +167,6 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   // are the grouped list's rows, a full row tall each.
   has('frontend/src/features/dev-board/workshop/hub-cards.tsx', new RegExp(`className="dev-ws-hub-open ${KIT}" data-ws-recent-all=""`), 'Recently live\'s All in Workshop');
   const ui = 'frontend/src/features/home/panels/ui.tsx';
-  has(ui, new RegExp(`className="home-panel-browse [^"]*${KIT}"`), 'Discover\'s See all');
   has(ui, new RegExp(`className="home-panel-see-all [^"]*${KIT}"`), 'See all challenges');
   has('frontend/src/features/home/panels/discover.tsx', new RegExp(`card-add-btn absolute [^$]*${KIT} \\$\\{`), 'the Discover +');
   for (const f of ['grants-list.tsx', 'app-permissions-list.tsx', 'cli-tokens-list.tsx']) {
@@ -207,9 +206,9 @@ test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {
   assert.ok(chips.length < CSS.length, 'the chip rows are isolated');
   assert.match(chips, /button\.attr-chip::after \{[\s\S]*?z-index: -1;[\s\S]*?height: max\(100%, 32px\);/);
   // The Save mark follows a vote row's No button 4px away: it reaches back no
-  // further than that margin.
+  // further than that margin, at the row's start edge in either direction.
   const save = CSS.slice(CSS.indexOf('  .gc-msg-save::after {'));
-  assert.match(save, /^ {2}\.gc-msg-save::after \{[\s\S]*?left: -4px;[\s\S]*?height: max\(100%, 32px\);/);
+  assert.match(save, /^ {2}\.gc-msg-save::after \{[\s\S]*?inset-inline-start: -4px;[\s\S]*?height: max\(100%, 32px\);/);
 });
 
 // ── Q20: ARIA structure ─────────────────────────────────────────────────
@@ -221,9 +220,11 @@ test('Q20: form controls the audit found unnamed have names', () => {
     'the Country label points at its select');
   assert.equal(message('auth:waiting.about.country'), 'Country');
   assert.match(about, /id="waiting-about-country"/);
-  // Four text boxes that took focus announcing only "edit text".
+  // Four text boxes that took focus announcing only "edit text". The message
+  // box follows what is typed (`dir="auto"`), so an Arabic or English message
+  // keeps its own direction.
   assert.match(read('frontend/src/features/messages/message-row.tsx'),
-    /<textarea ref=\{editRef\} aria-label=\{t\('messages:row\.editLabel'\)\}/, 'the message edit box');
+    /<textarea ref=\{editRef\} dir="auto" aria-label=\{t\('messages:row\.editLabel'\)\}/, 'the message edit box');
   assert.equal(message('messages:row.editLabel'), 'Edit message');
   assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'),
     /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? msg\('project:card\.title\.proposalInput'\) : msg\('project:card\.title\.requestInput'\)\}/,

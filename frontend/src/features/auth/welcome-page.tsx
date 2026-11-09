@@ -66,6 +66,7 @@ import {
   saveAccount,
   touchScreen,
 } from './sign-in-sheet';
+import { SignupOptIn } from './signup-opt-in';
 import { TermsNotice } from './waitlist-shared';
 
 // The make screen's root, over the landing (z-[60], with "Signing you in…")
@@ -104,7 +105,7 @@ const POINT_EMOJI = { make: '\u2728', ask: '\u{1F4AC}', decide: '\u{1F5F3}\uFE0F
 // the page fits a 390x844 phone above Continue with each line on one line
 // (a narrower phone wraps them rather than cutting them off). The hairline
 // starts where the words do, as the primitive's own insets do for its tile.
-const POINT_ROW = 'gap-3 py-2 [&:not(:last-child)]:after:left-[4.25rem] [@media(max-height:799px)]:py-0.5';
+const POINT_ROW = 'gap-3 py-2 [&:not(:last-child)]:after:start-[4.25rem] [@media(max-height:799px)]:py-0.5';
 // The make screen's idea tile (../first-session/make.tsx), a little smaller:
 // the app tile's face and hairline, the emoji at 22px.
 const POINT_TILE = 'app-icon-tile flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[22px] leading-none';
@@ -177,6 +178,8 @@ export function WelcomePage({ account, beforeFinish }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+  // The sign-up form's "Homeroom news by email" box (#6044), unticked until ticked.
+  const [newsByEmail, setNewsByEmail] = useState(false);
   const completion = useSessionConfirmation();
   const { finishLogin: confirmSession, clear: clearConfirmation } = completion;
   // One frame on the wallpaper alone, so the rise has a start.
@@ -234,7 +237,7 @@ export function WelcomePage({ account, beforeFinish }: {
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
-      const saved = await saveAccount(handle);
+      const saved = await saveAccount(handle, { marketingEmail: account.needsUsername && newsByEmail });
       if (!saved.ok) {
         setError(saved.error);
         if (saved.field === 'username') usernameField.current?.focus({ preventScroll: true });
@@ -252,7 +255,7 @@ export function WelcomePage({ account, beforeFinish }: {
     } finally {
       setBusy(false);
     }
-  }, [account.needsUsername, beforeFinish, clearConfirmation, confirmSession, handOff]);
+  }, [account.needsUsername, newsByEmail, beforeFinish, clearConfirmation, confirmSession, handOff]);
 
   return (
     <div
@@ -332,6 +335,9 @@ export function WelcomePage({ account, beforeFinish }: {
                     {...HANDLE_FIELD}
                   />
                 </div>
+              </div>
+              <div className="mt-3">
+                <SignupOptIn id="welcome-page-news-email" kind="email" checked={newsByEmail} onChange={setNewsByEmail} />
               </div>
             </>
           ) : null}

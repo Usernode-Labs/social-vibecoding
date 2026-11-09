@@ -18,8 +18,8 @@
  * as `pinsFragment` here; tests/comment-pin.test.js holds the two together)
  * from the `screenshotPins` a post carries. A fragment never reaches a
  * server, so GitHub's image proxy, coding agents and everything else that
- * fetches the picture get the plain screenshot, and the comment's words and
- * the where line are in the request's text for them. It travels with the
+ * fetches the picture get the plain screenshot, and the comment's words are
+ * in the request's text for them. It travels with the
  * request's body, so nothing else has to be stored or looked up.
  *
  * `pin` is the point as fractions of the picture's width and height, 0 to 1,

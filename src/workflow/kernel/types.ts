@@ -28,7 +28,7 @@ export interface Logger {
   error(scope: string, message: string, meta?: object): void;
 }
 
-// Who produced an event.
+// Who produced an event, as the producer says.
 export type Source =
   | { kind: 'route'; name?: string }
   | { kind: 'service'; workId: string; workKind: string; attempt: number }
@@ -37,12 +37,18 @@ export type Source =
   | { kind: 'admin'; name?: string }
   | { kind: 'system'; name?: string };
 
+// Which database login appended an event, as the database recorded it
+// (wf_events.producer): 'web' for one that may only append (the web
+// process's), 'platform' for one that may decide. A producer cannot choose it.
+export type Producer = 'platform' | 'web';
+
 // An event as a machine sees it: payload already decoded.
 export interface Event<P = unknown> {
   id: number;
   type: string;
   payload: P;
   source: Source;
+  producer: Producer;
   actor: string | null;
   requestKey: string;
   appId: number | null;
@@ -141,6 +147,11 @@ export interface MachineDefinition<S extends State = State, F = unknown> {
   events: Record<string, Decoder>;
   // Events that may create the instance (handled in the NONE row).
   create?: string[];
+  // Events the web process may append: what its routes ask for, and what a
+  // row web inserts sets off. Any other event web appended is refused before
+  // admission, replay or machine code, whatever source it claims
+  // (pipeline.ts). Required, so a machine says so even when it is none.
+  web: string[];
   terminal?: string[];
   decode: (row: { state: string; data: unknown }) => S;
   facts?: (tx: Tx, state: S, event: Event<any>, ctx: TransitionContext) => Promise<F>;

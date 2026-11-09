@@ -39,6 +39,8 @@ export const WORK = Object.freeze({
   liveDm: 'bot.tellLive',
   livePost: 'bot.commentLive',
   approved: 'bot.tellApproved',
+  // #6264: the promises people asked for, kept where they asked.
+  followups: 'bot.tellFollowups',
 });
 // How often a change being merged is looked at again (a merge GitHub does
 // not confirm puts it back up for its vote).
@@ -162,7 +164,20 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
   const row = f.row!;
   let d = base;
   const now = ctx.now.getTime();
-  const at = (name: Name, more: Omit<Outcome<BState>, 'next'> = {}) => step(name, d, { push: extra.push, ...more });
+  // #6264: the promises people asked for, kept by the change's own moments.
+  // Each is keyed so it is asked once: the checks' by the head they were
+  // about, the vote's by the approval epoch. Firing is a no-op when nobody
+  // is waiting.
+  const follow: WorkRequest[] = [];
+  const checkState = String(row.check_state || '');
+  const checksKey = row.reviewed_head_sha ? `followups:checks:${shortSha(String(row.reviewed_head_sha))}` : null;
+  if (checksKey && ['passing', 'skipped', 'failing'].includes(checkState) && !d.notes[checksKey]) {
+    follow.push({ kind: WORK.followups, key: checksKey,
+      input: { sessionId: d.sessionId, event: 'checks', head: String(row.reviewed_head_sha), verdict: checkState } });
+  }
+  if (follow.length) d = asked(d, follow);
+  const at = (name: Name, more: Omit<Outcome<BState>, 'next'> = {}) =>
+    step(name, d, { push: extra.push, ...(follow.length ? { work: follow } : {}), ...more });
   const kept = (s?.name as Name) || 'checking';
   // (A timer that fired is spent: a look while it is being merged arms the
   // next one for what it was waiting on.)
@@ -194,13 +209,21 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
   // Ready to try: said once per epoch, saying what does not work. An epoch
   // asked before and not sent (it was being merged meanwhile) is asked
   // again under a key of its own; the DM's own key is the epoch's.
-  if (d.told === r.epoch) return at('ready', { timer: null });
   const broken = words(r.broken);
   const first = `ready:${r.epoch}`;
-  const work: WorkRequest[] = [{ kind: WORK.ready, key: d.notes[first] ? `${first}:v${ctx.version + 1}` : first,
-    input: { sessionId: d.sessionId, epoch: r.epoch, broken } }];
-  d = asked({ ...d, told: r.epoch }, work);
-  return at('ready', { work, timer: null });
+  const voteKey = `followups:vote:${r.epoch}`;
+  const work: WorkRequest[] = d.told === r.epoch ? [] : [{
+    kind: WORK.ready, key: d.notes[first] ? `${first}:v${ctx.version + 1}` : first,
+    input: { sessionId: d.sessionId, epoch: r.epoch, broken },
+  }];
+  // Whoever asked to be told when it is ready to vote hears it once, at
+  // this epoch (a later epoch is a newer change to vote on).
+  if (!d.notes[voteKey]) {
+    work.push({ kind: WORK.followups, key: voteKey, input: { sessionId: d.sessionId, event: 'vote', epoch: r.epoch } });
+  }
+  if (!work.length) return at('ready', { timer: null });
+  d = asked({ ...d, ...(d.told === r.epoch ? {} : { told: r.epoch }) }, work);
+  return step('ready', d, { push: extra.push, work: [...follow, ...work], timer: null });
 }
 
 // Keyed by the instance's version: a head left and come back to is asked
@@ -272,7 +295,15 @@ function stopWork(d: Data, before: string | null, f: Facts): { d: Data; work: Wo
 function merged(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
   const live = s.name === NONE ? null : (s as Live);
   const { d, work } = stopWork(live ? live.data : created(e, f), e.payload.before, f);
-  return step('merged', d, { work, timer: null });
+  // #6264: whoever asked to be told it merged hears it, once.
+  const tell = followupWork(d, 'merged', 'followups:merged');
+  return step('merged', asked(d, tell), { work: [...work, ...tell], timer: null });
+}
+
+// #6264: one follow-up work item, unless it was already asked under its key.
+function followupWork(d: Data, event: string, key: string, input: Record<string, Json> = {}): WorkRequest[] {
+  if (d.notes[key]) return [];
+  return [{ kind: WORK.followups, key, input: { sessionId: d.sessionId, event, ...input } }];
 }
 
 // Live: whoever asked hears it (their DM, the chip, a first version's line),
@@ -286,26 +317,26 @@ function wentLive(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
     { kind: WORK.liveDm, key: 'live-dm', input: { sessionId: stop.d.sessionId } },
     { kind: WORK.livePost, key: 'live-post', input: { sessionId: stop.d.sessionId } },
   ];
-  return step('live', asked(stop.d, work), { work: [...work, ...stop.work], timer: null });
+  // #6264: whoever asked to be told it is live hears it, once.
+  const tell = followupWork(stop.d, 'live', 'followups:live');
+  return step('live', asked(stop.d, [...work, ...tell]), { work: [...work, ...tell, ...stop.work], timer: null });
 }
 
-// A vote: whoever asked for the change reads its tray again (it names who
-// it still waits on), and a yes is a quiet line in the request's thread
-// ("ada approved it."), once per voter and epoch. Said after the vote's
-// commit before, a restart in between lost it.
-function voted(s: BState, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<BState> {
+// A vote: whoever asked for the change reads where its requests stand again
+// (they name who it still waits on). 5 Nov 2026 (docs/plans/bot-one-model.md,
+// decision 6): a yes is no longer a line in the request's thread ("ada
+// approved it."); the change's votes are on its page. WORK.approved stays
+// for work owed before, which its service now settles quietly.
+function voted(s: BState, _e: Event<any>, f: Facts, _ctx: TransitionContext): Outcome<BState> {
   const live = s as Live;
-  const key = `approved:${e.payload.voterId}:${e.payload.epoch}`;
-  const work: WorkRequest[] = e.payload.vote === 'yes' && !live.data.notes[key]
-    ? [{ kind: WORK.approved, key, input: {
-      sessionId: live.data.sessionId, voterId: e.payload.voterId, voter: e.payload.voter, epoch: e.payload.epoch, owedAt: ctx.now.toISOString(),
-    } }]
-    : [];
-  return step(live.name as Name, asked(live.data, work), { work, push: tray(f) });
+  return step(live.name as Name, live.data, { work: [], push: tray(f) });
 }
 
+// Closed: whoever asked to be told about it hears that it was closed, once,
+// and every promise still waiting on it is called off (thread-followups.js).
 function closed(s: Live): Outcome<BState> {
-  return step('closed', s.data, { timer: null });
+  const tell = followupWork(s.data, 'closed', 'followups:closed');
+  return step('closed', asked(s.data, tell), { work: tell, timer: null });
 }
 
 // A work result: recorded on its note. The fix the bot would not take, or
@@ -368,7 +399,9 @@ const fromMachine = (...names: string[]) => (e: Event<any>): Check =>
 const anyProducer = (e: Event<any>): Check =>
   (e.source.kind === 'message' || e.source.kind === 'system' || e.source.kind === 'service' ? ok() : reject('not_a_producer'));
 const timer = (e: Event<any>): Check => (e.source.kind === 'timer' ? ok() : reject('timer_only'));
-const admin = (e: Event<any>): Check => (e.source.kind === 'admin' || e.source.kind === 'system' ? ok() : reject('not_a_producer'));
+// Web's is the admin console's, admitted as an admin's.
+const admin = (e: Event<any>): Check => (e.source.kind === 'admin' || (e.source.kind === 'system' && e.producer === 'platform')
+  ? ok() : reject('not_a_producer'));
 
 export function botChange(): Machine<BState, Facts> {
   const works = { WorkSucceeded: workResult('done'), WorkFailed: workResult('failed'), WorkExhausted: workResult('exhausted') };
@@ -413,6 +446,8 @@ export function botChange(): Machine<BState, Facts> {
     version: 2,
     events: EVENTS,
     create: CREATE,
+    // What web appends: a vote on the change, and the admin console's Retry follow-up.
+    web: ['Voted', 'RetryFollowup'],
     terminal: [...FINAL],
     decode: (row) => ({ name: row.state, data: row.data } as BState),
     facts: (tx: Tx, state: BState, event: Event<any>) => {

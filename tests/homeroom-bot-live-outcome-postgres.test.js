@@ -35,7 +35,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const bot = require('../src/services/homeroom-bot');
@@ -83,9 +82,9 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent, checks_head_sha and the new indexes included
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   const setting = (key, value) => pool.query(
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2)
@@ -182,7 +181,7 @@ test('a live build always records its outcome, against the full PostgreSQL schem
       `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = 'the build produced no change to propose' WHERE id = $1`, [runId],
     );
     await liveRun(recipebot, 49, null, { ago: 600 });
-    const capRoom = { proposals_per_app: 5, proposals_total: 5, question_tripwire: 10 };
+    const capRoom = { proposals_per_app: 5, proposals_total: 5 };
     // The refresh reads #48 as unchanged since its run. Run 613's deleted
     // the bot's own row here, and the issue was never looked at. A
     // refresh's own row for an unchanged issue (#49) still goes.
@@ -237,10 +236,10 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     const candidates = await buildable();
     assert.deepEqual(candidates.map((c) => Number(c.run_id)), [first, second], 'oldest first, only where the bot acts');
     assert.ok(!candidates.some((c) => Number(c.run_id) === quietRun));
-    assert.deepEqual(rules.pickLiveBuilds(candidates, { slots: 6, perPerson: 2 }).map((p) => Number(p.run_id)), [first, second],
-      'two builds on one project at once, under its BUILDS_PER_PROJECT');
+    assert.deepEqual(rules.pickLiveBuilds(candidates, { slots: 6, perPerson: 2, perProject: 2 }).map((p) => Number(p.run_id)), [first, second],
+      'two builds on one project at once, under its builds-per-project number');
     const building = [0, 1].map((i) => ({ kind: 'build', appId: recipebot.id, person: `u${900 + i}` }));
-    assert.deepEqual(rules.pickLiveBuilds(candidates, { slots: 6, perPerson: 2, inUse: building }).map((p) => Number(p.run_id)), [first],
+    assert.deepEqual(rules.pickLiveBuilds(candidates, { slots: 6, perPerson: 2, perProject: 3, inUse: building }).map((p) => Number(p.run_id)), [first],
       'and only up to it, counting the builds already under way');
     assert.deepEqual(await buildable(['quiet-app', 'recipebot']), [], 'a paused project builds nothing');
     await pool.query('DELETE FROM homeroom_bot_runs');
@@ -261,7 +260,7 @@ test('a live build always records its outcome, against the full PostgreSQL schem
         return { issues: numbers.map((n) => ({ number: n, state: 'open', createdAt: SEEN, updatedAt: '2026-10-03T16:46:40Z' })) };
       },
     });
-    const capRoom = { proposals_per_app: 5, proposals_total: 5, question_tripwire: 10 };
+    const capRoom = { proposals_per_app: 5, proposals_total: 5 };
 
     // Waiting its turn.
     const run = (await pool.query(
@@ -725,6 +724,97 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     assert.equal(await why(runB), null);
     // Another request's build is no business of this one's.
     assert.equal(await bot.requestBuilding(pool, { appId: recipebot.id, issueNumber: 33, runId: runB }), null);
+    await pool.query('DELETE FROM homeroom_bot_runs');
+  });
+
+  // #6267: a build whose upload GitHub refused for a temporary reason is
+  // kept, not thrown away. Its run waits to push; the sweep or a person's
+  // reply sends that same commit and proposes it, with no second build.
+  await t.test('#6267: a refused upload is kept, and a reply pushes the same commit without building again', async () => {
+    bot._resetForTests();
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    const salt = crypto.randomBytes(3).toString('hex');
+    const sha = 'c'.repeat(40);
+    const sessionId = await session(recipebot, { status: 'paused' });
+    const { rows: [{ branch_name: branch }] } = await pool.query('SELECT branch_name FROM chat_sessions WHERE id = $1', [sessionId]);
+    const issue = 97;
+    const runId = await liveRun(recipebot, issue, sessionId, { ago: 600 });
+    const waiting = `waiting to push: couldn't push the build's commit (push_failed, temporary)`;
+    await bot.recordLiveBuild(pool, runId, {
+      ok: false, waitingToPush: true, sessionId, branchName: branch, sha, error: waiting,
+    });
+    await require('../src/services/worker-unpushed-commit').record(pool, sessionId, { sha, branchName: branch }, null);
+    const recorded = await runOf(runId);
+    assert.deepEqual(
+      [recorded.build_ok, recorded.build_session_id, recorded.build_sha, String(recorded.build_error).slice(0, 15)],
+      [null, sessionId, sha, 'waiting to push'],
+      'the run waits, and keeps the session and the commit',
+    );
+    assert.equal(await statusOf(sessionId), 'paused', 'its worker is not archived');
+
+    const pushes = [];
+    const deps = {
+      worker: { async rescueUnpushedCommit(id) { pushes.push(id); return { attempted: true, pushed: true }; } },
+      github: { isEnabled: () => true }, ws: {},
+    };
+    t.mock.method(live, 'buildAndPropose', async () => { throw new Error('the build must not run again'); });
+    t.mock.method(live, 'proposedAlready', async () => null);
+    t.mock.method(live, 'botUsernameOf', async () => null);
+    t.mock.method(live, 'promoteOwnBuild', async () => ({ status: 200, body: { ok: true, prNumber: 71 } }));
+    t.mock.method(live, 'post', async () => ({ postId: 1 }));
+    t.mock.method(live, 'advanceSeen', async () => {});
+
+    assert.equal(await bot.resumeWaitingPush(pool, {}, { bot: botUser, app: recipebot, issueNumber: issue, deps }), true);
+    assert.deepEqual(pushes, [sessionId], 'the saved commit is sent from its own session');
+    const after = await runOf(runId);
+    assert.ok(after.build_ok === true, 'the run is built');
+    assert.equal(after.proposal_session_id, sessionId, 'and it is its proposal');
+    assert.equal(after.build_sha, sha, 'the same commit, not a new one');
+    // Neither the sweep nor a second reply pushes or proposes it again.
+    assert.equal(await bot.resumeWaitingPush(pool, {}, { bot: botUser, app: recipebot, issueNumber: issue, deps }), false);
+    assert.deepEqual(pushes, [sessionId]);
+    assert.ok(salt);
+    Object.assign(live, real);
+    await pool.query('DELETE FROM homeroom_bot_runs');
+  });
+
+  // #6267: after six hours the bot stops trying, says so, and keeps the
+  // saved commit so a reply can still send it.
+  await t.test('#6267: a build still waiting after six hours stops trying and keeps the commit', async () => {
+    bot._resetForTests();
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    const sha = 'd'.repeat(40);
+    const sessionId = await session(recipebot, { status: 'paused' });
+    const { rows: [{ branch_name: branch }] } = await pool.query('SELECT branch_name FROM chat_sessions WHERE id = $1', [sessionId]);
+    const issue = 98;
+    const runId = await liveRun(recipebot, issue, sessionId, { ago: 600 });
+    await bot.recordLiveBuild(pool, runId, {
+      ok: false, waitingToPush: true, sessionId, branchName: branch, sha,
+      error: `waiting to push: couldn't push the build's commit (push_failed, temporary)`,
+    });
+    await pool.query(
+      `UPDATE homeroom_bot_runs SET build_finish = jsonb_build_object('waiting_at', NOW() - INTERVAL '7 hours') WHERE id = $1`,
+      [runId],
+    );
+    await require('../src/services/worker-unpushed-commit').record(pool, sessionId, { sha, branchName: branch }, null);
+    let pushes = 0;
+    const posted = [];
+    t.mock.method(live, 'post', async (args) => { posted.push(args); return { postId: 1 }; });
+    t.mock.method(live, 'botUsernameOf', async () => null);
+    const out = await bot.sweepWaitingPushes(pool, {}, {
+      worker: { async rescueUnpushedCommit() { pushes += 1; return { attempted: true, pushed: true }; } },
+      github: { isEnabled: () => true }, ws: {},
+    });
+    assert.deepEqual(out, { pushed: 0, gaveUp: 1 });
+    assert.equal(pushes, 0, 'it does not try again');
+    const run = await runOf(runId);
+    assert.equal(run.build_ok, false);
+    assert.match(run.build_error, /gave up after 6 hours/);
+    assert.equal(await statusOf(sessionId), 'paused', 'the session is kept');
+    assert.equal((await pool.query('SELECT unpushed_sha FROM session_workers WHERE session_id = $1', [sessionId])).rows[0].unpushed_sha,
+      sha, 'and the commit record with it');
+    assert.ok(posted.length >= 1, 'it says it stopped');
+    Object.assign(live, real);
     await pool.query('DELETE FROM homeroom_bot_runs');
   });
 });

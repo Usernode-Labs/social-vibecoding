@@ -416,14 +416,25 @@ async function closeOwnSession({ pool, sessionId, reason, waitMs }) {
 // so its work never waits on another work item; a web process asks a
 // conductor (services/branch-operation.js, purpose `session`), on behalf of
 // whoever sent the first turn, or the change's owner.
-async function createRef({ row, sessionId, branchName, owner, repo, userId }) {
+async function createRef({ row, sessionId, branchName, owner, repo, userId, fromSessionId = null, fromBranch = null }) {
   const role = require('./process-role');
-  if (role.runsWorkflow(role.processRole())) return github.createBranch(owner, repo, branchName);
+  if (role.runsWorkflow(role.processRole())) {
+    // #6389: the bot's own version starts from the change it rebuilds.
+    if (fromSessionId) {
+      const sha = await github.getBranchSha(owner, repo, fromBranch).catch(() => null);
+      if (!sha) throw Object.assign(new Error('The original change\'s branch is gone'), { status: 409, error: 'source_branch_missing' });
+      return github.ensureBranchAtSha(owner, repo, branchName, sha);
+    }
+    return github.createBranch(owner, repo, branchName);
+  }
   const out = await require('./platform-operations').request({
     op: 'branch.ensure', appId: row.app_id, userId: userId || row.user_id,
-    input: { purpose: 'session', branch: branchName, sessionId: Number(sessionId) },
+    input: {
+      purpose: 'session', branch: branchName, sessionId: Number(sessionId),
+      ...(fromSessionId ? { fromSessionId: Number(fromSessionId) } : {}),
+    },
   });
-  if (!out.ok) throw Object.assign(new Error(out.error || 'The branch was not created'), { status: out.status });
+  if (!out.ok) throw Object.assign(new Error(out.error || 'The branch was not created'), { status: out.status, error: out.error || null });
 }
 
 async function ensureSessionBranch({ pool, sessionId, username = null, label = null, userId = null }) {
@@ -434,7 +445,9 @@ async function ensureSessionBranch({ pool, sessionId, username = null, label = n
   const { SESSION_BRANCH_LOCK } = require('./advisory-locks');
   return require('../db/session-locks').withSessionLock(pool, [SESSION_BRANCH_LOCK, Number(sessionId)], async () => {
     const { rows } = await pool.query(
-      `SELECT cs.id, cs.app_id, cs.branch_name, cs.user_id, cs.session_title, u.username, a.repo_url
+      `SELECT cs.id, cs.app_id, cs.branch_name, cs.user_id, cs.session_title, cs.rebuilt_from_session_id,
+              cs.waits_for_session_id,
+              u.username, a.repo_url
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
          LEFT JOIN users u ON u.id = cs.user_id
@@ -453,10 +466,33 @@ async function ensureSessionBranch({ pool, sessionId, username = null, label = n
       username || row.username || `u${row.user_id}`, Date.now(), label || row.session_title || null,
     );
     const [owner, repo] = ownerRepo(row.repo_url);
+    // #6389: a version of another change starts from that change's branch.
+    // Read once, here: its branch has to be the same app's and still there.
+    // #6423: a build stacked on a change touching the same files starts from
+    // that change's branch the same way (its waits_for_session_id), with no
+    // "own version" meaning (that is rebuilt_from_session_id's alone).
+    let fromSessionId = row.rebuilt_from_session_id
+      ? Number(row.rebuilt_from_session_id)
+      : (row.waits_for_session_id ? Number(row.waits_for_session_id) : null);
+    let fromBranch = null;
+    if (fromSessionId) {
+      const { rows: [src] } = await pool.query(
+        'SELECT app_id, branch_name FROM chat_sessions WHERE id = $1', [fromSessionId]);
+      if (!src || src.app_id !== row.app_id || !src.branch_name) fromSessionId = null;
+      else fromBranch = src.branch_name;
+    }
     if (github.isEnabled() && owner && repo) {
       try {
-        await createRef({ row, sessionId, branchName, owner, repo, userId });
+        await createRef({ row, sessionId, branchName, owner, repo, userId, fromSessionId, fromBranch });
       } catch (err) {
+        // #6389: the change this version starts from has no branch any more.
+        // Nothing is built from main in its place.
+        if (err.error === 'source_branch_missing') {
+          const gone = new Error('The change this version is built from has no branch any more');
+          gone.code = 'source_branch_missing';
+          gone.userMessage = 'The original change\'s branch is gone, so nothing was built in its place.';
+          throw gone;
+        }
         log.warn('session-lifecycle', 'Deferred branch creation failed', {
           sessionId, branch: branchName, err: err.message,
         });

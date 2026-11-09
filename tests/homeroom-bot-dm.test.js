@@ -509,7 +509,8 @@ test('the short description is suggested for everyone making a project, and ever
   // Owed with the project, in the route's transaction (its making files it),
   // then said (startFirstVersion: the bot's DM, the early plan).
   assert.match(create, /const owesFirstVersion = !readyMade && !!homeroomBotDm\.normalizeBrief\(req\.body\.brief\);/);
-  assert.match(create, /homeroomBotDm\.recordFirstVersion\(db, pool, config, \{ app: appRow, user: req\.user, brief: req\.body\.brief \}\)/);
+  // 1 Nov 2026 (C2.4): with the design it is made from, when it is.
+  assert.match(create, /homeroomBotDm\.recordFirstVersion\(db, pool, config, \{\s+app: appRow, user: req\.user, brief: req\.body\.brief, design: fromDesign,\s+\}\)/);
   assert.match(create, /if \(owesFirstVersion\) \{[\s\S]{0,200}startFirstVersion\(pool, config, \{/);
   // #3624: a ready-made app or a project with no description is recorded for
   // the bot instead, and so is a fork (an import was, before importing from
@@ -815,6 +816,114 @@ test('two answers in one DM keep one typing line up until the last is sent', asy
   assert.deepEqual(typing(), [true, false]);
 });
 
+test('31 Oct 2026: an answer to a message in a thread types in that thread, apart from the main chat', async (t) => {
+  const { events, ws } = typingHarness(t);
+  const finishers = [];
+  const work = () => new Promise((resolve) => { finishers.push(resolve); });
+  const inThread = dm.whileTyping({}, { botId: 2, conversationId: 45, threadRootId: 13006, ws }, work);
+  const inMain = dm.whileTyping({}, { botId: 2, conversationId: 45, ws }, work);
+  await settle();
+  const said = () => events.filter((e) => e.payload.type === 'conversation_typing')
+    .map((e) => [e.payload.threadRootId || null, e.payload.typing]);
+  assert.deepEqual(said().sort(), [[13006, true], [null, true]].sort(), 'one line in each place');
+  assert.deepEqual(events[0].payload.threadRootId === undefined ? events[1].payload : events[0].payload,
+    { type: 'conversation_typing', conversationId: 45, userId: 2, typing: true, threadRootId: 13006 });
+  finishers[0]('thread');
+  await inThread;
+  assert.deepEqual(said().filter(([, typing]) => !typing), [[13006, false]], 'the thread\'s stops, the main chat\'s stays');
+  finishers[1]('main');
+  await inMain;
+  assert.deepEqual(said().filter(([, typing]) => !typing), [[13006, false], [null, false]]);
+});
+
+// 1 Nov 2026: what the bot is doing rides on its typing event, for the
+// working card (frontend/src/features/messages/bot-working.tsx).
+test('what the bot is doing goes out on its typing event at once, and on every renewal after, until it changes', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] });
+  const { events, ws } = typingHarness(t);
+  const doings = () => events.filter((e) => e.payload.type === 'conversation_typing').map((e) => [e.payload.typing, e.payload.doing || null]);
+  let finish;
+  let handed;
+  const answering = dm.whileTyping({}, { botId: 2, conversationId: 47, threadRootId: 13006, ws }, (typing) => {
+    handed = typing;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  await settle();
+  assert.equal(typeof handed.doing, 'function', 'the work is handed what says it');
+  assert.deepEqual(doings(), [[true, null]], 'thinking, first: no doing');
+  await handed.doing({ kind: 'request', number: 12 });
+  assert.deepEqual(doings().at(-1), [true, { kind: 'request', number: 12 }], 'said at once');
+  await handed.doing({ kind: 'request', number: 12 });
+  assert.equal(doings().length, 2, 'the same thing is not said again');
+  t.mock.timers.tick(dm.TYPING_RENEW_MS);
+  await settle();
+  assert.deepEqual(doings().at(-1), [true, { kind: 'request', number: 12 }], 'and rides on the renewal');
+  assert.equal(events.at(-1).payload.threadRootId, 13006, 'in the place it types');
+  await handed.doing({ kind: 'code', project: '  Ear   Trainer ' });
+  await handed.doing(null);
+  t.mock.timers.tick(dm.TYPING_RENEW_MS);
+  await settle();
+  assert.deepEqual(doings().slice(-3), [[true, { kind: 'code', project: 'Ear Trainer' }], [true, null], [true, null]],
+    'a new kind at once; back to thinking, and the renewal says so too');
+  finish('done');
+  await answering;
+  assert.deepEqual(doings().at(-1), [false, null], 'a stop carries no doing');
+  await handed.doing({ kind: 'drawing' });
+  assert.deepEqual(doings().at(-1), [false, null], 'and nothing is said once it has stopped');
+});
+
+// 1 Nov 2026: a screen asked for in Main Chat is drawn in a thread the
+// designer opens; the typing, and so the working card, goes there with it.
+test('the typing moves to the thread the answer goes on in, with what it was doing, and ends there', async (t) => {
+  const { events, ws } = typingHarness(t);
+  const typed = () => events.filter((e) => e.payload.type === 'conversation_typing')
+    .map((e) => [e.payload.threadRootId || null, e.payload.typing, e.payload.doing || null]);
+  let finish;
+  let handed;
+  const answering = dm.whileTyping({}, { botId: 2, conversationId: 41, ws }, (typing) => {
+    handed = typing;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  await settle();
+  assert.equal(typeof handed.moveTo, 'function', 'the work is handed what moves it');
+  await handed.doing({ kind: 'drawing' });
+  await handed.moveTo(13010);
+  await settle();
+  assert.deepEqual(typed(), [
+    [null, true, null],
+    [null, true, { kind: 'drawing' }],
+    [13010, true, null],
+    [13010, true, { kind: 'drawing' }],
+    [null, false, null],
+  ], 'typing in the thread first, with what it was doing, then stopped in the main chat');
+  await handed.moveTo(13010);
+  assert.equal(typed().length, 5, 'moving to where it already is changes nothing');
+  await handed.doing({ kind: 'designing' });
+  assert.deepEqual(typed().at(-1), [13010, true, { kind: 'designing' }], 'and it says what it does there');
+  finish('drawn');
+  assert.equal(await answering, 'drawn');
+  assert.deepEqual(typed().at(-1), [13010, false, null], 'it stops where it is when the answer is out');
+  assert.equal(typed().filter(([root, typing]) => root === null && !typing).length, 1, 'the main chat stopped once');
+});
+
+test('a typing event carries only the kinds of work the screen words, and what they name', () => {
+  // Homeroom bot parity: P1 'writing' (the answer as it is written), P3 'looking' (a helper sent into a
+  // project's code, named by the project as 'code' is).
+  assert.deepEqual([...dm.DOING_KINDS], ['progress', 'request', 'code', 'drawing', 'designing', 'drafting', 'writing', 'looking']);
+  assert.deepEqual(dm.typingDoing({ kind: 'looking', project: 'Gym Tracker', number: 3 }), { kind: 'looking', project: 'Gym Tracker' });
+  assert.deepEqual(dm.typingDoing({ kind: 'drawing', extra: 'x' }), { kind: 'drawing' });
+  assert.deepEqual(dm.typingDoing({ kind: 'request', number: '7' }), { kind: 'request', number: 7 });
+  assert.equal(dm.typingDoing({ kind: 'request' }), null, 'a request is named by its number');
+  assert.deepEqual(dm.typingDoing({ kind: 'code', project: 'x'.repeat(200) }).project.length, 61, 'a short name');
+  assert.deepEqual(dm.typingDoing({ kind: 'code', project: '' }), { kind: 'code' });
+  assert.equal(dm.typingDoing({ kind: 'Reading request #12' }), null, 'never words');
+  assert.equal(dm.typingDoing(null), null);
+  // A person's typing route never says what anybody is doing.
+  const route = read('src/routes/conversations.js');
+  const typing = route.slice(route.indexOf("router.post('/api/conversations/:id/typing'"), route.indexOf("router.post('/api/conversations/:id/typing'") + 1500);
+  assert.doesNotMatch(typing, /doing/);
+});
+
 test('a message from somebody let in is answered while the bot types; anybody else\'s is not', async (t) => {
   const { ws, typing } = typingHarness(t);
   const pool = {
@@ -828,7 +937,14 @@ test('a message from somebody let in is answered while the bot types; anybody el
   const seen = [];
   const mayor = {
     async decideOffer() { return null; },
-    async runDmTurn(_pool, _config, args) { await settle(); seen.push(typing().slice()); return { turn: args.message.id }; },
+    async runDmTurn(_pool, _config, args) {
+      await settle();
+      seen.push(typing().slice());
+      // 1 Nov 2026: and is handed what says what it is doing, and what moves it.
+      assert.equal(typeof args.deps.doing, 'function');
+      assert.equal(typeof args.deps.moveTyping, 'function');
+      return { turn: args.message.id };
+    },
   };
   const out = await dm.noteUserMessage(pool, {}, {
     user: { id: 9, username: 'ada', hasPlatformAccess: true }, conversationId: 45, message: { id: 70, content: 'what are you working on?' },
@@ -877,6 +993,21 @@ test('a requester who does not decide on the project is told who does, and offer
   assert.doesNotMatch(text, /\u2014/);
 });
 
+// #6430: a go-ahead cannot settle this kind of change, so the DM says a
+// person has to build it and offers no Go ahead.
+test('#6430: a go-ahead that cannot settle it says a person has to build it', () => {
+  const ctx = { appName: 'Note board', issueNumber: 6, issueTitle: 'Read-only production debugging' };
+  const text = dm.dmText('person', {
+    reason: 'It changes permissions and production database access.',
+    goAheadDecides: false, firstStep: 'Just the three missing read tools',
+  }, ctx);
+  assert.match(text, /This needs a person to build, so I haven't built it: It changes permissions and production database access\./);
+  assert.match(text, /I don't build changes like this myself, even with a go-ahead\. A person has to build it, for example you with a coding agent, and the group votes on it as usual\. I can build this part now: Just the three missing read tools\.$/);
+  assert.doesNotMatch(text, /If you decide to go ahead/);
+  assert.doesNotMatch(text, /\bapprove/i);
+  assert.doesNotMatch(text, /\u2014/);
+});
+
 test('a request found already done says so, where it is, and that a vote on closing it follows', () => {
   const ctx = { appName: 'Ear Trainer', issueNumber: 14, issueTitle: 'Show my votes' };
   // One story: one message, the verdict and its offer (Propose to close,
@@ -900,16 +1031,17 @@ test('#4239: a request about Homeroom itself says so, and offers the move instea
   assert.match(text, /This is about Homeroom itself rather than Ear Trainer, so no change to Ear Trainer can do it: The header is drawn by Homeroom\.$/);
   assert.doesNotMatch(text, /\u2014/);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
-  assert.match(src, /\.\.\.\(STUCK_ACTIONS\[kind\] && !\(kind === 'person' && \(dm\.platform \|\| personDeciders\(dm\)\.length\)\) && !dm\.done\n\s+\? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/);
+  assert.match(src, /\.\.\.\(STUCK_ACTIONS\[kind\] && !dm\.done\n\s+&& !\(kind === 'person' && \(dm\.platform \|\| dm\.goAheadDecides === false \|\| personDeciders\(dm\)\.length\)\)\n\s+\? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/);
   assert.match(src, /const offerKind = kind === 'person' && dm\.platform \? 'move_request'/);
 });
 
 test('"typing" goes out before the answer starts, bounded', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
   const fn = src.slice(src.indexOf('async function whileTyping('), src.indexOf('// ── Who a request is for'));
-  assert.ok(fn.indexOf('stop.ready') < fn.indexOf('await work()'), 'the answer waits for its typing event');
+  // 1 Nov 2026: the work is handed what says what it is doing, and what moves it.
+  assert.ok(fn.indexOf('stop.ready') < fn.indexOf('return await work(typing);'), 'the answer waits for its typing event');
   assert.match(fn, /setTimeout\(resolve, TYPING_FIRST_WAIT_MS\)/, 'but never long');
-  assert.match(src, /created\.first = sendTyping\(pool, botId, id, true, io\);/);
+  assert.match(src, /created\.first = sendTyping\(pool, botId, id, true, io, root\);/);
   assert.match(src, /stop\.ready = entry\.first \|\| Promise\.resolve\(\);/);
 });
 
@@ -925,6 +1057,10 @@ test('news the card and the tray show is never a DM message of its own; what nee
     assert.equal(dm.storyMomentOf({ kind }), 'on_hold', kind);
     assert.equal(dm.saidOf(kind), 'slots', kind);
   }
+  // #6156: and one waiting for the bot's turn among the project's builds, said apart.
+  assert.equal(dm.cardOnly('held_builds_per_app', {}), false);
+  assert.equal(dm.storyMomentOf({ kind: 'held_builds_per_app' }), 'on_hold');
+  assert.equal(dm.saidOf('held_builds_per_app'), 'builds');
   assert.equal(dm.storyMomentOf({ kind: 'request_closed' }), 'done_elsewhere');
   assert.equal(dm.saidOf('request_closed'), 'done_elsewhere');
   // 16 Oct 2026: a person took on what the bot had promised: on hold, as theirs.

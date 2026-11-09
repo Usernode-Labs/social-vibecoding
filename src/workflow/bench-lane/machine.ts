@@ -261,15 +261,19 @@ export function benchLane() {
     WorkSucceeded: { to: workDone }, WorkFailed: { to: workDone }, WorkExhausted: { to: workDone },
   };
   const system = (e: Event<any>) => (['system', 'admin'].includes(e.source.kind) ? ok() : reject('not_the_platform'));
+  // A cancel web asks for is an admin's (its routes'), admitted as one.
+  const cancel = (e: Event<any>) => (e.producer === 'web' && e.source.kind !== 'admin' ? reject('not_a_producer') : system(e));
   return defineMachine<LState, Facts>({
     name: MACHINE,
     version: 1,
     events: EVENTS,
     create: ['Look', 'Tick', 'BuildEnded', 'RunCancelled', 'TrialCancelled'],
+    // What web appends: an admin's launch or rerun, and a run or trial cancelled.
+    web: ['Look', 'RunCancelled', 'TrialCancelled'],
     decode: (r) => ({ name: r.state as Name, data: r.data as Data }),
     facts: (tx, _s, e, ctx) => readFacts(tx, { runId: e.payload?.runId ?? null, trialId: e.payload?.trialId ?? null }, ctx.now),
     authorize: {
-      Look: system, RunCancelled: system, TrialCancelled: system,
+      Look: system, RunCancelled: cancel, TrialCancelled: cancel,
       BuildEnded: (e) => (e.source.kind === 'message' && e.source.from.machine === BOT_BUILD ? ok() : reject('bot_build_only')),
       Tick: (e) => (e.source.kind === 'timer' || e.source.kind === 'system' ? ok() : reject('not_the_clock')),
     },

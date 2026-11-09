@@ -520,12 +520,10 @@ test('only a viewer in the experiment is shown dense stills; everyone else exact
   assert.equal(view.serialize(odd, session(), 'demo', HEAD, { dense: true }).artifacts[0].density, 1);
 });
 
-test('a viewer sees dense stills only with the experiment on their account', async () => {
-  const pool = (value) => ({ query: async () => ({ rows: value === undefined ? [] : [{ review_flow_enabled: value }] }) });
-  assert.equal(await view.viewerSeesDense(pool(true), { id: 4 }), true);
-  for (const value of [false, null, undefined, 'true']) assert.equal(await view.viewerSeesDense(pool(value), { id: 4 }), false);
-  assert.equal(await view.viewerSeesDense(pool(true), null), false, 'a guest');
-  assert.equal(await view.viewerSeesDense({ query: async () => { throw new Error('no column yet'); } }, { id: 4 }), false);
+test('every signed-in viewer sees dense stills; a guest gets the 1x copies', async () => {
+  for (const id of [4, 1, 999]) assert.equal(await view.viewerSeesDense(null, { id }), true);
+  for (const id of [null, undefined, 0, -1, 'x']) assert.equal(await view.viewerSeesDense(null, { id }), false);
+  assert.equal(await view.viewerSeesDense(null, null), false, 'a guest');
 });
 
 test('a note or reason the agent wrote with escaped quotation marks reads with plain ones', () => {

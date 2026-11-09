@@ -68,6 +68,95 @@ test('a page opened with the shots install-strip flag shows the strip; any other
   assert.equal(run('', { framed: true }), null);
 });
 
+// #6379: the screenshot tool waits for the page's own requests to finish
+// before it shoots, and this counter is how it knows about them.
+function initPage(extra) {
+  const window = { ...extra };
+  window.top = window;
+  vm.runInNewContext(read(INIT), { sessionStorage: storage({}), localStorage: storage({}), window });
+  return window;
+}
+
+test('a shots page counts the requests it has in flight', async () => {
+  const answers = [];
+  const seen = [];
+  const window = initPage({
+    fetch(url, options) {
+      seen.push({ self: this, url, options });
+      return new Promise((resolve, reject) => answers.push({ resolve, reject }));
+    },
+  });
+  assert.equal(window.__usernodeShotsInFlight, 0);
+
+  const options = { method: 'POST' };
+  const first = window.fetch('/api/one', options);
+  assert.equal(window.__usernodeShotsInFlight, 1);
+  answers[0].resolve('answer');
+  assert.equal(await first, 'answer', 'the answer passes through unchanged');
+  assert.equal(window.__usernodeShotsInFlight, 0);
+  assert.equal(seen[0].self, window, 'called with the page as `this`, as before');
+  assert.equal(seen[0].url, '/api/one');
+  assert.equal(seen[0].options, options, 'and with the same arguments');
+
+  // A rejection passes through unchanged, and is not left counted.
+  const failing = window.fetch('/api/two');
+  assert.equal(window.__usernodeShotsInFlight, 1);
+  const reason = new Error('gone');
+  answers[1].reject(reason);
+  await assert.rejects(failing, (error) => error === reason);
+  assert.equal(window.__usernodeShotsInFlight, 0);
+
+  // Two at once are two.
+  const a = window.fetch('/api/a');
+  const b = window.fetch('/api/b');
+  assert.equal(window.__usernodeShotsInFlight, 2);
+  answers[2].resolve();
+  answers[3].resolve();
+  await Promise.all([a, b]);
+  assert.equal(window.__usernodeShotsInFlight, 0);
+});
+
+test('a shots page counts an XMLHttpRequest until its loadend', async () => {
+  const sent = [];
+  function FakeXHR() { this.listeners = []; }
+  FakeXHR.prototype.addEventListener = function (type, listener) {
+    if (type === 'loadend') this.listeners.push(listener);
+  };
+  FakeXHR.prototype.send = function (body) { sent.push({ self: this, body }); };
+  const window = initPage({ XMLHttpRequest: FakeXHR });
+
+  const xhr = new window.XMLHttpRequest();
+  xhr.send('body');
+  assert.equal(window.__usernodeShotsInFlight, 1);
+  assert.equal(sent[0].self, xhr);
+  assert.equal(sent[0].body, 'body');
+  // loadend fires once; a second one is not a second request finishing.
+  for (const listener of xhr.listeners) listener();
+  for (const listener of xhr.listeners) listener();
+  assert.equal(window.__usernodeShotsInFlight, 0);
+
+  // A send that throws leaves nothing counted.
+  FakeXHR.prototype.send = function () { throw new Error('InvalidStateError'); };
+  const broken = initPage({ XMLHttpRequest: FakeXHR });
+  assert.throws(() => new broken.XMLHttpRequest().send(), /InvalidStateError/);
+  assert.equal(broken.__usernodeShotsInFlight, 0);
+});
+
+test('a framed page\'s requests are not the page\'s own, and a page with neither API does not throw', () => {
+  const fetch = () => Promise.resolve('answer');
+  const framed = { fetch };
+  framed.top = {};
+  assert.doesNotThrow(() => vm.runInNewContext(read(INIT), {
+    sessionStorage: storage({}), localStorage: storage({}), window: framed,
+  }));
+  assert.equal(framed.fetch, fetch, 'the frame\'s fetch is left as it was');
+  assert.equal('__usernodeShotsInFlight' in framed, false);
+
+  const bare = initPage({});
+  assert.doesNotThrow(() => vm.runInNewContext(read(INIT), { sessionStorage: storage({}), localStorage: storage({}), window: bare }));
+  assert.equal(bare.__usernodeShotsInFlight, 0);
+});
+
 test('a page with no storage does not throw', () => {
   const sessionStorage = { setItem() { throw new Error('SecurityError'); } };
   const window = {}; window.top = window;

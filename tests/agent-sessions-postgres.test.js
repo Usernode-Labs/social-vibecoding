@@ -79,11 +79,19 @@ async function connect(t, { beforeMigration = null } = {}) {
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id), user_id INTEGER REFERENCES users(id),
       status VARCHAR(32) NOT NULL DEFAULT 'active', source TEXT,
       pr_number INTEGER, pr_title VARCHAR(256), session_title TEXT,
+      -- The name a change got before it had a pull request, which its cards
+      -- now read before the session's old name (#6124). The real table gets
+      -- it from an ALTER later in schema.sql.
+      proposed_pr_title TEXT,
       staging_url TEXT, check_state VARCHAR(32), test_results JSONB NOT NULL DEFAULT '[]',
       -- Why a skipped run was skipped (activeChange.checkSkipReason, #3180).
       check_error_detail TEXT,
       -- When the last verdict was stored (activeChange.failingChecks.at, #3755).
       checks_checked_at TIMESTAMPTZ,
+      -- Where a pending run stands, and its progress stream, which a queued
+      -- run's wait is read from (activeChange.checkPhase / checksQueueAhead,
+      -- #6122).
+      check_phase VARCHAR(24), checks_progress JSONB,
       shots_state VARCHAR(24), shots_run_id VARCHAR(32),
       -- A change's own durable turn (a build restart recovery can adopt).
       active_turn JSONB,

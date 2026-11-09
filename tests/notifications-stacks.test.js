@@ -94,6 +94,20 @@ test('one request\'s notifications fold into one card where the newest stood', (
   assert.equal(card.label, 'Live', 'drawn as its newest notification');
 });
 
+test('one request\'s two change notices fold into one card, each line its own change', () => {
+  // #6099: two proposals for one request (two sessions, distinct change
+  // pages) are one story. The card opens the newest; the history lines open
+  // their own notification, which carries its own session id.
+  const story = { storyKey: 'r:5:5580', storyRef: { number: 5580, title: 'Plant shelf' } };
+  const out = stacks.foldStories([
+    entry(view(12, { ...story, kind: 'pr_proposed', label: 'New change', sessionId: 7300 })),
+    entry(view(11, { ...story, kind: 'pr_proposed', label: 'New change', sessionId: 7296 })),
+  ]);
+  assert.deepEqual(out.map((e) => e.view.id), [12], 'one card, where its newest stood');
+  assert.deepEqual(out[0].view.groupIds, [12, 11]);
+  assert.deepEqual(out[0].view.story.members.map((m) => [m.id, m.sessionId]), [[12, 7300], [11, 7296]]);
+});
+
 test('a person speaking, a row with buttons and a story of one stay as they were', () => {
   const key = { storyKey: 's:5:77' };
   const out = stacks.foldStories([
@@ -198,13 +212,13 @@ test('#5929: a hovered card keeps its time, and its × and bookmark say what the
   const html = renderSheet({ list: [view(1), view(2, { appId: 6, appName: 'Polls', appLine: 'Polls' })] });
   // The time steps aside for the bookmark on hover; it never goes, so no
   // card is the one without a time.
-  assert.match(html, /<time title="Tuesday" class="shrink-0 group-hover\/notif:mr-7 group-has-\[:focus-visible\]\/notif:mr-7">1m ago<\/time>/);
+  assert.match(html, /<time title="Tuesday" class="shrink-0 group-hover\/notif:me-7 group-has-\[:focus-visible\]\/notif:me-7">1m ago<\/time>/);
   assert.doesNotMatch(html, /group-hover\/notif:invisible/);
   // The bookmark's tooltip is its accessible name.
   assert.match(html, /data-notification-save="1" aria-pressed="false" aria-label="Save notification" title="Save notification"/);
   assert.equal(message('notifications:row.clearTip'), 'Mark as read');
   // The × sits inside the card's corner and says it marks read.
-  assert.match(html, /data-notification-clear="1" aria-label="Clear notification" title="Mark as read" class="absolute left-1\.5 top-1\.5 /);
+  assert.match(html, /data-notification-clear="1" aria-label="Clear notification" title="Mark as read" class="absolute start-1\.5 top-1\.5 /);
   // A card standing for several says how many it marks read.
   const story = { storyKey: 'r:5:5580', storyRef: { number: 5580, title: 'Plant shelf' } };
   const folded = renderSheet({ list: [view(1, story), view(2, story)] });
@@ -566,5 +580,5 @@ test('CardHistory opens, lands and folds through moveHistory, and a card that go
   // Read where everything is before the running motion lets go.
   const move = STACKS_SRC.slice(STACKS_SRC.indexOf('export function moveHistory('), STACKS_SRC.indexOf('function controller()'));
   assert.ok(move.indexOf('offsetY(el)') < move.indexOf('stopMotion(prev'), 'read, then cancel');
-  assert.match(STACKS_SRC, /<div ref=\{boxRef\} data-notif-history-list=\{view\.id\} className="col-start-1 row-start-2">\s*\{\/\*[\s\S]*?\*\/\}\s*<div className="pl-\[4\.75rem\] pr-4 pb-2">/);
+  assert.match(STACKS_SRC, /<div ref=\{boxRef\} data-notif-history-list=\{view\.id\} className="col-start-1 row-start-2">\s*\{\/\*[\s\S]*?\*\/\}\s*<div className="ps-\[4\.75rem\] pe-4 pb-2">/);
 });

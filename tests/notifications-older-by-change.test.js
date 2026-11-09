@@ -125,14 +125,16 @@ test('the section headings are the catalog\'s', () => {
 
 test('revealed, Unread keeps its stacks and draws the older rows as sections of cards', () => {
   assert.match(SHEET_SRC, /const olderGrouped = tab === 'unread' && olderShown;/);
-  assert.match(SHEET_SRC, /const appGroups = groupedUnread \|\| olderGrouped \? groupUnreadByApp\(unread, t\) : \[\];/);
+  assert.match(SHEET_SRC, /const appGroups = groupedUnread \|\| olderGrouped \? groupUnreadByApp\(unread, t, held\.asked\) : \[\];/);
   // The older rows are every row Unread does not list.
   assert.match(SHEET_SRC, /const listedIds = new Set\(unread\.map\(\(view\) => view\.id\)\);/);
   assert.match(SHEET_SRC, /const olderSections = olderGrouped \? groupOlderByTime\(all\.filter\(\(view\) => !listedIds\.has\(view\.id\)\), t\) : \[\];/);
-  const at = SHEET_SRC.indexOf('{!searching && (groupedUnread ? appGroups.map(renderAppGroup) : olderGrouped ? (');
+  // #5929 item 1: the groups render through renderAppGroups(), which labels
+  // the two kinds when both are there; the gate and the order are the same.
+  const at = SHEET_SRC.indexOf('{!searching && (groupedUnread ? renderAppGroups() : olderGrouped ? (');
   assert.ok(at > 0, 'the revealed branch sits under the same search gate');
   const branch = SHEET_SRC.slice(at, SHEET_SRC.indexOf('{today.length ? (', at));
-  assert.match(branch, /\{appGroups\.map\(renderAppGroup\)\}\s*\{olderSections\.map\(renderOlderSection\)\}/);
+  assert.match(branch, /\{renderAppGroups\(\)\}\s*\{olderSections\.map\(renderOlderSection\)\}/);
   assert.doesNotMatch(SHEET_SRC, /renderOlderGroup|olderGroups/, 'no older stack per project is left');
   // All, and the search, keep the flat Today / Earlier list.
   assert.ok(SHEET_SRC.indexOf('{today.length ? (', at) > at);
@@ -201,7 +203,7 @@ test('a card\'s history gives each of its notifications its own Save, beside the
   assert.ok(openAt > 0, 'the line still opens the notification');
   assert.ok(openEnd > openAt && saveAt > openEnd, 'the bookmark is after the open button, not inside it');
   assert.match(block, /<div key=\{line\.key\} className="relative">/);
-  assert.match(block, /className=\{cls \+ ' pr-8 hover:text-violet-700/);
+  assert.match(block, /className=\{cls \+ ' pe-8 hover:text-violet-700/);
   // It is pressed state and name from the same catalog entries as the row's.
   assert.match(block, /aria-pressed=\{line\.notification\.saved \? 'true' : 'false'\}/);
   assert.match(block, /t\(line\.notification\.saved \? 'notifications:row\.unsave' : 'notifications:row\.save'\)/);

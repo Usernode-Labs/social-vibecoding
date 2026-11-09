@@ -298,20 +298,20 @@ function Kebab({ user, open, onToggle, onReload }: {
       <button type="button" className="admin-kebab-btn rounded px-2 py-1 text-lg leading-none text-zinc-500 hover:text-zinc-700 dark:text-zinc-300 dark:hover:text-zinc-200"
         aria-label="User actions" aria-haspopup="true" aria-expanded={open}
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>⋯</button>
-      <div className={`admin-kebab-menu${open ? '' : ' hidden'} absolute right-0 mt-1 z-20 min-w-[11rem] rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 py-1 shadow-lg`}>
+      <div className={`admin-kebab-menu${open ? '' : ' hidden'} absolute end-0 mt-1 z-20 min-w-[11rem] rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 py-1 shadow-lg`}>
         <button type="button" data-reset-id={user.id} data-username={user.username}
           onClick={() => { setOpen(false); resetUserPassword(user); }}
-          className="admin-reset-pw-btn block w-full text-left px-3 py-2 text-sm text-violet-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-violet-400">
+          className="admin-reset-pw-btn block w-full text-start px-3 py-2 text-sm text-violet-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-violet-400">
           Reset password</button>
         <button type="button" data-reset-first-run-id={user.id}
           onClick={() => { setOpen(false); resetFirstRun(user); }}
-          className="admin-reset-first-run-btn block w-full text-left px-3 py-2 text-sm text-violet-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-violet-400">
+          className="admin-reset-first-run-btn block w-full text-start px-3 py-2 text-sm text-violet-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-violet-400">
           Reset first run</button>
         {/* Delete stays hidden for admins. */}
         {!user.is_admin ? (
           <button type="button" data-delete-id={user.id}
             onClick={async () => { setOpen(false); if (await deleteUser(user)) onReload(); }}
-            className="admin-delete-user-btn block w-full text-left px-3 py-2 text-sm text-red-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-red-400">
+            className="admin-delete-user-btn block w-full text-start px-3 py-2 text-sm text-red-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-red-400">
             Delete</button>
         ) : null}
       </div>
@@ -429,7 +429,7 @@ function UserListRow({ user, canWrite, menuOpen, onMenu, onReload, onMore }: {
     <div className={ROW_GRID} data-user-row={user.id}>
       <div className="min-w-0">
         <button type="button" data-open-support={user.id} title="Open in Support"
-          className="font-medium break-words text-left text-zinc-900 dark:text-zinc-100 hover:underline focus-visible:underline"
+          className="font-medium break-words text-start text-zinc-900 dark:text-zinc-100 hover:underline focus-visible:underline"
           onClick={() => { location.hash = `#admin/support/${user.id}`; }}>{user.username}</button>
         {joined ? <div className="text-xs text-zinc-500 dark:text-zinc-400">{`Joined ${joined}`}</div> : null}
         <div className="mt-1 flex flex-wrap gap-1.5">
@@ -1213,7 +1213,7 @@ function UsersSection() {
     <>
       <div className={AdminUI.card}>
         <div className="flex flex-wrap items-center gap-3 p-4 border-b border-zinc-200 dark:border-zinc-800">
-          <div className="flex items-baseline gap-2 mr-auto">
+          <div className="flex items-baseline gap-2 me-auto">
             <h2 className={AdminUI.cardTitle}>Users</h2>
             {users ? <span className={AdminUI.muted}>{`${users.length} accounts`}</span> : null}
           </div>

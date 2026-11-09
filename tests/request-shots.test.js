@@ -164,6 +164,21 @@ const SHOT_BLOCK = (src = SRC) => `<p class="dc-p"><strong>Screenshot:</strong><
 
 // ── 1. The data ───────────────────────────────────────────────────────
 
+// #6387: a picture or video holds a fixed 16:10 box until it has its own
+// shape, so the cards under it do not jump as it loads. A picture already in
+// cache is marked ready before the first paint.
+test('#6387 a picture keeps its 16:10 box until it has loaded', () => {
+  const css = read('public/css/app.css');
+  const at = css.indexOf('.dev-request-shots .dc-inline-img:not([data-shot-ready])');
+  assert.ok(at > 0, 'the rule is in the stylesheet');
+  assert.match(css.slice(at), /^\.dev-request-shots \.dc-inline-img:not\(\[data-shot-ready\]\),\s+\.dev-request-shots \.dc-inline-video:not\(\[data-shot-ready\]\) \{\s+width: 512px;\s+max-width: 100%;\s+aspect-ratio: 16 \/ 10;\s+background: var\(--messages-surface\);\s+\}/);
+  const head = read(HEAD);
+  assert.match(head, /img\.complete && img\.naturalWidth > 0, \['load', 'error'\]/);
+  assert.match(head, /video\.readyState >= 1, \['loadedmetadata', 'error'\]/);
+  assert.match(head, /setAttribute\('data-shot-ready', ''\)/);
+  assert.match(head, /const shotBox = useRef<HTMLDivElement>\(null\);/);
+});
+
 test('a pin goes onto the link and comes back off it, whatever its words say', () => {
   const back = (pin) => pins.readPin(`${SRC}${pins.pinFragment(pin)}`);
   assert.equal(pins.pinFragment({ x: 0.42134, y: 0.318, note: 'Make it bigger' }), '#pin=0.4213,0.318&note=Make%20it%20bigger');
@@ -438,6 +453,6 @@ test('the words lift the screenshots for everyone, take the toggle\'s click, and
     'the same wrapper while the string is the same, so a hidden comment stays hidden');
   assert.match(src, /if \(togglePinShot\(event\.target, event\.currentTarget\)\) event\.preventDefault\(\);/);
   assert.match(src, /<div className="dev-request-ask" onClick=\{togglePin\}>/);
-  assert.match(src, /<div className="min-w-0 flex-1" \{\.\.\.images\.scope\}>[\s\S]*<RequestWords html=\{r\.bodyHtml\} \/>/,
+  assert.match(src, /<div className="min-w-0 flex-1" \{\.\.\.images\.scope\}>[\s\S]*<RequestWords\s+html=\{bodyHtml\}\s+translate=/,
     'the words are still inside the image viewer\'s scope');
 });

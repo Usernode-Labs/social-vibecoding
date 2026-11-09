@@ -58,6 +58,10 @@ const LEADERBOARD_USER_FIELDS = new Set([
   // scope it (same as prs_merged). Under include_0_values=0 an empty [] is
   // KEPT (it's neither 0 nor null), consistent with the empty {} kudos_given map.
   'active_apps',
+  // The member's profile picture as `/avatars/<id>`, or null when they have
+  // none (or their profile's moderation disabled it). The Leaderboard's Top
+  // users rows draw it in place of the coloured initial; display-only.
+  'avatar_url',
 ]);
 
 // Shape a single leaderboard/users row per the optional `fields` /
@@ -522,11 +526,21 @@ function kudosRoutes(config) {
   // created_at: `nextBefore` is the last row's timestamp, null when
   // the page came back short.
   //
-  // Semantics worth remembering: pr_votes/issue_votes are current-state
-  // ledgers (the vote route upserts with created_at = NOW() on flip,
-  // and re-voting an issue the same way deletes the row), so the vote
-  // arms surface "current standing vote, last changed at", not a full
-  // cast history. pr_kudos is append-only and complete.
+  // Semantics worth remembering (#6102): pr_votes/issue_votes are
+  // current-state ledgers. A flip upserts with created_at = NOW(), a
+  // same-side click on a request deletes the row, Undo deletes it, and
+  // a change's new version clears the votes on its old head. So the
+  // vote arms read every CAST from the append-only `events` log
+  // (pr_vote_cast with session_id + metadata.vote, issue_vote_cast
+  // with metadata.vote + metadata.issueId), one row per cast, and the
+  // vote tables fill in only a standing vote that has no cast event
+  // of its own (recorded before the log began, or whose event write —
+  // fire-and-forget — failed): a standing row within a minute of a
+  // same-side event is the same cast, and is left out. Backfilled
+  // pr_vote_cast rows (migrate.js) carry no metadata.vote and are not
+  // read; pr_vote_retracted is not read either, so taking a vote back
+  // gets no row. Each row carries a `key` that tells two casts on the
+  // same change apart. pr_kudos is append-only and complete.
   // --------------------------------------------------------------
   router.get('/api/me/history', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
@@ -559,11 +573,13 @@ function kudosRoutes(config) {
         arms.push(`
           SELECT 'kudos' AS type, pk.created_at, NULL AS vote,
                  cs.status AS status,
+                 NULL::timestamptz AS merged_at,
                  cs.id AS session_id, cs.pr_number, cs.pr_title,
                  au.username AS author_username,
                  a.slug AS app_slug, a.name AS app_name,
                  NULL::int AS issue_number, NULL AS issue_title, NULL AS issue_kind, NULL::int AS issue_id,
-                 NULL AS awarded_username, NULL::timestamptz AS awarded_at
+                 NULL AS awarded_username, NULL::timestamptz AS awarded_at,
+                 'pk:' || pk.id AS row_key
             FROM pr_kudos pk
             JOIN chat_sessions cs ON cs.id = pk.session_id
             JOIN apps a ON a.id = cs.app_id
@@ -572,43 +588,105 @@ function kudosRoutes(config) {
         arms.push(`
           SELECT 'bounty' AS type, ib.created_at, NULL AS vote,
                  ib.status AS status,
+                 NULL::timestamptz AS merged_at,
                  NULL::int AS session_id, NULL::int AS pr_number, NULL AS pr_title,
                  NULL AS author_username,
                  a.slug AS app_slug, a.name AS app_name,
                  ib.github_issue_number AS issue_number, NULL AS issue_title, NULL AS issue_kind, NULL::int AS issue_id,
-                 wu.username AS awarded_username, ib.awarded_at
+                 wu.username AS awarded_username, ib.awarded_at,
+                 'ib:' || ib.id AS row_key
             FROM issue_bounties ib
             JOIN apps a ON a.id = ib.app_id
             LEFT JOIN users wu ON wu.id = ib.awarded_user_id
            WHERE ib.giver_user_id = $1 ${cut('ib.created_at')}`);
       }
       if (typeArg === 'all' || typeArg === 'votes') {
-        arms.push(`
-          SELECT 'pr_vote' AS type, pv.created_at, pv.vote,
-                 -- Merged but not live yet (chat_sessions.live_at): going live.
-                 CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'going_live' ELSE cs.status END AS status,
+        // The target's standing NOW, whichever cast the row is.
+        // Merged but not live yet (chat_sessions.live_at): going live.
+        // #6101: merged_at is the authority; a row whose status has not
+        // caught up yet still reads as decided, never as open.
+        const changeStatus = `
+                 CASE
+                   WHEN cs.merged_at IS NOT NULL
+                     THEN CASE WHEN cs.live_at IS NULL THEN 'going_live' ELSE 'merged' END
+                   WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'going_live'
+                   ELSE cs.status
+                 END AS status,
+                 cs.merged_at,
                  cs.id AS session_id, cs.pr_number, cs.pr_title,
                  au.username AS author_username,
                  a.slug AS app_slug, a.name AS app_name,
                  NULL::int AS issue_number, NULL AS issue_title, NULL AS issue_kind, NULL::int AS issue_id,
-                 NULL AS awarded_username, NULL::timestamptz AS awarded_at
-            FROM pr_votes pv
-            JOIN chat_sessions cs ON cs.id = pv.session_id
-            JOIN apps a ON a.id = cs.app_id
-            LEFT JOIN users au ON au.id = cs.user_id
-           WHERE pv.user_id = $1 ${cut('pv.created_at')}`);
-        arms.push(`
-          SELECT 'proposal_vote' AS type, iv.created_at, iv.vote,
+                 NULL AS awarded_username, NULL::timestamptz AS awarded_at,`;
+        const decisionStatus = `
                  i.status AS status,
+                 NULL::timestamptz AS merged_at,
                  NULL::int AS session_id, NULL::int AS pr_number, NULL AS pr_title,
                  NULL AS author_username,
                  a.slug AS app_slug, a.name AS app_name,
                  i.github_issue_number AS issue_number, i.title AS issue_title, i.kind AS issue_kind, i.id AS issue_id,
-                 NULL AS awarded_username, NULL::timestamptz AS awarded_at
+                 NULL AS awarded_username, NULL::timestamptz AS awarded_at,`;
+        // Every vote cast on a change: one event per cast (routes/votes.js,
+        // demo-mode.js), the side in metadata.vote. The backfill's rows
+        // have no vote and are left to the standing arm below.
+        arms.push(`
+          SELECT 'pr_vote' AS type, e.created_at, e.metadata->>'vote' AS vote,${changeStatus}
+                 'e:' || e.id AS row_key
+            FROM events e
+            JOIN chat_sessions cs ON cs.id = e.session_id
+            JOIN apps a ON a.id = cs.app_id
+            LEFT JOIN users au ON au.id = cs.user_id
+           WHERE e.user_id = $1
+             AND e.event_type = 'pr_vote_cast'
+             AND e.metadata->>'vote' IN ('yes', 'no') ${cut('e.created_at')}`);
+        // Every vote cast on a request or a group decision (routes/issues.js,
+        // the governance machine): up/down is the request vocabulary. The
+        // CASE keeps the cast behind the shape test, whatever order the
+        // planner evaluates them in.
+        arms.push(`
+          SELECT 'proposal_vote' AS type, e.created_at, e.metadata->>'vote' AS vote,${decisionStatus}
+                 'e:' || e.id AS row_key
+            FROM events e
+            JOIN issues i ON i.id = CASE WHEN e.metadata->>'issueId' ~ '^[0-9]{1,9}$'
+                                         THEN (e.metadata->>'issueId')::int END
+            JOIN apps a ON a.id = i.app_id
+           WHERE e.user_id = $1
+             AND e.event_type = 'issue_vote_cast'
+             AND e.metadata->>'vote' IN ('up', 'down') ${cut('e.created_at')}`);
+        // A standing vote with no cast event of its own: one recorded
+        // before the log began, or whose event write failed. A same-side
+        // event within a minute of it is that cast, already listed above.
+        arms.push(`
+          SELECT 'pr_vote' AS type, pv.created_at, pv.vote,${changeStatus}
+                 'pv:' || pv.id AS row_key
+            FROM pr_votes pv
+            JOIN chat_sessions cs ON cs.id = pv.session_id
+            JOIN apps a ON a.id = cs.app_id
+            LEFT JOIN users au ON au.id = cs.user_id
+           WHERE pv.user_id = $1 ${cut('pv.created_at')}
+             AND NOT EXISTS (
+               SELECT 1 FROM events e
+                WHERE e.user_id = $1
+                  AND e.session_id = pv.session_id
+                  AND e.event_type = 'pr_vote_cast'
+                  AND e.metadata->>'vote' = pv.vote
+                  AND e.created_at BETWEEN pv.created_at - INTERVAL '1 minute'
+                                       AND pv.created_at + INTERVAL '1 minute')`);
+        arms.push(`
+          SELECT 'proposal_vote' AS type, iv.created_at, iv.vote,${decisionStatus}
+                 'iv:' || iv.id AS row_key
             FROM issue_votes iv
             JOIN issues i ON i.id = iv.issue_id
             JOIN apps a ON a.id = i.app_id
-           WHERE iv.user_id = $1 ${cut('iv.created_at')}`);
+           WHERE iv.user_id = $1 ${cut('iv.created_at')}
+             AND NOT EXISTS (
+               SELECT 1 FROM events e
+                WHERE e.user_id = $1
+                  AND e.event_type = 'issue_vote_cast'
+                  AND e.metadata->>'issueId' = iv.issue_id::text
+                  AND e.metadata->>'vote' = iv.vote
+                  AND e.created_at BETWEEN iv.created_at - INTERVAL '1 minute'
+                                       AND iv.created_at + INTERVAL '1 minute')`);
       }
       params.push(limit);
       const { rows } = await pool.query(
@@ -621,11 +699,15 @@ function kudosRoutes(config) {
       const items = rows.map((r) => {
         const item = {
           type: r.type,
+          // Unique across the list: two casts on the same change are two
+          // rows (#6102), so the type and the target cannot key them.
+          key: r.row_key,
           created_at: r.created_at,
           app: { slug: r.app_slug, name: r.app_name },
         };
         if (r.vote != null) item.vote = r.vote;
         if (r.status != null) item.status = r.status;
+        if (r.type === 'pr_vote' && r.merged_at != null) item.merged_at = r.merged_at;
         if (r.type === 'kudos' || r.type === 'pr_vote') {
           item.pr = {
             sessionId: r.session_id,
@@ -838,8 +920,10 @@ function kudosRoutes(config) {
   //
   // Per-PR kudos credit = direct pr_kudos + issue bounties AWARDED to
   // the PR, the same two-arm union /api/leaderboard/prs uses, so the
-  // counts on a profile match the Top PRs tab. Keyset pagination on
-  // created_at mirrors GET /api/me/history (`nextBefore` cursor, null
+  // counts on a profile match the Top PRs tab. The `user` block also
+  // carries the person's picture (`avatar_url`, null when they have none),
+  // which the pane's header draws in place of the letter. Keyset pagination
+  // on created_at mirrors GET /api/me/history (`nextBefore` cursor, null
   // when the page came back short).
   // --------------------------------------------------------------
   router.get('/api/leaderboard/users/:username/prs', async (req, res) => {
@@ -883,6 +967,18 @@ function kudosRoutes(config) {
       const moved = resolved.retired
         ? { from: username, to: resolved.username }
         : null;
+
+      // The person's profile picture, read by the RESOLVED id so a link on a
+      // retired handle still gets the current owner's. A moderation-disabled
+      // profile (profile_disabled_at) gets null, as src/routes/profiles.js
+      // treats it.
+      const { rows: avatarRows } = await pool.query(
+        `SELECT av.id FROM user_avatars av
+           JOIN users u ON u.id = av.user_id
+          WHERE av.user_id = $1 AND u.profile_disabled_at IS NULL`,
+        [user.id]
+      );
+      const avatarUrl = avatarRows[0] ? `/avatars/${avatarRows[0].id}` : null;
 
       // Headline stats over the FULL filtered set (pagination-agnostic).
       // kudos_merged matches the leaderboard's headline score
@@ -928,7 +1024,7 @@ function kudosRoutes(config) {
         : null;
       await withReleases(pool, rows);
       res.json({
-        user: { user_id: user.id, username: user.username },
+        user: { user_id: user.id, username: user.username, avatar_url: avatarUrl },
         stats: statRows[0],
         items: rows,
         nextBefore,

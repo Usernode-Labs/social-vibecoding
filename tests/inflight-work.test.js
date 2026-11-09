@@ -54,39 +54,55 @@ test('a rejection still reaches the caller, and the entry is released all the sa
   assert.equal(inflight.size(), 0);
 });
 
-test('snapshot lists the oldest first, one entry per call', async () => {
+test('snapshot lists the oldest first, one entry per call', async (t) => {
   const a = deferred();
   const b = deferred();
+  // Released however this test ends, so a failure here cannot leave entries
+  // held for the tests after it.
+  t.after(() => { a.resolve(); b.resolve(); });
+  const trackedAt = Date.now();
   inflight.track('timer:stale-pr-sweep', a.promise);
-  await new Promise((r) => setTimeout(r, 5));
+  // Waited out on the wall clock the ages are read from: a timer counts from
+  // the event loop's cached time, so on a busy machine setTimeout(5) can
+  // return before five wall-clock milliseconds have passed.
+  while (Date.now() - trackedAt < 10) await new Promise((r) => setTimeout(r, 2));
   inflight.track('merge-queue', b.promise);
   inflight.track('merge-queue', b.promise);
   const names = inflight.snapshot().map((e) => e.name);
   assert.deepEqual(names, ['timer:stale-pr-sweep', 'merge-queue', 'merge-queue']);
-  assert.ok(inflight.snapshot()[0].ageMs >= 5);
+  assert.ok(inflight.snapshot()[0].ageMs >= 5, `aged ${inflight.snapshot()[0].ageMs}ms`);
   a.resolve(); b.resolve();
   await new Promise((r) => setImmediate(r));
   assert.equal(inflight.size(), 0);
 });
 
-test('waitIdle resolves the moment the last entry settles, not on its next poll', async () => {
+test('waitIdle resolves the moment the last entry settles, not on its next poll', async (t) => {
   const d = deferred();
+  t.after(() => d.resolve());
   inflight.track('slow', d.promise);
   const startedAt = Date.now();
   const waited = inflight.waitIdle({ timeoutMs: 5000, pollMs: 4000 });
-  setTimeout(() => d.resolve(), 50);
+  let settled = false;
+  setTimeout(() => { settled = true; d.resolve(); }, 50);
   assert.equal(await waited, true);
+  // Resolved by the settle itself, long before the 4 s poll. Not a
+  // wall-clock lower bound: a busy runner fires the 50 ms timer early by
+  // Date.now() (see the `also` test below).
+  assert.equal(settled, true, 'not before the work settled');
   const elapsed = Date.now() - startedAt;
-  assert.ok(elapsed >= 45 && elapsed < 1000, `woke after ${elapsed}ms`);
+  assert.ok(elapsed < 1000, `woke after ${elapsed}ms`);
 });
 
-test('waitIdle gives up at its deadline with the work still held', async () => {
+test('waitIdle gives up at its deadline with the work still held', async (t) => {
   const d = deferred();
+  t.after(() => d.resolve());
   inflight.track('never', d.promise);
   const startedAt = Date.now();
   assert.equal(await inflight.waitIdle({ timeoutMs: 120 }), false);
   const elapsed = Date.now() - startedAt;
-  assert.ok(elapsed >= 110 && elapsed < 1000, `gave up after ${elapsed}ms`);
+  // Waited for its deadline, not a fixed wall-clock floor: the deadline's
+  // timer can fire early by Date.now() on a busy runner, as above.
+  assert.ok(elapsed >= 60 && elapsed < 1000, `gave up after ${elapsed}ms`);
   assert.deepEqual(inflight.snapshot().map((e) => e.name), ['never']);
   d.resolve();
   await new Promise((r) => setImmediate(r));

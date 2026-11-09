@@ -91,8 +91,40 @@ test('theme-color survives, because it still owns other chrome', () => {
   // make the meta redundant: it still paints Android's address bar and the
   // window ground a standalone install shows before the document paints, and
   // frontend/src/head.html's theme module rewrites it from the resolved mode.
-  assert.match(headSrc(), /<meta name="theme-color" content="#f4f2e4">/);
-  assert.match(headSrc(), /meta\[name="theme-color"\]/, 'the theme module still writes it');
+  //
+  // TWO metas now, keyed on the DEVICE's own setting (#6130): the pair is
+  // what a dark-OS load reads before the theme module parses, so the first
+  // frame and the address bar start dark instead of flashing white.
+  // Theme.apply() overwrites both with the resolved ground a moment later,
+  // so the pair is a starting point, never the final answer.
+  assert.match(
+    headSrc(),
+    /<meta name="theme-color" content="#f4f2e4" media="\(prefers-color-scheme: light\)">/,
+    'the light half of the starting pair'
+  );
+  assert.match(
+    headSrc(),
+    /<meta name="theme-color" content="#0b0d1b" media="\(prefers-color-scheme: dark\)">/,
+    'the dark half, so a dark device starts dark'
+  );
+  assert.match(headSrc(), /meta\[name="theme-color"\]/, 'the theme module still writes them');
+});
+
+test('the head tells the browser a dark load is supported before any style parses', () => {
+  // #6130: on a dark device every load flashed one bright frame. The
+  // class-keyed `color-scheme` rules below cannot cover the canvas painted
+  // between "there is a document" and "there is a style", and neither can
+  // `theme-color`: only a `color-scheme` META read during parse can.
+  const src = headSrc();
+  assert.match(src, /<meta name="color-scheme" content="light dark">/,
+    'the OS-keyed meta that decides the pre-style canvas');
+  const metaAt = src.indexOf('<meta name="color-scheme"');
+  const styleAt = src.indexOf('\n  <style>');
+  const themeAt = src.indexOf('window.Theme =');
+  assert.ok(metaAt > 0 && styleAt > 0 && metaAt < styleAt,
+    'the meta must be parsed before the critical style is');
+  assert.ok(metaAt < themeAt,
+    'and before the theme module that resolves the explicit choice');
 });
 
 test('color-scheme is keyed off .dark, never delegated to the OS', () => {

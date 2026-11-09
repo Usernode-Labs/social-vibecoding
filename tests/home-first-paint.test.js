@@ -292,10 +292,8 @@ test('before the first paint each section holds a skeleton, and Challenges holds
   assert.equal((challenges.match(/h-\[104px\] rounded-3xl/g) || []).length, 3, 'three card skeletons');
   assert.match(challenges, /animate-pulse/, 'what the app\'s launch cover waits to see gone');
 
-  const discover = renderToHtml(createElement(mod.DiscoverSectionView, { painted: false, discover: null, challenges: null }));
-  assert.match(discover, /^<section id="home-discover-section" data-panel-slot="discover" class="home-section-pending px-3 pb-3">/);
-  assert.match(discover, /Discover communities/i, 'Discover\'s heading is constant, so it shows');
-  assert.match(discover, /h-\[66px\]/, 'one card\'s skeleton');
+  // Discover's section went with Home's Discover lane (One Home, #6361).
+  assert.equal(mod.DiscoverSectionView, undefined);
 
   const after = renderToHtml(createElement(mod.ChallengesSectionView, { painted: true, discover: null, challenges: null }));
   assert.match(after, /class="hidden px-3 pb-3"/, 'painted with nothing: hidden, as before');

@@ -29,6 +29,11 @@ const { message } = require('./lib/platform-i18n');
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8'
 );
+// The review flow replaced the Workshop's reel (#6276), and its Ask sheet is
+// where a question about a vote row is asked now.
+const REVIEW_SHEET = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend/src/features/review-flow/vote-sheet.tsx'), 'utf8'
+);
 // The sheets' words are catalog entries now (frontend/locales/en/project.json,
 // under `needsYou.`), so the vocabulary is checked there as well.
 const SHEET_TEXTS = Object.entries(JSON.parse(fs.readFileSync(
@@ -46,9 +51,12 @@ test('no Workshop row sheet calls a vote row a proposal', () => {
 });
 
 test('the sheets that name a vote row all say "change"', () => {
-  // The Ask tab's field and its hint, and the caption with no summary.
-  assert.match(SRC, /\{t\('project:needsYou\.ask\.fieldLabel'\)\}<\/label>/);
-  assert.equal(message('project:needsYou.ask.fieldLabel'), 'Ask about this change');
+  // The reel's Ask sheet left with the reel (#6276); the review flow's Ask
+  // sheet names a vote row a change too.
+  assert.match(REVIEW_SHEET, /\{sub\(t\('communities:review\.help\.ask'\)\)\}/);
+  assert.equal(message('communities:review.help.ask'), 'Ask privately');
+  assert.match(message('communities:review.ask.inAiNote'), /\bthis change\b/);
+  // The caption with no summary, and the end card that counts changes.
   assert.match(SRC, /\{summary \|\| t\('project:needsYou\.noSummary\.change'\)\}/);
   assert.equal(message('project:needsYou.noSummary.change'), 'No plain-language summary was written for this change.');
   // The end card counts changes, as the cards above it do.

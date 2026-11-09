@@ -60,21 +60,23 @@ function harness({ wide = true, railHidden = false } = {}) {
   });
   context.window = context;
   vm.runInContext(read('public/js/app.js'), context);
-  return { App: context.App, AppView, element };
+  return { App: context.App, AppView, element, context };
 }
 
 // ── #2797: a rail press swaps in place ───────────────────────────────────
 
 test('a push into any of the rail\'s places is a cut on the desktop layout', () => {
   const { App, element } = harness();
-  // #6019: AI is the Messages screen's bot chat, and Discover a page of
-  // Home's that pushes in like any other page.
-  for (const id of ['home-screen', 'messages-screen', 'workshop-screen', 'profile-screen']) {
+  // #6019: AI is the Messages screen's bot chat. One Home (#6361): Needs
+  // you (#workshop-screen, the Communities screen once) is a page under
+  // Home, and pushes in like any other page.
+  for (const id of ['home-screen', 'messages-screen', 'profile-screen']) {
     const screen = element(id);
     assert.equal(App._entryTransition('push', screen), 'none', `${id} is a tab switch`);
     assert.equal(screen.getAttribute('data-entered'), 'none',
       'the stamp is the RESOLVED type, so a check reads what actually ran');
   }
+  assert.equal(App._entryTransition('push', element('workshop-screen')), 'push', 'Needs you is a page, not a place');
 });
 
 test('Home from the rail is a cut too, but backing out of an app still zooms', () => {
@@ -187,7 +189,7 @@ test('no app\'s Workshop has a ✕ — only the running app does — and a chann
   App.currentApp = 'homeroom';
   App.currentTab = 'dev';
   App.currentSubTab = 'chat';
-  assert.deepEqual([...App._backSlotFor('app-view')], ['arrow', '#app/homeroom/workshop']);
+  assert.deepEqual([...App._backSlotFor('app-view')], ['arrow', '#app/homeroom/dev/hub']);
   // A change is still an agent conversation, a thread of Messages (#2770).
   App.currentSubTab = 'sessions';
   assert.deepEqual([...App._backSlotFor('app-view')], ['arrow', '#messages']);
@@ -252,10 +254,62 @@ test('navigateHome is a tab press only when the Home tab says so — never from 
   const src = read('public/js/app.js');
   const body = src.slice(src.indexOf('  navigateHome(opts) {'), src.indexOf('\n  },', src.indexOf('  navigateHome(opts) {')));
   assert.match(body, /const viaTab = !!\(opts && opts\.viaTab === true\);/);
-  assert.match(body, /type: App\._entryTransition\('zoom-out', av, viaTab\)/);
+  assert.match(body, /type: App\._entryTransition\('zoom-out', av, viaTab && !\(leavingSlug && App\._stripShowsRunning\(leavingSlug\)\)\)/);
   const tabBar = read('frontend/src/features/nav/tab-bar.tsx');
   const home = tabBar.slice(tabBar.indexOf('function onHomeClick('), tabBar.indexOf('\n}\n', tabBar.indexOf('function onHomeClick(')));
   assert.match(home, /\.navigateHome\?\.\(\{ viaTab: true \}\)/, 'the Home tab is the caller that says so');
+});
+
+// 1 Nov 2026: iPhone Duo's strip keeps the tabs up over a running app, with
+// the app among them, and every other tab pressed there carries the app into
+// its tile (the stand-in card). Home's press cut: the card leaves the shrink
+// to navigateHome's zoom-out, which the press turned off. There, and only
+// there, Home keeps its zoom-out, into the strip's tile.
+test('Home pressed on the Duo\'s strip out of a running app keeps its zoom into the app\'s tile', () => {
+  const src = read('public/js/app.js');
+  const body = src.slice(src.indexOf('  navigateHome(opts) {'), src.indexOf('\n  },', src.indexOf('  navigateHome(opts) {')));
+  assert.match(body, /type: App\._entryTransition\('zoom-out', av, viaTab && !\(leavingSlug && App\._stripShowsRunning\(leavingSlug\)\)\)/);
+
+  const { App, context } = harness({ wide: false });
+  let rows = [];
+  context.document.querySelectorAll = (sel) => {
+    assert.equal(sel, '#platform-tabs .platform-side-app[aria-current="page"]', 'the lit row, the app on screen');
+    return rows;
+  };
+  const row = (slug, drawn) => ({
+    getAttribute: (name) => (name === 'data-side-app' ? slug : null),
+    getClientRects: () => ({ length: drawn ? 1 : 0 }),
+  });
+  rows = [row('notes-ab12', true)];
+  assert.equal(App._stripShowsRunning('notes-ab12'), true);
+  assert.equal(App._stripShowsRunning('chess-cd34'), false, 'another app');
+  rows = [row('notes-ab12', false)];
+  assert.equal(App._stripShowsRunning('notes-ab12'), false, 'off the strip the row is never drawn');
+  rows = [];
+  assert.equal(App._stripShowsRunning('notes-ab12'), false, 'the app\'s Workshop: no running app in the strip');
+  delete context.document.querySelectorAll;
+  assert.equal(App._stripShowsRunning('notes-ab12'), false, 'unreadable answers no');
+});
+
+// 1 Nov 2026: a community pressed in the sidebar went through navigateToApp's
+// zoom with nothing on screen to grow out of, and the kit fell back to its
+// sliding page transition: the old page, sidebar and all, slid left over the
+// new sidebar (recorded on iPhone Duo held sideways; a desktop window too).
+test('a community pressed in the sidebar is a place switch: it cuts, like the tabs', () => {
+  const rail = read('frontend/src/features/nav/rail-communities.tsx');
+  assert.match(rail, /if \(onPage === slug\) pressLitTab\(screen, \{ stopAtCommunity: true \}\);\s+else pressPlace\(\(\) => goToCommunity\(slug\)\);/);
+  const press = rail.slice(rail.indexOf('export function pressPlace('), rail.indexOf('\n}\n', rail.indexOf('export function pressPlace(')));
+  assert.match(press, /if \(app\) app\._tabPress = true;\s+try \{\s+navigate\(\);\s+\} finally \{\s+if \(app\) app\._tabPress = false;\s+\}/,
+    'the router\'s own mark, for exactly the press');
+  // The mark only counts if the press reaches navigateToApp in the same task.
+  const scope = read('frontend/src/features/workshop/community-scope.ts');
+  const go = scope.slice(scope.indexOf('export function goToCommunity('), scope.indexOf('\n}\n', scope.indexOf('export function goToCommunity(')));
+  assert.doesNotMatch(go, /\bawait\b|setTimeout|requestAnimationFrame/);
+  assert.match(go, /void app\?\.navigateToApp\?\.\(slug, 'dev'\);/);
+  // …and a press marked so is a cut on the rail's layout (the test above).
+  const { App, element } = harness();
+  App._tabPress = true;
+  assert.equal(App._entryTransition('zoom-in', element('app-view'), App._tabPress === true), 'none');
 });
 
 test('a tab press into an app\'s Workshop reveals it when its record lands, not empty before', async () => {

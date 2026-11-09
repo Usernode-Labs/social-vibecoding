@@ -9,12 +9,14 @@
 //   - the commit, its record and the draft PR are steps, so a retry after a
 //     lost reply commits once and opens one PR;
 //   - a client asking again after its answer was lost is told the same head;
-//   - authority revoked between attempts stops the retry before any write;
+//   - authority revoked between attempts stops the retry before any write,
+//     and so does the project's suspension;
 //   - a refused request leaves nothing behind (no commit, no record, no
 //     files kept, no lock held);
 //   - the hand-off's proposal lock orders the write after another writer's,
 //     and the head the route expected is read again under it;
-//   - a turn's lease is read again before its commit.
+//   - a turn's lease and its requester's collab access are read again
+//     before its commit.
 //
 // Only the code host and the preview machine's hand-off are faked.
 
@@ -248,6 +250,18 @@ test('a local agent\'s commit is conductor work', { timeout: 120000 }, async (t)
     assert.equal(await locksHeld(), 0, 'no lock held');
   });
 
+  await t.test('a project suspended after the route\'s check takes no upload', async () => {
+    const h = await handoff();
+    const before = host.calls.length;
+    const { key, requestId } = await ask(upload(h, 10));
+    await pool.query('UPDATE apps SET moderation_suspended_at = NOW() WHERE id = $1', [h.appId]);
+    await settle();
+    assert.deepEqual((await instance(key)).data, { ok: false, status: 404, error: 'Active handoff session not found' });
+    assert.equal(host.calls.length, before, 'nothing reached the host');
+    assert.equal((await row(h.sessionId)).handoff_uploaded_sha, null, 'nothing recorded');
+    assert.equal(await kept(requestId), 0);
+  });
+
   await t.test('a request refused by the conductor leaves nothing behind', async () => {
     const h = await handoff();
     const before = host.calls.length;
@@ -305,20 +319,20 @@ test('a local agent\'s commit is conductor work', { timeout: 120000 }, async (t)
     assert.equal(await kept(second.requestId), 0);
   });
 
-  await t.test('a build turn\'s commit becomes its head on the conductor; a lease lost before it writes nothing', async () => {
+  await t.test('a build turn\'s commit becomes its head on the conductor; a lease or collab access lost before it writes nothing', async () => {
     const h = await handoff();
-    const turn = async () => {
+    const turn = async (on = h) => {
       const { rows: [lease] } = await pool.query(
         `INSERT INTO session_agent_leases (session_id, user_id, label, expires_at)
-         VALUES ($1, $2, 'laptop', NOW() + INTERVAL '5 minutes') RETURNING id`, [h.sessionId, h.userId]);
+         VALUES ($1, $2, 'laptop', NOW() + INTERVAL '5 minutes') RETURNING id`, [on.sessionId, on.userId]);
       const { rows: [tr] } = await pool.query(
         `INSERT INTO local_agent_turns (session_id, lease_id, user_id, status, mode, prompt, base_sha, branch_name)
          VALUES ($1, $2, $3, 'running', 'build', 'Add the button', $4, $5) RETURNING id`,
-        [h.sessionId, lease.id, h.userId, host.branches.get(h.branch).sha, h.branch]);
+        [on.sessionId, lease.id, on.userId, host.branches.get(on.branch).sha, on.branch]);
       return { leaseId: String(lease.id), turnId: String(tr.id) };
     };
-    const asTurn = (ids, n) => {
-      const p = upload(h, n, { expectedParent: host.branches.get(h.branch).sha });
+    const asTurn = (ids, n, on = h) => {
+      const p = upload(on, n, { expectedParent: host.branches.get(on.branch).sha });
       return { ...p, input: { ...p.input, surface: 'turn', ...ids } };
     };
 
@@ -343,5 +357,18 @@ test('a local agent\'s commit is conductor work', { timeout: 120000 }, async (t)
     const { rows: [after] } = await pool.query('SELECT head_sha FROM local_agent_turns WHERE id = $1', [ids.turnId]);
     assert.equal(after.head_sha, head, 'the turn\'s head is unchanged');
     assert.equal(await kept(lost.requestId), 0);
+
+    // On another change, its requester stops building there after the
+    // route's check.
+    const other = await handoff();
+    const next = await turn(other);
+    const removed = await ask(asTurn(next, 18, other));
+    await pool.query('DELETE FROM app_collaborators WHERE app_id = $1 AND user_id = $2', [other.appId, other.userId]);
+    await settle();
+    assert.deepEqual((await instance(removed.key)).data, { ok: false, status: 404, error: 'not_found' });
+    assert.equal(host.calls.length, before, 'nothing reached the host');
+    const { rows: [unmoved] } = await pool.query('SELECT head_sha FROM local_agent_turns WHERE id = $1', [next.turnId]);
+    assert.equal(unmoved.head_sha, null, 'the turn has no head');
+    assert.equal(await kept(removed.requestId), 0);
   });
 });

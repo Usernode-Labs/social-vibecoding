@@ -247,10 +247,11 @@ test('a test account\'s vote on an app a real person made says, in one line, tha
   assert.match(SRC, /uncounted=\{!!yes\.uncounted\}/);
   const appView = fs.readFileSync(path.join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
   assert.match(appView, /pr\.my_vote_uncounted === true \? \{ uncounted: true \} : \{\}/);
-  assert.match(appView, /data-vote-uncounted="">\$\{PlatformI18n\.htmlText\('changes:vote\.row\.uncounted'\)\}/, 'the legacy vote rows carry the same words');
-  assert.equal(message('changes:vote.row.uncounted'), 'Test account: this vote won’t count.');
+  // #6236: the chat's legacy vote row, which carried the same line, is gone
+  // with its renderer; the picker is the one place the line is drawn.
+  assert.doesNotMatch(appView, /data-vote-uncounted=""/, 'no second renderer of the line');
   assert.match(CSS, /\.dev-vote-uncounted \{/);
-  assert.match(CSS, /\.gc-vote-uncounted \{/);
+  assert.doesNotMatch(CSS, /\.gc-vote-uncounted \{/);
 });
 
 // ── #4747: the advisory vote ──────────────────────────────────────────
@@ -267,9 +268,9 @@ test('an advisory vote says, in one line, that it does not decide; the test-acco
   assert.match(SRC, /advisory=\{!!yes\.advisory\}/);
   const appView = fs.readFileSync(path.join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
   assert.match(appView, /pr\.my_vote_advisory === true \? \{ advisory: true \} : \{\}/);
-  assert.match(appView, /data-vote-uncounted="">\$\{PlatformI18n\.htmlText\('changes:vote\.row\.advisory'\)\}/, 'the legacy vote rows carry the same words');
+  // #6236: the chat's legacy vote row, which carried the same line, is gone with its renderer.
+  assert.doesNotMatch(appView, /data-vote-uncounted=""/, 'the picker is the one place the line is drawn');
   assert.equal(message('project:card.vote.picker.advisory'), 'Your vote is advisory: it’s recorded, but it doesn’t decide this change.');
-  assert.equal(message('changes:vote.row.advisory'), 'Your vote is advisory: it’s recorded, but it doesn’t decide this change.');
 });
 
 // ── #3984: a vote on its way ─────────────────────────────────────────
@@ -281,7 +282,8 @@ test('#3984: while a vote is on its way the button reads "Sending…" and takes 
   assert.doesNotMatch(draw(), /Sending…|aria-busy/, 'nothing on its way: the plain face');
   mod.voteSendingStore.set({ 'castVote:7': 'yes' });
   const html = draw();
-  assert.match(html, /<button type="button" class="dev-vote-btn"[^>]*title="Sending your vote\."[^>]*aria-busy="true"[^>]*disabled=""[^>]*>Sending…<\/button>/);
+  assert.match(html, /<button type="button" class="dev-vote-btn"[^>]*title="Sending your vote\."[^>]*aria-busy="true"[^>]*aria-disabled="true"[^>]*>Sending…<\/button>/);
+  assert.doesNotMatch(html, /disabled=""/, '#6098: shown busy, not switched off, so it keeps keyboard focus');
   assert.doesNotMatch(html, /dev-vote-caret/, 'no caret: there is nothing to pick until it lands');
   const other = { ...yes, act: { fn: 'castVote', args: [8, 'yes', 3] } };
   assert.doesNotMatch(draw(other, { ...no, act: { fn: 'castVote', args: [8, 'no', 3] } }), /Sending…/, 'only that change\'s buttons');
@@ -301,7 +303,9 @@ test('#3984: castVote and castIssueVote set the mark once the vote is committed 
   assert.match(vote, /const key = `\$\{sessionId\}`;/, 'one vote in flight per change, whichever side');
   assert.ok(vote.indexOf("_publishVoteSending(`castVote:${sessionId}`, vote)") > vote.indexOf('if (reason === false)'),
     'set after the line is in hand: a cancelled No never reads as sending');
-  assert.match(vote, /finally \{\s*AppView\._voteInFlight\.delete\(key\);\s*AppView\._publishVoteSending\(`castVote:\$\{sessionId\}`, null\);/);
+  // A vote kept for the connection (#6127) keeps its mark until it is
+  // answered (AppView._actionSent); every other ending clears it here.
+  assert.match(vote, /finally \{\s*AppView\._voteInFlight\.delete\(key\);[\s\S]*?if \(!queued\) AppView\._publishVoteSending\(`castVote:\$\{sessionId\}`, null\);/);
   const issue = body('castIssueVote');
   assert.match(issue, /_publishVoteSending\(`castIssueVote:\$\{issueId\}`, vote === 'down' \? 'no' : 'yes'\);\n    try \{/);
   assert.match(issue, /finally \{\s*AppView\._voteInFlight\.delete\(key\);\s*AppView\._publishVoteSending\(`castIssueVote:\$\{issueId\}`, null\);/);

@@ -25,11 +25,12 @@ import type {
   Check, DomainWrite, Event, Json, Machine, MessageRequest, Outcome, Push, TimerRequest, TransitionContext, Tx, WorkRef,
   WorkRequest, WorkResultPayload,
 } from '../kernel/index.ts';
-import { chatLine, sessionEvent, sessionUpdate, toUser } from '../pushes.ts';
+import { chatLine, sessionEvent, sessionUpdate, threadChanged, toUser } from '../pushes.ts';
 import type { SessionRoute } from '../pushes.ts';
 import * as store from '../rules/check-store.ts';
 import * as rowStore from './check-store.ts';
 import { createCheckFailedNotification } from '../rules/change-notifications.ts';
+import { createPrProposedNotifications } from '../rules/proposal-notifications.ts';
 import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
 import { withinAutoRetries } from '../rules/check-retries.ts';
 import { OPEN, readFacts } from './facts.ts';
@@ -38,8 +39,10 @@ import { NOT_MOVING_KINDS } from '../session-work.ts';
 
 export const MACHINE = 'preview';
 export const sessionKey = (sessionId: number) => `session:${sessionId}`;
+export const wakeKey = (eventId: number) => `wake:${eventId}`;
 
 export const WORK = Object.freeze({
+  wake: 'preview.wake',
   prepare: 'preview.prepare',
   // The repo's unit suite, started with the build of an attempt and read by
   // the checks run against it (services.ts).
@@ -153,6 +156,8 @@ const REQUEST_REASONS: ReadonlySet<string> = new Set(['ensure', 'deploy', 'previ
 const optInt = (v: unknown, what: string) => (v == null ? null : int(v, what));
 
 const EVENTS = {
+  WakeRequested: (p: any) => ({ sessionId: int(p?.sessionId, 'sessionId'),
+    reason: word(p?.reason, 'reason'), repairRoute: p?.repairRoute === true }),
   // A head announced by any source (a turn, an upload, an update, a sync,
   // an imported pull request, the merge gate, fleet, recovery).
   // `carryFrom`: a mechanical merge of main into a tested head (votes.js
@@ -340,20 +345,26 @@ const retireAttemptKey = (n: number, version: number) => `retire-attempt:${n}:v$
 const route = (d: Data): SessionRoute => ({ sessionId: d.sessionId, userId: d.userId, appId: d.appId, appSlug: d.appSlug || null });
 const seq = (ctx: TransitionContext, i = 0) => `wf-${ctx.key}-${ctx.version + 1}-${i}`;
 
-// What browsers hear, as services/visuals.js and ws.js shape it.
-function checksPending(d: Data, ctx: TransitionContext, head: string, phase: string, trigger: string | null): Push {
-  return sessionEvent(route(d), 'checks_ready', seq(ctx, 1), {
+// What browsers hear, as services/visuals.js and ws.js shape it. A run
+// starting or settling also tells every page reading the change's thread to
+// read it again (#6231): the preview names no request, so the change's id is
+// what those pages match (pushes.ts threadChanged). Never a progress tick.
+function threadMoved(d: Data): Push {
+  return threadChanged({ appId: d.appId, appSlug: d.appSlug, sessionId: d.sessionId, numbers: [] });
+}
+function checksPending(d: Data, ctx: TransitionContext, head: string, phase: string, trigger: string | null): Push[] {
+  return [sessionEvent(route(d), 'checks_ready', seq(ctx, 1), {
     checkState: 'pending', failingCount: 0, commitSha: head,
     checkPhase: store.normalizeCheckPhase(phase), checkTrigger: store.normalizeCheckTrigger(trigger),
-  });
+  }), threadMoved(d)];
 }
-function checksReady(d: Data, ctx: TransitionContext, head: string, state: string, results: unknown[] = []): Push {
+function checksReady(d: Data, ctx: TransitionContext, head: string, state: string, results: unknown[] = []): Push[] {
   const rows = (Array.isArray(results) ? results : []) as { status?: string; advisory?: boolean }[];
   const blocking = rows.filter((r) => r && r.status !== 'pass' && !r.advisory).length;
   const advisory = rows.filter((r) => r && r.status !== 'pass' && r.advisory).length;
-  return sessionEvent(route(d), 'checks_ready', seq(ctx, 2), {
+  return [sessionEvent(route(d), 'checks_ready', seq(ctx, 2), {
     checkState: state, failingCount: blocking, blockingCount: blocking, advisoryCount: advisory, commitSha: head,
-  });
+  }), threadMoved(d)];
 }
 
 // The backoff of the error lane: 2 min doubling to 30 (storeChecks' own).
@@ -437,7 +448,7 @@ function begin(s: Live, head: string, trigger: string | null, ctx: TransitionCon
       sessionId: d.sessionId, appId: d.appId, n, head, db: attempt.db, dbs, trigger,
       serving: d.serving ? { n: d.serving.n, head: d.serving.head, runtimeName: d.serving.runtimeName } : null,
     } }, ...early],
-    push: previewOnly ? [] : [checksPending(d, ctx, head, 'building', trigger)],
+    push: previewOnly ? [] : [...checksPending(d, ctx, head, 'building', trigger)],
     timer: null,
   });
 }
@@ -456,7 +467,7 @@ function startRun(s: Live, trigger: string | null, ctx: TransitionContext,
       sessionId: d.sessionId, appId: d.appId, n: served.n, head: served.head, runId: key, trigger,
       runtimeName: served.runtimeName, runtimeKind: served.runtimeKind, url: served.url,
     } }],
-    push: [...(extra.push || []), checksPending(d, ctx, served.head, 'testing', trigger)],
+    push: [...(extra.push || []), ...checksPending(d, ctx, served.head, 'testing', trigger)],
     timer: null,
   });
 }
@@ -776,7 +787,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
         name: 'settled', data: d,
         writes: [{ type: 'skipped', ...base, reason: e.payload.reason, expected: f.session!.checks.commitSha },
           ...toBot(d, e.payload.head, 'skipped')],
-        push: [checksReady(d, ctx, e.payload.head, 'skipped')],
+        push: [...checksReady(d, ctx, e.payload.head, 'skipped')],
         messages: [toShots(d, 'HeadReady', { head: e.payload.head }), ...mergeWanted(d, f, 'skipped')],
         timer: null,
       });
@@ -885,7 +896,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       name: s.name, data: s.data,
       ...(stampable(e, f) ? {
         writes: [{ type: 'pending', sessionId: s.data.sessionId, head: e.payload.head, phase: null, trigger: 'manual-recheck' }],
-        push: [checksPending(s.data, ctx, e.payload.head, '', 'manual-recheck')],
+        push: [...checksPending(s.data, ctx, e.payload.head, '', 'manual-recheck')],
       } : {}),
       ...(resting(s) ? { timer: { at: new Date(ctx.now.getTime() + WORKED_RECHECK_MS), event: { type: 'ChecksDue' } } } : {}),
     }),
@@ -930,8 +941,13 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
   // Exit (archive, merge, included, app deletion) is terminal; idle and
   // pressure free the preview and the instance waits for the next revision.
   // Those two never retire a preview someone is working on.
+  // A leftover inventory can predate an unarchive: recheck the session's
+  // closed state here, under the transition's row lock, before retiring it.
+  const reopenedLeftover = (e: Event<any>, f: Facts) => e.payload.reason === 'leftover'
+    && f.session != null && !['merged', 'archived'].includes(f.session.status);
   const retire: Entry = {
     guard: (s, e, f) => {
+      if (reopenedLeftover(e, f)) return reject('session_open');
       if (e.payload.terminal) return ok();
       if (s.name === 'preparing' || s.name === 'checking') return reject('busy');
       if (f.session && ['promoted', 'merging'].includes(f.session.status)) return reject('under_review');
@@ -953,6 +969,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
   };
   const retireAdopting: Entry = {
     guard: (s, e, f, ctx) => {
+      if (reopenedLeftover(e, f)) return reject('session_open');
       const c = adopting(e, f, ctx);
       if (c !== true || e.payload.terminal) return c;
       if (['promoted', 'merging'].includes(f.session!.status)) return reject('under_review');
@@ -1077,6 +1094,11 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       : toRetiring(s, 'stale-env', false, ctx, deps)),
   };
   const house = (name: Name): Record<string, Entry> => ({
+    WakeRequested: SERVES.has(name) ? {
+      guard: (s, e, f) => s.data.serving && f.session && OPEN.has(f.session.status) ? ok() : reject('not_serving'),
+      to: (s, e) => step({ name, data: s.data, work: [{ kind: WORK.wake, key: wakeKey(e.id),
+        input: { sessionId: s.data.sessionId, reason: e.payload.reason, repairRoute: e.payload.repairRoute } }] }),
+    } : notHere('not_serving'),
     IdleDue: SERVES.has(name) ? idleDue : notHere('not_serving'),
     ChecksDue: name === 'settled' || name === 'idle' ? checksDue : notHere('not_owed_here'),
     EnvStale: SERVES.has(name) ? envStale : notHere(name === 'preparing' || name === 'checking' ? 'busy' : 'not_serving'),
@@ -1109,7 +1131,8 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       ConflictResolved: notHere('not_deferred'),
       ChecksCleared: cleared,
       PreviewLost: notHere('not_serving'),
-      RetireRequested: { guard: (s, e) => (e.payload.terminal ? ok() : reject('already_idle')), to: retire.to },
+      RetireRequested: { guard: (s, e, f) => (reopenedLeftover(e, f) ? reject('session_open')
+        : e.payload.terminal ? ok() : reject('already_idle')), to: retire.to },
       AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
       RetryDue: notHere('not_waiting'),
       ...house('idle'),
@@ -1207,7 +1230,8 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksCleared: notHere('retiring'),
       PreviewLost: notHere('retiring'),
       RetireRequested: {
-        guard: (s, e) => (e.payload.terminal && !s.data.exit.terminal ? ok() : reject('already_retiring')),
+        guard: (s, e, f) => (reopenedLeftover(e, f) ? reject('session_open')
+          : e.payload.terminal && !s.data.exit.terminal ? ok() : reject('already_retiring')),
         to: (s, e) => step({ name: 'retiring', data: { ...s.data, exit: { ...s.data.exit, reason: e.payload.reason, terminal: true }, pending: null },
           messages: [toShots(s.data, 'Closed', { reason: e.payload.reason })] }),
       },
@@ -1420,7 +1444,7 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
     cancel: [...(ended ? [{ kind: WORK.prepare, key: prepareKey(attempt.n) }] : []), earlyOf(attempt)],
     writes, work, messages,
     push: [
-      checksReady(d, ctx, attempt.head, 'error'),
+      ...checksReady(d, ctx, attempt.head, 'error'),
       sessionEvent(route(d), 'staging_failed', seq(ctx, 3),
         { error: detail, errorName: 'PreviewFailed', missingKeys: [] }),
     ],
@@ -1462,7 +1486,7 @@ function lostAgain(s: Live, e: Event<any>, losses: number, f: Facts, ctx: Transi
     }],
     work: old.work,
     push: [
-      checksReady(d, ctx, head, 'error'),
+      ...checksReady(d, ctx, head, 'error'),
       sessionEvent(route(d), 'staging_failed', seq(ctx, 3), { error: detail, errorName: 'PreviewFailed', missingKeys: [] }),
     ],
     timer,
@@ -1483,7 +1507,7 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
       name: 'deferred', data: d,
       writes: [{ type: 'deferred', ...base, capture: (r.capture ?? null) as Json, media: !!visuals }],
       work: [{ kind: WORK.publish, key: `publish:${run.key}`, input: { ...base, visuals: !!visuals } }],
-      push: [checksPending(d, ctx, run.head, 'deferred', d0.trigger), ...visualsReady],
+      push: [...checksPending(d, ctx, run.head, 'deferred', d0.trigger), ...visualsReady],
       messages: [toShots(d, 'HeadReady', { head: run.head }), ...undeclared(d, r)],
       timer: null,
     });
@@ -1558,7 +1582,7 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
       ...(ended ? [{ kind: WORK.cancel, key: `cancel:${run.key}`, input: { sessionId: d.sessionId, runId: run.key } }] : []),
       ...(stores ? [{ kind: WORK.publish, key: `publish:${run.key}`, input: { ...base, state, visuals: !!visuals } }] : []),
     ],
-    push: stores ? [checksReady(d, ctx, run.head, state, results), ...visualsReady] : [],
+    push: stores ? [...checksReady(d, ctx, run.head, state, results), ...visualsReady] : [],
     messages: [...(stores ? [toShots(d, 'HeadReady', { head: run.head }), ...mergeWanted(d, f, state)] : []), ...undeclared(d, r)],
     timer: state === 'error' ? errorTimer(d, f, deps, ctx, streakBefore) : null,
   });
@@ -1623,9 +1647,14 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     // 8: a preview lost again soon after it was rebuilt is its head's error
     // (lostAgain), counted by `losses`, which an older Pod would neither keep
     // nor read: it would rebuild such a preview every time it is lost.
-    version: 8,
+    // 9: request-triggered wakes are conductor work, including route repair.
+    version: 9,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared', 'RecheckFolded'],
+    // What web appends: a revision or a preview asked for, a recheck, what the
+    // ensure-staging and recheck routes find, a hand-off's build, a demo reset,
+    // and the admin console's actions.
+    web: ['WakeRequested', 'RevisionSubmitted', 'PreviewRequested', 'RecheckRequested', 'ChecksSkipped', 'RecheckFolded', 'PreviewLost', 'RetireRequested', 'OperationStarted', 'OperationEnded', 'AdminRetry', 'AdminRetire', 'AdminEnd'],
     terminal: ['retired'],
     decode: (row) => ({ name: row.state, data: row.data } as PState),
     facts: (tx, state, event) => {
@@ -1637,6 +1666,7 @@ export function preview(deps: Deps): Machine<PState, Facts> {
       return readFacts(tx, id, { lock: !operation, holders: [...new Set(holders)] });
     },
     authorize: {
+      WakeRequested: system,
       RevisionSubmitted: producedOrProposal,
       PreviewRequested: produced,
       ChecksSkipped: produced,
@@ -1701,6 +1731,21 @@ async function buildCardOpen(tx: Tx, sessionId: number): Promise<boolean> {
   return last?.build === 'running';
 }
 
+// #6402: the vote request goes out when the checks settle passing (or
+// skipped), not at promotion. `createPrProposedNotifications` itself checks
+// the row is promoted and ready, and dedupes per session, so a later
+// settlement of the same change never asks twice.
+async function notifyVoteReady(tx: Tx, sessionId: number, ctx: any) {
+  if (!ctx) return;
+  const { rows: [row] } = await tx.query(
+    `SELECT app_id, user_id FROM chat_sessions WHERE id = $1 AND status = 'promoted'`, [sessionId]);
+  if (!row) return;
+  const made = await createPrProposedNotifications(tx, {
+    appId: Number(row.app_id), sessionId, proposerId: row.user_id == null ? null : Number(row.user_id),
+  });
+  for (const n of made) ctx.push(toUser(Number(n.user_id), { type: 'notification_new', notificationId: Number(n.id) }));
+}
+
 const WRITES = {
   botChange: writeBotChange,
   // checks_commit_sha, 'pending', the phase and the trigger.
@@ -1727,10 +1772,13 @@ const WRITES = {
   // preview with no checks), the line that says it is up: the dev chat's
   // "Staging deployed!" (what a tab that watched it build already shows, and
   // what closes a "Building staging preview..." card on a reload), or an
-  // imported proposal's thread note.
+  // imported proposal's thread note. A new attempt serves awake: its deploy
+  // wrote one replica, so a sleep the preview was in has ended (#6157,
+  // services/preview-sleep.js).
   async published(tx: Tx, w: any, ctx: any) {
     await tx.query(
       `UPDATE chat_sessions SET staging_url = $2, staging_container_id = $3, staging_image_ref = $4, staging_build_ref = $5,
+              staging_asleep_at = NULL, staging_asleep_db_bytes = NULL,
               staging_runtime_kind = $6, staging_runtime_name = $7, staging_commit_sha = $8
         WHERE id = $1`,
       [w.sessionId, w.served.url, w.served.containerId, w.served.imageRef, w.served.buildRef,
@@ -1754,6 +1802,7 @@ const WRITES = {
   async unpublished(tx: Tx, w: any) {
     await tx.query(
       `UPDATE chat_sessions SET staging_url = NULL, staging_container_id = NULL, staging_image_ref = NULL,
+              staging_asleep_at = NULL, staging_asleep_db_bytes = NULL,
               staging_build_ref = NULL, staging_runtime_kind = NULL, staging_runtime_name = NULL, staging_commit_sha = NULL
         WHERE id = $1`, [w.sessionId]);
     await dropMedia(tx, w.sessionId);
@@ -1805,11 +1854,14 @@ const WRITES = {
   // capture outcome, the run's media, and the app's check history (counted
   // once per run). Nothing of it is written for a verdict about a head the
   // row has since left.
-  async settled(tx: Tx, w: any) {
+  async settled(tx: Tx, w: any, ctx: any) {
     const stored = await rowStore.storeChecks(tx, w.sessionId, w.head,
       { state: w.state, results: w.results, ...(w.platformFault ? { platformFault: true } : {}),
         ...(w.unitSuiteAbsent ? { unitSuiteAbsent: true } : {}) }, w.detail);
     if (!stored) { await dropMedia(tx, w.sessionId); return; }
+    // #6402: a passing (or skipped) verdict is the moment the change becomes
+    // votable, so the "new proposal" ping goes out here.
+    if (w.state === 'passing' || w.state === 'skipped') await notifyVoteReady(tx, w.sessionId, ctx);
     if (w.console) await rowStore.storeConsoleCheck(tx, w.sessionId, w.console, w.head);
     if (w.capture) await rowStore.storeCaptureOutcome(tx, w.sessionId, w.capture.state, w.capture.detail, w.head);
     if (w.media) await publishMedia(tx, w.sessionId, w.runId); else await dropMedia(tx, w.sessionId);
@@ -1851,7 +1903,11 @@ const WRITES = {
   carried: (tx: Tx, w: any) => tx.query('UPDATE chat_sessions SET checks_commit_sha = $2 WHERE id = $1', [w.sessionId, w.head]),
 
   // Nothing to test, against the row's pin as the transition read it.
-  skipped: (tx: Tx, w: any) => rowStore.storeChecksSkipped(tx, w.sessionId, w.head, w.reason, w.expected ?? null),
+  async skipped(tx: Tx, w: any, ctx: any) {
+    const stored = await rowStore.storeChecksSkipped(tx, w.sessionId, w.head, w.reason, w.expected ?? null);
+    if (stored) await notifyVoteReady(tx, w.sessionId, ctx);
+    return stored;
+  },
 
   // A promoted head that conflicts with main: previewed, verdict deferred.
   async deferred(tx: Tx, w: any) {
@@ -1868,11 +1924,12 @@ const WRITES = {
 async function publishMedia(tx: Tx, sessionId: number, runId: string) {
   await tx.query('DELETE FROM session_visuals WHERE session_id = $1', [sessionId]);
   await tx.query(
-    `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, data, captured_path,
+    `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, captured_path,
                                   capture_index, captured_viewport, shot_status, before_fell_back, scenario_id,
-                                  scenario_fingerprint)
-     SELECT id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index,
-            captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint
+                                  scenario_fingerprint, object_key, sha256, bytes, legacy_etag)
+     SELECT id, session_id, commit_hash, kind, media, content_type, captured_path, capture_index,
+            captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint,
+            object_key, sha256, bytes, legacy_etag
        FROM check_run_media WHERE run_id = $1 AND session_id = $2`, [runId, sessionId]);
   await dropMedia(tx, sessionId);
 }

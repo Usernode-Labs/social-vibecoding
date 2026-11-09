@@ -9,6 +9,7 @@ const shots = require('../services/shots-files');
 const plan = require('../services/visible-changes');
 const state = require('../services/shots-state');
 const view = require('../services/shots-view');
+const mediaStore = require('../services/media-store');
 const { visualHeadForSession } = require('../services/pr-vote-revision');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
@@ -78,7 +79,7 @@ function parseRange(header, total) {
 
 const LEGACY_PATH_RE = /^(\/api\/apps\/[^/?]+\/proposals\/[^/?]+\/)evidence(?=[/?]|$)/;
 
-function shotsRoutes(config) {
+function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
   const router = Router();
   const pool = getPool(config);
 
@@ -249,9 +250,10 @@ function shotsRoutes(config) {
       // gets the 1x copy every other address serves.
       const dense = req.query.density === 'device' && await view.viewerSeesDense(pool, req.user);
       const { rows } = await pool.query(
-        `SELECT CASE WHEN $4 THEN COALESCE(a.dense_data, a.data) ELSE a.data END AS data,
-                CASE WHEN $4 THEN COALESCE(a.dense_sha256, a.sha256) ELSE a.sha256 END AS sha256,
-                a.content_type, a.bytes, a.variant
+        `SELECT CASE WHEN $4 THEN COALESCE(a.dense_sha256, a.sha256) ELSE a.sha256 END AS sha256,
+                CASE WHEN $4 THEN COALESCE(a.dense_object_key, a.object_key) ELSE a.object_key END AS object_key,
+                CASE WHEN $4 THEN COALESCE(a.dense_bytes, a.bytes) ELSE a.bytes END AS bytes,
+                a.content_type, a.variant
            FROM shot_artifacts a
            JOIN shot_runs r ON r.id = a.run_id
            JOIN chat_sessions s ON s.id = r.session_id
@@ -272,8 +274,8 @@ function shotsRoutes(config) {
       // A close-up (services/shots-closeups.js) is only ever shown to an
       // account in the experiment, at its own address.
       if (!artifact || (artifact.variant === 'closeup' && !dense)) return res.status(404).json({ error: 'Shots artifact not found' });
-      const data = Buffer.isBuffer(artifact.data) ? artifact.data : Buffer.from(artifact.data || '');
-      const range = parseRange(req.headers.range, data.length);
+      const size = Number(artifact.bytes);
+      const range = parseRange(req.headers.range, size);
       res.set({
         'Content-Type': artifact.content_type,
         'Accept-Ranges': 'bytes',
@@ -284,21 +286,22 @@ function shotsRoutes(config) {
         'Content-Disposition': 'inline',
       });
       if (range === false) {
-        res.set('Content-Range', `bytes */${data.length}`);
+        res.set('Content-Range', `bytes */${size}`);
         return res.status(416).end();
       }
       if (range) {
         res.status(206);
         res.set({
-          'Content-Range': `bytes ${range.start}-${range.end}/${data.length}`,
+          'Content-Range': `bytes ${range.start}-${range.end}/${size}`,
           'Content-Length': String(range.end - range.start + 1),
         });
-        return res.end(data.subarray(range.start, range.end + 1));
+        return await mediaStore.respond(res, store, artifact, range);
       }
-      res.set('Content-Length', String(data.length));
-      return res.end(data);
+      res.set('Content-Length', String(size));
+      return await mediaStore.respond(res, store, artifact);
     } catch (err) {
       log.error('shots', 'Shots artifact read failed', { sessionId: id, err: err.message });
+      if (res.headersSent || res.destroyed) return res.destroy();
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

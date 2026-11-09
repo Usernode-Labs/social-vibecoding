@@ -67,6 +67,9 @@ function makeAppView(opts) {
     devBoard: {
       mountCardMenu: () => {},
       publishCardMenu: (rows) => { sandbox.publishedMenuRows = rows; },
+      // The React side draws the icon (features/dev-board/menu-icons.tsx);
+      // here a stand-in that says which one it was asked for.
+      menuIconElement: (key) => ({ iconFor: key }),
     },
   };
   sandbox.window = sandbox;
@@ -437,7 +440,10 @@ test('issue: the full demoted set, and Open on GitHub last', () => {
   const AppView = makeAppView();
   const labels = menuLabels(AppView, issueCardHtml(AppView, 
     ISSUE({ htmlUrl: 'https://github.com/o/r/issues/5' })));
-  assert.equal(labels[0], 'Pledge kudos');
+  // 1 Nov 2026: Build it now left the face for Work on this with Homeroom
+  // bot, and leads the ⋯ as an agent session.
+  assert.equal(labels[0], 'Build it in an agent session');
+  assert.equal(labels[1], 'Pledge kudos');
   assert.ok(labels.some((l) => /Pledge kudos/.test(l)));
   // The claim toggle is PROMOTED to the action band, so it left the menu.
   assert.ok(!labels.some((l) => /Claim it/.test(l)), 'promoted onto the face');
@@ -447,8 +453,31 @@ test('issue: the full demoted set, and Open on GitHub last', () => {
   assert.equal(labels[labels.length - 1], 'Open on GitHub');
 });
 
-test('issue: a disabled row still EXPLAINS itself rather than vanishing', () => {
+test('#6000 a closed issue offers Propose reopening in its ⋯ menu', () => {
   const AppView = makeAppView();
+  const closed = ISSUE({ state: 'closed' });
+  const row = menuItems(AppView, issueCardHtml(AppView, closed))
+    .find((i) => /Propose reopening/.test(i.label));
+  assert.ok(row, 'the row is there on a closed issue');
+  assert.equal(row.icon, 'retry');
+  assert.match(row.title, /Ask the group to reopen/);
+  assert.ok(row.act, 'and it opens the dialog');
+
+  AppView._govProposals = [{ kind: 'reopen_issue', status: 'open', payload: { issueNumber: 5 } }];
+  const waiting = menuItems(AppView, issueCardHtml(AppView, closed))
+    .find((i) => /Reopen proposed/.test(i.label));
+  assert.ok(waiting.disabled);
+  assert.ok(!waiting.act, 'a disabled row carries no handler');
+  assert.match(waiting.title, /waiting for approval/);
+
+  // The Workshop's inline expansion draws the same offer as a pill.
+  AppView._govProposals = [];
+  const pill = AppView._detailActionsView('issue', closed).pills.find((p) => p.key === 'reopen');
+  assert.equal(pill.label, 'Propose reopening');
+  assert.deepEqual(JSON.parse(JSON.stringify(pill.act)), { fn: 'promptReopenIssue', args: [5] });
+});
+
+test('issue: a disabled row still EXPLAINS itself rather than vanishing', () => {  const AppView = makeAppView();
   // An open close proposal: the row stays, disabled, saying why.
   AppView._govProposals = [{ kind: 'close_issue', status: 'open', payload: { issueNumber: 5 } }];
   const closed = menuItems(AppView, issueCardHtml(AppView, ISSUE()))
@@ -673,12 +702,11 @@ test('touch presents the SAME descriptors as an action sheet', () => {
   const sheet = AppView.__sandbox.__sheet;
   assert.ok(sheet, 'an action sheet was presented, not an anchored dropdown');
   // Disabled rows carry no handler, so they are not offered as sheet actions.
-  // The kit's sheet takes a plain string per row, so the descriptor's icon
-  // rides in as a label prefix — the SAME glyph the dropdown draws in its
-  // leading column, resolved from the one descriptor.
-  const I = AppView.MENU_ICONS;
-  assert.equal(sheet.actions.map((a) => a.label).join('|'),
-    `${I.merge}  Do it|${I.withdraw}  Nuke`);
+  // Audit D08: the label is the row's words alone, and the icon rides in as
+  // the kit's `iconEl`, the SAME line icon the dropdown draws in its leading
+  // column, resolved from the one descriptor.
+  assert.equal(sheet.actions.map((a) => a.label).join('|'), 'Do it|Nuke');
+  assert.deepEqual(sheet.actions.map((a) => a.iconEl && a.iconEl.iconFor), ['merge', 'withdraw']);
   assert.equal(sheet.actions[1].destructive, true);
   sheet.actions[0].handler();
   assert.ok(ran, 'the descriptor\'s own closure runs');
@@ -732,35 +760,45 @@ test('every descriptor on every card type declares an icon from the vocabulary',
   assert.ok(all.length > 20, `expected the full descriptor inventory, got ${all.length}`);
   const missing = all.filter((it) => !it.icon).map((it) => it.label);
   assert.deepEqual(missing, [], 'no row falls back to the default bullet');
-  const unknown = all.filter((it) => !AppView.MENU_ICONS[it.icon])
+  const unknown = all.filter((it) => !AppView.MENU_ICONS.includes(it.icon))
     .map((it) => `${it.label} → ${it.icon}`);
   assert.deepEqual(unknown, [], 'every icon key resolves in MENU_ICONS');
 });
 
-test('the same action wears the same glyph on every card type', () => {
+test('the same action wears the same icon on every card type', () => {
   const AppView = makeAppView({ admin: true });
   const byLabel = new Map();
   for (const it of everyDescriptor(AppView)) {
-    const glyph = AppView._menuIconGlyph(it);
+    const glyph = AppView._menuIconKey(it);
     if (byLabel.has(it.label)) {
       assert.equal(byLabel.get(it.label), glyph, `${it.label} drifted between card types`);
     }
     byLabel.set(it.label, glyph);
   }
   // The three that genuinely repeat across card types.
-  assert.equal(byLabel.get('Admin merge'), AppView.MENU_ICONS.merge);
-  assert.equal(byLabel.get('Withdraw'), AppView.MENU_ICONS.withdraw);
-  assert.equal(byLabel.get('View PR on GitHub'), AppView.MENU_ICONS.github);
-  assert.equal(byLabel.get('Open on GitHub'), AppView.MENU_ICONS.github);
+  assert.equal(byLabel.get('Admin merge'), 'merge');
+  assert.equal(byLabel.get('Withdraw'), 'withdraw');
+  assert.equal(byLabel.get('View PR on GitHub'), 'github');
+  assert.equal(byLabel.get('Open on GitHub'), 'github');
 });
 
-test('an unknown or absent icon key still gets a glyph, so the column never collapses', () => {
+test('an unknown or absent icon key still gets an icon, so the column never collapses', () => {
   const AppView = makeAppView();
-  assert.equal(AppView._menuIconGlyph({ label: 'x' }), AppView.MENU_ICONS.default);
-  assert.equal(AppView._menuIconGlyph({ label: 'x', icon: 'nope' }), AppView.MENU_ICONS.default);
+  assert.equal(AppView._menuIconKey({ label: 'x' }), 'default');
+  assert.equal(AppView._menuIconKey({ label: 'x', icon: 'nope' }), 'default');
 });
 
-test('the dropdown draws the glyph in a decorative leading column', () => {
+test('audit D08: every key is drawn by the line-icon table, and no glyph or emoji is left', () => {
+  const AppView = makeAppView();
+  const table = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/menu-icons.tsx'), 'utf8');
+  const body = table.slice(table.indexOf('MENU_ICON_COMPONENTS'), table.indexOf('};', table.indexOf('MENU_ICON_COMPONENTS')));
+  const drawn = [...body.matchAll(/^  ([a-z]+): [A-Z][A-Za-z]*Icon,$/gm)].map((m) => m[1]);
+  assert.deepEqual([...drawn].sort(), [...AppView.MENU_ICONS].sort(), 'the two key lists are one vocabulary');
+  const block = SRC.slice(SRC.indexOf('MENU_ICONS: Object.freeze(['), SRC.indexOf(']),', SRC.indexOf('MENU_ICONS: Object.freeze([')));
+  assert.doesNotMatch(block, /\p{Extended_Pictographic}/u, 'no emoji in the vocabulary');
+});
+
+test('the dropdown draws the icon in a decorative leading column', () => {
   const AppView = makeAppView();
   let menuEl = null;
   const sandbox = AppView.__sandbox;
@@ -777,18 +815,17 @@ test('the dropdown draws the glyph in a decorative leading column', () => {
     getBoundingClientRect: () => ({ top: 100, bottom: 120, right: 400, left: 380 }),
   });
   assert.ok(menuEl, 'a dropdown was built');
-  // The glyph is chosen here and drawn by features/dev-board/card-menu.tsx, so
-  // the check runs end to end: the published row carries the glyph, and the
-  // component puts it in its own aria-hidden span beside the label.
-  assert.deepEqual(AppView.__sandbox.publishedMenuRows.map((r) => r.glyph),
-    [AppView.MENU_ICONS.withdraw]);
+  // The icon is chosen here and drawn by features/dev-board/card-menu.tsx, so
+  // the check runs end to end: the published row carries the icon's key, and
+  // the component puts its line icon in an aria-hidden span beside the label.
+  assert.deepEqual(AppView.__sandbox.publishedMenuRows.map((r) => r.icon), ['withdraw']);
   const menuHtml = renderComponent(
     'frontend/src/features/dev-board/card-menu.tsx', 'CardMenuView',
     { rows: JSON.parse(JSON.stringify(AppView.__sandbox.publishedMenuRows)) },
   );
   assert.match(menuHtml,
-    new RegExp(`<span class="dev-card-menu-icon" aria-hidden="true">${AppView.MENU_ICONS.withdraw}</span>`),
-    'glyph in its own aria-hidden span');
+    /<span class="dev-card-menu-icon" aria-hidden="true"><svg[^>]*aria-hidden="true"[^>]*><path[^>]*d="M6 18L18 6M6 6l12 12"/,
+    'the line icon (XIcon) in its own aria-hidden span');
   assert.match(menuHtml, /<span class="dev-card-menu-label">Withdraw<\/span>/,
     'the LABEL is still the accessible name — the glyph is not part of it');
 });
@@ -801,7 +838,7 @@ test('the ✨ that used to live inside the Explore label is now its icon', () =>
     PR({ status: 'merged', chat_count: 0 }), 3))
     .find((i) => /Explore in a coding agent/.test(i.label));
   assert.equal(item.label, 'Explore in a coding agent', 'no glyph baked into the label');
-  assert.equal(AppView._menuIconGlyph(item), AppView.MENU_ICONS.explore);
+  assert.equal(AppView._menuIconKey(item), 'explore');
 });
 
 // ── A folded kudos slot in ⋯ ──────────────────────────────────────────
@@ -836,6 +873,38 @@ test('a folded kudos slot is a ⋯ row: the slot’s line, acting through its bu
   // A spec with neither a call nor a slot is dropped, as before.
   AppView._setFoldedCardActions('proposal:7', [{ key: 'x', label: 'x' }]);
   assert.equal(AppView._cardMenuItems('proposal:7').length, 0);
+});
+
+// 31 Oct 2026: a thread's own rows (Notify me or Mute, its moves, Build it
+// with your own Claude Code) sat on its page as pills and a fold. Its head
+// publishes them into the page's ⋯ instead (dev-board/topic/thread-menu.ts),
+// one list per source, after the card's own rows; a menu open on the page
+// lists them at once, and a head that goes takes them back.
+test('a thread\'s own rows join its ⋯, one list per source, and leave with it', () => {
+  const AppView = makeAppView();
+  const drawn = [];
+  AppView._fillCardMenu = (el, items) => { drawn.push(items.map((i) => i.label)); };
+  AppView._cardMenus['request:18'] = [{ label: 'Edit request', act: () => {} }];
+  let muted = 0;
+  AppView._setThreadCardActions('request:18', 'thread', [
+    { label: 'Mute', icon: 'mute', act: () => { muted += 1; } },
+    { label: 'Merge into another thread', icon: 'move', act: () => {} },
+    { label: 'no act' },
+  ]);
+  AppView._setThreadCardActions('request:18', 'agent', [{ label: 'Build it with your own Claude Code', icon: 'generate', act: () => {} }]);
+  const rows = AppView._cardMenuItems('request:18');
+  assert.deepEqual(rows.map((r) => r.label), ['Edit request', 'Build it with your own Claude Code', 'Mute', 'Merge into another thread'],
+    'the card\'s rows, then each source\'s in order; a row with nothing to do is dropped');
+  rows[2].act();
+  assert.equal(muted, 1);
+  assert.equal(AppView._menuIconKey(rows[2]), 'mute');
+  // Open on the page: the menu shows a source's rows the moment they come.
+  AppView._openCardMenu = { key: 'request:18', el: {}, trigger: null, own: null };
+  AppView._setThreadCardActions('request:18', 'thread', []);
+  assert.deepEqual(drawn.at(-1), ['Edit request', 'Build it with your own Claude Code']);
+  AppView._setThreadCardActions('request:18', 'agent', []);
+  assert.deepEqual(AppView._cardMenuItems('request:18').map((r) => r.label), ['Edit request']);
+  assert.equal(AppView._threadCardActions['request:18'], undefined, 'nothing left behind for the key');
 });
 
 // A row's click reads the CURRENT list by index, so a pill folded while the

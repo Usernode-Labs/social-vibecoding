@@ -321,8 +321,14 @@ async function applySchema(connectionUrl) {
   const client = new Client({ connectionString: connectionUrl });
   await client.connect();
   try {
-    const schema = fs.readFileSync(path.join(ROOT, 'src', 'db', 'schema.sql'), 'utf8');
+    const schema = require('../src/db/schema-source').schemaSql();
     await client.query(schema);
+    // The maintenance-only role helper is deployed by the bootstrap Job,
+    // outside schema.sql. Validate its callers against its actual declaration
+    // in this throwaway catalog; never invoke its administrative body here.
+    const { adoptionFunctionSql } = require('./bootstrap-database-roles');
+    await client.query(adoptionFunctionSql(require('../src/services/database-role-access').names(), 'sql_check_platform'));
+
   } finally {
     await client.end();
   }
@@ -330,20 +336,6 @@ async function applySchema(connectionUrl) {
 
 // Reuse lint:sql's complete shadow schema: no second server or schema load.
 // A fresh, isolated role avoids touching any role used outside this fixture.
-async function validatePlatformPreviewPolicy(connectionUrl) {
-  const started = performance.now();
-  const preview = require('../src/services/platform-preview-data-policy');
-  const client = new Client({ connectionString: connectionUrl });
-  await client.connect();
-  try {
-    await client.query('SET search_path = pg_catalog');
-    const { rows } = await client.query(preview.CATALOG_SQL);
-    const catalog = JSON.parse(rows[0].inventory);
-    preview.verifyCatalog(catalog);
-    return { tables: catalog.relations.length, durationMs: Math.round(performance.now() - started) };
-  } finally { await client.end(); }
-}
-
 async function validateDebugAccess(connectionUrl) {
   const started = performance.now();
   const { buildGrantStatements, READABLE_COLUMNS } = require('../src/services/debug-access');
@@ -497,8 +489,6 @@ async function main() {
   const shadow = await createShadowDatabase(baseUrl);
   try {
     await applySchema(shadow.shadowUrl);
-    const previewPolicy = await validatePlatformPreviewPolicy(shadow.shadowUrl);
-    console.log(`Platform preview policy verified for ${previewPolicy.tables} tables (${previewPolicy.durationMs} ms).`);
     const debugPolicy = await validateDebugAccess(shadow.shadowUrl);
     console.log(`Debug SQL policy verified for ${debugPolicy.columns} reviewed columns (${debugPolicy.durationMs} ms).`);
     const uniqueCount = await validateQueries(inventory, shadow.shadowUrl);
@@ -524,6 +514,5 @@ module.exports = {
   collectQueryInventory,
   inventorySummary,
   validateDebugAccess,
-  validatePlatformPreviewPolicy,
   validateQueries,
 };

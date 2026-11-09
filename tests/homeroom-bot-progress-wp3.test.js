@@ -34,6 +34,11 @@ test('#8 (WP3): a queue row from before its proposal merged is left over, not wo
   assert.equal(progress.leftOverQueue({ ...merged, proposal_status: 'promoted', enqueued_at: '2026-10-03T11:58:00Z' }), false);
   assert.equal(progress.leftOverQueue({ ...merged, merged_at: null, enqueued_at: '2026-10-03T11:58:00Z' }), false);
   assert.equal(stage({ queue_id: 4, enqueued_at: ago(1), queue_position: 2 }).stage, 'queued', 'an ordinary queue row is untouched');
+  // B24: a request that closed with its change live has no work left, whenever its row was put there.
+  const closedLive = { ...merged, request_closed: true, enqueued_at: '2026-10-03T12:05:00Z', started_at: '2026-10-03T12:06:00Z' };
+  assert.equal(progress.leftOverQueue(closedLive), true);
+  assert.equal(stage(closedLive), null, 'never "Reading the request" under its "It\'s live"');
+  assert.equal(stage({ ...closedLive, request_closed: false }).stage, 'reading', 'an open one reread after it went live is new work');
 });
 
 test('#19 (WP3): how long a step usually takes is a fixed range, never past its time limit, and none for a wait', () => {

@@ -45,7 +45,7 @@ export interface BoardFilterValues {
    * either of which could be the stale one by the time Done is pressed.
    */
   assignedToMe: boolean;
-  createdByMe: boolean;
+  yours: boolean;
 }
 
 export interface BoardFiltersPayload {
@@ -75,7 +75,7 @@ export function BoardFiltersDialog() {
   const [assignee, setAssignee] = useState('');
   const [needsVote, setNeedsVote] = useState(false);
   const [assignedToMe, setAssignedToMe] = useState(false);
-  const [createdByMe, setCreatedByMe] = useState(false);
+  const [yours, setYours] = useState(false);
   const [quick, setQuick] = useState(false);
   const [categories, setCategories] = useState<Array<{ value: string; label: string }>>([]);
   const [assignees, setAssignees] = useState<string[]>([]);
@@ -89,7 +89,7 @@ export function BoardFiltersDialog() {
       setAssignee(payload.filters.assignee || '');
       setNeedsVote(!!payload.filters.needsVote);
       setAssignedToMe(!!payload.filters.assignedToMe);
-      setCreatedByMe(!!payload.filters.createdByMe);
+      setYours(!!payload.filters.yours);
       setQuick(!!payload.quick);
       setCategories(payload.categories || []);
       setAssignees(payload.assignees || []);
@@ -107,7 +107,7 @@ export function BoardFiltersDialog() {
       assignee: assignee || null,
       needsVote,
       assignedToMe,
-      createdByMe,
+      yours,
     });
     dialog.close();
   }
@@ -240,16 +240,16 @@ export function BoardFiltersDialog() {
               >
                 <span className="min-w-0">
                   <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    {t('dialogs:boardFilters.created.title')}
+                    {t('dialogs:boardFilters.yours.title')}
                   </span>
                   <span className="block text-xs text-zinc-500">
-                    {t('dialogs:boardFilters.created.description')}
+                    {t('dialogs:boardFilters.yours.description')}
                   </span>
                 </span>
                 <Switch
                   id="board-filters-createdbyme"
-                  checked={createdByMe}
-                  onChange={(event) => setCreatedByMe(event.target.checked)}
+                  checked={yours}
+                  onChange={(event) => setYours(event.target.checked)}
                 />
               </label>
             </>

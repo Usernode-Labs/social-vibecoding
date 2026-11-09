@@ -1,4 +1,5 @@
 const appAllowance = require('../services/app-allowance');
+const mailLanguage = require('../services/mail/language');
 const platformLimits = require('../services/platform-limit-alerts');
 const appLimit = require('../services/app-limit');
 const { NAME_BEING_PURGED, NAME_BEING_PURGED_ERROR } = require('../services/app-data-retention');
@@ -17,6 +18,8 @@ const platformEnv = require('../services/platform-env');
 const pendingSecrets = require('../services/pending-secrets');
 const { encrypt: encryptSecret } = require('../services/secrets');
 const appManifest = require('../services/app-manifest');
+const offlineCache = require('../services/offline-cache');
+const offlineCacheRefusals = require('../services/offline-cache-refusals');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const topicsPr = require('../services/topics-pr');
@@ -307,6 +310,15 @@ function hubFirstVersion(state, viewerId, { member = false } = {}) {
     creator: state.creator || null,
     waits_on: mine && !ready ? (state.plan ? 'plan' : state.question ? 'question' : null) : null,
     conversation_id: mine ? (Number(state.conversationId) || null) : null,
+    // Its plan, for its maker, when it was said in a private thread of theirs
+    // (homeroom-bot-dm.js waitingPlan): Review the plan opens it there.
+    ...(mine && state.plan && Number(state.plan.threadRootId) > 0 ? {
+      plan_at: {
+        conversationId: Number(state.plan.conversationId) || Number(state.conversationId) || null,
+        threadRootId: Number(state.plan.threadRootId),
+        messageId: Number(state.plan.messageId) || null,
+      },
+    } : {}),
     session_id: Number.isInteger(sessionId) && sessionId > 0 ? sessionId : null,
     plan: member && !mine && !ready && !state.stopped ? sharedPlan(state.plan || state.chosenPlan) : null,
     // 14 Oct 2026: its build stopped (line 'stopped'), and for its maker
@@ -1051,6 +1063,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           // of this payload (see summarizeManifestSnapshot). GET
           // /api/apps/:slug still answers the whole snapshot.
           manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
+          // Offline apps (services/offline-cache.js): the shell frames this app
+          // at its cacheable address.
+          offline_cache: offlineCache.forApp(a),
           contributor_count: contributorCount,
           first_version_line: firstVersionLines.get(Number(a.id)) || null,
           first_version_phase: firstVersionPhases.get(Number(a.id)) || null,
@@ -1315,13 +1330,27 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
 
+      // 1 Nov 2026 (threads, one loop: C2.4): a project made from a design
+      // in one of the person's private threads with Homeroom bot (the
+      // design bot's Make the project card): their own design, with no
+      // project yet. Its brief is the design's title and notes, its first
+      // request's plan is the design (homeroom-bot-dm.js fileFirstRequest),
+      // and its early plan is written from it, asking nothing.
+      const homeroomBotDm = require('../services/homeroom-bot-dm');
+      let fromDesign = null;
+      if (req.body.design != null) {
+        fromDesign = await homeroomBotDm.designForProject(pool, { user: req.user, design: req.body.design, brief: req.body.brief });
+        if (!fromDesign.ok) return res.status(fromDesign.status).json({ error: fromDesign.error });
+        if (template !== appTemplates.DEFAULT_TEMPLATE) return res.status(400).json({ error: 'A project made from a design starts from no template.' });
+        req.body = { ...req.body, brief: fromDesign.brief };
+      }
+
       // Everything the project is made from is written in ONE transaction:
       // its row's insert starts its making (the app-creation machine,
       // src/workflow/app-creation/, through the apps_wf_enrol_creation
       // trigger), and its setup reads the rule, the description, the starter
       // and the card owed from the row once this commits.
       const readyMade = appTemplates.isReadyMade(template);
-      const homeroomBotDm = require('../services/homeroom-bot-dm');
       const owesFirstVersion = !readyMade && !!homeroomBotDm.normalizeBrief(req.body.brief);
       // A ready-made app whose starter directory has an original is a
       // version of it (docs/plans/versions.md, services/originals.js
@@ -1462,7 +1491,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // device's, so the card's "today" is theirs (an unknown or invalid
         // zone reads as UTC there). A ready-made app has its own icon and
         // nothing to sketch.
-        if (MAKE_ORIGINS.has(req.body.from) && !readyMade
+        if ((MAKE_ORIGINS.has(req.body.from) || fromDesign) && !readyMade
             && homeroomBotDm.normalizeBrief(req.body.brief)) {
           await optional('sketch', 'Sketch not owed', () => require('../services/app-sketch').startSketch(db, {
             app: appRow, user: req.user, brief: req.body.brief,
@@ -1480,7 +1509,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // create fails.
         if (owesFirstVersion) {
           await optional('first_version', 'Homeroom bot first version not owed',
-            () => homeroomBotDm.recordFirstVersion(db, pool, config, { app: appRow, user: req.user, brief: req.body.brief }));
+            () => homeroomBotDm.recordFirstVersion(db, pool, config, {
+              app: appRow, user: req.user, brief: req.body.brief, design: fromDesign,
+            }));
         }
         await db.query('COMMIT');
       } catch (err) {
@@ -1511,6 +1542,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (inviteEmails.length) {
         const byEmail = await emailInvites.inviteByEmail(pool, config, {
           app: appRow, emails: inviteEmails, inviter: { id: req.user.id, username: req.user.username },
+          locale: req.user.locale || mailLanguage.requestLanguage(req),
         });
         invited += byEmail.invited + byEmail.mailed;
       }
@@ -1535,6 +1567,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           // firstSession, counts only these) or the Create button's, which
           // opens the same screen and its More options (MAKE_ORIGINS).
           ...(MAKE_ORIGINS.has(req.body.from) ? { from: req.body.from } : {}),
+          ...(fromDesign ? { fromDesign: true } : {}),
         },
       });
 
@@ -1556,10 +1589,18 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             app: appRow, user: req.user, brief: req.body.brief,
             // Its plan is written now, for the made screen to ask its
             // questions while the project is set up (first-version-plan.js).
-            earlyPlan: MAKE_ORIGINS.has(req.body.from),
+            // A design's was written with the project, from the design.
+            earlyPlan: MAKE_ORIGINS.has(req.body.from) || !!fromDesign,
+            fromDesign: !!fromDesign,
           });
         } catch (err) {
           log.warn('apps', 'Homeroom bot first version not started', { appId: appRow.id, err: err.message });
+        }
+        // The design's card gives way to what it made.
+        if (fromDesign) {
+          await require('../services/homeroom-bot-mayor').noteProjectMade(pool, {
+            userId: req.user.id, rootId: fromDesign.design.rootId, app: appRow,
+          });
         }
       } else {
         try {
@@ -1940,6 +1981,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           ? { manifest_snapshot: appAccess.summarizeManifestSnapshot(appRow.manifest_snapshot) }
           : {}),
         demo_partner: demoPartner,
+        offline_cache: offlineCache.forApp(appRow),
         contributor_count: contributorCount,
         // Server-built icon URL so the client never assembles ids into
         // paths (and staging demo rows can inject arbitrary sources) —
@@ -2460,7 +2502,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     if (!repoRef.parse(app.repo_url)) {
       return { canDeclare: false, reason: 'This app has no repository to open a proposal against.' };
     }
-    if (!github.hasWriteAccess()) {
+    if (!github.isEnabled()) {
       return {
         canDeclare: false,
         reason: 'Declaring a variable needs a code host configured on the platform.',
@@ -2670,7 +2712,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   const MAX_DECL_DEFAULT_LEN = 2048;        // matches MAX_PLATFORM_ENV_DEFAULT_LEN
   const MAX_DECL_GROUP_LEN = 48;            // matches MAX_PLATFORM_ENV_GROUP_LEN
 
-  router.post('/api/apps/:slug/secret-declaration-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/secret-declaration-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool), async (req, res) => {
     const body = req.body || {};
     const key = typeof body.key === 'string' ? body.key.trim() : '';
     // Trimmed up front so every value rule below (the length cap, the
@@ -2697,7 +2739,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // Same access shape the secrets panel itself has: collab-level, and
       // for the self-app the Phase-4 public-voting gate. Deliberately NOT
       // canManageApp — proposing an env-var change is the `secret_change`
-      // authority level, which any collaborator already has.
+      // authority level, which any collaborator already has. Proposing is
+      // taking part, so it is also a member's (requireAppMembership above).
       if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
         return res.status(404).json({ error: 'App not found' });
       }
@@ -2812,7 +2855,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
 
       // GitHub preconditions — same three guards and wording as
       // visibility-pr / governance-pr / admins-pr.
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Declaring a variable needs a code host configured on the platform.',
         });
@@ -2932,7 +2975,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // rebuild re-reads dapp.json and reconciles apps.name (see
   // services/app-manifest.js reconcileAppName + staging.deployProduction).
   // This replaces the old issue-based rename proposal in routes/issues.js.
-  router.post('/api/apps/:slug/rename', drainGuard, issueCreateLimiter, async (req, res) => {
+  // Proposing is taking part, so it is for members (requireAppMembership,
+  // AGENTS.md) who may build here.
+  router.post('/api/apps/:slug/rename', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool), async (req, res) => {
     const newName = typeof req.body?.newName === 'string' ? req.body.newName.trim() : '';
     if (!newName) {
       return res.status(400).json({ error: 'newName is required' });
@@ -2954,7 +2999,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'App is already named that' });
       }
 
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Renames need a code host configured on the platform.',
         });
@@ -3073,7 +3118,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // services/app-manifest.js applyVisibilityChange). The old instant
   // PATCH /api/apps/:slug/visibility is gone; admins fast-track by
   // force-merging the PR (POST /api/sessions/:id/admin-merge).
-  router.post('/api/apps/:slug/visibility-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/visibility-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool, { manage: true }), async (req, res) => {
     const collabVisibility = req.body?.collabVisibility;
     const viewVisibility = req.body?.viewVisibility;
     const visibilityError = validateVisibilityCombo(collabVisibility, viewVisibility);
@@ -3108,7 +3153,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (identityRefusal) return res.status(403).json(identityRefusal);
       }
 
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Visibility changes need a code host configured on the platform.',
         });
@@ -3154,7 +3199,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // gets one PR on dapp.json. Same proposers as the two single-block routes
   // it stands in for: the creator, an app admin or a platform admin. The
   // platform's own app may change its rule here, never its visibility.
-  router.post('/api/apps/:slug/who-decides-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/who-decides-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool, { manage: true }), async (req, res) => {
     const whoDecides = require('../services/who-decides-pr');
     let change;
     try {
@@ -3199,7 +3244,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (identityRefusal) return res.status(403).json(identityRefusal);
       }
 
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Changes to who decides need a code host configured on the platform.',
         });
@@ -3213,7 +3258,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // sheet warns that if both pass the later one may overwrite the
       // earlier. The community read still returns the open one
       // (findWhoDecidesPr) so the sheet can link to it.
-      const result = await proposeManifest(res, app, req.user, 'who-decides', diff);
+      // The rules as they are today ride along so the description can say
+      // what is added or removed (services/who-decides-pr.js).
+      const args = diff.governance
+        ? { ...diff, was: { rules: gov.rules || null, approverPolicy: gov.approverPolicy, approvalsRequired: gov.approvalsRequired } }
+        : diff;
+      const result = await proposeManifest(res, app, req.user, 'who-decides', args);
       if (!result) return;
       res.status(201).json({
         ok: true,
@@ -3379,7 +3429,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // admins can't force-merge it (only a platform admin can).
   // Body: { admins: string[] } — the FULL declared list ([] clears the
   // roster; that's how revocation is expressed).
-  router.post('/api/apps/:slug/admins-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/admins-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool, { manage: true }), async (req, res) => {
     const raw = req.body?.admins;
     if (!Array.isArray(raw) || raw.some((u) => typeof u !== 'string')) {
       return res.status(400).json({ error: 'admins must be an array of usernames' });
@@ -3434,7 +3484,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'The app already declares those admins' });
       }
 
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Admin changes need a code host configured on the platform.',
         });
@@ -3472,7 +3522,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  router.post('/api/apps/:slug/governance-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/governance-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool, { manage: true }), async (req, res) => {
     const approverPolicy = req.body?.approverPolicy;
     let approvalsRequired = req.body?.approvalsRequired;
     if (approverPolicy !== 'anyone' && approverPolicy !== 'invited') {
@@ -3530,7 +3580,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'The app already has those approval settings' });
       }
 
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Governance changes need a code host configured on the platform.',
         });
@@ -3620,7 +3670,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
         return res.status(403).json({ error: 'Only people who can build here can propose a change to its topics' });
       }
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Topic changes need a code host configured on the platform.',
         });
@@ -4040,32 +4090,19 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(404).json({ error: 'App not found' });
       }
       const appId = appRows[0].id;
-      // #4600: whether this pin JOINED the app's community. A pin joins
-      // through the app_favorites trigger (schema.sql,
-      // sync_favorite_community_member), so Home's featured list's ⊕ is a
-      // join as much as /membership is, and is counted the same way: on the
-      // spot (scoreOnJoin), not on the rule's next pass, and said so in the
-      // answer (`joined`) so the client can tell its Challenges block to
-      // read again.
-      let joined = false;
+      // One Home (#6361): pinning an app is only that. It joined the app's
+      // community until the app_favorites trigger went (one-home-pins.sql);
+      // joining is POST /membership now, and pins the community instead.
+      // `joined` stays in the answer, always false, for clients that read it.
+      const joined = false;
       if (favorited) {
-        const { rows: joinRows } = await pool.query(
-          `SELECT (a.community_id IS NOT NULL AND NOT EXISTS (
-                    SELECT 1 FROM community_members m
-                     WHERE m.community_id = a.community_id AND m.user_id = $2)) AS joins
-             FROM apps a WHERE a.id = $1`,
-          [appId, req.user.id]
-        );
         // DO UPDATE (not DO NOTHING) so the same statement also clears a
-        // member's hidden=TRUE opt-out row — "Add to Your apps" un-hides.
+        // member's hidden=TRUE opt-out row — "Pin to Home" un-hides.
         await pool.query(
           `INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)
            ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE`,
           [appId, req.user.id]
         );
-        joined = joinRows[0]?.joins === true;
-        // Never throws, so the pin answers the same either way.
-        if (joined) await challengeScorer.scoreOnJoin(pool, config);
       } else if (await appAccess.isCollaborator(pool, appId, req.user.id)) {
         // #618: membership (creator or accepted invite) pins the app into
         // "Your apps", so a member's "remove" must persist as an explicit
@@ -4291,9 +4328,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
       // AN INVITE LINK IS OUT (#4045, 8 Oct 2026): the viewer has a live one
-      // for a project that is still just theirs, so the hub draws their face
-      // with open seats beside it instead of "Just you". Asked only then;
-      // see hasLiveLink for what the records can and cannot say.
+      // for a project that is still just theirs, and it went out (copied,
+      // shared or used; audit D03), so the hub draws their face with open
+      // seats beside it instead of "Just you". Asked only then; see
+      // hasLiveLink.
       const inviteLink = membership?.is_member && membership.audience === 'solo' && req.user?.id
         ? await communityInvites.hasLiveLink(pool, app.id, req.user.id) : false;
       // WHAT INVITE IS OUT, for Share it's line (15 Oct 2026): "Invite link
@@ -4371,6 +4409,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           rules: described ? described.rules : null,
           groups: described ? described.groups : [],
           creator,
+          // #6281: the creator's account is gone (apps.created_by is
+          // ON DELETE SET NULL), so the sheet says that rather than
+          // "this project has no creator", which reads like a bug. The
+          // platform's own project has no creator by design, hence the
+          // self_hosted check.
+          creator_gone: !app.self_hosted && !creator,
           approvers: approverNames,
         },
         // #4666: who can see it, as the two columns say, for the sheet.
@@ -4543,6 +4587,31 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.status(result.duplicate ? 200 : 201).json({ ok: true, ...result });
     } catch (err) {
       log.error('apps', 'Failed to record app opening', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Offline apps: this viewer's frame did not say it opened at the cacheable
+  // address on build `body.build` (public/js/app-view.js
+  // _offlineCacheDidNotOpen). Two people on the same build switch that
+  // address off for the app until it deploys again
+  // (services/offline-cache-refusals.js). Same visibility guard as the app
+  // detail request. Always 204 for a report it can take, so the shell never
+  // retries it.
+  router.post('/api/apps/:slug/offline-cache/did-not-open', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+    const build = offlineCacheRefusals.parseBuild(req.body && req.body.build);
+    if (!build) return res.status(400).json({ error: 'A build sha is required' });
+    try {
+      const appRow = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, main_sha`
+      );
+      if (!appRow) return res.status(404).json({ error: 'App not found' });
+      if (appRow.self_hosted) return res.status(204).end();
+      await offlineCacheRefusals.recordRefusal(pool, { app: appRow, userId: req.user.id, build });
+      return res.status(204).end();
+    } catch (err) {
+      log.error('apps', 'Failed to record an offline-cache refusal', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

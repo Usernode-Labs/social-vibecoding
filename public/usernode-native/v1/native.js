@@ -3549,6 +3549,8 @@
    * ignores `outEl`. `duration` (ms, or a function returning ms or null,
    * asked once the source is resolved) shortens or lengthens the move; the
    * fade scales with it, and leaving it out keeps the homescreen timing.
+   * Either zoom holds its start pose for one painted frame before it moves
+   * (afterStartPose), so the frame that reveals the screen is not spent.
    * When the zoom can't run (no usable source rect,
    * reduced motion, missing el) it falls back to opts.fallback ('push'
    * for zoom-in, 'pop' for zoom-out, or 'none') with the combined
@@ -3617,6 +3619,31 @@
     try { if (typeof d === 'function') d = d(); } catch (e) { d = null; }
     d = Number(d);
     return isFinite(d) && d > 0 ? Math.round(d) : fallbackMs;
+  }
+
+  // THE FIRST FRAME OF A ZOOM IS ITS START POSE (1 Nov 2026). `fn` has just
+  // revealed a screen, so the frame that paints it is a long one: on the
+  // iPhone Duo simulator (iOS 27.1) 60 to 77ms passed before the next frame.
+  // A transition set in the same task runs its clock through that frame, so
+  // the first frame anyone saw had the card 60 to 77% of the way there: an
+  // app grew out of the middle of the screen, not out of its tile, and
+  // shrank from half its size. So the move starts once the start pose has
+  // been painted: on the second animation frame from here, because the first
+  // one runs before the long frame paints. The cap starts it anyway where
+  // frames are not coming (a hidden tab); a timer cannot run inside a frame,
+  // so it never starts before that paint either. With no animation frames at
+  // all (no window), the move starts at once, as it always did.
+  var ZOOM_START_CAP_MS = 120;
+  function afterStartPose(go) {
+    if (typeof requestAnimationFrame !== 'function') { go(); return; }
+    var started = false;
+    var once = function () {
+      if (started) return;
+      started = true;
+      go();
+    };
+    requestAnimationFrame(function () { requestAnimationFrame(once); });
+    setTimeout(once, ZOOM_START_CAP_MS);
   }
 
   function zoomTransition(fn, type, opts) {
@@ -3700,14 +3727,17 @@
       el.style.borderRadius = ZOOM_RADIUS;
       void el.offsetHeight; // flush the start pose before enabling the transition
       var inMs = zoomDuration(opts, 380);
-      el.style.transition = 'transform ' + inMs + 'ms ' + ZOOM_EASE
-        + ', opacity ' + Math.min(220, inMs) + 'ms ease, border-radius ' + inMs + 'ms ease';
-      el.style.transform = 'none';
-      el.style.opacity = '1';
-      el.style.borderRadius = '0px';
       zoomCleanup = finish;
-      el.addEventListener('transitionend', onEnd);
-      setTimeout(finish, inMs + 120); // safety if transitionend never fires
+      afterStartPose(function () {
+        if (done) return; // finished before it moved
+        el.style.transition = 'transform ' + inMs + 'ms ' + ZOOM_EASE
+          + ', opacity ' + Math.min(220, inMs) + 'ms ease, border-radius ' + inMs + 'ms ease';
+        el.style.transform = 'none';
+        el.style.opacity = '1';
+        el.style.borderRadius = '0px';
+        el.addEventListener('transitionend', onEnd);
+        setTimeout(finish, inMs + 120); // safety if transitionend never fires
+      });
       return promise;
     }
 
@@ -3726,16 +3756,19 @@
     }
     void el.offsetHeight;
     var outMs = zoomDuration(opts, 340);
-    el.style.transition = 'transform ' + outMs + 'ms ' + ZOOM_EASE
-      + ', opacity ' + Math.round(outMs * 200 / 340) + 'ms ease '
-      + Math.round(outMs * 60 / 340) + 'ms, border-radius ' + outMs + 'ms ease';
-    el.style.transform = 'translate(' + outPose.tx + 'px, ' + outPose.ty + 'px) '
-      + 'scale(' + outPose.sx + ', ' + outPose.sy + ')';
-    el.style.opacity = '0';
-    el.style.borderRadius = ZOOM_RADIUS;
     zoomCleanup = finish;
-    el.addEventListener('transitionend', onEnd);
-    setTimeout(finish, outMs + 140); // safety if transitionend never fires
+    afterStartPose(function () {
+      if (done) return; // finished before it moved
+      el.style.transition = 'transform ' + outMs + 'ms ' + ZOOM_EASE
+        + ', opacity ' + Math.round(outMs * 200 / 340) + 'ms ease '
+        + Math.round(outMs * 60 / 340) + 'ms, border-radius ' + outMs + 'ms ease';
+      el.style.transform = 'translate(' + outPose.tx + 'px, ' + outPose.ty + 'px) '
+        + 'scale(' + outPose.sx + ', ' + outPose.sy + ')';
+      el.style.opacity = '0';
+      el.style.borderRadius = ZOOM_RADIUS;
+      el.addEventListener('transitionend', onEnd);
+      setTimeout(finish, outMs + 140); // safety if transitionend never fires
+    });
     return promise;
   }
 
@@ -4730,6 +4763,11 @@
    * with the chosen action object, or null on cancel/backdrop.
    * ──────────────────────────────────────────────────────────────────── */
 
+  // The page's address, for a surface that closes when it moves.
+  function currentHref() {
+    try { return window.location.href; } catch (_) { return null; }
+  }
+
   // actionSheet({ title?, actions: [{ label, icon?, iconEl?, destructive?,
   // highlighted?, handler? }], cancelLabel? }) — returns a Promise.
   // `highlighted` lights one row (a tint behind it, its label bold): the
@@ -4815,6 +4853,7 @@
       var settleAction = null; // the chosen action while the exit spring runs
       function finishSettle() {
         if (unwatch) unwatch();
+        stopNavWatch();
         if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
         if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
         if (settleAction && settleAction.handler) settleAction.handler();
@@ -4830,6 +4869,19 @@
       }
 
       onBackdropDismiss(backdrop, function () { settle(null); });
+
+      // A MOVE TO ANOTHER ADDRESS CLOSES IT, as a Cancel would (audit D01,
+      // 2 Nov 2026). Back, a swipe back or a link written under it left the
+      // sheet floating over the next screen, and the next tap only closed
+      // it. Only a move away from where it opened counts.
+      var openedAt = currentHref();
+      function onNav() { if (currentHref() !== openedAt) settle(null); }
+      function stopNavWatch() {
+        window.removeEventListener('popstate', onNav);
+        window.removeEventListener('hashchange', onNav);
+      }
+      window.addEventListener('popstate', onNav);
+      window.addEventListener('hashchange', onNav);
 
       // Same present-time height assumption as the bottom sheet (issue
       // #742). The API can't receive late content, but a re-measure (e.g.
