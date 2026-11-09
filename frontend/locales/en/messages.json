@@ -4691,6 +4691,10 @@
     "text": "{{project}} · #{{number}} · Your vote helps free a build slot",
     "description": "The AI tab's main view, Needs you: tooltip of the row of a vote on one of Homeroom bot's changes while a request of the person's waits for one of its slots on that project; deciding the change frees one."
   },
+  "ai.row.voteConflict": {
+    "text": "{{project}} · #{{number}} · Conflicts with main: Homeroom resolves it once you approve",
+    "description": "The AI tab's main view, Needs you: tooltip of the Vote row of a change that conflicts with main and that only a yes can move. {{project}} is the project's name and {{number}} the request or change number."
+  },
   "ai.row.project": {
     "text": "{{project}}",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a row (its whole line; read by a screen reader too) that needs the person and has no number: the project's name."
@@ -5098,6 +5102,10 @@
   "ai.why.voteFreesSlot": {
     "text": "Your vote helps free a build slot",
     "description": "Homeroom bot tab, on a phone: the second line of a vote on one of Homeroom bot's changes, where a request of yours waits for its build slot."
+  },
+  "ai.why.voteConflict": {
+    "text": "Conflicts with main: Homeroom resolves it once you approve",
+    "description": "Homeroom bot tab, on a phone: the second line of a Vote row on a change that conflicts with main; a yes lets Homeroom resolve the conflict and merge it without asking again."
   },
   "ai.why.heldYours_one": {
     "text": "A vote you owe can free its slot",

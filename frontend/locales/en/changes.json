@@ -8771,6 +8771,14 @@
     "text": "An update is coming: votes cast now are cleared when it lands.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page when Homeroom bot or the change's author is changing it, or has a change queued: a Yes or No cast now is thrown away when the update lands, and everyone is asked again."
   },
+  "page.votes.note.conflictOnYes": {
+    "text": "Conflicts with main: Homeroom resolves it once you approve.",
+    "description": "A change page's Votes card: the change conflicts with main and only the group's approval can move it; once approved Homeroom resolves the conflict and merges it without asking again."
+  },
+  "page.votes.note.syncing": {
+    "text": "Syncing with main: Homeroom asks for votes when it is caught up and its checks pass.",
+    "description": "A change page's Votes card: the change conflicts with main and Homeroom is resolving that now, so nobody is asked to vote yet."
+  },
   "page.votes.note.goingLive": {
     "text": "It’s going live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while the approved change is being applied to the running app."
