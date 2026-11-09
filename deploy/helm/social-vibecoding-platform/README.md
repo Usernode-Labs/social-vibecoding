@@ -418,8 +418,10 @@ recorded version becomes unreviewed is woken even without gateway telemetry.
 Wake requests remain available regardless of revision eligibility. Deploy
 this support before the infrastructure pins: legacy ID-only assignments wake
 and stay awake until their reviewed SHAs are configured. Select only
-request-driven apps with durable external state and no timers, scheduled
-work, subscriptions or background queues. Homeroom, previews and deployments
+request-driven apps with durable external state and no independent scheduled
+work, outbound subscriptions or background queues. Timers tied to live
+requests/streams, or work guaranteed to finish within the idle window, are
+compatible. Homeroom, previews and deployments
 in progress are excluded. All live gateway Pods must supply fresh activity
 data over private port 3001: active HTTP requests, streams and WebSockets
 prevent sleep; missing telemetry keeps apps awake. The database records
