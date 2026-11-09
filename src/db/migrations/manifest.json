@@ -258,23 +258,23 @@
     },
     {
       "id": "invite-nudges",
-      "sha256": "c61edfeef0bf9d5d8e54ffaf1b40458b067f02ea6a663aaa437bca565600ca96",
-      "schemaSha256": "5428a54f9fc030b4060870adf3f0a57e637daca5a5a3d7c98e70a1c0c310d26e"
+      "sha256": "7f4778a2d6b7847498fe571609881c1aef07b9d3acf1929a087eeaf2dbc5e90e",
+      "schemaSha256": "616c677fb57320b738c71219d5777c374ac2f57170922a8e25780b9d52727435"
     },
     {
       "id": "waitlist-admit-reminders",
       "sha256": "0246051ea8d93526a43360e6a573f389df256c2fff8c58f403c30991d3e8464e",
-      "schemaSha256": "17e49ee473d864e3711325ebb2e98aed83c10af55c19d949b2a7f288a1a9f639"
+      "schemaSha256": "34f88ebeeecde224c8eb713d4aa6f0b02cb5ddd9761df5e0727e563af03e8029"
     },
     {
       "id": "invite-link-guard",
       "sha256": "f2a3e5eae6210555d7a6f36fa4b97f1e6318209b73fb98e42fa0372d01057d7a",
-      "schemaSha256": "8b38afcd3a527d882a02bc633749dea8942697dcbd7a2f4b5b02dd86d24d3498"
+      "schemaSha256": "a4a8636a1dadb529266825a1e2cda3923101d10b8022c0b77e5019a317b3a648"
     },
     {
       "id": "invite-link-guard-push-kinds",
       "sha256": "91839debfd3e1a054920997a85b227f68571b8cf5ab6acd50a88f70f4136e591",
-      "schemaSha256": "fe63f749b9620f7ea7585e304b84f90ad4faf95cc1793a5bc4a77eaab6e0fab4"
+      "schemaSha256": "9fcb84cb3d7312f478856b39a01072be8dec914e95cb334113893d45fe27ead7"
     }
   ]
 }
