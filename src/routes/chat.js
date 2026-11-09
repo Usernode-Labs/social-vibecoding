@@ -5,6 +5,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const models = require('../services/models');
 const modelCosts = require('../services/model-costs');
+const github = require('../services/github');
 const { listActiveUserIds } = require('../services/active-users');
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
@@ -31,6 +32,10 @@ const {
 // #4417: 'category' is a topic's channel (services/app-chat.js).
 const THREAD_TYPES = new Set(['issue', 'session', 'governance', appChat.MESSAGE_THREAD, appChat.CATEGORY_THREAD]);
 const MAX_THREAD_REF = 2147483647; // PostgreSQL INTEGER
+// #6497: a request's discussion opens whole. Its first page reads up to this
+// many rows, so a thread of a few dozen replies arrives in one read; past it
+// "Load earlier" still pages 50 at a time.
+const REQUEST_THREAD_CEILING = 500;
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // #2236: how a message reached the thread, as the row will carry it.
@@ -432,7 +437,7 @@ function chatRoutes(config) {
   // ── Reading a transcript (#194, #2387) ───────────────────────────
   //
   //   GET /api/apps/:slug/messages
-  //     ?limit=1..100 (default 50)
+  //     ?limit=1..100 (default 50; a request's first page: up to 500)
   //     &thread_type=&thread_ref=   one thread; absent = the general stream
   //     &before=<id>                older page, ids < before
   //     &after=<id>                 newer page, ids > after (catch-up)
@@ -440,8 +445,14 @@ function chatRoutes(config) {
   //   → { messages /* oldest first */, has_more_before, has_more_after,
   //       focus?: { message_id, thread_ref },   // around only
   //       root?: Message,                       // thread_type=message only
+  //       request_comments?: { comments, truncated, note? }, // a request's first page
   //       read?: { last_read_message_id, unread_count } }
   //                                             // the general stream's first page
+  //
+  // #6497: a request's thread (thread_type=issue) is read whole on its first
+  // page, up to REQUEST_THREAD_CEILING rows, and carries its GitHub comments
+  // as `request_comments` (up to github.ISSUE_COMMENTS_MAX), read in parallel
+  // with the rows. Every other read, and an older page, keeps pageLimit.
   //
   // At most one of before / after / around. `around` on a reply-thread
   // message while reading the general stream centres the window on the
@@ -451,8 +462,6 @@ function chatRoutes(config) {
   // Every row carries `deleted` (a placeholder: no text, no attachments, no
   // quote) and `thread` (a general-stream row's reply summary, or null).
   router.get('/api/apps/:slug/messages', async (req, res) => {
-    const limit = pageLimit(req.query.limit);
-
     // #194: optional thread scoping. Absent → the general chat: its own
     // messages (thread_type IS NULL), which keeps topic threads out of it,
     // plus — since the #2387 follow-up — the live replies of its reply
@@ -483,13 +492,23 @@ function chatRoutes(config) {
       // Reading chat history only needs view access (#621): anyone who
       // can see the app gets a read-only look at the dev surface.
       // Posting stays collab-gated at the WS layer (404 on deny so
-      // private apps aren't enumerable).
+      // private apps aren't enumerable). #6497: repo_url is what a
+      // request's first page reads its GitHub comments with.
       const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`
       );
       if (!app) {
         return res.status(404).json({ error: 'App not found' });
       }
+
+      // #6497: a request's first page is its whole discussion, up to the
+      // ceiling; an older page (before), a catch-up (after) and a permalink
+      // window (around) keep the page limit, as every other stream does.
+      const requestFirstPage = threadType === 'issue'
+        && before == null && after == null && around == null;
+      const limit = requestFirstPage
+        ? Math.min(parseInt(req.query.limit, 10) || REQUEST_THREAD_CEILING, REQUEST_THREAD_CEILING)
+        : pageLimit(req.query.limit);
 
       const appId = app.id;
       const viewerId = req.user.id;
@@ -528,6 +547,9 @@ function chatRoutes(config) {
       let hasMoreBefore = false;
       let hasMoreAfter = false;
       let focus = null;
+      // #6497: the request's first-page comments, when this read asked for
+      // them (null on every other read).
+      let requestComments = null;
       if (around != null) {
         const target = await locateAround(appId, thread, around, viewerId);
         if (!target) return res.status(404).json({ error: 'Message not found' });
@@ -555,9 +577,19 @@ function chatRoutes(config) {
           ...stream, op: '<=', pivot: after, order: 'DESC', limit: 1,
         })).length > 0;
       } else {
-        const older = await selectStream(pool, before != null
+        // #6497: a request's first page reads its GitHub comments beside
+        // its own rows, so the page waits for the slower of the two rather
+        // than for both one after the other. Every other read passes null.
+        const olderRead = selectStream(pool, before != null
           ? { ...stream, op: '<', pivot: before, order: 'DESC', limit: limit + 1 }
           : { ...stream, order: 'DESC', limit: limit + 1 });
+        const commentsRead = requestFirstPage
+          ? require('./issues').readRequestComments(pool, app, threadRef, {
+            demo, max: github.ISSUE_COMMENTS_MAX,
+          })
+          : null;
+        const [older, comments] = await Promise.all([olderRead, commentsRead]);
+        requestComments = comments || null;
         hasMoreBefore = older.length > limit;
         rows = older.slice(0, limit).reverse();
         if (before != null) {
@@ -580,11 +612,17 @@ function chatRoutes(config) {
       if (demo && before == null && after == null && around == null) {
         const mock = stagingDemoTranscript(appId, thread, messages, app);
         if (mock) {
-          return res.json({ messages: mock, has_more_before: false, has_more_after: false });
+          return res.json({
+            messages: mock,
+            has_more_before: false,
+            has_more_after: false,
+            ...(requestComments ? { request_comments: requestComments } : {}),
+          });
         }
       }
 
       const body = { messages, has_more_before: hasMoreBefore, has_more_after: hasMoreAfter };
+      if (requestComments) body.request_comments = requestComments;
       // #6391: in a request's or a change's thread, the bot's reply carries a
       // second button set for members it did not answer. Whether this reader
       // is one is said once here, so the thread can draw it; posting needs

@@ -1655,7 +1655,14 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // room is the page's usable box, the window less the rail and the Duo's
   // column, declared once on body (1 Nov 2026; tests/usable-box.test.js pins
   // how it is made).
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-room: var\(--platform-usable-w\);\s+--ai-list-min: 480px;\s+--ai-main-auto: max\(400px, calc\(var\(--ai-room\) - 720px\)\);\s+--ai-main-w: max\(320px, min\(var\(--ai-main-chosen-w, var\(--ai-main-auto\)\), calc\(var\(--ai-room\) - var\(--ai-list-min\)\)\)\);\s+\}/);
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-room: var\(--platform-usable-w\);\s+--ai-list-min: var\(--list-pane-w\);\s+--ai-main-auto: max\(400px, calc\(var\(--ai-room\) - var\(--list-pane-w\)\)\);\s+--ai-main-w: max\(320px, min\(var\(--ai-main-chosen-w, var\(--ai-main-auto\)\), calc\(var\(--ai-room\) - var\(--ai-list-min\)\)\)\);\s+\}/);
+  // 9 Nov 2026 (#6495): the bot tab's list is the Messages inbox's list while
+  // something is open beside it, so the two pages share one measure and the
+  // open column gets the room the list lets go. Defined once, read by both.
+  assert.match(css, /:root \{ --list-pane-w: 22rem; \}/, 'one list width, defined once');
+  assert.match(css, /\.messages-list-pane \{\s+flex: 0 0 var\(--list-pane-w\);\s+width: var\(--list-pane-w\);/, 'the inbox reads it');
+  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\] \.ai-screen-body \{\s+width: 100%;\s+max-width: var\(--list-pane-w\);\s+margin-inline: 0;\s+\}/,
+    'and so does the bot tab\'s list, against the rail, only while something is open');
   assert.doesNotMatch(css, /--side-panel-chosen-w/, 'one width no longer sizes both columns');
   // A wider Main holds its words to the 720px it used to be, so plan cards
   // and replies keep a readable line; below that the gutter is the part's own.

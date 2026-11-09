@@ -114,6 +114,10 @@ async function migrate(config) {
   // #6441's shots: three requests gone live within an hour, so the bell's
   // Unread shows them folded into one row that lists each.
   await seedStagingFoldedLiveNotifications(pool);
+  // #6494's shots: the bell's two storage notices, one at half full and one
+  // nearly full, each saying how much is used and what the limit is. Staging
+  // runs no sweep against a growing database, so they are seeded.
+  await seedStagingStorageNotices(pool);
   // #6261's shots: a design thread with a version in the capture member's
   // chat, for the comment picture's design frames.
   await seedStagingDesignThread(pool);
@@ -2179,6 +2183,79 @@ async function seedStagingFoldedLiveNotifications(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging folded "went live" seeding failed', { message: err.message });
+  }
+}
+
+// #6494's shots: the two storage notices the sweep now writes, "over half
+// full" and "nearly full", each carrying the space used and the limit. A
+// fresh staging copy has no project whose database grew, and staging runs no
+// sweep against one, so both rows are seeded for the shots' member fixture
+// (usernode-capture), on obviously fake projects of its own. Nothing here is
+// a signal the code reads to decide anything. Idempotent by app and detail
+// token; strictly a no-op outside staging.
+//
+// Two projects, not one: a newer storage notice replaces an unread older one
+// for the same project, so a real bell holds one per project. The one at
+// half full has only the early notice, and the one nearly full has only the
+// warning (a sweep that jumped past both lines sends the highest alone).
+async function seedStagingStorageNotices(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!people.rows.length) return;
+    const memberId = people.rows[0].id;
+    const projects = [
+      {
+        id: 900096, name: 'Staging demo: recipe box', slug: 'staging-demo-recipe-box',
+        bytes: 2684354560, warnLevel: 2, detail: 'storage_warn:2560:3072', minutesAgo: 8,
+      },
+      {
+        id: 900095, name: 'Staging demo: spice shelf', slug: 'staging-demo-spice-shelf',
+        bytes: 1717567488, warnLevel: 1, detail: 'storage_early:1638:3072', minutesAgo: 3 * 24 * 60,
+      },
+    ];
+    for (const project of projects) {
+      const app = await pool.query(
+        `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by,
+                           db_size_bytes, db_size_measured_at, db_storage_warned_at, db_storage_warn_level)
+         VALUES ($1::int, $2::text, $3::text, 'running', 'members', 'private', $4::int,
+                 $5::bigint, NOW() - make_interval(mins => $6::int),
+                 CASE WHEN $7::int >= 2 THEN NOW() - make_interval(mins => $6::int) END, $7::int)
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id`,
+        [project.id, project.name, project.slug, memberId, project.bytes, project.minutesAgo, project.warnLevel],
+      );
+      const appId = app.rows[0]?.id || (await pool.query(
+        'SELECT id FROM apps WHERE id = $1', [project.id],
+      )).rows[0]?.id;
+      if (!appId) continue;
+      // The bell lists a private project's row only for someone who can still
+      // open that project (services/notifications.js APP_ACCESS_SQL: public,
+      // an admin, or an app_collaborators member). A project's INSERT mints
+      // its community but joins nobody to it, and a community membership is
+      // not what this check reads, so the creator's own collaborator row is
+      // written here, which also puts them in that community by trigger.
+      await pool.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+         VALUES ($1::int, $2::int, 'member', NOW())
+         ON CONFLICT (app_id, user_id) DO NOTHING`,
+        [appId, memberId],
+      );
+      await pool.query(
+        `INSERT INTO notifications
+           (user_id, app_id, source_user_id, kind, detail, read_at, created_at)
+         SELECT $1::int, $2::int, NULL, 'app_health', $3::varchar, NULL,
+                NOW() - make_interval(mins => $4::int)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM notifications n
+             WHERE n.user_id = $1 AND n.app_id = $2
+               AND n.kind = 'app_health' AND n.detail = $3::varchar
+          )`,
+        [memberId, appId, project.detail, project.minutesAgo],
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging storage notice seeding failed', { message: err.message });
   }
 }
 
