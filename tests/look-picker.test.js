@@ -47,6 +47,7 @@ test('real admins only, and never on the first render', () => {
   assert.equal(renderComponent(PICKER, 'LookPicker', { variant: 'frame' }, { cache: false, stubs: { '../../lib/platform-viewer': { whenPlatformViewer: () => () => {} } } }), '',
     'the prerendered document and the first client render agree: nothing');
   assert.match(src, /window\.Skin\?\.set\?\.\(next\)/, 'the choice is the head module\'s, kept on the device');
+  assert.match(src, /window\.Skin\?\.set\?\.\(next\);[\s\S]{0,400}?window\.scrollTo\(0, 0\)/, 'and the page starts at its top under the new look\'s bar');
   assert.match(src, /const skin = useLiveSkin\(\);/);
 });
 
@@ -63,4 +64,26 @@ test('under a look the menu lies over the glyph, unseen, and takes the press', (
   const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
   assert.match(hand, /html\[data-skin\] \.fr-look \{ position: relative; cursor: pointer; \}/);
   assert.match(hand, /html\[data-skin\] \.fr-look > select \{ position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; \}/);
+});
+
+test('beside the look, one press flips light and dark', () => {
+  // A look is judged in both: the toggle sits with the picker, between it
+  // and the bell, and says which one is on.
+  const light = view({ variant: 'frame', skin: 'glass', dark: false, onDark() {} });
+  assert.match(light, /<\/label><button type="button" class="fr-ib" aria-pressed="false" aria-label="Dark" title="Dark" data-look-theme="frame"><svg[^>]*>.*?<\/svg><\/button>$/s);
+  const dark = view({ variant: 'shell', skin: 'standard', dark: true, onDark() {} });
+  assert.match(dark, /<\/label><button type="button" class="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target [^"]*" aria-pressed="true" aria-label="Dark" title="Dark" data-look-theme="shell">/);
+  // The glyph is where a press goes: the moon while it is light, the sun while it is dark.
+  const icons = read('frontend/@/components/ui/kit-icons.ts');
+  const d = (name) => icons.match(new RegExp(`^  ${name}: "(.*)",?$`, 'm'))[1].replace(/\\"/g, '"');
+  assert.ok(light.includes(d('moon')) && !light.includes(d('sun')));
+  assert.ok(dark.includes(d('sun')) && !dark.includes(d('moon')));
+});
+
+test('the toggle is the theme\'s own switch, and follows it wherever it is changed', () => {
+  const src = read(PICKER);
+  assert.match(src, /window\.Theme\?\.set\?\.\(dark \? 'light' : 'dark'\)/, 'an explicit choice, kept on the device as Settings > Theme keeps it');
+  assert.match(src, /useSyncExternalStore\(subscribeTheme, isDark, \(\) => false\)/);
+  assert.match(src, /document\.documentElement\.classList\.contains\('dark'\)/, 'what is on screen, so "System" reads as what the device shows');
+  assert.equal((src.match(/window\.Theme\?\.onChange\?\.\(/g) || []).length, 1, 'one listener, however many pickers are mounted');
 });
