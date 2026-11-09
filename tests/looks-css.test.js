@@ -296,5 +296,6 @@ test('a worn rule that could match nothing is left out', () => {
     }
   }
   assert.ok(seen > 100, `the worn rules are there (${seen})`);
-  assert.match(text, /:not\(\[data-auth-back\]\):is\(\.bg-white,\.bg-zinc-100\)\{background:var\(--fr-sunk\)/, 'a state the map names is kept: the quiet button');
+  const btn = looks.config.wear.roots.btn;
+  assert.ok(text.includes(`${btn.to}${btn.parts.quiet}{background:var(--fr-sunk)`), 'a state the map names is kept: the quiet button');
 });

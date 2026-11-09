@@ -330,13 +330,13 @@
         "to": ":is(.messages-thread-action,.messages-composer-action)"
       },
       "card": {
-        "to": ":is(.dev-request-ask,.dev-request-status,:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) .rounded-2xl.overflow-hidden)"
+        "to": ":is(.dev-request-ask,.dev-request-status,:is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen),[data-sign-in-sheet]) .rounded-2xl.overflow-hidden)"
       },
       "title": {
         "to": ":is(.settings-page-title,#first-session-make-title,:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) h1)"
       },
       "btn": {
-        "to": ":is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back])",
+        "to": ":is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back]),[data-sign-in-sheet] [role=\"dialog\"] button.bg-violet-600)",
         "parts": {
           "quiet": ":is(.bg-white,.bg-zinc-100)"
         }

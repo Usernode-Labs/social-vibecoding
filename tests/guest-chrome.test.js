@@ -88,8 +88,8 @@ test('a stand-alone page is the kit\'s one column: the product\'s own form, wear
   const looks = JSON.parse(read('frontend/looks/looks.json'));
   const AUTH = ':is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen)';
   assert.ok(looks.wear.roots.title.to.includes(`${AUTH} h1`));
-  assert.ok(looks.wear.roots.card.to.includes(`${AUTH} .rounded-2xl.overflow-hidden`));
-  assert.equal(looks.wear.roots.btn.to, `${AUTH} :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back])`,
+  assert.ok(looks.wear.roots.card.to.includes(`:is(${AUTH},[data-sign-in-sheet]) .rounded-2xl.overflow-hidden`));
+  assert.ok(looks.wear.roots.btn.to.includes(`${AUTH} :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back])`),
     'the one accent-filled control is the primary button; a white or grey pill is a quiet one');
   assert.deepEqual(looks.wear.roots.btn.parts, { quiet: ':is(.bg-white,.bg-zinc-100)' });
   const css = read('public/css/app.css');
@@ -108,4 +108,20 @@ test('in a phone browser, where the document scrolls, the screen starts under th
   const css = read('public/css/app.css');
   const hand = css.slice(css.indexOf('THE GUEST\'S FRAME'), css.indexOf('/* looks:begin'));
   assert.match(hand, /html\[data-frame-chrome="guest"\]\[data-browser-scroller\^="auth-"\] body :is\([^)]*\):not\(\.hidden\) \{\s*margin-top: var\(--fr-shell-top, 0px\);/);
+});
+
+test('the sign-in sheet is the kit\'s sheet: the look\'s surface, title, field and button around the product\'s own steps', () => {
+  // The tour's o04 to o06. The sheet keeps every step it has (a code by
+  // email or by text, a password, a reset, Apple and Google, a username)
+  // and where it stands on the screen; what it is drawn with is the look's.
+  const looks = JSON.parse(read('frontend/looks/looks.json'));
+  assert.ok(looks.wear.roots.btn.to.includes('[data-sign-in-sheet] [role="dialog"] button.bg-violet-600'), 'its one primary button; Apple\'s and Google\'s keep their own faces');
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('THE SIGN-IN SHEET'), css.indexOf('/* looks:begin'));
+  assert.ok(css.includes('THE SIGN-IN SHEET'));
+  assert.match(hand, /\[data-sign-in-sheet\] > \[role="dialog"\] \{[^}]*background: var\(--fr-solid, var\(--fr-ground\)\);[^}]*box-shadow: var\(--fr-sh\), inset 0 0 0 1px var\(--fr-line\);/);
+  assert.match(hand, /#sign-in-sheet-title \{ font-size: 24px; line-height: 1\.15; font-weight: 700; letter-spacing: -0\.02em; color: var\(--fr-ink\); \}/);
+  assert.match(hand, /\[data-sign-in-sheet-method\] \{ background: var\(--fr-sunk\); \}/, 'the two ways are the look\'s own switch');
+  const sheet = read('frontend/src/features/auth/sign-in-sheet.tsx');
+  for (const hook of ['data-sign-in-sheet={step}', 'role="dialog"', 'id="sign-in-sheet-title"', 'data-sign-in-sheet-method=""', 'role="radio"']) assert.ok(sheet.includes(hook), hook);
 });
