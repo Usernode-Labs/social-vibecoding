@@ -2165,6 +2165,11 @@ function doingFor(name, args = {}, { project = null } = {}) {
     case 'draw_screen':
     case 'write_screen':
       return { kind: 'drawing' };
+    // #6354: opening one of Homeroom's own pages to copy it for a design.
+    case 'capture_page': {
+      const page = typeof args?.page === 'string' ? clip(args.page, 60) : '';
+      return page ? { kind: 'capturing', page } : { kind: 'capturing' };
+    }
     case 'edit_design':
       return { kind: 'designing' };
     case 'offer_request':
