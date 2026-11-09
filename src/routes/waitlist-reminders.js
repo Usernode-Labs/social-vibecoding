@@ -49,9 +49,10 @@ const BROKEN_GET = page('This link does not work',
 const BROKEN_POST = page('This link does not work',
   '<p>Nothing was changed. Open the link again from the email.</p>');
 
-// The page the POST answers, once the row is stamped.
-const STOPPED = page('No more reminders',
-  '<p>We won\'t email you about your spot again. It stays open: sign in any time with the email address we wrote to.</p>'
+// The page the POST answers, once the row is stamped. Its heading says it
+// worked (6508's review, 9 Nov: "No more reminders" did not read as done).
+const STOPPED = page('Reminders turned off',
+  '<p>You won\'t get any more reminder emails about your Homeroom invite. You can still sign in any time with this email.</p>'
   + `<p><a href="${SIGN_IN_PATH}" style="${LINK_STYLE}">Sign in</a></p>`
   + SMALL_PRINT);
 

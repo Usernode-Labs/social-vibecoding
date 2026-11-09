@@ -346,8 +346,10 @@ test('the stop link: GET asks, POST stops, and a wrong token changes nothing', a
     const stopped = await fetch(`${base}/mail/reminders/stop?w=5&t=${token}`, { method: 'POST' });
     assert.equal(stopped.status, 200);
     const done = await stopped.text();
-    assert.match(done, /<title>No more reminders<\/title>/);
-    assert.match(done, /We won't email you about your spot again\. It stays open: sign in any time with the email address we wrote to\./);
+    assert.match(done, /<title>Reminders turned off<\/title>/);
+    assert.match(done, /<h1[^>]*>Reminders turned off<\/h1>/, 'the heading says it worked');
+    assert.match(done, /You won't get any more reminder emails about your Homeroom invite\. You can still sign in any time with this email\./);
+    assert.doesNotMatch(done, /No more reminders/);
     assert.match(done, /<a href="\/\?login=1" style="color:#0a6ee0;font-size:15px">Sign in<\/a>/);
     assert.doesNotMatch(done, /background:#0a6ee0/, 'no button once stopped');
     assert.match(done, /This stops reminders for this address only\. Sign-in codes you ask for still arrive\./);
