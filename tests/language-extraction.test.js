@@ -281,7 +281,7 @@ test('the Workshop\'s counted words read with a plural form for each count, and 
   for (const n of [1, 2, 21]) {
     assert.equal(message('project:workRow.replies', { count: n }), `${n} ${n === 1 ? 'comment' : 'comments'}`);
     assert.equal(message('project:workshop.dash.onYou', { count: n }), `${n} on you`);
-    assert.equal(message('project:workshop.dash.fromLastWeek', { count: n }), `from ${n}`);
+    assert.equal(message('project:workshop.dash.fromLastWeek', { count: n }), `from ${n} by this time last week`);
     for (const total of [2, 5, 21]) {
       assert.equal(message('project:communityCard.line.members.some', { count: n, total }),
         `A change goes live when its checks pass and ${n} of the ${total} active members ${n === 1 ? 'approves' : 'approve'} it.`);
@@ -299,7 +299,7 @@ test('the Workshop\'s counted words read with a plural form for each count, and 
   assert.ok(tiles.length > 200);
   assert.doesNotMatch(tiles, /=== 1/, 'no number is tested for "one" to choose a wording');
   assert.match(tiles, /t\('project:workshop\.dash\.onYou', \{ count: owed \}\)/);
-  assert.match(tiles, /t\('project:workshop\.dash\.fromLastWeek', \{ count: d\.shippedPrevWeek \}\)/);
+  assert.match(tiles, /t\('project:workshop\.dash\.fromLastWeek', \{ count: d\.shippedPrevWeekToDate \}\)/);
   const card = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-board/workshop/community-card.tsx'), 'utf8');
   const rule = card.slice(card.indexOf('export function ruleSentence('), card.indexOf('export function RuleWords('));
   assert.doesNotMatch(rule, /count === 1|=== 1 \?/, 'nor in the rule\'s sentences: each regime is its own message');

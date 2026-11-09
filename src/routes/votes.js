@@ -4907,7 +4907,9 @@ function voteRoutes(config) {
         const { rows: shippedRows } = await pool.query(
           `SELECT COUNT(*) FILTER (WHERE t >= $2::timestamptz)::int AS shipped_week,
                   COUNT(*) FILTER (WHERE t < $2::timestamptz
-                                     AND t >= $2::timestamptz - interval '7 days')::int AS shipped_prev_week
+                                     AND t >= $2::timestamptz - interval '7 days')::int AS shipped_prev_week,
+                  COUNT(*) FILTER (WHERE t >= $2::timestamptz - interval '7 days'
+                                     AND t < now() - interval '7 days')::int AS shipped_prev_week_to_date
              FROM (
                SELECT COALESCE(merged_at, created_at) AS t
                  FROM chat_sessions
@@ -4922,7 +4924,14 @@ function voteRoutes(config) {
         );
         const week = Number(shippedRows[0]?.shipped_week);
         const prevWeek = Number(shippedRows[0]?.shipped_prev_week);
-        if (Number.isFinite(week) && Number.isFinite(prevWeek)) shipped = { week, prevWeek };
+        const prevWeekToDate = Number(shippedRows[0]?.shipped_prev_week_to_date);
+        if (Number.isFinite(week) && Number.isFinite(prevWeek)) {
+          shipped = { week, prevWeek };
+          // Same point last week: last Monday 00:00 UTC up to now minus seven
+          // days. A Monday morning then compares like with like instead of
+          // reading as a fall against the whole of last week.
+          if (Number.isFinite(prevWeekToDate)) shipped.prevWeekToDate = prevWeekToDate;
+        }
       }
 
       // Same priority + assigned-person summary on completed proposals, so
@@ -5018,7 +5027,12 @@ function voteRoutes(config) {
             const t = new Date(m.merged_at || m.closed_at || m.created_at).getTime();
             if (!Number.isFinite(t)) continue;
             if (t >= weekStartMs) shipped.week += 1;
-            else if (t >= weekStartMs - WEEK) shipped.prevWeek += 1;
+            else if (t >= weekStartMs - WEEK) {
+              shipped.prevWeek += 1;
+              if (shipped.prevWeekToDate != null && t < Date.now() - WEEK) {
+                shipped.prevWeekToDate += 1;
+              }
+            }
           }
         }
       }

@@ -5927,6 +5927,42 @@ async function seedStagingMergedPrs(pool, config) {
     }
   }
 
+  // #6547: one merge LAST WEEK, before the same point in the week, so a
+  // fresh staging copy's Workshop has a "by this time last week" figure to
+  // compare against. Timed from the server's own calendar week, so it sits
+  // inside last week's to-date window (last Monday 00:00 to now minus seven
+  // days) whatever day the build runs. Idempotent through the branch name.
+  {
+    const branch = 'staging-fixture/merged-pr-to-date';
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch]
+    );
+    if (!existing.length) {
+      const author = users[0];
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+            votes_required, active_users_at_merge, created_at)
+         VALUES
+           ($1, $2, $3, $4, $5, $6, 'merged', $7, $8,
+            date_trunc('week', NOW()) - INTERVAL '7 days')
+         RETURNING id`,
+        [appId, author.id, branch, 9110,
+         '[staging fixture] Tidy the workshop tiles for small screens',
+         'In plain terms: this completed change improves the app for everyone who uses it, with no extra steps needed on your part.',
+         Math.max(1, Math.ceil(users.length / 2)), users.length]
+      );
+      await pool.query(
+        `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+         VALUES ($1, $2, 'yes', date_trunc('week', NOW()) - INTERVAL '7 days' + INTERVAL '2 hours')
+         ON CONFLICT (session_id, user_id) DO NOTHING`,
+        [rows[0].id, author.id]
+      );
+      inserted++;
+    }
+  }
+
   log.info('db', 'Staging merged-PR fixtures seeded', {
     appId,
     total: fixtures.length,

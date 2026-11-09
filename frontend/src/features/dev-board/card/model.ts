@@ -778,9 +778,19 @@ export interface DevWorkshopView {
      * type-check.
      */
     votesWaitingRefs?: { kind: 'proposal' | 'gov'; id: number }[];
-    /** Merges in the last 7 days, and in the 7 before them — a rate. */
+    /**
+     * Merges in this calendar week (from Monday 00:00 UTC) and in the whole
+     * week before it — the two the walk states per window.
+     */
     shippedWeek: number;
     shippedPrevWeek: number;
+    /**
+     * Merges last week up to the same point: last Monday 00:00 UTC to seven
+     * days before now. The rate the tiles show compares `shippedWeek` against
+     * THIS, so a Monday morning does not read as a fall against a whole week.
+     * Older servers send only `shippedPrevWeek`, which is then the fallback.
+     */
+    shippedPrevWeekToDate: number;
     /** Distinct people active on the app (the merge context's own count). */
     people: number;
     /** Open issues with no claim, no session and nobody assigned. */
