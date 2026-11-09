@@ -360,7 +360,7 @@ test('#6139: a change that finished building reads as ready, with no spinner, an
 
 test('the request\'s changes are drawn from their own pages\' reads, and the ballot lives with them', () => {
   const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
-  assert.match(src, /readChangeDetail\(\{ id: item\.id, status: item\.status \}, false, abort\.signal, bumped \? \{ fresh: true \} : undefined\)/, 'read as its own page reads it, fresh after a vote moves its figures');
+  assert.match(src, /readChangeDetail\(\{ id: item\.id, status: item\.status \}, false, abort\.signal, \{ fresh \}\)/, 'read as its own page reads it, past the cache when its status moved or a vote bumped it');
   assert.match(src, /const built = av\._topicViewFor\('proposal', row\);/, 'built as its own page builds it');
   // #6477: the ballot re-reads its changes after a pick, fresh, so the figure
   // follows the recount and not the saved copy the vote moved past.

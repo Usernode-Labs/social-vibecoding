@@ -148,6 +148,10 @@ function useChangeViews(items: ThreadItem[], tick = 0): Array<ChangeView | null>
   // a vote moved the figures, so it skips the cached copy the first read
   // painted.
   const seenTick = useRef(tick);
+  // #6490: the status each change was last read at. When a merge arrives, the
+  // item's status moves (promoted → merged) but the service worker may still
+  // answer with its saved pre-merge copy, so a moved status asks past it.
+  const seen = useRef<Record<number, string>>({});
   const key = items.map((i) => `${i.id}:${i.status}`).join(',');
   useEffect(() => {
     if (!items.length) return undefined;
@@ -159,7 +163,10 @@ function useChangeViews(items: ThreadItem[], tick = 0): Array<ChangeView | null>
     // no-op while nothing is unread.
     for (const item of items) window.Notifications?.markProposalSeen?.(item.id);
     for (const item of items) {
-      readChangeDetail({ id: item.id, status: item.status }, false, abort.signal, bumped ? { fresh: true } : undefined)
+      const before = seen.current[item.id];
+      const fresh = bumped || (before !== undefined && before !== item.status);
+      seen.current[item.id] = item.status;
+      readChangeDetail({ id: item.id, status: item.status }, false, abort.signal, { fresh })
         .then((row) => { if (!abort.signal.aborted && row) setRows((was) => ({ ...was, [item.id]: row })); })
         .catch(() => {});
     }
