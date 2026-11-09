@@ -339,6 +339,22 @@ export function PageBody({ title, purpose, acts, tabs, side, sideFirst, children
   );
 }
 
+/**
+ * The one line for progress: Plan, Build, Checks, Vote, Live, drawn the
+ * same wherever a request or a change appears. `at` is the stop reached (5:
+ * live, every stop green); `state` is how the current one stands: under
+ * way, or waiting on others. `mini` is the wordless strip on a row.
+ */
+export function Track({ at, state = 'now', mini, words }: { at: number; state?: 'now' | 'wait'; mini?: boolean; words: readonly [string, string, string, string, string] }) {
+  return (
+    <span className={k('track', mini && 'mini')} role="img" aria-label={words[Math.min(Math.max(at, 0), 4)]}>
+      {words.map((word, i) => (
+        <span key={word} className={k('st', at >= 5 ? 'live' : i < at ? 'done' : i === at ? state : '')} aria-hidden="true">{word}</span>
+      ))}
+    </span>
+  );
+}
+
 /** The page's search field, under its tabs: one real input in the kit's field. */
 export function Search({ value, onChange, placeholder, label }: { value: string; onChange: (next: string) => void; placeholder: string; label?: string }) {
   return (

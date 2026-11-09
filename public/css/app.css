@@ -26979,6 +26979,24 @@ html[data-frame-chrome] body { isolation: isolate; }
 html[data-skin] .fr.fr-shell.fr-shell-under > .fr-side { visibility: hidden; }
 html[data-skin] .fr.fr-shell:not(.fr-shell-under) > .fr-colm { background: none; box-shadow: none; }
 
+/* A LIST BESIDE ITS OPEN ITEM (the kit's split: Homeroom bot's page). The
+   screen stays the scroller and keeps its own column for the open item;
+   under a look the list is the kit's pane, 520px as the tour draws it, and
+   the column takes what is left: its width token is set here instead of
+   by the handle, which steps aside. The column gives up its own ground,
+   corner and top line for the kit's one line between two panes. */
+html[data-skin] .fr.fr-pane,
+html[data-skin] .fr-pane > .fr-scroll { overflow: visible; }
+/* Main Chat is the list's first row here, so the phone's bar that asks
+   for it over the tab bar is not drawn twice. */
+html[data-skin] #ai-screen[data-frame-list] .ai-askbar,
+html[data-skin] #ai-screen[data-frame-list] .ai-askbar-gap { display: none; }
+@media (min-width: 768px) {
+  html[data-skin] #ai-screen[data-frame-list] { --ai-main-w: max(360px, calc(100vw - var(--platform-rail-w, 0px) - 520px)); }
+  html[data-skin] #ai-screen[data-frame-list] .ai-main-pane { top: var(--fr-shell-top); background: none; border-top: 0; border-inline-start: 1px solid var(--fr-line); border-radius: 0; }
+  html[data-skin] #ai-screen[data-frame-list] #ai-main-divider { display: none; }
+}
+
 /* A SHEET (kit.tsx Sheet) is drawn in <body>, in a host that covers the
    window above the chrome and the screens; the kit's own overlay fills the
    host as it filled the tour's mock. What a sheet holds scrolls inside it. */
