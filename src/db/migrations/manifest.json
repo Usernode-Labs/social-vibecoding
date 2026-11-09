@@ -230,6 +230,11 @@
       "id": "change-request-claims",
       "sha256": "5428abcf77d1cb9a60cd937148ba9a65411317e777477481e181957d6f3db341",
       "schemaSha256": "7275deb128c1b488ba92f361192b55b8609a9922fed5f1854ed31cc638416ce6"
+    },
+    {
+      "id": "connector-uploads-design-kind",
+      "sha256": "b6d1fb2e5f8b9c98d1a856b4897696806269d9d547ee6fe78b74245410143379",
+      "schemaSha256": "2d86f8c9984d20be06c03c01675f1d740f5444346b6d9c3becea44ddadb71f1d"
     }
   ]
 }
