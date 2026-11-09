@@ -97,6 +97,22 @@ test('allowance notifications explain the change, request or review outcome', as
   assert.equal(declined.subject, 'Your app allowance is unchanged.');
 });
 
+// #6494: the storage rows say how full the database is, in sizes, so the
+// reader can judge how much room is left. A bare token written before this
+// change keeps its old words.
+test('storage rows say how much is used and what the limit is', async () => {
+  const oneLine = (s) => s.replace(/\s+/g, ' ').trim();
+  const early = await lines({ kind: 'app_health', detail: 'storage_early:1638:3072' });
+  assert.equal(early.label, 'App storage');
+  assert.equal(oneLine(early.subject), 'Notes has used over half its storage: 1.6 GB of 3 GB');
+  const warn = await lines({ kind: 'app_health', detail: 'storage_warn:2560:3072' });
+  assert.equal(oneLine(warn.subject), 'Notes has used most of its storage: 2.5 GB of 3 GB');
+  const bare = await lines({ kind: 'app_health', detail: 'storage_warn' });
+  assert.equal(bare.subject, 'Notes has used most of its storage');
+  const unnamed = await lines({ kind: 'app_health', appName: null, detail: 'storage_early:614:3072' });
+  assert.equal(unnamed.subject, 'Your app has used over half its storage: 614 MB of 3 GB');
+});
+
 /** The row's two copy lines, as plain strings. */
 async function lines(n) {
   const view = (await load())({ ...ROW, ...n });
@@ -378,8 +394,12 @@ test('unexpected events rows say how many, of what, and where to look (#4296)', 
 test('ScreenRow renders kind, subject, meta — in that order', () => {
   const row = SHEET.slice(SHEET.indexOf('function ScreenRow('));
   const body = row.slice(0, row.indexOf('\n}'));
+  const subjectStart = SHEET.indexOf('function subjectOf(');
+  const subjectFn = SHEET.slice(subjectStart, SHEET.indexOf('\n}', subjectStart));
+  // #6506: the subject's words were factored into subjectOf, which the row
+  // and a card both draw.
   const kindAt = body.indexOf('<RowLabel view={view} />');
-  const subjectAt = body.indexOf('view.segments.length ? view.segments.map');
+  const subjectAt = body.indexOf('{subjectOf(view)}');
   const metaAt = body.indexOf('view.appLine');
   assert.ok(kindAt > -1 && subjectAt > -1 && metaAt > -1, 'all three lines are drawn');
   assert.ok(kindAt < subjectAt && subjectAt < metaAt,
@@ -388,13 +408,16 @@ test('ScreenRow renders kind, subject, meta — in that order', () => {
   // is the two-line shape above.
   assert.match(body, /\{view\.segments\.length \? \(\s*<span[^>]*>\s*<RowLabel view=\{view\} \/>/,
     'the kind line only renders when there is a subject under it');
-  assert.match(body, /\)\) : view\.label\}/,
+  assert.match(subjectFn, /\)\) : view\.label;/,
     'and the label takes the subject line when there is not');
 });
 
 test('the three lines are visually ranked, not three of the same thing', () => {
   const row = SHEET.slice(SHEET.indexOf('function ScreenRow('));
   const body = row.slice(0, row.indexOf('\n}'));
+  // #6506: the subject's sizes and weights live in subjectClass, chosen by
+  // the row's read state; the kind and meta lines stay in the row.
+  const subject = SHEET.slice(SHEET.indexOf('export function subjectClass'), SHEET.indexOf('function subjectOf('));
 
   // The SIZES moved onto the Improve rail's scale (text-xs / text-sm) when the
   // sheet stopped running a bespoke 13-22px ramp beside a panel running
@@ -404,28 +427,32 @@ test('the three lines are visually ranked, not three of the same thing', () => {
   assert.match(body, /block text-xs text-zinc-500 dark:text-zinc-400 truncate/,
     'the kind line is subordinate, in the muted ink');
   // #5289: the subject runs to two lines before it is cut, not one.
-  assert.match(body, /block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words/,
-    'the subject carries the strong ink and the larger size, over up to two lines');
+  // #6506: unread is the strong ink and weight; read is regular and softer.
+  assert.match(subject, /'block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words'/,
+    'an unread subject carries the strong ink and the larger size, over up to two lines');
+  assert.match(subject, /'block text-sm font-normal text-zinc-700 dark:text-zinc-300 line-clamp-2 break-words'/,
+    'a read subject keeps the size but drops to the regular weight and softer ink');
   assert.match(body, /block text-xs text-zinc-500 truncate/,
     'the meta line stays small and regular');
 
   // Stated as a relationship too, so a future scale change has to keep the
-  // RANK rather than merely keep three literals that happen to differ.
+  // RANK rather than merely keep literals that happen to differ.
   //
   // Read off the three line spans specifically — `block text-…` — and nothing
-  // else in the row. An earlier cut of this scanned the whole body and matched
-  // the count badge, whose classes are a multi-line concatenation carrying
-  // both `font-semibold` and a muted `text-zinc-500` in different branches of
-  // a ternary. The badge is not one of the three lines and has no rank here.
-  const lines = (body.match(/block text-\S+[^"']*/g) || [])
-    .filter((c) => c.includes('truncate') || c.includes('line-clamp-2'));
-  assert.equal(lines.length, 3, 'exactly three ranked lines');
+  // else in the row. The subject has two states; only the unread one may be
+  // the strong line.
+  const lines = [
+    /block text-xs text-zinc-500 dark:text-zinc-400 truncate/.exec(body)[0],
+    /block text-xs text-zinc-500 truncate/.exec(body)[0],
+    ...(subject.match(/'block text-sm[^']*'/g) || []).map((c) => c.slice(1, -1)),
+  ].filter((c) => c.includes('truncate') || c.includes('line-clamp-2'));
+  assert.equal(lines.length, 4, 'the kind and meta lines, and the subject in its two states');
   const strong = lines.filter((c) => /font-semibold/.test(c));
   assert.equal(strong.length, 1, 'exactly one line carries the strong weight');
   assert.match(strong[0], /text-zinc-900/, 'and it is the one in the strong ink');
   const size = (c) => /block (text-\S+)/.exec(c)[1];
-  assert.ok(lines.filter((c) => size(c) === size(strong[0])).length === 1,
-    'the subject must not share its size with the lines it outranks');
+  assert.ok(lines.filter((c) => size(c) === size(strong[0])).length === 2,
+    'only the subject is the larger size, unread or read, so it outranks both other lines');
 
   // Each line is cut on its own, so a long subject cannot push the app
   // name or the time off the row: the kind and meta lines truncate to one
@@ -433,7 +460,8 @@ test('the three lines are visually ranked, not three of the same thing', () => {
   // Counted on the class strings themselves (`truncate"`), since the prose
   // beside them says the word too.
   assert.equal((body.match(/truncate"/g) || []).length, 2, 'the kind and meta lines truncate');
-  assert.equal((body.match(/line-clamp-2 break-words"/g) || []).length, 1, 'the subject clamps at two lines');
+  assert.equal((subject.match(/line-clamp-2 break-words'/g) || []).length, 2,
+    'both states of the subject clamp at two lines');
 });
 
 test('a push test has clear account-level copy without inventing a completed session', async () => {

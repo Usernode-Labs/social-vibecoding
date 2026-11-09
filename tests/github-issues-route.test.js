@@ -32,7 +32,7 @@ appAccess.getAppForUser = async () => ({
   id: 1, slug: 'demo', repo_url: 'https://github.com/o/r',
 });
 
-const { issueRoutes } = require('../src/routes/issues');
+const { issueRoutes, readRequestComments } = require('../src/routes/issues');
 const express = require('express');
 
 // Requests are rows (services/requests.js), and the board is a query of
@@ -241,8 +241,10 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     // the seeded note and its suggested replies, and 9107 for #6264, the
     // request whose discussion carries the bot's promise to tell someone
     // when the update was in and the line it posted when it was, and 9112
-    // for #6399, the request whose hand-back reason a later release lifted).
-    assert.strictEqual(body.issues.length, 26);
+    // for #6399, the request whose hand-back reason a later release lifted,
+    // and 9114/9115 for #6211, the pair whose discussions show the overlap
+    // note, its three choices and the line saying what was chosen).
+    assert.strictEqual(body.issues.length, 28);
 
     // #6399: and opened by its address, as the shots do, the request whose
     // hand-back reason a later release lifted is there without ?demo=1.
@@ -623,8 +625,42 @@ test('comments endpoint returns the clipped live thread (collab-gated, merged sh
   }
 });
 
-test('comments endpoint 404s when the app is not accessible to the viewer', async () => {
-  const prev = appAccess.getAppForUser;
+// #6497: a request's page reads its comments through readRequestComments.
+// Its first-page read asks for the reader's maximum (300), so a 40-comment
+// thread arrives whole; the comments route keeps its newest 30.
+test('#6497: readRequestComments keeps a 40-comment thread whole at the request ceiling', async () => {
+  const many = Array.from({ length: 40 }, (_, i) => ({
+    id: i + 1,
+    author: i === 4 ? 'usernode-bot' : `person${i + 1}`,
+    body: `comment ${i + 1}`,
+    createdAt: new Date(Date.UTC(2026, 10, 1, 0, i)).toISOString(),
+  }));
+  store.setComments('o', 'r', 142, many);
+  const app = { id: 1, repo_url: 'https://github.com/o/r' };
+  const fakePool = { query: async () => ({ rows: [] }) };
+  const full = await readRequestComments(fakePool, app, 142, { max: github.ISSUE_COMMENTS_MAX });
+  assert.strictEqual(full.comments.length, 40, '40 of 40, not the newest 30');
+  assert.strictEqual(full.truncated, false);
+  const clipped = await readRequestComments(fakePool, app, 142);
+  assert.strictEqual(clipped.comments.length, 30, 'the comments route keeps its newest 30');
+  assert.strictEqual(clipped.truncated, true);
+
+  // #3693: the bot's post the thread already carries is left out before the
+  // clip, so it never takes one of the 40 places.
+  const live = require('../src/services/homeroom-bot-live');
+  const prev = live.threadCopiedCommentIds;
+  live.threadCopiedCommentIds = async () => new Set(['5']);
+  try {
+    const without = await readRequestComments(fakePool, app, 142, { max: github.ISSUE_COMMENTS_MAX });
+    assert.strictEqual(without.comments.length, 39);
+    assert.ok(!without.comments.some((c) => c.body === 'comment 5'), 'the bot copy is not drawn twice');
+  } finally {
+    live.threadCopiedCommentIds = prev;
+    clearThreads();
+  }
+});
+
+test('comments endpoint 404s when the app is not accessible to the viewer', async () => {  const prev = appAccess.getAppForUser;
   appAccess.getAppForUser = async () => null;
   const server = await startServer();
   try {

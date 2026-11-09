@@ -204,7 +204,9 @@ test('the gate pair paints plain and decides in the browser whether it sticks', 
 
 test('group-chat.js carries the change language from the mount to the shell and the transcript', () => {
   const src = read('public/js/group-chat.js');
-  assert.match(src, /const language = \['chat', 'request', 'change'\]\.includes\(opts\.language\) \? opts\.language : 'flat';/);
+  // #6440 adds a governance vote's page ('decision') as a fourth language;
+  // the change page's own wiring is unchanged.
+  assert.match(src, /const language = \['chat', 'request', 'change', 'decision'\]\.includes\(opts\.language\) \? opts\.language : 'flat';/);
   assert.match(src, /change: fill && language === 'change',/);
   assert.match(src, /if \(closed\) return;\n\s+if \(!st\.loaded\) GroupChat\.loadThreadHistory\(type, ref\);/,
     'an unshared change\'s thread is not read');
@@ -333,6 +335,18 @@ test('on a phone the gate card stacks its buttons under its line', () => {
 const view = (status) => ({
   number: 81, category: null, author: 'snait', at: null, time: '10:03', timeTitle: '',
   via: 'via Claude Code', status, votes: {}, testing: {}, shots: null, thanks: false,
+});
+
+test('the change bar publishes the page\'s pill and its ⋯ key for the column beside the bot page (#6431)', () => {
+  const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  // The bar itself does not change: the column's heading draws the pill and
+  // the rows beside the bot page, and this is what tells it which.
+  assert.match(src, /usePanelHead\(\{ kind: 'change', pill: v\.status \|\| null, menuKey: menuKey \|\| null \}\);/);
+  // A change's number was a button in its own bar, and that bar goes beside
+  // the bot page; the column's heading still links "Change #N" to its page.
+  const store = read('frontend/src/features/side-panel/head-store.ts');
+  assert.match(store, /if \(!isEmbeddedPanel\(\)\) return undefined;/,
+    'and nothing is published where the page keeps its own bar');
 });
 
 test('the header shows the status pill beside "Change #N", in the card\'s capsule form', () => {

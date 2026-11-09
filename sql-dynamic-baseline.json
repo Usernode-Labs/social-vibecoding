@@ -1118,13 +1118,6 @@
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
-      "fingerprint": "175574c444ff7c922367",
-      "count": 1,
-      "preview": "`SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, c.channel_key, me.role AS my_role, me.status AS membership_st"
-    },
-    {
-      "source": "src/services/conversations.js",
-      "kind": "structural-template",
       "fingerprint": "1ed50d96de6aeca2b5eb",
       "count": 1,
       "preview": "`SELECT c.id, c.kind, c.title, c.status AS conversation_status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, cm.role, cm.status AS membership_statu"
@@ -1163,6 +1156,13 @@
       "fingerprint": "e8c55fd031f16d23f09f",
       "count": 1,
       "preview": "`SELECT CASE WHEN user_low_id = $2 THEN user_high_id ELSE user_low_id END AS other_id FROM conversation_direct_pairs WHERE conversation_id = $1 AND (user_low_id"
+    },
+    {
+      "source": "src/services/conversations.js",
+      "kind": "structural-template",
+      "fingerprint": "fe14b0071e91c113a599",
+      "count": 1,
+      "preview": "`SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, c.channel_key, me.role AS my_role, me.status AS membership_st"
     },
     {
       "source": "src/services/credential-store.js",
@@ -1716,6 +1716,13 @@
       "fingerprint": "e92a1adcfc139d96e01e",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "f4f0d5e27ae9dc187fa1",
+      "count": 1,
+      "preview": "`INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail) SELECT u, $2, NULL, 'app_health', $3 FROM UNNEST($1::int[]) AS u WHERE NOT EXISTS ( S"
     },
     {
       "source": "src/services/notifications.js",

@@ -435,6 +435,43 @@ test('a first look posts as it always did, and runs no gate query', async (t) =>
   assert.ok(!pool.queries.some(([sql]) => /homeroom_bot_posts/.test(sql)), 'the gate is not even asked');
 });
 
+// 6 Nov 2026 (#6430): a go-ahead typed in the request's own discussion is
+// the same refusal as one typed in the chat: one plain answer, said to the
+// person who gave it, and no note again.
+test('#6430: a re-read after a thread go-ahead posts the one plain answer, not the note', async (t) => {
+  const seen = stubLive(t);
+  const pool = fakePool([[/goAheadCannot/, { rows: [] }]]);
+  const parsed = {
+    verdict: 'person', reason: 'it was evan\'s go-ahead, and production access is involved',
+    goAheadDecides: false, firstStep: 'Just the three missing read tools',
+  };
+  const acted = await bot.actOnVerdict(verdictArgs({
+    pool, relook: false, parsed, goAhead: { by: 'evan', where: 'thread', messageId: 41 },
+  }));
+  assert.equal(acted, 'person');
+  assert.equal(seen.posts.length, 1, 'one post, not a note and an answer');
+  const said = seen.posts[0].homeroomText;
+  assert.match(said, /even with a go-ahead/);
+  assert.match(said, /your go-ahead/, 'the reader is spoken to, never named in the third person');
+  assert.doesNotMatch(said, /evan/i);
+  assert.doesNotMatch(said, /\bapprove/i, 'it never says somebody has to approve it');
+  assert.match(said, /A person has to build it, for example you with a coding agent/);
+  assert.match(said, /I can build this part now: Just the three missing read tools\.$/);
+  assert.equal(seen.posts[0].dm.goAheadDecides, false);
+  assert.equal(seen.posts[0].dm.firstStep, 'Just the three missing read tools');
+});
+
+test('#6430: a re-read says nothing when the thread already answered that go-ahead', async (t) => {
+  const seen = stubLive(t);
+  const pool = fakePool([[/goAheadCannot/, { rows: [{ ok: 1 }] }]]);
+  const parsed = { verdict: 'person', reason: 'x', goAheadDecides: false, firstStep: 'Just the read tools' };
+  const acted = await bot.actOnVerdict(verdictArgs({
+    pool, relook: false, parsed, goAhead: { by: 'evan', where: 'thread', messageId: 41 },
+  }));
+  assert.equal(acted, 'answered');
+  assert.equal(seen.posts.length, 0, 'the refusal appears once, under itself never twice');
+});
+
 test('#6399: a person note after "I\'m taking this up now" is posted, with its suggestion buttons', async (t) => {
   const seen = stubLive(t);
   const promised = [/FROM homeroom_bot_posts/, { rows: [{ kind: 'going_ahead', created_at: '2026-10-09T09:02:00Z' }] }];

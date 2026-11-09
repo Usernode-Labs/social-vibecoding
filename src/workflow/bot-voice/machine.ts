@@ -89,7 +89,8 @@ const EVENTS = {
   Heard: (p: any) => ({ ...where(p), messageId: int(p?.messageId, 'messageId') }),
   Settled: () => ({}),
   OfferTapped: (p: any) => {
-    const choice = p?.choice === 'yes' ? 'yes' : p?.choice === 'no' ? 'no' : null;
+    // #6211: `first` is an overlap note's third choice (build this one first).
+    const choice = p?.choice === 'yes' ? 'yes' : p?.choice === 'no' ? 'no' : p?.choice === 'first' ? 'first' : null;
     if (!choice) throw new Error('choice must be yes or no');
     const rows = Array.isArray(p?.rows) ? p.rows.filter((r: unknown) => typeof r === 'string').slice(0, 12) : undefined;
     return { ...where(p), offerId: int(p?.offerId, 'offerId'), userId: int(p?.userId, 'userId'), choice, ...(rows ? { rows } : {}) };
@@ -190,6 +191,8 @@ const tapGuard = (s: VState, e: Event<any>, f: Facts, ctx: TransitionContext): C
   // person: any member may tap it. The route's membership gate and the act's
   // closeGate decide who that is. Every other offer is its one person's.
   const anyMember = o.for_user_id == null && o.kind === 'close_request';
+  // #6211: the third choice belongs to an overlap note's buttons alone.
+  if (e.payload.choice === 'first' && o.kind !== 'overlap') return reject('no_such_choice');
   if (!anyMember && Number(o.for_user_id) !== e.payload.userId) return reject('not_for_you');
   const d = s.name === NONE ? null : (s as Live).data;
   if (o.status !== 'open' || d?.taps[String(o.id)]) return reject('already_decided');

@@ -45,9 +45,11 @@ import { createStore } from '../../lib/plain-store.js';
  *   The door's name for the page it opened (the AI tab's row's title), with
  *   the route it named: the header's title beside the AI tab's page while the
  *   panel is still on that route.
- * @property {'main'|'thread'} backTo  What the AI page's column goes back to
- *   when the page beside it closes: 'thread' while a private thread is behind
- *   it, 'main' otherwise. The chip beside that page names it.
+ * @property {{ route: string, kind: 'request'|'change', pill: object|null, menuKey: string|null }|null} head
+ *   What the page on screen publishes for its column (#6431): its status
+ *   pill and the key of its own ⋯ rows, with the route it published them on.
+ *   Null for a page that has neither, and wherever a new page or a new frame
+ *   starts, so one page's pill never shows on the next.
  */
 
 /** @type {SidePanelState} */
@@ -62,7 +64,7 @@ export const INITIAL = {
   reported: '',
   place: null,
   label: null,
-  backTo: 'main',
+  head: null,
 };
 
 export const sidePanelStore = createStore(INITIAL);

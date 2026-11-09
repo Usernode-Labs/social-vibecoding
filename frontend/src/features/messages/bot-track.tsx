@@ -241,7 +241,7 @@ const TINT: Record<Tone, string> = {
 const WAIT_GLYPHS: Record<string, Glyph> = {
   question: ChatIcon, plan: ListLinesIcon, needs_detail: PencilSquareIcon, decide: UserIcon, already_works: CheckIcon,
 };
-const HELD_LINES: ReadonlySet<string> = new Set(['held_builds', 'held_waiting', 'on_hold', 'cooldown', 'overlap_wait']);
+const HELD_LINES: ReadonlySet<string> = new Set(['held_builds', 'held_waiting', 'on_hold', 'cooldown']);
 const WAITING_LINES: ReadonlySet<string> = new Set(['queued', 'waiting']);
 
 /** Pure: a track's tone and glyph, for its badge and its bar, by its stage. */
@@ -263,7 +263,7 @@ export function trackLook(track: Pick<BotTrack, 'work' | 'busy'>): { tone: Tone;
       if (code === 'claimed') return { tone: 'ended', icon: UserIcon, spin: false };
       if (HELD_LINES.has(code)) return { tone: 'held', icon: ClockIcon, spin: false };
       if (WAITING_LINES.has(code)) return { tone: 'working', icon: ClockIcon, spin: false };
-      return { tone: 'working', icon: SpinnerArcIcon, spin: !!track.busy || stage === 'building' };
+      return { tone: 'working', icon: SpinnerArcIcon, spin: !!track.busy };
   }
 }
 

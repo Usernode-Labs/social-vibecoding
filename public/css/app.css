@@ -567,6 +567,11 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    `.messages-layout` around it (project-discussion.tsx). */
 .messages-layout,
 .dev-ws-discussion,
+/* #6431: the column's heading beside the bot page is the same kind of row as
+   Main's, and its ⋯ menu is Messages' own (.messages-thread-menu). Those
+   tokens are only declared where they are drawn, so the menu's fill resolved
+   to nothing there and the page showed through it. */
+.side-panel-head,
 #ai-screen .ai-askbar {
   /* The OPAQUE surfaces drawn on the two planes: a bubble from the other
      side, a shared-item card, a floating disc, the composer. White on the
@@ -590,6 +595,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .dark .messages-layout,
 .dark .dev-ws-discussion,
+.dark .side-panel-head,
 .dark #ai-screen .ai-askbar {
   --messages-surface: var(--dc-raised);
   --messages-surface-2: #3a3a3c;
@@ -1678,6 +1684,93 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   font-weight: 600;
   opacity: .7;
 }
+/* #6426: Main Chat's "Welcome back" card, just above the message box. It is
+   the message box's own card (same surface, radius, shadow and width) with a
+   hairline, and its chips are the suggested-reply pill above, in one row
+   that scrolls sideways with a soft fade at its right edge. */
+.messages-welcome {
+  position: relative;
+  /* The message box's own width: the bar around that box holds 12px each
+     side (and the 720px reading column on a wide Main), so the card takes
+     the same inset. */
+  margin: 0 12px 8px;
+  padding-block: 12px;
+  padding-inline: 14px 44px;
+  border-radius: 22px;
+  background: var(--messages-surface);
+  box-shadow: var(--messages-disc-shadow), inset 0 0 0 1px var(--app-sheet-line);
+}
+.messages-welcome-title {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.messages-welcome-line {
+  margin: 2px 0 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.messages-welcome-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  /* A soft edge says the row goes on, at the inline end of the text. */
+  -webkit-mask-image: linear-gradient(to right, #000 85%, transparent);
+  mask-image: linear-gradient(to right, #000 85%, transparent);
+}
+[dir='rtl'] .messages-welcome-chips {
+  -webkit-mask-image: linear-gradient(to left, #000 85%, transparent);
+  mask-image: linear-gradient(to left, #000 85%, transparent);
+}
+.messages-welcome-chips::-webkit-scrollbar { display: none; }
+.messages-welcome-chips button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 6px 13px;
+  border-radius: 9999px;
+  color: var(--brand-ink);
+  background: var(--brand-tint);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.messages-welcome-chips button:hover { filter: brightness(.97); }
+.messages-welcome-chips button:focus-visible,
+.messages-welcome-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.messages-welcome-dismiss {
+  position: absolute;
+  top: 6px;
+  inset-inline-end: 6px;
+  display: flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+}
+.messages-welcome-dismiss:hover { background: var(--messages-surface-2); }
+@media (max-width: 767px) {
+  /* On a phone the chips run off the card's edge, behind the 44px ×. */
+  .messages-welcome-chips { margin-inline-end: -44px; }
+  .messages-welcome-dismiss { top: 0; inset-inline-end: 0; width: 44px; height: 44px; }
+}
+/* Main Chat's 720px reading column (see `.chat-composer-bar` below): the
+   card keeps the box's inset at every width. */
+#ai-screen .ai-main-pane .messages-layout[data-main-chat] .messages-welcome {
+  margin-inline: max(12px, calc((100% - 720px) / 2));
+}
 .messages-bot-answered {
   margin-top: 4px;
   color: var(--text-muted);
@@ -2273,10 +2366,16 @@ form.agent-session-composer:focus-within {
    around its shoulders. Below that exactly one pane is rendered at a time
    (the list until a row is picked, the thread after, the header bar's back
    arrow between them) and both stay full width. */
+/* ONE LIST MEASURE (#6495, 9 Nov 2026): 22rem is the width the inbox's list
+   has always had, read by `.messages-list-pane` below. On the Homeroom bot
+   tab (#6520) the list fills the room beside the open column instead, and
+   this width is only its floor, through `--ai-list-min` (THE AI TAB'S MAIN
+   VIEW). */
+:root { --list-pane-w: 22rem; }
 @media (min-width: 768px) {
   .messages-list-pane {
-    flex: 0 0 22rem;
-    width: 22rem;
+    flex: 0 0 var(--list-pane-w);
+    width: var(--list-pane-w);
     padding-inline-end: 8px;
   }
   .messages-thread-pane {
@@ -3937,7 +4036,7 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
    these lists and was on none of them: the page kept the gray body and the
    bar its zinc-200 surface. Every list here that names #workshop-screen,
    its React-owned sibling, names it as well. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #f4f2e4;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
@@ -3975,7 +4074,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    screen — so on every other route these selectors are exactly the two they
    were. See "THE BAR TAKES THE APP'S TONE" below for the tokens that ride
    along with the ground. */
-:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
   /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
      with its one palette entry re-tinted: #DEEDF8 on #F4F2E4 is a faint cool
@@ -4015,7 +4114,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    at every width on its own — the second rule here gives dark the same
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -4029,7 +4128,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
-  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -4072,7 +4171,7 @@ html:root body:has(#app-view:not(.hidden):not([data-app-surface="platform"])),
    what makes the launcher → app push read as one bar: both routes paint
    the same wallpaper under the same cleared bar, so the bar's snapshot is
    identical on both sides of the transition and only the page moves. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
 
@@ -4101,7 +4200,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    surface below tucks 8px up into, so a line drawn across it would cut the
    notch in half. The frost IS the edge here. */
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
-             #settings-screen, #messages-screen, #workshop-screen, #ai-screen,
+             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
              #agent-session-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header {
   background-color: var(--dc-sheet-fill);
@@ -4130,7 +4229,7 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    the surfaces below tuck into keeps its shape. Nothing inside the header
    reaches past its box, so the clip cuts nothing. */
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
-             #settings-screen, #messages-screen, #workshop-screen, #ai-screen,
+             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
              #agent-session-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
@@ -4148,7 +4247,7 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    layer covers it whole (its washes end on the ground colour), so nothing
    on the bar changes; only the strip does. */
 html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
-             #settings-screen, #messages-screen, #workshop-screen, #ai-screen,
+             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
              #agent-session-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header,
 html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
@@ -4178,7 +4277,7 @@ html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not
    (`overflow: hidden`, 100dvh), scrolls, and nothing scrolls it, so the
    bar stays where it sits in the flow; and it is already `relative z-10`,
    so it was a stacking context and a containing block before. */
-html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(:is(#messages-screen, #workshop-screen, #ai-screen,
+html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(:is(#messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
              #agent-session-screen, #profile-proposals-screen):not(.hidden)) #platform-header,
 html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   position: sticky;
@@ -4384,7 +4483,7 @@ html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scro
    value, so the browser chrome and a cold launch frame the page in it.
    The launch cover reads the same ground, so the app opens on the page's
    colour in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
   background-color: var(--home-ground);
 }
 /* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
@@ -15480,6 +15579,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-unit-where { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
 .dev-ledger-unit-reason { margin: 6px 0 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .dev-ledger-unit-output { margin-top: 8px; }
+/* The rest of a failed check's output (#6491): the console errors and test
+   printouts fold under the reason, and the app's own tests fold every failing
+   test but the first. Same fold, one step in from the one that opened it. */
+.dev-ledger-why-full, .dev-ledger-unit-more { margin-top: 6px; }
 /* A failed run's "What went wrong", over its failures. It spans the run's
    grid, as the failures' list and its note do. */
 .dev-ledger-explain { grid-column: 1 / -1; margin: 2px 0 8px; font-size: 12.5px; }
@@ -18114,10 +18217,14 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    it) takes the same width in Main's place.
    UNTIL A WIDTH IS CHOSEN (30 Oct 2026), Main takes the room the list does
    not need. Since 3 Nov 2026 that is ALL of it, with no 720px upper limit:
-   the list is 672px (max-w-2xl) and a gutter each side, so Main is the rest
-   of the window, and only the list's own margins separate them. With the
-   old cap at 720px a 1720px window left a band of empty background between
-   the two and a narrow, tall column for plan cards. The 400px floor stays.
+   Main is the rest of the window, and only the list's own margins separate
+   them. With the old cap at 720px a 1720px window left a band of empty
+   background between the two and a narrow, tall column for plan cards. The
+   400px floor stays. THE LIST GIVES WHAT IT TAKES (#6495, 9 Nov 2026): while
+   something is open beside it the list is the inbox's own measure
+   (`--list-pane-w`), so the two list-and-open pages share one layout; with
+   nothing open it stays the centred 672px single column (`max-w-2xl`,
+   features/ai/index.tsx), as Home and Needs you are.
    A width dragged on Main's edge is Main's own (`--ai-main-chosen-w` and its
    own device key, features/side-panel/resize.ts), so a width chosen for the
    side panel beside an app no longer sizes Main, and the reverse.
@@ -18142,8 +18249,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    short. A design's preview pads the column, as its ✕ is at its top. */
 body:has(#ai-screen:not(.hidden)) {
   --ai-room: var(--platform-usable-w);
-  --ai-list-min: 480px;
-  --ai-main-auto: max(400px, calc(var(--ai-room) - 720px));
+  --ai-list-min: var(--list-pane-w);
+  --ai-main-auto: max(400px, calc(var(--ai-room) - var(--list-pane-w)));
   --ai-main-w: max(320px, min(var(--ai-main-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
 }
 html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
@@ -18174,7 +18281,11 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
 @media (max-width: 1023.98px) {
   body:has(#ai-screen:not(.hidden)) { --ai-list-min: 280px; }
 }
-#ai-screen[data-ai-docked] { padding-inline-end: var(--ai-main-w); }
+/* THE COLUMN'S LANE IS KEPT ONLY WHILE IT IS OPEN (6 Nov 2026, #6425): a
+   desktop opens on the lists alone, and they take the room the column would
+   have. A row, a link or Main Chat's row opens it, and the list gives the
+   lane up again. */
+#ai-screen[data-ai-docked][data-ai-open] { padding-inline-end: var(--ai-main-w); }
 /* NO GUTTER AFTER THE RAIL WHILE MAIN IS DOCKED (1 Nov 2026). Every screen
    beside the rail pads a gutter after it and mirrors it on the far edge, so
    a column inside centres. Here Main is the far edge, with no gutter, so the
@@ -18182,6 +18293,24 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    16px from Main. Without it they sit 16px from both, and the list centres
    between them. */
 #ai-screen[data-ai-docked] { padding-inline-start: var(--platform-rail-w, 0px); }
+/* THE BOT TAB'S LIST FILLS THE ROOM BESIDE THE OPEN COLUMN (#6520, 9 Nov
+   2026). With something open beside it the body has the room between the
+   rail and the open column (the `--ai-main-w` above) to itself, and it
+   takes all of that room, up to the page's own 672px single column
+   (`max-w-2xl` in features/ai/index.tsx) and centred in it, rather than
+   staying the inbox's 22rem against the rail and leaving the rest bare.
+   `--list-pane-w` remains the list's floor through `--ai-list-min`, so
+   dragging the column wider still stops where it did. With nothing open
+   beside the lists the rule does not match and the body keeps
+   `max-w-2xl mx-auto`, a single centred page as Home and Needs you are. */
+#ai-screen[data-ai-docked][data-ai-open] .ai-screen-body {
+  width: 100%;
+  max-width: 42rem;
+  margin-inline: auto;
+}
+/* The aside stays mounted, because a thread is opened from the place it is
+   handed (`at`); with nothing open beside the lists it is not drawn. */
+#ai-screen:not([data-ai-open]) .ai-main-pane { display: none; }
 /* #6147: 8px below the header, as the list's first card and the Workshop's
    side panel (.dev-ws-side) are, not 8px up into its rounded lower edge. The
    preview pane and Main's divider start on the same line. */
@@ -18321,24 +18450,28 @@ body:has(#ai-screen:is([data-ai-preview="three"], [data-ai-preview="halves"]):no
   width: var(--ai-col-w);
   inset-inline-end: calc(var(--ai-preview-w) + var(--ai-edge, 0px));
 }
-.side-panel-head > :is(.side-panel-main, .side-panel-place, .side-panel-more) { display: none; }
+.side-panel-head > :is(.side-panel-ai-close, .side-panel-place, .side-panel-more) { display: none; }
 body:has(#ai-screen:not(.hidden)) .side-panel :is(#side-panel-back, #side-panel-title, #side-panel-expand, #side-panel-close) {
   display: none;
 }
-body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-main, .side-panel-place, .side-panel-more) { display: inline-flex; }
+body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-ai-close, .side-panel-place, .side-panel-more) { display: inline-flex; }
 /* And the page in it leaves out its own way back, "‹ Workshop": the column's
-   ‹ Main Chat is the way back, and its project is beside it. The class is on the
+   × is the way back, and its project is beside it. The class is on the
    panel document's <html> while it stands beside this page (side-panel
    controller BESIDE_AI_CLASS). */
 html.in-side-panel.side-panel-beside-ai :is(.dev-topic-backs, .dev-topic-back) { display: none; }
 /* AND THE COLUMN IS ONE SHEET (30 Oct 2026), as Main is: the page lies flat
-   under the column's heading rather than lifting its own sheets off it. The
-   heading names what is open and its number, so a request's or a change's own
-   bar keeps only its status, its category and its ⋯ here, and goes when it
-   has none of them. */
+   under the column's heading rather than lifting its own sheets off it.
+   AND, SINCE #6431, ONE HEADER: the column's heading names what is open, its
+   number, where it stands (the page's own status pill) and everything its ⋯
+   holds, so the page's bar is not drawn here at all — a request's or a
+   change's, its number included. Two rows and two ⋯ buttons, with the
+   actions split between them, were what Evan reported (6 Nov 2026). The page
+   itself, everywhere else (the full page, the Workshop's side panel), keeps
+   its bar exactly as it was. */
 html.in-side-panel.side-panel-beside-ai .dc-lift { border-radius: 0; border-top: 0; box-shadow: none; }
-html.in-side-panel.side-panel-beside-ai .dev-request-bar :is([data-request-kicker], .dev-request-bar-title) { display: none; }
-html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu-btn, [data-request-status], [data-request-category])) { display: none; }
+html.in-side-panel.side-panel-beside-ai .dev-request-bar :is([data-request-kicker], .dev-request-bar-title, [data-request-category], [data-change-category]) { display: none; }
+html.in-side-panel.side-panel-beside-ai .dev-request-bar { display: none; }
 /* AND THE PAGE ITSELF REACHES THE COLUMN'S EDGES (3 Nov 2026). The 30 Oct
    rule above took the sheet's radius, top edge and shadow, but three things
    still drew a second box inside the column: #dev-topic-thread's 12px
@@ -18371,6 +18504,28 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 }
 :is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) :is(.dev-request-bar, .dev-request-scroll) {
   padding-inline: 12px;
+}
+/* THE COLUMN HAS MAIN CHAT'S SURFACE, #6432. The 30 Oct rules above took the
+   page's own sheets away so it would lie flat in the column, but nothing
+   painted the column itself: the panel document's body still drew the route
+   wallpaper (its star, grain and washes), sized to the column and not lined
+   up with the page's own, so Evan saw it through the request (6 Nov 2026).
+   Main got a surface under it (#ai-screen .ai-main-pane, --home-ground with
+   the --dc-sheet-fill thread pane over it); --dc-sheet-solid is that same
+   composite, the list's cards' colour in both themes, so the page lies on it
+   here. `background` clears the image too. `!important` is what beats the
+   route rule's `:has(:is(#…))` (one id deep) and the brand skin's body
+   background; the app-launch cover is written the same way. The fixed layer
+   is a second copy the phone's browser scroller paints behind the body, and
+   it goes too. No media query: the phone's drawer holds the same page. Only
+   the document beside the bot page (a panel document, never the top one) is
+   touched, so the full page and the Workshop's .dev-ws-side keep theirs, and
+   the thread's own cards keep their fills. */
+html.in-side-panel.side-panel-beside-ai body {
+  background: var(--dc-sheet-solid) !important;
+}
+html.in-side-panel.side-panel-beside-ai body::before {
+  background: none !important;
 }
 /* A DESIGN'S PREVIEW, A COLUMN OF ITS OWN (1 Nov 2026, threads, one loop
    C1; features/ai/preview.ts). Opened from a version in a thread, the design
@@ -22481,7 +22636,7 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):
 .platform-tabs::before,
 .platform-parked::before,
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
-             #settings-screen, #messages-screen, #workshop-screen, #ai-screen,
+             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
              #agent-session-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header::before,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header::before,
@@ -24092,7 +24247,7 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
      #profile-proposals-screen likewise (#3498): Your requests and Your votes
      centred in the whole window, so from a laptop width down their cards
      began under the rail. */
-  :is(#home-screen, #workshop-screen, #ai-screen, #leaderboard-screen,
+  :is(#home-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #leaderboard-screen,
       #profile-screen, #admin-screen, #settings-screen, #messages-screen,
       #agent-session-screen, #profile-proposals-screen) {
     /* A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review).
@@ -25444,6 +25599,19 @@ html.dark .messages-inbox-change-tile {
 body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
   --divider-at: calc(var(--ai-main-w) + var(--ai-edge, 0px));
 }
+/* IN THE MIDDLE OF THE GAP (#6447). Below 1024px the two sheets are close,
+   so the list's 16px gutter is the gap you see between them, and the handle
+   on the pane's edge read as stuck to the column. Half of that gutter (8px)
+   toward the list puts the line, its bar and the touch grip halfway across
+   the empty space. A desktop keeps the pane's own edge above: its gap is
+   wide and a line in it would float. Same specificity as that rule, so
+   source order decides, and this block stays before the three and halves
+   rules below so those still win. */
+@media (max-width: 1023.98px) {
+  body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
+    --divider-at: calc(var(--ai-main-w) + var(--ai-edge, 0px) + 8px);
+  }
+}
 /* #6394: with a plan open beside the page the panel holds, the panel's edge
    is the thread's edge of three columns, on the line where the panel begins.
    In halves the list has stepped aside and the preview's own handle is the
@@ -25557,12 +25725,28 @@ body:has(#ai-screen:not(.hidden)) .side-panel-head {
    measures it from the screen whichever document has the focus
    (`un-kb`, `--un-kb-inset`), so the panel ends above it. */
 html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-inset, 0px); }
-/* The topic's back chip, centred in the row rather than at its top. */
-.side-panel-head > .side-panel-main { margin: 0; align-self: center; }
+/* The column's × that closes the page, centred in the row rather than at its
+   top (6 Nov 2026, #6425: it took the "‹ Main Chat" chip's place). */
+.side-panel-head > .side-panel-ai-close { margin: 0; align-self: center; }
 /* The ⋯ beside the column's heading (3 Nov 2026), at the row's end: Copy
    link, the item's own page address. It is a sibling of the heading, so it
-   stays put when the heading's words are long. */
-.side-panel-more { margin-inline-start: auto; align-self: center; }
+   stays put when the heading's words are long.
+   #6431: and it is a LAYER ABOVE THE PAGE, solidly (Evan, 6 Nov 2026: the
+   menu "is overlapping weirdly? Maybe because it is fully transparent?").
+   Its surface tokens come from .side-panel-head, which is in the lists that
+   declare Messages' (above), and the wrapper stacks above the panel's body
+   so no page content paints over it. */
+.side-panel-more {
+  position: relative;
+  z-index: 2;
+  margin-inline-start: auto;
+  align-self: center;
+}
+/* The menu's own hairline, on top of the lift its base rule already draws, so
+   it reads as a sheet lying over the page rather than a hole in it. */
+.side-panel-more .messages-thread-menu {
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .18), inset 0 0 0 1px var(--messages-hair);
+}
 /* The column's heading, as Main's header reads (30 Oct 2026): the project's
    tile, then what is open over where it is, the rows' 15 over 13. The
    project's name is the door to it, underlined under the pointer. */
@@ -25579,9 +25763,24 @@ html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-i
   color: var(--text-primary);
 }
 .side-panel-place-where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 13px;
   line-height: 18px;
   color: var(--text-faint);
+}
+/* The project and the number truncate; the pill after them never does
+   (#6431 — it is the page's own, at the size the page's bar drew it). */
+.side-panel-place-where-text { min-width: 0; }
+.side-panel-place-status { flex: none; display: inline-flex; }
+/* The thin divider between the column's own two rows and the page's (#6431):
+   Copy link and Open in workshop, then everything the page's ⋯ holds. */
+.side-panel-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--app-sheet-line);
 }
 .side-panel-place-link { color: inherit; text-decoration: none; border-radius: 4px; }
 .side-panel-place-link:hover { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }
@@ -26729,46 +26928,94 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
    applies; without it not one rule below matches. Light shell only, and not
    over a dark app either (:not(.dark), :not([data-app-tone="dark"])): dark
    is the standard dark either way.
-   The look, from the brand-kit pass: a flat cream ground, without the grain,
-   the star or the washes; Geist for every word; warm hairlines; where you
-   are in ink on a pale blue pill with an ink edge; unread counts in ink; on
-   a project's Hub, the actions raised by an ink edge and a hard shadow; a
-   change's picture framed by a plain ink outline.
-   Appended last on purpose. The declarations other rules count
-   (--home-washes, --home-wallpaper, --dc-sheet-fill) are not redeclared:
-   the ground and the bars are painted over them instead. */
+
+   The look is "Baseplate" (request #6278): bricks on a baseplate.
+   - A light warm grey ground, the plate, with white cards and white bars
+     on it. A community's own header colour stays on its pages.
+   - One palette: warm greys, and an ink (#1d231c) for text.
+   - One job per colour. Sun (#ffd95a, on a darker #d6a92a edge) means
+     "do this": the main action, Join, and the votes waiting for you. Ink
+     means "you are here" or "selected": the lit tab, the lit row, the
+     chosen chip. The old blue's other jobs (links, text, quieter fills) go
+     to ink.
+   - Geist for words, Young Serif for page titles, Geist Mono for counts.
+   - The website's own figures in two empty states.
+
+   Appended last on purpose. The declarations other rules count (the home
+   washes, the wallpaper, the sheet fill) are not redeclared: the ground
+   and the bars are painted over them instead. */
 @font-face {
   font-family: 'Geist';
   /* Absolute: the build-scoped copy of this sheet (/b/<sha>/css/app.css)
      serves only .js and .css, so a relative url would 404 there. A browser
      without the new look never matches a rule that names Geist, so it never
-     downloads the file. */
+     downloads the file. The same holds for the two faces below. */
   src: url('/fonts/geist/Geist-Variable.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/geist-mono/GeistMono-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Young Serif';
+  src: url('/fonts/young-serif/young-serif-latin-400-normal.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   font-family: 'Geist', ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  background-color: #fcfbf3;
-  /* Cards are white on the cream ground. */
+  background-color: #f4f4f0;
+  /* Surfaces: white cards on the plate. */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f4f4f0;
+  --bg-tertiary: #e9e9e3;
+  --bg-input: #f4f4f0;
+  --dc-strip: #f4f4f0;
+  --dc-sheet: #ffffff;
+  --dc-sheet-raise: #ffffff;
+  --dc-raised: #f4f4f0;
   --dc-sheet-solid: #ffffff;
-  /* Where you are: ink on a pale blue pill with an ink edge. */
-  --lit-ink: #111111;
-  --lit-tint: #dcebfa;
-  --lit-line: #111111;
+  --dc-strip-solid: #f4f4f0;
+  --border: #dcdcd5;
+  --border-light: #e9e9e3;
+  /* Ink and its warm greys. */
+  --text-primary: #1d231c;
+  --text-secondary: #3d4039;
+  --text-muted: #62655d;
+  --text-faint: #8d9088;
+  /* The old blue's jobs that are not "do this" go to ink: links, text,
+     outlines and the quieter fills. Sun is given out by name below. */
+  --accent: #1d231c;
+  --accent-light: #3d4039;
+  --accent-ink: #ffffff;
+  --accent-tint: rgba(29, 35, 28, 0.06);
+  --accent-tint-ink: #1d231c;
+  --accent-wash: #fff5d1;
+  --accent-wash-ink: #5c4400;
+  /* Lit things elsewhere (steps, tags, the theme switch) on a pale warm
+     grey; the tab and the row you are on are ink, below. */
+  --lit-ink: #1d231c;
+  --lit-tint: #e9e9e3;
+  --lit-line: rgba(29, 35, 28, 0.14);
   /* The header's own ink on the top-level screens. A project's bar sets
      its own on #platform-header (white on the project's colour). */
-  --brand-ink: #111111;
-  --brand-tint: #f1efe6;
-  --brand-line: #e2dfcf;
+  --brand-ink: #1d231c;
+  --brand-tint: #f4f4f0;
+  --brand-line: #dcdcd5;
 }
-/* Warm hairlines, unless high contrast asked for darker ones. */
+/* Hairlines in ink at 8%, unless high contrast asked for darker ones. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-contrast="more"]) {
-  --app-sheet-line: #e7e4d4;
+  --app-sheet-line: rgba(29, 35, 28, 0.08);
 }
 
-/* THE GROUND. The wallpaper is drawn on <body> by the route rule (one id
+/* THE PLATE. The wallpaper is drawn on <body> by the route rule (one id
    deep); `:has(#platform-tabs)` is always true in the shell and makes this
    rule one id deep as well, so it wins by its classes. The tile zoom paints
    the moving view from --un-zoom-bg, so it follows. --home-ground moves with
@@ -26776,97 +27023,206 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-contras
    launch cover and the washes end on it. The scroller's fixed layer repaints
    the wallpaper; it is flat here too. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) body:has(#platform-tabs) {
-  --home-ground: #fcfbf3;
-  --un-zoom-bg: #fcfbf3;
-  background: #fcfbf3;
+  --home-ground: #f4f4f0;
+  --un-zoom-bg: #f4f4f0;
+  background: #f4f4f0;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) body::before {
-  background: #fcfbf3;
+  background: #f4f4f0;
 }
 
-/* THE BARS. On the top-level screens the header is a flat cream bar with a
-   hairline foot and square corners, not the faked glass with the rounded
-   notch; a project's bar (html[data-community-tint]) keeps its colour. The
-   doubled id outranks the route rules (two ids deep) by its classes. The
-   tab bar keeps its own layer, filled flat. */
+/* THE BARS are white. On the top-level screens the header is a flat bar
+   with a hairline foot and square corners, not the faked glass with the
+   rounded notch. A project's bar (html[data-community-tint]) keeps its
+   community's colour. The doubled id outranks the route rules (two ids
+   deep) by its classes. The tab bar keeps its own layer, filled flat. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-community-tint]) #platform-header#platform-header {
-  background-color: #fcfbf3;
+  background-color: #ffffff;
   clip-path: none;
   border-end-start-radius: 0;
   border-end-end-radius: 0;
-  box-shadow: inset 0 -1px 0 #e7e4d4;
+  box-shadow: inset 0 -1px 0 rgba(29, 35, 28, 0.08);
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-community-tint]) #platform-header#platform-header::before {
   display: none;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs::before {
-  background: #fcfbf3;
-}
-/* Unread conversations count in ink (the vote count keeps the accent). */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-badge {
-  background: #111111;
-  color: #fcfbf3;
+  background: #ffffff;
 }
 
-/* A PROJECT'S HUB. Open app, Invite and the ⋯ beside them are raised: an
-   ink edge and a hard shadow, pressed down a pixel when tapped. Open app
-   takes the accent, the other two are white. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-open-app[data-ws-community-open-app],
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-community-invite],
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-plus-btn-hero {
-  border: 1px solid #111111;
-  box-shadow: 1.5px 2px 0 #111111;
+/* YOU ARE HERE: ink. On a phone the lit tab sits on the sliding marker;
+   from 768px the lit row of the sidebar is the tab itself. The places of a
+   project (its Hub, Workshop, channels) light the same way, in the drawer,
+   the tray and the sidebar's nest. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs-marker {
+  background: #1d231c;
+  box-shadow: none;
 }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab[aria-current="page"] {
+  color: #ffffff;
+}
+@media (min-width: 768px) {
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab[aria-current="page"] {
+    background: #1d231c;
+  }
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-place[aria-current="page"] {
+  background: #1d231c;
+  color: #ffffff;
+}
+
+/* DO THIS: sun with ink words, on a darker edge. The shell's primary
+   button, Join, starting a conversation, and the counts of votes waiting
+   for you. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-600,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty button,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .card-add-btn[data-join]:not([data-join="joined"]) {
+  background-color: #ffd95a;
+  border-color: transparent;
+  color: #1d231c;
+  box-shadow: 0 2px 0 #d6a92a;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-violet-500:hover,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty button:hover {
+  background-color: #ffe07a;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-600:active,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty button:active,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .card-add-btn[data-join]:active {
+  box-shadow: 0 0 0 #d6a92a;
+  transform: translateY(1px);
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-votes,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-all-votes,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-rail-votes,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-foryou-pill:not([data-ws-channel-unread]) {
+  background: #ffd95a;
+  color: #1d231c;
+  font-variant-numeric: tabular-nums;
+}
+/* The old blue as words and pale fills: ink, and a pale sun. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-violet-500,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-violet-600,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-violet-700 {
+  color: #1d231c;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) a.text-violet-600,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) a.text-violet-700 {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-50,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-100 {
+  background-color: #fff5d1;
+}
+
+/* WARM GREYS. The zinc ramp is a cool grey; on the warm plate its common
+   fills, words and lines take the warm one. The chosen chip (zinc-900) is
+   the ink. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-50 { background-color: #f7f7f3; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-100,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-zinc-100:hover { background-color: #ebebe5; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-200,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-zinc-200:hover { background-color: #e2e2dc; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-900 { background-color: #1d231c; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-900 { color: #1d231c; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-800 { color: #2c3029; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-700 { color: #3d4039; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-600 { color: #4d5049; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-500 { color: #62655d; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-400 { color: #8d9088; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-200 { border-color: #e2e2dc; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-300 { border-color: #cfd0c9; }
+
+/* BRICKS: white cards on the plate, with a hairline and a soft shadow. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\],
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-section-card,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty {
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(29, 35, 28, 0.05), 0 8px 20px -14px rgba(29, 35, 28, 0.22);
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .app-icon-tile,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-discover-card {
+  border-color: rgba(29, 35, 28, 0.08);
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-discover-card {
+  box-shadow: 0 1px 2px rgba(29, 35, 28, 0.05), 0 8px 20px -14px rgba(29, 35, 28, 0.22);
+}
+/* Unread conversations: coral, the colour of people talking. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-badge {
+  background: #ff8a78;
+  color: #1d231c;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A PROJECT'S HUB. Open app is ink: it goes somewhere, it does not ask for
+   you. Invite and the ⋯ beside it are white bricks. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-open-app[data-ws-community-open-app] {
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: #1d231c;
+  color: #ffffff;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-community-invite],
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-plus-btn-hero {
   background: #ffffff;
-  color: #111111;
+  color: #1d231c;
+  box-shadow: inset 0 0 0 1px rgba(29, 35, 28, 0.10), 0 1px 2px rgba(29, 35, 28, 0.06);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-open-app[data-ws-community-open-app]:active,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-community-invite]:active,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-plus-btn-hero:active {
-  transform: translate(1px, 1px);
-  box-shadow: 0.5px 1px 0 #111111;
-}
-/* For you: each row's glyph on its own pale colour, and the channel's
-   unread count in ink. */
+/* For you: each row's glyph on the pale tint of its job (sun for what
+   waits on you, sky for your own work, grass for the conversation), and the
+   channel's unread count in ink. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-hub-needs] .dev-ws-foryou-row > :first-child {
-  background: #fcfab3;
-  color: #111111;
+  background: #fff5d1;
+  color: #1d231c;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-mine-card] > :first-child {
-  background: #dcebfa;
-  color: #111111;
+  background: #e6f0fb;
+  color: #1d231c;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-channel="preview"] > :first-child {
-  background: #e1efd9;
-  color: #111111;
+  background: #e3f5e8;
+  color: #1d231c;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-foryou-pill[data-ws-channel-unread] {
-  background: #111111;
-  color: #fcfbf3;
+  background: #1d231c;
+  color: #ffffff;
 }
-
-/* PICTURES OF A CHANGE: a plain ink outline, drawn over the picture so an
-   image filling the box does not hide it. */
+/* Pictures of a change: a hairline, drawn over the picture so an image
+   filling the box does not hide it. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-recent-pic,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-media-view {
-  outline: 1px solid #111111;
+  outline: 1px solid rgba(29, 35, 28, 0.10);
   outline-offset: -1px;
 }
 
-/* HOME: warm hairlines on the app tiles and the community cards, and Join
-   in ink. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .app-icon-tile,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-discover-card {
-  border-color: #e7e4d4;
+/* TYPE BY ROLE. A page's title in the serif (not the header's own name,
+   and not the small line the made screen keeps in an h1); the Workshop's
+   counts in mono, so the figures line up. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) h1:not(#platform-header h1):not(#first-session-made-title) {
+  font-family: 'Young Serif', Georgia, 'Times New Roman', serif;
+  font-weight: 400;
+  letter-spacing: -0.005em;
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .card-add-btn[data-join] {
-  border-color: #111111;
-  color: #111111;
-  box-shadow: none;
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-dash-cell b {
+  font-family: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* MOMENTS. The website's own figures above two empty states: Messages
+   before the first conversation, and Homeroom bot when nothing needs you.
+   Background images, so the experiment off never loads them. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty::before {
+  content: "";
+  display: block;
+  align-self: stretch;
+  height: 170px;
+  margin-bottom: 12px;
+  background: url('/illustrations/people/phone.png') center / contain no-repeat;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ai-empty=""]::before {
+  content: "";
+  display: block;
+  height: 130px;
+  margin: 2px 0 10px;
+  background: url('/illustrations/people/log.png') center / contain no-repeat;
 }

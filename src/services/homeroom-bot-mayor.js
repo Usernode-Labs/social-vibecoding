@@ -112,7 +112,10 @@ const MAX_SOURCE_READS_PER_TURN = CHAT_LIMITS.readsPerTurn;
 const SOURCE_READ_TOOLS = Object.freeze(['list_source', 'read_source']);
 // What the last round offers: a tool that ends the turn, never a lookup. An
 // offer alone is the turn's answer, as it is today.
-const CHAT_LAST_ROUND = (name) => name === 'reply' || name === 'draw_screen' || name.startsWith('offer_');
+// #6523: offer_new_project sets a flag for the reply rather than ending the
+// turn, so it is never one of the last round's ending tools.
+const CHAT_LAST_ROUND = (name) => name === 'reply' || name === 'draw_screen'
+  || (name.startsWith('offer_') && name !== 'offer_new_project');
 const CHAT_LAST_ROUND_NOTE = lastRoundNote('offer the draft they asked for');
 const CHAT_STAND_IN_NOTE = standInNote('offer the draft they asked for');
 const CHAT_READING_DONE = readingDoneNote('offer the draft they asked for');
@@ -504,6 +507,8 @@ function otherThreadLines(thread) {
       '- It is the private thread you opened for a NEW project, which does not exist yet. Help them shape what it is',
       '  for, then draw its first screen with draw_screen and design it with them here; from a design they like, you',
       '  offer to make the project. Nothing is made, filed or posted until they tap.',
+      // #6523: its foot already has the door, so the flag is not needed here.
+      '- New project is already at the foot of this thread, so do not call offer_new_project here.',
     );
   } else if (d?.kind === 'ask') {
     // #6071 follow-up: started from your "+", with what its welcome block picked.
@@ -516,11 +521,19 @@ function otherThreadLines(thread) {
       '  Help them say what they want. Once it is clear enough to build, offer it as a request with offer_request:',
       '  File it shows only under that offer, so make it then, without waiting to be asked. When they want to see how a',
       '  screen could look, call draw_screen: it is drawn here, in this thread, and changed at their word.',
+      // #6523: New project is offered, never guessed from the kind of thread.
+      '  When, and only when, this thread is an idea for a project of its own with no project yet, call',
+      '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
+      '  project that exists.',
     );
   } else if (!d) {
     lines.push(
       '- Nothing in this thread is filed until you offer it. Once what they want is clear enough to build, offer it as',
       '  a request with offer_request: File it shows only under that offer.',
+      // #6523: New project is offered, never guessed from the kind of thread.
+      '  When, and only when, this thread is an idea for a project of its own with no project yet, call',
+      '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
+      '  project that exists.',
     );
   } else if (d?.appSlug) {
     const name = d.appName || d.appSlug;
@@ -563,6 +576,9 @@ function threadLines(request) {
     '- Here, "status?", "how is it going?" or "where are we?" means this request: say where it stands right now,',
     '  from request_detail or progress, and what happens next. Do not list the rest of their page (my_work) unless',
     '  they ask about everything.',
+    // #6390: they are reading this page already, so a link to it says nothing.
+    '- They are on this request\'s page already: never link to this request or its page, and never say "follow it',
+    '  here". Say what is happening in words, and link only to somewhere else, such as a change you built.',
     '',
   ];
 }
@@ -1060,6 +1076,16 @@ const TOOLS = [
         required: ['idea'],
         additionalProperties: false,
       },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'offer_new_project',
+      description: 'In a private thread that is an idea for a NEW project of its own (an app that does not exist yet) '
+        + 'and not a question, a report, or a change to a project that exists: put the New project button under your '
+        + 'reply. One per turn.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
   {
@@ -2162,6 +2188,11 @@ function doingFor(name, args = {}, { project = null } = {}) {
     case 'draw_screen':
     case 'write_screen':
       return { kind: 'drawing' };
+    // #6354: opening one of Homeroom's own pages to copy it for a design.
+    case 'capture_page': {
+      const page = typeof args?.page === 'string' ? clip(args.page, 60) : '';
+      return page ? { kind: 'capturing', page } : { kind: 'capturing' };
+    }
     case 'edit_design':
       return { kind: 'designing' };
     case 'offer_request':
@@ -3406,6 +3437,13 @@ async function runTool(pool, ctx, name, args) {
       case 'close_thread': return await closeThread(pool, ctx);
       case 'start_request': return await startRequest(pool, ctx, args);
       case 'start_project_thread': return await startProjectThread(pool, ctx, args);
+      case 'offer_new_project': {
+        // #6523: the New project button is the bot's to offer, in a private
+        // thread that is an idea for a project of its own. Never in Main.
+        if (!ctx.deps.threadRootId && !ctx.projectThread) return { ok: false, error: 'Only in a private thread with no project.' };
+        ctx.newProjectOffer = true;
+        return { ok: true, note: 'New project shows under your reply.' };
+      }
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
       case 'list_source':
       case 'read_source':
@@ -3607,11 +3645,11 @@ function codeOf(err) {
  *   - the key's own failures, and a request this module built wrong (no
  *     HTTP status: it was never sent), are not asked again.
  */
-function retryPlan(err, { forced = false, elapsedMs = 0, attempt = 1 } = {}) {
+function retryPlan(err, { forced = false, elapsedMs = 0, attempt = 1, retryOutputTokens = RETRY_OUTPUT_TOKENS } = {}) {
   if (attempt >= MAX_ATTEMPTS) return null;
   const code = err?.code;
   let plan = null;
-  if (code === 'output_limit') plan = { maxOutputTokens: RETRY_OUTPUT_TOKENS };
+  if (code === 'output_limit') plan = { maxOutputTokens: retryOutputTokens };
   else if (code === 'invalid_request' && err?.status) plan = forced ? { toolChoice: 'auto' } : {};
   else if (code === 'rate_limited') {
     // #3772: a provider that says when to come back is believed, up to a point.
@@ -3651,7 +3689,7 @@ function avoidProviders(before, err) {
  * is a failure too ('empty_answer'). Resolves the response; throws the last
  * failure.
  */
-async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_ATTEMPTS, ...rest }) {
+async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_ATTEMPTS, retryOutputTokens, ...rest }) {
   let overrides = {};
   for (let attempt = 1; ; attempt += 1) {
     try {
@@ -3715,7 +3753,7 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
         // #6270: 'required' is a tool choice the provider may refuse too; a
         // retry then lets the model choose, with the same tools offered.
         const forced = typeof (overrides.toolChoice ?? toolChoice) === 'object' || (overrides.toolChoice ?? toolChoice) === 'required';
-        plan = retryPlan(err, { forced, elapsedMs: Date.now() - t.startedMs, attempt });
+        plan = retryPlan(err, { forced, elapsedMs: Date.now() - t.startedMs, attempt, retryOutputTokens });
       }
       if (!plan) throw err;
       const { waitMs = 0, ...change } = plan;
@@ -3954,6 +3992,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     sourceReads: 0, standIns: 0, gaveUp: false,
     // The turn's failures, for a stand-in refused by its reply tool.
     failures: [],
+    // 9 Nov 2026 (#6523): the bot offered to make this idea a project, so the
+    // reply carries `newProject` and the thread's foot shows New project.
+    newProjectOffer: false,
   };
   // B01, B07 (audit 2 Nov 2026): once start_project_thread opened a new
   // project's thread, everything this turn says goes in it, whichever way
@@ -4046,6 +4087,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // (homeroom-bot-thread-tools/), between its own and the platform's.
       ctx.platformTools = platformTools.length > 0;
       const threadTools = threadToolsOf(deps);
+      // #6427: what a module reads before it says what it offers (admin.js:
+      // whether this is a full admin's own chat with the bot).
+      if (typeof threadTools.beforeTurn === 'function') await threadTools.beforeTurn(pool, ctx);
       const extraTools = threadTools.toolsFor(ctx);
       const tools = [...TOOLS, ...extraTools, ...platformTools];
       // #3733: the conversation could not be read: their message alone is
@@ -4311,7 +4355,11 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // Homeroom bot parity (P1-P9): a card a thread tool put under the reply
   // (homeroom-bot-cards/, frontend features/messages/bot-cards/).
   const toolCard = ctx.card && typeof ctx.card === 'object' && typeof ctx.card.type === 'string' ? ctx.card : null;
-  const extra = { ...(looked ? { looked } : {}), ...(toolCard ? { card: toolCard } : {}) };
+  const extra = {
+    ...(looked ? { looked } : {}), ...(toolCard ? { card: toolCard } : {}),
+    // #6523: the thread's foot reads this to show New project.
+    ...(ctx.newProjectOffer ? { newProject: true } : {}),
+  };
   // 2 Nov 2026: a reply that ends in an offer keeps both. Up to two more
   // offers follow it as cards of their own (MAX_OFFERS), each said once.
   if (ctx.offer) {
@@ -4628,8 +4676,26 @@ async function notePrivateDraft(pool, { userId, messageId, state, ref = null }) 
   ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not note where a draft\'s private thread went', { err: err.message }));
 }
 
+// #6427: a card that posts somewhere public, offered in a thread of a
+// person's chat with the bot where a database read (query_prod_db) happened,
+// says so: its words were drafted by a turn that could have read those rows
+// (frontend bot-question.tsx draws the line). Only an admin can have run one,
+// so nobody else's offer pays for the look. `roots` are the threads the
+// offer came from (null for Main). Never throws.
+async function dbReadMark(pool, { user, conversationId, roots }) {
+  if (user?.isAdmin !== true) return {};
+  const read = await require('./homeroom-bot-thread-tools/admin').dbReadIn(pool, {
+    userId: user.id, conversationId, threadRootIds: roots,
+  });
+  return read ? { dbRead: true } : {};
+}
+
 async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps, extra = null, keySuffix = '' }) {
   const dm = dmModule(deps);
+  const dbRead = await dbReadMark(pool, {
+    user, conversationId,
+    roots: [message?.threadRootId || message?.thread_root_id || null, deps?.threadRequest?.rootId || deps?.threadRootId || null],
+  });
   // #6305: one request on several projects. It has no one project, no
   // dm_actions row and nothing to settle: its card is the whole offer, and
   // its File on all is decided by homeroom-bot-cards/file-many.js.
@@ -4652,6 +4718,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       metadata: {
         ...(extra || {}),
         ...(o.extras ? { draftExtras: o.extras } : {}),
+        ...dbRead,
       },
     });
     if (sent?.messageId) {
@@ -4753,6 +4820,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       // requests, where, Done when), kept on the message it was said in, so
       // File it can file the same. Read back by settleOffer.
       ...(o.extras ? { draftExtras: o.extras } : {}),
+      ...dbRead,
     },
   });
   if (sent?.messageId && sent.duplicate) {
@@ -4982,6 +5050,12 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
       ...designPlanActions(n).map((a) => (a.id === 'yes' ? { ...a, style: 'secondary' } : a)),
     ]
     : designPlanActions(n);
+  // #6427: a plan is posted publicly: the line a database read in its thread,
+  // or in the one that asked for the screen, puts on the card.
+  const dbRead = await dbReadMark(pool, {
+    user, conversationId,
+    roots: [message?.threadRootId || message?.thread_root_id || null, deps?.threadRootId || null],
+  });
   const sent = await dm.sendDm(pool, {
     bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
     content: [
@@ -4993,7 +5067,7 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
     metadata: {
       kind: 'confirm', appSlug: app.slug, appName: name, actionId: action.id,
       question: n ? `Post version ${v} as a plan on #${n}?` : `Post version ${v} as a plan on ${name}?`,
-      answers: designPlanAnswers(n), actions, status: 'open', mirrors: false,
+      answers: designPlanAnswers(n), actions, status: 'open', mirrors: false, ...dbRead,
     },
   });
   if (sent?.messageId && sent.duplicate) {
@@ -5933,7 +6007,7 @@ async function startRequest(pool, ctx, args) {
     return {
       ok: false,
       code: 'go_ahead_cannot',
-      said: liveModule(deps).goAheadCannotText({ reason: lastLook[0].reason, firstStep: lastLook[0].first_step }),
+      said: liveModule(deps).goAheadCannotText({ reason: lastLook[0].reason, firstStep: lastLook[0].first_step, reader: user.username }),
       next: 'Say exactly this. Do not say you are on it, and do not offer tell_me_when.',
     };
   }
@@ -6935,6 +7009,9 @@ module.exports = {
   checkProjectOffer,
   cardSentence,
   sendDesignOffer,
+  // #6427: an offer's card, and the line a database read in its thread puts on it.
+  offer,
+  dbReadMark,
   decidePostDesign,
   noteProjectMade,
   MAKE_PROJECT,

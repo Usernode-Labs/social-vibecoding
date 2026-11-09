@@ -32,6 +32,7 @@ import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
 import { buildLineTileClass, buildLineTileOf, buildLineTileWordsOf, tileStageOf } from '../first-session/build-line-words.js';
+import { installHomeSearchShortcut } from './search-shortcut';
 
 
 const Home = {
@@ -118,6 +119,10 @@ const Home = {
     // later refreshes must preserve the position the user chose.
     Home._searchReveal.sync();
     if (App.user && !App._sessionFromSnapshot) window.UsernodeReact?.appAllowance?.refresh?.();
+    // The tiles' vote counts (request 6500): a bridge read, the same as the
+    // allowance above, so every path into load() (a visit to Home, a pull,
+    // the late-answer correction) re-reads what the tiles count.
+    if (App.user) window.UsernodeReact?.homePins?.refresh?.();
     Home._probeShortcutSupport();
     // The header's standing action, from the remembered row, BEFORE the
     // fetch below rather than after it. render() is the call every path
@@ -1062,10 +1067,6 @@ const Home = {
       // button beside the heading, not this tile, so the trailing tile keeps
       // exactly the presence it has at rest.
       if (App.user?.privateMember) create = null;
-      // ONE HOME (#6361): making something new is Pinned communities'
-      // "New community" tile now (./pinned-communities.tsx), so the apps
-      // grid draws no trailing tile of its own.
-      create = null;
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -2182,6 +2183,19 @@ const Home = {
         input.focus();
       });
     }
+    // / from anywhere, and Ctrl+K (⌘K) while Home shows, put the cursor in
+    // this box (./search-shortcut.ts, #6462). From another screen / opens
+    // Home first, which is what focusSearch does.
+    installHomeSearchShortcut({
+      doc: document,
+      open: (showing) => {
+        if (!showing) { Home.focusSearch(); return; }
+        try {
+          input.focus({ preventScroll: false });
+          input.select?.();
+        } catch (err) { /* nothing to focus */ }
+      },
+    });
   },
 
   // Add / remove one app from "Your apps", from anywhere: a discovery rail,

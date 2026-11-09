@@ -803,6 +803,11 @@ export interface ChangeUpstreamView {
 
 export interface TopicBody {
   changeId?: number;
+  /**
+   * #6440: a governance vote's page — the model its head draws
+   * (./governance-model.ts). The page has no card: the head IS the page.
+   */
+  decision?: any;
   issues?: IssueLink[];
   /** #2431 — on an ISSUE's page, the change on it (an open issue's). */
   addressedBy?: IssueProposalRef | null;

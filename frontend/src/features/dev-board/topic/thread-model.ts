@@ -22,6 +22,19 @@ export interface FoldedReply {
   at?: string | null;
 }
 
+/**
+ * #6225: one request a change closes when it merges, as its Votes card lists
+ * it. `confirmed` is whether its requester agreed to it: the change was built
+ * for that request, or its filer made the change. A number the change claims
+ * that is not a request here has a null title and filer.
+ */
+export interface ClosesRequest {
+  number: number;
+  title: string | null;
+  by: string | null;
+  confirmed: boolean;
+}
+
 export interface ThreadItem {
   type: ThreadItemType;
   id: number;
@@ -53,10 +66,19 @@ export interface ThreadItem {
   /** A close vote: the proposer's reason, and the request it was filed on. */
   reason?: string | null;
   target?: number | null;
+  /**
+   * #6439, a close vote: how an ended vote ended, off the governance
+   * machine's audit (src/services/threads.js). `closed` it passed; `kept` it
+   * was withdrawn or could not be applied; `elsewhere` the request closed
+   * another way. Null while it is open.
+   */
+  outcome?: 'closed' | 'kept' | 'elsewhere' | null;
   /** A change: the requests it closes when it merges (its linked_issues). */
   closes?: number[];
   /** #6420: among `closes`, the requests whose requester answered "This doesn't close it". */
   notConfirmed?: number[];
+  /** #6225: the same requests with their titles and filers, for the Votes card. */
+  closesRequests?: ClosesRequest[];
   /**
    * 1 Nov 2026 (C2.3), a change: the plan it was built from, by that plan's
    * session and version (a person's plan on the request, or the bot's own
@@ -135,6 +157,19 @@ export function alsoCloses(item: ThreadItem, request: number): number[] {
   const here = Number(request);
   if (!closes.includes(here)) return [];
   return [...new Set(closes)].filter((n) => Number.isInteger(n) && n > 0 && n !== here).sort((a, b) => a - b);
+}
+
+/**
+ * #6225: what a change's Votes card lists under its tally, while it is up for
+ * a vote: every request a yes would close, ascending. Nothing before it is
+ * proposed or after it merges, because the list describes what a yes would
+ * do, and nothing when it closes only the one request it was built for. Pure.
+ */
+export function closesList(item: ThreadItem): ClosesRequest[] {
+  const list = Array.isArray(item.closesRequests) ? item.closesRequests : [];
+  if (item.state !== 'review') return [];
+  if (list.length === 1 && list[0] && list[0].confirmed) return [];
+  return [...list].sort((a, b) => Number(a.number) - Number(b.number));
 }
 
 export interface ThreadMove {
@@ -326,7 +361,11 @@ export function splittable(payload: ThreadPayload | null): ThreadItem[] {
 export interface ThreadLayout {
   /** Every change in the thread, oldest first. */
   changes: ThreadItem[];
-  /** The open vote to close the thread, if there is one. */
+  /**
+   * The vote to close the thread: the open one, else the latest one that
+   * has ended (#6439: its card stays and says how it ended). Null when the
+   * thread has never had one.
+   */
   close: ThreadItem | null;
   /** The items the list under them still names. */
   listed: ThreadItem[];
@@ -336,7 +375,14 @@ export function threadLayout(payload: ThreadPayload | null, here: ThreadHere | n
   const items = payload && Array.isArray(payload.items) ? payload.items : [];
   if (!here || here.type !== 'request') return { changes: [], close: null, listed: items };
   const changes = items.filter((i) => i.type === 'change');
-  const close = items.find((i) => i.type === 'close' && i.status === 'open') || null;
+  // #6439: an open vote to close leads; once every vote has ended, the
+  // latest one keeps its card, so the request's page says how it ended.
+  // Older ended votes stay in the list below, as they always have.
+  const closes = items.filter((i) => i.type === 'close');
+  const open = closes.find((i) => i.status === 'open') || null;
+  const latest = closes.reduce<ThreadItem | null>(
+    (best, i) => (!best || Number(i.id) > Number(best.id) ? i : best), null);
+  const close = open || latest;
   const listed = items.filter((i) => i.type !== 'change' && i !== close);
   return { changes, close, listed };
 }
@@ -444,13 +490,20 @@ export function requestPill(
 ): { tier: number; key: string; label: string; tone: string; yes: number; no: number; majority: number; advisory: number; lock: boolean; spinner?: boolean } | null {
   if (stand === 'closed') return null;
   const base = { tier: 1, yes: 0, no: 0, majority: 1, advisory: 0, lock: false };
+  // #6439: an ended vote to close still draws its card, but the header only
+  // says a vote is on while one is open.
+  const close = layout.close && layout.close.status === 'open' ? layout.close : null;
   const review = layout.changes.filter((c) => c.state === 'review').length;
-  if (review >= 2 || (review >= 1 && layout.close)) return { ...base, key: 'choosing', label: say('project:topic.thread.pill.choosing'), tone: 'neutral' };
+  if (review >= 2 || (review >= 1 && close)) return { ...base, key: 'choosing', label: say('project:topic.thread.pill.choosing'), tone: 'neutral' };
   if (review === 1) return { ...base, key: 'vote', label: say('project:topic.thread.pill.vote'), tone: 'neutral' };
-  if (layout.close) return { ...base, key: 'close', label: say('project:topic.thread.pill.close'), tone: 'neutral' };
+  if (close) return { ...base, key: 'close', label: say('project:topic.thread.pill.close'), tone: 'neutral' };
   const underway = layout.changes.filter((c) => c.state === 'underway');
   if (underway.some((c) => !c.ready) || stand === 'building') {
     return { ...base, key: 'building', label: say('project:topic.thread.pill.building'), tone: 'progress', spinner: true };
+  }
+  // #6532: a build that is ready and waits its turn is not being built yet.
+  if (stand === 'ready_to_build') {
+    return { ...base, key: 'ready_to_build', label: say('project:topic.thread.pill.readyToBuild'), tone: 'neutral' };
   }
   // #6139: every change underway has finished; only putting one up is left.
   if (underway.length) return { ...base, key: 'ready', label: say('project:topic.thread.pill.ready'), tone: 'neutral' };

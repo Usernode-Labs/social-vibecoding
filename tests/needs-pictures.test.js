@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const appManifest = require('../src/services/app-manifest');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -212,7 +213,8 @@ test('staging holds each picture under ?demo=1', () => {
   // flow's change page is what a declared check covers now.
   const check = require('../dapp.json').tests.find((t) => /change page in place in the pane/.test(t.name));
   assert.ok(check, 'the review flow’s change page is covered by a declared check');
-  assert.ok(check.expectSelector.length <= 256, "the runner clips selectors at 256 characters");
+  assert.ok(check.expectSelector.length <= appManifest.MAX_TEST_SELECTOR_LEN,
+    `the selector fits the runner's cap (${appManifest.MAX_TEST_SELECTOR_LEN} characters)`);
 });
 
 test('#5039: an area\'s name stays whole, and the columns size to their longest entry', () => {

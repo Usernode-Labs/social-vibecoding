@@ -83,6 +83,9 @@ function makeAppView({ search = '' } = {}) {
     pr_url: 'https://github.com/acme/app/pull/1540',
     status: 'promoted', username: 'evan', created_at: at(1), promoted_at: at(1), last_message_at: at(1),
     linked_issues: [], my_vote: null, votes_for: 3, votes_against: 1, yes_count: 3, no_count: 1,
+    // More yeses still needed, so the row keeps its Vote button (#6505: a
+    // decided change draws none).
+    votes_required: 5,
     checks_state: 'success', checks_total: 412, checks_passed: 412, message_count: 5,
   }];
   AppView._govProposals = [];
@@ -1479,7 +1482,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 838 → 839: +1 (#3692): the Homeroom bot DM's activity tray strip on
   // the staging fixture (#messages/910005). It shares that route with the
   // #3624 check, but could not fold into it: that selector is already at
-  // 253 of the 256 characters the runner reads. 839 leaves 21 slots
+  // 253 characters against the runner's selector cap
+  // (`MAX_TEST_SELECTOR_LEN`). 839 leaves 21 slots
   // against MAX_DECLARED_TESTS (860).
   //
   // 839 → 840: +1 (#3755): an agent chat whose change failed its checks
@@ -1500,8 +1504,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 841 → 842: +1 (#4097): the Homeroom bot's news about a request leads
   // with the request's card on the staging fixture (#messages/910005). It
   // shares that route with the #3624 and #3692 checks, but could not fold
-  // into either: their selectors are at 253 and 245 of the 256 characters
-  // the runner reads. 842 leaves 28 slots.
+  // into either: their selectors are at 253 and 245 characters against the
+  // runner's selector cap (`MAX_TEST_SELECTOR_LEN`). 842 leaves 28 slots.
   //
   // 842 → 843: +1: the Benchmark area's Studio place
   // (#admin/homeroom-bot/benchmark/studio), the App bench studio's gallery on
@@ -1544,8 +1548,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // coding-run card checks on 990412 became ONE on the agent-session fixture
   // (#messages/agent/990801), because that card is the dev chat's `Attached`,
   // which agent sessions draw too. It could not fold into the three 990801
-  // checks on that route: their selectors leave at most 43 of the runner's
-  // 256 characters, and this one needs 191 of its own. Three groups stay,
+  // checks on that route: their selectors leave at most 43 characters under
+  // the runner's selector cap (`MAX_TEST_SELECTOR_LEN`), and this one needs
+  // 191 of its own. Three groups stay,
   // because none is the classic chat's own: the spec panel's (900830,
   // 900831), where a shared spec still opens and whose HTML-spec frames
   // (lib/spec-html) agent sessions draw; the published chat's (990002), the
@@ -1634,7 +1639,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 729 → 730: +1 (#4772): the Workshop tab's What's happening files the
   // viewer's work in sections (Waiting on you, Yours, up for a vote, Going
   // live), on the ?demo=1 mocks. Folding it into the Overview check on the
-  // same route took that selector past the runner's 256 characters. 730
+  // same route took that selector past the runner's selector cap
+  // (`MAX_TEST_SELECTOR_LEN`). 730
   // leaves 150 slots.
   //
   // 730 → 731: +1: the admin console's Apps & usage section (#admin/apps),
@@ -1756,7 +1762,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // counts, the audience chips) with it. Its page check now follows
   // #communities to Home and finds the Needs you tile there; the two Needs
   // you checks follow the page to #needs. 729 leaves 151 slots.
-  checkCap.assertPinned(DAPP.tests.length, 729);
+  // 729 → 730: +1 (#6371) the This week page the weekly digest's Friday row
+  // opens is an address of its own (/?demo=1#week), so it has no check to
+  // fold into. 730 leaves 150 slots.
+  checkCap.assertPinned(DAPP.tests.length, 730);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

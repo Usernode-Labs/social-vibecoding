@@ -1415,7 +1415,8 @@ const GroupChat = {
     if (!status) return null;
     const me = window.App && App.user ? Number(App.user.id) : null;
     const actions = (Array.isArray(bot.actions) ? bot.actions : [])
-      .filter((a) => a && (a.id === 'yes' || a.id === 'no') && typeof a.label === 'string' && a.label)
+      // #6211: an overlap note also offers `first` (build this one first).
+      .filter((a) => a && (a.id === 'yes' || a.id === 'no' || a.id === 'first') && typeof a.label === 'string' && a.label)
       .map((a) => ({ id: a.id, label: a.label.slice(0, 40), primary: a.style === 'primary' }));
     // #6305: a many-project offer carries the rows it would file.
     const rows = Array.isArray(bot.offer.rows) ? bot.offer.rows.slice(0, 12) : null;
@@ -1479,7 +1480,7 @@ const GroupChat = {
   // room hears it was decided (`chat_message_updated`); a refusal is said.
   async decideBotOffer(messageId, choice, rows) {
     const slug = GroupChat.appSlug;
-    if (!slug || !messageId || (choice !== 'yes' && choice !== 'no')) return;
+    if (!slug || !messageId || (choice !== 'yes' && choice !== 'no' && choice !== 'first')) return;
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(messageId)}/bot-offer`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1668,7 +1669,7 @@ const GroupChat = {
     // the change as its root post and every notice a single line. `closed`
     // is what a change nobody else can see yet says instead of a stream: its
     // thread is not read at all (only its author can open the page).
-    const language = ['chat', 'request', 'change'].includes(opts.language) ? opts.language : 'flat';
+    const language = ['chat', 'request', 'change', 'decision'].includes(opts.language) ? opts.language : 'flat';
     const closed = language === 'change' && opts.closed ? String(opts.closed) : null;
     // #5007: a change built for a request points its replies at that
     // request's own page, where the conversation lives. Only the change
@@ -1727,6 +1728,8 @@ const GroupChat = {
       maxLength: GC_MAX_MESSAGE_LEN,
       request: fill && language === 'request',
       change: fill && language === 'change',
+      // #6440: a governance vote's page, the same sheet as a request's.
+      decision: fill && language === 'decision',
     });
 
     // Kit polish: keyboard avoidance on the unified thread scroller
@@ -1974,6 +1977,13 @@ const GroupChat = {
       if (!isFirstPage) GroupChat._takeOlder(st, thread, messages, data, events);
       else {
         if (GroupChat._fromSavedCopy(res)) GroupChat._owe(st, true);
+        // #6497: a request's first page carries its GitHub comments, so the
+        // one render below draws the whole discussion in time order. A
+        // payload only ever rides an issue thread's first page.
+        if (type === 'issue' && data.request_comments
+            && typeof AppView !== 'undefined' && AppView._takeIssueComments) {
+          AppView._takeIssueComments(slug, ref, data.request_comments);
+        }
         GroupChat._takeNewest(st, thread, messages, data, events, true);
       }
       st.loaded = true;
@@ -2078,12 +2088,21 @@ const GroupChat = {
   },
   // #4417 follow-up: no thread is the general pane's stream, which is a
   // topic's channel while one is open there (`_channel`).
+  //
+  // #6497: a request's discussion opens whole. Its first page asks for the
+  // server's request ceiling (500 rows), so a thread of a few dozen replies
+  // arrives in one read instead of 50 at a time; "Load earlier" still asks
+  // `&limit=50&before=`. Every other stream keeps 50. The URL stays
+  // byte-identical between the first load and `_refreshLatest`, as the
+  // comment above `_threadQuery` requires for the service worker.
   _firstPageUrl(slug, thread) {
     const scope = thread || GroupChat._channel;
+    const limit = scope && scope.type === 'issue' ? GroupChat.REQUEST_THREAD_LIMIT : 50;
     return scope
-      ? `${GroupChat._threadQuery(slug, scope)}&limit=50${GroupChat._demoParam()}`
+      ? `${GroupChat._threadQuery(slug, scope)}&limit=${limit}${GroupChat._demoParam()}`
       : `/api/apps/${slug}/messages?limit=50${GroupChat._demoParam()}`;
   },
+  REQUEST_THREAD_LIMIT: 500,
 
   // A catch-up waits for the network (the worker's `no-cache` rule, sw.js),
   // but not forever: a half-dead link would otherwise hold it, and "Load
@@ -2310,6 +2329,12 @@ const GroupChat = {
       if (!res.ok || GroupChat._fromSavedCopy(res)) return;
       const data = await res.json();
       if (GroupChat.appSlug !== slug || !current()) return;
+      // #6497: a catch-up refreshes the request's comments the same way its
+      // first page brought them.
+      if (thread && thread.type === 'issue' && data.request_comments
+          && typeof AppView !== 'undefined' && AppView._takeIssueComments) {
+        AppView._takeIssueComments(slug, thread.ref, data.request_comments);
+      }
       GroupChat._takeNewest(s, thread, Array.isArray(data.messages) ? data.messages : [], data, events);
       if (thread) {
         if (GroupChat._isOpenThread(thread.type, thread.ref)) GroupChat.renderThread({ keepScroll: true });
@@ -2524,7 +2549,7 @@ const GroupChat = {
     const prevTop = scroll ? scroll.scrollTop : 0;
     const wasLoaded = el.dataset.loaded === '1';
 
-    const language = ['chat', 'request', 'change'].includes(a.language) ? a.language : 'flat';
+    const language = ['chat', 'request', 'change', 'decision'].includes(a.language) ? a.language : 'flat';
     const chat = language === 'chat';
     GroupChat._react()?.mountTranscript(el, 'thread');
     // #2387: a reply thread opens with the message it hangs off — from the
@@ -3982,10 +4007,13 @@ const GroupChat = {
   // Operates only over messages the list actually references, so older
   // dotted messages outside the capped list aren't wrongly touched: a
   // referenced message's dot becomes (readAt == null).
+  // #6441: every kind a message can ring with is here, so a thread reply
+  // that arrives while the thread is open gets its dot and is then read by
+  // the transcript's on-screen observer.
   reconcileDotsFromNotifications() {
     const items = (window.Notifications && Notifications.items) || [];
     if (!Array.isArray(items)) return;
-    const KINDS = new Set(['mention', 'reply', 'reaction']);
+    const KINDS = new Set(['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply', 'change_thread_reply']);
     const state = new Map(); // chatMessageId -> isUnread
     for (const n of items) {
       if (!n || !KINDS.has(n.kind) || n.chatMessageId == null) continue;

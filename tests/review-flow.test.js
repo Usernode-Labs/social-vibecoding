@@ -94,9 +94,11 @@ test('#6344: the decisions, ballots and questions the run cannot draw become row
     feedItem({ kind: 'governance', id: 20, title: '', number: null }),
     feedItem({ kind: 'ballot', id: 22, title: '', number: null, ballot: { number: null, title: null, options: [], close: null } }),
     feedItem({ kind: 'governance', id: 30, title: 'No project here', app: null }),
+    // #6439: a vote to close a request is decided on the request's page.
+    feedItem({ kind: 'governance', id: 24, title: 'Close it: covered elsewhere', number: null, decision: { kind: 'close_issue', issueNumber: 7 } }),
   ];
   const pages = model.pageItems(feed, t);
-  assert.deepEqual(pages.map((p) => p.key), ['governance:9', 'ballot:12', 'question:15', 'governance:20', 'ballot:22'],
+  assert.deepEqual(pages.map((p) => p.key), ['governance:9', 'ballot:12', 'question:15', 'governance:20', 'ballot:22', 'governance:24'],
     'the feed order, only the kinds decided on their own page, and none without a project');
   assert.deepEqual(pages.map((p) => p.href), [
     '#app/homeroom/dev/governance/9',
@@ -104,15 +106,20 @@ test('#6344: the decisions, ballots and questions the run cannot draw become row
     '#app/homeroom/dev/issues/7',
     '#app/homeroom/dev/governance/20',
     '#app/homeroom/workshop',
-  ], 'a decision opens its own page; a ballot and a question their request\'s, else the Workshop');
-  assert.deepEqual(pages.map((p) => p.kind), ['governance', 'ballot', 'question', 'governance', 'ballot']);
+    '#app/homeroom/dev/issues/7',
+  ], 'a decision opens its own page; a close vote, a ballot and a question their request\'s, else the Workshop');
+  assert.deepEqual(pages.map((p) => p.kind), ['governance', 'ballot', 'question', 'governance', 'ballot', 'governance']);
   assert.deepEqual(pages.map((p) => p.title), [
     'Rename the app to Recipe Box',
     'Which sign-in screen should go live?',
     message('communities:reel.fallbackTitle.question'),
     message('communities:reel.fallbackTitle.decision'),
     message('communities:reel.ballot.fallbackTitle', { number: '' }),
+    'Close it: covered elsewhere',
   ], 'its own title, else the fallback the feed already uses');
+  const close = model.toReviewItems([feed[7]], () => null)[0];
+  assert.equal(close.request, 7, '#6439: the review item knows the request its vote would close');
+  assert.equal(model.toReviewItems([feed[1]], () => null)[0].request, null, 'a rename has no request');
 });
 
 test('the title shot crops the after side to what changed, at its own proportions', () => {

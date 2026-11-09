@@ -41,6 +41,9 @@
 // follow-up waiting its turn showed as nothing while the bot said otherwise.
 
 const { changeHref } = require('./change-destination');
+// #6528: the ready rule the bot's own ready card uses (checks passed and the
+// before & after shots settled), one copy shared with the change machine.
+const { heldUntil } = require('../workflow/rules/bot-readiness.ts');
 
 // Lazy: the live module is large, and only the queue readers below need it.
 function live() { return require('./homeroom-bot-live'); }
@@ -533,6 +536,22 @@ function checksOnHead(row) {
   return head.toLowerCase() === checked.toLowerCase();
 }
 
+/**
+ * #6521: checksOnHead for a change as the change page's own rows carry it
+ * (routes/votes.js /promoted and /proposals/:id, whose columns are `source`
+ * and `checks_commit_sha`), so the page, the thread list (stageOf) and the
+ * merge gate read one rule instead of the page believing a stale pass.
+ */
+function sessionChecksOnHead(session) {
+  if (!session) return true;
+  return checksOnHead({
+    proposal_source: session.source,
+    imported_pr_head_sha: session.imported_pr_head_sha,
+    reviewed_head_sha: session.reviewed_head_sha,
+    checks_sha: session.checks_commit_sha,
+  });
+}
+
 // N5: a proposal's stages on the vote step that are not ready to try: a
 // follow-up waiting its turn or running changes the change.
 const FOLLOW_UP_STAGES = new Set(['followup_queued', 'revising']);
@@ -679,9 +698,30 @@ function stageOf(input, { now = new Date() } = {}) {
     // waits on nobody's approval.
     const first = row.first_version === true;
     if (row.check_state === 'passing' || row.check_state === 'skipped') {
-      return first
-        ? { stage: 'vote', since: row.proposal_at, doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two' }
-        : { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
+      if (first) {
+        return { stage: 'vote', since: row.proposal_at, doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two' };
+      }
+      // #6528: its tests passed but its before & after shots are still being
+      // taken: it reads as checking, so the "Ready to try" bell (and the
+      // ready card) waits until the pictures are there. The rule is the
+      // bot's own readiness (bot-readiness.ts heldUntil), with its 45-minute
+      // lapse when no settle ever comes; a change with nothing visible to
+      // shoot is not held.
+      const head = (row.proposal_source === 'imported' ? row.imported_pr_head_sha : row.reviewed_head_sha) || row.checks_sha;
+      const held = heldUntil({
+        shots_state: row.shots_state,
+        shots_run_id: row.shots_run_id,
+        shots_detail: row.shots_detail,
+        shots_updated_at: row.shots_updated_at,
+        checks_checked_at: row.checks_at,
+      }, head, now.getTime());
+      if (held != null) {
+        return {
+          stage: 'checks', since: row.checks_at || row.proposal_at,
+          doing: 'it\'s waiting for approval, and its tests passed; its before and after shots are still being taken',
+        };
+      }
+      return { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
     }
     const waiting = first ? 'it goes live without a vote once its tests pass' : 'it\'s waiting for approval';
     // #6284: the bot stopped at its own limit on failing checks. Needs you
@@ -713,7 +753,7 @@ function stageOf(input, { now = new Date() } = {}) {
   if (row.started_at) {
     // #6228: a read under way after a person replied is reading that reply.
     if (replyWaits(row, { now })) {
-      return { stage: 'reading', reply: true, since: row.started_at, doing: 'reading the newest reply', limit: 'reading' };
+      return { stage: 'reading', reply: true, since: row.started_at, doing: 'reading the new reply', limit: 'reading' };
     }
     return { stage: 'reading', since: row.started_at, doing: `reading ${it} to decide whether to ask a question or build it`, limit: 'reading' };
   }
@@ -808,7 +848,7 @@ function stageOf(input, { now = new Date() } = {}) {
     // #6228: a reply waiting for the read the bot has queued reads as that
     // read about to happen, not as a request waiting its turn.
     if (replyWaits(row, { now })) {
-      return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'about to read the newest reply' };
+      return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'reading the new reply in a moment' };
     }
     return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder',
       ...(planFailed(row) ? { retry: 'plan' } : {}) };
@@ -816,7 +856,7 @@ function stageOf(input, { now = new Date() } = {}) {
   // #6228: a reply nobody has queued a read for yet still reads as one
   // coming, for REPLY_WAIT_MS: the bot's refresh sees it and queues it.
   if (replyWaits(row, { now })) {
-    return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'about to read the newest reply' };
+    return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'reading the new reply in a moment' };
   }
   return null;
 }
@@ -1102,16 +1142,7 @@ function requestRecordJoinsSql({ appId = 'm.app_id', issueNumber = 'm.issue_numb
           WHERE app_id = ${appId} AND issue_number = ${issueNumber} AND question_status = 'open'
             ${userIdSql ? `AND user_id = ${userIdSql}` : ''}
           ORDER BY created_at DESC LIMIT 1
-       ) oq ON TRUE
-       -- #6423: the change this request's build waits for, touching the
-       -- same files (bot-request's build.overlap), if it waits for one.
-       LEFT JOIN LATERAL (
-         SELECT (b.data->'build'->'overlap'->>'prNumber')::int AS build_overlap_pr
-           FROM wf_instances b
-          WHERE b.machine = 'bot-request'
-            AND b.key = 'request:' || ${appId} || ':' || ${issueNumber}
-          LIMIT 1
-       ) ov ON TRUE`;
+       ) oq ON TRUE`;
 }
 
 /** The columns requestRecordJoinsSql provides, as both readers select them. */
@@ -1129,6 +1160,9 @@ const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q
             -- Merged but not live yet (live_at) reads as merging: going live.
             CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
             cs.check_state, cs.check_phase,
+            -- #6528: the change's before & after shots, so a passing change
+            -- still being shot reads as checking rather than ready.
+            cs.shots_state, cs.shots_run_id, cs.shots_detail, cs.shots_updated_at,
             cs.merge_conflict_state, cs.integration_merges_clean,
             cs.checks_progress, cs.checks_checked_at AS checks_at, cs.test_results,
             -- N5: which commit the verdict is about, and the head up for
@@ -1137,7 +1171,6 @@ const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q
             cs.source AS proposal_source,
             COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
             oq.created_at AS question_at,
-            ov.build_overlap_pr,
             -- #6284: it stopped at its own limit on this change, with no
             -- grant open: Needs you reads that, not "checking".
             EXISTS (
@@ -1937,6 +1970,8 @@ module.exports = {
   // #6234: the bot's own fix of a change's failing checks, for its page.
   changeBotFix,
   checksOnHead,
+  // #6521: the same rule for a change page's own row shape.
+  sessionChecksOnHead,
   firstVersionStage,
   firstVersionStopped,
   handedBack,

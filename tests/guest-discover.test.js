@@ -109,9 +109,9 @@ test('Try it where it can open here: the viewer anywhere, the app\'s own address
   assert.equal(canTryHere(noLogin, true), true);
   assert.equal(canTryHere(guestOnly, true), false);
   assert.equal(canTryHere(neither, true), false);
-  // Discover asks it for every card, with this page's answer (a signed-in
-  // waitlisted account can open every project); the project page too.
-  assert.match(read(DISCOVER), /const tryable = useCallback\(\(app: GuestApp\) => signedIn \|\| canTryHere\(app, inApp\), \[signedIn, inApp\]\);/);
+  // A signed-in waitlisted account can open every project here, inside the
+  // viewer (the pinned-app tiles); the project page asks the same question.
+  assert.match(read(DISCOVER), /<TryLink app=\{app\} className="flex min-w-0 flex-col items-center gap-1\.5 no-underline" onOpenInside=\{open\} inside=\{signedIn\}>/);
   assert.match(read(PROJECT), /\{signedIn \|\| canTryHere\(app, inHomeroomApp\(\)\) \? \(\s+<TryLink\s+app=\{app\}\s+inside=\{signedIn\}/);
   const { inHomeroomApp } = loadTsx(DATA);
   assert.equal(inHomeroomApp(), false, 'a server render is never the app');
@@ -147,8 +147,8 @@ const discoverProps = (over = {}) => ({
 test('every card opens its project\'s page, no card is locked, and each project is one card: featured first, then the most active (One Home, #6361)', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
   // The signed-out Home's Communities: Featured first, what an admin
-  // featured in its order, as one sideways row (One Home follow-up, #6361);
-  // then the rest by people active, each project once.
+  // featured in its order, in the same wrapping grid as the rest (#6434);
+  // then the rest by people active, under their own heading, each project once.
   assert.deepEqual([...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'game-corner']);
   assert.deepEqual([...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]), ['fresh-one']);
   assert.ok(html.indexOf('data-home-join-featured=""') < html.indexOf('<article data-guest-card="fresh-one"'), 'the strip leads');
@@ -218,8 +218,8 @@ test('a card is its picture, its name and its own sentence; how many used it lat
     assert.ok(!words.some((w) => /member|people active|up for a vote|voted in|Updated|Latest change/.test(w)), `${slug}: ${words}`);
     assert.doesNotMatch(cardOf(html, slug), /data-guest-card-(?:fact|activity|votes)=/);
   }
-  assert.deepEqual(text(quiet).slice(1), ['Quiet', message('home:join.pin'), message('home:join.button')],
-    'the letter tile, then the name, then Home\'s Pin and Join (One Home, #6361)');
+  assert.deepEqual(text(quiet).slice(1), ['Quiet'],
+    'the letter tile, then the name: a visitor\'s card carries no Pin or Join (#6433)');
 });
 
 test('the cards are one grid that reflows, two columns at least, and the cards look worth tapping', () => {
@@ -245,27 +245,95 @@ test('the cards are one grid that reflows, two columns at least, and the cards l
   assert.match(card, /<span aria-hidden="true" class="absolute bottom-2 end-2 [^"]*opacity-0[^"]*group-hover:opacity-100[^"]*group-has-\[a:focus-visible\]:opacity-100/);
 });
 
-test('a card\'s only buttons are Pin and Join, under its words: Try it is the project page\'s, and a waitlisted account still sees every project (One Home, #6361)', () => {
+test('a visitor\'s card has no buttons at all: Try it, Join and Pin are the project page\'s (#6433), and a waitlisted account still sees every project', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
   assert.doesNotMatch(html, /data-guest-try=/);
   assert.doesNotMatch(html, /<button[^>]*>Try it/);
   for (const slug of ['todo-list', 'game-corner', 'fresh-one']) {
     const card = cardOf(html, slug);
-    const buttons = [...card.matchAll(/<button[^>]*>/g)].map((m) => m[0]);
-    assert.equal(buttons.length, 2, `${slug}: two buttons`);
-    assert.match(buttons[0], new RegExp(`data-home-pin="${slug}"`));
-    assert.match(buttons[0], /aria-pressed="false"/, 'nothing pinned on this device yet');
-    assert.match(buttons[1], new RegExp(`data-home-join="${slug}"`));
-    // Over the card's stretched link, so they take their own taps.
-    assert.match(card, /<span class="relative z-\[2\] mt-2\.5 flex items-center gap-2" data-guest-card-footer="">/);
+    assert.deepEqual(card.match(/<button/g) || [], [], `${slug}: no button`);
+    assert.doesNotMatch(card, /data-home-pin=|data-home-join=|data-guest-card-footer/);
   }
-  // Pin keeps it on this device; Join asks the landing to sign up for it.
-  assert.match(read(DISCOVER), /onPin=\{\(app\) => \{ toggleDevicePin\('communities', app\.slug\); \}\}\s*onJoin=\{\(app\) => \{ onIntent\?\.\(\{ kind: 'join', app \}\); \}\}/);
+  // The page behind the card is where a visitor joins; the card only tells
+  // the landing what was asked for, never from a button of its own.
+  assert.match(read(DISCOVER), /onJoin=\{\(app\) => \{ onIntent\?\.\(\{ kind: 'join', app \}\); \}\}/);
   // A waitlisted account is signed in: every project is still there,
   // Featured's and the rest.
   const signedIn = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ signedIn: true }));
   assert.deepEqual([...signedIn.matchAll(/<article data-guest-(?:featured|card)="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'game-corner', 'fresh-one']);
   assert.doesNotMatch(signedIn, /data-guest-join=/);
+});
+
+test('signed out with nothing pinned: no suggested apps and no hint line; Pinned apps is not drawn (#6433)', () => {
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const pins = loadTsx('frontend/src/features/guest/device-pins.ts');
+  pins.devicePinsStore.set({ apps: [], communities: [], ready: true });
+  const wired = loadTsx(DISCOVER, { stubs: { './device-pins': pins } });
+  const html = renderToHtml(createElement(wired.GuestDiscover, discoverProps()));
+  assert.doesNotMatch(html, /data-guest-pinned-apps/);
+  assert.doesNotMatch(html, /data-guest-suggested-app/);
+  assert.doesNotMatch(html, /Tap \+ to pin an app/);
+  // The row and its line are gone from the code, not merely unrendered.
+  const src = read(DISCOVER);
+  assert.doesNotMatch(src, /home:guest\.appsHint|data-guest-suggested-app|home:guest\.pinApp/);
+  const catalog = JSON.parse(read('frontend/locales/en/home.json'));
+  assert.equal(catalog['guest.appsHint'], undefined, 'the hint went with the row');
+  assert.equal(catalog['guest.pinApp'], undefined, 'the + label went with it');
+});
+
+test('signed out with an app pinned on this device: Pinned apps draws its tile and remove badge (#6433)', () => {
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const pins = loadTsx('frontend/src/features/guest/device-pins.ts');
+  pins.devicePinsStore.set({ apps: ['todo-list'], communities: [], ready: true });
+  const wired = loadTsx(DISCOVER, { stubs: { './device-pins': pins } });
+  const html = renderToHtml(createElement(wired.GuestDiscover, discoverProps()));
+  assert.match(html, /<section data-guest-pinned-apps="">/);
+  const at = html.indexOf('data-guest-pinned-app="todo-list"');
+  assert.ok(at >= 0, 'the pinned app is Home');
+  // The − badge names it, over the tile's own link.
+  assert.ok(html.includes(`aria-label="${message('home:guest.unpinApp', { app: 'Todo List' })}"`), 'the − badge names it');
+  assert.match(html.slice(at), /<svg/, 'with its remove glyph');
+  assert.doesNotMatch(html, /data-guest-suggested-app|Tap \+ to pin/);
+});
+
+test('a visitor\'s community cards have no Pin or Join; a signed-in card keeps its votes line and Join (#6433)', () => {
+  const { CommunitiesToJoin } = loadTsx(JOIN);
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const draw = (over = {}) => renderToHtml(createElement(CommunitiesToJoin, {
+    apps: APPS, exclude: new Set(), signedIn: true, query: '', onJoin() {}, ...over,
+  }));
+  const guest = draw({ signedIn: false });
+  assert.doesNotMatch(guest, /data-home-pin=|data-home-join=|data-guest-card-footer/);
+  // Signed in, the row is unchanged: what is up for a vote, then Join.
+  const signedIn = draw();
+  for (const slug of ['todo-list', 'game-corner', 'fresh-one']) {
+    const card = cardOf(signedIn, slug);
+    assert.match(card, new RegExp(`data-home-join="${slug}"`));
+    assert.match(card, /data-guest-card-footer=""/);
+    assert.doesNotMatch(card, /data-home-pin=/);
+  }
+  assert.ok(text(cardOf(signedIn, 'game-corner')).includes(message('home:join.votes', { count: 7 })));
+});
+
+test('an app open for a visitor is pinned from the landing\'s bar, to this device, and Home shows it (#6433)', () => {
+  const src = read(LANDING);
+  const actions = src.slice(src.indexOf('data-landing-actions'));
+  // Only while an app is open and there is no session, beside Sign in.
+  assert.match(actions, /\{openApp && !session \? \(\s+<button\s+type="button"\s+data-landing-pin-app=\{openApp\.slug\}\s+aria-pressed=\{devicePins\.apps\.includes\(openApp\.slug\)\}/);
+  assert.match(actions, /onClick=\{\(\) => \{ toggleDevicePin\('apps', openApp\.slug\); \}\}/);
+  assert.match(src, /const devicePins = useStoreState\(devicePinsStore\);/);
+  // The bar's own quiet button, so the bar keeps its height.
+  assert.match(actions, /className="un-touch-target -my-2 min-h-11 rounded-full px-2 text-\[15px\] font-semibold /);
+  assert.equal(message('auth:landing.pinApp'), 'Pin');
+  assert.equal(message('auth:landing.pinnedApp'), 'Pinned');
+  assert.equal(message('auth:landing.pinAppNamed', { app: 'Game Corner' }), 'Pin Game Corner to Home');
+  // Pressing it writes this device's list, which Home's Pinned apps reads.
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const pins = loadTsx('frontend/src/features/guest/device-pins.ts');
+  assert.equal(pins.toggleDevicePin('apps', 'todo-list'), true);
+  assert.deepEqual(pins.devicePinsStore.get().apps, ['todo-list']);
+  const wired = loadTsx(DISCOVER, { stubs: { './device-pins': pins } });
+  assert.match(renderToHtml(createElement(wired.GuestDiscover, discoverProps())), /data-guest-pinned-app="todo-list"/);
 });
 
 // Twenty projects, the even ones (a01, a03, …) open for a visitor.
@@ -285,8 +353,19 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   const html = draw();
   assert.deepEqual(featuredOf(html), ['todo-list', 'game-corner'], 'in the order an admin set');
   assert.deepEqual(cardsOf(html), ['fresh-one'], 'and not again in the grid');
-  assert.match(html, /<div data-home-join-featured=""[^>]*><h3 id="home-join-featured-label" class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*">Featured<\/h3><div role="list" aria-labelledby="home-join-featured-label" class="[^"]*\bsnap-x\b[^"]*\boverflow-x-auto\b/);
+  // #6434: Featured wraps in the same grid as the rest, at the same size,
+  // and the rest get their own heading.
+  assert.match(html, /<div data-home-join-featured=""[^>]*><h3 id="home-join-featured-label" class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*">Featured<\/h3><div role="list" aria-labelledby="home-join-featured-label" class="grid grid-cols-\[repeat\(auto-fill,[^"]*\] gap-3 px-1"><div role="listitem" class="flex \[&amp;&gt;article\]:flex-1">/);
+  assert.doesNotMatch(read(JOIN), /snap-x|overflow-x-auto|w-\[min\(17rem/, 'nothing in the section scrolls sideways');
   assert.equal(message('home:join.featured'), 'Featured');
+  assert.equal(message('home:join.more'), 'More communities');
+  // #6470: All is chosen by default, so the rest follow Featured with no
+  // "More communities" heading between them.
+  assert.doesNotMatch(html, /data-home-join-rest/, 'All chosen: the rest follow Featured with no heading (#6470)');
+  assert.ok(html.indexOf('data-guest-card="fresh-one"') > html.indexOf('data-guest-featured="game-corner"'), 'the rest still come after Featured');
+  // A chosen kind keeps the heading over its rest. The kind is internal state
+  // a chip click sets, so the static renderer cannot reach it: pin the source.
+  assert.match(read(JOIN), /\{kind && featured\.length \? <h3 className=\{`\$\{SMALL_CAPS_LABEL\} px-1 pb-2`\} data-home-join-rest="">\{t\('home:join\.more'\)\}<\/h3> : null\}/, 'a chosen kind keeps the heading over its rest');
   // Each featured card keeps what a card can do: Join, signed in.
   assert.match(cardOf(html, 'game-corner'), /data-home-join="game-corner"/);
   // A community already on this Home is in neither.
@@ -297,15 +376,21 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   assert.deepEqual(featuredOf(found), []);
   assert.deepEqual(cardsOf(found), ['todo-list', 'game-corner', 'fresh-one']);
   assert.doesNotMatch(found, /data-home-join-featured/);
-  // Signed out the same strip, with Pin then Join on each card, and its own
-  // label id (the landing and Home share a document).
-  const guest = draw({ signedIn: false, pinned: new Set(), onPin() {} });
+  assert.doesNotMatch(found, /data-home-join-rest/, 'one grid while searching, no second heading');
+  // Signed out the same strip, with its own label id (the landing and Home
+  // share a document); a visitor's cards have no buttons at all (#6433).
+  const guest = draw({ signedIn: false });
   assert.deepEqual(featuredOf(guest), ['todo-list', 'game-corner']);
   assert.match(guest, /id="guest-join-featured-label"/);
-  assert.match(cardOf(guest, 'todo-list'), /data-home-pin="todo-list"[\s\S]*data-home-join="todo-list"/);
+  assert.doesNotMatch(guest, /data-home-pin=|data-home-join=|data-guest-card-footer/);
   // Nothing featured: no strip, and the grid is everything.
   const none = draw({ apps: APPS.map((a) => ({ ...a, featured: false })) });
   assert.doesNotMatch(none, /data-home-join-featured/);
+  assert.doesNotMatch(none, /data-home-join-rest/, 'nothing featured: one grid, no second heading');
+  // Only featured ones: Featured alone, no empty second heading.
+  const onlyFeatured = draw({ apps: APPS.filter((a) => a.featured) });
+  assert.match(onlyFeatured, /data-home-join-featured/);
+  assert.doesNotMatch(onlyFeatured, /data-home-join-rest/, 'no rest: no More communities heading');
   assert.deepEqual(cardsOf(none), ['game-corner', 'todo-list', 'fresh-one']);
 });
 
@@ -707,6 +792,6 @@ test('the landing\'s declared checks hold Discover and the bar\'s Sign in, folde
   assert.ok(one);
   assert.match(one.expectSelector, /:has\(#landing-header button\[data-landing-sign-up\]\):has\(\[data-landing-story\] button\[data-landing-story-join\]\):not\(:has\(\[data-landing-story\] a\)\) #landing-header \[data-landing-sign-in\]:not\(\.hidden\)$/);
   // Its one other button is pinned by the story's own test above, under the
-  // runner's 256-character cap on a selector.
+  // runner's selector cap (`MAX_TEST_SELECTOR_LEN`).
   assert.ok(one.expectSelector.length <= 256);
 });

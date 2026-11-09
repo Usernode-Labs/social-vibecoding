@@ -145,8 +145,10 @@ test('a request the bot holds until later says so, offers no Ask and does not sp
   const queued = baseIssue({ bot: { what: 'queued', since: null } });
   assert.equal(AppView._requestStatusView(queued).lead, message('changes:request.status.lead.botQueued'));
   assert.equal(AppView._issueWorkState(queued).spinner, true);
-  // Nobody on it, and a track that holds nothing: Nobody, with Ask.
-  for (const issue of [baseIssue(), baseIssue({ track: { work: { stage: 'reading', line: { code: 'queued' } } } })]) {
+  // Nobody on it, and a track that holds nothing: Nobody, with Ask. #6390:
+  // a track that says it is READING with no bot row is the bot on it, not
+  // nobody, so that case is the queued one here.
+  for (const issue of [baseIssue(), baseIssue({ track: { work: { stage: 'queued', line: { code: 'queued' } } } })]) {
     const nobody = AppView._requestStatusView(issue);
     assert.equal(nobody.lead, 'Nobody is working on this yet.');
     assert.equal(nobody.action.label, 'Ask Homeroom bot to build this');

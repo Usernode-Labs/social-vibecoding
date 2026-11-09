@@ -3,11 +3,12 @@
  * (features/auth/landing.tsx draws it under the story's short hero).
  *
  * ONE HOME, SIGNED OUT (#6361). The same page a member's Home is: one
- * search, Pinned apps (until this device pins one, a few to try, each with a
- * + to pin), the communities this device pinned, then Communities, the
- * public directory as picture cards, each with Pin and Join, admin-featured
- * first and then the most people active (../home/communities-to-join.tsx),
- * more as you scroll. Pins are kept on the device (./device-pins.ts) and
+ * search, Pinned apps (this device's, once it has pinned one; #6433), the
+ * communities this device pinned, then Communities, the public directory as
+ * picture cards, admin-featured first and then the most people active
+ * (../home/communities-to-join.tsx), more as you scroll. A visitor pins an
+ * app from the bar while it is open (../auth/landing.tsx), never from a
+ * suggested row here. Pins are kept on the device (./device-pins.ts) and
  * move to the account at sign-in. The Featured and All apps sections, their
  * sort and Show more went with it.
  *
@@ -19,8 +20,9 @@
  *
  * THE WHOLE CARD IS ONE LINK to the project's read-only page
  * (./guest-project.tsx), whose band leads with Try it, then Join, then the
- * community. Its only buttons are Home's Pin and Join, on a row under the
- * words raised over the link (Card's `footer`); there is no Try it on a card. The name is the link and
+ * community. A card has no buttons of its own (#6433): a visitor's card is
+ * its picture, name and sentence, and what a card can do is on the page
+ * behind it. There is no Try it and no Pin or Join on one. The name is the link and
  * stretches over the card, so a tap anywhere opens it, a screen reader meets
  * one link per card, and the keyboard's focus ring goes round the whole
  * card. Its href is the clean `/app/<slug>` a search engine can follow
@@ -48,15 +50,15 @@
  * Join, Vote, Ask), never as a wall.
  */
 
-import { type AnchorHTMLAttributes, type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type AnchorHTMLAttributes, type MouseEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 
-import { ArrowRightShortIcon, PlusIcon, SearchIcon, UserIcon } from '@/components/ui/icons';
+import { ArrowRightShortIcon, SearchIcon, UserIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { CommunitiesToJoin } from '../home/communities-to-join';
-import { CORNER_PIN, CORNER_UNPIN, CommunityTileFace, MinusGlyph } from '../home/pinned-communities';
+import { CORNER_UNPIN, CommunityTileFace, MinusGlyph } from '../home/pinned-communities';
 import { devicePinsStore, loadDevicePins, toggleDevicePin } from './device-pins';
 import { useCommunityColor } from '../../lib/community-color';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
@@ -64,12 +66,8 @@ import { cardCover, morph, projectHero } from './card-morph';
 import {
   type GuestApp,
   MIN_PEOPLE,
-  canTryHere,
-  featuredApps,
-  inHomeroomApp,
   projectHash,
   projectPath,
-  sortApps,
 } from './guest-data';
 
 /** A project made in the last 30 days wears "New". */
@@ -253,7 +251,8 @@ export function Card({ app, eager, featured = false, footer }: {
   eager: boolean;
   featured?: boolean;
   /** One Home (#6361): a row under the words, raised over the card's link so
-      its buttons (Join, Pin) take their own taps. */
+      its buttons (the signed-in Join) take their own taps. A visitor's card
+      has no footer row (#6433). */
   footer?: ReactNode;
 }) {
   const t = useMessages('auth');
@@ -343,9 +342,9 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
   onOpenInside?: (app: GuestApp) => void;
 }) {
   // ONE HOME (#6361): THE SAME HOME, SIGNED OUT. Under the story: one search,
-  // Pinned apps (a few to try, each with a + to pin, until this device has
-  // pinned one), the communities this device pinned, then Communities, the
-  // directory's picture cards with Pin and Join. Pins are kept on the device
+  // Pinned apps (this device's, shown once it has pinned one; #6433 took the
+  // suggested row and its + away), the communities this device pinned, then
+  // Communities, the directory's picture cards. Pins are kept on the device
   // (./device-pins.ts) and move to the account at sign-in. The Featured and
   // All apps sections, their sort control and Show more went with it.
   const t = useMessages('auth');
@@ -356,20 +355,14 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
 
   const all = apps || [];
   const bySlug = useMemo(() => new Map(all.map((a) => [a.slug, a])), [all]);
-  const inApp = inHomeroomApp();
-  const tryable = useCallback((app: GuestApp) => signedIn || canTryHere(app, inApp), [signedIn, inApp]);
   const q = query.trim();
   const matches = (app: GuestApp) => !q || [app.name, app.slug, app.description].some((f) => typeof f === 'string' && f.toLowerCase().includes(q.toLowerCase()));
   const pinnedApps = device.apps.map((s) => bySlug.get(s)).filter((a): a is GuestApp => !!a && matches(a));
-  const suggested = useMemo(() => (device.ready && !device.apps.length
-    ? featuredApps(all, tryable).concat(sortApps(all, 'trending').filter((a) => tryable(a))).filter((a, i, list) => list.findIndex((b) => b.slug === a.slug) === i).slice(0, 4)
-    : []), [all, device.ready, device.apps.length, tryable]);
   const pinnedCommunities = device.communities.map((s) => bySlug.get(s)).filter((a): a is GuestApp => !!a && matches(a));
-  const pinnedSet = useMemo(() => new Set(device.communities), [device.communities]);
   const open = onOpenInside || (() => {});
 
-  const appTile = (app: GuestApp, suggestion: boolean) => (
-    <span key={app.slug} className="relative flex min-w-0 flex-col items-center gap-1.5 py-1 text-center" data-guest-pinned-app={suggestion ? undefined : app.slug} data-guest-suggested-app={suggestion ? app.slug : undefined}>
+  const appTile = (app: GuestApp) => (
+    <span key={app.slug} className="relative flex min-w-0 flex-col items-center gap-1.5 py-1 text-center" data-guest-pinned-app={app.slug}>
       <TryLink app={app} className="flex min-w-0 flex-col items-center gap-1.5 no-underline" onOpenInside={open} inside={signedIn}>
         <GuestIcon app={app} size="md" />
         <span className="max-w-full line-clamp-2 break-words text-[12.5px] font-semibold leading-[15px] text-zinc-800 dark:text-zinc-200">{app.name}</span>
@@ -380,11 +373,11 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
       <button
         type="button"
         className="absolute -top-4 -end-1.5 w-11 h-11 flex items-center justify-center"
-        aria-label={suggestion ? th('home:guest.pinApp', { app: app.name }) : th('home:guest.unpinApp', { app: app.name })}
+        aria-label={th('home:guest.unpinApp', { app: app.name })}
         onClick={() => { toggleDevicePin('apps', app.slug); }}
       >
-        <span className={`w-6 h-6 rounded-full flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)] ${suggestion ? CORNER_PIN : CORNER_UNPIN}`}>
-          {suggestion ? <PlusIcon className="w-3.5 h-3.5" aria-hidden="true" /> : <MinusGlyph />}
+        <span className={`w-6 h-6 rounded-full flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)] ${CORNER_UNPIN}`}>
+          <MinusGlyph />
         </span>
       </button>
     </span>
@@ -407,12 +400,11 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
           />
         </label>
 
-        {pinnedApps.length || (suggested.length && !q) ? (
+        {pinnedApps.length ? (
           <section data-guest-pinned-apps="">
             <h2 className={`${SMALL_CAPS_LABEL} pt-4 pb-1.5`}>{th('home:grid.heading')}</h2>
-            {!pinnedApps.length ? <p className="pb-1 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{th('home:guest.appsHint')}</p> : null}
             <div className="grid grid-cols-4 gap-x-1 gap-y-4 pt-2">
-              {pinnedApps.length ? pinnedApps.map((a) => appTile(a, false)) : suggested.map((a) => appTile(a, true))}
+              {pinnedApps.map((a) => appTile(a))}
             </div>
           </section>
         ) : null}
@@ -453,8 +445,6 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
             exclude={EMPTY}
             signedIn={false}
             query={q}
-            pinned={pinnedSet}
-            onPin={(app) => { toggleDevicePin('communities', app.slug); }}
             onJoin={(app) => { onIntent?.({ kind: 'join', app }); }}
           />
         </div>

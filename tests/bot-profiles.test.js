@@ -109,6 +109,27 @@ test('the surfaces\' limits are their profiles\'', () => {
   }
 });
 
+// #6358: a design turn gets four times the room and twice the retry, and three
+// minutes a step, so a long page is drawn to the end. Chat is unchanged.
+test('#6358: a design turn draws a whole screen within its budget', () => {
+  assert.deepEqual(
+    [profiles.DESIGN_LIMITS.rounds, profiles.DESIGN_LIMITS.outputTokens, profiles.DESIGN_LIMITS.retryOutputTokens,
+      profiles.DESIGN_LIMITS.requestTimeoutMs],
+    [12, 16000, 32000, 180_000],
+  );
+  assert.deepEqual(
+    [profiles.CHAT_LIMITS.outputTokens, profiles.CHAT_LIMITS.retryOutputTokens, profiles.CHAT_LIMITS.requestTimeoutMs],
+    [8000, 16000, 90_000],
+  );
+  const design = require('../src/services/design-bot');
+  assert.equal(design.DESIGN_OUTPUT_TOKENS, 16000);
+  assert.equal(design.DESIGN_RETRY_OUTPUT_TOKENS, 32000);
+  assert.equal(design.DESIGN_REQUEST_TIMEOUT_MS, 180_000);
+  const src = read('src/services/design-bot.js');
+  assert.match(src, /retryOutputTokens: DESIGN_RETRY_OUTPUT_TOKENS,/);
+  assert.match(src, /timeoutMs: DESIGN_REQUEST_TIMEOUT_MS,/);
+});
+
 test('the one entry runs each kind on its surface, and the callers use it', async () => {
   const threadBot = require('../src/services/thread-bot');
   const ran = [];

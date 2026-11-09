@@ -58,12 +58,13 @@ import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useSta
 import type { MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
-import { i18n } from '../../../lib/i18n/runtime';
+import { i18n, t as translate } from '../../../lib/i18n/runtime';
 import { projectChangesOnGithub } from '../../../lib/change-ref';
 import { reload as reloadTab } from '../../../lib/tab-build';
 import { detailDrawn, detailEntry, markShotsArrival, takeShotsArrival } from '../../ai/detail';
 import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
+import { Avatar } from '@/components/ui/feed';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { ActionButton, StatusPill } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
@@ -71,17 +72,21 @@ import { ChangeGates } from './change-head';
 import { changeDetailAsk, mergeChangePatch } from './change-detail-refresh';
 import type { ChangeThreadView, TopicBody } from './model';
 import { ChangeSheets, readChangeDetail } from './topic-head';
+import { outcomeLine, type GovernanceView } from './governance-model';
 import { RequestWords } from './request-head';
 import { openRequestSpec, type RequestSpecCard } from './request-model';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { pageSlug } from './thread-items';
+import { swatchFor } from '../../group-chat/swatch';
 import { WorkWithBotButton } from './work-with-bot';
 import {
   alsoCloses,
   ballotOf,
   ballotVotes,
+  closesList,
   elsewhereFor,
   type Ballot,
+  type FoldedReply,
   type ThreadElsewhere,
   type ThreadItem,
   type ThreadPayload,
@@ -143,6 +148,10 @@ function useChangeViews(items: ThreadItem[]): Array<ChangeView | null> {
   useEffect(() => {
     if (!items.length) return undefined;
     const abort = new AbortController();
+    // #6441: a change's page is the request's page now, so a change drawn
+    // here has been seen: its "ready to try" leaves the bell. The call is a
+    // no-op while nothing is unread.
+    for (const item of items) window.Notifications?.markProposalSeen?.(item.id);
     for (const item of items) {
       readChangeDetail({ id: item.id, status: item.status }, false, abort.signal)
         .then((row) => { if (!abort.signal.aborted && row) setRows((was) => ({ ...was, [item.id]: row })); })
@@ -580,7 +589,7 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
           {t(item.ready ? 'project:topic.thread.page.ready' : 'project:topic.thread.page.underway')}
         </p>
       ) : view ? (
-        <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} />
+        <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} closes={closesList(item)} />
       ) : (
         // #6387: the cards keep their place while the change's own read is
         // still landing, so they fill in rather than pushing the page down.
@@ -796,13 +805,13 @@ function useCloseRow(slug: string | null, close: ThreadItem | null, revision: nu
   return row;
 }
 
-/** A Votes card's bar, one segment per yes the rule needs. */
-function Bar({ yes, need, label }: { yes: number; need: number; label: string }): ReactNode {
+/** A Votes card's bar, one segment per yes the rule needs. #6439: an ended card's bar is full and drawn done. */
+function Bar({ yes, need, label, done = false }: { yes: number; need: number; label: string; done?: boolean }): ReactNode {
   return (
     <div className="dev-change-bar" role="img" aria-label={label}>
       {Array.from({ length: need }, (_, i) => (
         <span key={i} className="dev-change-bar-seg" style={{ flexGrow: 1, flexBasis: 0 }}>
-          <span className="dev-change-bar-fill" data-state="moving" style={{ width: i < yes ? '100%' : '0%' }} />
+          <span className="dev-change-bar-fill" data-state={done ? 'done' : 'moving'} style={{ width: i < (done ? need : yes) ? '100%' : '0%' }} />
         </span>
       ))}
     </div>
@@ -976,16 +985,66 @@ function useBallotInView(options: ThreadItem[], box: RefObject<HTMLElement | nul
   }, [ids]);
 }
 
-/** A vote to close the request with no change competing: who proposed it and why, then its Votes card. */
+/**
+ * #6439: a door that sends someone straight to a vote to close opens the
+ * request's page at its close card, not at the top (./votes-in-view.ts).
+ * The ask is `close:<id>`, a key of its own so it never collides with a
+ * change's id.
+ */
+function useCloseInView(close: ThreadItem, box: RefObject<HTMLElement | null>): void {
+  useEffect(() => {
+    let release: (() => void) | null = null;
+    const show = () => {
+      const card = box.current?.querySelector<HTMLElement>('[data-change-gate="close"]') || box.current;
+      if (!card) return;
+      if (!takeVotesInView(`close:${close.id}`)) return;
+      release?.();
+      release = holdVotesInView(card);
+    };
+    show();
+    const off = onVotesAsked(show);
+    return () => { off(); release?.(); };
+  }, [close.id]);
+}
+
+/** The newest replies posted on a vote to close, read from its own thread (#6439). */
+async function readCloseReplies(slug: string | null, closeId: number): Promise<FoldedReply[]> {
+  if (!slug) return [];
+  const qs = `thread_type=governance&thread_ref=${encodeURIComponent(String(closeId))}&limit=200`;
+  const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages?${qs}`, { credentials: 'same-origin' });
+  if (!res.ok) return [];
+  const data = await res.json();
+  const rows = Array.isArray(data && data.messages) ? data.messages : [];
+  return rows
+    .filter((m: { msg_type?: string; deleted_at?: string | null; content?: string }) => m && m.msg_type === 'message' && !m.deleted_at && m.content)
+    .map((m: { id: number; username?: string | null; content: string; is_synthetic?: boolean; created_at?: string | null }) => ({
+      id: Number(m.id),
+      username: m.username || 'someone',
+      bot: !!m.is_synthetic || m.username === 'homeroom_bot',
+      text: String(m.content || '').slice(0, 280),
+      at: m.created_at || null,
+    }));
+}
+
+/**
+ * A vote to close the request: who proposed it and why, then its Votes card.
+ * While it is open the card is the place to vote; once it has ended (#6439)
+ * it stays, reading how it ended, with no buttons. Replies people posted on
+ * the vote are shown under it, so nothing posted there is lost.
+ */
 function CloseVote({ slug, close, onChanged }: { slug: string | null; close: ThreadItem; onChanged: () => void }): ReactNode {
   const t = useMessages('project');
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [all, setAll] = useState<FoldedReply[] | null>(null);
+  const [loadingAll, setLoadingAll] = useState(false);
   const row = useCloseRow(slug, close, revision);
   const box = useRef<HTMLDivElement>(null);
+  useCloseInView(close, box);
+  const done = close.status !== 'open';
   const vote = async (side: 'up' | 'down', from: HTMLElement | null = null) => {
     const av = appView();
-    if (busy || !av || typeof av.castIssueVote !== 'function') return;
+    if (busy || done || !av || typeof av.castIssueVote !== 'function') return;
     // #6098: the same rule as the ballot's: the button keeps focus while the
     // vote is sent, and is found again if a redraw replaced it.
     const wasFocused = !!from && document.activeElement === from;
@@ -997,47 +1056,202 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
       refocusAfterVote(box.current, 'close-vote', from, wasFocused);
     }
   };
+  const showAll = async () => {
+    if (loadingAll) return;
+    setLoadingAll(true);
+    try { setAll(await readCloseReplies(slug, close.id)); } finally { setLoadingAll(false); }
+  };
   const mine = row ? row.myVote : close.myVote || null;
   const yes = row ? row.yes : 0;
   const need = row ? row.need : 1;
+  const folded = close.folded || [];
+  const replies = all || folded;
+  const more = !all && Number(close.replies) > folded.length;
+  // How an ended vote ended (src/services/threads.js `outcome`): closed by
+  // the vote, kept open, or ended because the request closed another way.
+  const outcome = close.outcome === 'closed'
+    ? t('project:topic.thread.close.closedByVote')
+    : close.outcome === 'elsewhere'
+      ? t('project:topic.thread.close.closedElsewhere')
+      : t('project:topic.thread.close.keptOpen');
   return (
-    <div ref={box} className="mt-3" data-close-proposal={close.id}>
+    <div ref={box} className="mt-3" data-close-proposal={close.id} data-close-outcome={close.outcome || undefined}>
       <div className={KICKER}>{t('project:topic.thread.close.kicker', { by: close.by || t('project:topic.thread.page.someone') })}</div>
-      <button type="button" className="mt-0.5 block min-w-0 text-start text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100" onClick={() => appView()?.openTopic?.('gov', close.id)}>
+      <p className="mt-0.5 block min-w-0 text-start text-[15px] font-[650] leading-snug text-zinc-900 dark:text-zinc-100">
         {close.reason || close.title || t('project:topic.thread.item.close')}
-      </button>
+      </p>
       <div className="dev-change-pair mt-2">
-        <div className="dev-change-gate" data-change-gate="close" data-done="false" data-tone={mine ? 'muted' : 'ask'} role="group" aria-label={t('project:topic.thread.close.votes')}>
+        <div className="dev-change-gate" data-change-gate="close" data-done={done ? 'true' : 'false'} data-tone={done ? 'muted' : mine ? 'muted' : 'ask'} role="group" aria-label={t('project:topic.thread.close.votes')}>
           <div className="dev-change-gate-main">
             <div className="dev-change-gate-head">
               <span className="dev-change-gate-name">{t('project:topic.thread.ballot.votes')}</span>
               <span className="dev-change-gate-figure">{t('project:topic.thread.close.figure', { yes, need })}</span>
             </div>
-            <Bar yes={yes} need={need} label={t('project:topic.thread.close.figure', { yes, need })} />
+            <Bar yes={yes} need={need} label={t('project:topic.thread.close.figure', { yes, need })} done={done} />
           </div>
-          <div className="dev-change-gate-act">
-            {(['up', 'down'] as const).map((side) => {
-              const on = mine === (side === 'up' ? 'yes' : 'no');
-              return (
-                <button
-                  key={side}
-                  type="button"
-                  className="dev-vote-btn"
-                  aria-pressed={on}
-                  aria-disabled={busy || undefined}
-                  data-close-vote={side}
-                  style={on || (!mine && side === 'up') ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
-                  onClick={(e) => { void vote(side, e.currentTarget); }}
-                >
-                  {side === 'up' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : <XIcon className="h-3.5 w-3.5" aria-hidden="true" />}
-                  {side === 'up' ? t('project:topic.thread.close.yes') : t('project:topic.thread.close.no')}
-                </button>
-              );
-            })}
+          {done ? null : (
+            <div className="dev-change-gate-act">
+              {(['up', 'down'] as const).map((side) => {
+                const on = mine === (side === 'up' ? 'yes' : 'no');
+                return (
+                  <button
+                    key={side}
+                    type="button"
+                    className="dev-vote-btn"
+                    aria-pressed={on}
+                    aria-disabled={busy || undefined}
+                    data-close-vote={side}
+                    style={on || (!mine && side === 'up') ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
+                    onClick={(e) => { void vote(side, e.currentTarget); }}
+                  >
+                    {side === 'up' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : <XIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+                    {side === 'up' ? t('project:topic.thread.close.yes') : t('project:topic.thread.close.no')}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <p className="dev-change-gate-note">
+            {done
+              ? <><strong>{outcome}</strong>{mine ? ` ${t(mine === 'yes' ? 'project:topic.thread.close.saidYes' : 'project:topic.thread.close.saidNo')}` : null}</>
+              : (mine
+                ? t(mine === 'yes' ? 'project:topic.thread.close.saidYes' : 'project:topic.thread.close.saidNo')
+                : t('project:topic.thread.close.note'))}
+          </p>
+        </div>
+      </div>
+      {replies.length ? (
+        <div className="flex flex-col gap-1 px-1 pt-2" data-thread-fold={`close:${close.id}`}>
+          {replies.map((reply) => (
+            <span key={reply.id} className="msgx-thread-line">
+              <span className="msgx-thread-face">
+                <Avatar shape="square" size="sm" color={swatchFor(reply.username)} aria-hidden="true">
+                  {reply.username.charAt(0).toUpperCase()}
+                </Avatar>
+              </span>
+              <strong className="msgx-thread-line-name">{reply.bot ? reply.username : `@${reply.username}`}</strong>
+              <span className="msgx-thread-line-text">{reply.text}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {more ? (
+        <button type="button" className="mt-1 text-[13px] font-semibold text-[color:var(--accent)] hover:underline" data-close-show-all={close.id} aria-disabled={loadingAll || undefined} onClick={() => { void showAll(); }}>
+          {t('project:topic.thread.close.showAll')}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * #6440: a governance vote's Votes card — the card a change's page has,
+ * for a decision. While the vote counts it draws the tally, the votes the
+ * rule needs, and Yes and No; once it has ended it says how (passed and
+ * applied, rejected, withdrawn, no longer needed) and offers no vote. The
+ * `data-close-*` attributes a close vote's card has always carried stay, so
+ * the checks on it keep selecting the same things.
+ */
+export function GovVote({ g }: { g: GovernanceView }): ReactNode {
+  const t = useMessages('project');
+  const [busy, setBusy] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const box = useRef<HTMLDivElement>(null);
+  const av = appView();
+  // While the vote is open the tally is the page's own; a vote sent here
+  // re-reads it, because the row the page was drawn from is now one behind.
+  const [sent, setSent] = useState<GovernanceView['votes'] | null>(null);
+  useEffect(() => {
+    if (!sent) return undefined;
+    const id = Number(g.id);
+    if (!id) return undefined;
+    let live = true;
+    fetch(`/api/apps/${encodeURIComponent(pageSlug() || '')}/governance/${id}`, { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        const p = json && json.proposal;
+        if (!live || !p) return;
+        setSent({
+          yes: Number(p.qualified_yes_count ?? p.up_count) || 0,
+          need: Math.max(1, Number(p.approvals_required ?? p.votes_required) || 1),
+          mine: p.my_vote === 'up' ? 'yes' : p.my_vote === 'down' ? 'no' : null,
+          open: g.votes.open,
+          outcome: g.votes.outcome,
+        });
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [revision]);
+  const votes = sent && sent.open === g.votes.open ? sent : g.votes;
+  const vote = async (side: 'up' | 'down', from: HTMLElement | null = null) => {
+    if (busy || !av || typeof av.castIssueVote !== 'function') return;
+    const wasFocused = !!from && document.activeElement === from;
+    setBusy(true);
+    try { await av.castIssueVote(g.id, side); } finally {
+      setBusy(false);
+      setRevision((n) => n + 1);
+      (window as any).AppView?._renderTopicHead?.();
+      refocusAfterVote(box.current, 'close-vote', from, wasFocused);
+    }
+  };
+  const ending = outcomeLine(votes.outcome);
+  const open = votes.open;
+  const mine = votes.mine;
+  const figure = t('project:topic.decision.votes.figure', { yes: votes.yes, need: votes.need });
+  return (
+    <div ref={box} className="mt-3" data-gov-vote={g.id}>
+      <div className="dev-change-pair mt-2">
+        <div
+          className="dev-change-gate"
+          data-change-gate="close"
+          data-gov-outcome={votes.outcome}
+          data-done={open ? 'false' : 'true'}
+          data-tone={open ? (mine ? 'muted' : 'ask') : 'muted'}
+          role="group"
+          aria-label={t('project:topic.decision.votes.label')}
+        >
+          <div className="dev-change-gate-main">
+            <div className="dev-change-gate-head">
+              <span className="dev-change-gate-name">
+                {open ? null : <CheckIcon className="dev-change-gate-check" aria-hidden="true" />}
+                {t('project:topic.decision.votes.name')}
+              </span>
+              <span className="dev-change-gate-figure">{figure}</span>
+            </div>
+            <Bar yes={votes.yes} need={votes.need} label={figure} />
           </div>
-          <p className="dev-change-gate-note">{mine
-            ? t(mine === 'yes' ? 'project:topic.thread.close.saidYes' : 'project:topic.thread.close.saidNo')
-            : t('project:topic.thread.close.note')}</p>
+          {open ? (
+            <div className="dev-change-gate-act">
+              {(['up', 'down'] as const).map((side) => {
+                const on = mine === (side === 'up' ? 'yes' : 'no');
+                return (
+                  <button
+                    key={side}
+                    type="button"
+                    className="dev-vote-btn"
+                    aria-pressed={on}
+                    aria-disabled={busy || undefined}
+                    data-close-vote={side}
+                    style={on || (!mine && side === 'up') ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
+                    onClick={(e) => { void vote(side, e.currentTarget); }}
+                  >
+                    {side === 'up' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : <XIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+                    {side === 'up' ? t('project:topic.thread.close.yes') : t('project:topic.thread.close.no')}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          <p className="dev-change-gate-note">
+            {!open && votes.outcome === 'applying'
+              ? <span className="dc-status-spinner-arc" aria-hidden="true" />
+              : null}
+            {open
+              ? (mine
+                ? t(mine === 'yes' ? 'project:topic.thread.close.saidYes' : 'project:topic.thread.close.saidNo')
+                : t('project:topic.decision.votes.note', { need: votes.need }))
+              : (ending ? translate(ending) : null)}
+          </p>
         </div>
       </div>
     </div>

@@ -54,16 +54,6 @@ test('the bot\'s own step maps to one stage, with its queue or hold on the secon
   assert.equal(planning.stage, 'planning');
 });
 
-// #6423: a build waiting for a change that touches the same files says so,
-// with the pull request when it has one, and plainly when it has none.
-test('a build waiting on a change touching the same files says which', () => {
-  const waiting = derive({ verdict: 'ready', build_ok: null, build_waiting_at: ago(5), build_overlap_pr: 6404 });
-  assert.deepEqual([waiting.stage, waiting.line], ['building', { code: 'overlap_wait', pr: 6404 }]);
-  const other = derive({ verdict: 'ready', build_ok: null, build_waiting_at: ago(5) });
-  assert.deepEqual([other.stage, other.line.code, other.line.place], ['building', 'queued', undefined],
-    'no overlap: its place in line, as before');
-});
-
 test('the requester\'s move is always waiting_for_you, with why', () => {
   const plan = derive({ verdict: 'ready', build_ok: null, plan_waiting_at: ago(20) });
   assert.deepEqual([plan.stage, plan.why, plan.whoseMove], ['waiting_for_you', 'plan', 'requester']);
@@ -181,6 +171,24 @@ test('the new wait words are the catalog\'s, keyed by the same entries', () => {
   assert.equal(ws.WORDS['work.line.checksRunning_one'], core['work.line.checksRunning_one'].text);
   assert.equal(ws.WORDS['work.line.checksRunning_other'], core['work.line.checksRunning_other'].text);
   assert.equal(ws.WORDS['work.line.syncWait'], core['work.line.syncWait'].text);
+});
+
+test('#6528: a passing change reads Checking until its before & after shots settle, then rings ready', () => {
+  const head = 'a'.repeat(40);
+  const change = {
+    proposal_session_id: 50, proposal_at: ago(60), checks_sha: head, reviewed_head_sha: head,
+    verdict: 'ready', build_ok: true, proposal_status: 'promoted', check_state: 'passing',
+  };
+  const shooting = {
+    shots_state: 'exploring', shots_run_id: 'r'.repeat(32),
+    shots_detail: { headSha: head, required: true }, shots_updated_at: ago(5), checks_at: ago(5),
+  };
+  const held = derive({ ...change, ...shooting });
+  assert.deepEqual([held.stage, held.line, held.whoseMove], ['checking', null, 'bot']);
+  assert.equal(ws.bellOf(held, held), null, 'staying in checking rings nothing');
+  const vote = derive({ ...change, ...shooting, shots_state: 'verified' });
+  assert.deepEqual([vote.stage, vote.whoseMove], ['up_for_vote', 'group']);
+  assert.equal(ws.bellOf(held, vote), 'ready');
 });
 
 test('a change of stage rings: needs you, ready to vote, stopped, live; a moved line rings nothing', () => {

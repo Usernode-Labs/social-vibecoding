@@ -144,6 +144,31 @@ test('a proposal: its checks, then the group\'s vote', () => {
   assert.equal(progress.outcomeOf({ mode: 'shadow', verdict: 'person' }), null);
 });
 
+// #6528: a passing change is still Checking while its before & after shots
+// are taken, so the ready bell waits for the pictures too.
+test('#6528: a passing change holds at checking until its shots settle', () => {
+  const head = 'a'.repeat(40);
+  const open = {
+    proposal_status: 'promoted', proposal_at: ago(20), check_state: 'passing',
+    checks_sha: head, reviewed_head_sha: head,
+  };
+  const shooting = {
+    shots_state: 'exploring', shots_run_id: 'r'.repeat(32),
+    shots_detail: { headSha: head, required: true }, shots_updated_at: ago(5), checks_at: ago(5),
+  };
+  assert.deepEqual(stage({ ...open, ...shooting }), {
+    stage: 'checks', since: ago(5),
+    doing: 'it\'s waiting for approval, and its tests passed; its before and after shots are still being taken',
+  });
+  assert.equal(stage({ ...open, ...shooting, shots_state: 'verified' }).stage, 'vote');
+  assert.equal(stage({ ...open, ...shooting, shots_detail: { headSha: head, required: false } }).stage, 'vote',
+    'nothing visible to shoot is not held');
+  assert.equal(stage({ ...open, ...shooting, checks_at: ago(50), shots_updated_at: ago(50) }).stage, 'vote',
+    'the hold lapses after 45 minutes');
+  assert.equal(stage({ ...open, ...shooting, first_version: true }).stage, 'vote',
+    'a first version goes live without a vote and is not held');
+});
+
 // 13 Oct 2026 (D1): a project's first version goes live without a vote, so
 // once its tests pass it waits on nobody, and while they run the bot does
 // not say it is waiting for approval.
@@ -512,7 +537,7 @@ test('#6228: a fresh reply on a handed-back request reads as waiting to be read'
   const handed = { mode: 'live', verdict: 'person', run_at: ago(10) };
   // Not queued yet: the refresh's window.
   assert.deepEqual(stage({ ...handed, reply_at: ago(1), reply_user_id: 7 }), {
-    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'about to read the newest reply',
+    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'reading the new reply in a moment',
   });
   // handedBack still says Decide on its own; stageOf answers first.
   assert.equal(progress.handedBack({ ...handed, reply_at: ago(1) }), 'decide');
@@ -522,11 +547,11 @@ test('#6228: a fresh reply on a handed-back request reads as waiting to be read'
   // Queued, on hold: it waits for the week, not a read.
   assert.equal(stage({ ...handed, queue_id: 4, enqueued_at: ago(45), held_until: new Date(NOW.getTime() + 60 * 60 * 1000).toISOString(), reply_at: ago(30) }).stage, 'on_hold');
   assert.deepEqual(stage({ ...handed, queue_id: 4, enqueued_at: ago(2), reply_at: ago(1) }), {
-    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'about to read the newest reply',
+    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'reading the new reply in a moment',
   });
   // The read started: reading the reply, with the reading clock.
   assert.deepEqual(stage({ ...handed, started_at: ago(1), reply_at: ago(2) }), {
-    stage: 'reading', reply: true, since: ago(1), doing: 'reading the newest reply', limit: 'reading',
+    stage: 'reading', reply: true, since: ago(1), doing: 'reading the new reply', limit: 'reading',
   });
   // A reply older than the look was already read.
   assert.equal(stage({ ...handed, reply_at: ago(20), run_at: ago(10) }), null);

@@ -31,17 +31,31 @@ export const HOLD_MS = 6_000;
 /** The room left above the card, under the header. */
 export const GAP_PX = 12;
 
-let asked: { id: number; at: number } | null = null;
+let asked: { key: string; at: number } | null = null;
 const listeners = new Set<() => void>();
 
 /**
- * The door: change `sessionId`'s page should open at its Votes card. A page
- * of that change already on screen hears it at once (onVotesAsked): its
+ * #6439: what a door asks for, as one key. A change is keyed by its id; a
+ * vote to close a request by `close:<id>`, since the two id spaces overlap.
+ */
+function askKey(ref: unknown): string | null {
+  if (typeof ref === 'string') {
+    const close = /^close:(\d+)$/.exec(ref);
+    if (close) return `close:${Number(close[1])}`;
+  }
+  const id = Number(ref);
+  return Number.isInteger(id) && id > 0 ? String(id) : null;
+}
+
+/**
+ * The door: change `sessionId`'s page should open at its Votes card, or —
+ * `askVotesInView('close:' + id)` — the request's page at its vote to close.
+ * A page of that item already on screen hears it at once (onVotesAsked): its
  * address does not change, so nothing else would bring the card into view.
  */
 export function askVotesInView(sessionId: unknown, now: number = Date.now()): void {
-  const id = Number(sessionId);
-  asked = Number.isInteger(id) && id > 0 ? { id, at: now } : null;
+  const key = askKey(sessionId);
+  asked = key ? { key, at: now } : null;
   if (asked) listeners.forEach((listener) => listener());
 }
 
@@ -51,11 +65,11 @@ export function onVotesAsked(listener: () => void): () => void {
   return () => { listeners.delete(listener); };
 }
 
-/** The page: whether change `sessionId` was asked for, recently. Answers once. */
+/** The page: whether change `sessionId` (or `close:<id>`) was asked for, recently. Answers once. */
 export function takeVotesInView(sessionId: unknown, now: number = Date.now()): boolean {
-  const id = Number(sessionId);
+  const key = askKey(sessionId);
   const ask = asked;
-  if (!ask || ask.id !== id) return false;
+  if (!key || !ask || ask.key !== key) return false;
   asked = null;
   return now - ask.at <= ASK_TTL_MS;
 }

@@ -49,7 +49,7 @@ test('the doors wait for the bot\'s answer, and File it is never one of them', (
   const { doorsFor } = loadTsx(BAR);
   const notes = { slug: 'notes', name: 'Notes' };
   const open = (kind, app = null) => ({ state: 'open', kind, app });
-  const doors = (where, replied = true) => JSON.parse(JSON.stringify(doorsFor(where, replied)));
+  const doors = (where, replied = true, invited = false) => JSON.parse(JSON.stringify(doorsFor(where, replied, invited)));
   assert.deepEqual(doors(open('idea'), false), [], 'nothing to take public before the bot answers');
   // 1 Nov 2026 (Evan): File it and Post it are under the bot's offer, once
   // something is ready, not at the foot of every thread.
@@ -59,12 +59,19 @@ test('the doors wait for the bot\'s answer, and File it is never one of them', (
   assert.deepEqual(doors(open('idea', notes)), []);
   assert.deepEqual(doors(open('design', notes)), []);
   assert.deepEqual(doors(open('design')), [], 'a design\'s bot offers the project itself');
-  // An idea in no project can still start one.
-  assert.deepEqual(doors(open('ask')), ['new'], 'a "+" thread in no project, like an idea');
-  assert.deepEqual(doors(open('idea')), ['new']);
-  assert.deepEqual(doors({ state: 'open' }), ['new'], 'an older server sends no kind: an idea');
-  assert.deepEqual(doors({ ...open('idea'), mine: false }), [], 'never on a thread that is not theirs');
-  assert.deepEqual(doors({ state: 'filed', number: 4 }), [], 'none once it went somewhere');
+  // #6523 (9 Nov 2026): New project is the bot's to offer. Without its
+  // offer, no thread in no project shows it, whatever it is about.
+  assert.deepEqual(doors(open('ask')), [], 'a "+" thread in no project without an offer');
+  assert.deepEqual(doors(open('idea')), [], 'an idea without an offer');
+  assert.deepEqual(doors({ state: 'open' }), [], 'an older server sends no kind: an idea, no offer');
+  assert.deepEqual(doors({ state: 'open' }, true, true), ['new'], 'an older server, offered');
+  // With its offer, only a thread in no project shows it.
+  assert.deepEqual(doors(open('ask'), true, true), ['new']);
+  assert.deepEqual(doors(open('idea'), true, true), ['new']);
+  assert.deepEqual(doors(open('ask', notes), true, true), [], 'never a thread for a project that exists');
+  assert.deepEqual(doors(open('design'), true, true), [], 'a design\'s bot offers the project itself');
+  assert.deepEqual(doors({ ...open('idea'), mine: false }, true, true), [], 'never on a thread that is not theirs');
+  assert.deepEqual(doors({ state: 'filed', number: 4 }, true, true), [], 'none once it went somewhere');
   assert.deepEqual(doors(null), []);
   // B04 (audit 2 Nov 2026): a screen drawn for no project yet is made into one from its drawing.
   const drawn = { title: 'Weekly chore chart', version: 2 };
@@ -72,6 +79,26 @@ test('the doors wait for the bot\'s answer, and File it is never one of them', (
   assert.deepEqual(doors({ ...open('design'), design: drawn }), ['new'], 'a design for no project yet too');
   assert.deepEqual(doors({ ...open('design', notes), design: drawn }), [], 'never one of a project that exists');
   assert.deepEqual(doors({ ...open('ask'), design: drawn }, false), []);
+});
+
+test('#6523: New project is invited by the bot\'s newest reply, or by the thread it opened for a new project', () => {
+  const { newProjectInvited } = loadTsx(BAR);
+  const bot = (meta) => ({ content: 'A reply', sender: { id: 2, bot: true }, metadata: { homeroomBot: meta } });
+  const person = { content: 'Yes please', sender: { id: 7 } };
+  const root = { content: 'New thread, for a new project.', sender: { id: 2, bot: true }, metadata: { homeroomBot: { kind: 'opened_thread', changeKind: 'project' } } };
+  const other = { content: 'A question', sender: { id: 2, bot: true }, metadata: { homeroomBot: { kind: 'opened_thread', changeKind: 'any' } } };
+  // Its newest reply is the one that counts.
+  assert.equal(newProjectInvited(null, [person, bot({ newProject: true })]), true);
+  assert.equal(newProjectInvited(null, [bot({ newProject: true }), person]), true, 'their answer after it does not take it away');
+  assert.equal(newProjectInvited(null, [bot({ newProject: true }), bot({})]), false, 'an earlier offer alone does not count');
+  assert.equal(newProjectInvited(null, [person]), false, 'no bot reply, no offer');
+  assert.equal(newProjectInvited(null, []), false);
+  // The bot opened the thread for a new project.
+  assert.equal(newProjectInvited(root, []), true);
+  assert.equal(newProjectInvited(root, [{ ...bot({}), metadata: {} }]), true);
+  assert.equal(newProjectInvited(other, []), false, 'a thread it opened for anything else');
+  assert.equal(newProjectInvited({ content: 'Their own words', sender: { id: 7 } }, [bot({ newProject: true })]), true,
+    'a thread of theirs, with its offer');
 });
 
 test('B04: New project on a drawn screen makes it with its name and drawing, never the generic create screen', () => {
@@ -98,6 +125,9 @@ test('it is drawn on every private thread in the bot\'s chat, by the server\'s w
   assert.match(screen.slice(doors - 80, doors), /\{privateRoot && privateMine && root \? \(\s*$/);
   assert.match(screen.slice(doors, doors + 400), /text=\{privateThreadWords\(root, replies, meId\)\}/);
   assert.match(screen.slice(doors, doors + 400), /botReplied=\{replies\.some\(\(message\) => message\.sender\.bot\)\}/);
+  // #6523: the foot follows what Homeroom bot last said, not the thread's kind.
+  assert.match(screen.slice(doors, doors + 400), /invited=\{newProjectInvited\(root, replies\)\}/);
+  assert.match(screen, /PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited,/);
   assert.match(screen.slice(doors, doors + 400), /working=\{!!threadWorking\}/, 'the thread\'s working state holds the foot back');
   assert.doesNotMatch(screen, /<PrivateThreadBar\b/, 'no bar of doors over the thread any more');
 });
@@ -146,12 +176,13 @@ test('in Main Chat\'s column a thread is alone under its own head, and says it i
   assert.match(screen, /<div className="messages-thread-name min-w-0 truncate" data-reply-title="">\{mainTitle\}<\/div>/);
   assert.match(screen, /<span className="truncate">\{t\('messages:ai\.thread\.sub'\)\}<\/span>/);
   assert.equal(message('messages:ai.thread.sub'), 'Only you can see this thread');
-  // No ✕ in the column: its thread leads with Back to Main Chat. A phone's
-  // arrow still goes to the list.
-  assert.match(screen, /\{inMain \? null : \(\s*<button type="button" className="messages-thread-action" data-reply-close=""/);
+  // 6 Nov 2026 (#6425): on a desktop the thread closes with its own ✕, which
+  // leaves the lists alone or Main Chat when it was open; a phone's arrow
+  // still goes to the list, with no ✕ beside it.
+  assert.match(screen, /\{inMain && onBack \? null : \(\s*<button type="button" className="messages-thread-action" data-reply-close=""/);
   assert.match(screen, /\{inMain && onBack \? \(\s*<button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""\s+aria-label=\{t\('messages:ai\.drawer\.back'\)\}/);
-  assert.match(screen, /\) : inMain \? \([\s\S]*?data-reply-back=""\s+aria-label=\{t\('messages:replies\.backToMain'\)\} title=\{t\('messages:replies\.backToMain'\)\} onClick=\{\(\) => closeThread\(\)\}/);
-  assert.equal(message('messages:replies.backToMain'), 'Back to Main Chat');
+  assert.doesNotMatch(screen, /messages:replies\.backToMain/);
+  assert.equal(message('messages:replies.close'), 'Close thread');
   assert.match(screen, /\{here && snap\.route\.threadRootId \? <ReplyThreadPanel inMain=\{mainChat\} onBack=\{onBack\} \/> : null\}/);
 });
 
@@ -162,14 +193,17 @@ test('the foot has New project alone: no File it or Post it form, and nothing it
   assert.doesNotMatch(source, /privateThread\.(fileIt|postIt|sendFile|sendPost)/, 'no File it or Post it at the foot');
   assert.doesNotMatch(source, /method: 'POST'/, 'the foot writes nothing: the bot\'s offer does');
   assert.equal(renderComponent(BAR, 'PrivateThreadDoors', {
-    rootId: 5, text: 'An idea', where: { state: 'open', kind: 'ask', app: { slug: 'notes', name: 'Notes' } }, botReplied: true,
-  }), '', 'a thread for a project has no foot');
-  assert.match(renderComponent(BAR, 'PrivateThreadDoors', {
+    rootId: 5, text: 'An idea', where: { state: 'open', kind: 'ask', app: { slug: 'notes', name: 'Notes' } }, botReplied: true, invited: true,
+  }), '', 'a thread for a project has no foot, even when offered');
+  assert.equal(renderComponent(BAR, 'PrivateThreadDoors', {
     rootId: 5, text: 'An idea', where: { state: 'open', kind: 'ask', app: null }, botReplied: true,
+  }), '', 'no foot without the bot\'s offer');
+  assert.match(renderComponent(BAR, 'PrivateThreadDoors', {
+    rootId: 5, text: 'An idea', where: { state: 'open', kind: 'ask', app: null }, botReplied: true, invited: true,
   }), /data-private-door="new"[^>]*>New project</);
   // While the bot works in it, its working card is the foot's one thing: the chip waits.
   assert.equal(renderComponent(BAR, 'PrivateThreadDoors', {
-    rootId: 5, text: 'An idea', where: { state: 'open', kind: 'ask', app: null }, botReplied: true, working: true,
+    rootId: 5, text: 'An idea', where: { state: 'open', kind: 'ask', app: null }, botReplied: true, invited: true, working: true,
   }), '', 'nothing under the working card until the reply lands');
 });
 

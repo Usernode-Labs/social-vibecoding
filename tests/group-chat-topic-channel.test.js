@@ -158,6 +158,9 @@ test('the general pane moves to a topic\'s channel and back without a second soc
   assert.equal(gc._firstPageUrl('homeroom', null), '/api/apps/homeroom/messages?limit=50');
   // A thread's own reads are unchanged by it.
   assert.equal(gc._firstPageUrl('homeroom', { type: 'message', ref: 60 }), '/api/apps/homeroom/messages?thread_type=message&thread_ref=60&limit=50');
+  // #6497: a request's discussion opens whole; its first page asks for the
+  // server's request ceiling, so a 40-reply thread arrives in one read.
+  assert.equal(gc._firstPageUrl('homeroom', { type: 'issue', ref: 6497 }), '/api/apps/homeroom/messages?thread_type=issue&thread_ref=6497&limit=500');
 });
 
 test('the pane\'s composer posts and types in the channel it shows; a thread\'s in its thread', () => {

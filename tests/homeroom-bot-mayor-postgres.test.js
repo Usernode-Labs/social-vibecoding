@@ -1977,8 +1977,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const out = await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 6 });
     assert.equal(out.ok, false);
     assert.equal(out.code, 'go_ahead_cannot');
-    assert.match(out.said, /^A go-ahead can't change this one: moving App secrets and deleting a GitHub Actions secret are operator work outside this app\./);
-    assert.match(out.said, /I can do this part here: Remove the dead bot token line from the deploy workflow\.$/);
+    assert.match(out.said, /^I don't build changes like this myself, even with a go-ahead: moving App secrets and deleting a GitHub Actions secret are operator work outside this app\./);
+    assert.match(out.said, /I can build this part now: Remove the dead bot token line from the deploy workflow\.$/);
     assert.match(out.next, /Do not say you are on it/);
     const { rows: queued } = await pool.query(
       'SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id],
