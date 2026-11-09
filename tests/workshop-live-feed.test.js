@@ -22,9 +22,16 @@ test('the query is the viewer\'s communities, this week, newest first, bounded',
   assert.match(sql, /cs\.status = 'merged'/, 'only what went live');
   assert.match(sql, /COALESCE\(cs\.merged_at, cs\.created_at\) > NOW\(\) - INTERVAL '7 days'/, 'this week; merged_at is null on old rows');
   assert.match(sql, /EXISTS \(SELECT 1 FROM community_members cm\s+WHERE cm\.community_id = a\.community_id AND cm\.user_id = \$1\)/, 'a member\'s communities only');
+  // The SAME visibility filter as the counts and feeds beside it
+  // (VISIBLE_APP_WHERE over `a` and the viewer's membership row `me`), not a
+  // copy of part of it: a private project's changes reach only its
+  // collaborators and admins, a suspended one nobody.
+  assert.match(sql, /LEFT JOIN app_collaborators me\s+ON me\.app_id = a\.id AND me\.user_id = \$1 AND me\.status = 'member'/);
   assert.match(sql, /a\.moderation_suspended_at IS NULL/, 'never a suspended project');
-  assert.match(sql, /\(NOT a\.self_hosted OR \$2::boolean\)/, 'the platform\'s own project by the Needs you feed\'s rule');
-  assert.match(sql, /ORDER BY COALESCE\(cs\.merged_at, cs\.created_at\) DESC, cs\.id DESC\s+LIMIT \$3/);
+  assert.match(sql, /\(NOT a\.self_hosted OR \$2::boolean\)/, 'the platform\'s own project by the shared rule');
+  assert.match(sql, /\(\$3::boolean OR a\.view_visibility = 'public' OR me\.user_id IS NOT NULL\)/, 'a private project only for its collaborators, or an admin');
+  assert.match(SRC, /const LIVE_FEED_SQL = `[^`]*\$\{VISIBLE_APP_WHERE\}/, 'written with the shared filter itself');
+  assert.match(sql, /ORDER BY COALESCE\(cs\.merged_at, cs\.created_at\) DESC, cs\.id DESC\s+LIMIT \$4/);
   assert.equal(overview.LIVE_FEED_MAX, 8);
 });
 
@@ -43,12 +50,13 @@ test('a row is shaped as the feed beside it shapes its project', () => {
   });
 });
 
-test('the route answers a signed-in viewer, with the three parameters in the query\'s order', () => {
+test('the route answers a signed-in viewer, with the four parameters in the query\'s order', () => {
   const at = SRC.indexOf("router.get('/api/workshop/live-feed'");
   assert.ok(at > 0, 'the route is registered');
   const body = SRC.slice(at, SRC.indexOf('\n  });', at));
   assert.match(body, /if \(!req\.user\?\.id\) return res\.status\(401\)\.json\(\{ error: 'Not authenticated' \}\);/);
-  assert.match(body, /pool\.query\(LIVE_FEED_SQL, \[req\.user\.id, !!req\.user\.isAdmin \|\| !!config\.selfAppPublicVoting, LIVE_FEED_MAX\]\)/);
+  assert.match(body, /pool\.query\(LIVE_FEED_SQL, \[req\.user\.id, !!req\.user\.isAdmin \|\| !!config\.selfAppPublicVoting, !!req\.user\.isAdmin, LIVE_FEED_MAX\]\)/,
+    'viewer, may-see-self-hosted, is-admin, bound: the shared filter\'s own parameters');
   assert.match(body, /res\.json\(\{ items: shapeLiveFeed\(rows\) \}\)/);
   assert.match(body, /res\.status\(500\)\.json\(\{ error: 'Internal server error' \}\)/);
 });

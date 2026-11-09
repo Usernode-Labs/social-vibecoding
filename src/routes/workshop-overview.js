@@ -445,8 +445,11 @@ const BOT_QUESTIONS_SQL = `
 // member of, newest first. Home's side column in the one frame reads it
 // ("Live this week", features/home/frame/home-frame.tsx): context beside
 // what needs you, not a feed to page through, so it is bounded to
-// LIVE_FEED_MAX and has no cursor. `$1` is the viewer, `$2` "may see
-// self-hosted rows" (the Needs you feed's rule), `$3` the bound.
+// LIVE_FEED_MAX and has no cursor. Visibility is VISIBLE_APP_WHERE itself,
+// the filter the counts and feeds above share, so a private project's
+// changes reach only its collaborators and admins: `$1` is the viewer,
+// `$2` "may see self-hosted rows", `$3` "is an admin", `$4` the bound.
+// Narrowed further to the viewer's own communities, as the Needs you feed is.
 // merged_at was added by a later ALTER TABLE and is null on old rows, which
 // fall back to created_at, as GET /api/apps/:slug/merged does.
 const LIVE_FEED_MAX = 8;
@@ -456,15 +459,17 @@ const LIVE_FEED_SQL = `
          u.username AS author,
          a.slug, a.name, a.icon_image_id, a.icon_emoji
     FROM chat_sessions cs
-    JOIN apps a ON a.id = cs.app_id AND a.moderation_suspended_at IS NULL
+    JOIN apps a ON a.id = cs.app_id
+    LEFT JOIN app_collaborators me
+      ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
     LEFT JOIN users u ON u.id = cs.user_id
    WHERE cs.status = 'merged'
      AND COALESCE(cs.merged_at, cs.created_at) > NOW() - INTERVAL '7 days'
-     AND (NOT a.self_hosted OR $2::boolean)
+     AND ${VISIBLE_APP_WHERE}
      AND EXISTS (SELECT 1 FROM community_members cm
                   WHERE cm.community_id = a.community_id AND cm.user_id = $1)
    ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, cs.id DESC
-   LIMIT $3
+   LIMIT $4
 `;
 
 function shapeLiveFeed(rows) {
@@ -1425,7 +1430,7 @@ function workshopOverviewRoutes(config) {
   router.get('/api/workshop/live-feed', async (req, res) => {
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
-      const { rows } = await pool.query(LIVE_FEED_SQL, [req.user.id, !!req.user.isAdmin || !!config.selfAppPublicVoting, LIVE_FEED_MAX]);
+      const { rows } = await pool.query(LIVE_FEED_SQL, [req.user.id, !!req.user.isAdmin || !!config.selfAppPublicVoting, !!req.user.isAdmin, LIVE_FEED_MAX]);
       return res.json({ items: shapeLiveFeed(rows) });
     } catch (err) {
       log.error('workshop-overview', 'Failed to read the live feed', { message: err.message });
