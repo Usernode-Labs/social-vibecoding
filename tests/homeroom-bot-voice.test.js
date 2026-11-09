@@ -70,7 +70,7 @@ test('words a DM or a chat passed on are not answered twice', () => {
 // ── The gate, on a pool that answers what it asks ────────────────────────
 
 function gatePool({ quoteOf = null, change = null, posts = [], asks = [], before = null, open = null,
-  lastBot = null, previous = null, run = [], follows = null, requested = false } = {}) {
+  lastBot = null, previous = null, run = [], follows = null, requested = false, lastSpeaker = null } = {}) {
   const asked = [];
   return {
     asked,
@@ -79,7 +79,9 @@ function gatePool({ quoteOf = null, change = null, posts = [], asks = [], before
       asked.push(s);
       if (/SELECT user_id FROM chat_messages WHERE id = \$1/.test(s)) return { rows: quoteOf == null ? [] : [{ user_id: quoteOf }] };
       if (/SELECT created_at FROM chat_messages/.test(s)) return { rows: lastBot ? [{ created_at: lastBot }] : [] };
-      if (/SELECT m\.user_id, m\.created_at FROM chat_messages m[\s\S]*m\.thread_type = 'issue'/.test(s)) return { rows: follows ? [follows] : [] };
+      // #6539: the thread the place sits in is a parameter, request or change alike.
+      if (/SELECT m\.id, m\.user_id, m\.created_at FROM chat_messages m[\s\S]*m\.thread_type = \$4/.test(s)) return { rows: follows ? [follows] : [] };
+      if (/SELECT speaker_id FROM homeroom_bot_voice_turns/.test(s)) return { rows: lastSpeaker == null ? [] : [{ speaker_id: lastSpeaker }] };
       if (/SELECT user_id FROM chat_messages\s+WHERE app_id/.test(s)) return { rows: previous ? [{ user_id: previous }] : [] };
       if (/m\.posted_via, u\.is_synthetic/.test(s)) return { rows: run };
       if (/FROM homeroom_bot_change_asks WHERE message_id/.test(s)) return { rows: asks.includes(Number(params[0])) ? [{ '?column?': 1 }] : [] };
@@ -268,6 +270,37 @@ test('#6311: the requester or an admin writing after the bot\'s post in a reques
   const question = { kind: 'question', created_at: new Date(Date.now() - 10 * 60 * 1000) };
   assert.deepEqual(await g(gatePool({ follows: recent, requested: true, posts: [question] })),
     { speak: false, why: 'answers_question' });
+});
+
+// #6539: on a change's thread, a message straight after the bot's own post is
+// to the bot when it comes from the person that post answered, the change's
+// author or a project admin, within the window requests and reply threads
+// already use. Anybody else's still needs an @.
+test('#6539: on a change, the answered person, the author or an admin writing straight after the bot is answered', async () => {
+  const place = { type: 'session', ref: 70 };
+  const recent = { id: 49, user_id: BOT.id, created_at: new Date(Date.now() - 5 * 60 * 1000) };
+  const theirs = { id: 70, app_id: 9, user_id: 5, status: 'active', is_headless: false };
+  const g = (over = {}, { who = EVAN, app = APP } = {}) => voice.gate(
+    gatePool({ change: theirs, ...over }),
+    { app, place, row: msg(), bot: BOT, settings: LIVE, speaker: who, deps: deps() },
+  );
+  // The person the bot's newest finished turn was answering.
+  assert.deepEqual(await g({ follows: recent, lastSpeaker: EVAN.id }), { speak: true, why: 'followed' });
+  // The change's author.
+  assert.deepEqual(await g({ follows: recent }, { who: { ...EVAN, id: 5 } }), { speak: true, why: 'followed' });
+  // A project admin (the app's creator; canManageApp).
+  assert.deepEqual(await g({ follows: recent }, { who: { ...EVAN, id: 7 }, app: { ...APP, id: 91, created_by: 7 } }),
+    { speak: true, why: 'followed' });
+  // Somebody else writing right after the bot, for example a reviewer answering the author.
+  assert.deepEqual(await g({ follows: recent, lastSpeaker: EVAN.id }, { who: { ...EVAN, id: 6 } }),
+    { speak: false, why: 'not_addressed' });
+  // Too long after the bot's post.
+  assert.deepEqual(await g({ follows: { ...recent, created_at: new Date(Date.now() - 31 * 60 * 1000) }, lastSpeaker: EVAN.id }),
+    { speak: false, why: 'not_addressed' });
+  // The message before this one is not the bot's: somebody wrote in between.
+  assert.deepEqual(await g({ follows: { ...recent, user_id: 5 }, lastSpeaker: EVAN.id }), { speak: false, why: 'not_addressed' });
+  // Words already passed on as an ask are the follow-up's, not answered twice.
+  assert.deepEqual(await g({ follows: recent, lastSpeaker: EVAN.id, asks: [50] }), { speak: false, why: 'queued_as_ask' });
 });
 
 // 6 Nov 2026 (#6395): a plain "Go ahead" on a request, from the person the
