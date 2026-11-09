@@ -26973,6 +26973,13 @@ html[data-frame-chrome] body { isolation: isolate; }
 html[data-skin] .fr.fr-shell.fr-shell-under > .fr-side { visibility: hidden; }
 html[data-skin] .fr.fr-shell:not(.fr-shell-under) > .fr-colm { background: none; box-shadow: none; }
 
+/* A SHEET (kit.tsx Sheet) is drawn in <body>, in a host that covers the
+   window above the chrome and the screens; the kit's own overlay fills the
+   host as it filled the tour's mock. What a sheet holds scrolls inside it. */
+html[data-skin] .fr.fr-ovhost { position: fixed; inset: 0; z-index: 60; }
+html[data-skin] .fr-ovhost .fr-sheet { outline: none; }
+html[data-skin] .fr-ovhost .fr-sheet > .fr-stack { min-height: 0; overflow-y: auto; }
+
 /* TODAY'S HEADER AND TAB BAR STAY MOUNTED, UNSEEN, while the chrome above
    is up (it sets data-frame-chrome on <html>): they keep every behaviour,
    and a press on the kit's control is handed to theirs. The header keeps

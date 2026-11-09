@@ -10,7 +10,8 @@
  * IT DRAWS; THE SHELL'S OWN NAVIGATION STILL DECIDES. Today's header and
  * tab bar stay mounted, hidden (app.css "THE FRAME IN THE SHELL"), and
  * keep every behaviour they have: the router's writes, the counts, the
- * sheets they open. This island reads the same stores they read (where you
+ * sheets they open. The bell and the account menu open the kit's own
+ * sheets (./frame-sheets.tsx), fed by the same controllers. This island reads the same stores they read (where you
  * are, what is unread, your recent communities) and a press here is handed
  * to the control it stands for there, so nothing is decided twice.
  *
@@ -39,6 +40,7 @@ import { useVisibility } from '../../lib/visibility-store';
 import { navStore } from '../nav/nav-store.js';
 import { useRailCommunities } from '../nav/rail-communities';
 import { communityScopeStore, goToCommunity } from '../workshop/community-scope';
+import { FrameSheets, openFrameSheet } from './frame-sheets';
 
 const MARK = '/brand/homeroom-mark.png';
 
@@ -204,15 +206,39 @@ export function FrameChrome() {
             <span className={k('nm')}>{t('core:rail.allPlain')}</span>
           </a>
           <div className={k('sidefoot')}>
+            {/* You opens your page; the sliders at the row's end open the
+                account menu. One row, as the tour draws it, so the glyph is
+                a control inside the link and its press is taken here. */}
             <a
               className={k('nv me', tab === 'me' && !inCommunity && 'on')}
               href="#profile"
               aria-current={tab === 'me' && !inCommunity ? 'page' : undefined}
-              onClick={(event) => handing(event, () => press('platform-tab-me'))}
+              onClick={(event) => {
+                if ((event.target as HTMLElement).closest('[data-frame-menu]')) {
+                  event.preventDefault();
+                  openFrameSheet('menu');
+                  return;
+                }
+                handing(event, () => press('platform-tab-me'));
+              }}
             >
               <Av size={24} name={me || '?'} src={user?.avatar_url} />
               <span className={k('nm')}>{t('core:tabs.me')}</span>
-              <Icon name="sliders" size={18} />
+              <span
+                data-frame-menu=""
+                role="button"
+                tabIndex={0}
+                aria-label={t('core:frame.menu.open')}
+                style={{ display: 'contents' }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  openFrameSheet('menu');
+                }}
+              >
+                <Icon name="sliders" size={18} />
+              </span>
             </a>
           </div>
         </aside>
@@ -233,11 +259,11 @@ export function FrameChrome() {
             <button type="button" className={k('ib d')} aria-label={t('core:rail.search')} onClick={() => { (window as any).Home?.focusSearch?.(); }}>
               <Icon name="search" />
             </button>
-            <button type="button" className={k('ib')} aria-label={t('core:header.notifications')} onClick={() => press('notifications-btn')}>
+            <button type="button" className={k('ib')} aria-label={t('core:header.notifications')} onClick={() => openFrameSheet('notifications')}>
               <Icon name="bell" />
               {unread ? <span className={k('dot')} /> : null}
             </button>
-            <button type="button" className={k('p')} aria-label={t('core:tabs.me')} onClick={() => press('platform-tab-me')} style={{ background: 'none', border: 0 }}>
+            <button type="button" className={k('p')} aria-label={t('core:frame.menu.open')} onClick={() => openFrameSheet('menu')} style={{ background: 'none', border: 0 }}>
               <Av size={28} name={me || '?'} src={user?.avatar_url} />
             </button>
           </header>
@@ -250,6 +276,7 @@ export function FrameChrome() {
           </nav>
         </div>
       </Frame>
+      <FrameSheets username={me} />
     </>
   );
 }

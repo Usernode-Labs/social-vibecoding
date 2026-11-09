@@ -33,6 +33,7 @@ function stubs({ tab = 'home', screen = 'home-screen', bot = false, messages = 2
     '../workshop/community-scope': { communityScopeStore: fixedStore({ slug, info: INFO, list: Object.keys(INFO) }), goToCommunity() {} },
     '../../lib/visibility-store': { useVisibility: (id, initial) => initial },
     '../../lib/platform-viewer': { whenPlatformViewer: () => () => {} },
+    './frame-sheets': { FrameSheets: () => null, openFrameSheet() {} },
   };
 }
 const chrome = (state) => renderComponent(FRAME_APP, 'FrameChrome', {}, { stubs: stubs(state), cache: false });
@@ -88,11 +89,12 @@ test('a press is handed to the shell\'s own control, and a cmd-click keeps the a
   const src = read('frontend', 'src', 'features', 'frame', 'frame-app.tsx');
   assert.match(src, /document\.getElementById\(id\)\?\.click\(\)/);
   assert.match(src, /press\(`platform-tab-\$\{key\}`\)/);
-  assert.match(src, /press\('notifications-btn'\)/);
+  assert.match(src, /openFrameSheet\('notifications'\)/, 'the bell opens the kit\'s own sheet');
+  assert.match(src, /openFrameSheet\('menu'\)/, 'and the sliders on the You row the account menu');
   assert.match(src, /press\('back-btn'\)/);
   assert.match(src, /NavLink\?\.isNativeClick\?\.\(event\)/);
   assert.match(src, /goToCommunity\(slug\)/);
-  for (const id of ['platform-tab-home', 'platform-tab-ai', 'platform-tab-messages', 'platform-tab-me', 'notifications-btn', 'back-btn', 'header-title-name', 'notifications-badge']) {
+  for (const id of ['platform-tab-home', 'platform-tab-ai', 'platform-tab-messages', 'platform-tab-me', 'back-btn', 'header-title-name', 'notifications-badge']) {
     assert.match(shellMarkup(), new RegExp(`id="${id}"`), `${id} is in the shell for the chrome to read or press`);
   }
 });

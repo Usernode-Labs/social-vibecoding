@@ -24,6 +24,7 @@
  * status), at most one pill on it, a zero says nothing.
  */
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 
 import { KIT_ICONS } from './kit-icons';
 
@@ -337,3 +338,84 @@ export function PageBody({ title, purpose, acts, tabs, side, sideFirst, children
     </Frame>
   );
 }
+
+/** An on or off setting on a row: the kit's switch, as a real one. */
+export function Tog({ on, onChange, label }: { on: boolean; onChange: (next: boolean) => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      className={k('tog', on && 'on')}
+      onClick={(event) => { event.stopPropagation(); onChange(!on); }}
+    />
+  );
+}
+
+/**
+ * THE sheet. Every short task is one: the same title, sentence and button
+ * order as a page (frame rule 7). `kind` '' is centred (from the bottom on
+ * a phone), 'right' the side sheet on a desktop, 'pop' the small one
+ * anchored to the corner.
+ *
+ * It is a dialog: it takes the focus, Escape or a press on the dimmed page
+ * closes it, and the focus goes back to where it was. Drawn in <body>, over
+ * the chrome and the screens (app.css gives its host the layer); where
+ * there is no document (the render tests) it renders in place.
+ */
+export function Sheet({ kind = '', title, purpose, onClose, closeLabel, primary, secondary, foot, children }: {
+  kind?: '' | 'right' | 'pop';
+  title: React.ReactNode;
+  purpose?: React.ReactNode;
+  onClose: () => void;
+  closeLabel: string;
+  primary?: React.ReactNode;
+  secondary?: React.ReactNode;
+  foot?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  const ref = React.useRef<HTMLDivElement | null>(null);
+  const titleId = React.useId();
+  React.useEffect(() => {
+    const before = document.activeElement as HTMLElement | null;
+    ref.current?.focus({ preventScroll: true });
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      try { before?.focus?.({ preventScroll: true }); } catch { /* it has gone */ }
+    };
+  }, [onClose]);
+  const sheet = (
+    <div className="fr fr-ovhost">
+      <div className={k('ov', kind)} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+        <div className={k('sheet')} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} ref={ref}>
+          <button type="button" className={k('ib x')} aria-label={closeLabel} onClick={onClose}>
+            <Icon name="x" size={16} />
+          </button>
+          <div className={k('head')}>
+            <div className={k('tx')}>
+              <h2 className={k('title')} id={titleId}>{title}</h2>
+              {purpose ? <p className={k('purpose')}>{purpose}</p> : null}
+            </div>
+          </div>
+          {children ? <div className={k('stack')}>{children}</div> : null}
+          {primary || secondary ? (
+            <div className={k('btnrow')} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+              {primary}
+              {secondary}
+            </div>
+          ) : null}
+          {foot ? <div className={k('foot')}>{foot}</div> : null}
+        </div>
+      </div>
+    </div>
+  );
+  return typeof document === 'undefined' ? sheet : createPortal(sheet, document.body);
+}
+
