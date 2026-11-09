@@ -139,7 +139,17 @@ test('under a look the project\'s page has the frame\'s page area, and the stand
   assert.match(hand, /html\[data-skin\]\[data-project-frame\] #app-view \{ padding-inline-start: var\(--platform-rail-w, 0px\) !important; padding-inline-end: 0 !important; \}/);
   assert.match(hand, /html\[data-skin\]\[data-project-frame\] #dev-workshop \{ max-width: none; margin: 0; \}/, 'not the standard look\'s 760px column');
   assert.match(hand, /html\[data-skin\] \.dev-ws > \[data-project-frame\] ~ \.dev-ws-placebar \{ display: none; \}/, 'the places are the kit\'s tabs');
-  assert.match(hand, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="status"\], \[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'where the kit draws the whole place');
+  assert.match(hand, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'where the kit draws the whole place');
+  // Under the kit's Hub the standard one goes part by part: what asks something of you once stays.
+  const kept = hand.match(/html\[data-skin\] \.dev-ws > \[data-project-frame="status"\] ~ \.dev-ws-tabbody > :not\(:is\(([^)]*)\)\) \{ display: none; \}/);
+  assert.ok(kept, 'the standard Hub is put away part by part');
+  for (const card of ['[data-ws-first-version]', '[data-ws-update]', '[data-ws-share]', '[data-ws-start-here]', '[data-ws-hub-versions]', '[data-notify-ask="community"]']) {
+    assert.ok(kept[1].includes(card), `${card} stays under the kit's Hub`);
+  }
+  const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
+  assert.match(hub, /data-ws-first-version=\{line\}/);
+  assert.match(hub, /data-ws-update=\{kind\}/);
+  assert.match(read('frontend/src/features/dev-board/workshop/community-card.tsx'), /data-ws-share=""/);
   assert.match(hand, /html\[data-skin\] \.dev-ws:not\(\[data-ws-tab="needs"\]\) > \[data-project-frame\] ~ \.dev-ws-tabbody > \* \{ max-width: 720px; margin-inline: 0; \}/, 'an undrawn place sits in the kit\'s content column');
   assert.match(hand, /html\[data-skin\] #dev-workshop\.dev-ws-on-needs > \.dev-ws\[data-ws-tab="needs"\] > \[data-project-frame\] \{ max-width: none; margin-inline: 0; \}/, 'the kit\'s head is not held to the review stage\'s 760px');
   const frame = read(FRAME);

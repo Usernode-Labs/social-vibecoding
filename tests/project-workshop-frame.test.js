@@ -88,5 +88,5 @@ test('the page draws the kit\'s Workshop under a look, and keeps its own for a w
   assert.match(src, /const frameWorkshopUp = frame && !frameTopics && tab === 'workshop' && !weekUp;/, 'a week\'s page is still the page\'s own, under the kit\'s head');
   assert.match(src, /useBotSlots\(frame \? v\.slug : null\)/, 'the slots are read only under a look');
   const css = read('public/css/app.css');
-  assert.match(css, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="status"\], \[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/);
+  assert.match(css, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/);
 });
