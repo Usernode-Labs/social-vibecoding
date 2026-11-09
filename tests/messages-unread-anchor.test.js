@@ -668,7 +668,9 @@ test('the conversation opens at the line, draws it once, and measures after its 
   // Hung from the transcript's foot, just above the composer, and above the
   // typing line, as in every chat (1 November 2026, "A chat's foot" in
   // @/components/ui/chat): it rises with the transcript when a name appears.
-  assert.match(THREAD, /<\/div>\s*\{\/\*[\s\S]*?\*\/\}\s*<TranscriptOverlay edge="foot">\s*<JumpToLatestButton shown=\{unread\.jump\}[^\n]*\/>\s*<\/TranscriptOverlay>\s*<ChatStatusLine className="messages-typing">\{typingLine\(t, typing\)\}<\/ChatStatusLine>\s*<MessageComposer \/>/,
+  // #6426: Main Chat's Welcome back card sits between the typing line and
+  // the message box; nothing else changed about the order.
+  assert.match(THREAD, /<\/div>\s*\{\/\*[\s\S]*?\*\/\}\s*<TranscriptOverlay edge="foot">\s*<JumpToLatestButton shown=\{unread\.jump\}[^\n]*\/>\s*<\/TranscriptOverlay>\s*<ChatStatusLine className="messages-typing">\{typingLine\(t, typing\)\}<\/ChatStatusLine>\s*(?:\{mainChat && botDm && conversationId \? <WelcomeBack[^\n]*\/> : null\}\s*)?<MessageComposer \/>/,
     'the button hangs between the transcript and the typing line');
   // A linked window's latest is not drawn: the button goes to the present.
   assert.match(THREAD, /if \(snap\.nextAfter\) \{ pinned\.current = true; jumpToPresent\(\); return; \}\s*toLatest\(\);/);

@@ -29,9 +29,23 @@
  *   pane  → { __design: 'mode', on }      { __design: 'pins', pins: [{ n, x, y, open }] }
  *   frame → { __design: 'pin', x, y, element }
  *
+ * ── A design draws its own picture (#6261) ────────────────────────────
+ *
+ * A picture of the page leaves every frame out (comment-pin/picture.ts,
+ * `drawShell`) because a frame is another document, so a design's frame was
+ * a blank box in a comment's picture. The shell cannot draw into the frame,
+ * so it asks the frame to draw itself: the vendored SnapDOM source is sent
+ * in the message, the helper runs it as an inline script (the policy allows
+ * inline scripts) and calls it on its own body, then posts the image back.
+ *
+ *   shell → { __design: 'picture', id, scale, lib }
+ *   frame → { __design: 'picture', id, blob }   or { __design, id, error }
+ *
  * The frame's messages are only believed from the frame the pane drew
  * (event.source). A design's own script could still send one: the most it
- * can do is place a pin, which the person sees before sending.
+ * can do is place a pin, which the person sees before sending, or supply
+ * its own frame's picture, which is drawn only inside that frame's own
+ * rectangle.
  */
 
 /** The content security policy a version is drawn under. `origin` is this site's. */
@@ -52,6 +66,9 @@ export function designCsp(origin: string): string {
 /** The sandbox a version's frame gets: its own origin, scripts and nothing else. */
 export const DESIGN_SANDBOX = 'allow-scripts';
 
+/** How the shell finds the design frames to ask for their own picture. */
+export const DESIGN_FRAME_ATTR = 'data-design-frame';
+
 // The frame's half of a pinned comment (see above). Plain ES5 in a string:
 // it runs inside the design's document, before any of the design's own.
 const HELPER = `(function(){
@@ -62,7 +79,17 @@ function take(e){if(!on)return;if(layer&&layer.contains(e.target))return;e.preve
 ['click','mousedown','mouseup','pointerdown','pointerup','touchstart','touchend','submit'].forEach(function(n){window.addEventListener(n,take,true);});
 function draw(pins){if(!document.body)return;if(!layer){layer=document.createElement('div');layer.setAttribute('data-design-pins','');layer.style.cssText='position:absolute;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none';document.body.appendChild(layer);}
 var s=size();layer.innerHTML='';(pins||[]).forEach(function(p){var m=document.createElement('div');m.textContent=String(p.n);m.style.cssText='position:absolute;left:'+(p.x*s.w)+'px;top:'+(p.y*s.h-26)+'px;min-width:26px;height:26px;padding:0 6px;box-sizing:border-box;border-radius:50% 50% 50% 0;background:'+(p.open?'#0a6ee0':'#3f3f46')+';color:#fff;font:600 12px/26px system-ui,sans-serif;text-align:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)';layer.appendChild(m);});}
-window.addEventListener('message',function(e){if(e.source!==parent)return;var d=e.data;if(!d||typeof d!=='object')return;if(d.__design==='mode'){on=!!d.on;document.documentElement.style.cursor=on?'crosshair':'';}else if(d.__design==='pins'){draw(d.pins);}});
+var snap=null,drawing={};
+function reply(id,blob,error){try{parent.postMessage({__design:'picture',id:id,blob:blob,error:error},'*');}catch(e){}}
+function snapshot(d){var id=String(d.id||'');if(!id||drawing[id])return;drawing[id]=true;
+function done(blob,error){delete drawing[id];reply(id,blob,error);}
+try{
+if(!snap){if(typeof d.lib!=='string'||!d.lib){done(null,'no picture');return;}var s=document.createElement('script');s.textContent=d.lib;(document.head||document.documentElement).appendChild(s);snap=window.snapdom;if(s.parentNode)s.parentNode.removeChild(s);}
+if(typeof snap!=='function'||!document.body){done(null,'no picture');return;}
+snap(document.body,{scale:Number(d.scale)||1,dpr:1,clip:{x:scrollX,y:scrollY,width:innerWidth,height:innerHeight},exclude:['[data-design-pins]'],excludeMode:'hide'}).then(function(c){return c.toCanvas();}).then(function(canvas){canvas.toBlob(function(blob){if(blob)done(blob,null);else done(null,'no picture');},'image/png');},function(){done(null,'no picture');});
+}catch(err){done(null,'no picture');}
+}
+window.addEventListener('message',function(e){if(e.source!==parent)return;var d=e.data;if(!d||typeof d!=='object')return;if(d.__design==='mode'){on=!!d.on;document.documentElement.style.cursor=on?'crosshair':'';}else if(d.__design==='pins'){draw(d.pins);}else if(d.__design==='picture'){snapshot(d);}});
 })();`;
 
 /** The stylesheets a Homeroom page draws with now: this document's own, from this site. */

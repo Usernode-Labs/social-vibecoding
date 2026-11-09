@@ -53,7 +53,7 @@ import type {
   Check, DomainWrite, Event, Json, Machine, MessageRequest, Outcome, Push, TimerRequest, TransitionContext, Tx,
   WorkRequest, WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
-import { boardMoved, chatLine, issueUpdate, sessionUpdate, toUser, voteUpdate } from '../pushes.ts';
+import { boardMoved, chatLine, issueUpdate, sessionUpdate, threadChanged, toUser, voteUpdate } from '../pushes.ts';
 import { changeClosed } from '../rules/agent-notes.ts';
 import { createChangeClosedNotification, settleDecidedChange } from '../rules/change-notifications.ts';
 import { createConnectorSubmittedNotification, createPrProposedNotifications, createStalePrNotification } from '../rules/proposal-notifications.ts';
@@ -68,6 +68,13 @@ import type { Facts, Row } from './facts.ts';
 
 export const MACHINE = 'proposal';
 export const sessionKey = (sessionId: number) => `session:${sessionId}`;
+
+// How long a refusal the queue may simply meet again is remembered as
+// blocking: a GitHub busy answer, or a plain refusal nobody has to act on,
+// is tried again on the queue's next sweep. A conflict, a draft, a wrong base
+// branch and code missing from the git host keep their record until the head
+// or main moves. Keep equal to the merge queue's SWEEP_MS (a test pins it).
+export const REFUSAL_RETRY_MS = 4 * 60 * 1000;
 
 export const WORK = Object.freeze({
   open: 'review.open',
@@ -183,12 +190,19 @@ export interface Data {
   // where a merge of main moved it by pure git; absent on a force given
   // before it was recorded, which skips the checks nowhere.
   force?: { by: string | null; userId: number | null; at: string; head?: string | null } | null;
+  // The force an authored push ended (headMoved): what it was, the commit it
+  // was given on, and the commit that replaced it. Kept until the next force
+  // or until the proposal leaves review, so the card can say the old one no
+  // longer applies instead of silently reverting to a plain vote.
+  forceDropped?: { by: string | null; userId: number | null; at: string | null; head: string | null; to: string | null; droppedAt: string } | null;
   sync?: Sync | null;
   lastSync?: SyncOutcome | null;
   // GitHub's last refusal (named once per head), what the AI could not
   // resolve (never paid for twice against the same main), and the back-off
-  // after a sync the machinery under it broke.
-  refused?: { head: string | null; main: string | null; kind: string } | null;
+  // after a sync the machinery under it broke. `at` is when it was recorded;
+  // `retryAt` is when the queue may try it again, or null for a refusal that
+  // stays held until the head or main moves.
+  refused?: { head: string | null; main: string | null; kind: string; at?: string; retryAt?: string | null } | null;
   gaveUp?: { head: string | null; main: string | null } | null;
   backoff?: { until: string; failures: number } | null;
   // The change under this one's base is on main: its pull request is being
@@ -422,7 +436,8 @@ const EVENTS = {
     const keys = p?.keys == null ? null : (Array.isArray(p.keys) ? p.keys : [])
       .map((k: unknown) => text(k, 300)).filter(Boolean) as string[];
     return { ...session(p), reason, head: optSha(p?.head, 'head'), keys, queueN: optInt(p?.queueN, 'queueN'),
-      approved: !!p?.approved, userId: optInt(p?.userId, 'userId'), githubConflict: !!p?.githubConflict };
+      approved: !!p?.approved, userId: optInt(p?.userId, 'userId'), githubConflict: !!p?.githubConflict,
+      mechanical: !!p?.mechanical };
   },
   // A person's Stop of the turn the proposal's sync runs (the session's
   // Stop routes, through platform.stopWorkflowTurn).
@@ -546,9 +561,18 @@ const line = (e: Event<any>, d: Data, content: string, extra: { msgType?: string
   ({ type: 'line', eventId: e.id, appId: d.appId, sessionId: d.sessionId, content, msgType: extra.msgType || 'system',
     metadata: extra.metadata ?? null });
 // A card moved on the boards: browsers hear it, and so does the Workshop's
-// placement stage in every web process (pushes.ts boardMoved).
-const board = (f: Facts, action: string, extra: Record<string, Json> = {}): Push =>
-  boardMoved(sessionUpdate({ action, sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, ...extra }));
+// placement stage in every web process (pushes.ts boardMoved). The page that
+// reads its thread hears it too (#6231): a build that becomes a proposal is
+// listed there only after it reads the thread again.
+const threadMoved = (f: Facts): Push =>
+  threadChanged({ appId: f.row!.appId, appSlug: f.row!.appSlug, sessionId: f.row!.id,
+    // A row read outside readFacts (a driven transition) may carry no linked
+    // requests: the event names none of them, and the push drops nulls.
+    numbers: [...(f.row!.linkedIssues ?? []), f.row!.prNumber] });
+const board = (f: Facts, action: string, extra: Record<string, Json> = {}): Push[] => [
+  boardMoved(sessionUpdate({ action, sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, ...extra })),
+  threadMoved(f),
+];
 const votes = (f: Facts, extra: Record<string, Json> = {}): Push =>
   voteUpdate({ sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, merged: false, ...extra });
 
@@ -643,7 +667,7 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
       answer: { n: promoting.n, ok: false, code, message: p.error?.message?.slice(0, 500) ?? null } } };
     // A page that stopped waiting (the route answered 202) reads it again;
     // a campaign that asked hears it.
-    return step(back, { work: done.work, timer: timerFor(back, f, ctx, deps), push: [board(f, 'promote_failed', { error: code })],
+    return step(back, { work: done.work, timer: timerFor(back, f, ctx, deps), push: [...board(f, 'promote_failed', { error: code })],
       messages: promoting.campaign ? [toCampaign(back.data, promoting.campaign, 'ProposalRefused',
         { code, message: p.error?.message?.slice(0, 500) ?? null })] : undefined });
   }
@@ -672,7 +696,7 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
       { type: 'proposed', sessionId: d.sessionId, appId: d.appId, proposerId: promoting.by, viaAgent: promoting.viaAgent },
     ],
     work,
-    push: [board(f, 'promoted')],
+    push: [...board(f, 'promoted')],
     // The preview machine builds and checks the reviewed head (it joins a
     // build or a verdict it already has for it).
     // The app's merge queue hears it is in line (it sweeps its line from
@@ -687,7 +711,7 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
 const unpromote: Handler = (s, e, f, ctx, deps) => {
   const n = s.data.n + 1;
   const destroy = destroyWorker(s.data, n);
-  const next: Live = { name: 'underway', data: { ...(noSlot(s.data) ? s.data : doom(s.data, destroy)), n, slot: slotFor(s.data), force: null } };
+  const next: Live = { name: 'underway', data: { ...(noSlot(s.data) ? s.data : doom(s.data, destroy)), n, slot: slotFor(s.data), force: null, forceDropped: null } };
   const who = e.payload.username || 'The author';
   return step(next, {
     writes: [
@@ -695,7 +719,7 @@ const unpromote: Handler = (s, e, f, ctx, deps) => {
       line(e, s.data, `${who} moved ${prLabel(f.row!)} back to Underway. Its votes were cleared, and it goes up for a fresh vote when it is proposed again`),
     ],
     work: noSlot(s.data) ? [] : [destroy],
-    push: [board(f, 'unpromoted'), votes(f)],
+    push: [...board(f, 'unpromoted'), votes(f)],
     timer: timerFor(next, f, ctx, deps),
   });
 };
@@ -704,7 +728,7 @@ const pause: Handler = (s, e, f) => {
   const n = s.data.n + 1;
   const destroy = destroyWorker(s.data, n);
   return step({ name: 'underway', data: { ...doom(s.data, destroy), n, slot: 'released' } }, {
-    work: [destroy], push: [board(f, 'paused')], timer: null,
+    work: [destroy], push: [...board(f, 'paused')], timer: null,
   });
 };
 
@@ -719,7 +743,7 @@ const resume: Handler = (s, e, f, ctx, deps) => {
   const next: Live = { name: 'underway', data: { ...spared.data, slot: noSlot(s.data) ? 'none' : 'held' } };
   // last_activity_at moves with it: the idle timer runs from now.
   const timer = deps.idleMs > 0 && !noSlot(s.data) ? { at: later(ctx, deps.idleMs), event: { type: 'IdleCheck' } } : null;
-  return step(next, { writes: [{ type: 'resumed', sessionId: s.data.sessionId }], push: [board(f, 'resumed')], timer,
+  return step(next, { writes: [{ type: 'resumed', sessionId: s.data.sessionId }], push: [...board(f, 'resumed')], timer,
     cancel: spared.cancel });
 };
 
@@ -732,7 +756,7 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
   // A retarget waiting behind the close is dropped with it (prMove), so the
   // proposal no longer waits for one: a later parent's merge, after a
   // reopen, moves it again.
-  let d: Data = { ...s.data, n, reason, promoting: null, claim: null, force: null, attempt: null, sync: null, retarget: null, owedSync: null,
+  let d: Data = { ...s.data, n, reason, promoting: null, claim: null, force: null, forceDropped: null, attempt: null, sync: null, retarget: null, owedSync: null,
     answer: s.name === 'proposing' && s.data.promoting
       ? { n: s.data.promoting.n, ok: false, code: 'session_state_changed' } : s.data.answer };
   // A gate or a sync under way is ended with it (the worker's removal below
@@ -772,7 +796,7 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
   }
   // A change of the Homeroom bot's: its change machine ends with it.
   writes.push(toBotChange(d.sessionId, 'Closed', { reason }));
-  const push = [board(f, 'archived'), votes(f)];
+  const push = [...board(f, 'archived'), votes(f)];
   if (row.linkedIssues.length) push.push(issueUpdate({ action: 'updated', source: 'session_archived', appSlug: row.appSlug, appId: row.appId }));
   // Merged into main on GitHub before its vote: the changes stacked on it
   // move onto main.
@@ -807,7 +831,7 @@ const reopen: Handler = (s, e, f, ctx, deps) => {
   if (pr) ({ data: d, work } = prMove(d, { kind: WORK.reopen, key: `reopen:${n}`, input: { sessionId: d.sessionId, ...pr } }));
   const next: Live = { name: 'underway', data: d };
   const row = f.row!;
-  const push = [board(f, 'unarchived')];
+  const push = [...board(f, 'unarchived')];
   if (row.linkedIssues.length) push.push(issueUpdate({ action: 'updated', source: 'session_unarchived', appSlug: row.appSlug, appId: row.appId }));
   return step(next, { work, push, timer: timerFor(next, f, ctx, deps), cancel: spared.cancel });
 };
@@ -819,14 +843,14 @@ const abandoned: Handler = (s, e, f, ctx, deps) => {
   // Its force, its gate or attempt and its sync end with it (a force never
   // outlives the proposal it was given to).
   const { told, cancel, work } = endSlots(s.data, 'declined', { reason: 'closed' });
-  const next: Live = { name: 'underway', data: { ...s.data, claim: null, slot: slotFor(s.data), force: null, attempt: null, sync: null } };
+  const next: Live = { name: 'underway', data: { ...s.data, claim: null, slot: slotFor(s.data), force: null, forceDropped: null, attempt: null, sync: null } };
   return step(next, {
     messages: told, cancel, work,
     writes: [
       { type: 'abandoned', sessionId: s.data.sessionId },
       line(e, s.data, `${prLabel(f.row!)} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Re-propose it from the session's dev-chat.`),
     ],
-    push: [votes(f, { merging: false, mergeFailed: true, resolving: false, selfHosted: f.row!.selfHosted }), board(f, 'paused')],
+    push: [votes(f, { merging: false, mergeFailed: true, resolving: false, selfHosted: f.row!.selfHosted }), ...board(f, 'paused')],
     timer: timerFor(next, f, ctx, deps),
   });
 };
@@ -894,7 +918,7 @@ const stopRequested: Handler = (s, e, f) => {
 // The changes stacked on its branch are told it is on main.
 const merged: Handler = (s, e, f) => {
   const { told, cancel, work } = endSlots(s.data, 'merged');
-  const out: Live = { name: 'merged', data: { ...s.data, claim: null, promoting: null, force: null, sync: null, retarget: null,
+  const out: Live = { name: 'merged', data: { ...s.data, claim: null, promoting: null, force: null, forceDropped: null, sync: null, retarget: null,
     attempt: s.data.attempt ? { ...s.data.attempt, stage: 'merged' } : null } };
   return step(out, { timer: null, messages: [...told, ...parentMerged(s.data, f)], cancel, work });
 };
@@ -937,13 +961,15 @@ function askRefusal(s: Live, f: Facts): string | null {
   return null;
 }
 
-// Why an import is not merged while its pull request is based where it is:
+// Why a change is not merged while its pull request is based where it is:
 // it waits for the change whose branch that is, or its base is no change's.
-// A force does not reach past it: "merged" means "in main".
-// One whose parent is no longer open (merged and not moved onto main yet, or
-// closed) waits for nothing: its base is just not main.
+// A force does not reach past it: "merged" means "in main". One whose parent
+// is no longer open (merged and not moved onto main yet, or closed) waits
+// for nothing: its base is just not main.
+// #6423: this is every change with a base other than main, not only an
+// imported one: a bot change built on top of another has one too.
 function baseRefusal(r: Row): string | null {
-  if (!r.imported || onMain(r.baseRef)) return null;
+  if (onMain(r.baseRef)) return null;
   return r.waitsFor && r.waitsForStatus && OPEN_STATUSES.includes(r.waitsForStatus) ? 'waits_for_parent' : 'base_not_main';
 }
 
@@ -1089,10 +1115,23 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
       // refusal of this head (an earlier one is forgotten): the next ask tries it again.
       const said = s.data.refused && s.data.refused.head === f.row!.head && s.data.refused.kind === kind;
       const writes: DomainWrite[] = kind === 'conflict' ? [{ type: 'conflictMarked', sessionId: s.data.sessionId }] : [];
+      // GitHub busy, or a plain refusal nobody has to act on: the queue may
+      // simply meet it again, so it comes back on the sweep and the card says
+      // it is waiting on GitHub. A conflict, a draft, a wrong base or code
+      // missing from the git host stays held until the head or main moves.
+      const retryAt = kind === 'github_busy' || (kind === 'blocked' && !r?.codeMissing)
+        ? new Date(ctx.now.getTime() + REFUSAL_RETRY_MS).toISOString()
+        : null;
+      if (retryAt) {
+        writes.push({ type: 'mergeHeld', sessionId: s.data.sessionId,
+          reason: kind === 'github_busy' ? 'github_busy' : 'github_refused' });
+      }
       return backToReview(s, e, f, ctx, deps, {
         outcome: 'refused', extra: { kind }, line: said ? null : (r?.message || null), writes,
         push: { mergeFailed: true, resolving: kind === 'conflict' },
-        refused: kind === 'base_moved' ? null : { head: f.row!.head, main: f.row!.integrationMain, kind },
+        refused: kind === 'base_moved' ? null : {
+          head: f.row!.head, main: f.row!.integrationMain, kind, at: ctx.now.toISOString(), retryAt,
+        },
       });
     }
   }
@@ -1133,8 +1172,9 @@ function observed(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps
 // An admin forces the merge (M4): it lasts until it merges, closes, leaves
 // review or its author pushes new code.
 const forceMerge: Handler = (s, e, f, ctx) => step(
-  { name: s.name, data: { ...s.data, force: { by: e.payload.username ?? null, userId: e.payload.userId ?? null,
-    at: ctx.now.toISOString(), head: f.row?.head ?? null } } } as Live,
+  { name: s.name, data: { ...s.data, forceDropped: null,
+    force: { by: e.payload.username ?? null, userId: e.payload.userId ?? null,
+      at: ctx.now.toISOString(), head: f.row?.head ?? null } } } as Live,
   { messages: [toQueue(s.data, 'MergeWanted', { reason: 'force', force: true })] },
 );
 
@@ -1174,7 +1214,7 @@ function syncRefusal(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): 
     const g = s.data.gaveUp;
     if (g && g.head === row.integrationHead && (g.main == null || row.integrationMain == null || g.main === row.integrationMain)) return 'unresolvable';
     if (s.data.backoff && Date.parse(s.data.backoff.until) > ctx.now.getTime()) return 'sync_backoff';
-    if (!p.approved && row.integrationResolvedEpoch === row.epoch) return 'awaiting_approval';
+    if (!p.approved && !p.mechanical && row.integrationResolvedEpoch === row.epoch) return 'awaiting_approval';
   }
   return null;
 }
@@ -1207,7 +1247,7 @@ function beginSync(s: Live, p: any, f: Facts, ctx: TransitionContext): Outcome<P
     writes.push({ type: 'fixedCheckClaim', sessionId: s.data.sessionId, head: p.head, keys });
   }
   if (p.reason === 'conflict') {
-    if (!p.approved) writes.push({ type: 'resolutionSpent', sessionId: s.data.sessionId });
+    if (!p.approved && !p.mechanical) writes.push({ type: 'resolutionSpent', sessionId: s.data.sessionId });
     writes.push({ type: 'blockReasons', sessionId: s.data.sessionId, reasons: ['integrating'] });
   }
   // Any sync with main is the one a move onto main owed.
@@ -1354,19 +1394,42 @@ function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
 // an admin's force over its checks.
 const MECHANICAL_MOVES: ReadonlySet<string> = new Set(['mechanical', 'imported_head_mechanical']);
 
-const headMoved: Handler = (s, e, f) => {
+const headMoved: Handler = (s, e, f, ctx) => {
   const p = e.payload;
   const force = s.data.force;
   // New code nobody forced: an admin's force ends with an authored push. It
   // lasts through a merge of main, conflicts included (M4), but follows only
   // a mechanical one: the head a resolution wrote merges on its own checks.
+  const dropped = !!force && !p.keepVotes;
   const next = !force ? s
-    : !p.keepVotes ? ({ name: s.name, data: { ...s.data, force: null } } as Live)
+    : dropped ? ({
+      name: s.name,
+      data: {
+        ...s.data,
+        force: null,
+        forceDropped: {
+          by: force.by ?? null,
+          userId: force.userId ?? null,
+          at: force.at ?? null,
+          head: force.head ?? null,
+          to: p.to ?? null,
+          droppedAt: ctx.now.toISOString(),
+        },
+      },
+    } as Live)
       : MECHANICAL_MOVES.has(p.reason) && !!force.head && force.head === p.from
         ? ({ name: s.name, data: { ...s.data, force: { ...force, head: p.to } } } as Live)
         : s;
+  const writes: DomainWrite[] = [{ type: 'headMoved', sessionId: s.data.sessionId, column: p.column, to: p.to, keepVotes: p.keepVotes, fixOnly: p.fixOnly }];
+  if (dropped) {
+    const short = String(force.head || '').slice(0, 7);
+    writes.push({
+      ...line(e, s.data, `The admin merge by ${force.by || 'an admin'} was for an earlier commit${short ? ` (${short})` : ''}. New code replaced it, so it no longer applies: this version waits for its vote and checks.`),
+      dedupe: true,
+    });
+  }
   return step(next, {
-    writes: [{ type: 'headMoved', sessionId: s.data.sessionId, column: p.column, to: p.to, keepVotes: p.keepVotes, fixOnly: p.fixOnly }],
+    writes,
     messages: f.row!.shots ? [toShots(s.data, 'HeadMoved', { head: p.to, reason: p.reason, pin: p.column, from: null })] : [],
   });
 };
@@ -1972,6 +2035,16 @@ const WRITES = {
   blockReasons: async (tx: Tx, w: any) => tx.query(
     `UPDATE chat_sessions SET integration_block_reasons = $2::jsonb
       WHERE id = $1 AND integration_block_reasons IS DISTINCT FROM $2::jsonb`, [w.sessionId, JSON.stringify(w.reasons || [])]),
+  // GitHub held this change's merge back (it was busy, or refused it for a
+  // reason nobody has to act on): the card says so. The time of the next try
+  // is this machine's own refusal record (`refused.retryAt`, below), which the
+  // session reads carry alongside these reasons. Its reasons are the server's
+  // alone; the queue's laneReasons rewrite leaves them alone.
+  mergeHeld: async (tx: Tx, w: any) => tx.query(
+    `UPDATE chat_sessions
+        SET integration_block_reasons = (COALESCE(integration_block_reasons, '[]'::jsonb) - 'github_busy' - 'github_refused')
+              || jsonb_build_array($2::text)
+      WHERE id = $1`, [w.sessionId, w.reason]),
   // The once-records of the platform's own syncs, written with the sync.
   bootFailureClaim: async (tx: Tx, w: any) => tx.query(
     'UPDATE chat_sessions SET boot_failure_sync_head = $2 WHERE id = $1', [w.sessionId, w.head]),

@@ -27,7 +27,10 @@ const threads = require('../src/services/threads');
 const SCHEMA_SQL = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
 const MIGRATE_SRC = fs.readFileSync(path.join(__dirname, '../src/db/migrate.js'), 'utf8');
 const SERVICE_SRC = fs.readFileSync(path.join(__dirname, '../src/services/threads.js'), 'utf8');
-const BLOCK = SCHEMA_SQL.slice(SCHEMA_SQL.indexOf('-- ── Threads (stage 1 of #6019)'));
+// The threads stages, from their first section to the end of the baseline
+// they live in: the schema's later migrations add triggers of their own.
+const BASELINE_SQL = fs.readFileSync(path.join(__dirname, '../src/db/migrations/0001-baseline.sql'), 'utf8');
+const BLOCK = BASELINE_SQL.slice(BASELINE_SQL.indexOf('-- ── Threads (stage 1 of #6019)'));
 
 // A pool that answers by SQL substring, recording every call.
 function fakePool({ marker = false, maxSession = 0, maxMessage = 0, failOn = null } = {}) {
@@ -229,6 +232,10 @@ test('change_thread_reply is registered wherever issue_thread_reply is', () => {
   const en = JSON.parse(read('frontend/locales/en/notifications.json'));
   assert.equal(en['row.chat.changeReply'].text, 'Replied on change #{{number}}');
   assert.equal(en['row.chat.decisionReply'].text, 'Replied on a decision');
+  // #6237: on a project whose code is on GitHub the change's number is
+  // GitHub's own, written "PR N", and "#N" is only ever a request.
+  assert.equal(en['row.chat.changeReplyPr'].text, 'Replied on change PR {{number}}');
+  assert.match(bell, /n\.changeOnGithub \? 'notifications:row\.chat\.changeReplyPr' : 'notifications:row\.chat\.changeReply'/);
 });
 
 test('Notify me and Mute: a same-origin write, for a thread the viewer may see', () => {
@@ -240,4 +247,17 @@ test('Notify me and Mute: a same-origin write, for a thread the viewer may see',
   const follow = route.slice(route.indexOf("router.put('/api/threads/:id/follow'"));
   assert.doesNotMatch(follow.slice(0, follow.indexOf('\n  });')), /member/, 'following is not taking part');
   assert.match(read('server.js'), /require\('\.\/src\/routes\/threads'\)\.threadsRoutes\(config\)/);
+});
+
+// #6439: an ended vote to close keeps its card on the request's page, so the
+// thread read now carries how it ended, off the governance machine's audit
+// in the payload: applied (closed), superseded (the request closed another
+// way), withdrawn or refused (kept open).
+test('#6439 a close vote\'s outcome is read off the governance audit', () => {
+  for (const key of ['appliedAt', 'appliedBy', 'withdrawnAt', 'supersededBy']) {
+    assert.match(SERVICE_SRC, new RegExp(`i\\.payload->>'${key}' AS `), `reads ${key}`);
+  }
+  assert.match(SERVICE_SRC, /item\.outcome = row\.applied_at && !appliedBy\.startsWith\('refused:'\)/);
+  assert.match(SERVICE_SRC, /row\.superseded_by\s*\?\s*'elsewhere'/);
+  assert.match(SERVICE_SRC, /: 'kept';/);
 });

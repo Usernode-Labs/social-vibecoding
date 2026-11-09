@@ -9,6 +9,11 @@
 //   tools(ctx)                   -> OpenAI-style function tools offered this turn ([] when it does not apply)
 //   run(pool, ctx, name, args)   -> the tool's result, or undefined when `name` is not one of its tools
 //   promptLines(ctx)             -> lines added to the system prompt this turn ([] when none)
+// and may export:
+//   beforeTurn(pool, ctx)        -> what it must read before tools(ctx) can say what it offers,
+//                                   noted on ctx (admin.js: whose conversation this is)
+//   claims(name)                 -> true for a tool it answers even when it did not offer it,
+//                                   so a call by name gets its own refusal (admin.js #6427)
 //
 // `ctx` is homeroom-bot-mayor.js answer()'s turn context: user (with isAdmin),
 // settings, config, deps (threadRootId, threadRequest, threadDraft, …),
@@ -28,6 +33,7 @@ const MODULES = Object.freeze([
   ['admin', () => require('./admin')], // P7: admin tools behind confirm cards
   ['pictures', () => require('./pictures')], // P8: pictures from an outside image model
   ['investigate', () => require('./investigate')], // P9: investigations that run for days
+  ['follow-up', () => require('./follow-up')], // #6264: tell me when it is done
 ]);
 
 function modules(deps = {}) {
@@ -40,6 +46,18 @@ function modules(deps = {}) {
       return null;
     }
   }).filter(Boolean);
+}
+
+/** What the modules read before the turn's tools are listed (their beforeTurn), in module order. Never throws. */
+async function beforeTurn(pool, ctx) {
+  for (const mod of modules(ctx?.deps)) {
+    if (typeof mod.beforeTurn !== 'function') continue;
+    try {
+      await mod.beforeTurn(pool, ctx);
+    } catch (err) {
+      log.warn('homeroom-bot-thread-tools', 'A thread tool module could not read what it needs for this turn', { module: mod.name, err: err.message });
+    }
+  }
 }
 
 /** The extra tools this turn offers, in module order. Never throws. */
@@ -82,7 +100,8 @@ async function run(pool, ctx, name, args) {
   for (const mod of modules(ctx?.deps)) {
     let owns = false;
     try {
-      owns = (typeof mod.tools === 'function' ? mod.tools(ctx) || [] : []).some((t) => t?.function?.name === name);
+      owns = (typeof mod.tools === 'function' ? mod.tools(ctx) || [] : []).some((t) => t?.function?.name === name)
+        || (typeof mod.claims === 'function' && mod.claims(name) === true);
     } catch {
       owns = false;
     }
@@ -97,4 +116,4 @@ async function run(pool, ctx, name, args) {
   return undefined;
 }
 
-module.exports = { toolsFor, promptLines, run, MODULES };
+module.exports = { beforeTurn, toolsFor, promptLines, run, MODULES };

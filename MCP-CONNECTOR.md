@@ -398,6 +398,36 @@ first, the read included, and both writes then `featuredAdminLimiter` and
 console and a connector session validate and write alike. The writes are
 acting tools; the read is a `list_`.
 
+### Admin only: the Journey readings
+
+A full platform admin's connector also reads Admin › Journey, the waitlist and
+first-mile funnel (`services/journey.js`), so an admin's own Claude can follow
+the newest cohorts without a signed-in browser. The charter's `journey`
+section is how a session reads them and what it must not do with them.
+
+| Tool | What it actually does |
+|---|---|
+| `get_journey_cohorts` | The admit-day cohorts, newest first (how many were admitted, how many have an account), and how many came in another way in the last 28 days. Read-only |
+| `get_journey_first_mile` | One cohort (`admitted`: a day, or `other_way`), one compact row per person in admit order: each step from admitted to first_act as its time, `done` or its state, the step notes, where they stopped and why, mail opened and clicked, tour, welcome message, onboarding progress. Whole-cohort counts per step on every page. 50 people a page (`limit` up to 100, `offset` from `nextOffset`); a page that would pass 48,000 characters comes back shorter. Read-only |
+| `get_journey_person` | One person with an account (`userId`), as the page's dialog has them, and `leftOut` when they are on the left-out list. Read-only |
+| `get_journey_readings` | One of the page's other readings (`which`: summary, stages, loops, creation, first_session, pairs, next_steps, left_out), for a `week` (a Monday, or `all`) and one cohort (`admitted`). A reading over 48,000 characters has its longest lists halved until it fits, and `truncated` names them. Read-only |
+
+These four call the journey service directly, with the left-out list the
+console's routes read (`services/journey-left-out.js`), instead of looping
+back over HTTP: `/api/admin` stays outside the connector's allowlist, and a
+read is no reason to widen it. The wall is therefore the handler's own check
+against the user row `authenticateConnector` reads on every request, the row
+`adminMiddleware` reads for the console. They are registered for a full admin
+only, though the console lets a view-only admin read the page, because the
+answers name real newcomers and go to a third-party chat product. Usernames,
+project names, request titles and what people asked for come back inside the
+untrusted envelope; an email address, the only name a person with no account
+has, comes back masked to its first letter and domain (`j…@example.com`)
+wherever it appears; and any other string passes bare only when it is a plain
+label. The 48,000-character answer keeps a page well inside Claude Code's
+default limit on one tool result (25,000 tokens), so a cohort of a hundred
+arrives in two calls.
+
 ---
 
 ## 3. The allowlist Homeroom ships

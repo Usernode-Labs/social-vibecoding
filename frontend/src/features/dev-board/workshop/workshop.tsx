@@ -78,6 +78,8 @@ import { swatchFor } from '../../messages/format';
 import { openBot } from '../../messages/store';
 import { togglePin } from '../../nav/pin-actions';
 import { pinnedAppsStore } from '../../nav/pinned-apps-store.js';
+import { gridStore } from '../../home/grid-store';
+import { homePinsStore, setHomePin } from '../../home/home-pins-store';
 import { useSidebarRows } from '../../nav/sidebar-rows';
 import type { StagedObject } from '../../messages/types';
 import { devWorkshopStore, voteSavedStore } from '../card/cards-store';
@@ -99,7 +101,7 @@ import {
   communityPending, leaveCommunity, useCommunity,
 } from './community-card';
 import {
-  FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, UpdateCard, hubAlone, owesVote,
+  FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, TopicsCard, UpdateCard, hubAlone, owesVote,
 } from './hub-cards';
 import { CommunityAsk } from '../../notify-ask/community-ask';
 import { useHubDismissed } from './hub-dismissed';
@@ -112,9 +114,9 @@ import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
 import { ProjectReviewFlow } from '../../review-flow/review-flow';
-import { useReviewFlowEnabled } from '../../review-flow/settings';
 import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
+import { takeWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from './panel-target';
 import { PrivateRequests } from './private-requests';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
 import { TouchesPicture, readTouches, touchesSaid, type Touches } from './touches';
@@ -122,10 +124,11 @@ import { PageBack } from './page-back';
 import { BotSlotsDoor, BotSlotsPage, warmBotSlots } from './bot-slots';
 import { readAskStream } from './ask-stream';
 import {
-  ActButton, ActRow, WorkList, primaryAct, rowWords, topicRef, type CardRow as WorkCardRow, type TopicRef,
+  ActButton, WorkList, primaryAct, topicRef, type CardRow as WorkCardRow, type TopicRef,
 } from './work-row';
 import { TopicSidePanel } from './side-panel';
-import { HappenedRow, ThisWeek, WEEKS_FIRST, WEEKS_STEP, WeekPage, WeekRow, catchUp, weekDate } from './week-pages';
+import { ThisWeek, WEEKS_FIRST, WEEKS_STEP, WeekPage, WeekRow, weekDate } from './week-pages';
+import { YourWorkCard } from './your-work';
 import {
   commitDistance,
   swipeAxis,
@@ -136,12 +139,16 @@ import {
   type SwipeSide,
 } from './swipe-vote';
 
+/** ONE HOME (#6361): is this project's app pinned to Home? Home's own rule. */
+function homeAppPinned(slug: string): boolean {
+  const home = (typeof window !== 'undefined' ? (window as any).Home : null);
+  const app = Array.isArray(home?._apps) ? home._apps.find((a: { slug: string }) => a && a.slug === slug) : null;
+  return !!(app && home?.isYours?.(app));
+}
+
 export type SortKey = 'people' | 'activity' | 'open';
 // #4417: the page's places — a channel is `c:<handle>` (./places.ts).
 type TabKey = PlaceKey;
-
-/** Your work on the Workshop tab: its first rows, the rest behind a reveal. */
-export const WORKSHOP_WORK_FIRST = 3;
 
 /** The since list with nothing in it: a first visit's, which still has weeks. */
 const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
@@ -157,12 +164,14 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
  * can do (Open app, Invite, the ⋯, Joined), how lively it has been, what
  * landed since you were last here, Needs you, the discussion's last two
  * messages, your work, and Start a new change. DISCUSSION is its channel,
- * whole. NEEDS YOU is one decision per screen. The WORKSHOP is three titled
- * parts: OVERVIEW, All items' numbers (whose See all opens ALL ITEMS, the
- * whole board), where most of the open work is, and the approval rule every
- * change goes through; WHAT'S HAPPENING, your work in full and what is new
- * for you since your last visit; WHAT HAPPENED, this week row by row and a
- * row for each week before it. All items is the one page, with its way back
+ * whole. NEEDS YOU is one decision per screen. The WORKSHOP is OVERVIEW,
+ * All items' numbers (whose See all opens ALL ITEMS, the whole board), where
+ * most of the open work is, and the approval rule every change goes
+ * through; YOUR WORK, one row that opens the Homeroom bot tab narrowed to
+ * this project (5 Nov 2026: it was What's happening, your work in full and
+ * what was new for you); WHAT HAPPENED, this week row by row, its new
+ * requests ending with Build it, and a row for each week before it. All
+ * items is the one page, with its way back
  * to the Workshop, and the Workshop tab stays lit over it.
  *
  * The tabs came back as a BAND in the community's colour, continuing the
@@ -576,13 +585,22 @@ const EMPTY_PRESS: Record<'hub' | 'away', Record<'collab' | 'plain', string>> = 
   },
 };
 
-function EmptyNote({ filtered, loadFailed, onHub = false }: {
+function EmptyNote({ filtered, loadFailed, onHub = false, start = null }: {
   filtered: boolean;
   loadFailed: boolean;
   /** Drawn on the hub, under the hero whose ⋯ it names. */
   onHub?: boolean;
+  /**
+   * #6111: the one action that starts the first change, for a board that
+   * really holds nothing. `bot` says Homeroom bot builds changes for this
+   * viewer here, so the action is its chat rather than a session. It is a
+   * sibling of the note, never inside it, so the sentence every check and
+   * pin selects on is unchanged.
+   */
+  start?: { slug: string; name: string; bot: boolean } | null;
 }): ReactNode {
   const { readOnly, canCollaborate } = useDevActions();
+  const improveReadOnly = useStoreState(improveStore).readOnly;
   const t = useMessages('project');
   // One whole sentence per case: where the ⋯ is, and what it holds for
   // this viewer.
@@ -591,15 +609,44 @@ function EmptyNote({ filtered, loadFailed, onHub = false }: {
     <RichMessage id={press} components={[<span className="font-medium text-violet-700 dark:text-violet-400" />]} />
   );
   return (
-    <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
-      {filtered ? (
-        t('project:boardEmpty.filtered')
-      ) : loadFailed ? (
-        // The sentence about the board follows the one about the load, where
-        // the message puts it.
-        <RichMessage id="project:boardEmpty.loadFailed" components={[<>{board}</>]} />
-      ) : board}
-    </div>
+    <>
+      <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
+        {filtered ? (
+          t('project:boardEmpty.filtered')
+        ) : loadFailed ? (
+          // The sentence about the board follows the one about the load, where
+          // the message puts it.
+          <RichMessage id="project:boardEmpty.loadFailed" components={[<>{board}</>]} />
+        ) : board}
+      </div>
+      {/* A search or a failed load means the board may not be empty, and a
+          read-only viewer has nowhere to go: neither gets the button. The
+          same goes for the hub's second gate, improveStore.readOnly, which
+          is what the start-here card's own action reads. */}
+      {start && !filtered && !loadFailed && !readOnly && !improveReadOnly ? (
+        start.bot && start.slug ? (
+          <Button
+            type="button"
+            data-ws-empty-start-bot=""
+            size="sm"
+            className="self-start mb-2"
+            onClick={() => { void openBot(startHereBotReference(start.slug, start.name)); }}
+          >
+            {t('project:boardEmpty.startBot')}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            data-ws-empty-start=""
+            size="sm"
+            className="self-start mb-2"
+            onClick={() => Improve.startSession()}
+          >
+            {t('project:boardEmpty.start')}
+          </Button>
+        )
+      ) : null}
+    </>
   );
 }
 
@@ -2611,1316 +2658,6 @@ voteSavedStore.subscribe(() => {
   devWorkshopStore.set({ queue });
 });
 
-/**
- * A project's Needs you, and the Communities screen's (#3488): ONE feed, so
- * the two cannot drift apart again. There the rows mix every project's, each
- * carrying its own (`row.app`), and every address the feed builds (the card's
- * page, the ask box, the thread) is that row's project rather than `slug`.
- * `renderApp` draws the project over a row's by-line. The end card's main
- * button is `doneLabel` (else "See what's live") and calls `onDone`; `onHub`,
- * where there is one, is its way back to the project's Hub.
- */
-export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSuggest, doneLabel, renderApp, openOn = null, onAnswered }: {
-  rows: DevWorkshopView['queue'];
-  models: DevWorkshopView['models'];
-  slug: string;
-  canPost: boolean;
-  onDone: () => void;
-  onHub?: () => void;
-  /** #4680: the end card's link to the Suggest an improvement form. A
-   * project's feed passes it; the Communities screen's does not, where it
-   * would not be clear which project the suggestion is for. */
-  onSuggest?: () => void;
-  doneLabel?: string;
-  renderApp?: (row: QueueRow) => ReactNode;
-  /**
-   * The row to open on, by key, once: the Workshop's New for you opens a
-   * vote here, landed on (`vote:<card key>`). Read at mount.
-   */
-  openOn?: string | null;
-  /**
-   * #4794: the Communities screen's hook on a vote this feed has SAVED —
-   * called once, inside the `ok === true` branch, never on a cancel, a
-   * refusal or a network failure. A project's own feed passes nothing: its
-   * refresh already drops the row from its own store.
-   */
-  onAnswered?: (row: QueueRow, which: 'yes' | 'no') => void;
-}): ReactNode {
-  const t = useMessages('project');
-  const scrollRef = useRef<HTMLDivElement>(null);
-  // Whether the route asked to open on the end card. Read once, at mount:
-  // the URL does not change for the life of the feed, and a state seed is
-  // the one place a render-time read of it is evaluated once.
-  const [endOnOpen] = useState(wantsEnd);
-  // Which slot is in view: an item's index, or `n` for the end card. The
-  // `?shot=needs-end` route opens on the end card, so the seed is the count
-  // of rows the publish already holds (the re-sync below corrects it by key
-  // when rows land later).
-  const [at, setAt] = useState(() => (endOnOpen ? rows.filter((r) => r.t === 'card').length : 0));
-  const [sheet, setSheet] = useState<SheetKind | null>(null);
-  // The sheet on its way out. It stays mounted, marked `data-ws-leaving`,
-  // for as long as app.css's leave animation runs, then is dropped.
-  const [leaving, setLeaving] = useState<SheetKind | null>(null);
-  // The caption grown over the picture ("more"), for the item in view. It
-  // folds back when the reader moves on.
-  const [captionOpen, setCaptionOpen] = useState(false);
-  // Whether the on-screen keyboard is up. The kit measures it and app.css
-  // lifts the sheet's floor by `--un-kb-inset` on its own; this is only the
-  // flag `[data-ws-kb]` needs to give the card the short sheet's full height.
-  const [kbUp, setKbUp] = useState(false);
-  // Answered here, this session: the pinned row's confirmation, and the end
-  // card's "What your votes did".
-  const [answered, setAnswered] = useState<Record<string, string>>({});
-  // QA 2026-09-24 Q3: votes on their way, by row. Set when castVote commits
-  // to sending (the line is in hand), cleared when the server answers. The
-  // ref is the re-entry guard, read synchronously by a second press; the
-  // state is what the rail button draws from.
-  const [sending, setSending] = useState<Record<string, string>>({});
-  const sendingRef = useRef<Set<string>>(new Set());
-  // #3613: the vote sheet's own form — the card's VotePicker, inline: the
-  // Yes/No switch, the line for the group and the send button, so the line
-  // is written on the sheet rather than in a prompt card castVote raises
-  // after the press.
-  const [voteSide, setVoteSide] = useState<'yes' | 'no'>('yes');
-  const [voteLine, setVoteLine] = useState('');
-  // The No's picked answer: the sheet's picker sends the vote only with one.
-  const [voteChoice, setVoteChoice] = useState<NoChoice | null>(null);
-  const voteBoxRef = useRef<HTMLTextAreaElement>(null);
-  // The pins, keyed by row, with the index each held when it was answered.
-  // A ref with a version counter rather than state, because a pin is set in
-  // the same breath as the vote and read back in the very next publish.
-  const pinsRef = useRef<Map<string, { row: QueueRow; index: number }>>(new Map());
-  const [pinsVersion, setPinsVersion] = useState(0);
-  // Which row the reader is ON, by key — the thing the list is re-synced to
-  // when rows leave or arrive above it. `END_KEY` is the end card, the slot
-  // after every row, and it is the seed when the route asked for it.
-  const curKeyRef = useRef<string | null>(endOnOpen ? END_KEY : null);
-  // #5179: the advance a saved vote owes — the row's key, marked when the
-  // vote is saved and spent by the effect after the render that records it.
-  // A ref because the mark is set inside answer's promise callback and is
-  // read once, after the next render.
-  const advanceRef = useRef<string | null>(null);
-  // The sheet of the render in view, mirrored for the advance's guard:
-  // answer's promise callback closes over the `sheet` of the render that
-  // cast the vote, which is stale by the time the vote resolves, so a
-  // Comments, Ask or Vote sheet opened meanwhile is read here instead.
-  const sheetRef = useRef<SheetKind | null>(sheet);
-  useLayoutEffect(() => { sheetRef.current = sheet; });
-  // Still owed the instant scroll to the end card (the effect below): true
-  // until the scroller has a height to scroll by.
-  const endScrollRef = useRef<boolean>(endOnOpen);
-  // Still owed the `?shot=needs-approve` open (the effect below): true until
-  // a row that approves has landed and the scroller has a height.
-  const approveOpenRef = useRef<'approve' | 'diagram' | 'touches' | null>(endOnOpen ? null : shotTarget());
-  // Still owed the open on `openOn`'s row (the effect below).
-  const landRef = useRef<string | null>(endOnOpen ? null : openOn);
-  // Still owed the resume open (#4753, the effect below): true only when no
-  // other open is owed — the route asked for neither the end card
-  // (`endOnOpen`), a shot target nor a New for you row (`openOn`).
-  const resumeRef = useRef<boolean>(!endOnOpen && !approveOpenRef.current && !openOn);
-  const moreRef = useRef<HTMLButtonElement>(null);
-  const voteRef = useRef<HTMLButtonElement>(null);
-  const commentsRef = useRef<HTMLDivElement>(null);
-  const wide = useMediaFlag(WIDE_QUERY);
-  // On a wide window the vote is a popover on its button, and the rail's
-  // buttons sit at its foot: where the button is in the rail, measured
-  // before the popover paints (app.css `--ws-vote-top`).
-  const [voteTop, setVoteTop] = useState(0);
-
-  // Keyed by row, so moving to the next proposal does not carry the last
-  // one's conversation with it.
-  const [threads, setThreads] = useState<Record<string, AskMsg[]>>({});
-  const [draft, setDraft] = useState('');
-  // Which row has a question in flight. Keyed like the threads rather than a
-  // bare boolean: the feed still moves while an answer is coming, and an
-  // answer that lands after you have moved on belongs to the row it was
-  // asked about.
-  const [asking, setAsking] = useState<Record<string, boolean>>({});
-  // Which rows have had their stored thread fetched. Marked BEFORE the
-  // request goes out, so moving away and back does not fire a second one.
-  // A REF, NOT STATE: as state it would be a dependency of the effect that
-  // writes it, and the effect would tear itself down on every write.
-  const loadedRef = useRef<Set<string>>(new Set());
-  // Which model answers. The dev session's own list and its own default —
-  // see `_workshopModels`.
-  const [model, setModel] = useState<string>(() => models.selected || '');
-
-  // #5463: a vote the server saved, read straight off the store — a vote cast
-  // anywhere (the change's page, a notification's "Still yes", another feed)
-  // marks this feed's row the same way its own vote does, without waiting for
-  // a fresh read to repaint it.
-  const savedAll = useStoreState(voteSavedStore);
-  // The rows the previous render drew, for the pin below: a row voted
-  // elsewhere holds the slot it had, the way a row answered here does.
-  const drawnRef = useRef<QueueRow[]>([]);
-  const items = useMemo<QueueRow[]>(() => {
-    const live = rows.filter((r): r is QueueRow => r.t === 'card');
-    const have = new Set(live.map((r) => r.key));
-    const out = live.slice();
-    for (const [key, pin] of pinsRef.current) {
-      if (!have.has(key)) out.splice(Math.min(pin.index, out.length), 0, pin.row);
-    }
-    // A row voted elsewhere holds its slot the same way: it left `rows` with
-    // the publish that noticed the saved vote, and the pin keeps the
-    // confirmation in front of the viewer instead of the list jumping under
-    // them. A row no saved vote explains — answered on the server by someone
-    // else's read, no longer owed — just leaves. Walked from the end, so each
-    // splice at an old index leaves the earlier ones where they were.
-    const prev = drawnRef.current;
-    for (let idx = prev.length - 1; idx >= 0; idx--) {
-      const prior = prev[idx];
-      if (have.has(prior.key) || pinsRef.current.has(prior.key)) continue;
-      if (out.some((r) => r.key === prior.key)) continue;
-      if (!savedVoteFor(prior, savedAll)) continue;
-      out.splice(Math.min(idx, out.length), 0, prior);
-    }
-    return out;
-  }, [rows, pinsVersion, savedAll]);
-  drawnRef.current = items;
-  const n = items.length;
-  // `n + 1` slots: the items, then the end card (#2172). `i === n` is the
-  // end card, and `row` is null there.
-  const i = Math.min(at, n);
-  const row = i < n ? items[i] : null;
-  // What the pass went past: still in the feed, unanswered.
-  const left = items.filter((r) => !answered[r.key]).length;
-  /**
-   * Each row's tint, decided the first time it is seen and kept for life.
-   * The tints alternate so a swipe reads as a new item, and a row seen for
-   * the first time takes the opposite of the row before it, so a list seen
-   * whole alternates perfectly and a row that arrives later still differs
-   * from its neighbour above. Keyed on the index of the moment instead, a
-   * row leaving above the one in view would flip every tint after it, and
-   * the card in front of the reader would change colour for nothing.
-   */
-  const tintRef = useRef<Map<string, 'a' | 'b'>>(new Map());
-  const tints = useMemo<Array<'a' | 'b'>>(() => {
-    const seen = tintRef.current;
-    const out: Array<'a' | 'b'> = [];
-    let prev: 'a' | 'b' | null = null;
-    for (const r of items) {
-      let tint = seen.get(r.key);
-      if (!tint) { tint = prev === 'a' ? 'b' : 'a'; seen.set(r.key, tint); }
-      out.push(tint);
-      prev = tint;
-    }
-    return out;
-  }, [items]);
-  const voted = row ? answered[row.key] || null : null;
-
-  /**
-   * Stay on the row you were on when the list changes under you.
-   *
-   * A layout effect, so the scroll position is corrected in the same frame
-   * the rows shift: a row leaving ABOVE the current one would otherwise slide
-   * the next row into view for a paint. By key, because indexes are what the
-   * change moves.
-   */
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    const key = curKeyRef.current;
-    if (key) {
-      const idx = key === END_KEY ? items.length : items.findIndex((r) => r.key === key);
-      if (idx >= 0) {
-        if (idx !== at) {
-          setAt(idx);
-          // INSTANTLY. The scroller has `scroll-behavior: smooth`, which
-          // applies to this assignment too, so the correction would ANIMATE
-          // from where the shifted rows left the view to where the row is —
-          // a card sliding through for a third of a second, which is the
-          // "reset" a viewer saw. Off for the one assignment, then back.
-          if (el && el.clientHeight) {
-            el.style.scrollBehavior = 'auto';
-            el.scrollTop = idx * el.clientHeight;
-            el.style.scrollBehavior = '';
-          }
-        }
-        return;
-      }
-    }
-    // The end card is a place to BE only once there are rows to be past:
-    // with none, the key stays unset, so the first rows to land are what the
-    // reader opens on rather than the card after them.
-    const clamped = Math.min(at, items.length);
-    curKeyRef.current = items[clamped] ? items[clamped].key : null;
-    if (clamped !== at) setAt(clamped);
-  }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /**
-   * The `?shot=needs-end` open: the seed put `at` on the end card, and this
-   * puts the scroller there in the same frame, instantly (see the re-sync
-   * above for why not smoothly). Once — but on the first publish that finds
-   * the scroller laid out, not necessarily the first render, because a
-   * scroller with no height yet has nothing to scroll by. After that, rows
-   * landing later are the re-sync's job, which follows `END_KEY` to wherever
-   * the end moves.
-   */
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!endScrollRef.current || !el || !el.clientHeight) return;
-    endScrollRef.current = false;
-    el.style.scrollBehavior = 'auto';
-    el.scrollTop = items.length * el.clientHeight;
-    el.style.scrollBehavior = '';
-  }, [items]);
-
-  /**
-   * The `?shot=needs-approve` open: once the first row that approves has
-   * landed, land on it (instantly, as above) and put its vote sheet up.
-   * Once; after that the re-sync follows the row by key.
-   */
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    const target = approveOpenRef.current;
-    if (!target || !el || !el.clientHeight) return;
-    const idx = items.findIndex((r) => shotMatches(target, r));
-    if (idx < 0) return;
-    approveOpenRef.current = null;
-    curKeyRef.current = items[idx].key;
-    setAt(idx);
-    el.style.scrollBehavior = 'auto';
-    el.scrollTop = idx * el.clientHeight;
-    el.style.scrollBehavior = '';
-    setLeaving(null);
-    // #4490: the picture targets open on the item alone, no sheet over it.
-    if (target !== 'approve') return;
-    setSheet('vote');
-    setVoteSide('yes');
-    setVoteLine('');
-    setVoteChoice(null);
-  }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /**
-   * The Workshop's Vote on a row of New for you: land on that row, once,
-   * instantly, as the `?shot=needs-approve` open above lands on its own.
-   * A row that is not in the feed (answered since, or not owed after all)
-   * leaves the feed where it opens.
-   */
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    const key = landRef.current;
-    if (!key || !el || !el.clientHeight) return;
-    const idx = items.findIndex((r) => r.key === key);
-    if (idx < 0) return;
-    landRef.current = null;
-    curKeyRef.current = key;
-    setAt(idx);
-    el.style.scrollBehavior = 'auto';
-    el.scrollTop = idx * el.clientHeight;
-    el.style.scrollBehavior = '';
-  }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /**
-   * #4753: come back to a feed you have already been part way through, and it
-   * opens on the first item you have not already passed over or answered —
-   * `firstUnseenIndex`, read off the record needs-seen.ts keeps — rather than
-   * on the first one. The rows it jumps past are the seen ones, still in
-   * place and reachable by swiping back up. Once, on the first publish that
-   * has rows and a laid-out scroller, as the opens above land; after that the
-   * re-sync follows the row by key. Off when another open is owed: the end
-   * card, a shot target and `openOn` land where they ask. The jump does not
-   * go through `landOn`, so the rows it passes are not marked seen HERE —
-   * they were already seen, which is how the index was found.
-   */
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!resumeRef.current || !el || !el.clientHeight || !items.length) return;
-    resumeRef.current = false;
-    const idx = firstUnseenIndex(items, (r) => rowSlug(r, slug));
-    if (idx <= 0) return;
-    curKeyRef.current = items[idx].key;
-    setAt(idx);
-    el.style.scrollBehavior = 'auto';
-    el.scrollTop = idx * el.clientHeight;
-    el.style.scrollBehavior = '';
-  }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const landOn = (idx: number) => {
-    const c = Math.min(Math.max(idx, 0), items.length);
-    // #3526: A VOTE YOU MOVE ON FROM UNANSWERED IS SEEN. Only the one you
-    // were on, and only going forward: a swipe back up, the end card's way
-    // back and a route that opens on the end card pass nothing over. It
-    // stays where it is and can still be voted on; what changes is that the
-    // badges stop counting it (../../workshop/needs-seen.ts), as an unread
-    // count stops counting what you have read.
-    if (c > i && row && !answered[row.key] && !sendingRef.current.has(row.key)) {
-      markNeedsSeen(rowSlug(row, slug), needsRowKey(row));
-    }
-    curKeyRef.current = items[c] ? items[c].key : (items.length ? END_KEY : null);
-    setAt(c);
-    // The open caption is the item's: the next one arrives folded.
-    if (c !== i) setCaptionOpen(false);
-    // A sheet stays with its item: arriving on the end card closes it, so
-    // the way back up shows the card and not a panel about the row above.
-    if (c >= items.length && sheet) { setLeaving(null); setSheet(null); }
-  };
-  const onScroll = () => {
-    const el = scrollRef.current;
-    if (!el || !el.clientHeight) return;
-    const idx = Math.round(el.scrollTop / el.clientHeight);
-    if (idx !== at) landOn(idx);
-  };
-  /**
-   * Moving through the feed by a press rather than a swipe. No wrap: the
-   * ends are the ends, and the counter says which one you are at.
-   */
-  const go = (delta: number) => {
-    const el = scrollRef.current;
-    const idx = Math.min(Math.max(i + delta, 0), n);
-    if (idx === i) return;
-    if (el && el.clientHeight) el.scrollTo({ top: idx * el.clientHeight, behavior: 'smooth' });
-    landOn(idx);
-  };
-  // The chevron beside each item's counter (#3517). Stable, like `toggleMore`
-  // below, so handing it to the memo()'d items costs no render; it reads
-  // this render's `go` through a ref, refreshed the way `swipeHandle` is.
-  const goRef = useRef(go);
-  useLayoutEffect(() => { goRef.current = go; });
-  const prevItem = useCallback(() => goRef.current(-1), []);
-
-  const closeSheet = () => {
-    if (!sheet) return;
-    setLeaving(sheet);
-    setSheet(null);
-  };
-  /**
-   * A rail button's press: its sheet opens, or closes when it is the one up.
-   * Comments and Ask are the two tabs of ONE sheet, so pressing the other
-   * one's button switches the tab and the sheet stays where it is.
-   */
-  const toggleSheet = (kind: SheetKind) => {
-    if (sheet === kind) { closeSheet(); return; }
-    setLeaving(null);
-    setSheet(kind);
-    // The vote form opens fresh: on Yes, with an empty line and no answer.
-    if (kind === 'vote') { setVoteSide('yes'); setVoteLine(''); setVoteChoice(null); }
-  };
-  // The leave animation's length, then the sheet is gone. Nothing to wait
-  // for where motion is unwelcome — app.css runs no animation there.
-  useEffect(() => {
-    if (!leaving) return undefined;
-    const still = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const t = window.setTimeout(() => setLeaving(null), still ? 0 : 220);
-    return () => window.clearTimeout(t);
-  }, [leaving]);
-  // THE KEYBOARD. A fixed sheet is laid out against the layout viewport, which
-  // the on-screen keyboard does not shrink — so on a phone the card's floor,
-  // and the field on it, sat under the keys. app.css lifts that floor by
-  // `--un-kb-inset`, and the kit maintains it from ONE visualViewport tracker
-  // for the whole page.
-  //
-  // This screen used to measure the viewport itself, which is how it ended up
-  // with its own `innerHeight - vv.height - vv.offsetTop` — the expression
-  // #1938 proved wrong on iOS, where `innerHeight` collapses to the visual
-  // viewport and the result goes negative. `Math.max(0, …)` turned that into a
-  // confident zero, so the sheet simply never lifted on an iPhone and nothing
-  // looked broken enough to notice. Reading the kit's number is what stops a
-  // fourth copy of that arithmetic drifting out of step with the other three.
-  //
-  // What is left is the part CSS cannot do: the sheet got shorter, so the
-  // field inside it has to be scrolled back into view. `un-kb` lands on <html>
-  // from the kit's own rAF, so this observes the class rather than racing it
-  // through a second viewport listener. Only while a sheet is up, and only
-  // below the breakpoint: a panel on a wide window is not fixed at all.
-  //
-  // `platform-kb-open` counts as well (lib/keyboard-open.ts). In the Homeroom
-  // app the web view is resized to end at the keys, nothing is covered, and
-  // `un-kb` never comes on, so the card kept its resting two-thirds cap and
-  // the vote form ran off the page behind the keys (5 October 2026). That
-  // class is the page's own "the keyboard is up", however the host made room.
-  useEffect(() => {
-    if (!sheet || wide || typeof document === 'undefined') return undefined;
-    const docEl = document.documentElement;
-    const sync = () => {
-      const up = docEl.classList.contains('un-kb') || docEl.classList.contains('platform-kb-open');
-      setKbUp((cur) => (cur === up ? cur : up));
-      if (!up) return;
-      const active = document.activeElement as HTMLElement | null;
-      if (active && active.closest('.dev-ws-sheet-modal')) active.scrollIntoView({ block: 'nearest' });
-    };
-    const observer = new MutationObserver(sync);
-    observer.observe(docEl, { attributes: true, attributeFilter: ['class'] });
-    sync();
-    return () => {
-      observer.disconnect();
-      setKbUp(false);
-    };
-  }, [sheet, wide]);
-
-  /**
-   * Answering the item: a vote. The row is pinned BEFORE the act, because
-   * the act's publish removes it from the queue, and the pin is what keeps
-   * it on screen with its confirmation.
-   *
-   * QA 2026-09-24 Q3: THE CONFIRMATION WAITS FOR THE SERVER. The card used
-   * to be marked answered here, before `castVote` had even asked for a No's
-   * line, so cancelling "What's not working for you?" left "Voted no · press
-   * ↓ for the next" on a card nothing had been sent for, and a reload put it
-   * back. `castVote` resolves true only once the server has the vote: until
-   * then the rail says it is sending, a cancel leaves the card exactly as it
-   * was (and drops a pin this press added), and a refusal or a network
-   * failure is reported by `castVote`'s own toast.
-   *
-   * `settled` is the swipe's (#3052): called once the vote is on its way or
-   * was not cast, whichever comes first, so a card held at the line goes
-   * back as soon as the prompt closes. The swipe only reaches a vote row
-   * with both acts and none in flight (`swipeHandle` checks), which is the
-   * one path below that calls it.
-   *
-   * `reason` is the vote sheet's line (#3613): a string is sent with the
-   * vote, null sends none, and leaving it out (the swipe) lets castVote ask
-   * for it the way it always has.
-   */
-  const answer = (which: 'yes' | 'no', settled?: () => void, reason?: string | null) => {
-    if (!row) return;
-    const spec = which === 'yes' ? row.yes : row.no;
-    if (!spec || !spec.act) return;
-    const key = row.key;
-    if (sendingRef.current.has(key)) return;
-    sendingRef.current.add(key);
-    // PINNED FOR THE SESSION, not until the next move. The vote makes the
-    // row leave `rows` (it is no longer owed), and the pin keeps it in its
-    // slot, so nothing under the viewer shifts: a row leaving ABOVE the
-    // one in view moves every index after it, and with it the counter,
-    // and the scroll position has to be corrected under the reader. The
-    // pins used to go once the next card had settled, which was exactly
-    // when that correction was most visible — the card you had just
-    // arrived on re-numbered and slid.
-    const pinnedHere = !pinsRef.current.has(row.key);
-    if (pinnedHere) {
-      pinsRef.current.set(row.key, { row, index: at });
-      setPinsVersion((v) => v + 1);
-    }
-    closeSheet();
-    // castVote(sessionId, vote, expectedEpoch, opts): the model leaves the
-    // epoch out when the row has none, so the slots are padded to put the
-    // options bag fourth (VoteButton's VOTE_ARITY does the same).
-    const args = [...(spec.act.args as unknown[])];
-    while (args.length < 3) args.push(null);
-    const onSend = () => {
-      setSending((cur) => ({ ...cur, [key]: which }));
-      if (settled) settled();
-    };
-    const opts = reason === undefined ? { onSend } : { onSend, reason };
-    Promise.resolve(callAppView(spec.act.fn, ...args, opts))
-      .catch(() => false)
-      .then((ok) => {
-        sendingRef.current.delete(key);
-        setSending((cur) => {
-          if (!(key in cur)) return cur;
-          const next = { ...cur };
-          delete next[key];
-          return next;
-        });
-        if (ok === true) {
-          setAnswered((cur) => ({ ...cur, [key]: which }));
-          // #5179: the vote is IN, so the feed owes one move to the next
-          // row, spent by the effect on `answered` below. Set only here:
-          // a cancel, a refusal or a network failure moves nothing.
-          advanceRef.current = key;
-          // #4794: the vote is IN. Tell the screen that owns this feed's
-          // store copy, so it drops the row while the viewer is still here —
-          // its bookkeeping must not be able to undo a saved vote.
-          if (onAnswered) {
-            try { onAnswered(row, which); } catch { /* the vote stands whatever the hook did */ }
-          }
-        } else if (pinnedHere) {
-          pinsRef.current.delete(key);
-          setPinsVersion((v) => v + 1);
-        }
-        if (settled) settled();
-      });
-  };
-  // #5179: spend the advance a saved vote owed. After the render that
-  // records the vote, so the `go` this render refreshed into goRef reads
-  // the vote as answered — called straight from answer's promise, landOn's
-  // #3526 check would see the row as not yet answered and mark it seen as
-  // the feed moved off it. The move is the feed's own go(1): the chevron's
-  // smooth scroll, clamped to the end card on the last row. It does not
-  // pull the viewer: only when they are still on the row they voted on
-  // (a swipe or a press got there first, no move) and no sheet is up
-  // (Comments, Ask or Vote opened meanwhile, no move).
-  useEffect(() => {
-    const key = advanceRef.current;
-    if (!key) return;
-    advanceRef.current = null;
-    if (curKeyRef.current !== key || sheetRef.current !== null) return;
-    goRef.current(1);
-  }, [answered]);
-  // #5463: a saved vote that reaches this feed from the store reads here as
-  // answered — the same confirmation words its own vote draws ("Voted yes" /
-  // "Voted no"), with the row holding its slot. It sets neither the advance
-  // (the feed does not move on a vote it did not cast) nor the screen's
-  // answered hook (the store's own listener already stripped the copy, and a
-  // second telling would run the same strip twice). A row mid-send keeps its
-  // own answer's word.
-  useLayoutEffect(() => {
-    const add: Record<string, string> = {};
-    for (const r of items) {
-      if (answered[r.key] || sendingRef.current.has(r.key)) continue;
-      const side = savedVoteFor(r, savedAll);
-      if (side) add[r.key] = side;
-    }
-    if (Object.keys(add).length) setAnswered((cur) => ({ ...cur, ...add }));
-  });
-  /**
-   * The vote sheet's send (#3613): the switch's side with the line written
-   * under it. A Yes sends with its optional line; a No sends only once an
-   * answer is picked, and carries that answer with the line if one is written.
-   */
-  const voteTrimmed = voteLine.replace(/\s+/g, ' ').trim();
-  const submitVote = () => {
-    if (voteSide === 'no') {
-      if (!voteChoice) return;
-      const choice = {
-        notWorking: t('project:card.vote.picker.why.notWorking'),
-        approach: t('project:card.vote.picker.why.approach'),
-        notNeeded: t('project:card.vote.picker.why.notNeeded'),
-        other: t('project:card.vote.picker.why.other'),
-      }[voteChoice];
-      answer('no', undefined, composeNoReason(choice, voteLine,
-        (c, detail) => t('project:card.vote.picker.withDetail', { choice: c, detail })));
-      return;
-    }
-    answer('yes', undefined, voteTrimmed || null);
-  };
-  const onVoteBoxKey = (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => {
-    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); submitVote(); return; }
-    // The window's keys stand down inside a field, so the box closes itself.
-    if (ev.key === 'Escape') { ev.preventDefault(); closeSheet(); }
-  };
-  /**
-   * The swipe's way in (#3052): the card in view, when it is one the viewer
-   * can vote on and has not answered here, with no vote of its own already
-   * on the way. A commit that finds that no longer true (the feed moved, a
-   * press got there first) lets the card go rather than leaving it held.
-   */
-  const swipeOk = (key: string) => !!(row && row.key === key && canSwipeVote(row)
-    && !answered[key] && !sendingRef.current.has(key));
-  const swipeHandle = useRef<SwipeVoteHandle>({ can: () => false, commit: (_k, _w, settled) => settled() });
-  useLayoutEffect(() => {
-    swipeHandle.current = {
-      can: swipeOk,
-      commit: (key, which, settled) => {
-        if (!swipeOk(key)) { settled(); return; }
-        // A Yes is the whole vote. A No still says why, so the swipe opens
-        // the vote sheet on No rather than casting a lineless No.
-        if (which === 'no') {
-          settled();
-          setSheet('vote');
-          setVoteSide('no');
-          setVoteLine('');
-          setVoteChoice(null);
-          return;
-        }
-        answer(which, settled);
-      },
-    };
-  });
-  useSwipeVote(scrollRef, !wide, swipeHandle);
-
-  const preview = row ? (row.card.rail.preview || row.card.actionPreview || null) : null;
-  const canTry = !!(preview && preview.state === 'live');
-  const tryIt = () => {
-    if (preview && preview.state === 'live') callAppView('swapToStagingForSession', preview.sessionId, preview.url);
-  };
-  // The caption's "more" and "less", a tap on a drawn picture, and D. Stable,
-  // like openFull below, so handing it to the memo()'d items costs no render.
-  const toggleMore = useCallback(() => setCaptionOpen((o) => !o), []);
-  // Stable, so the memo()'d items it is handed to skip a render of the feed.
-  const openFull = useCallback((el: HTMLElement) => callAppView(
-    el.dataset.shots === 'true' ? 'openShotsComparison' : 'openVisualComparison',
-    el,
-  ), []);
-  const menuKey = row ? row.card.rail.menuKey : undefined;
-  // The card's own page, offered under More as "Open card": here the item IS
-  // the screen, so there is no card face to tap for it (app-view.js's
-  // _toggleCardMenu reads it off the trigger).
-  const cardHref = row ? openHref(rowSlug(row, slug), row.card) : null;
-  // What is rendered: the open sheet, or the one still leaving. Never on
-  // the end card, which has no item for a sheet to be about.
-  const shown = row ? (sheet || leaving) : null;
-  const talk = shown === 'comments' || shown === 'ask';
-  // `inert` too: a sheet on its way out takes no focus, and app.css lets taps
-  // through it, so the next tap lands on what it is uncovering.
-  const leavingAttr = !sheet && leaving ? { 'data-ws-leaving': '', inert: true } : {};
-  const commentCount = row ? (row.card.chatCount || 0) : 0;
-  const headFacts = row ? factsFor(row, voted) : [];
-  useLayoutEffect(() => {
-    const btn = voteRef.current;
-    if (shown !== 'vote' || !wide || !btn) return;
-    setVoteTop((cur) => (cur === btn.offsetTop ? cur : btn.offsetTop));
-  }, [shown, wide, row ? row.key : null]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /**
-   * The keys. Every one is also a button on the rail (or, for D, the
-   * caption's "more"), so nothing is ONLY a key; they are listed on the wide
-   * layout, where a keyboard is likely. Ignored while a field has focus —
-   * typing "v" in the ask box is typing. No dependency list on purpose: the
-   * handler closes over this render's state, and re-binding is cheaper than
-   * a stale row.
-   */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      // Only while the feed is on screen. It stays mounted under a screen
-      // that is hidden (the Communities tab's, #3488, while another tab is
-      // up), and a V then a Y there would cast a vote nobody could see.
-      const feed = scrollRef.current;
-      if (!feed || !feed.offsetParent) return;
-      const k = e.key;
-      if (k === 'Escape') {
-        if (sheet) { closeSheet(); e.preventDefault(); } else if (captionOpen) { setCaptionOpen(false); e.preventDefault(); }
-        return;
-      }
-      if (k === 'ArrowDown' || k === 'j' || k === 'J') { go(1); e.preventDefault(); return; }
-      if (k === 'ArrowUp' || k === 'k' || k === 'K') { go(-1); e.preventDefault(); return; }
-      if (!row) return;
-      if (k === 'v' || k === 'V') { toggleSheet('vote'); return; }
-      // On the vote sheet Y and N turn its switch, and Enter sends it: the
-      // line is written on the sheet, so a key no longer votes on its own.
-      if ((k === 'y' || k === 'Y') && sheet === 'vote') { setVoteSide('yes'); return; }
-      if ((k === 'n' || k === 'N') && sheet === 'vote') { setVoteSide('no'); return; }
-      if (k === 'Enter' && sheet === 'vote' && !(t && (t.tagName === 'BUTTON' || t.tagName === 'A'))) {
-        e.preventDefault();
-        submitVote();
-        return;
-      }
-      // D grows the caption over the picture, and folds it back: "more".
-      if (k === 'd' || k === 'D') { toggleMore(); return; }
-      if (k === 'a' || k === 'A') { toggleSheet('ask'); return; }
-      // Claimed with preventDefault: C is also the experimental Suggest an
-      // improvement shortcut (#4289), which leaves a key alone once a screen
-      // has used it.
-      if (k === 'c' || k === 'C') { e.preventDefault(); toggleSheet('comments'); return; }
-      if ((k === 't' || k === 'T') && canTry) { tryIt(); return; }
-      if ((k === 'm' || k === 'M') && moreRef.current) moreRef.current.click();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  });
-
-  // The comments tab's GitHub thread is filled by the legacy observer, so
-  // it is pointed at the sheet each time the tab comes up.
-  useLayoutEffect(() => {
-    if (sheet !== 'comments') return;
-    const host = commentsRef.current;
-    if (host) callAppView('_wireFeedComments', host);
-  }, [sheet, row ? row.key : null]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const target = row ? row.askAbout || null : null;
-  const thread = row ? threads[row.key] || [] : [];
-  const engaged = thread.length > 0;
-  const inFlight = !!(row && asking[row.key]);
-
-  /**
-   * Bring back what this viewer already asked about this item. In an effect
-   * and never in render — the shell's rule for a stateful island. It never
-   * overwrites a thread that already has turns in it.
-   */
-  useEffect(() => {
-    if (!row || sheet !== 'ask' || !target || loadedRef.current.has(row.key)) return undefined;
-    const key = row.key;
-    const { kind, ref } = target;
-    let live = true;
-    loadedRef.current.add(key);
-    const qs = `kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(String(ref))}`;
-    fetch(`/api/apps/${encodeURIComponent(rowSlug(row, slug))}/workshop/ask/thread?${qs}`, {
-      credentials: 'same-origin',
-      headers: { accept: 'application/json' },
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!live || !data || !Array.isArray(data.messages) || !data.messages.length) return;
-        setThreads((cur) => {
-          if (cur[key] && cur[key].length) return cur;
-          return {
-            ...cur,
-            [key]: data.messages.map((m: { who?: string; text?: string }) => ({
-              who: m.who === 'ai' ? 'ai' as const : 'you' as const,
-              text: String(m.text || ''),
-            })),
-          };
-        });
-      })
-      // A thread that will not load is a pane with no history in it, which
-      // is the state it opens in anyway.
-      .catch(() => {});
-    return () => { live = false; };
-    // PRIMITIVES ONLY: `target` is an object off the view model, and a
-    // republish that rebuilds it would otherwise tear the effect down.
-  }, [slug, sheet, row ? row.key : null, target ? target.kind : null, target ? target.ref : null]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /**
-   * Send one question and write the answer in under it. THE ROW IS CAPTURED,
-   * not read back at resolve time: the feed keeps moving while an answer is
-   * on its way, and an answer about item A appended to item B's thread is
-   * worse than no answer at all.
-   */
-  const ask = async () => {
-    const q = draft.trim();
-    if (!row || !q || !target || inFlight) return;
-    const key = row.key;
-    const sending = row;
-    const prior = threads[key] || [];
-    setThreads((cur) => ({
-      ...cur,
-      [key]: [...prior, { who: 'you', text: q }, { who: 'ai', text: t('project:needsYou.ask.reading'), pending: true }],
-    }));
-    setAsking((cur) => ({ ...cur, [key]: true }));
-    setDraft('');
-
-    // Writes the trailing bubble in place: the LAST one on this row's
-    // thread, and only while it is still pending.
-    const writeTail = (patch: AskMsg) => setThreads((cur) => {
-      const t = cur[key];
-      if (!t || !t.length) return cur;
-      const last = t.length - 1;
-      if (!t[last].pending) return cur;
-      const next = t.slice();
-      next[last] = patch;
-      return { ...cur, [key]: next };
-    });
-
-    let text: string;
-    let failed = false;
-    try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(rowSlug(sending, slug))}/workshop/ask`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-        credentials: 'same-origin',
-        // No transcript rides along. The server keeps this viewer's own
-        // thread and reads it back itself, so the history cannot be
-        // rewritten by whoever is asking.
-        body: JSON.stringify({ target: sending.askAbout, question: q, model: model || undefined }),
-      });
-      // A refusal the server could make BEFORE opening the stream is still
-      // ordinary JSON with a real status, so that shape is handled first.
-      const isStream = (res.headers.get('content-type') || '').includes('text/event-stream');
-      if (!res.ok || !isStream || !res.body) {
-        const data = await res.json().catch(() => ({}));
-        failed = true;
-        // The server's own sentence wherever it wrote one: it is the only
-        // thing that can say WHICH of "out of allowance", "too many at once"
-        // and "no model is configured" happened.
-        text = (typeof data.error === 'string' && data.error.trim())
-          ? data.error.trim()
-          : t('project:needsYou.ask.failed');
-      } else {
-        const parsed = await readAskStream(res.body, (sofar) => {
-          writeTail({ who: 'ai', text: sofar, pending: true });
-        });
-        if (parsed.error) {
-          failed = true;
-          text = parsed.error;
-        } else if (parsed.text.trim()) {
-          text = parsed.text.trim();
-        } else {
-          failed = true;
-          text = t('project:needsYou.ask.failed');
-        }
-      }
-    } catch {
-      failed = true;
-      text = t('project:needsYou.ask.failedOffline');
-    }
-
-    writeTail({ who: 'ai', text, failed });
-    setAsking((cur) => {
-      const next = { ...cur };
-      delete next[key];
-      return next;
-    });
-  };
-
-  /**
-   * ONE send circle, rendered in one of two places: the resting line while
-   * the composer is a single row, the controls row once it opens. Written
-   * once so the disabled rule and the classes cannot drift between the two.
-   */
-  const sendBtn = (
-    <button
-      type="submit"
-      className="dc-send-btn dc-circle-send dev-ws-ask-send"
-      aria-label={t('project:needsYou.ask.send')}
-      disabled={!draft.trim() || !target || inFlight}
-      // The field keeps focus through the press (lib/keyboard-open.ts).
-      onMouseDown={(event) => event.preventDefault()}
-    ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
-  );
-
-  /**
-   * Moving by a press. On a phone the swipe is the move and app.css hides
-   * these; on a wide window they stand beside the rail and do what the wheel
-   * does. Disabled at the ends rather than wrapping: the end card is the
-   * last slot, so Next goes dark there. Written once, because the rail on
-   * the end card is these alone (see below).
-   */
-  const moveRow = (
-    <div className="dev-ws-move" data-ws-move-row="">
-      <button type="button" className="dev-ws-move-btn" data-ws-move="prev" aria-label={t('project:needsYou.move.previous')} disabled={i <= 0} onClick={() => go(-1)}>
-        <ChevronUpIcon className="dev-ws-move-icon" aria-hidden="true" />
-      </button>
-      <button type="button" className="dev-ws-move-btn" data-ws-move="next" aria-label={t('project:needsYou.move.next')} disabled={i >= n} onClick={() => go(1)}>
-        <ChevronDownIcon className="dev-ws-move-icon" aria-hidden="true" />
-      </button>
-    </div>
-  );
-
-  // THE PLACE IN THE FEED, for the strip under the header (#4754). The
-  // segments and the counter used to ride each card's top line, so they
-  // slid away with the card; they sit on one fixed line now, and only the
-  // lit part and the number change as the cards scroll under it. One
-  // unbroken line past SEGMENTS_MAX, where the segments would be slivers.
-  const pct = Math.round((Math.min(i + 1, n) / Math.max(1, n)) * 1000) / 10;
-
-  return (
-    <div
-      className="dev-ws-needs"
-      data-ws-needs=""
-      data-ws-sheet={shown || undefined}
-      data-ws-kb={kbUp ? '' : undefined}
-      data-ws-end={row ? undefined : ''}
-    >
-      {/* THE STAGE. The strip and the scroller share one column, so the
-          strip is as wide as the card and sits directly over it while the
-          rail and the arrows stay beside the stage on a wide window. */}
-      <div className="dev-ws-needs-stage">
-        {/* WHERE YOU ARE, ON THE PAGE. It reads the same `at` the scroller
-            does, so a swipe and a press light it exactly where the cards
-            moved. The end card lights the line fully and says nothing (no
-            counter, as before), and an empty feed keeps the strip's height
-            so nothing jumps. */}
-        <div className="dev-ws-needs-progress" data-ws-progress="">
-          {n > 0 ? (
-            <div className="dev-ws-needs-progress-line" style={{ '--ws-n': n <= SEGMENTS_MAX ? n : 1 } as CSSProperties} aria-hidden="true"><i style={{ width: `${pct}%` }} /></div>
-          ) : null}
-          {row ? <span className="dev-ws-needs-of">{`${i + 1} / ${n}`}</span> : null}
-        </div>
-        {/* THE FEED. A real scroll container with snap points, not a swap of one
-            rendered card: every row stays in the DOM (the legacy fillers find
-            their hosts, a deep link can name a row that is not in view), a
-            drag pages it with `scroll-snap`, and the index is read back from
-            the scroll position so a swipe and a press cannot disagree. */}
-        <div className="dev-ws-needs-scroll" data-ws-feed="" ref={scrollRef} onScroll={onScroll}>
-          {items.map((r, k) => (
-            <FeedItem
-              key={r.key}
-              row={r}
-              index={k}
-              tint={tints[k]}
-              near={Math.abs(k - i) <= 1}
-              voted={answered[r.key] || null}
-              wide={wide}
-              swipe={!wide && canSwipeVote(r) && !answered[r.key]}
-              slug={slug}
-              open={k === i && captionOpen}
-              onFull={openFull}
-              onMore={toggleMore}
-              onPrev={wide ? undefined : prevItem}
-              renderApp={renderApp}
-            />
-          ))}
-          {/* ALWAYS, after the last item: the swipe past the end lands here.
-              With no items it is the whole screen. */}
-          <DoneItem
-            rows={items}
-            answered={answered}
-            left={left}
-            onDone={onDone}
-            onHub={onHub}
-            onSuggest={onSuggest}
-            doneLabel={doneLabel}
-            onBack={() => go(items.findIndex((r) => !answered[r.key]) - i)}
-          />
-        </div>
-      </div>
-
-      {row ? (
-        <aside className="dev-ws-rail" data-ws-rail="" aria-label={t('project:needsYou.rail.label')}>
-          <button
-            ref={voteRef}
-            type="button"
-            className={voted ? 'dev-ws-rail-btn dev-ws-rail-vote is-on' : 'dev-ws-rail-btn dev-ws-rail-vote'}
-            data-ws-rail-btn="vote"
-            data-ws-voted={voted || undefined}
-            aria-haspopup="dialog"
-            aria-expanded={sheet === 'vote'}
-            disabled={!voted && !!sending[row.key]}
-            onClick={() => toggleSheet('vote')}
-          >
-            <span className="dev-ws-rail-ic">{voted ? <CheckIcon aria-hidden="true" /> : <BallotIcon aria-hidden="true" />}</span>
-            <span className="dev-ws-rail-lab">{voted ? answeredWords(row, voted, 'rail') : (sending[row.key] ? t('project:needsYou.rail.sending') : (approves(row) ? t('project:needsYou.rail.approve') : t('project:needsYou.rail.vote')))}</span>
-          </button>
-          {/* Skip: the feed's forward move. It records no answer, so the row
-              stays in the feed and can be voted on later. */}
-          <button
-            type="button"
-            className="dev-ws-rail-btn dev-ws-rail-skip"
-            data-ws-rail-btn="skip"
-            aria-label={t('project:needsYou.rail.skipThis')}
-            onClick={() => go(1)}
-          >
-            <span className="dev-ws-rail-ic"><ArrowRightIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">{t('project:needsYou.rail.skip')}</span>
-          </button>
-          {/* Comments and Ask: the two tabs of one sheet (see the header). */}
-          <button
-            type="button"
-            className="dev-ws-rail-btn dev-ws-rail-comments"
-            data-ws-rail-btn="comments"
-            aria-haspopup="dialog"
-            aria-expanded={sheet === 'comments'}
-            aria-label={commentCount ? t('project:needsYou.rail.commentsCount', { count: commentCount }) : undefined}
-            onClick={() => toggleSheet('comments')}
-          >
-            <span className="dev-ws-rail-ic"><ChatBubbleTailIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">{commentCount ? String(commentCount) : t('project:needsYou.rail.comments')}</span>
-          </button>
-          <button
-            type="button"
-            className="dev-ws-rail-btn dev-ws-rail-ask"
-            data-ws-rail-btn="ask"
-            aria-haspopup="dialog"
-            aria-expanded={sheet === 'ask'}
-            onClick={() => toggleSheet('ask')}
-          >
-            <span className="dev-ws-rail-ic"><SparklesIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">{t('project:needsYou.rail.ask')}</span>
-          </button>
-          <button
-            type="button"
-            className="dev-ws-rail-btn dev-ws-rail-try"
-            data-ws-rail-btn="try"
-            disabled={!canTry}
-            title={preview && preview.state !== 'live' ? preview.title : undefined}
-            onClick={tryIt}
-          >
-            <span className="dev-ws-rail-ic"><PlayIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">{t('project:needsYou.rail.tryIt')}</span>
-          </button>
-          {/* The card's own ⋯ menu, on the rail. Same hook, same class, so
-              the delegated handler and the declared checks find it. */}
-          <button
-            ref={moreRef}
-            type="button"
-            className="dev-ws-rail-btn dev-ws-rail-more dev-card-menu-btn"
-            data-ws-rail-btn="more"
-            data-card-menu={menuKey}
-            data-card-menu-open={cardHref || undefined}
-            disabled={!menuKey && !cardHref}
-            aria-haspopup="true"
-            aria-label={t('project:needsYou.rail.moreActions')}
-          >
-            <span className="dev-ws-rail-ic"><EllipsisHorizontalIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">{t('project:needsYou.rail.more')}</span>
-          </button>
-          {moveRow}
-          {/* The vote: the question, where it stands, and the two answers. A
-              sheet from the floor on a phone, a popover on this button on a
-              wide window (app.css). Cancel (Decide later, on a group decision)
-              closes it. */}
-          {shown === 'vote' ? (
-            <div className="dev-ws-sheet-modal dev-ws-sheet-vote" data-ws-sheet="vote" role="dialog" aria-label={row.ask} style={wide ? { '--ws-vote-top': `${voteTop}px` } as CSSProperties : undefined} {...leavingAttr}>
-              <button type="button" className="dev-ws-scrim" aria-label={t('core:common.close')} onClick={closeSheet} />
-              <div className="dev-ws-sheet-card">
-                <span className="dev-ws-sheet-handle" aria-hidden="true" />
-                <p className="dev-ws-ask-q">{row.ask}</p>
-                <VoteSub row={row} voted={voted} />
-                {/* A group decision (a rename, a secret, closing a request)
-                    carries no pair here: its votes can apply it on the spot,
-                    so it is decided on its own page, which shows the options
-                    and what follows. Two dead buttons said nothing of that. */}
-                {row.yes || row.no || !cardHref ? (
-                  /* #3613: the card's own vote picker, inline — the switch,
-                     the line for the group under it, Cancel and the send —
-                     rather than two buttons followed by castVote's prompt
-                     card. Cancel is what Decide later was. */
-                  <NeedsVoteForm
-                    row={row}
-                    slug={slug}
-                    side={voteSide}
-                    line={voteLine}
-                    noChoice={voteChoice}
-                    boxRef={voteBoxRef}
-                    onSide={setVoteSide}
-                    onLine={setVoteLine}
-                    onNoChoice={setVoteChoice}
-                    onBoxKey={onVoteBoxKey}
-                    onCancel={closeSheet}
-                    onSend={submitVote}
-                  />
-                ) : (
-                  <>
-                    <div className="dev-ws-answer-row">
-                      <a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href={cardHref}>{t('project:needsYou.voteSheet.openToDecide')}</a>
-                    </div>
-                    <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>{t('project:needsYou.voteSheet.later')}</button>
-                  </>
-                )}
-                <p className="dev-ws-keys-hint" aria-hidden="true">{approves(row) ? t('project:needsYou.voteSheet.keysApprove') : t('project:needsYou.voteSheet.keysVote')}</p>
-              </div>
-            </div>
-          ) : null}
-        </aside>
-      ) : (
-        /* THE END CARD'S RAIL: the move pair alone, so the way back up is
-           where the thumb learned it is, and on a wide window the stage
-           keeps its width rather than re-centring when the rail goes. On a
-           phone the pair is hidden (app.css) and the rail draws nothing.
-           Only once there are rows to go back to: an empty queue has no
-           rail, as before. */
-        n ? (
-          <aside className="dev-ws-rail dev-ws-rail-end" data-ws-rail="" aria-label={t('project:needsYou.rail.endLabel')}>
-            {moveRow}
-          </aside>
-        ) : null
-      )}
-
-      {/* The keys, listed once, where a keyboard is likely (app.css), in the
-          rail's order. Each entry is one message: its keys are the numbered
-          tags, and the word after them is one text run, so the prerender
-          never emits two adjacent text nodes (React #418). */}
-      {row || n ? (
-        <p className="dev-ws-keys" aria-hidden="true">
-          {legendFor(!row).map(({ id, keys }) => (
-            <span key={id} className="dev-ws-key">
-              <RichMessage id={id} components={keys === 2 ? [<kbd />, <kbd />] : [<kbd />]} />
-            </span>
-          ))}
-        </p>
-      ) : null}
-
-      {/* ── Comments and Ask: one sheet, two tabs, about the item in view ──
-          A sheet on a phone, a panel beside the rail on a wide window, where
-          the card's caption is repeated at its top. Both tabs stay mounted
-          while it is up, so a half-written comment survives a look at Ask.
-          The Comments tab holds the app's own thread (the one the unfolded
-          rows use) and the legacy filler's host, pointed at it when the tab
-          comes up; the Ask tab is the private Q&A with the model, whose
-          composer is the dev session's own (`.dc-card`). */}
-      {row && talk ? (
-      <div className="dev-ws-sheet-modal dev-ws-sheet-talk" data-ws-sheet={shown} role="dialog" aria-label={t('project:needsYou.talk.dialog')} {...leavingAttr}>
-      <button type="button" className="dev-ws-scrim" aria-label={t('core:common.close')} onClick={closeSheet} />
-      <section className="dev-ws-sheet-card dev-ws-talk" data-ws-talk="">
-        <span className="dev-ws-sheet-handle" aria-hidden="true" />
-        <div className="dev-ws-talk-head" data-ws-talk-head="">
-          <ItemBy row={row} />
-          <h3 className="dev-ws-talk-title">{row.card.title.text || row.card.title.title}</h3>
-          {row.descriptionHtml ? <Html className="dev-ws-talk-words" html={row.descriptionHtml} />
-            : row.summary ? <p className="dev-ws-talk-words">{row.summary}</p> : null}
-          <FactsLine facts={headFacts} />
-        </div>
-        <div className="dev-ws-talk-tabs">
-          <div className="dev-ws-talk-tablist" role="tablist" aria-label={t('project:needsYou.talk.tabs')}>
-            <button
-              type="button"
-              role="tab"
-              className="dev-ws-talk-tab"
-              data-ws-talk-tab="comments"
-              aria-selected={shown === 'comments'}
-              onClick={() => setSheet('comments')}
-            >
-              {commentCount
-                ? <RichMessage id="project:needsYou.talk.commentsCount" values={{ count: commentCount }} components={[<span className="dev-ws-talk-n" />]} />
-                : t('project:needsYou.talk.comments')}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              className="dev-ws-talk-tab"
-              data-ws-talk-tab="ask"
-              aria-selected={shown === 'ask'}
-              onClick={() => setSheet('ask')}
-            >
-              <SparklesIcon className="dev-ws-talk-tab-ic" aria-hidden="true" />
-              {t('project:needsYou.talk.ask')}
-            </button>
-          </div>
-          <button type="button" className="dev-ws-sheet-x" aria-label={t('core:common.close')} onClick={closeSheet}>
-            <XIcon className="dev-ws-sheet-x-ic" aria-hidden="true" />
-          </button>
-        </div>
-        <div className="dev-ws-sheet-body" data-ws-comments="" role="tabpanel" hidden={shown !== 'comments'} ref={commentsRef}>
-          {row.commentsFor != null ? <div className="dev-feed-comments" data-comments-for={row.commentsFor} /> : null}
-          {row.thread ? (
-            <FeedThread slug={rowSlug(row, slug)} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
-          ) : null}
-          {!row.thread && row.commentsFor == null ? <p className="dev-ws-ask-hint">{t('project:needsYou.comments.none')}</p> : null}
-        </div>
-        <div className="dev-ws-ask" data-ws-ask="" role="tabpanel" hidden={shown !== 'ask'}>
-          <p className="dev-ws-ask-private">{t('project:needsYou.ask.private')}</p>
-          <div className="dev-ws-ask-log" data-ws-ask-log="">
-            {engaged ? thread.map((m, k) => (
-              <p
-                key={k}
-                className={askMsgClass(m)}
-                /* The answer is the one thing here nobody in this app wrote,
-                   so it is announced. Polite, not assertive. */
-                aria-live={m.who === 'ai' ? 'polite' : undefined}
-              >
-                {m.text}
-              </p>
-            )) : (
-              <p className="dev-ws-ask-hint">
-                {target ? t('project:needsYou.ask.hint') : t('project:needsYou.ask.noDetails')}
-              </p>
-            )}
-          </div>
-          <form
-            className="dev-ws-ask-composer dc-card"
-            onSubmit={(e) => { e.preventDefault(); ask(); }}
-          >
-            <label className="sr-only" htmlFor="dev-ws-ask-input">{t('project:needsYou.ask.fieldLabel')}</label>
-            {/* THE FIELD on a line of its own; the controls row is under it. */}
-            <div className="dev-ws-ask-line">
-              <input
-                id="dev-ws-ask-input"
-                className="dev-ws-ask-input"
-                type="text"
-                value={draft}
-                placeholder={
-                  !target ? t('project:needsYou.ask.placeholderNone')
-                    : inFlight ? t('project:needsYou.ask.placeholderReading')
-                      : t('project:needsYou.ask.placeholder')
-                }
-                disabled={!target || inFlight}
-                onChange={(e) => setDraft(e.target.value)}
-              />
-            </div>
-            {/* THE CONTROLS ROW is there at every width: the model picker, and
-                the send circle as the card's last thing. It used to wait for a
-                tap on the field on a phone, and a picker behind a tap nobody
-                knows to make is a picker nobody uses. */}
-            <div className="dev-ws-ask-row">
-              {models.list.length ? (
-                <span className="dev-ws-ask-model" data-ws-ask-model="">
-                  <label className="sr-only" htmlFor="dev-ws-ask-model-select">{t('project:needsYou.ask.model')}</label>
-                  <select
-                    id="dev-ws-ask-model-select"
-                    className="dc-model-select dc-model-name"
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                  >
-                    {models.list.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-                  </select>
-                  <ChevronDownIcon className="dev-ws-ask-model-chev" aria-hidden="true" />
-                </span>
-              ) : null}
-              {/* `margin-left: auto` in app.css, so the circle is at the card's
-                  right edge whether or not the model picker is beside it. */}
-              {sendBtn}
-            </div>
-          </form>
-        </div>
-      </section>
-      </div>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * A part's head in What's happening's card: What happened's week head
- * (./week-pages.tsx ThisWeek), the part's name in This week's weight and its
- * count beside it, muted, or in the accent when the count asks for the
- * viewer (`ask`), as This week's "5 new" does.
- */
-function PartHead({ title, count, ask = false, action = null }: {
-  title: string;
-  count: string | null;
-  ask?: boolean;
-  /** Optional control at the head's right end, as New for you's Mark all seen (#5056). */
-  action?: ReactNode;
-}): ReactNode {
-  return (
-    <div className="dev-ws-hweek-head">
-      <span className="dev-ws-week-head">
-        <b>{title}</b>
-        {count ? <span className={ask ? 'dev-ws-week-fresh' : undefined}>{count}</span> : null}
-      </span>
-      {action}
-    </div>
-  );
-}
-
-/** The viewer's own work in What happened's one-line rows, ending with where each stands. */
-function MineLines({ rows, slug, openKey, onOpen }: {
-  rows: WorkCardRow[];
-  slug: string;
-  openKey: string | null;
-  onOpen: (event: ReactMouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
-}): ReactNode {
-  return (
-    <ul className="dev-ws-hlist">
-      {rows.map((r) => {
-        const ref = topicRef(r.card);
-        return (
-          <HappenedRow
-            key={r.key}
-            row={r}
-            fresh={!!r.fresh}
-            slug={slug}
-            on={!!openKey && !!ref && openKey === `${ref.kind}:${ref.id}`}
-            onOpen={onOpen}
-            standing
-          />
-        );
-      })}
-    </ul>
-  );
-}
-
-/**
- * #4772: one part of the viewer's own work in What's happening's card
- * (Waiting on you, Yours, up for a vote, Going live): its head over its
- * rows, its first WORKSHOP_WORK_FIRST and the rest behind Show N more.
- * Waiting on you and Going live are one line a row (MineLines); Yours, up
- * for a vote keeps the shared two-line work row (./work-row.tsx, variant
- * `line`), whose first line ends with the vote's pill and Vote. The caller
- * leaves out a part with no rows.
- */
-function MineSection({ section, title, count, ask = false, rows, slug, openKey, onOpen }: {
-  section: 'waiting' | 'vote' | 'live' | 'next';
-  title: string;
-  count: string;
-  ask?: boolean;
-  rows: WorkCardRow[];
-  slug: string;
-  openKey: string | null;
-  onOpen: (event: ReactMouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
-}): ReactNode {
-  const t = useMessages('project');
-  const [all, setAll] = useState(false);
-  const shown = all ? rows : rows.slice(0, WORKSHOP_WORK_FIRST);
-  return (
-    <div className="dev-ws-hpart" data-ws-mine-section={section}>
-      <PartHead title={title} count={count} ask={ask} />
-      <div className="dev-ws-lane" data-ws-lane={`mine-${section}`}>
-        {section === 'vote' ? (
-          <WorkList rows={shown} slug={slug} openKey={openKey} onOpen={onOpen} variant="line" />
-        ) : (
-          <MineLines rows={shown} slug={slug} openKey={openKey} onOpen={onOpen} />
-        )}
-        {rows.length > WORKSHOP_WORK_FIRST ? (
-          <button
-            type="button"
-            className="dev-ws-reveal touch-target-32"
-            data-ws-mine-section-more={section}
-            aria-expanded={all}
-            onClick={() => setAll(!all)}
-          >
-            <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-            {all ? t('project:workshop.mine.showLess') : t('project:workshop.mine.showMore', { count: rows.length - WORKSHOP_WORK_FIRST })}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 /**
  * The grouping strip — "By category" / "By stage".
@@ -3980,15 +2717,6 @@ function GroupStrip({ group }: { group: string }): ReactNode {
  * the floor and the sheets rise from it, stopping above the keyboard.
  */
 const WIDE_QUERY = '(min-width: 700px)';
-/**
- * #4457: where a Workshop row opens its page in a panel beside the list
- * rather than as the page: room for the list and a 560px panel beside it.
- * #4417: the chrome beside the page was the strip and the 264px places
- * column, which stepped aside while the panel was open so the list kept its
- * room. On every desktop window now the sidebar of rows nests the places and
- * there is no column (v3).
- */
-const SIDE_QUERY = '(min-width: 1180px)';
 
 /**
  * (#5164) How often the hub's own places quietly re-read what waits on you
@@ -4345,8 +3073,6 @@ function useWorkshopHostState(
 export function DevWorkshop(): ReactNode {
   const t = useMessages('project');
   const v = useStoreState(devWorkshopStore);
-  // The new Needs you, when this device has it switched on (an experiment).
-  const reviewFlow = useReviewFlowEnabled();
   // THE OPEN APP'S NAME AND ARTWORK, for the hero and the channel below. The
   // same store the header's own tile draws from, so the two cannot disagree
   // about which app this is, and no second fetch: the controller publishes
@@ -4375,12 +3101,10 @@ export function DevWorkshop(): ReactNode {
   // tab, by its Monday (sinceWeekStateKey), or null for the tab itself.
   const [weeksShown, setWeeksShown] = useState(WEEKS_FIRST);
   const [openWeek, setOpenWeek] = useState<string | null>(null);
-  // New for you's rows past its first WORKSHOP_WORK_FIRST, put out in place.
-  const [freshAll, setFreshAll] = useState(false);
   // #4457: the item whose page is open in the panel beside the list (wide
   // windows only; ./side-panel.tsx), as the kind and id AppView opens.
   const [sideItem, setSideItem] = useState<TopicRef | null>(null);
-  const sideWide = useMediaFlag(SIDE_QUERY);
+  const sideWide = useMediaFlag(WORKSHOP_SIDE_QUERY);
   // Whether the Workshop tab's Your work shows every row or its first
   // WORKSHOP_WORK_FIRST.
   const [mineAll, setMineAll] = useState(false);
@@ -4627,7 +3351,6 @@ export function DevWorkshop(): ReactNode {
   // and republishes): what was new is then in its week, a tap away (#2183).
   const clearSince = () => {
     if (!v.since) return;
-    setFreshAll(false);
     callAppView('_workshopClearSince', slug, v.since.through);
   };
 
@@ -4682,8 +3405,42 @@ export function DevWorkshop(): ReactNode {
     setSideItem(null);
     setOpenWeek(null);
     setWeeksShown(WEEKS_FIRST);
-    setFreshAll(false);
   }, [v.slug]);
+  // #6380: THE COLUMN'S "OPEN IN WORKSHOP". Beside the Homeroom bot's list a
+  // request, change or decision has no Workshop row to press, so the row
+  // leaves it for this one (./panel-target.ts) and the tab opens it here, in
+  // the panel, as its own row would. It runs AFTER the resets above, in the
+  // same commit, so a page mounting straight onto the stash is not wiped by
+  // them; a page already up takes it from the event. Only when the panel can
+  // be there at all — this project's page, the Workshop tab, a wide window,
+  // and the page on screen — so a stash is left for the visit that shows it
+  // rather than taken by one that cannot.
+  useEffect(() => {
+    let live = true;
+    const take = () => {
+      if (!v.slug || tab !== 'workshop' || !sideWide || !pageShown) return;
+      const slug = v.slug;
+      void takeWorkshopPanelItem(slug).then((ref) => {
+        if (live && ref && slug === v.slug) setSideItem(ref);
+      });
+    };
+    take();
+    // A door followed while the page is up: taken a turn later, once the
+    // router's own pass (which may mount this page afresh) is over.
+    let timer = 0;
+    const onTarget = (event: Event) => {
+      const detail = (event as CustomEvent<{ slug?: string } | null>).detail;
+      if (!detail || detail.slug !== v.slug) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(take, 0);
+    };
+    window.addEventListener('usernode:workshop-panel-target', onTarget);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+      window.removeEventListener('usernode:workshop-panel-target', onTarget);
+    };
+  }, [v.slug, tab, sideWide, pageShown]);
   // A deep link that names a row (the ?shot= captures): open its theme and
   // unfold it once, on the publish that carries it.
   const autoKey = v.autoExpand ? `${v.autoExpand.theme}:${v.autoExpand.key}` : null;
@@ -4704,7 +3461,7 @@ export function DevWorkshop(): ReactNode {
   // the same note).
   // A week's presses are part of it (#3524): each one mounts rows the
   // fillers have not seen, so the count, not only which weeks, goes in.
-  const openSig = `${Object.values(openRows).join('|')}|work:${mineAll}:${freshAll}`;
+  const openSig = Object.values(openRows).join('|');
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -4718,6 +3475,12 @@ export function DevWorkshop(): ReactNode {
   // The ⋯'s Pin to sidebar, beside the sidebar that draws the pins.
   const sidebarRows = useSidebarRows();
   const { apps: pins } = useStoreState(pinnedAppsStore);
+  // ONE HOME (#6361): the ⋯'s two Home pins read Home's own records: the
+  // pinned communities (../../home/home-pins-store.ts) and the apps grid,
+  // whose store repaints whenever Home.toggleAdded lands.
+  const homePins = useStoreState(homePinsStore);
+  useStoreState(gridStore);
+  const tHome = useMessages('home');
   // The improve store is the header's own record of the app, read only once
   // it is about this project, not the one the page was last pointed at.
   // THE COMMUNITY'S COLOUR is the header's (../../header/community-tint.ts):
@@ -4768,8 +3531,8 @@ export function DevWorkshop(): ReactNode {
   const placesInColumn = useMediaFlag(PLACES_COLUMN_QUERY);
   useEffect(() => { setTrayOpen(false); }, [tab, v.slug, placesInColumn]);
   useEffect(() => { if (trayOpen) setTrayShown(true); }, [trayOpen]);
-  // On a phone the drawer takes the edge (../../nav-drawer/nav-drawer.tsx):
-  // the places are its level 1, and the tray is the wide window's.
+  // On a phone the Hub's rows lead to the places (../../nav-drawer/nav-drawer.tsx,
+  // ./hub-cards.tsx TopicsCard), and the tray is the wide window's.
   const { on: drawerOn } = useStoreState(drawerStore);
   useEdgeSwipe(!placesInColumn && !drawerOn && !trayOpen && !!v.slug && !v.loading, () => {
     trayNav.current = false;
@@ -4872,6 +3635,13 @@ export function DevWorkshop(): ReactNode {
      what the pinned pane head and its band are measured against (`setBar`).
      The back bar scrolls away under it. */
   const projectName = app.name || community?.name || slug;
+  // #6111: the empty board's one start action. `v.emptyNote` is set only
+  // when the board itself holds nothing (never for a search or a filter),
+  // so a failed load is the one case that has to be taken out again; a
+  // project Homeroom bot is still building gets no second start.
+  const emptyStart = v.emptyNote && !v.emptyNote.loadFailed && !building
+    ? { slug, name: projectName, bot: !!(v.mine && v.mine.bot) }
+    : null;
   const choosePlace = (key: TabKey) => {
     trayNav.current = true;
     setTrayOpen(false);
@@ -4934,54 +3704,20 @@ export function DevWorkshop(): ReactNode {
   // first. A first visit has no baseline and so nothing new, but the weeks
   // and their figures are still the history, so they are drawn without the
   // card's own controls.
-  // #4772: the viewer's own work, by section (AppView._workshopView files
-  // each row's `group`): what waits on them, then their work in flight, then
-  // theirs up for a vote, then what is going live. `extra` is what Homeroom
-  // bot waits on them for on items that are not otherwise theirs.
-  const mineCards = (v.mine ? v.mine.rows : []).filter((r): r is WorkCardRow => r.t === 'card');
-  const mineIn = (group: NonNullable<WorkCardRow['group']>) => mineCards.filter((r) => (r.group || 'work') === group);
-  const waitingRows = [...mineIn('waiting'), ...((v.mine && v.mine.extra) || []).filter((r): r is WorkCardRow => r.t === 'card')];
-  const workRows = mineIn('work');
-  const voteRows = mineIn('vote');
-  const liveRows = mineIn('live');
-  // Up next, soonest first: going live, then up for a vote.
-  const nextRows = [...liveRows, ...voteRows];
-  const anyMine = waitingRows.length + workRows.length + voteRows.length + liveRows.length > 0;
-  // Your work stays when the viewer has nothing anywhere (#2182: it says so);
-  // with something in another section, an empty Your work is left out.
-  const showWork = !!v.mine && (workRows.length > 0 || (!anyMine && !!v.mine.viewer));
-  // A merged change of the viewer's still going live is Going live's until
-  // it is live, and then What happened's news like anyone's: while it is
-  // here, What happened and its weeks leave it out, so it is listed once.
-  const rowKey = (r: WorkCardRow): string => {
-    const ref = topicRef(r.card);
-    return ref ? `${ref.kind}:${ref.id}` : r.key;
-  };
-  const goingLiveKeys = new Set(liveRows.map(rowKey));
-  const notGoingLive = (r: { t: string }): boolean => r.t !== 'card' || !goingLiveKeys.has(rowKey(r as WorkCardRow));
-  const sinceAll = v.since || EMPTY_SINCE;
-  const sinceList = goingLiveKeys.size ? { ...sinceAll, rows: sinceAll.rows.filter(notGoingLive) } : sinceAll;
+  // 5 Nov 2026: the whole of the project's story, your own work in it too.
+  // It used to leave out your work in flight and your merges still going
+  // live, because What's happening listed them; your work is the Homeroom
+  // bot tab's now (the Your work card opens it), and here it is news like
+  // anyone's, marked You.
+  const sinceList = v.since || EMPTY_SINCE;
   const weeks = tab === 'workshop' ? sinceWeeks(sinceList, v.dashboard ? v.dashboard.weeks : null, Date.now()) : [];
   const thisWeek = weeks.length && weeks[0].live ? weeks[0] : null;
   const pastWeeks = thisWeek ? weeks.slice(1) : weeks;
   const firstWeek = v.dashboard ? v.dashboard.firstWeek : null;
   // #4457: the week whose page is open, while it is still in the list.
   const weekUp = openWeek ? weeks.find((w) => sinceWeekStateKey(w) === openWeek) || null : null;
-  // Own ongoing work is already in What's happening. Once it merges, its
-  // outcome belongs in catch-up too: it no longer appears in that ongoing
-  // list. #4538: so is a bot change built from the viewer's request — What's
-  // happening has it while it is in flight, and the bot remains its maker
-  // either way. (week-pages.tsx `catchUp`, which files the dots and "N new"
-  // the same way.) #4772: `sinceList` has already left out what is going
-  // live, which is Going live's until it is live.
   const sinceRows = (v.since ? sinceList.rows : [])
-    .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief && catchUp(r.brief));
-  // NEW FOR YOU: of what moved since your last visit, the requests filed
-  // since, newest first. Your own are Your work's. A vote waiting on yours is
-  // Needs you's (#4716): it was here too, a second Vote for the same vote,
-  // whose press only opened Needs you on it.
-  const freshRows = sinceRows.filter((r) => !!r.brief && !r.brief.mine && !r.brief.requested
-    && r.brief.kind === 'request' && !!r.fresh);
+    .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief);
   const openWeekPage = (key: string) => {
     setOpenWeek(key);
     // A week further back than the since-list's capped rows draws nothing on
@@ -4997,16 +3733,15 @@ export function DevWorkshop(): ReactNode {
     callAppView('closeWorkshopWeek');
     scrollToHead(hostRef.current);
   };
-  // New for you's rows: lit while their page is open beside the list, as
-  // WorkList lights its own.
-  const rowOn = (r: WorkCardRow): boolean => {
-    const ref = topicRef(r.card);
-    return !!sideKey && !!ref && sideKey === `${ref.kind}:${ref.id}`;
-  };
-  // New for you's: Build it, the request card's own act when that act is
-  // building it (asking Homeroom bot, or yourself). 1 Nov 2026: or Work on
-  // it, where the card's act is Work on this with Homeroom bot.
-  const freshAct = (r: WorkCardRow): ReactNode => {
+  // What happened's new requests nobody has picked up (New for you's, until
+  // 5 Nov 2026, folded in here: the same rows were in both): Build it, the
+  // request card's own act when that act is building it (asking Homeroom
+  // bot, or yourself). 1 Nov 2026: or Work on it, where the card's act is
+  // Work on this with Homeroom bot. Never on your own, or on one already
+  // somebody's.
+  const freshAct = (r: CardRow): ReactNode => {
+    const b = r.brief;
+    if (!b || b.mine || b.requested || b.kind !== 'request') return null;
     const a = primaryAct(r.card);
     if (a && a.act && (a.act.fn === 'askBotToBuild' || a.act.fn === 'chooseIssueWork')) {
       return <ActButton a={a} label={t('project:workshop.fresh.buildIt')} />;
@@ -5086,6 +3821,28 @@ export function DevWorkshop(): ReactNode {
                 : null}
               onLeave={canLeave(community) ? () => { void leaveCommunity(slug); } : null}
               appName={community?.name || app.name || slug}
+              // ONE HOME (#6361): the two Home pins, separate acts, for
+              // anyone signed in. No app row on Homeroom's own community,
+              // which has no app.
+              homeApp={!actions.selfHosted ? {
+                pinned: homeAppPinned(slug),
+                onToggle: () => { void (window as any).Home?.toggleAdded?.(slug, !homeAppPinned(slug)); },
+              } : null}
+              homeCommunity={{
+                pinned: homePins.pins.some((p) => p.slug === slug),
+                onToggle: () => {
+                  const name = community?.name || app.name || slug;
+                  const on = !homePins.pins.some((p) => p.slug === slug);
+                  void setHomePin({
+                    slug, name, iconUrl: own ? app.iconUrl || null : null, iconEmoji: own ? app.iconEmoji || null : null,
+                    iconColor: null, member: !!community?.is_member,
+                  }, on, {
+                    pinned: tHome('home:communities.pinned', { community: name }),
+                    unpinned: tHome('home:communities.unpinned', { community: name }),
+                    failed: (reason: string) => tHome('home:communities.failed', { reason }),
+                  });
+                },
+              }}
               // A member's, and only beside the sidebar (../../nav/pin-actions.ts).
               pin={sidebarRows && community?.is_member ? {
                 pinned: pins.some((p: { slug: string }) => p.slug === slug),
@@ -5132,6 +3889,7 @@ export function DevWorkshop(): ReactNode {
         <EmptyNote
           filtered={!!v.emptyNote.filtered}
           loadFailed={v.emptyNote.loadFailed}
+          start={emptyStart}
           onHub
         />
       ) : null}
@@ -5139,10 +3897,11 @@ export function DevWorkshop(): ReactNode {
       {/* ── The hub, top to bottom: for you, then what went live ──
           One column at every width, each part under its small-caps label.
           FOR YOU is one card of doors: Needs you (the first vote you owe, a
-          quiet line when none is, #3408), Your work (the first of yours and
-          how many, or "No work in progress.") and the Discussion (its last
-          line, or "No messages yet."), each opening its place, the same
-          from a project's first day. RECENTLY LIVE is the last three
+          quiet line when none is, #3408), the Workshop (6 Nov 2026: it took
+          Your work's place there, and opens where what happened and every
+          item are) and the Discussion (its last line, or "No messages
+          yet."), each opening its place, the same from a project's first
+          day. RECENTLY LIVE is the last three
           changes that went live, as pictures, and its door is the Workshop,
           where what landed since your last visit, your work in full and
           "live this week" are; before any has, it is the app itself
@@ -5167,6 +3926,11 @@ export function DevWorkshop(): ReactNode {
           onDiscussion={() => openTab('discussion')}
         />
       ) : null}
+      {/* TOPICS, on a phone (3 Nov 2026): the Hub is the way to every place
+          now that no drawer lists them beside the page, so each live topic's
+          channel has a row here. A wide window lists them in its sidebar.
+          See ./hub-cards.tsx TopicsCard. */}
+      {slug && drawerOn ? <TopicsCard data={community} onOpen={(key) => openTab(key)} /> : null}
       {/* FROM ITS VERSIONS, on an original (docs/plans/versions.md): what
           its versions sent it, what went live in them lately, and how its
           last update went down. Nothing on a project nobody has made a
@@ -5201,14 +3965,13 @@ export function DevWorkshop(): ReactNode {
         />
       ) : null}
 
-      {/* ── THE WORKSHOP TAB, in three titled parts (After-Workshop-B) ──
+      {/* ── THE WORKSHOP TAB (After-Workshop-B; 5 Nov 2026) ──
           OVERVIEW: All items' numbers, where most of the open work is, and
           the approval rule in one line (whose See all opens All items, the
-          page under this tab), then the notices panel when it has notices.
-          WHAT'S HAPPENING: one card, your own work in flight, then what is
-          new for you since your last visit and asks something of you, in
-          parts headed and divided as What happened's weeks are. WHAT HAPPENED:
-          this week, row by row, then each week before it as one row. */}
+          page under this tab). YOUR WORK: one row, opening the Homeroom bot
+          tab narrowed to this project. WHAT HAPPENED: this week, row by
+          row, its new requests nobody has picked up ending with Build it,
+          then each week before it as one row. */}
       {/* ── A WEEK'S OWN PAGE, inside the Workshop tab (#4457) ──
           This week's "All of this week", or an earlier week's row, opens it,
           with "‹ Workshop" back; the tab stays lit. See ./week-pages.tsx. */}
@@ -5219,8 +3982,8 @@ export function DevWorkshop(): ReactNode {
             ? {
                 loading: v.week.loading,
                 failed: v.week.failed,
-                fresh: v.week.fresh.filter((r): r is WorkCardRow => r.t === 'card' && notGoingLive(r)),
-                seen: v.week.seen.filter((r): r is WorkCardRow => r.t === 'card' && notGoingLive(r)),
+                fresh: v.week.fresh.filter((r): r is WorkCardRow => r.t === 'card'),
+                seen: v.week.seen.filter((r): r is WorkCardRow => r.t === 'card'),
               }
             : null}
           slug={slug}
@@ -5296,158 +4059,15 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {/* ── WHAT'S HAPPENING ── what is yours, then what is new for you, in
-          ONE card (After-Workshop-C, Oct 2026). Its parts are headed and
-          divided the way What happened's weeks are: the part's name in This
-          week's weight with its count beside it, a hairline over every row
-          and a hairline between parts. They were a card each (#4772), five
-          rounded boxes in a column with the same title over each, and each
-          one's two-line rows made a short list read as a long one. */}
-      {anyMine || showWork || freshRows.length ? (
-        <>
-        <SectionHeader className="px-1.5 pb-0 pt-3.5" data-ws-part="happening">{t('project:workshop.part.happening')}</SectionHeader>
-        <section className="dev-ws-strip" data-ws-happening="">
-          {/* ── Waiting on you ── (#4772) what needs the viewer's answer
-              before it can move: Homeroom bot's plan for their request
-              waiting for Build it, its question to them, and a change of
-              theirs that needs a fix. One line each; its count asks for the
-              viewer, so it is in the accent. */}
-          {waitingRows.length ? (
-            <MineSection
-              section="waiting"
-              title={t('project:workshop.waiting.title')}
-              count={t('project:workshop.waiting.count', { count: waitingRows.length })}
-              ask
-              rows={waitingRows}
-              slug={slug}
-              openKey={sideKey}
-              onOpen={openItem}
-            />
-          ) : null}
-          {/* ── Your work ──
-              A returning member's own work in flight that waits on nobody's
-              vote and none of their answers (#4772: those are the parts
-              around it): their requests and their changes being made
-              (AppView._workshopView), in What happened's one-line row
-              (./week-pages.tsx HappenedRow, `standing`): the glyph, the
-              title, and at the line's end where it stands. A request your
-              change addresses is drawn as that change. Its first
-              WORKSHOP_WORK_FIRST, the rest behind Show N more. */}
-          {v.mine && showWork ? (
-            <div className="dev-ws-hpart" data-ws-mine="">
-              <PartHead
-                title={t('project:workshop.mine.title')}
-                count={workRows.length ? t('project:workshop.mine.open', { count: workRows.length }) : null}
-              />
-              <div className="dev-ws-lane" data-ws-lane="mine">
-                {/* #2182: the part does not leave when the viewer has nothing
-                    underway. It says so, and names the way in: asking
-                    Homeroom bot where it builds for this viewer (`mine.bot`),
-                    Build it now under the hub's ⋯ elsewhere, and nothing to
-                    press for a read-only viewer or under the start-here
-                    banner. */}
-                {!workRows.length ? (
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
-                    {actions.readOnly || startHere
-                      ? t('project:workshop.mine.empty')
-                      : v.mine.bot
-                        ? t('project:workshop.mine.emptyBot')
-                        : t('project:workshop.mine.emptyBuild')}
-                  </p>
-                ) : (
-                  <MineLines
-                    rows={workRows.slice(0, mineAll ? undefined : WORKSHOP_WORK_FIRST)}
-                    slug={slug}
-                    openKey={sideKey}
-                    onOpen={openItem}
-                  />
-                )}
-                {workRows.length > WORKSHOP_WORK_FIRST ? (
-                  <button
-                    type="button"
-                    className="dev-ws-reveal touch-target-32"
-                    data-ws-mine-more=""
-                    aria-expanded={mineAll}
-                    onClick={() => setMineAll(!mineAll)}
-                  >
-                    <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                    {mineAll ? t('project:workshop.mine.showLess') : t('project:workshop.mine.showMore', { count: workRows.length - WORKSHOP_WORK_FIRST })}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-          {/* ── Up next ── (#6019 follow-up; plan v3's Up next, which
-              replaced #4772's "Yours, up for a vote" and "Going live") the
-              viewer's own work moving without them, soonest first: what is
-              going live, then what is up for a vote and needs nothing from
-              them. One line a row, each ending with where it stands. A change
-              going live is left out of What happened meanwhile
-              (`goingLiveKeys`), and is its news once live, so it is listed
-              once at any point. */}
-          {nextRows.length ? (
-            <MineSection
-              section="next"
-              title={t('project:workshop.upNext.title')}
-              count={t('project:workshop.upNext.count', { count: nextRows.length })}
-              rows={nextRows}
-              slug={slug}
-              openKey={sideKey}
-              onOpen={openItem}
-            />
-          ) : null}
-          {/* ── New for you ──
-              Since your last visit, the requests filed since, whose Build it
-              is the request card's own next step (ask Homeroom bot, or build
-              it yourself). The votes waiting on yours are Needs you's
-              (#4716). Not on a first visit, which has no last visit, and not
-              when there is none. */}
-          {freshRows.length ? (
-            <div className="dev-ws-hpart" data-ws-fresh="">
-              <PartHead
-                title={t('project:workshop.fresh.title')}
-                count={t('project:workshop.fresh.count', { count: freshRows.length })}
-                action={(
-                  <button
-                    type="button"
-                    className="dev-ws-since-clear un-touch-target"
-                    data-ws-fresh-clear=""
-                    onClick={clearSince}
-                  >
-                    {t('project:workshop.fresh.markAllSeen')}
-                  </button>
-                )}
-              />
-              <div className="dev-ws-wlist">
-                {(freshAll ? freshRows : freshRows.slice(0, WORKSHOP_WORK_FIRST)).map((r) => (
-                  <ActRow
-                    key={r.key}
-                    row={r}
-                    slug={slug}
-                    sub={rowWords(r.brief!, { lead: t('project:workRow.state.newRequest'), replies: true })}
-                    act={freshAct(r)}
-                    on={rowOn(r)}
-                    onOpen={openItem}
-                  />
-                ))}
-              </div>
-              {freshRows.length > WORKSHOP_WORK_FIRST ? (
-                <button
-                  type="button"
-                  className="dev-ws-reveal touch-target-32"
-                  data-ws-fresh-more=""
-                  aria-expanded={freshAll}
-                  onClick={() => setFreshAll(!freshAll)}
-                >
-                  <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                  {freshAll ? t('project:workshop.mine.showLess') : t('project:workshop.mine.showMore', { count: freshRows.length - WORKSHOP_WORK_FIRST })}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </section>
-        </>
-      ) : null}
+      {/* ── YOUR WORK ── (5 Nov 2026) one row, a card of its own under
+          Overview: how much of yours there is here, in the Homeroom bot
+          tab's own words, opening the tab narrowed to this project
+          (./your-work.tsx). It replaced What's happening's Waiting on you,
+          Your work and Up next, which listed the same work a second time
+          from the board's buckets; New for you is What happened's now (its
+          new requests nobody has picked up end with Build it). Not for a
+          visitor, who has no work here. */}
+      {slug && v.mine && v.mine.viewer ? <YourWorkCard slug={slug} name={projectName} /> : null}
 
       {/* ── WHAT HAPPENED ──
           One card for what was Since your last visit and Week by week:
@@ -5483,6 +4103,7 @@ export function DevWorkshop(): ReactNode {
                 openKey={sideKey}
                 onOpen={openItem}
                 onAll={() => openWeekPage(sinceWeekStateKey(thisWeek))}
+                act={freshAct}
               />
             ) : null}
             {pastWeeks.length ? (
@@ -5521,30 +4142,11 @@ export function DevWorkshop(): ReactNode {
       {/* ── The item's page, beside the list (#4457) or the board (#4486) ── ./side-panel.tsx */}
       {sideOpen && sideItem ? <TopicSidePanel item={sideItem} onClose={closeSide} /> : null}
 
-      {tab === 'needs' && reviewFlow && slug ? (
-        // EXPERIMENTAL (Settings, Experimental, "New Needs you"): the
-        // project's Needs you drawn by the new review flow, the same one the
+      {tab === 'needs' && slug ? (
+        // A project's Needs you drawn by the review flow, the same one the
         // Communities tab draws. ../../review-flow/. Its back, "‹ <community>",
         // leaves the run for the community's hub, never an earlier change.
         <ProjectReviewFlow slug={slug} onDone={() => openTab('status')} />
-      ) : tab === 'needs' ? (
-        <NeedsFeed
-          rows={v.queue}
-          models={v.models}
-          slug={slug}
-          canPost={canPost}
-          onDone={() => openTab('workshop')}
-          onHub={() => openTab('status')}
-          // No `onAnswered` here (#4794): a project page passes nothing. The
-          // vote's own route already drops the row — the deck casts through
-          // AppView.castVote, whose ok path publishes the saved vote into
-          // voteSavedStore, and the store listener above strips it from the
-          // kept queue before the feed's own `setAnswered` even lands.
-          // #4680: the end card's quiet way into the Suggest an improvement
-          // form, the same open the hub's ⋯ row makes. No `intent: 'issue'`,
-          // so the heading reads "Suggest an improvement".
-          onSuggest={() => { (window as any).App?.openFeedbackModal?.({ fromDev: true }); }}
-        />
       ) : null}
       {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This
           was `tab === 'all' && themes.length`, and the second half was #2090:
@@ -5639,17 +4241,26 @@ export function DevWorkshop(): ReactNode {
               backdrop makes them the same colour by construction. */}
           <div className="dev-ws-pane-body">
           {group === 'stage' ? (
-            <div className="dev-ws-board" data-ws-stage="">
-              <DevKanban openKey={sideKey} onOpen={openItem} />
-            </div>
+            <>
+              {v.emptyNote ? (
+                /* #6111: an empty board's columns each say "Nothing here
+                   yet"; the note above them says what to do about it. */
+                <EmptyNote filtered={false} loadFailed={v.emptyNote.loadFailed} start={emptyStart} />
+              ) : null}
+              <div className="dev-ws-board" data-ws-stage="">
+                <DevKanban openKey={sideKey} onOpen={openItem} />
+              </div>
+            </>
           ) : !themes.length ? (
             /* The rows' place, under the controls that emptied it. `filtered`
                is the live filter state rather than `emptyNote`'s: that note
                is about the BOARD having no entries, and a board whose every
                open item a search has hidden still has them, so it stays null
                while the theme list is bare. The stage pane needs none of
-               this — the columns say "No matching cards" for themselves. */
-            <EmptyNote filtered={v.meta.filtered} loadFailed={!!(v.emptyNote && v.emptyNote.loadFailed)} />
+               this — a board with no entries cannot be narrowed, so it passes
+               `false` — and its columns say "No matching cards" for
+               themselves. */
+            <EmptyNote filtered={v.meta.filtered} loadFailed={!!(v.emptyNote && v.emptyNote.loadFailed)} start={emptyStart} />
           ) : (
           <>
           <div className="dev-ws-sort">

@@ -75,6 +75,11 @@ import { installAdultGate } from './features/auth/adult-gate';
 import { installSessionRenewalRetry } from './lib/session-renewal-retry';
 import { installApiCacheIdentity } from './lib/api-cache-identity';
 import { installReadTimeout } from './lib/read-timeout';
+import { installGoogleAnalytics } from './lib/google-analytics';
+// #6233: publishes window.UsernodeReact.tabBuild at module scope. app.js's
+// /api/version poll writes the build this tab loaded and its merge boundary
+// here, and screens read it to say "Live · reload to get it".
+import './lib/tab-build';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
 // because the Dev surfaces are runtime-injected into an empty #app-content and
@@ -179,9 +184,6 @@ import './lib/file-drop-guard';
 // bridge's message from inside an app); the comment itself
 // (features/comment-pin/) loads on the first C.
 import './features/improve/suggest-shortcut';
-// New Needs you (an experiment, Settings, Experimental): the switch's bridge
-// for settings.js, window.UsernodeReact.reviewFlow.
-import './features/review-flow/settings';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at
@@ -190,6 +192,11 @@ import './features/review-flow/settings';
 // prerender graph entirely. Its `window.DevChat` publication and its
 // visibility/focus/pagehide listeners are guarded anyway.
 import './features/dev-chat/mount';
+// #6354: publishes window.UsernodeReact.designCapture, the serializer
+// Homeroom's own capture job runs in the page to copy one of its pages for a
+// design. Imported for the side effect, at module scope, so the bridge is in
+// place before the job's short wait ends.
+import './features/design/capture';
 import './features/dev-chat/dev-chat.js';
 
 // #2563: the first-run "Choose your username" gate. Imported at the BROWSER
@@ -237,6 +244,7 @@ bootStep('installSessionRenewalRetry', () => installSessionRenewalRetry());
 // identity confirmation, a native renewal and its one retry), and its signal
 // reaches the request that goes out.
 bootStep('installReadTimeout', () => installReadTimeout());
+bootStep('installGoogleAnalytics', () => installGoogleAnalytics());
 // Votes and reactions with no answer wait on the device for the connection
 // (./lib/action-outbox.ts), and go once the shell says it is back.
 bootStep('installActionOutbox', () => installActionOutbox());

@@ -674,6 +674,7 @@ function jobManifest(cfg, runtime, {
           serviceAccountName: cfg.buildkitServiceAccount,
           automountServiceAccountToken: false,
           securityContext: security.pod,
+          ...require('./kubernetes').batchWorkPlacement(cfg),
           containers: [{
             name: CONTAINER,
             image: cfg.buildkitImage,
@@ -956,6 +957,7 @@ async function createBuild(config, {
   const starter = starterCache(cfg, runtime, app, { starterTree });
   const starterExport = Boolean(starter && starterTree);
   const inputSecretName = runtime.withSuffix(name, 'input');
+  await require('./kubernetes').waitForBatchPool(config);
   const cloneUrl = await runtime.getCloneUrl(repo.owner, repo.name);
   const body = jobManifest(cfg, runtime, {
     app, revision, environment, sessionId, dockerfile, name, tag, cacheRef, recipe, inputSecretName, settledSteps,

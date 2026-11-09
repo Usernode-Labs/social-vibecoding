@@ -91,7 +91,9 @@ import { AppGrid } from './app-grid';
 import { openAddAppsSheet } from './add-apps-sheet';
 import { AppsMore } from './apps-more';
 import { CreateCompact } from './create-tile';
-import { ChallengesSection, DiscoverSection } from './panels/sections';
+import { ChallengesSection } from './panels/sections';
+import { HomeJoin } from './home-join';
+import { PinnedCommunities } from './pinned-communities';
 import { SectionHeading } from './panels/ui';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
@@ -101,6 +103,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { gridStore } from './grid-store';
+import { HOME_SEARCH_SHORTCUT_KEYS } from './search-shortcut';
 
 // The three modules that fill this screen, imported in the order their
 // <script> tags had: HomeLayout (pure geometry) is read by both of the others,
@@ -121,6 +124,17 @@ export function HomeScreen() {
   const grid = useStoreState(gridStore);
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
+  // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
+  // member meets their communities first, and the second kind of pin when
+  // they choose it (the app's Pin to Home, the hub's ⋯, "Pin its app too").
+  // My apps is hidden only when the loaded grid has nothing at all to show:
+  // an account at rest with no apps still draws the trailing New project tile
+  // (#6522), so an empty grid whose create view Home.render() hands it keeps
+  // the section — a private member, who gets no create view, is the case that
+  // hides it. Never hidden before the grid's first paint, so the prerender
+  // agrees.
+  const noApps = grid.ready && grid.view === 'grid' && !grid.editing
+    && grid.items.length === 0 && !grid.create;
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
@@ -180,6 +194,7 @@ export function HomeScreen() {
               autoComplete="off"
               placeholder={t('home:search.placeholder')}
               aria-label={t('home:search.label')}
+              aria-keyshortcuts={HOME_SEARCH_SHORTCUT_KEYS}
               className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
             />
             <button
@@ -227,6 +242,8 @@ export function HomeScreen() {
             there.
         */}
         <WidgetStrip />
+        {/* One Home (#6361): no continue card. The change you last worked on
+            is a row of the bell and of Homeroom bot's list. */}
         {/*
             ── AREA 1 of 4: YOUR APPS ─────────────────────────────────
 
@@ -263,7 +280,7 @@ export function HomeScreen() {
             Home._rectForCell measures those overlay cells to land a committed
             drop. Trim the padding here, never there.
         */}
-        <section id="home-apps-section" className="px-3">
+        <section id="home-apps-section" className="px-3" hidden={noApps}>
           {/*
               The area's label, in the same treatment the two below it use —
               see ./panels/ui.tsx's SectionHeading for why every area on this
@@ -387,7 +404,7 @@ export function HomeScreen() {
             model now feeds both, rather than a second pass copying one to
             the other.
         */}
-        <DiscoverSection />
+        <PinnedCommunities />
         {/*
             A PRIVATE MEMBER'S WAITLIST CARD (./waitlist-card.tsx): an invite
             link let them into their group's apps, and this is where they join
@@ -403,6 +420,7 @@ export function HomeScreen() {
         */}
         <VerifyCard />
         <ChallengesSection />
+        <HomeJoin />
         {/*
             THE "YOU" AREA IS GONE, and Profile did not go with it. A fifth
             area held one row — an avatar, "Profile", "Your points, settings

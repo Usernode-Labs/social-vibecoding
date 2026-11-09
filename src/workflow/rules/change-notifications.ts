@@ -28,7 +28,7 @@ const DIGEST_WAITING_HEAD = `LEAST((
 const DIGEST_WAITING_TAIL = `     AND COALESCE(waiting.promoted_at, waiting.created_at) <= n.created_at
      AND (n.session_id IS NULL OR waiting.id = n.session_id)
      AND waiting.user_id IS DISTINCT FROM n.user_id
-     AND (EXISTS (SELECT 1 FROM app_favorites stake WHERE stake.app_id = waiting.app_id AND stake.user_id = n.user_id)
+     AND (EXISTS (SELECT 1 FROM app_stakes stake WHERE stake.app_id = waiting.app_id AND stake.user_id = n.user_id)
           OR EXISTS (SELECT 1 FROM apps made WHERE made.id = waiting.app_id AND made.created_by = n.user_id))
      AND NOT EXISTS (SELECT 1 FROM user_app_blocks waiting_block
                       WHERE waiting_block.user_id = n.user_id AND waiting_block.app_id = waiting.app_id)
@@ -214,7 +214,7 @@ export async function settleVoteDigests(
       WHERE n.kind = 'vote_digest' AND n.read_at IS NULL
         AND ($1::int[] IS NULL OR n.user_id = ANY($1::int[]))
         AND ($2::int IS NULL OR n.user_id IN (
-              SELECT stake.user_id FROM app_favorites stake WHERE stake.app_id = $2
+              SELECT stake.user_id FROM app_stakes stake WHERE stake.app_id = $2
               UNION
               SELECT made.created_by FROM apps made WHERE made.id = $2 AND made.created_by IS NOT NULL))
         AND ($3::timestamptz IS NULL OR n.created_at >= $3::timestamptz)
@@ -300,6 +300,16 @@ export async function settleDecidedChange(pool: Queryable, sessionId: unknown, {
         AND m.id = n.conversation_message_id
         AND m.metadata->'homeroomBot'->>'sessionId' = $1::text
       RETURNING n.user_id`,
+    [id]
+  )).rows);
+
+  // 5 Nov 2026: a "ready to try" the request's stage rang (work-state.js
+  // bellPushes) carries its change already, and no message: read, so a merge
+  // hides it and a close words it Closed, as the message-rung one above.
+  note((await pool.query(
+    `UPDATE notifications SET read_at = NOW()
+      WHERE session_id = $1 AND kind = 'build_ready' AND conversation_message_id IS NULL AND read_at IS NULL
+      RETURNING user_id`,
     [id]
   )).rows);
 

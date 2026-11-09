@@ -379,4 +379,21 @@ test('a project\'s first version goes first, against the full PostgreSQL schema'
       'never-looked-at', 'not-held', 'plan-waiting', 'rebuilding', 'setting-up',
     ]);
   });
+
+  // #6428: builds no longer wait for a change touching the same files. A
+  // build stored held for one (#6423) is the lane's to grant on its next
+  // pass, before the old deadline; a hold for its payer's week still holds.
+  await t.test('a build held for an overlap before #6428 is granted on the next pass', async () => {
+    const app = await project('overlap-held', { firstVersion: null });
+    const now = new Date().toISOString();
+    const until = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
+    const overlapRun = await run(app, 2);
+    await instance(app, 2, 'building', { build: {
+      runId: overlapRun, phase: 'waiting', since: now, key: null, heldUntil: until, heldFor: 'overlap',
+      overlap: { since: now, until, sessionId: 501, runId: null, prNumber: 6404 },
+    } });
+    const weekRun = await run(app, 3);
+    await instance(app, 3, 'building', { build: { runId: weekRun, phase: 'waiting', since: now, key: null, heldUntil: until } });
+    assert.deepEqual(await buildable(app), [2]);
+  });
 });

@@ -38,6 +38,7 @@ const checkSignals = require('./check-signals');
 const unitSuite = require('./unit-suite');
 const unitSuiteRow = require('./unit-suite-row');
 const contentReview = require('./content-review');
+const tokenOrderCheck = require('./token-order-check');
 const smallChange = require('./small-change');
 const assetRouteCheck = require('./asset-route-check');
 const renderHealth = require('./render-health');
@@ -277,7 +278,8 @@ function mintCaptureToken(user, appId, { previewOnly = false } = {}) {
   return platformJwt.signAppIdentityToken({
     appId,
     user: {
-      id: user.id,
+      // A platform preview knows the personas by their fixed ids (SEC-06).
+      id: previewOnly ? require('./preview-personas').previewPersonaId(user) : user.id,
       username: user.username,
       usernode_pubkey: user.usernode_pubkey || null,
       locale: user.locale ?? null,
@@ -2892,6 +2894,14 @@ async function settleCaptureRun(config, pool, run) {
     pool, sessionId: session.id, appId: app.id, repoOwner, repoName, commitHash,
   }).catch(() => null);
   if (contentOutcome) extraRows.push(contentOutcome.row);
+  // The sign-in token read after the bridge: a script this change adds
+  // above the bridge tag that reads the token from the address opens the
+  // app signed out inside Homeroom. Deterministic, cached per head, at
+  // settlement for the same reason as the review above. Never throws.
+  const tokenOrderOutcome = shotsOnly ? null : await tokenOrderCheck.maybeRunTokenOrderCheck({
+    config, pool, sessionId: session.id, appSlug: app.slug, repoOwner, repoName, commitHash,
+  }).catch(() => null);
+  if (tokenOrderOutcome) extraRows.push(tokenOrderOutcome.row);
   // The small-change tag, watch only: a row for admins, never a check row,
   // so it is not awaited and nothing below reads it. Cached per head like
   // the review above. Never rejects.

@@ -34,6 +34,12 @@
  * thread has no door either. The routes the old doors wrote to stay
  * (routes/conversations.js, services/private-threads.js fileIt, postIt).
  *
+ * 9 Nov 2026 (#6523, Evan): New project is not guessed from the kind of
+ * thread either. It is the bot's to offer (offer_new_project), from a drawn
+ * design, or in a thread it opened for a new project. A question, a filed
+ * request or a change to a project that exists has no door, even when the
+ * thread is not tied to a project.
+ *
  * The first render is nothing: where the thread stands is read in an effect
  * (`usePrivateThread`, held by the thread's pane for its head and its foot).
  *
@@ -47,16 +53,20 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { projectChangesOnGithub } from '../../lib/change-ref';
 import { useMessages } from '../../lib/i18n/react';
+
 import { t as translate } from '../../lib/i18n/runtime';
 import { Button } from '@/components/ui/button';
 
 import { MakeSheet } from './bot-make';
+import { reopenThread } from './private-thread-done';
 import { TrackBar, trackShort, trackStateWord, useTrackOf } from './bot-track';
 import type { BotTrack } from './types';
 
 export interface PrivateThreadState {
-  state: 'open' | 'filed' | 'posted' | 'dropped';
+  /** #6159: `done` once it was finished (its request went live or closed, Mark done, or asked). */
+  state: 'open' | 'filed' | 'posted' | 'dropped' | 'done';
   /** What it is (open only): absent from an older server, which reads as an idea. */
   kind?: 'draft_request' | 'draft_reply' | 'idea' | 'ask' | 'design';
   /**
@@ -83,17 +93,18 @@ export type Door = 'new';
  * Pure: the doors a private thread offers at its foot. None until Homeroom
  * bot has answered in it (there is nothing shaped to take public yet), and
  * none once it went somewhere. File it and Post it are never here: they are
- * the bot's to offer, under its own reply, once something is ready. An idea
- * in no project (a thread they started, a "+" thread for any project) can
- * start one.
+ * the bot's to offer, under its own reply, once something is ready. New
+ * project is the bot's to offer too (#6523): `invited` is true when its
+ * newest reply offered one, or when the bot opened this thread for a new
+ * project. A screen drawn for no project yet keeps it regardless.
  */
-export function doorsFor(where: PrivateThreadState | null, botReplied: boolean): Door[] {
+export function doorsFor(where: PrivateThreadState | null, botReplied: boolean, invited = false): Door[] {
   if (!where || where.state !== 'open' || !botReplied || where.mine === false) return [];
   // B04: a screen drawn for no project yet is made into one, with its drawing.
   if (where.design && !where.app && where.kind !== 'draft_request' && where.kind !== 'draft_reply') return ['new'];
   // A design thread's bot offers the project itself (design-bot.js offer_project).
   if (where.kind === 'draft_request' || where.kind === 'draft_reply' || where.kind === 'design' || where.app) return [];
-  return ['new'];
+  return invited ? ['new'] : [];
 }
 
 interface ThreadMessage {
@@ -103,8 +114,29 @@ interface ThreadMessage {
     homeroomBot?: {
       kind?: string; designTitle?: string; projectIdea?: string; draftTitle?: string;
       aboutKind?: 'request' | 'change'; aboutNumber?: number; aboutTitle?: string;
+      /** #6523: the kind of thread the bot opened here; 'project' for a new one. */
+      changeKind?: string;
+      /** #6523: Homeroom bot offered to make this idea a project in this reply. */
+      newProject?: boolean;
     } | null;
   } | null;
+}
+
+/**
+ * Pure (#6523): whether Homeroom bot invited a new project in this thread.
+ * True when its newest reply carries `newProject`, or when the root is the
+ * line it opened for a new project (start_project_thread). An earlier
+ * offer alone does not count: only its latest reply.
+ */
+export function newProjectInvited(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[]): boolean {
+  const meta = root?.sender.bot ? root.metadata?.homeroomBot || null : null;
+  if (meta?.kind === 'opened_thread' && meta.changeKind === 'project') return true;
+  for (let i = replies.length - 1; i >= 0; i -= 1) {
+    const message = replies[i];
+    if (!message.sender.bot) continue;
+    return message.metadata?.homeroomBot?.newProject === true;
+  }
+  return false;
 }
 
 /**
@@ -128,11 +160,13 @@ function firstOwn(replies: readonly ThreadMessage[], meId: number): ThreadMessag
 }
 
 /** Pure: "#18 Dark mode", "Change #19 Night theme": what a thread opened from a request's or a change's page is about. */
-export function aboutThreadTitle(kind: 'request' | 'change', number: number, title: string | null | undefined): string {
+export function aboutThreadTitle(kind: 'request' | 'change', number: number, title: string | null | undefined,
+  onGithub = projectChangesOnGithub()): string {
   const named = firstLine(title);
   if (kind === 'change') {
-    return named ? translate('messages:ai.thread.aboutChange', { number: String(number), title: named })
-      : translate('messages:ai.thread.aboutChangeUntitled', { number: String(number) });
+    return named
+      ? translate(onGithub ? 'messages:ai.thread.aboutChangePr' : 'messages:ai.thread.aboutChange', { number: String(number), title: named })
+      : translate(onGithub ? 'messages:ai.thread.aboutChangeUntitledPr' : 'messages:ai.thread.aboutChangeUntitled', { number: String(number) });
   }
   return named ? translate('messages:ai.thread.aboutRequest', { number: String(number), title: named })
     : translate('messages:ai.thread.aboutRequestUntitled', { number: String(number) });
@@ -225,11 +259,14 @@ export function filedRequestOf(where: PrivateThreadState | null): { slug: string
  */
 export function RequestTrackStrip({ track, number, href }: { track: BotTrack; number: number; href: string }): ReactNode {
   const t = useMessages('messages');
-  const line = trackShort(track);
+  const word = trackStateWord(track);
+  const short = trackShort(track);
+  // A stage with no second line says its word once, not twice.
+  const line = short === word ? '' : short;
   return (
-    <div className="messages-bot-note items-center gap-2 px-4 py-2" data-private-thread="track" data-private-track={track.state}>
-      <span className="shrink-0 font-semibold text-zinc-700 dark:text-zinc-200" data-private-track-state="">{trackStateWord(track)}</span>
-      <span className="min-w-0 flex-1 truncate" title={line}>{line}</span>
+    <div className="messages-bot-note items-center gap-2 px-4 py-2" data-private-thread="track" data-private-track={track.work.stage}>
+      <span className="shrink-0 font-semibold text-zinc-700 dark:text-zinc-200" data-private-track-state="">{word}</span>
+      <span className="min-w-0 flex-1 truncate" title={line || undefined}>{line}</span>
       <TrackBar track={track} className="w-16 shrink-0" />
       <a className="shrink-0 font-semibold text-violet-700 dark:text-violet-300" href={href} data-private-track-open="">
         {t('messages:privateThread.openRequest', { number })}
@@ -239,11 +276,25 @@ export function RequestTrackStrip({ track, number, href }: { track: BotTrack; nu
 }
 
 /** The thread's head: that only they can see it, or where it went (#6153: where its request stands). */
-export function PrivateThreadNote({ where }: { where: PrivateThreadState | null }): ReactNode {
+export function PrivateThreadNote({ where, rootId = null, onChanged }: {
+  where: PrivateThreadState | null;
+  /** #6159: the thread, for Reopen on a done one. */
+  rootId?: number | null;
+  onChanged?: (state: PrivateThreadState['state']) => void;
+}): ReactNode {
   const t = useMessages('messages');
   const filed = filedRequestOf(where);
   const track = useTrackOf(filed ? { appSlug: filed.slug, appName: filed.name, issueNumber: filed.number } : null);
   if (!where) return null;
+  if (where.state === 'done') {
+    return (
+      <div className="messages-bot-note px-4 py-2" data-private-thread="done">
+        {t('messages:privateThread.done')}
+        {rootId ? <>{' · '}<button type="button" className="font-semibold text-violet-700 hover:underline dark:text-violet-300" data-private-thread-reopen=""
+          onClick={() => { void reopenThread(rootId).then((next) => { if (next) onChanged?.(next); }); }}>{t('messages:privateThread.reopen')}</button></> : null}
+      </div>
+    );
+  }
   if (filed && track) return <RequestTrackStrip track={track} number={filed.number} href={filed.href} />;
   if (where.state === 'filed' || where.state === 'posted') {
     const id = where.state === 'filed' ? 'messages:privateThread.filed' : 'messages:privateThread.posted';
@@ -257,19 +308,25 @@ export function PrivateThreadNote({ where }: { where: PrivateThreadState | null 
   return <div className="messages-bot-note px-4 py-2" data-private-thread="open">{t('messages:privateThread.label')}</div>;
 }
 
-/** The thread's foot: New project, for an idea in no project yet, and who it is for. */
-export function PrivateThreadDoors({ rootId, text, where, botReplied }: {
+/** The thread's foot: New project, when Homeroom bot offers one, and who it is for. */
+export function PrivateThreadDoors({ rootId, text, where, botReplied, invited = false, working = false }: {
   rootId: number;
   text: string;
   where: PrivateThreadState | null;
   /** Homeroom bot has answered in the thread. */
   botReplied: boolean;
+  /** #6523: Homeroom bot offered a new project in its newest reply, or opened this thread for one. */
+  invited?: boolean;
+  /** Homeroom bot is working in the thread: its working card is its foot. */
+  working?: boolean;
 }): ReactNode {
   const t = useMessages('messages');
   const [door, setDoor] = useState<Door | null>(null);
   const [made, setMade] = useState<{ slug: string; name: string } | null>(null);
 
   useEffect(() => { setDoor(null); setMade(null); }, [rootId]);
+  // The chip, not a form left open, is what comes back when the bot is done.
+  useEffect(() => { if (working) setDoor(null); }, [working]);
 
   if (made) {
     return (
@@ -278,7 +335,9 @@ export function PrivateThreadDoors({ rootId, text, where, botReplied }: {
       </div>
     );
   }
-  const doors = doorsFor(where, botReplied);
+  // While the bot works, its working card is the thread's one thing at the foot.
+  if (working) return null;
+  const doors = doorsFor(where, botReplied, invited);
   if (!where || !doors.length) return null;
   // B04 (audit 2 Nov 2026): a drawn screen is made into its project in
   // place, with its name and its drawing (the bot's own Make the project

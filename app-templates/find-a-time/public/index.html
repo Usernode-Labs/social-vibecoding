@@ -76,6 +76,9 @@
         <p class="text-body text-muted">{{TIME_INTRO}}</p>
       </header>
 
+      <!-- Shown only when the screen is the copy kept on this device (app.js showSaved). -->
+      <p id="saved-strip" class="rounded-xl bg-raised px-3 py-2 text-small text-muted" role="status" hidden></p>
+
       <button id="new-plan" type="button" class="btn-secondary w-full" data-dates-only>
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
         Start a plan

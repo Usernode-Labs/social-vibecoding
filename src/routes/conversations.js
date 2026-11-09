@@ -123,22 +123,6 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  // #3692: the activity tray at the top of the Homeroom bot's DM: what the
-  // bot is working on for the signed-in person now, and what it did for them
-  // before (services/homeroom-bot-tray.js). Their own work only: it takes no
-  // user parameter, and reads every row by req.user's id. Not a conversation
-  // id: the segment is a word, and no route takes `/:id/work`.
-  router.get('/api/conversations/homeroom-bot/work', async (req, res) => {
-    try {
-      const tray = require('../services/homeroom-bot-tray');
-      if (isDemo(req)) return res.json(await tray.demoWorkFor(pool, req.user));
-      return res.json(await tray.workFor(pool, { user: req.user }));
-    } catch (err) {
-      log.error('conversations', 'homeroom bot work failed', { err: err.message, userId: req.user?.id });
-      return res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
   // #3736: how far along each activity card in the signed-in person's DM
   // with the Homeroom bot is (services/homeroom-bot-activity.js): one piece
   // of the bot's work per card, read from its records. Their own cards only:
@@ -195,6 +179,31 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       return res.json({ conversationId: opened.conversationId });
     } catch (err) {
       log.error('conversations', 'opening the Homeroom bot chat failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #6248: the saved request draft an offer waits on, for the read-only
+  // preview beside the chat (services/homeroom-bot-mayor.js readDraft). The
+  // message clips its details at 1200 characters; this reads the row's own.
+  // Their own open action only. A browser's read, not a connector's: it is
+  // on no list (services/cli-api-policy.js is fail-closed).
+  //
+  //   GET /api/conversations/homeroom-bot/actions/:actionId/draft
+  //   → 200 { title, details, status, app: { slug, name }, footer } | 404
+  router.get('/api/conversations/homeroom-bot/actions/:actionId/draft', sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      const actionId = Number(req.params.actionId);
+      if (!Number.isInteger(actionId) || actionId <= 0) return res.status(404).json({ error: 'No such draft' });
+      // The staging demo's offer is not a real row to read: the pane keeps
+      // the message's own copy.
+      if (isDemo(req)) return res.status(404).json({ error: 'No such draft' });
+      const out = await require('../services/homeroom-bot-mayor').readDraft(pool, { user: req.user, actionId });
+      if (!out.ok) return res.status(404).json({ error: 'No such draft' });
+      return res.json({ title: out.title, details: out.details, status: out.status, app: out.app, footer: out.footer });
+    } catch (err) {
+      log.error('conversations', 'reading a request draft failed', { err: err.message, userId: req.user?.id });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -310,6 +319,53 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #6264: the plan card's "Notify me when it's ready" makes the same
+  // promise the bot makes when somebody asks in words: one stored follow-up
+  // for "ready to vote" on the request's change, told in their chat with the
+  // bot. It is their own row only, on a project they can see, in a
+  // conversation between them and the bot.
+  router.post('/api/conversations/homeroom-bot/followups', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      const body = req.body || {};
+      const slug = typeof body.appSlug === 'string' ? body.appSlug.slice(0, 200) : '';
+      const issueNumber = Number(body.issueNumber);
+      const event = String(body.event || 'vote');
+      const conversationId = Number(body.conversationId);
+      const threadRootId = body.threadRootId == null ? null : Number(body.threadRootId);
+      if (!slug || !Number.isInteger(issueNumber) || issueNumber <= 0) {
+        return res.status(400).json({ error: 'Where and what to tell you about are both needed.' });
+      }
+      if (!['update', 'checks', 'vote', 'merged', 'live'].includes(event)) {
+        return res.status(400).json({ error: 'Unknown moment.' });
+      }
+      const mayor = require('../services/homeroom-bot-mayor');
+      const app = await mayor.findApp(pool, slug);
+      if (!app || !(await mayor.canView(pool, app, req.user))) return res.status(404).json({ error: 'No such project' });
+      const bot = await require('../services/homeroom-bot-dm').botAccount(pool);
+      if (!bot) return res.status(503).json({ error: 'The bot is not available just now.' });
+      if (Number.isInteger(conversationId) && conversationId > 0) {
+        const { rows } = await pool.query(
+          `SELECT 1 FROM conversations c
+             JOIN conversation_members me ON me.conversation_id = c.id AND me.user_id = $1
+             JOIN conversation_members them ON them.conversation_id = c.id AND them.user_id = $2
+            WHERE c.id = $3 AND c.kind = 'direct'`, [Number(req.user.id), Number(bot.id), conversationId]);
+        if (!rows.length) return res.status(404).json({ error: 'No such conversation' });
+      }
+      const out = await require('../services/thread-followups').register(pool, {
+        user: req.user, app, issueNumber, event,
+        place: { type: 'dm', ref: null },
+        conversationId: Number.isInteger(conversationId) && conversationId > 0 ? conversationId : null,
+        threadRootId: Number.isInteger(threadRootId) && threadRootId > 0 ? threadRootId : null,
+      });
+      if (!out.ok) return res.status(409).json({ error: out.error });
+      return res.json({ ok: true, id: out.id });
+    } catch (err) {
+      log.error('conversations', 'homeroom bot follow-up failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // #6019 (stage 5): a private thread's two doors, from the head of a
   // thread the person started in their chat with the bot
   // (frontend/src/features/messages/private-thread-bar.tsx,
@@ -322,6 +378,8 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   //   GET  /api/conversations/homeroom-bot/threads/:rootId       → { state, kind?, number?, app?, target?, href?, mine }
   //   POST /api/conversations/homeroom-bot/threads/:rootId/file  { project, title?, text? }
   //   POST /api/conversations/homeroom-bot/threads/:rootId/post  { project, number, text? }
+  //   POST /api/conversations/homeroom-bot/threads/:rootId/done   (#6159: Mark done)
+  //   POST /api/conversations/homeroom-bot/threads/:rootId/reopen (#6159: Reopen)
   const privateThreads = () => require('../services/private-threads');
   const threadRoot = (req) => {
     const id = Number(req.params.rootId);
@@ -360,6 +418,21 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
+  // #6159 (3 Nov 2026): a private thread can be finished, and brought back.
+  // Only the person's own: anybody else's root is "No such thread".
+  for (const [door, act] of [['done', 'markDone'], ['reopen', 'reopen']]) {
+    router.post(`/api/conversations/homeroom-bot/threads/:rootId/${door}`, conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+      try {
+        const rootId = threadRoot(req);
+        if (!rootId) return res.status(404).json({ error: 'No such thread' });
+        if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+        return answerDoor(res, await privateThreads()[act](pool, { user: req.user, rootId }));
+      } catch (err) {
+        log.error('conversations', `private thread ${door} failed`, { err: err.message, userId: req.user?.id });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+  }
   router.post('/api/conversations/homeroom-bot/threads/:rootId/post', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
     try {
       const rootId = threadRoot(req);

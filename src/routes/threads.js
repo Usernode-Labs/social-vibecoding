@@ -76,8 +76,11 @@ function threadsRoutes() {
       const page = await threads.threadPage(pool, {
         thread, viewerId: req.user ? req.user.id : null, owner: found.owner, repo: found.repo,
       });
-      // Stage 6: a merge or split waiting on this thread.
-      return res.json({ ...page, moves: await threadMoves.openMoves(pool, { threadId: thread.id }) });
+      // Stage 6: a merge or split waiting on this thread. #6421: a change's
+      // consent question is drawn for the asker who may answer it.
+      return res.json({ ...page, moves: await threadMoves.openMoves(pool, {
+        threadId: thread.id, viewerId: req.user ? req.user.id : null,
+      }) });
     } catch (err) {
       log.error('threads', 'thread read failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -169,6 +172,7 @@ function threadsRoutes() {
       return answerMove(res, await act(pool, {
         app: found.app, user: req.user, moveId: req.params.id,
         reason: typeof req.body?.reason === 'string' ? req.body.reason : null,
+        answer: typeof req.body?.answer === 'string' ? req.body.answer : null,
       }));
     } catch (err) {
       log.error('threads', `move ${verb} failed`, { message: err.message });
@@ -177,6 +181,9 @@ function threadsRoutes() {
   };
   router.post('/api/apps/:slug/thread-moves/:id/agree', sameOriginBrowserOnly, member, decideMove('agree', threadMoves.agree));
   router.post('/api/apps/:slug/thread-moves/:id/object', sameOriginBrowserOnly, member, decideMove('object', threadMoves.object));
+  // #6421: a request's other asker answers a change's question: Yes gathers
+  // that thread into the change's, Keep separate leaves it linked where it is.
+  router.post('/api/apps/:slug/thread-moves/:id/consent', sameOriginBrowserOnly, member, decideMove('consent', threadMoves.consent));
 
   // ── A private thread about it (threads, one loop: phase B) ──────────
   //

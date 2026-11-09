@@ -28,6 +28,10 @@
  * Kudos and destination, where the outbox (#1054) keeps it and sends it when
  * it can. Only a refusal the person can act on (a 4xx with a reason) is said
  * in the box itself, with their words still in it.
+ *
+ * A picture the server will not take does not stop the words either, but it
+ * is said (#6121): the outcome's `droppedPictures` counts every picture that
+ * was offered and did not end up on the request, and the toast names them.
  */
 
 import { t } from '../../lib/i18n/runtime';
@@ -47,6 +51,8 @@ export interface CommentPost {
   text: string;
   target: Target;
   appSlug: string | null;
+  /** The app's name as the box showed it, so the form can name it with no app tab open. */
+  appName?: string | null;
   /** The pages, each with its pins. */
   shots?: CommentShot[];
   /** The person's own images, after the pages. */
@@ -62,7 +68,7 @@ export interface CommentPost {
 export interface BountyOutcome { placed: boolean; remaining?: number; error?: string }
 
 export type PostOutcome =
-  | { ok: true; botWillBuild: boolean; url: string; title: string; bounty: BountyOutcome | null }
+  | { ok: true; botWillBuild: boolean; url: string; title: string; bounty: BountyOutcome | null; droppedPictures: number }
   | { ok: false; handover: true }
   | { ok: false; handover: false; error: string };
 
@@ -139,11 +145,11 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
 
   const ids: string[] = [];
   const pins: Array<ShotPin & { id: string }> = [];
-  const pictures: Array<{ blob: Blob; pins: ShotPin[] }> = [
+  const offered: Array<{ blob: Blob; pins: ShotPin[] }> = [
     ...(post.shots || []),
     ...(post.images || []).map((blob) => ({ blob, pins: [] })),
-  ].filter((p) => !!p.blob).slice(0, MAX_PICTURES);
-  for (const picture of pictures) {
+  ].filter((p) => !!p.blob);
+  for (const picture of offered.slice(0, MAX_PICTURES)) {
     const id = await upload(picture.blob);
     if (id === 'handover') return { ok: false, handover: true };
     if (!id) continue;
@@ -189,6 +195,7 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
       url: typeof data.url === 'string' ? data.url : '',
       title: typeof data.title === 'string' ? data.title : title,
       bounty: !KUDOS_PARKED && b && typeof b === 'object' ? { placed: !!b.placed, remaining: b.remaining, error: b.error } : null,
+      droppedPictures: offered.length - ids.length,
     };
   }
   if (res.status >= 500) return { ok: false, handover: true };
@@ -212,6 +219,12 @@ export function handOverOptions(post: CommentPost): Record<string, unknown> {
     target: post.target,
     description: descriptionFor(post.text, post.change),
   };
+  // The destination travels with the words: the form files on the app the
+  // person picked, even when no app tab is open behind it (#6485).
+  if (post.target === 'app' && post.appSlug) {
+    opts.appSlug = post.appSlug;
+    if (post.appName) opts.appName = post.appName;
+  }
   if (screenshots.length) opts.screenshots = screenshots.slice(0, MAX_PICTURES);
   const title = String(post.title || '').trim();
   if (title) opts.title = title;

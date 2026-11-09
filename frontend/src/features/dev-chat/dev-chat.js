@@ -157,7 +157,34 @@ const DevChat = {
   // Single slot, last-write-wins — the badge count carries multiplicity.
   _titleCompletion: null,
 
-  budget: null,
+  // #6493: the ONE allowance the Settings row, the composer's "$ left" pill
+  // and this meter all read. It lives in features/header/ai-credit.js
+  // (`AiCredit.Budget`); this getter composes it with the three fields only
+  // /api/budget carries (globalSpentCents, globalLimitCents, aiEnabled) and
+  // maps its `byokCents` to the `byokSpentCents` spelling this meter reads.
+  // Null until the shared state exists, which is exactly when this meter used
+  // to have nothing to say.
+  get budget() {
+    if (DevChat._budgetOverride) return DevChat._budgetOverride;
+    const AiCredit = typeof window !== 'undefined' ? window.AiCredit : null;
+    const state = AiCredit?.Budget?.current?.() || null;
+    if (!state) return null;
+    const extras = DevChat._budgetExtras || {};
+    return {
+      ...extras,
+      ...state,
+      byokSpentCents: typeof state.byokCents === 'number'
+        ? state.byokCents : state.byokSpentCents,
+    };
+  },
+  // Only the ?shot= and ?demo= fixtures assign this: those pages skip
+  // `adopt()` on purpose, so their made-up figures must win over the shared
+  // one rather than being overwritten by it.
+  set budget(value) {
+    DevChat._budgetOverride = value || null;
+  },
+  _budgetExtras: {},
+  _budgetOverride: null,
   // #2118: an OpenRouter session's counterpart — what the viewer's
   // OpenRouter key reports left of its limit (GET /allowance), read live.
   openrouterAllowance: null,
@@ -1912,7 +1939,7 @@ const DevChat = {
       if (!response.ok) {
         const busy = response.status === 409 && /busy/i.test(String(data.error || ''));
         if (!(busy && quietBusy)) {
-          PlatformUI.toast(data.error || PlatformI18n.t('devchat:agentSwitch.failed'));
+          PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:agentSwitch.failed'));
         }
         return busy ? 'busy' : 'failed';
       }
@@ -1961,7 +1988,7 @@ const DevChat = {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:agentSwitch.platformFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:agentSwitch.platformFailed'));
         return;
       }
       if (!DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
@@ -2351,12 +2378,33 @@ const DevChat = {
       DevChat.renderBudget();
       return;
     }
+    const demo = DevChat._budgetDemo();
+    const AiCredit = typeof window !== 'undefined' ? window.AiCredit : null;
     try {
+      // Taken BEFORE the request, as AiCredit.Budget.refresh does: an answer
+      // that comes back after a newer live push must not win.
+      const seq = AiCredit?.Budget?._takeTicket ? AiCredit.Budget._takeTicket() : null;
       // ?demo=1 passthrough so a staging reviewer can see the exhausted
       // state (red meter + three-route banner) without burning a real
       // daily allowance. Strictly a no-op in production.
       const res = await fetch(`/api/budget${DevChat._budgetDemo() ? `?demo=${DevChat._budgetDemoValue()}` : ''}`);
-      if (res.ok) DevChat.budget = await res.json();
+      if (res.ok) {
+        const b = await res.json();
+        if (demo) {
+          // ?demo= pages show a fixture: keep it local, never shared.
+          DevChat.budget = b;
+        } else if (AiCredit?.Budget?.adopt) {
+          // The extras are the fields only this route carries. The snapshot
+          // half is adopted into the one shared allowance, so this meter and
+          // the Settings row draw the same figure (#6493).
+          DevChat._budgetExtras = {
+            globalSpentCents: b.globalSpentCents,
+            globalLimitCents: b.globalLimitCents,
+            aiEnabled: b.aiEnabled,
+          };
+          AiCredit.Budget.adopt(b, seq == null ? undefined : { seq });
+        }
+      }
     } catch {}
     DevChat.renderBudget();
     DevChat._maybeInjectDemoCreditsCard();
@@ -2364,36 +2412,12 @@ const DevChat = {
 
   // #2598: a model call's cost just landed against this user's weekly pool
   // and the server pushed the new figures (services/budget-live.js) over the
-  // socket public/js/app.js already holds open. Re-render from them instead
-  // of refetching: a build makes a call every few seconds, and the whole
-  // point of the push is that the figure moves without a request per call.
-  //
-  // MERGED into the existing budget, never replacing it. The pushed payload
-  // is limits.getBudgetSnapshot — the shared snapshot — while GET /api/budget
-  // wraps that with three fields of its own (globalSpentCents,
-  // globalLimitCents, aiEnabled) and its own spelling of the BYOK figure.
-  // Replacing would blank all four, and the exhausted banner's shared-budget
-  // check reads two of them to decide whose budget it blames.
-  //
-  // renderBudget() repaints the composer's meter AND both credits banners, so
-  // an OpenRouter session — whose meter shows the KEY's allowance, not the
-  // pool (#2118) — still gets its low-balance and exhausted banners moved by
-  // the included key's pooled spend (#2571).
+  // socket public/js/app.js already holds open. The push itself reaches the
+  // one shared allowance through `AiCredit.Budget.applyPush` (app.js calls
+  // that first), so there is nothing left to merge here: repaint the meter
+  // and both banners from the state that just moved.
   applyBudgetUpdate(budget) {
     if (!budget || typeof budget !== 'object') return;
-    // ?demo= and ?shot= pages are showing a fixture on purpose. A real push
-    // arriving underneath would swap out the state a reviewer came to look
-    // at, which is the one thing those flags exist to prevent.
-    if (DevChat._budgetDemo() || DevChat._shotCreditsLowBudget()) return;
-    const previous = DevChat.budget || {};
-    const byokCents = Number(budget.byokCents);
-    DevChat.budget = {
-      ...previous,
-      ...budget,
-      // /api/budget's spelling of the same number, kept in step so the
-      // key-holder branch of the meter can't read a stale "your key $X".
-      byokSpentCents: Number.isFinite(byokCents) ? byokCents : previous.byokSpentCents,
-    };
     DevChat.renderBudget();
   },
 
@@ -4391,7 +4415,7 @@ const DevChat = {
       }
       if (!silent) {
         const data = await rr.json().catch(() => ({}));
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:session.resumeFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:session.resumeFailed'));
       }
       return false;
     } catch {
@@ -4548,7 +4572,7 @@ const DevChat = {
             session.status = 'active';
           } else {
             const data = await rr.json().catch(() => ({}));
-            PlatformUI.toast(data.error || PlatformI18n.t('devchat:session.resumeFailed'));
+            PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:session.resumeFailed'));
           }
         } catch { /* network blip — fall through; session stays paused */ }
       }
@@ -7377,7 +7401,7 @@ const DevChat = {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok && res.status !== 409) {
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:issueDraft.failed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:issueDraft.failed'));
         if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
         return;
       }
@@ -7930,7 +7954,7 @@ const DevChat = {
             status: { t: 'status', key: `${key}:s`, icon: 'check', html: msg.content || '', text: msg.content || '', elapsed: null, stamp },
             prUrl: session?.pr_url || msg.prUrl || null,
             prNumber: session?.pr_number || msg.prNumber || null,
-            title: session?.session_title || session?.pr_title || '',
+            title: session?.pr_title || session?.proposed_pr_title || session?.session_title || '',
             closes: DevChat._closesRefs(session),
             // #3605: once the change is up for a vote its status opens the
             // proposal's vote page. Null before then: an underway session has
@@ -8853,7 +8877,16 @@ const DevChat = {
             // Markdown image renderer, and rebuild controlled markup. Width,
             // event handlers, styles and every other supplied attribute are
             // deliberately discarded before DOMPurify sees the result.
-            const tag = String(text || '').trim();
+            // HTML comments are dropped as GitHub drops them: Homeroom's own
+            // GitHub comments end with an invisible governance marker that
+            // must not print as text. Only a whole-comment token is dropped;
+            // anything else stays escaped.
+            const raw = String(text || '');
+            if (/^\s*<!--[\s\S]*?-->\s*$/.test(raw)
+                && raw.indexOf('<!--', raw.indexOf('<!--') + 4) === -1) {
+              return '';
+            }
+            const tag = raw.trim();
             if (DevChat._renderImagesInline && /^<img\b[^>]*\/?>$/i.test(tag)) {
               const srcMatch = /\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
               const altMatch = /\salt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
@@ -9597,7 +9630,7 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
       body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || (action === 'resume'
+        PlatformUI.toast(PlatformI18n.errorText(body) || (action === 'resume'
           ? PlatformI18n.t('devchat:sessions.toast.resumeFailed')
           : PlatformI18n.t('devchat:sessions.toast.pauseFailed')));
         return null;
@@ -9637,7 +9670,7 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:sessions.toast.archiveFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:sessions.toast.archiveFailed'));
         return null;
       }
     } catch {
@@ -9656,7 +9689,7 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || PlatformI18n.t('devchat:sessions.toast.unarchiveFailed'));
+        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:sessions.toast.unarchiveFailed'));
         return null;
       }
       if (data.ccPurged) {
@@ -11031,7 +11064,7 @@ const DevChat = {
           body: file,
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || PlatformI18n.t('devchat:attach.uploadFailedHttp', { status: res.status }));
+        if (!res.ok) throw new Error(PlatformI18n.errorText(data) || PlatformI18n.t('devchat:attach.uploadFailedHttp', { status: res.status }));
         entry.id = data.id;
         entry.kind = data.kind;
         entry.meta = data.meta || null;
@@ -11472,7 +11505,7 @@ const DevChat = {
         // the user's mirror and the server have genuinely diverged.
         if (res.status === 409) {
           const data = await res.json().catch(() => ({}));
-          if (data && data.error) DevChat._toast(data.error);
+          if (data && data.error) DevChat._toast(PlatformI18n.errorText(data));
         }
         return false;
       }
@@ -12684,6 +12717,10 @@ DevChat._repaintLanguage = () => {
 };
 if (typeof window !== 'undefined') {
   document.addEventListener('homeroom:language-changed', DevChat._repaintLanguage);
+  // #6493: whichever surface replaced the one shared allowance (a Settings
+  // fetch, the socket's push) repaints this meter and both banners, so an
+  // open dev chat never shows a figure the rest of the app has moved past.
+  document.addEventListener('homeroom:ai-budget-changed', () => DevChat.renderBudget());
   document.addEventListener('visibilitychange', DevChat._awayReturnHandler);
   window.addEventListener('focus', DevChat._awayReturnHandler);
   window.addEventListener('blur', DevChat._awayReturnHandler);

@@ -75,7 +75,6 @@ async function freshDb(t) {
   });
   const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
-  await pool.query(schema);
   return pool;
 }
 

@@ -1116,10 +1116,18 @@ function reading(def, measure) {
   return { state: 'error', value: 'Couldn’t load', detail: 'Try again later', off: null, final: true };
 }
 
+/**
+ * A count's target is none at all, so its line says that in words (#6273):
+ * "none expected" beside a count that is off it, and nothing about the
+ * target beside one that is on it. "target none" read as a label whose
+ * value was missing.
+ */
+const COUNT_OFF_LINE = 'none expected';
+
 /** A reading's whole line: its own part and the target. Pure. */
 function lineFor(def, read) {
   if (read.final) return read.detail;
-  if (def.kind === 'count') return joinLine(read.detail, read.off ? 'target none' : '');
+  if (def.kind === 'count') return joinLine(read.detail, read.off ? COUNT_OFF_LINE : '');
   return joinLine(read.detail, targetLine(def.target, def.kind, read.off));
 }
 
@@ -1161,8 +1169,10 @@ function present(id, measure) {
       ...base,
       state,
       value: sides.map((side) => `${side.name} ${side.value}`).join(' · '),
+      // A split count says "none expected" only while a side is off it
+      // (#6273): both at None has nothing to add.
       sub: joinLine(def.kind === 'duration' ? 'median' : '',
-        def.kind === 'count' ? (def.target ? 'target none' : '') : targetLine(def.target, def.kind, false)),
+        def.kind === 'count' ? (def.target && state === 'warn' ? COUNT_OFF_LINE : '') : targetLine(def.target, def.kind, false)),
       sides,
     };
   }

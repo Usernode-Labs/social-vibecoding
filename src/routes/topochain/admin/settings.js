@@ -118,9 +118,14 @@ function settingsAdminRoutes(config) {
   // sender address IS returned: it is public (it's in the From of every
   // mail we send) and it is the one value an admin has to be able to
   // check.
-  router.get('/api/v4/admin/settings/mail-status', (_req, res) => {
+  //
+  // The provider in force follows the one an admin saved in Admin → Email
+  // delivery (services/mail/select.js savedChoice), so this card and that
+  // section never name two different senders.
+  router.get('/api/v4/admin/settings/mail-status', async (_req, res) => {
     const mail = require('../../../services/mail');
-    return ok(res, { data: mail.describe(process.env) });
+    const saved = await mail.savedChoice(pool).catch(() => null);
+    return ok(res, { data: mail.describe(process.env, { saved }) });
   });
 
   // ── GET /api/v4/admin/settings/mail-activity ─────────────────────────

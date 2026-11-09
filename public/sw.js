@@ -529,9 +529,28 @@ const NO_FALLBACK_PAGES = [
 // /embed/<slug> is the same kind of page (routes/project-preview.js): a
 // public project as a post on X frames it, a server document with no
 // session that is never the shell. It is no-store too.
+//
+// /__access/ is the apex half of the app-host gate (routes/apps.js,
+// services/edge-gate.js handleAuthorize): every navigation there is a 302,
+// to the app's own one-time guest pass or to the sign-in code callback.
+// A signed-out visitor's "Try it" on a hub lands here, and the cached shell
+// answering it with Homeroom's welcome screen stranded them before the
+// redirect could run (#6310). Nothing under it is a shell route.
+//
+// /invite/<token> (routes/community-invites.js) is the server's shell with
+// the link's preview in its head and the token's HttpOnly cookie in the
+// response; a cached copy has neither, so signing up or in from it would
+// follow nothing.
+//
+// /mail/c/ (a click that 302s to its destination) and /mail/unsubscribe/
+// (its own confirmation page) are links in an email, opened as top-level
+// navigations. Neither is ever the shell.
 const NO_FALLBACK_PREFIXES = [
   '/reports/',
   '/embed/',
+  '/__access/',
+  '/invite/',
+  '/mail/',
 ];
 
 // An app's install page: a server page under /app/<slug>/ that is never the
@@ -1474,9 +1493,24 @@ if (typeof module !== 'undefined' && module.exports) {
     if (activeApiScope && activeApiScope !== scope) {
       retiredApiScopes.add(activeApiScope);
       void clearApiCaches().catch(() => {});
+    } else if (!activeApiScope) {
+      // A worker the browser stopped while idle starts again with no active
+      // scope, and a sign-in as someone else in between left the previous
+      // identity's entries on disk. Never served (entries are keyed and
+      // replayed by scope), but dropped now rather than at the next load.
+      void dropOtherApiScopes(scope).catch(() => {});
     }
     activeApiScope = scope;
     return { scope, epoch: apiEpoch };
+  }
+
+  function dropOtherApiScopes(scope) {
+    return queueApiCacheWork(async () => {
+      const cache = await caches.open(API_CACHE);
+      for (const key of await cache.keys()) {
+        if (new URL(key.url).searchParams.get(API_SCOPE_PARAM) !== scope) await cache.delete(key);
+      }
+    });
   }
 
   function currentApiContext(context) {

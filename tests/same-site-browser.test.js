@@ -134,7 +134,6 @@ const EXEMPT = new Map([
   ['agent-sessions.js POST /api/agent-sessions/:id/turns', JSON_FIELD],
   ['app-files.js POST /api/apps/:slug/files', RAW],
   ['app-llm-proxy.js POST `${ROUTE_PREFIX}*`', TOKEN],
-  ['app-permissions.js POST /api/me/permission-grants', JSON_FIELD],
   ['app-storage.js POST /api/app-storage/files', TOKEN],
   ['approvers.js POST /api/apps/:slug/approver-invites', JSON_FIELD],
   ['apps.js POST /api/apps', JSON_FIELD],
@@ -167,8 +166,6 @@ const EXEMPT = new Map([
   ['auth.js POST /api/me/password', JSON_FIELD],
   ['auth.js POST /api/me/ai-progress-estimate', JSON_FIELD],
   ['auth.js POST /api/me/session-bridge', JSON_FIELD],
-  // New Needs you, the experimental review flow: the same JSON `enabled`.
-  ['auth.js POST /api/me/review-flow', JSON_FIELD],
   ['auth.js POST /api/auth/wallet-check', JSON_FIELD],
   ['auth.js POST /api/auth/wallet-verify', JSON_FIELD],
   ['auth.js POST /api/auth/wallet-reset-verify', JSON_FIELD],
@@ -240,6 +237,7 @@ const EXEMPT = new Map([
   ['preview-projects.js POST /api/preview-projects/:slug/restart', TOKEN],
   ['preview-projects.js DELETE /api/preview-projects/:slug', TOKEN],
   ['mail-webhooks.js POST /api/mail/webhooks/resend', 'Resend raw-body Svix signature; no cookie or browser session authorizes a callback'],
+  ['mail-webhooks.js POST /api/mail/webhooks/brevo', 'Brevo\'s mail webhook bearer token (BREVO_MAIL_WEBHOOK_TOKEN); no cookie or browser session authorizes a callback'],
   ['sms-webhooks.js POST /api/sms/webhooks/brevo', 'Brevo\'s SMS webhook bearer token (BREVO_SMS_WEBHOOK_TOKEN); no cookie or browser session authorizes a callback'],
   ['sms-webhooks.js POST /api/sms/webhooks/twilio', 'Twilio\'s X-Twilio-Signature HMAC keyed by TWILIO_AUTH_TOKEN over TWILIO_STATUS_CALLBACK_URL; no cookie or browser session authorizes a callback'],
   ['alerts-webhook.js POST /api/internal/alerts', 'Alertmanager\'s bearer token (ALERTMANAGER_WEBHOOK_TOKEN); no cookie or browser session authorizes a call'],
@@ -261,7 +259,6 @@ const EXEMPT = new Map([
   ['internal.js POST /api/internal/sessions/:sessionId/prod-debug/sql', TOKEN],
   ['issues.js POST /api/apps/:slug/issues', JSON_FIELD],
   ['issues.js POST /api/issues/:id/vote', JSON_FIELD],
-  ['llm-grants.js POST /api/me/llm-grants', JSON_FIELD],
   ['mcp-remote.js POST /api/connect/oauth/register', TOKEN],
   ['mcp-remote.js POST /api/connect/oauth/token', TOKEN],
   ['mcp-remote.js POST /api/connect/oauth/revoke', TOKEN],
@@ -306,6 +303,9 @@ const EXEMPT = new Map([
   ['topochain/partner.js POST /api/v4/user-activities', TOKEN],
   ['topochain/public.js POST /api/v4/app-version/check', TOKEN],
   ['user-agent-files.js POST /api/me/agent-files', JSON_FIELD],
+  // #6081: the words to translate arrive in a JSON `texts` array; another
+  // origin cannot send one without a preflight.
+  ['user-content-translations.js POST /api/translations', JSON_FIELD],
   ['votes.js POST /api/apps/:slug/pr-import', JSON_FIELD],
   ['votes.js POST /api/apps/:slug/pr-import/_mock/advance', JSON_FIELD],
   ['votes.js POST /api/sessions/:id/vote', JSON_FIELD],

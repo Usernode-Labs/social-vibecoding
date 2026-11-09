@@ -128,10 +128,10 @@ test('Done column visibly names the live production boundary', () => {
   };
   const html = kanbanHtml(AppView);
   assert.match(html, /data-kanban-col-status="done"/);
-  assert.match(html, /Live in production through PR #42 · abcdef0/, 'in the board\u2019s words (#4486)');
+  assert.match(html, /Live in production through PR 42 · abcdef0/, 'in the board\u2019s words (#4486)');
   // A child app names the change too, when the deployment knows it.
   AppView._mergedCtx.deployment = { kind: 'child', state: 'deployed', runningSha: 'abcdef0123', livePrNumber: 42 };
-  assert.match(kanbanHtml(AppView), /Live in production through PR #42</);
+  assert.match(kanbanHtml(AppView), /Live in production through PR 42</);
 });
 
 test('Done column calls out pending and stalled production changes', () => {

@@ -117,9 +117,12 @@ test('migrate.js seeds usernode-capture-admin as an idempotent view-only admin',
   const body = src.slice(src.indexOf('async function seedCaptureAdminUser'));
   const fn = body.slice(0, body.indexOf('\n}\n') + 2);
   assert.match(fn, /usernode-capture-admin/);
-  // View-only admin: is_admin TRUE + admin_readonly TRUE.
-  assert.match(fn, /is_admin,\s*admin_readonly,\s*can_create_apps/);
-  assert.match(fn, /VALUES\s*\(\$1,\s*\$2,\s*TRUE,\s*TRUE,\s*FALSE\)/);
+  // View-only admin: is_admin TRUE + admin_readonly TRUE, no app creation.
+  assert.match(fn, /is_admin,\s*admin_readonly,\s*can_create_apps,/);
+  assert.match(fn, /\$1,\s*\$2,\s*TRUE,\s*TRUE,\s*FALSE,/);
+  // A platform preview makes it at its fixed id (SEC-06); elsewhere the next id.
+  assert.match(fn, /COALESCE\(\$3::int, nextval\(pg_get_serial_sequence\('users', 'id'\)\)\)/);
+  assert.match(fn, /previewPersonaId\('usernode-capture-admin'\)/);
   // Idempotent: existence check + ON CONFLICT DO NOTHING.
   assert.match(fn, /ON CONFLICT \(username\) DO NOTHING/);
   assert.match(fn, /SELECT id FROM users WHERE username = \$1/);

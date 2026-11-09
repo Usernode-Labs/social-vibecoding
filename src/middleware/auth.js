@@ -4,6 +4,7 @@ const { setSessionCacheCookie, stampApiIdentity } = require('../services/browser
 const crypto = require('crypto');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const { classifyUserAgent } = require('../services/linked-browsers');
 const platformJwt = require('../services/platform-jwt');
 
 const PUBLIC_PATHS = [
@@ -117,6 +118,9 @@ const PUBLIC_PATHS = [
   // body would arrive where a script was expected, leaving the whole app
   // unstyled. Static JS only, no data access.
   '/usernode-tailwind/',
+  // The Google Analytics frame (#6314): a static page the shell frames for
+  // signed-out visitors too. Whole file name, no data access.
+  '/analytics-frame.html',
   // PWA shell assets (#487). The service-worker script, manifest and
   // icons must be fetchable without a session: the browser requests them
   // from login.html (pre-auth) and during background SW update checks,
@@ -163,6 +167,11 @@ const PUBLIC_PATHS = [
   // entry is belt-and-braces like the report share entry below. Access control
   // is the unguessable 32-hex id, and the bytes are served under a sandbox CSP.
   '/challenge-illustrations/',
+  // Images in admin-edited email templates (routes/email-images.js). A mail
+  // client loads them with no session; the route mounts BEFORE this
+  // middleware, so this entry is belt-and-braces. Access control is the
+  // unguessable 32-hex id, and the bytes are served under a sandbox CSP.
+  '/email-images/',
   // Public report share links (routes/report-snapshots.js). The route is
   // mounted BEFORE this middleware in server.js, so requests normally
   // never get here — this entry is belt-and-braces so the public contract
@@ -371,6 +380,28 @@ async function renewCookieSession(pool, res, token, row) {
   }
 }
 
+// #5974: Settings › Linked devices says when each browser was last used.
+// `sessions.last_seen_at` is written at most once per 15 minutes per
+// session: a request whose row was stamped more recently writes nothing, and
+// the UPDATE repeats the window so two requests racing on a stale row cost
+// one write. Never awaited: the request has authenticated by now, and the
+// date is a convenience the response must not wait for or fail on.
+const SESSION_SEEN_THROTTLE_MS = 15 * 60 * 1000;
+
+function touchSessionLastSeen(pool, token, row) {
+  const seen = row.last_seen_at ? new Date(row.last_seen_at).getTime() : NaN;
+  if (Number.isFinite(seen) && Date.now() - seen < SESSION_SEEN_THROTTLE_MS) return;
+  Promise.resolve()
+    .then(() => pool.query(
+      `UPDATE sessions
+          SET last_seen_at = NOW()
+        WHERE token = $1
+          AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL '15 minutes')`,
+      [token]
+    ))
+    .catch((err) => log.warn('auth', 'Session last-seen update failed', { message: err.message }));
+}
+
 function authMiddleware(config) {
   const pool = getPool(config);
 
@@ -386,7 +417,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.review_flow_enabled, u.private_member_since, u.locale, u.has_platform_access, u.is_synthetic,
+          `SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.review_flow_enabled, u.private_member_since, u.locale, u.has_platform_access, u.is_synthetic,
              ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
@@ -462,8 +493,6 @@ function authMiddleware(config) {
             aiProgressEstimate: !!rows[0].ai_progress_estimate,
             // #1281: opt-in for the session-CLI bridge venue. Default FALSE.
             sessionBridgeEnabled: !!rows[0].session_bridge_enabled,
-            // New Needs you, the experimental review flow. Default FALSE.
-            reviewFlowEnabled: !!rows[0].review_flow_enabled,
             // Platform-level language preference (issue #757): a BCP-47
             // tag or null when unset. Surfaced via /api/auth/me.
             locale: rows[0].locale || null,
@@ -478,6 +507,7 @@ function authMiddleware(config) {
           // the cookie outright, so renewing the credential it is discarding
           // would both waste a write and set competing cookies on one response.
           const renewedExpiry = await renewCookieSession(pool, res, cookieToken, rows[0]);
+          touchSessionLastSeen(pool, cookieToken, rows[0]);
           stampApiIdentity(req, res, cookieToken, renewedExpiry || rows[0].expires_at);
           bindStreamSession(req, cookieToken);
           log.debug('auth', 'Session validated', { userId: req.user.id });
@@ -520,6 +550,37 @@ function authMiddleware(config) {
   };
 }
 
+// SEC-06: a reviewer this preview has no row for (an account made after its
+// database was copied, or any reviewer once it starts empty) gets one on
+// their first verified sign-in: the synthetic handle the platform gives them
+// (platform-preview-data-policy.js previewIdentity), no password anyone can
+// use, member rights with platform access. Only that handle, for that very
+// id, is accepted, so a production handle never lands here; the screenshot
+// personas are seeded instead (db/migrate.js).
+// The users sequence is moved past the id, so a row this preview makes
+// itself never takes it. False when the handle is not a reviewer's.
+async function createPreviewReviewer(pool, payload) {
+  if (!Number.isSafeInteger(payload.id) || payload.id < 1 || payload.username !== `preview-user-${payload.id}`) return false;
+  const { rowCount } = await pool.query(
+    `INSERT INTO users (id, username, password, can_create_apps,
+       has_platform_access, private_member_since, created_at)
+     VALUES ($1, $2, '__staging_redacted__', FALSE, TRUE,
+       '2026-01-01T00:00:00Z'::timestamptz, '2026-01-01T00:00:00Z'::timestamptz)
+     ON CONFLICT DO NOTHING`,
+    [payload.id, payload.username]
+  );
+  if (rowCount) {
+    await pool.query(
+      `SELECT setval(q.seq, GREATEST($1::bigint, COALESCE(s.last_value, 0)))
+         FROM (SELECT pg_get_serial_sequence('users', 'id') AS seq) q
+         JOIN pg_sequences s ON format('%I.%I', s.schemaname, s.sequencename) = q.seq`,
+      [payload.id]
+    );
+    log.info('auth', 'Staging iframe-JWT created the reviewer', { id: payload.id });
+  }
+  return true;
+}
+
 // Verify the parent-issued JWT, look up the matching user in the local
 // (cloned) users table, mint a session row + set the cookie. Returns the
 // resolved req.user shape on success, null on any failure (caller falls
@@ -545,17 +606,18 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
     return null;
   }
 
-  // The clone keeps stable IDs with synthetic handles for iframe sign-in. Its
-  // trusted export policy resets profiles and production roles; synthetic
-  // capture personas receive their fixture roles locally. Username match is defense-in-depth
-  // against a token whose id was renumbered between clone and now.
+  // The preview knows a reviewer by their production id and synthetic handle
+  // (a row made on first sign-in, createPreviewReviewer), and the screenshot
+  // personas by their fixed ids, seeded with their fixture roles. Username
+  // match is defense-in-depth against a token naming another row's id.
+  const findUser = async () => (await pool.query(
+    'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
+    [payload.id]
+  )).rows[0];
   let userRow;
   try {
-    const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, review_flow_enabled, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
-      [payload.id]
-    );
-    userRow = rows[0];
+    userRow = await findUser();
+    if (!userRow && await createPreviewReviewer(pool, payload)) userRow = await findUser();
   } catch (err) {
     log.error('auth', 'Staging iframe-JWT user lookup failed', { err: err.message });
     return null;
@@ -578,8 +640,8 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
   const expiresAt = new Date(Date.now() + STAGING_SESSION_DAYS * 24 * 60 * 60 * 1000);
   try {
     await pool.query(
-      'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
-      [sessionToken, userRow.id, expiresAt]
+      'INSERT INTO sessions (token, user_id, expires_at, user_agent_class) VALUES ($1, $2, $3, $4)',
+      [sessionToken, userRow.id, expiresAt, classifyUserAgent(req?.headers?.['user-agent'])]
     );
   } catch (err) {
     log.error('auth', 'Staging iframe-JWT session insert failed', { err: err.message });
@@ -609,7 +671,6 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
     appQuota: userRow.app_quota ?? 0,
     aiProgressEstimate: !!userRow.ai_progress_estimate,
     sessionBridgeEnabled: !!userRow.session_bridge_enabled,
-    reviewFlowEnabled: !!userRow.review_flow_enabled,
     locale: userRow.locale || null,
     hasPlatformAccess: !!userRow.has_platform_access,
     privateMember: isPrivateMember(userRow),

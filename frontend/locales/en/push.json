@@ -523,6 +523,10 @@
     "text": "This week on {{app}}",
     "description": "Phone notification title: the Friday summary of a project. {{app}} is a project's name."
   },
+  "weeklyDigest.title.ready": {
+    "text": "Your weekly digest is ready",
+    "description": "Phone notification title: the one Friday summary that covers all of the viewer's projects. What happened is under it."
+  },
   "weeklyDigest.title.plain": {
     "text": "This week",
     "description": "Phone notification title: the Friday summary."
@@ -590,6 +594,22 @@
   "voteDigest.body.many": {
     "text": "See them under Needs you in Communities",
     "description": "Phone notification text under the title: a reminder of the changes waiting for the reader's vote. Needs you is a section of the Communities screen, and both are names on screen."
+  },
+  "votedDigest.title_one": {
+    "text": "{{count}} change you voted on was decided",
+    "description": "Phone notification title: a weekly count of the changes the reader voted on that went live or were closed in the last week. {{count}} is how many."
+  },
+  "votedDigest.title_other": {
+    "text": "{{count}} changes you voted on were decided",
+    "description": "Phone notification title: a weekly count of the changes the reader voted on that went live or were closed in the last week. {{count}} is how many."
+  },
+  "votedDigest.title.plain": {
+    "text": "Changes you voted on were decided",
+    "description": "Phone notification title: a weekly summary of the changes the reader voted on, when how many is not known."
+  },
+  "votedDigest.body": {
+    "text": "See how they ended in Your votes",
+    "description": "Phone notification text under the title of the weekly summary of changes the reader voted on. Your votes is the name of a page on screen."
   },
   "checkFailed.title.named": {
     "text": "Testing found a problem with \"{{title}}\"",
@@ -678,6 +698,26 @@
   "appHealth.storageWarn.body.plain": {
     "text": "Your app has used most of its storage. Clean up old data or ask an admin to raise the limit",
     "description": "Phone notification text under the title: a project the reader runs has used most of its storage."
+  },
+  "appHealth.storageEarly.title": {
+    "text": "Storage is over half full",
+    "description": "Phone notification title: a project the reader runs has used over half of its storage."
+  },
+  "appHealth.storageEarly.body.app": {
+    "text": "{{app}} has used {{used}} of {{limit}}. Clean up old data or ask an admin to raise the limit before it fills",
+    "description": "Phone notification text under the title: a project the reader runs is over half full. {{app}} is a project's name; {{used}} and {{limit}} are sizes such as \"1.6 GB\" and \"3 GB\"."
+  },
+  "appHealth.storageEarly.body.plain": {
+    "text": "Your app has used {{used}} of {{limit}}. Clean up old data or ask an admin to raise the limit before it fills",
+    "description": "Phone notification text under the title: a project the reader runs is over half full. {{used}} and {{limit}} are sizes such as \"1.6 GB\" and \"3 GB\"."
+  },
+  "appHealth.storageWarn.bodySized.app": {
+    "text": "{{app}} has used {{used}} of {{limit}}. Clean up old data or ask an admin to raise the limit",
+    "description": "Phone notification text under the title: a project the reader runs is close to its storage limit, with the space used and the limit. {{app}} is a project's name; {{used}} and {{limit}} are sizes such as \"2.5 GB\" and \"3 GB\"."
+  },
+  "appHealth.storageWarn.bodySized.plain": {
+    "text": "Your app has used {{used}} of {{limit}}. Clean up old data or ask an admin to raise the limit",
+    "description": "Phone notification text under the title: a project the reader runs is close to its storage limit, with the space used and the limit. {{used}} and {{limit}} are sizes such as \"2.5 GB\" and \"3 GB\"."
   },
   "appHealth.storageFull.title": {
     "text": "Out of storage",

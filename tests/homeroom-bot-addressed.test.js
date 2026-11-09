@@ -38,6 +38,27 @@ test('the bot speaks the first time it could leave a note here', () => {
   assert.deepEqual(addressed.addressed({ lastNote: null }), { speak: true, why: 'first_note' });
 });
 
+test('#6399: after "I\'m taking this up now", the read that follows speaks, whatever the words', () => {
+  const promised = { kind: 'going_ahead', created_at: '2026-10-09T09:02:00Z', thread_message_id: 7 };
+  assert.deepEqual(addressed.addressed({ lastNote: promised }), { speak: true, why: 'promised' });
+  assert.deepEqual(addressed.addressed({ lastNote: promised, waitingOnly: true }), { speak: true, why: 'promised' },
+    'a look somebody asked for speaks too');
+  assert.deepEqual(addressed.addressed({ lastNote: promised, messages: [msg('thanks')] }), { speak: true, why: 'promised' });
+  assert.equal(addressed.waitingOn({ lastNote: promised }), null, 'a go-ahead is still not a note it waits on');
+});
+
+test('#6311: a re-read says the same note only when its words have not changed', () => {
+  const note = 'I think this is about Homeroom itself, not Ear trainer: the header is drawn by Homeroom.';
+  assert.equal(addressed.sameNote(note, note), true);
+  assert.equal(addressed.sameNote(note, 'I think this is about Homeroom itself, not Ear trainer: The header is drawn by Homeroom!'),
+    true, 'case and punctuation ignored');
+  assert.equal(addressed.sameNote(note, `${note} The button is the app's own.`), true, '80% of the words in common');
+  assert.equal(addressed.sameNote(note, 'I think this is about Homeroom itself, not Ear trainer: sign-in is Homeroom\'s own.'),
+    false, 'a different reason');
+  assert.equal(addressed.sameNote('', note), false);
+  assert.equal(addressed.sameNote(null, note), false, 'a missing previous text never matches');
+});
+
 test('people talking among themselves after a person note are not for the bot', () => {
   const result = addressed.addressed({
     lastNote: NOTE('person'),
@@ -369,6 +390,27 @@ test('a repeat person note stays quiet while people talk among themselves', asyn
     [9, 12, '2026-10-09T09:02:00Z', 77], 'the words after the note, for its user');
 });
 
+test('#6311: a re-read whose note would say the same thing posts nothing, and a changed reason posts', async (t) => {
+  const seen = stubLive(t);
+  const noteText = live.personHomeroomText({ ...PERSON_PARSED, project: 'Chores', requester: null, deciders: [] });
+  const same = fakePool([
+    [/SELECT p\.kind, m\.content/, { rows: [{ kind: 'person', content: noteText }] }],
+    NOTE_ROUTE,
+    [/metadata->'quote'/, { rows: [{ id: 4, content: 'the list one, please', created_at: AFTER, quotes_bot: true }] }],
+  ]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: same, relook: true })), 'unchanged');
+  assert.equal(seen.posts.length, 0, 'the same note is not posted again');
+
+  seen.posts.length = 0;
+  const changed = fakePool([
+    [/SELECT p\.kind, m\.content/, { rows: [{ kind: 'person', content: 'I think a person needs to decide this one: something else entirely. The person who asked for it can say Go ahead in a chat with me, or reply here.' }] }],
+    NOTE_ROUTE,
+    [/metadata->'quote'/, { rows: [{ id: 4, content: 'now it is for a person', created_at: AFTER, quotes_bot: true }] }],
+  ]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: changed, relook: true })), 'person');
+  assert.equal(seen.posts.length, 1, 'a reason that changed is said');
+});
+
 test('the note is posted again after a mention, and after a reply to one of its messages', async (t) => {
   const seen = stubLive(t);
   const mentioned = fakePool([NOTE_ROUTE, talk('@homeroom_bot what did you mean by the header?')]);
@@ -391,6 +433,64 @@ test('a first look posts as it always did, and runs no gate query', async (t) =>
   assert.equal(await bot.actOnVerdict(verdictArgs({ pool, relook: false })), 'person');
   assert.equal(seen.posts.length, 1);
   assert.ok(!pool.queries.some(([sql]) => /homeroom_bot_posts/.test(sql)), 'the gate is not even asked');
+});
+
+// 6 Nov 2026 (#6430): a go-ahead typed in the request's own discussion is
+// the same refusal as one typed in the chat: one plain answer, said to the
+// person who gave it, and no note again.
+test('#6430: a re-read after a thread go-ahead posts the one plain answer, not the note', async (t) => {
+  const seen = stubLive(t);
+  const pool = fakePool([[/goAheadCannot/, { rows: [] }]]);
+  const parsed = {
+    verdict: 'person', reason: 'it was evan\'s go-ahead, and production access is involved',
+    goAheadDecides: false, firstStep: 'Just the three missing read tools',
+  };
+  const acted = await bot.actOnVerdict(verdictArgs({
+    pool, relook: false, parsed, goAhead: { by: 'evan', where: 'thread', messageId: 41 },
+  }));
+  assert.equal(acted, 'person');
+  assert.equal(seen.posts.length, 1, 'one post, not a note and an answer');
+  const said = seen.posts[0].homeroomText;
+  assert.match(said, /even with a go-ahead/);
+  assert.match(said, /your go-ahead/, 'the reader is spoken to, never named in the third person');
+  assert.doesNotMatch(said, /evan/i);
+  assert.doesNotMatch(said, /\bapprove/i, 'it never says somebody has to approve it');
+  assert.match(said, /A person has to build it, for example you with a coding agent/);
+  assert.match(said, /I can build this part now: Just the three missing read tools\.$/);
+  assert.equal(seen.posts[0].dm.goAheadDecides, false);
+  assert.equal(seen.posts[0].dm.firstStep, 'Just the three missing read tools');
+});
+
+test('#6430: a re-read says nothing when the thread already answered that go-ahead', async (t) => {
+  const seen = stubLive(t);
+  const pool = fakePool([[/goAheadCannot/, { rows: [{ ok: 1 }] }]]);
+  const parsed = { verdict: 'person', reason: 'x', goAheadDecides: false, firstStep: 'Just the read tools' };
+  const acted = await bot.actOnVerdict(verdictArgs({
+    pool, relook: false, parsed, goAhead: { by: 'evan', where: 'thread', messageId: 41 },
+  }));
+  assert.equal(acted, 'answered');
+  assert.equal(seen.posts.length, 0, 'the refusal appears once, under itself never twice');
+});
+
+test('#6399: a person note after "I\'m taking this up now" is posted, with its suggestion buttons', async (t) => {
+  const seen = stubLive(t);
+  const promised = [/FROM homeroom_bot_posts/, { rows: [{ kind: 'going_ahead', created_at: '2026-10-09T09:02:00Z' }] }];
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: fakePool([promised]), relook: true })), 'person');
+  assert.equal(seen.posts.length, 1, 'the promise is never the last word');
+  assert.equal(seen.posts[0].kind, 'person');
+
+  // #6399: a read somebody asked for again says what it found, even when its
+  // words repeat the last note (#6311 would otherwise hold it).
+  seen.posts.length = 0;
+  const noteText = live.personHomeroomText({ ...PERSON_PARSED, project: 'Chores', requester: null, deciders: [] });
+  const same = fakePool([
+    [/SELECT p\.kind, m\.content/, { rows: [{ kind: 'person', content: noteText }] }],
+    NOTE_ROUTE,
+    talk('the list one, please'),
+  ]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: same, relook: true, askedAgain: true })), 'person');
+  assert.equal(seen.posts.length, 1, 'a read asked for again posts even when the note repeats');
+  assert.equal(same.queries.some(([sql]) => /metadata->'quote'/.test(sql)), false, 'the gate is not asked');
 });
 
 test('a re-look that concludes the request is ready still acts', async (t) => {
@@ -483,14 +583,19 @@ test('runTriage gates exactly the looks the request itself started, and the ones
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /relook: item\.reason === 'changed' \|\| item\.reason === READ_AGAIN_REASON,\s*\n/);
   assert.match(src, /askedLook: item\.reason === ASKED_REASON,\s*\n\s*comments,/);
+  // #6399: only a read somebody asked for again is never held by the gate.
+  assert.match(src, /askedAgain: item\.reason === READ_AGAIN_REASON && Number\(item\.requested_by\) > 0,/);
   assert.match(src, /const ASKED_REASON = 'asked';/);
-  assert.match(src, /const gated = \(relook \|\| askedLook\) && !capSuppressed && addressedMod\(\)\.NOTE_KINDS\.includes\(parsed\.verdict\);/);
+  assert.match(src, /const gated = \(relook \|\| askedLook\) && !askedAgain && !capSuppressed && addressedMod\(\)\.NOTE_KINDS\.includes\(parsed\.verdict\);/);
   assert.match(src, /const gate = gated\n\s+\? await addressedMod\(\)\.shouldSpeak\(pool, \{/);
   assert.match(src, /waitingOnly: !relook,/);
-  // The two doors that queue an 'asked' look: the request page's button and
-  // a request filed on a project the bot builds on.
+  // The two doors that queue a look: the request page's button and a request
+  // filed on a project the bot builds on. #6399: the page's button asks for a
+  // read again when it is that request's card saying so.
   const dm = read('src/services/homeroom-bot-dm.js');
-  assert.equal((dm.match(/reason: 'asked'/g) || []).length, 2);
+  assert.equal((dm.match(/reason: 'asked'/g) || []).length, 1);
+  assert.match(dm, /reason: readAgain \? settingsModule\(\)\.READ_AGAIN_REASON : 'asked'/);
+  assert.match(dm, /readAgain = false \}/);
 });
 
 // ── The queries, against the real schema ──

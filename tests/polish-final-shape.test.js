@@ -65,8 +65,9 @@ test('#11: an image icon shows the app\'s initial until the picture has drawn', 
   const css = read('public/css/app.css');
   assert.match(css, /:where\(:has\(> \.app-icon-wait\)\) \{ position: relative; \}/);
   assert.match(css, /\.app-icon-wait \{\s*position: absolute; inset: 0;/);
-  const list = read('frontend/src/features/apps/browse-list.tsx');
-  assert.match(list, /eager=\{drawn\+\+ < EAGER_ICON_ROWS\}/, 'Discover\'s first rows ask at once');
+  // One Home (#6361): Discover's list is Home's Communities to join now.
+  const list = read('frontend/src/features/home/communities-to-join.tsx');
+  assert.match(list, /eager=\{i < 4\}/, 'the first cards ask at once');
 });
 
 // ── #12: the request page ───────────────────────────────────────────────
@@ -165,41 +166,6 @@ test('#19: a room\'s picture holds its box until it has drawn', () => {
   const transcript = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(transcript, /data-pending=\{drawn \? undefined : ''\}/);
   assert.match(read('public/css/app.css'), /\.dc-msg-att-img\[data-pending\] \{ width: 160px; height: 120px; \}/);
-});
-
-test('#19: the Communities list draws when its communities are in, not when the feed is', async () => {
-  const { workshopController, workshopStore, expectNeedsDoor } = loadTsx('frontend/src/features/workshop/index.tsx');
-  const priorWindow = global.window;
-  const priorFetch = global.fetch;
-  global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
-  let releaseFeed;
-  const feedAnswer = new Promise((resolve) => { releaseFeed = resolve; });
-  try {
-    global.fetch = (url) => {
-      if (url.startsWith('/api/apps?scope=joined')) {
-        return Promise.resolve({ ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A', is_member: true }] }) });
-      }
-      if (url.startsWith('/api/workshop/counts')) return Promise.resolve({ ok: true, json: async () => ({ counts: {} }) });
-      if (url.startsWith('/api/workshop/needs-feed')) return feedAnswer;
-      return Promise.resolve({ ok: false, json: async () => ({}) });
-    };
-    workshopStore.set({ rows: null, feed: null });
-    const loading = workshopController.open();
-    for (let i = 0; i < 20 && !workshopStore.get().rows; i += 1) await new Promise((r) => setImmediate(r));
-    assert.deepEqual(workshopStore.get().rows.map((r) => r.slug), ['a'], 'the list is drawn');
-    assert.equal(workshopStore.get().feed, null, 'while the feed is still on its way');
-    releaseFeed({ ok: true, json: async () => ({ items: [], max: 50 }) });
-    await loading;
-    assert.deepEqual(workshopStore.get().feed, []);
-    workshopController.close();
-  } finally {
-    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
-    global.fetch = priorFetch;
-  }
-  assert.equal(expectNeedsDoor({ list: null, info: {} }), true, 'unknown: the door is expected');
-  assert.equal(expectNeedsDoor({ list: ['a'], info: { a: { owedCount: 0 } } }), false);
-  assert.equal(expectNeedsDoor({ list: ['a', 'b'], info: { b: { owedCount: 2 } } }), true);
-  assert.equal(message('communities:list.loading'), 'Loading your communities');
 });
 
 // ── #24 and N13 ─────────────────────────────────────────────────────────

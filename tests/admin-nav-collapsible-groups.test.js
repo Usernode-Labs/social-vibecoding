@@ -1,10 +1,11 @@
 // Collapsible admin menu groups (#1152) — Operations, People, Insights,
 // Platform fold away, and the fold persists per browser.
 //
-// Both admin menu surfaces (the desktop sidebar written into
-// #admin-nav-desktop, and the phone level-1 menu written into
-// #admin-section-content) render from ONE grouping helper, so this is one
-// feature with two renderers. Contract pinned here:
+// Since #6456 this is the PHONE's level-1 menu only (written into
+// #admin-section-content). The desktop sidebar that shared it became a top
+// bar of group menus with open-section tabs, pinned by
+// tests/admin-workspace.test.js; it groups through the same helper but has
+// no headings to fold. Contract pinned here:
 //
 //  - the collapse state is a versioned localStorage key holding the
 //    COLLAPSED group names — not the expanded ones, which is what makes
@@ -115,25 +116,9 @@ test('both menus render group headings as real toggle buttons', () => {
   assert.match(sliceFn('_groupDomId(prefix, name) {', 300), /\$\{prefix\}-/,
     'the container id is prefixed per surface');
 
-  const side = sliceFn('_navItemsHtml() {', 2200);
-  assert.match(side, /_groupToggleHtml\(g\.name, domId, collapsed,/,
-    'the sidebar heading is the shared toggle');
-  assert.match(side, /_groupDomId\('admin-nav-group', g\.name\)/,
-    "the sidebar's container ids are admin-nav-group-*");
-  assert.match(side, /data-admin-group="\$\{AdminConsole\.esc\(g\.name\)\}"/,
-    'the sidebar items container is addressable by group name');
-  assert.match(side, /collapsed \? ' class="hidden"' : ''/,
-    'and is hidden when the group is collapsed');
-  // The rows are the <nav>'s section links, the active one announced as the
-  // current page. QA 2026-09-24 Q20: they were `role="tab"` with no tablist
-  // parent (axe aria-required-parent), so the tab-set contract is retired.
-  // (This member only: the phone menu's comment after it names the same two
-  // attributes in prose.)
-  const sideOnly = side.slice(0, side.indexOf('\n  },\n'));
-  assert.ok(sideOnly.length > 200, 'sliced to the end of _navItemsHtml');
-  assert.doesNotMatch(sideOnly, /role="tab"/, 'sidebar rows are not orphan tabs');
-  assert.doesNotMatch(sideOnly, /aria-selected=/, 'and carry no tab selection state');
-  assert.match(side, /isActive \? ' aria-current="page"' : ''/, 'the active row is announced as the current page');
+  // The desktop sidebar's half of this test retired with the sidebar
+  // (#6456): the top bar draws no group headings, so it has no toggles.
+  assert.ok(!consoleJs.includes('_navItemsHtml'), 'the sidebar builder is gone');
 
   const mobile = sliceFn('_mobileMenuHtml() {', 2400);
   assert.match(mobile, /_groupToggleHtml\(g\.name, domId, collapsed,/,
@@ -147,15 +132,13 @@ test('both menus render group headings as real toggle buttons', () => {
     'the card hides when collapsed, and the toggle stays outside it so '
     + '[&>button:last-child] still means "the last section row"');
 
-  // One grouping helper, keyed by NAME on both surfaces — an index-keyed
-  // toggle would desync the moment public mode narrows the menu.
-  for (const body of [side, mobile]) {
-    assert.match(body, /_isGroupCollapsed\(g\.name\)/,
-      'collapse is looked up by group name, from the shared helper output');
-  }
+  // Keyed by NAME: an index-keyed toggle would desync the moment public
+  // mode narrows the menu.
+  assert.match(mobile, /_isGroupCollapsed\(g\.name\)/,
+    'collapse is looked up by group name, from the shared helper output');
 });
 
-test('a heading press is a menu-only action, wired on both hosts', () => {
+test('a heading press is a menu-only action, wired where the headings are', () => {
   const wire = bodyOf('_wireGroupToggles(root) {');
   assert.match(wire, /querySelectorAll\('\[data-admin-group-toggle\]'\)/,
     'scoped to the host just written, like _wireSectionButtons');
@@ -169,9 +152,6 @@ test('a heading press is a menu-only action, wired on both hosts', () => {
       `a toggle must not route or repaint — found ${forbidden} in the handler`);
   }
 
-  const shell = bodyOf('_renderShell() {');
-  assert.match(shell, /_wireGroupToggles\(sideHost\)/,
-    'the sidebar repaint wires its own toggles');
   const menu = sliceFn('_renderMobileMenu(host) {', 300);
   assert.match(menu, /_wireGroupToggles\(host\)/,
     'the phone menu repaint wires its own toggles');
@@ -207,22 +187,17 @@ test('arriving at a section expands its group, before the repaint', () => {
     'the rule is arrival-only — a deliberate collapse of the current group sticks');
 });
 
-test('dapp.json checks the /#admin menu ships expanded and collapsible', () => {
+test('dapp.json no longer pins the retired sidebar headings', () => {
+  // The two #1152 checks selected the desktop sidebar's toggles. That host
+  // draws the top bar now, and its checks moved with it
+  // (tests/admin-workspace.test.js).
   const declared = Array.isArray(dapp.tests) ? dapp.tests : [];
-  const bySel = (sel) => declared.find((t) => t.expectSelector === sel);
-
-  const collapsible = bySel(
-    '#admin-nav-desktop [data-admin-group-toggle="Operations"][aria-expanded="true"]');
-  assert.ok(collapsible, 'a check asserts the heading renders as an expanded toggle');
-  assert.equal(collapsible.path, '/#admin');
-
-  const active = bySel(
-    '#admin-nav-desktop [data-admin-group="People"]:not(.hidden) [data-admin-section="users"]');
-  assert.ok(active, "a check asserts the active section's group is visible on arrival");
-  assert.equal(active.path, '/#admin/users');
-
-  // #860's grouping check is the neighbour these two sit beside, not a
-  // thing they replace.
+  for (const t of declared) {
+    const sel = t.expectSelector || '';
+    assert.ok(!/#admin-nav-desktop [^,]*data-admin-group/.test(sel),
+      `"${t.name}" selects a sidebar group heading the top bar does not draw`);
+  }
+  // #860's grouping check is the neighbour these sat beside, and stands.
   assert.ok(declared.some((t) => t.path === '/#admin' && t.expectText === 'Operations'),
     'the original grouped-headings check still stands');
 });

@@ -470,6 +470,18 @@ function chatHarness({ tab = 'messages', chatMounted = true } = {}) {
   AppView._renderTopicHead = () => {};
   if (chatMounted) AppView.__sandbox.GroupChat = { appSlug: 'demo-app', refreshVoteControls: () => {} };
   AppView.__sandbox.App.currentTab = tab;
+  // #6109: castVote no longer reads the chat itself; it names the chat in the
+  // burst, whose flush reads it (public/js/app.js, pinned in
+  // tests/live-refresh-burst.test.js). This stands in for that flush: the dev
+  // read plus one chat read, skipped on the dev tab that already covers it.
+  const App = AppView.__sandbox.App;
+  App._liveRefresh = (kind, ids, opts = {}) => {
+    const dev = Promise.resolve(AppView.refreshDevData(kind));
+    const slug = opts.chatSlug;
+    const coveredByDev = App.currentTab === 'dev' && App.currentApp === slug;
+    const chat = kind === 'vote' && slug && !coveredByDev ? AppView.loadVoteState(slug) : null;
+    return Promise.all([dev, chat]);
+  };
   const reads = [];
   AppView.loadVoteState = (slug) => { reads.push(slug); return Promise.resolve(); };
   return { AppView, boardRow, chatRow, reads };

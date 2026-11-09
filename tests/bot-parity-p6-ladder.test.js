@@ -52,6 +52,16 @@ test('the failing tests are read off the check output: the unit suite\'s own tes
   assert.equal(many.length, flaky.MAX_TESTS + 1);
 });
 
+test('a multi-line error is quoted from its message, not from the YAML that writes it', () => {
+  // A runner writes a multi-line error as `error: |-` with the message after
+  // it; the request used to quote the block marker instead of the failure.
+  const k5 = `${EM} K5 a transition locks only its own instance ${EM}\n  error: |-\n  Expected values to be strictly equal:\n\n  null !== 'accepted'\n  at Object.<anonymous>`;
+  assert.equal(flaky.errorLine(k5), 'Expected values to be strictly equal:');
+  assert.equal(flaky.errorLine(`  error: >-\n  Expected values to be strictly equal:`), 'Expected values to be strictly equal:');
+  assert.equal(flaky.errorLine("  error: 'boom'"), 'boom', 'a single-line error is unchanged');
+  assert.equal(flaky.errorLine('  error: |-'), '|-', 'nothing after the marker: as before');
+});
+
 test('a test is the same test however it was reported', () => {
   assert.equal(flaky.testKey({ file: 'tests/A.test.js', name: '  kudos   are counted once ' }), flaky.testKey({ file: 'tests/a.test.js', name: 'Kudos are counted once' }));
   assert.ok(flaky.sameTests([{ name: 'x', file: 'f' }], [{ name: 'X', file: 'F' }, { name: 'y' }]));
@@ -77,6 +87,8 @@ test('the ladder: as before off Homeroom, a fix to find or file, a wait while it
     { do: 'person', why: 'fix_failed' });
   assert.deepEqual(flaky.nextStep({ wait: { stage: 'rechecking', started_at: started }, flakes: [{ state: 'merged' }], tests: [t1], now }),
     { do: 'person', why: 'still_fails' }, 'its fix is in and it still fails');
+  assert.deepEqual(flaky.nextStep({ wait: { stage: 'rechecking', started_at: started }, flakes: [{ state: 'merged' }], tests: [t1], cutOff: true, now }),
+    { do: 'fix', tests: [t1] }, 'a check the runner cut off goes back for a fix, not to a person');
   assert.deepEqual(flaky.nextStep({ wait: { stage: 'fixing', started_at: '2026-10-28T11:00:00Z' }, flakes: [{ state: 'building' }], tests: [t1], now }),
     { do: 'person', why: 'too_long' }, `after ${flaky.WAIT_DAYS} days`);
   for (const why of ['no_test', 'too_many', 'still_fails', 'fix_failed', 'fix_closed', 'fix_expired', 'too_long', 'not_live', 'no_board']) {
@@ -236,6 +248,8 @@ function harness({ ladder = null, carry = null, result = NOT_CHANGE } = {}) {
       }
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: 0 }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
+      // #6409: the fix's start line claims its failing head before saying it.
+      if (/INSERT INTO events \(app_id, session_id, event_type, metadata\)/.test(s)) return { rows: [{ id: 4242 }] };
       if (/FROM platform_settings/.test(s)) return { rows: [{ key: 'homeroom_bot_mode', value: 'shadow' }] };
       return { rows: [] };
     },
@@ -303,7 +317,8 @@ test('a fix on its way: no incident, no admins, one ladder step, and the head is
   assert.deepEqual(h.calls.flaky[1].onNotChange, { sessionId: 5001, head: HEAD, syncWhy: 'already_tried', failing: 1 });
   assert.ok(!h.calls.queries.some((q) => /INSERT INTO events/.test(q.s) && /checks_not_change/.test(JSON.stringify(q.params))),
     'not handed to admins');
-  assert.deepEqual(h.calls.onProposal, [], 'the ladder says its own line');
+  // #6234: the start line went out before the turn; the ladder says its own line after.
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_fixing'], 'the ladder says its own line');
   assert.equal(h.calls.posts.length, 0);
   assert.ok(h.calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'the run that looked is recorded');
 });
@@ -313,14 +328,19 @@ test('the ladder ran out: handed over as before, with what was tried', async (t)
   const out = await run(t, h);
   assert.equal(out.acted, 'checks_not_change');
   assert.ok(h.calls.queries.some((q) => /INSERT INTO events/.test(q.s) && /checks_not_change/.test(JSON.stringify(q.params))), 'admins hear it');
-  assert.deepEqual(h.calls.onProposal.map((p) => [p.kind, p.text]), [['checks_not_change', 'The failing check on this change isn\'t caused by it. I tried things.']]);
+  assert.deepEqual(h.calls.onProposal.map((p) => [p.kind, p.text]), [
+    // #6234: the start line, before the turn that found it is not the change's.
+    ['checks_fixing', 'Homeroom bot is fixing the failing check "Repo unit suite (npm test) passes". It will say here when it\'s done.'],
+    ['checks_not_change', 'The failing check on this change isn\'t caused by it. I tried things.'],
+  ]);
 });
 
 test('not the ladder\'s (null): exactly as before', async (t) => {
   const h = harness({ ladder: null });
   const out = await run(t, h);
   assert.equal(out.acted, 'checks_not_change');
-  assert.equal(h.calls.onProposal[0].text, followup.checksNotChangeText({ failingCount: 1 }));
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_fixing', 'checks_not_change']);
+  assert.equal(h.calls.onProposal[1].text, followup.checksNotChangeText({ failingCount: 1 }));
 });
 
 test('the same check failing again after its sync needs no paid turn: it goes straight on', async (t) => {

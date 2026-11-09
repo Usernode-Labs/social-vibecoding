@@ -193,8 +193,10 @@ test('the endpoint lists yours then more, one row per app, never an app the view
     'membership is one way in');
   assert.match(ROUTE, /LEFT JOIN app_favorites fav ON fav\.app_id = a\.id AND fav\.user_id = \$1/,
     'a favorite (or a hidden-from-Your-apps opt-out) is read per viewer');
-  assert.match(ROUTE, /WHEN \(member\.app_id IS NOT NULL AND NOT COALESCE\(fav\.hidden, FALSE\)\)\s+OR \(fav\.app_id IS NOT NULL AND NOT fav\.hidden\)\s+THEN 'yours'/,
-    'yours = Home.isYours: a visible membership, or a favorite');
+  assert.match(ROUTE, /WHEN \(member\.app_id IS NOT NULL AND NOT COALESCE\(fav\.hidden, FALSE\)\)\s+OR \(fav\.app_id IS NOT NULL AND NOT fav\.hidden\)\s+OR home_pin\.community_id IS NOT NULL\s+THEN 'yours'/,
+    'yours = Home.isYours: a visible membership, or a favorite, or (One Home, #6361) its community pinned to Home');
+  assert.match(ROUTE, /LEFT JOIN home_community_pins home_pin ON home_pin\.community_id = a\.community_id AND home_pin\.user_id = \$1/,
+    'the Home pin is read per viewer, by the app\'s community');
   for (const [source, why] of [
     [/FROM chat_messages posted\s+WHERE posted\.user_id = \$1/, 'posted in its chat'],
     [/FROM message_reactions reaction/, 'reacted in its chat'],
@@ -322,12 +324,11 @@ test('the bot\'s row says what waits on you, and the headings say what in them a
   // Its chat's own activity bar words, from the same store, once it has read.
   assert.match(SCREEN, /const parts = summaryParts\(stripGroups\(botWork\.work\)\);/);
   assert.match(SCREEN, /return parts\.length \? parts\.slice\(0, 2\)\.map\(\(part\) => part\.text\)\.join\(' · '\) : null;/);
-  // #5392: the row stays current, the same live reads the DM's strip runs:
-  // again whenever the list opens or the bot's work moves, fresh, and every
-  // POLL_MS while the bot has work in hand and the page is in view.
+  // #5392: the row stays current: again whenever the list opens and when a
+  // request's stage moves (5 Nov 2026: a push, never a timer).
   assert.match(SCREEN, /if \(mounted && botConversation\) loadBotWork\(\);/, 'fresh, after mount and whenever the bot\'s last activity moves');
-  assert.match(SCREEN, /window\.addEventListener\(WORK_CHANGED_EVENT, changed\);/, 'again when the bot\'s work changes');
-  assert.match(SCREEN, /window\.setInterval\(\(\) => \{\s*if \(document\.visibilityState !== 'hidden'\) loadBotWork\(\);\s*\}, POLL_MS\);/, 'every POLL_MS while it has work in hand');
+  assert.match(SCREEN, /useWorkChanged\(!!botConversation\);/, 'again when a request\'s stage moves');
+  assert.doesNotMatch(SCREEN, /loadBotWork\(\);\s*\}, POLL_MS\)/, 'no timer');
   assert.match(SCREEN, /preview=\{conversation\.homeroomBot \? botLine : null\}/);
   // #5393: a group's preview names its last sender ahead of this; the bot's
   // own line (`preview`) still leads the fallback the DM rows draw.
@@ -367,15 +368,13 @@ test('#5393: a group row shows its members\' faces and names the person who spok
   assert.match(css, /\.messages-group-faces \{ position: relative; flex: 0 0 44px; width: 44px; height: 44px; \}/);
   assert.match(css, /\.messages-conversation-row::after \{[^}]*inset-inline-start: 74px;/);
   assert.match(css, /\.messages-group-faces > :last-child \{ inset-inline-end: 0; bottom: 0; box-shadow: 0 0 0 2px var\(--dc-sheet-solid, var\(--app-bg\)\); \}/);
-  // v3: the desktop's sidebar nests the latest conversations, with room for
-  // one face: the first member who is not the viewer, at 18px.
-  const rail = SCREEN.slice(SCREEN.indexOf('function railRow('), SCREEN.indexOf('function inboxRow('));
-  assert.match(rail, /conversation\.members\.find\(\(member\) => member\.status === 'member' && Number\(member\.id\) !== viewerId\)/);
-  assert.match(rail, /<UserAvatar user=\{face\} size="sm" shape="square" \/>/);
-  assert.match(css, /\.platform-rail-nest \.platform-rail-face > \* \{\n    width: 18px;\n    height: 18px;/);
+  // The sidebar nested the latest conversations with one face each (v3)
+  // until 7 Nov 2026; nothing is nested under Messages now.
+  assert.doesNotMatch(SCREEN, /function railRow\(/);
+  assert.doesNotMatch(css, /platform-rail-face/);
 });
 
-test('on a desktop the list is the page, and the sidebar nests the latest conversations (v3)', () => {
+test('on a desktop with nothing open the list is the page, and a place lit in the sidebar wears the lit ink (v3)', () => {
   const css = read('public/css/app.css');
   // The list stood beside the strip as a 264px column of compact rows; the
   // sidebar of rows is on every desktop window now, and the list is a page.
@@ -384,7 +383,7 @@ test('on a desktop the list is the page, and the sidebar nests the latest conver
   assert.ok(!css.includes(`${P} {`), 'no column');
   assert.match(css, /\.messages-layout\.messages-list-page > \.messages-list-pane \{\n    flex: 1 1 auto;/);
   assert.doesNotMatch(css, /messages-more-channels/, 'the chevron row is gone');
-  // The open one is lit in the sidebar like a place.
+  // A place open under a community's row is lit like a tab.
   assert.match(css, /\.platform-rail-nest :is\(\.dev-ws-place, \.platform-rail-sub\)\[aria-current="page"\] \{\n    background: var\(--lit-tint\);\n    color: var\(--lit-ink\);/);
 });
 

@@ -6,8 +6,10 @@
 // mounted on a throwaway Express app with getPool() swapped for an
 // in-memory mock that pattern-matches the SQL. The history endpoint
 // issues a single UNION ALL whose arms are detected by their literal
-// `'<type>' AS type` tags, so the mock can tell which arms the route
-// included for a given ?type= filter.
+// `'<type>' AS type` tags and their first FROM (#6102: each vote tag
+// has a cast arm over `events` and a standing arm over its vote table),
+// so the mock can tell which arms the route included for a given ?type=
+// filter.
 //
 // Run with: node --test tests/history.test.js
 
@@ -56,11 +58,15 @@ function withMockPool(mockPool, fn) {
 
 // ─── in-memory mock pool for the history UNION ALL ────────────────
 //
-// State mirrors the four ledgers + their join targets. The history
-// query is recognized by its trailing `ORDER BY created_at DESC LIMIT
-// $n`; which arms to evaluate is read off the SQL itself (the route
-// only includes the arms the ?type= filter asked for), as is the
-// presence of the keyset cursor (`created_at < $2`).
+// State mirrors the ledgers + their join targets, and the `events` log
+// the vote arms read every cast from (#6102). The history query is
+// recognized by its trailing `ORDER BY created_at DESC LIMIT $n`; it is
+// split at UNION ALL and each arm is evaluated from its own SQL: its
+// `'<type>' AS type` tag says what it is, its first FROM says what it
+// reads (two arms share each vote tag: a cast one over `events`, a
+// standing one over `pr_votes`/`issue_votes`), and NOT EXISTS on a
+// standing arm is the one-minute same-side dedupe against the log. The
+// keyset cursor (`created_at < $2`) is read off each arm too.
 function makeHistoryPool(seed = {}) {
   const state = {
     apps: new Map(seed.apps || []),         // id => { slug, name }
@@ -69,13 +75,20 @@ function makeHistoryPool(seed = {}) {
     issues: new Map(seed.issues || []),     // id => { id, app_id, github_issue_number, title, kind, status }
     kudos: seed.kudos || [],                // { session_id, giver_user_id, created_at }
     bounties: seed.bounties || [],          // { app_id, github_issue_number, giver_user_id, status, awarded_user_id, awarded_at, created_at }
-    prVotes: seed.prVotes || [],            // { session_id, user_id, vote, created_at }
-    issueVotes: seed.issueVotes || [],      // { issue_id, user_id, vote, created_at }
+    prVotes: seed.prVotes || [],            // { id, session_id, user_id, vote, created_at }
+    issueVotes: seed.issueVotes || [],      // { id, issue_id, user_id, vote, created_at }
+    events: seed.events || [],              // { id, user_id, session_id, event_type, metadata, created_at }
+    lastSql: null,
+    lastArms: [],
   };
+
+  const MINUTE = 60 * 1000;
+  const within = (a, b) => Math.abs(Date.parse(a) - Date.parse(b)) <= MINUTE;
 
   async function query(sql, params = []) {
     const s = String(sql);
     if (/ORDER BY created_at DESC/i.test(s) && /LIMIT \$\d+/i.test(s)) {
+      state.lastSql = s;
       const userId = params[0];
       const hasBefore = /created_at < \$2/.test(s);
       const before = hasBefore ? Date.parse(params[1]) : null;
@@ -84,69 +97,133 @@ function makeHistoryPool(seed = {}) {
       const uname = (id) =>
         id != null && state.users.has(id) ? state.users.get(id).username : null;
       const blank = {
-        vote: null, status: null, session_id: null, pr_number: null,
+        vote: null, status: null, merged_at: null, session_id: null, pr_number: null,
         pr_title: null, author_username: null, issue_number: null,
-        issue_title: null, issue_kind: null, awarded_username: null,
-        awarded_at: null,
+        issue_title: null, issue_kind: null, issue_id: null, awarded_username: null,
+        awarded_at: null, row_key: null,
       };
+      // #6101: merged_at decides, whatever status has caught up to.
+      const changeRow = (cs) => ({
+        session_id: cs.id,
+        status: cs.merged_at
+          ? (cs.live_at ? 'merged' : 'going_live')
+          : (cs.status === 'merged' && !cs.live_at ? 'going_live' : cs.status),
+        merged_at: cs.merged_at ?? null,
+        pr_number: cs.pr_number ?? null, pr_title: cs.pr_title ?? null,
+        author_username: uname(cs.user_id),
+      });
+      const decisionRow = (issue) => ({
+        status: issue.status,
+        issue_number: issue.github_issue_number ?? null,
+        issue_title: issue.title, issue_kind: issue.kind, issue_id: issue.id,
+      });
       const rows = [];
 
-      if (s.includes(`'kudos' AS type`)) {
-        for (const k of state.kudos) {
-          if (k.giver_user_id !== userId) continue;
-          const cs = state.sessions.get(k.session_id);
-          if (!cs) continue; // inner JOIN chat_sessions
-          const a = app(cs.app_id);
-          rows.push({
-            ...blank, type: 'kudos', created_at: k.created_at,
-            status: cs.status, session_id: cs.id,
-            pr_number: cs.pr_number ?? null, pr_title: cs.pr_title ?? null,
-            author_username: uname(cs.user_id),
-            app_slug: a.slug, app_name: a.name,
+      // Everything between the outer SELECT * FROM ( ... ) h.
+      const inner = s.slice(s.indexOf('(') + 1, s.lastIndexOf(') h'));
+      const arms = inner.split(/\bUNION ALL\b/).map((arm) => {
+        const tag = (arm.match(/'(\w+)' AS type/) || [])[1];
+        const from = (arm.match(/\bFROM (\w+)/) || [])[1];
+        return { tag, from, sql: arm };
+      });
+      state.lastArms = arms;
+
+      for (const arm of arms) {
+        if (!arm.tag || !arm.from) throw new Error(`arm without a tag or a source: ${arm.sql.slice(0, 80)}`);
+        if (arm.tag === 'kudos' && arm.from === 'pr_kudos') {
+          state.kudos.forEach((k, i) => {
+            if (k.giver_user_id !== userId) return;
+            const cs = state.sessions.get(k.session_id);
+            if (!cs) return; // inner JOIN chat_sessions
+            const a = app(cs.app_id);
+            rows.push({
+              ...blank, type: 'kudos', created_at: k.created_at,
+              status: cs.status, session_id: cs.id,
+              pr_number: cs.pr_number ?? null, pr_title: cs.pr_title ?? null,
+              author_username: uname(cs.user_id),
+              app_slug: a.slug, app_name: a.name, row_key: `pk:${k.id ?? i + 1}`,
+            });
           });
-        }
-      }
-      if (s.includes(`'bounty' AS type`)) {
-        for (const b of state.bounties) {
-          if (b.giver_user_id !== userId) continue;
-          const a = app(b.app_id);
-          rows.push({
-            ...blank, type: 'bounty', created_at: b.created_at,
-            status: b.status, issue_number: b.github_issue_number,
-            awarded_username: uname(b.awarded_user_id),
-            awarded_at: b.awarded_at ?? null,
-            app_slug: a.slug, app_name: a.name,
+        } else if (arm.tag === 'bounty' && arm.from === 'issue_bounties') {
+          state.bounties.forEach((b, i) => {
+            if (b.giver_user_id !== userId) return;
+            const a = app(b.app_id);
+            rows.push({
+              ...blank, type: 'bounty', created_at: b.created_at,
+              status: b.status, issue_number: b.github_issue_number,
+              awarded_username: uname(b.awarded_user_id),
+              awarded_at: b.awarded_at ?? null,
+              app_slug: a.slug, app_name: a.name, row_key: `ib:${b.id ?? i + 1}`,
+            });
           });
-        }
-      }
-      if (s.includes(`'pr_vote' AS type`)) {
-        for (const v of state.prVotes) {
-          if (v.user_id !== userId) continue;
-          const cs = state.sessions.get(v.session_id);
-          if (!cs) continue;
-          const a = app(cs.app_id);
-          rows.push({
-            ...blank, type: 'pr_vote', created_at: v.created_at,
-            vote: v.vote, status: cs.status, session_id: cs.id,
-            pr_number: cs.pr_number ?? null, pr_title: cs.pr_title ?? null,
-            author_username: uname(cs.user_id),
-            app_slug: a.slug, app_name: a.name,
+        } else if (arm.tag === 'pr_vote' && arm.from === 'events') {
+          // A cast: the side is in metadata.vote; a backfilled row has none.
+          if (!/e\.event_type = 'pr_vote_cast'/.test(arm.sql)) throw new Error('pr_vote cast arm must read pr_vote_cast');
+          for (const e of state.events) {
+            if (e.user_id !== userId || e.event_type !== 'pr_vote_cast') continue;
+            const vote = e.metadata && e.metadata.vote;
+            if (vote !== 'yes' && vote !== 'no') continue;
+            const cs = state.sessions.get(e.session_id);
+            if (!cs) continue;
+            const a = app(cs.app_id);
+            rows.push({
+              ...blank, type: 'pr_vote', created_at: e.created_at, vote,
+              ...changeRow(cs), app_slug: a.slug, app_name: a.name, row_key: `e:${e.id}`,
+            });
+          }
+        } else if (arm.tag === 'proposal_vote' && arm.from === 'events') {
+          if (!/e\.event_type = 'issue_vote_cast'/.test(arm.sql)) throw new Error('proposal_vote cast arm must read issue_vote_cast');
+          for (const e of state.events) {
+            if (e.user_id !== userId || e.event_type !== 'issue_vote_cast') continue;
+            const vote = e.metadata && e.metadata.vote;
+            if (vote !== 'up' && vote !== 'down') continue;
+            const issueId = String(e.metadata.issueId ?? '');
+            if (!/^[0-9]{1,9}$/.test(issueId)) continue;
+            const issue = state.issues.get(Number(issueId));
+            if (!issue) continue;
+            const a = app(issue.app_id);
+            rows.push({
+              ...blank, type: 'proposal_vote', created_at: e.created_at, vote,
+              ...decisionRow(issue), app_slug: a.slug, app_name: a.name, row_key: `e:${e.id}`,
+            });
+          }
+        } else if (arm.tag === 'pr_vote' && arm.from === 'pr_votes') {
+          // The standing vote, only where no same-side cast event is within
+          // a minute of it.
+          if (!/NOT EXISTS/.test(arm.sql)) throw new Error('standing pr_vote arm must carry NOT EXISTS');
+          state.prVotes.forEach((v, i) => {
+            if (v.user_id !== userId) return;
+            const cs = state.sessions.get(v.session_id);
+            if (!cs) return;
+            const logged = state.events.some((e) => e.user_id === userId
+              && e.session_id === v.session_id && e.event_type === 'pr_vote_cast'
+              && e.metadata && e.metadata.vote === v.vote && within(e.created_at, v.created_at));
+            if (logged) return;
+            const a = app(cs.app_id);
+            rows.push({
+              ...blank, type: 'pr_vote', created_at: v.created_at, vote: v.vote,
+              ...changeRow(cs), app_slug: a.slug, app_name: a.name, row_key: `pv:${v.id ?? i + 1}`,
+            });
           });
-        }
-      }
-      if (s.includes(`'proposal_vote' AS type`)) {
-        for (const v of state.issueVotes) {
-          if (v.user_id !== userId) continue;
-          const issue = state.issues.get(v.issue_id);
-          if (!issue) continue;
-          const a = app(issue.app_id);
-          rows.push({
-            ...blank, type: 'proposal_vote', created_at: v.created_at,
-            vote: v.vote, status: issue.status,
-            issue_number: issue.github_issue_number ?? null,
-            issue_title: issue.title, issue_kind: issue.kind,
-            app_slug: a.slug, app_name: a.name,
+        } else if (arm.tag === 'proposal_vote' && arm.from === 'issue_votes') {
+          if (!/NOT EXISTS/.test(arm.sql)) throw new Error('standing proposal_vote arm must carry NOT EXISTS');
+          state.issueVotes.forEach((v, i) => {
+            if (v.user_id !== userId) return;
+            const issue = state.issues.get(v.issue_id);
+            if (!issue) return;
+            const logged = state.events.some((e) => e.user_id === userId
+              && e.event_type === 'issue_vote_cast' && e.metadata
+              && String(e.metadata.issueId) === String(v.issue_id)
+              && e.metadata.vote === v.vote && within(e.created_at, v.created_at));
+            if (logged) return;
+            const a = app(issue.app_id);
+            rows.push({
+              ...blank, type: 'proposal_vote', created_at: v.created_at, vote: v.vote,
+              ...decisionRow(issue), app_slug: a.slug, app_name: a.name, row_key: `iv:${v.id ?? i + 1}`,
+            });
           });
+        } else {
+          throw new Error(`unexpected arm ${arm.tag} over ${arm.from}`);
         }
       }
 
@@ -185,6 +262,9 @@ async function startTestServer(pool, user = { id: 1, username: 'alice' }) {
 // distinct, strictly increasing timestamps; user 2 (bob) authored the
 // PRs. t() spaces entries a minute apart, newest = highest index.
 function t(i) { return new Date(Date.UTC(2026, 4, 20, 10, i, 0)).toISOString(); }
+// The same minute, a few seconds on: a vote's row and its event are written
+// one after the other, never in the same instant.
+function tPlus(i, seconds) { return new Date(Date.UTC(2026, 4, 20, 10, i, seconds)).toISOString(); }
 
 function seedPool() {
   return makeHistoryPool({
@@ -266,11 +346,79 @@ test('type=kudos returns only the kudos + bounty arms', async () => {
   }
 });
 
-test('type=votes returns only the two vote arms', async () => {
-  const { baseUrl, close } = await startTestServer(seedPool());
+test('type=votes returns only the vote arms: a cast and a standing one per kind', async () => {
+  const pool = seedPool();
+  const { baseUrl, close } = await startTestServer(pool);
   try {
     const data = await (await fetch(`${baseUrl}/api/me/history?type=votes`)).json();
     assert.deepEqual(data.items.map((i) => i.type), ['pr_vote', 'proposal_vote']);
+    assert.deepEqual(pool.state.lastArms.map((a) => [a.tag, a.from]), [
+      ['pr_vote', 'events'], ['proposal_vote', 'events'],
+      ['pr_vote', 'pr_votes'], ['proposal_vote', 'issue_votes'],
+    ]);
+    const [prCast, issueCast, prStanding, issueStanding] = pool.state.lastArms;
+    // The cast arms read the log, a real cast only: the backfill's rows
+    // (migrate.js) carry no metadata.vote and are not casts.
+    assert.match(prCast.sql, /e\.event_type = 'pr_vote_cast'/);
+    assert.match(prCast.sql, /e\.metadata->>'vote' IN \('yes', 'no'\)/);
+    assert.match(issueCast.sql, /e\.event_type = 'issue_vote_cast'/);
+    // up/down is the request vocabulary (routes/issues.js), not yes/no.
+    assert.match(issueCast.sql, /e\.metadata->>'vote' IN \('up', 'down'\)/);
+    // An issueId the log cannot join is dropped, never cast: the shape test
+    // guards the cast inside a CASE so no evaluation order reaches it first.
+    assert.match(issueCast.sql, /CASE WHEN e\.metadata->>'issueId' ~ '\^\[0-9\]\{1,9\}\$'\s+THEN \(e\.metadata->>'issueId'\)::int END/);
+    // The standing arms fill in only a vote with no cast event of its own:
+    // same person, same target, same side, within a minute.
+    for (const arm of [prStanding, issueStanding]) {
+      assert.match(arm.sql, /NOT EXISTS \(/);
+      assert.match(arm.sql, /INTERVAL '1 minute'/);
+    }
+    assert.match(prStanding.sql, /e\.session_id = pv\.session_id/);
+    assert.match(prStanding.sql, /e\.metadata->>'vote' = pv\.vote/);
+    assert.match(issueStanding.sql, /e\.metadata->>'issueId' = iv\.issue_id::text/);
+    assert.match(issueStanding.sql, /e\.metadata->>'vote' = iv\.vote/);
+    // Me-scoped: every arm filters on $1, the dedupe subqueries too.
+    for (const arm of pool.state.lastArms) {
+      assert.match(arm.sql, /WHERE (e|pv|iv)\.user_id = \$1/);
+    }
+    for (const arm of [prStanding, issueStanding]) {
+      assert.match(arm.sql, /NOT EXISTS \(\s*SELECT 1 FROM events e\s+WHERE e\.user_id = \$1/);
+    }
+    // Taking a vote back is no row of its own.
+    assert.doesNotMatch(pool.state.lastSql, /pr_vote_retracted/);
+    // Each item carries the server's key.
+    for (const item of data.items) assert.match(item.key, /^(e|pv|iv):\d+$/);
+  } finally {
+    await close();
+  }
+});
+
+test('type=kudos includes no events arm, and every arm carries a key', async () => {
+  const pool = seedPool();
+  const { baseUrl, close } = await startTestServer(pool);
+  try {
+    const data = await (await fetch(`${baseUrl}/api/me/history?type=kudos`)).json();
+    assert.deepEqual(pool.state.lastArms.map((a) => [a.tag, a.from]), [
+      ['kudos', 'pr_kudos'], ['bounty', 'issue_bounties'],
+    ]);
+    assert.doesNotMatch(pool.state.lastSql, /FROM events/);
+    assert.deepEqual(data.items.map((i) => i.key), ['pk:1', 'ib:1']);
+    for (const arm of pool.state.lastArms) assert.match(arm.sql, /\|\| (pk|ib)\.id AS row_key/);
+  } finally {
+    await close();
+  }
+});
+
+test('every arm applies the before cursor to its own time column', async () => {
+  const pool = seedPool();
+  const { baseUrl, close } = await startTestServer(pool);
+  try {
+    await fetch(`${baseUrl}/api/me/history?before=${encodeURIComponent(t(3))}`);
+    assert.equal(pool.state.lastArms.length, 6);
+    assert.deepEqual(
+      pool.state.lastArms.map((a) => (a.sql.match(/AND (\w+)\.created_at < \$2/) || [])[1]),
+      ['pk', 'ib', 'e', 'e', 'pv', 'iv']
+    );
   } finally {
     await close();
   }
@@ -337,20 +485,98 @@ test('scoping: another user’s gives never appear', async () => {
   }
 });
 
-test('vote-flip: one row with the new vote and the updated timestamp', async () => {
+// #6102: a vote changed is two casts, and both are listed.
+test('vote-flip: two rows, one per side, newest first, with distinct keys', async () => {
   const pool = seedPool();
-  // The vote route upserts (ON CONFLICT ... SET vote, created_at=NOW())
-  // — simulate the flip by mutating the single standing row in place.
+  // The yes was cast at t(2), its event written a few seconds after the
+  // row; the flip to no at t(5) upserts the standing row in place
+  // (ON CONFLICT ... SET vote, created_at = NOW()) and logs a second cast.
   const v = pool.state.prVotes[0];
+  pool.state.events.push(
+    { id: 1, user_id: 1, session_id: 11, event_type: 'pr_vote_cast', metadata: { vote: 'yes' }, created_at: tPlus(2, 3) },
+    { id: 2, user_id: 1, session_id: 11, event_type: 'pr_vote_cast', metadata: { vote: 'no' }, created_at: tPlus(5, 3) },
+  );
   v.vote = 'no';
   v.created_at = t(5);
   const { baseUrl, close } = await startTestServer(pool);
   try {
     const data = await (await fetch(`${baseUrl}/api/me/history?type=votes`)).json();
     const prVotes = data.items.filter((i) => i.type === 'pr_vote');
-    assert.equal(prVotes.length, 1, 'only the current standing vote survives a flip');
-    assert.equal(prVotes[0].vote, 'no');
-    assert.equal(prVotes[0].created_at, t(5));
+    assert.deepEqual(prVotes.map((i) => [i.key, i.vote, i.created_at, i.pr.sessionId]), [
+      ['e:2', 'no', tPlus(5, 3), 11],
+      ['e:1', 'yes', tPlus(2, 3), 11],
+    ], 'both casts, the standing row folded into its own cast');
+    assert.notEqual(prVotes[0].key, prVotes[1].key);
+  } finally {
+    await close();
+  }
+});
+
+test('a standing vote with no cast event of its own still shows, once', async () => {
+  const pool = seedPool();
+  // Recorded before the log began (or its fire-and-forget event write
+  // failed): the vote tables are the only record. A backfilled pr_vote_cast
+  // row (no metadata.vote) is not a cast and does not hide it either.
+  pool.state.events.push(
+    { id: 3, user_id: 1, session_id: 11, event_type: 'pr_vote_cast', metadata: {}, created_at: t(2) },
+  );
+  const { baseUrl, close } = await startTestServer(pool);
+  try {
+    const data = await (await fetch(`${baseUrl}/api/me/history?type=votes`)).json();
+    assert.deepEqual(data.items.map((i) => [i.key, i.type, i.vote]), [
+      ['pv:1', 'pr_vote', 'yes'],
+      ['iv:1', 'proposal_vote', 'up'],
+    ]);
+  } finally {
+    await close();
+  }
+});
+
+test('a same-side cast more than a minute from the standing row is its own cast', async () => {
+  const pool = seedPool();
+  // Yes at t(2), no at t(5), back to yes at t(8): three casts. The standing
+  // row is the last yes; only the t(8) event is within a minute of it.
+  pool.state.events.push(
+    { id: 1, user_id: 1, session_id: 11, event_type: 'pr_vote_cast', metadata: { vote: 'yes' }, created_at: t(2) },
+    { id: 2, user_id: 1, session_id: 11, event_type: 'pr_vote_cast', metadata: { vote: 'no' }, created_at: t(5) },
+    { id: 3, user_id: 1, session_id: 11, event_type: 'pr_vote_cast', metadata: { vote: 'yes' }, created_at: t(8) },
+    // A request vote and its event in the same statement (the governance
+    // machine): one row.
+    { id: 4, user_id: 1, event_type: 'issue_vote_cast', metadata: { vote: 'up', issueId: 5 }, created_at: t(1) },
+    // Another person's cast on the same change never shows.
+    { id: 5, user_id: 2, session_id: 11, event_type: 'pr_vote_cast', metadata: { vote: 'no' }, created_at: t(9) },
+  );
+  pool.state.prVotes[0].created_at = t(8);
+  const { baseUrl, close } = await startTestServer(pool);
+  try {
+    const data = await (await fetch(`${baseUrl}/api/me/history?type=votes`)).json();
+    assert.deepEqual(data.items.map((i) => [i.key, i.type, i.vote]), [
+      ['e:3', 'pr_vote', 'yes'],
+      ['e:2', 'pr_vote', 'no'],
+      ['e:1', 'pr_vote', 'yes'],
+      ['e:4', 'proposal_vote', 'up'],
+    ]);
+    assert.equal(new Set(data.items.map((i) => i.key)).size, 4, 'keys are distinct');
+    assert.equal(data.items[3].issue.id, 5, 'a cast on a request links to it');
+  } finally {
+    await close();
+  }
+});
+
+test('#6101: a merged change whose status has not caught up still reads as decided', async () => {
+  const pool = seedPool();
+  // The vote was read while the change was still up for a vote; the merge
+  // landed since. `merged_at` is the authority for the client.
+  const cs = pool.state.sessions.get(11);
+  cs.status = 'promoted';
+  cs.merged_at = t(6);
+  cs.live_at = null;
+  const { baseUrl, close } = await startTestServer(pool);
+  try {
+    const data = await (await fetch(`${baseUrl}/api/me/history?type=votes`)).json();
+    const prVote = data.items.find((i) => i.type === 'pr_vote');
+    assert.equal(prVote.status, 'going_live', 'merged, its deploy still to come');
+    assert.equal(prVote.merged_at, t(6), 'the merge time reaches the screen');
   } finally {
     await close();
   }

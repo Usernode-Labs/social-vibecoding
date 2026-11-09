@@ -55,6 +55,14 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const { messageStamp, agoStamp } = loadTsx('frontend/src/lib/timestamp.ts');
 
+// #6103: every copy stamps in the date locale — the interface language with
+// the device's region. There is no browser in this process, so the device
+// list comes from node's own `navigator` when it has one.
+const { dateLocale } = loadTsx('frontend/src/lib/i18n/locale.ts');
+const DEVICE_LANGUAGES = typeof navigator === 'undefined' ? []
+  : (navigator.languages?.length ? navigator.languages : [navigator.language].filter(Boolean));
+const LOCALE = dateLocale('en', DEVICE_LANGUAGES);
+
 // Lift `_stamp(ts, now) { … }` out of the GroupChat object literal. Brace
 // matching rather than a lazy regex: the body contains braces of its own, and
 // a `.*?}` would stop at the first option object.
@@ -70,7 +78,7 @@ function legacyStamp() {
     else if (src[i] === '}') { depth -= 1; if (depth === 0) break; }
   }
   const body = src.slice(start + head.length, i);
-  return vm.runInNewContext(`(function (ts, now) {${body}})`);
+  return vm.runInNewContext(`(function (ts, now) {${body}})`, { PlatformI18n: englishPlatformI18n() });
 }
 
 const stampLegacy = legacyStamp();
@@ -117,11 +125,11 @@ const CASES = [
 test('#1808: the date appears exactly when it is not today', () => {
   for (const [label, when, expectDate] of CASES) {
     const { text } = messageStamp(when, { now: NOW });
-    const time = when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    const time = when.toLocaleTimeString(LOCALE, { hour: 'numeric', minute: '2-digit' });
     if (expectDate) {
       assert.notEqual(text, time, `${label}: a stamp that is not today's must say so`);
       assert.ok(text.endsWith(time), `${label}: the time is still the tail of the stamp`);
-      const day = when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      const day = when.toLocaleDateString(LOCALE, { month: 'short', day: 'numeric' });
       assert.ok(text.startsWith(day), `${label}: the day leads, got ${text}`);
     } else {
       assert.equal(text, time, `${label}: today keeps the dense form it always had`);
@@ -140,7 +148,7 @@ test('#1808: the title never elides, whatever the text did', () => {
   for (const [label, when] of CASES) {
     const { title } = messageStamp(when, { now: NOW });
     assert.match(title, new RegExp(String(when.getFullYear())), `${label}: year in the title`);
-    const time = when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    const time = when.toLocaleTimeString(LOCALE, { hour: 'numeric', minute: '2-digit' });
     assert.ok(title.includes(time), `${label}: time in the title`);
   }
 });
@@ -173,6 +181,33 @@ test('#1808: GroupChat._stamp and lib/timestamp answer identically', () => {
   }
 });
 
+test('#6103: an English interface on a UK device writes "2 Nov" in every copy', () => {
+  // The device's region decides the order and the interface language keeps
+  // the words (#6103). `navigator.languages` is the device, and all three
+  // copies read it through the one rule, so stubbing it here reaches them all.
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { languages: ['en-GB'], language: 'en-GB' }, configurable: true, writable: true,
+  });
+  try {
+    const at = new Date(2026, 10, 2, 9, 5); // 2 Nov 2026
+    const now = new Date(2026, 11, 20, 14, 41); // Dec 20: past the floor, same year
+    assert.equal(agoStamp(at, { now }).text, '2 Nov', 'a card reads the day first');
+    assert.equal(relStampLegacy(at, now).text, '2 Nov', 'and so does the session transcript');
+    assert.ok(messageStamp(at, { now }).text.startsWith('2 Nov, '),
+      `the date part is day first, got ${messageStamp(at, { now }).text}`);
+    assert.ok(stampLegacy(at, now).text.startsWith('2 Nov, '),
+      `the chat copy agrees, got ${stampLegacy(at, now).text}`);
+    assert.equal(stampLegacy(at, now).text, messageStamp(at, { now }).text,
+      'the two transcript copies print the same instant alike');
+    assert.equal(relStampLegacy(at, now).text, agoStamp(at, { now }).text,
+      'the two card copies print the same instant alike');
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, 'navigator', descriptor);
+    else delete globalThis.navigator;
+  }
+});
+
 test('polish N5: no copy pads the hour, so "04:14 AM" and "1:28 AM" never sit side by side', () => {
   for (const file of ['frontend/src/lib/timestamp.ts', 'public/js/group-chat.js', 'frontend/src/features/leaderboard/activity-row.tsx']) {
     assert.doesNotMatch(read(file), /hour: '2-digit'/, file);
@@ -184,7 +219,7 @@ test('polish N5: no copy pads the hour, so "04:14 AM" and "1:28 AM" never sit si
 test('#1808: both copies default their clock to now', () => {
   // Neither takes `now` in production; the parameter exists for this file.
   const today = new Date();
-  const time = today.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const time = today.toLocaleTimeString(LOCALE, { hour: 'numeric', minute: '2-digit' });
   assert.equal(messageStamp(today).text, time);
   assert.equal(stampLegacy(today).text, time);
 });
@@ -220,7 +255,7 @@ test('#1808: the age is relative under a week and a date from a week on', () => 
     } else {
       // Past the floor: exactly the date part messageStamp would print, with
       // the year elided inside the current one and spelled out outside it.
-      const day = when.toLocaleDateString(undefined, when.getFullYear() === NOW.getFullYear()
+      const day = when.toLocaleDateString(LOCALE, when.getFullYear() === NOW.getFullYear()
         ? { month: 'short', day: 'numeric' }
         : { year: 'numeric', month: 'short', day: 'numeric' });
       assert.equal(text, day, `${label}: got ${text}`);
@@ -278,9 +313,9 @@ test('#1808: the age carries an unelided title in every branch', () => {
   for (const [label, when] of AGO_CASES) {
     const { title } = agoStamp(when, { now: NOW });
     assert.match(title, new RegExp(String(when.getFullYear())), `${label}: year`);
-    const time = when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    const time = when.toLocaleTimeString(LOCALE, { hour: 'numeric', minute: '2-digit' });
     assert.ok(title.includes(time), `${label}: time`);
-    const day = when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const day = when.toLocaleDateString(LOCALE, { month: 'short', day: 'numeric' });
     assert.ok(title.includes(day.replace(/^0/, '')) || title.includes(day),
       `${label}: day, got ${title}`);
   }

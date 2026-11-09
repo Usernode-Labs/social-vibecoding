@@ -465,10 +465,13 @@ async function ensureFixtures(pool, user) {
 const BOT_DM_LEGACY_ID = 910005;
 const BOT_DM_QUESTION_KEY = 'staging-hrbot-question';
 const BOT_DM_OFFER_KEY = 'staging-hrbot-offer';
-// B3: the action id the demo offer's buttons name. No homeroom_bot_dm_actions
+// B3: the action id the demo offer's buttons name. No bot_cards
 // row stands behind it: the action endpoint answers the demo without one.
 const BOT_DM_DEMO_ACTION_ID = 990001;
 const BOT_DM_ASK_KEY = 'staging-hrbot-ask';
+// #6305: one request offered on several projects, from one card.
+const BOT_DM_FILE_MANY_KEY = 'staging-hrbot-file-many';
+const BOT_DM_FILE_MANY_FILED_KEY = 'staging-hrbot-file-many-filed';
 // B6: a first version's plan, waiting for Build it, and a request the bot
 // has two questions about. Fixtures too: the plan's Build it names an action
 // no row stands behind, and nothing is posted on any request.
@@ -559,6 +562,97 @@ async function ensureBotDmFixture(pool, user) {
             { id: 'yes', label: 'File it', style: 'primary', type: 'server' },
             { id: 'no', label: 'Not now', style: 'secondary', type: 'server' },
           ],
+        },
+      },
+    });
+  }
+  // #6305: one request offered on several projects, from one card, with a
+  // row for each, a "Did you mean ...?" row, and an app that already does
+  // it. Obviously fake, and a fixture: the demo's card endpoint decides
+  // nothing, so File on all files nothing here.
+  const manySent = await pool.query(
+    `SELECT 1 FROM conversation_messages
+      WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3`,
+    [opened.conversationId, bot.id, BOT_DM_FILE_MANY_KEY]
+  );
+  if (!manySent.rows.length) {
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: 'Here\'s the request for all four. I looked at each app first: Game Corner already does it,'
+        + ' so it\'s unticked. Tick or untick any row, then File on all.\n\n'
+        + '**New request on 4 projects**: Staging demo, work for people who aren\'t signed in',
+      idempotency_key: BOT_DM_FILE_MANY_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'chat',
+          card: {
+            type: 'file_many', v: 1, state: 'open', forUserId: Number(user.id),
+            title: 'Work for people who aren\'t signed in',
+            details: 'Visitors without an account can open the app and use it, without being sent to sign up first.',
+            rows: [
+              {
+                named: 'Game Corner', match: 'exact', slug: 'game-corner', name: 'Game Corner',
+                choices: [], done: 'Game Corner already lets guests play today\'s board.', disabled: null, ticked: false,
+              },
+              {
+                named: 'Block World', match: 'guess', slug: null, name: 'Block World',
+                choices: [
+                  { slug: 'block-game', name: 'block-game' },
+                  { slug: 'block-party', name: 'Block Party' },
+                  { slug: 'world-map', name: 'World Map' },
+                ],
+                done: null, disabled: null, ticked: false,
+              },
+              {
+                named: 'ViaTales', match: 'exact', slug: 'viatales', name: 'ViaTales',
+                choices: [], done: null, disabled: null, ticked: true,
+              },
+              {
+                named: 'Ear Trainer', match: 'exact', slug: 'ear-trainer', name: 'Ear Trainer',
+                choices: [], done: null, disabled: null, ticked: true,
+              },
+            ],
+          },
+        },
+      },
+    });
+  }
+  // #6305: the same card after its tap, so the filed state and a row that
+  // cannot be filed are seen too. A fixture: the numbers stand for requests
+  // this demo does not have.
+  const manyFiledSent = await pool.query(
+    `SELECT 1 FROM conversation_messages
+      WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3`,
+    [opened.conversationId, bot.id, BOT_DM_FILE_MANY_FILED_KEY]
+  );
+  if (!manyFiledSent.rows.length) {
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: 'Filed as #42 on Game Corner and #43 on ViaTales.',
+      idempotency_key: BOT_DM_FILE_MANY_FILED_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'chat',
+          card: {
+            type: 'file_many', v: 1, state: 'filed', forUserId: Number(user.id),
+            title: 'Work for people who aren\'t signed in',
+            details: 'Visitors without an account can open the app and use it, without being sent to sign up first.',
+            rows: [
+              {
+                named: 'Game Corner', match: 'exact', slug: 'game-corner', name: 'Game Corner',
+                choices: [], done: null, disabled: null, ticked: true, issueNumber: 42,
+              },
+              {
+                named: 'Block World', match: 'guess', slug: null, name: 'Block World',
+                choices: [{ slug: 'block-game', name: 'block-game' }],
+                done: null, disabled: null, ticked: true, issueNumber: 43,
+              },
+              {
+                named: 'World Map', match: 'exact', slug: 'world-map', name: 'World Map',
+                choices: [], done: null, disabled: 'not_member', ticked: true,
+              },
+            ],
+          },
         },
       },
     });
@@ -901,11 +995,23 @@ async function ensureBotDmStory(pool, { botId, conversationId, cardKey }) {
 //   2. a batch of requests worked through at once, with its roll-up, and a
 //      note added to a build that is running (batch.tsx, build-note.tsx);
 //   3. an investigation that checks in for days (investigation.tsx).
+//   4. #6250: a thread filed as a request, which stays in the list with where
+//      it went ("Filed as #404"), and whose opener line Main Chat leaves out.
 // Obviously fake ("Staging demo"), with no project, batch, note or
 // investigation behind the cards: a tap on one decides nothing (the demo's
 // card route answers { demo }), and nothing rings (notify: false). Each
 // thread is sent once, keyed on its root's idempotency key.
 const PARITY_THREADS = Object.freeze([
+  {
+    // #6250: a filed thread stays in the list, saying where it went (#404 is
+    // obviously fake and names no request the demo lists).
+    key: 'staging-hrbot-parity-filed',
+    appSlug: 'staging-demo-app', state: 'filed', resultRef: 404,
+    lines: [
+      { me: true, content: 'Staging demo: keep my private threads in the list' },
+      { content: 'Staging demo: filed as request #404. This thread stays open.' },
+    ],
+  },
   {
     key: 'staging-hrbot-parity-talk',
     lines: [
@@ -1052,10 +1158,15 @@ async function ensureBotParityThreads(pool, { user, botId, conversationId }) {
     }, { notify: false, metadata: { homeroomBot: { kind: 'opened_thread', changeKind: 'any' } } });
     const rootId = root?.messageId ?? root?.message?.id;
     if (!rootId) continue;
+    // #6250: a filed thread keeps its app and its request, so its row says
+    // where it went; the others are open and in no project.
+    const app = thread.appSlug
+      ? (await pool.query('SELECT id FROM apps WHERE slug = $1', [thread.appSlug])).rows[0]
+      : null;
     await pool.query(
-      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-       VALUES ($1, $2, $3, NULL, 'ask', 'open') ON CONFLICT (root_message_id) DO NOTHING`,
-      [user.id, conversationId, rootId]
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, result_ref)
+       VALUES ($1, $2, $3, $4, 'ask', $5, $6) ON CONFLICT (root_message_id) DO NOTHING`,
+      [user.id, conversationId, rootId, app ? app.id : null, thread.state || 'open', thread.resultRef || null]
     );
     let index = 0;
     for (const line of thread.lines) {

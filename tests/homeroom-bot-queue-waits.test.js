@@ -34,7 +34,13 @@ test('queueWait: every reason the loop passes a row over for, in the order it me
   const w = (row, ctx = {}) => bot.queueWait({ app_id: 9, issue_number: 5, ...row }, { now: NOW, ...ctx });
   // The three it said before, first, unchanged.
   assert.deepEqual(w({ wait_reason: 'session_busy', wait_until: LATER, app_paused: true }), { reason: 'session_busy', until: LATER });
-  assert.deepEqual(w({ held_until: LATER, first_version_pending: true }), { reason: 'allowance', until: LATER });
+  assert.deepEqual(w({ held_until: LATER, held_reason: 'allowance', first_version_pending: true }), { reason: 'allowance', until: LATER });
+  // #6357: a day's pause after its look threw again and again is no money:
+  // said as a cooldown, recorded or (a hold stored before the reason was)
+  // inferred from an end that is not the week's reset.
+  assert.deepEqual(w({ held_until: LATER, held_reason: 'cooldown' }), { reason: 'cooldown', until: LATER });
+  assert.deepEqual(w({ held_until: LATER }), { reason: 'cooldown', until: LATER });
+  assert.deepEqual(w({ held_until: '2026-10-19T00:00:00.000Z' }), { reason: 'allowance', until: '2026-10-19T00:00:00.000Z' });
   assert.deepEqual(w({}, { fault: { until: Date.parse(LATER) }, off: true }), { reason: 'platform_fault', until: LATER });
   // The bot off, or paused on its spent budget until its next pass.
   assert.deepEqual(w({ app_paused: true }, { off: true }), { reason: 'bot_paused', until: null });
@@ -49,11 +55,19 @@ test('queueWait: every reason the loop passes a row over for, in the order it me
   assert.equal(w({ first_version_pending: true, reason: 'admin' }), null, 'an admin\'s Run now is not held');
   assert.equal(w({ first_version_pending: true, follow_up_session_id: 40 }), null, 'nor a follow-up');
   assert.deepEqual(w({ build_pending: true }), { reason: 'build_pending', until: null });
-  // Its app's session taken, or the app backed off until a time.
+  // Its app backed off, until a time or not.
   const busyApps = new Map([[9, null]]);
   assert.deepEqual(w({}, { busyApps }), { reason: 'session_busy', until: null });
   assert.deepEqual(w({}, { busyApps: new Map([[9, Date.parse(LATER)]]) }), { reason: 'session_busy', until: LATER });
   assert.equal(w({ follow_up_session_id: 40 }, { busyApps }), null, 'a follow-up runs on its proposal\'s session');
+  // 3 Nov 2026: its project already reads as many requests as it may (each
+  // on a triage session of its own), or an older release's read holds them all.
+  const fullApps = new Set([9]);
+  assert.deepEqual(w({}, { fullApps }), { reason: 'reads_per_app', until: null });
+  assert.deepEqual(w({}, { busyApps: new Map([[9, Date.parse(LATER)]]), fullApps }), { reason: 'session_busy', until: LATER }, 'its own backoff says more');
+  assert.equal(w({ follow_up_session_id: 40 }, { fullApps }), null, 'a follow-up takes no read slot');
+  assert.equal(w({ app_id: 10 }, { fullApps }), null, 'another project\'s reads are its own');
+  assert.deepEqual(w({ build_pending: true }, { fullApps }), { reason: 'build_pending', until: null }, 'a build of it waiting says that first');
   // Its person already has their share running.
   const personCounts = new Map([['u7', 3]]);
   assert.deepEqual(w({ person_id: 7 }, { personCounts, perPerson: 3 }), { reason: 'per_person', until: null });
@@ -79,7 +93,7 @@ test('queueSnapshot: the counts and the rows listed come from one statement, and
     { id: 4, app_id: 11, issue_number: 6, started_at: null, person_id: 7, waiting_total: 4, running_total: 1 },
   ];
   const pool = { async query(sql, params) { calls.push({ sql, params }); return { rows }; } };
-  const q = await bot.queueSnapshot(pool, { mode: 'shadow', pausedApps: ['quiet-app'], perPerson: 1 }, { botId: 77, now: NOW, memory });
+  const q = await bot.queueSnapshot(pool, { mode: 'shadow', pausedApps: ['quiet-app'], perPerson: 1, readsPerApp: 1 }, { botId: 77, now: NOW, memory });
   assert.equal(calls.length, 1, 'one statement, so one snapshot');
   assert.match(calls[0].sql, /COUNT\(\*\) FILTER \(WHERE q\.started_at IS NULL\) OVER \(\)::int AS waiting_total/);
   assert.match(calls[0].sql, /COUNT\(\*\) FILTER \(WHERE q\.started_at IS NOT NULL\) OVER \(\)::int AS running_total/);
@@ -91,8 +105,28 @@ test('queueSnapshot: the counts and the rows listed come from one statement, and
   assert.equal(q.listedWaiting, 3);
   assert.ok(q.items.every((i) => !('waiting_total' in i) && !('running_total' in i)));
   assert.deepEqual(q.items.map((i) => i.waiting && i.waiting.reason), [
-    undefined, 'session_busy', 'first_version_pending', 'per_person',
-  ].map((r) => r || null));
+    undefined, 'reads_per_app', 'first_version_pending', 'per_person',
+  ].map((r) => r || null), 'one read per project: #4 waits for #3');
+  // Three at once: #4 is read beside #3 (its person, 8, has nothing running).
+  const three = await bot.queueSnapshot(pool, { mode: 'shadow', pausedApps: ['quiet-app'], perPerson: 1, readsPerApp: 3 }, { botId: 77, now: NOW, memory });
+  assert.equal(three.items[1].waiting, null);
+  assert.equal((await bot.queueSnapshot(pool, { mode: 'shadow', perPerson: 1 }, { now: NOW, memory })).items[1].waiting, null, 'three unless set');
+  // The lane's own record counts too, by request, once: two more reads on
+  // project 9 fill its three; a read an older release may run holds a
+  // project whole.
+  const lane = (n, more = {}) => ({ key: `request:9:${n}`, appId: 9, followUp: false, build: false, lane: 'live', person: `u${n}`, readSlot: n - 3, legacy: false, ...more });
+  const full = await bot.queueSnapshot(pool, { mode: 'shadow', perPerson: 9, readsPerApp: 3 },
+    { now: NOW, memory: { ...memory, inFlight: [lane(3), lane(5), lane(6)] } });
+  assert.equal(full.items[1].waiting.reason, 'reads_per_app');
+  const notYet = await bot.queueSnapshot(pool, { mode: 'shadow', perPerson: 9, readsPerApp: 3 },
+    { now: NOW, memory: { ...memory, inFlight: [lane(3), lane(5)] } });
+  assert.equal(notYet.items[1].waiting, null, '#3 is counted once, from either record');
+  const legacy = await bot.queueSnapshot(pool, { mode: 'shadow', perPerson: 9, readsPerApp: 3 },
+    { now: NOW, memory: { ...memory, inFlight: [lane(3, { readSlot: null, legacy: true })] } });
+  assert.equal(legacy.items[1].waiting.reason, 'reads_per_app');
+  const building = await bot.queueSnapshot(pool, { mode: 'shadow', perPerson: 9, readsPerApp: 1 },
+    { now: NOW, memory: { ...memory, inFlight: [{ key: 'request:11:8', appId: 11, followUp: false, build: true, lane: 'live', person: 'u9' }] } });
+  assert.equal(building.items[3].waiting, null, 'a build takes no read slot');
   // The bot off: everything waiting says so.
   const off = await bot.queueSnapshot(pool, { mode: 'off' }, { now: NOW, memory });
   assert.deepEqual(off.items.slice(1).map((i) => i.waiting.reason), ['bot_paused', 'bot_paused', 'bot_paused']);
@@ -116,7 +150,7 @@ test('get_homeroom_bot: the queue, a held run, the mode, the week and the move o
       settings: { mode: 'shadow', appCaps: { 9: { waiting: 30 }, 12: { building: 2 } } }, bot: null, totals: { days: 7 },
       apps: [{ id: 9, slug: 'notes', name: 'Notes' }],
       caps: {
-        buildsPerApp: 5, proposalsPerApp: 15, proposalsTotal: 40, questionsPerAppPerDay: 10,
+        buildsPerApp: 5, proposalsPerApp: 15, proposalsTotal: 40,
         byApp: { notes: { appId: 9, buildsPerApp: 5, proposalsPerApp: 30 }, 'gym-tracker': { appId: 12, buildsPerApp: 2, proposalsPerApp: 15 } },
       },
       queue: {
@@ -161,7 +195,9 @@ test('get_homeroom_bot: the queue, a held run, the mode, the week and the move o
   // with its project's own number where it has one.
   assert.deepEqual(out.runs[0].held, { cap: 'proposals_per_app', limit: 30, why: 'held: 30 proposals waiting for votes on this app' });
   assert.deepEqual(out.runs[1].held, { cap: 'builds_per_app', limit: 2, why: 'held: 2 builds under way on this app' });
-  assert.deepEqual(out.runs[2].held, { cap: 'question_tripwire', limit: 10, why: 'held: 10 questions asked on this app today' });
+  // 3 Nov 2026: a run the daily limit on questions held, from before that
+  // limit went, is held by a cap that is gone: no limit to name.
+  assert.deepEqual(out.runs[2].held, { cap: null, limit: null, why: 'held by a cap' });
   assert.equal(out.runs[2].build, null, 'a held question has no build');
   assert.equal(out.runs[3].held, null);
   assert.equal(out.runs[3].build.state, 'queued', 'a build under way is not read as held');
@@ -218,6 +254,7 @@ test('the console says why each row waits, counts waiting and running alike, and
   assert.equal(waitLine({ reason: 'app_paused', until: null }), 'waiting: its app is paused');
   assert.equal(waitLine({ reason: 'bot_paused', until: null }), 'waiting: the bot is off or its weekly budget is spent');
   assert.equal(waitLine({ reason: 'session_busy', until: null }), 'waiting: a turn is running on its session');
+  assert.equal(waitLine({ reason: 'reads_per_app', until: null }), 'waiting: its project is already reading as many requests as it may at once');
   assert.match(waitLine({ reason: 'settling', until: LATER }), /^waiting: somebody is still writing on it, until \S/);
 
   const queue = { depth: 15, running: 2, items: [], listedWaiting: 12, listedRunning: 2 };
@@ -227,7 +264,7 @@ test('the console says why each row waits, counts waiting and running alike, and
   assert.equal(queueCountLine(null), '');
 
   const caps = {
-    buildsPerApp: 5, proposalsPerApp: 15, proposalsTotal: 40, questionsPerAppPerDay: 10,
+    buildsPerApp: 5, proposalsPerApp: 15, proposalsTotal: 40,
     byApp: { homeroom: { appId: 1, buildsPerApp: 5, proposalsPerApp: 30 } },
   };
   // #6156: a run held for the bot's turn and one held for votes read apart.
@@ -236,10 +273,11 @@ test('the console says why each row waits, counts waiting and running alike, and
   assert.equal(heldLine('proposals_per_app', caps, 'homeroom'), 'held: 30 proposals waiting for votes on this app', 'a project\'s own number');
   assert.notEqual(heldLine('builds_per_app', caps), heldLine('proposals_per_app', caps));
   assert.equal(heldLine('proposals_total', caps), 'held: the bot\'s ceiling of 40 proposals open across Homeroom');
-  assert.equal(heldLine('question_tripwire', caps), 'held: 10 questions asked on this app today');
+  // 3 Nov 2026: a run the gone daily limit on questions held, in the ledger from before.
+  assert.equal(heldLine('question_tripwire', caps), 'held: question tripwire');
   assert.equal(heldLine(null, caps), '');
   // The console and the connector say a hold alike.
-  for (const cap of ['builds_per_app', 'proposals_per_app', 'proposals_total', 'question_tripwire']) {
+  for (const cap of ['builds_per_app', 'proposals_per_app', 'proposals_total']) {
     for (const app of [null, 'homeroom']) assert.equal(heldLine(cap, caps, app), data.heldOf(cap, caps, app).why, `${cap} ${app}`);
   }
 
@@ -272,7 +310,7 @@ test('a move offer records what became of it on the run, and the week counts the
 
   const summaryPool = {
     async query(sql) {
-      if (/FROM homeroom_bot_dm_actions\s+WHERE kind = 'move_request'/.test(sql)) {
+      if (/FROM bot_cards\s+WHERE kind = 'move_request'/.test(sql)) {
         return { rows: [{ sent: 4, moved: 2, kept: 1, open: 1, failed: 0 }] };
       }
       return { rows: [
@@ -322,4 +360,23 @@ test('configuration comparison: the platform\'s failures are left out of the bui
   assert.match(src, /platformFailures,/);
   const tsx = read('frontend/src/features/admin/admin-bot-configs.tsx');
   assert.match(tsx, /platform failure\$\{s\.platformFailures === 1 \? '' : 's'\}, left out/);
+});
+
+// #6246 (4 Nov 2026): a queue row on hold is not what a plan waiting for
+// Build it waits for. The plan is what the person acts on now, so the held
+// row does not turn it into "on hold until Monday".
+test('#6246: a queue row on hold does not hide a plan waiting for Build it', () => {
+  const progress = require('../src/services/homeroom-bot-progress');
+  const now = new Date('2026-11-04T08:00:00Z');
+  const waiting = {
+    app_id: 9, issue_number: 5,
+    mode: 'live', verdict: 'ready', build_ok: null,
+    run_at: '2026-11-04T06:00:00Z', plan_waiting_at: '2026-11-04T06:10:00Z',
+    queue_id: 4, enqueued_at: '2026-11-03T22:00:00Z', held_until: '2026-11-09T00:00:00Z',
+  };
+  assert.deepEqual(progress.stageOf(waiting, { now }), {
+    stage: 'plan', since: '2026-11-04T06:10:00Z', waitingOn: 'them', doing: 'the plan is ready and waits for Build it',
+  });
+  // The same held queue row with no waiting run still reads on hold.
+  assert.equal(progress.stageOf({ ...waiting, mode: null, verdict: null, plan_waiting_at: null }, { now }).stage, 'on_hold');
 });

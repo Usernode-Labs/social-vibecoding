@@ -477,6 +477,8 @@ export interface StepRow {
   fix?: FixChecksView | null;
   /** Extra hooks on the row (the superseded-base marker on Checks). */
   attrs?: Record<string, string>;
+  /** Done because an admin's force merge skips it, not because it was cleared. */
+  skipped?: boolean;
 }
 
 /**
@@ -555,6 +557,8 @@ export interface RequestView {
   titleEditing: { issue: number; initial: string } | null;
   /** The request's words, rendered, without the leading "**Source:**" line. */
   bodyHtml: string;
+  /** #6081: the same words as markdown, what Translate sends to the model. */
+  bodyMarkdown: string;
   /**
    * The author's editor for the words. `source` is the "**Source:**" line
    * the page leaves out, put back in front of what they save.
@@ -588,6 +592,11 @@ export interface RequestStatusView {
   action: { label: string; title?: string; disabled?: boolean; act?: { fn: string; args?: unknown[] }; href?: string } | null;
   /** A closed request: the words that say so, and no stepper. */
   closed: string | null;
+  /**
+   * #6387: the row says a change addresses this request, so the page holds
+   * the change section's place while the thread is still being read.
+   */
+  changeExpected?: boolean;
   /**
    * The sentence already says what Homeroom bot is doing with its plan (or
    * its change), so no "Plan v1 is ready for comments." after it.
@@ -627,6 +636,12 @@ export interface ChecksExplainView {
   /** The run: its checks_checked_at. */
   at: string;
   fallback: string | null;
+  /**
+   * #6288: the Testing card's lead when main is already failing these tests,
+   * so the Checks step says whose they are too (it is drawn above the
+   * failure's own words). Null when main is not failing them.
+   */
+  mainLead?: string | null;
   /** The page the first failing check opened on the preview, when it can be reopened. */
   page?: { path: string; stagingUrl: string } | null;
 }
@@ -664,6 +679,18 @@ export interface ChangeGateView {
   label: string;
   /** The one line under the card, as its sentences. */
   note: string[];
+  /**
+   * #6282: the card asks for no vote while an update to the change is on its
+   * way (AppView._changeVotesView): a yes cast now is cleared when it lands.
+   * Votes only; the card keeps its tally and its note.
+   */
+  hold?: boolean;
+  /**
+   * #3800: Votes only, while a change is up for a vote: its lines under the
+   * bar, worded (AppView._changeVoteFacts). `ask` is the viewer's vote still
+   * being wanted, in the accent.
+   */
+  facts?: { key: 'tally' | 'ends' | 'mine'; text: string; ask?: boolean }[];
   /** Why this status is shown, disclosed beside the note when available. */
   noteDetail?: string;
   /** Testing only: its re-run, or a retry of the preview. */
@@ -672,10 +699,23 @@ export interface ChangeGateView {
   details?: boolean;
   /** Testing only, when its checks failed: what went wrong, in plain words. */
   explain?: ChecksExplainView | null;
+  /**
+   * #6288: while main is already failing this change's tests, the request
+   * main watch filed to fix main. The one thing to read instead of asking
+   * the change's author to fix a failure that is not theirs.
+   */
+  mainFailure?: { href: string; label: string; mixed: boolean } | null;
   /** Testing only, for the change's author: Fix it. */
   fix?: FixChecksView | null;
   /** Testing only, for everybody else: who has to fix it. */
   authorNote?: string | null;
+  /**
+   * #6234: Testing only, on a change Homeroom bot built whose checks failed:
+   * where its own fix of them stands (services/homeroom-bot-progress.js
+   * changeBotFix), carried on the card as `data-change-bot-fix`. The words
+   * are in `authorNote`.
+   */
+  botFix?: 'fixing' | 'queued' | 'platform' | 'handed_off' | 'stopped' | null;
   /**
    * Votes only, on a merge of Homeroom itself that is not live yet: the
    * server's `release` block, which the card words after the note and keeps
@@ -763,6 +803,11 @@ export interface ChangeUpstreamView {
 
 export interface TopicBody {
   changeId?: number;
+  /**
+   * #6440: a governance vote's page — the model its head draws
+   * (./governance-model.ts). The page has no card: the head IS the page.
+   */
+  decision?: any;
   issues?: IssueLink[];
   /** #2431 — on an ISSUE's page, the change on it (an open issue's). */
   addressedBy?: IssueProposalRef | null;

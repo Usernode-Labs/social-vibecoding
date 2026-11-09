@@ -5,6 +5,12 @@ const access = require('./database-role-access');
 const { connectionName } = require('../db/connection-options');
 
 const PLATFORM_SCHEMAS = Object.freeze(['public', 'credentials']);
+// Evidence the migrator owns, never runtime application data: migration
+// receipts, and the log of who was made an administrator
+// (src/db/migrations/privilege-changes.sql), which only its triggers write.
+// The runtime logins read it; any inherited or default write grant is taken.
+// Read access is also what the existing unredacted pg_dump export needs.
+const EVIDENCE = new Set(['public.schema_migrations', 'public.privilege_changes']);
 const { WEB_EVENT_COLUMNS, isKernelRelation } = access;
 // How long the migration Job waits for web processes of an earlier build to
 // go (their rollout): its two tries, each waiting this long, end inside its
@@ -45,6 +51,7 @@ async function grantWebWorkflow(pool, web, kernel = null) {
 // before then reads as the platform's, and web may still withdraw it
 // (wf_refuse_pending, src/db/migrations/0014-web-withdraws-at-cutover.sql).
 async function restrictWebWorkflow(pool, web) {
+  if (await webWorkflowCurrent(pool, web)) return;
   const role = access.identifier(web);
   const kernel = await kernelRelations(pool);
   if (!kernel.length) return;
@@ -61,6 +68,25 @@ async function restrictWebWorkflow(pool, web) {
     await pool.query(`INSERT INTO public.wf_settings (key, value) VALUES ('web_restricted_at', clock_timestamp()::text)
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`);
   }
+}
+
+async function webWorkflowCurrent(pool, web) {
+  const { rows: [row] } = await pool.query(`
+    WITH k AS (SELECT c.oid, c.relname, c.relkind FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relname LIKE 'wf\\_%' AND c.relkind IN ('r','p','S'))
+    SELECT COALESCE(bool_and(CASE WHEN relkind = 'S' THEN
+      has_sequence_privilege($1, oid, 'SELECT') AND has_sequence_privilege($1, oid, 'USAGE')
+        AND NOT has_sequence_privilege($1, oid, 'UPDATE')
+      ELSE has_table_privilege($1, oid, 'SELECT')
+        AND NOT has_table_privilege($1, oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+        AND NOT has_any_column_privilege($1, oid, 'UPDATE,REFERENCES')
+        AND CASE WHEN relname = 'wf_events' THEN
+          (SELECT bool_and(has_column_privilege($1, k.oid, a.attnum, 'INSERT') = (a.attname = ANY($2::text[])))
+             FROM pg_catalog.pg_attribute a WHERE a.attrelid = k.oid AND a.attnum > 0 AND NOT a.attisdropped)
+          ELSE NOT has_any_column_privilege($1, oid, 'INSERT') END END), TRUE) AS current
+      FROM k`, [web, WEB_EVENT_COLUMNS]);
+  return row?.current === true;
 }
 
 // A web process of a build before the one that records
@@ -126,16 +152,50 @@ function notReady(n) {
 // (takeWebWorkflowWrites).
 async function ensureRuntimeGrants(pool, env = process.env) {
   if (!access.enabled(env)) return;
+  const started = Date.now();
   const roles = access.names(env);
   const runtime = [roles.web, roles.conductor].map(access.identifier).join(', ');
   const conductor = access.identifier(roles.conductor);
   const reader = access.identifier(roles.provisioner);
   const owner = access.identifier(roles.migrator);
-  const { rows: schemas } = await pool.query('SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname = ANY($1::text[])', [PLATFORM_SCHEMAS]);
-  for (const { nspname } of schemas) {
+  const statements = [];
+  const { rows: schemas } = await pool.query(`
+    SELECT n.nspname,
+      EXISTS (SELECT 1 FROM aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a
+        WHERE a.grantee = 0 AND a.privilege_type = 'CREATE') AS public_creates,
+      ARRAY(SELECT r.rolname::text FROM pg_catalog.pg_roles r WHERE r.rolname = ANY($3::text[])
+        AND has_schema_privilege(r.oid, n.oid, 'USAGE')) AS uses,
+      ARRAY(SELECT r.rolname::text FROM pg_catalog.pg_roles r WHERE r.rolname = ANY($3::text[])
+        AND has_schema_privilege(r.oid, n.oid, 'CREATE')) AS creates,
+      COALESCE((SELECT json_agg(json_build_object('kind', d.defaclobjtype, 'role', r.rolname, 'privilege', a.privilege_type, 'grantable', a.is_grantable))
+        FROM pg_catalog.pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a
+        JOIN pg_catalog.pg_roles r ON r.oid = a.grantee
+        WHERE d.defaclnamespace = n.oid AND d.defaclrole = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $2)), '[]'::json) AS defaults
+    FROM pg_catalog.pg_namespace n WHERE n.nspname = ANY($1::text[])`,
+  [PLATFORM_SCHEMAS, roles.migrator, [roles.web, roles.conductor, roles.provisioner]]);
+  for (const actual of schemas) {
+    const { nspname } = actual;
+    const defaults = actual.defaults || [];
+    const required = [
+      ...[roles.web, roles.conductor].flatMap(role => [
+        ...['SELECT','INSERT','UPDATE','DELETE'].map(privilege => ({ kind: 'r', role, privilege })),
+        ...['USAGE','SELECT','UPDATE'].map(privilege => ({ kind: 'S', role, privilege })),
+        { kind: 'f', role, privilege: 'EXECUTE' },
+      ]),
+      ...['r','S'].map(kind => ({ kind, role: roles.provisioner, privilege: 'SELECT' })),
+    ];
+    const unwanted = defaults.some(got => [roles.web, roles.conductor, roles.provisioner].includes(got.role)
+      && (got.grantable || !required.some(want => got.kind === want.kind && got.role === want.role && got.privilege === want.privilege)));
+    if (!actual.public_creates && !actual.creates?.length && !unwanted
+        && [roles.web, roles.conductor, roles.provisioner].every(role => actual.uses?.includes(role))
+        && required.every(want => defaults.some(got => got.kind === want.kind && got.role === want.role && got.privilege === want.privilege))) continue;
     const schema = access.identifier(nspname);
-    await pool.query(`REVOKE CREATE ON SCHEMA ${schema} FROM PUBLIC;
+    statements.push(`REVOKE CREATE ON SCHEMA ${schema} FROM PUBLIC;
+      REVOKE CREATE ON SCHEMA ${schema} FROM ${runtime}, ${reader};
       GRANT USAGE ON SCHEMA ${schema} TO ${runtime}, ${reader};
+      ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA ${schema} REVOKE ALL ON TABLES FROM ${runtime}, ${reader};
+      ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA ${schema} REVOKE ALL ON SEQUENCES FROM ${runtime}, ${reader};
+      ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA ${schema} REVOKE ALL ON FUNCTIONS FROM ${runtime}, ${reader};
       ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA ${schema}
         GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${runtime};
       ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA ${schema}
@@ -149,36 +209,59 @@ async function ensureRuntimeGrants(pool, env = process.env) {
   }
   // Extension objects keep their operator ownership and existing ACLs.
   // Never attempt to take them over or grant broader extension access.
+  const hasEvery = (fn, role, privileges) => `(SELECT bool_and(${fn}(${role}::text, c.oid, privilege))
+    FROM unnest(ARRAY[${privileges.map(p => `'${p}'`).join(',')}]) privilege)`;
+  const required = role => `CASE WHEN c.relkind = 'S' THEN ${hasEvery('has_sequence_privilege', role, ['USAGE','SELECT','UPDATE'])}
+    ELSE ${hasEvery('has_table_privilege', role, ['SELECT','INSERT','UPDATE','DELETE'])} END`;
   const { rows } = await pool.query(`
     SELECT c.oid::regclass::text AS name, c.relkind AS kind,
-           n.nspname || '.' || c.relname AS qualified_name
+           n.nspname || '.' || c.relname AS qualified_name,
+           ${required('$3')} AS web_ready, ${required('$4')} AS conductor_ready,
+           CASE WHEN c.relkind = 'S' THEN has_sequence_privilege($5::text, c.oid, 'SELECT')
+             ELSE has_table_privilege($5::text, c.oid, 'SELECT') END AS reader_ready,
+           CASE WHEN c.relkind = 'S' THEN has_sequence_privilege($5::text, c.oid, 'USAGE,UPDATE') ELSE
+             has_table_privilege($5::text, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+               OR has_any_column_privilege($5::text, c.oid, 'INSERT,UPDATE,REFERENCES') END AS reader_writes,
+           CASE WHEN c.relkind = 'S' THEN FALSE ELSE
+             EXISTS (SELECT 1 FROM unnest(ARRAY[$3::text,$4::text,$5::text]) role_name
+               WHERE has_table_privilege(role_name, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                 OR has_any_column_privilege(role_name, c.oid, 'INSERT,UPDATE,REFERENCES')) END AS evidence_writes,
+           CASE WHEN c.relkind = 'S' THEN FALSE ELSE
+             has_table_privilege($3::text, c.oid, 'SELECT') AND has_table_privilege($4::text, c.oid, 'SELECT')
+               AND has_table_privilege($5::text, c.oid, 'SELECT') END AS evidence_reads
       FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = ANY($2::text[]) AND c.relowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $1)
-       AND c.relkind IN ('r','p','v','m','f','S')`, [roles.migrator, PLATFORM_SCHEMAS]);
+       AND c.relkind IN ('r','p','v','m','f','S')`,
+  [roles.migrator, PLATFORM_SCHEMAS, roles.web, roles.conductor, roles.provisioner]);
   for (const item of rows) {
-    if (item.qualified_name === 'public.schema_migrations') {
-      // Migration receipts are evidence owned by the migrator, never runtime
-      // application data. Undo any inherited/default runtime grants too.
-      // Read access is required by the existing unredacted pg_dump export.
-      await pool.query(`GRANT SELECT ON TABLE public.schema_migrations TO ${runtime}, ${reader};
-        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
-        ON TABLE public.schema_migrations FROM ${runtime}, ${reader}`);
+    if (EVIDENCE.has(item.qualified_name)) {
+      if (!item.evidence_reads) statements.push(`GRANT SELECT ON TABLE ${item.name} TO ${runtime}, ${reader}`);
+      if (item.evidence_writes) statements.push(`REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+        ON TABLE ${item.name} FROM ${runtime}, ${reader}`);
       continue;
     }
     // regclass's rendering is quoted by PostgreSQL and schema qualified
     // when public is not on search_path. It is catalog output, never input.
     const kind = item.kind === 'S' ? 'SEQUENCE' : 'TABLE';
     const privileges = item.kind === 'S' ? 'USAGE, SELECT, UPDATE' : 'SELECT, INSERT, UPDATE, DELETE';
-    await pool.query(`GRANT ${privileges} ON ${kind} ${item.name} TO ${isKernelRelation(item.qualified_name) ? conductor : runtime}`);
-    await pool.query(`GRANT SELECT ON ${kind} ${item.name} TO ${reader}`);
+    if (!item.conductor_ready) statements.push(`GRANT ${privileges} ON ${kind} ${item.name} TO ${conductor}`);
+    if (!isKernelRelation(item.qualified_name) && !item.web_ready) statements.push(`GRANT ${privileges} ON ${kind} ${item.name} TO ${access.identifier(roles.web)}`);
+    if (!item.reader_ready) statements.push(`GRANT SELECT ON ${kind} ${item.name} TO ${reader}`);
+    if (item.reader_writes) statements.push(`REVOKE ${item.kind === 'S' ? 'USAGE, UPDATE' : 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'} ON ${kind} ${item.name} FROM ${reader}`);
   }
   const { rows: functions } = await pool.query(`
-    SELECT p.oid::regprocedure::text AS name FROM pg_catalog.pg_proc p
+    SELECT p.oid::regprocedure::text AS name,
+      has_function_privilege($3::text, p.oid, 'EXECUTE') AND has_function_privilege($4::text, p.oid, 'EXECUTE') AS current
+    FROM pg_catalog.pg_proc p
       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = ANY($2::text[]) AND p.proowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $1)
-       AND p.prokind <> 'a'`, [roles.migrator, PLATFORM_SCHEMAS]);
-  for (const item of functions) await pool.query(`GRANT EXECUTE ON ROUTINE ${item.name} TO ${runtime}`);
-  await grantWebWorkflow(pool, roles.web);
+       AND p.prokind <> 'a'`, [roles.migrator, PLATFORM_SCHEMAS, roles.web, roles.conductor]);
+  for (const item of functions) if (!item.current) statements.push(`GRANT EXECUTE ON ROUTINE ${item.name} TO ${runtime}`);
+  if (statements.length) await pool.query(statements.join(';\n'));
+  if (!await webWorkflowCurrent(pool, roles.web)) await grantWebWorkflow(pool, roles.web);
+  require('./logger').info('db-roles', 'Runtime permissions reconciled', {
+    examined: rows.length, statements: statements.length, durationMs: Date.now() - started,
+  });
 }
 
 async function withRoleAdmin(fn) {

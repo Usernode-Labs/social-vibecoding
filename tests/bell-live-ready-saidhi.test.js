@@ -111,12 +111,14 @@ test('a live one opens the app it is live in; one still asking opens the change'
   const asking = load();
   asking.N.items = [ready({ sessionStatus: 'promoted' })];
   asking.N._onItemClick(7);
-  assert.deepEqual(nav(asking.calls), [['openAppTab', 'page-turners', 'dev', { subTab: 'proposals', ref: 6346 }]]);
+  // #6099: the row's own session id as a typed topic ref, not the legacy
+  // `subTab: 'proposals'` spelling; both normalize to the same change page.
+  assert.deepEqual(nav(asking.calls), [['openAppTab', 'page-turners', 'dev', { subTab: 'topic', ref: { kind: 'proposal', id: 6346 } }]]);
 
   const closed = load();
   closed.N.items = [ready({ sessionStatus: 'archived' })];
   closed.N._onItemClick(7);
-  assert.deepEqual(nav(closed.calls), [['openAppTab', 'page-turners', 'dev', { subTab: 'proposals', ref: 6346 }]],
+  assert.deepEqual(nav(closed.calls), [['openAppTab', 'page-turners', 'dev', { subTab: 'topic', ref: { kind: 'proposal', id: 6346 } }]],
     'a closed change has no app to open: its page says what happened');
 });
 
@@ -127,9 +129,11 @@ test('a digest counts what still waits, and says so when nothing does', () => {
     appName: 'Page Turners', appSlug: 'page-turners', sessionId: 6346, detail: '1', ...extra,
   });
   assert.equal(digest({}).label, 'Waiting for your approval', 'an older server: the count it was sent with');
-  assert.equal(subject(digest({})), '1 change');
-  assert.equal(subject(digest({ detail: '3', digestWaiting: 2 })), '2 changes', 'the live count wins');
-  assert.equal(subject(digest({ detail: '3', digestWaiting: 1 })), '1 change');
+  assert.equal(subject(digest({})), '1 change to review in Page Turners');
+  assert.equal(subject(digest({ detail: '3', digestWaiting: 2 })), '2 changes to review in Page Turners', 'the live count wins');
+  assert.equal(subject(digest({ detail: '3', digestWaiting: 1 })), '1 change to review in Page Turners');
+  // #5929 item 6: a digest of several changes has no app, so it names none.
+  assert.equal(subject(digest({ detail: '37', digestWaiting: 37, appName: null })), '37 changes to review');
   const none = digest({ digestWaiting: 0 });
   assert.equal(none.label, 'Nothing is waiting for your approval now');
   assert.equal(none.segments.length, 0, 'never "0 changes"');

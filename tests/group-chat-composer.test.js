@@ -150,8 +150,8 @@ test('the module publishes the staged reply to both scopes, and no longer paints
   // The label the sources produce: a PR number, an @author, or what an
   // authorless row is (#2391).
   assert.match(fn[1], /q\.prNumber \? PlatformI18n\.t\('chat:group\.quote\.pr', \{ number: q\.prNumber \}\) : PlatformI18n\.t\('chat:group\.quote\.prUnnumbered'\)/);
-  assert.equal(message('chat:group.quote.pr', { number: 12 }), 'PR #12');
-  assert.equal(message('chat:group.quote.prUnnumbered'), 'PR #');
+  assert.equal(message('chat:group.quote.pr', { number: 12 }), 'PR 12');
+  assert.equal(message('chat:group.quote.prUnnumbered'), 'PR');
   assert.match(fn[1], /pr: q\.source === 'pr' \? String\(q\.prNumber \|\| ''\) : null,/, 'a pull request is not passed as a name');
   assert.match(fn[1], /q\.author \? `@\$\{q\.author\}` : ''/);
   // An authorless row has a sentence of its own: the module says which, and
@@ -273,4 +273,27 @@ test('the general chat pane is mounted, not assigned', () => {
   // Discussion tab says what it is.
   assert.doesNotMatch(fn[1], /usernode_seen_gc_intro|introAppName/);
   assert.doesNotMatch(read('frontend/src/features/group-chat/general-chat.tsx'), /talks and votes on proposed changes|introAppName/);
+});
+
+// #6228 (3 Nov 2026): the status slot under a request's thread says what
+// Homeroom bot is doing with the newest reply, in the bot chip's own style.
+test('#6228: the bot\'s reply line, and typing takes the slot first', () => {
+  const view = (extra) => renderComponent(COMPOSER, 'StatusLineView', { scope: 'thread', status: '', ...extra });
+  const says = (html, id) => assert.ok(html.includes(message(id)), `${id} in ${html}`);
+  const will = view({ bot: { state: 'will_read', mine: true } });
+  says(will, 'chat:group.botStatus.willRead');
+  assert.match(will, /data-bot-status="will_read"/);
+  assert.match(will, /--brand-tint/, 'the bot chip\'s style');
+  assert.match(will, /👀/);
+  // The person who wrote it sees "your reply"; everybody else "the reply".
+  says(view({ bot: { state: 'reading', mine: true } }), 'chat:group.botStatus.readingYours');
+  says(view({ bot: { state: 'reading', mine: false } }), 'chat:group.botStatus.reading');
+  const quiet = view({ bot: { state: 'quiet', mine: true } });
+  says(quiet, 'chat:group.botStatus.quiet');
+  assert.doesNotMatch(quiet, /👀/, 'nothing to add carries no glyph');
+  // Someone typing takes the line; the bot's comes back when they stop.
+  assert.equal(view({ status: 'bob is typing...', bot: { state: 'reading', mine: true } }),
+    '<div id="gc-thread-typing" class="chat-status" aria-live="polite">bob is typing...</div>');
+  // Neither: the slot is empty.
+  assert.equal(view({}), '<div id="gc-thread-typing" class="chat-status" aria-live="polite"></div>');
 });

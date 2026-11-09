@@ -43,7 +43,8 @@ test('the model is asked for what they might say next, and its suggestions becom
   assert.equal(reply.properties.suggestions.maxItems, 3);
   assert.deepEqual(reply.required, ['text'], 'never required: a reply can stand without them');
   const source = read('src/services/homeroom-bot-mayor.js');
-  assert.match(source, /up to 3 suggestions: short things they might say next, in their own/);
+  assert.match(source, /up to 3 suggestions in the reply tool\\'s suggestions field: short things they/);
+  assert.match(source, /They are shown as buttons\. Never write them in the text\./);
   assert.match(source, /Offer at least one',\s*'unless the conversation has plainly ended\.'/);
   assert.deepEqual(mayor.suggestionLabels([
     '  How long will   it take? ', 'how long will it take?', 'x'.repeat(61), '', null, 42, 'Start it now', 'Show my requests', 'One more',
@@ -67,7 +68,7 @@ test('a stuck build, one it cannot build, one with nothing in it and one a perso
   assert.match(dm.dmText('blocked', { reason: 'x' }, context), /Reply to this message with more detail/);
   assert.match(dm.dmText('empty', {}, context), /Reply to this message with what you'd like/);
   assert.match(dm.dmText('person', { reason: 'x' }, context), /reply to this message and say so/);
-  assert.match(read('src/services/homeroom-bot-dm.js'), /\.\.\.\(STUCK_ACTIONS\[kind\] && !\(kind === 'person' && \(dm\.platform \|\| personDeciders\(dm\)\.length\)\) && !dm\.done\n\s+\? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/,
+  assert.match(read('src/services/homeroom-bot-dm.js'), /\.\.\.\(STUCK_ACTIONS\[kind\] && !dm\.done\n\s+&& !\(kind === 'person' && \(dm\.platform \|\| dm\.goAheadDecides === false \|\| personDeciders\(dm\)\.length\)\)\n\s+\? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/,
     '#4239: every stuck kind but a request about Homeroom itself, whose move offer follows, and one somebody else decides');
   assert.equal(dm.suggestsOnly({ actions: dm.STUCK_ACTIONS.build_failed }), true);
   assert.equal(dm.suggestsOnly({ actions: dm.promptActions(['a', 'b']) }), true);
@@ -95,7 +96,37 @@ const message = (meta) => ({
   sender: { id: 2, username: 'homeroom_bot', bot: true }, metadata: { homeroomBot: meta },
 });
 const draw = (meta) => renderToHtml(createElement(BotQuestion, { message: message(meta), conversationId: 3 }));
+const drawHidePrompts = (meta) => renderToHtml(createElement(BotQuestion, { message: message(meta), conversationId: 3, hidePrompts: true }));
 const NEWS = { appName: 'Todo List', appSlug: 'todo-list', issueNumber: 93, status: 'open' };
+
+// ── #6404: a Questions card is the one set of answers ───────────────────
+
+const { asksWithQuestionsCard } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
+const QUESTIONS_CARD = { type: 'questions', v: 1, questions: [{ question: 'Which project?', answers: ['Bread Bot', 'Sheep countrr'], guess: 0 }], answered: null };
+const withCard = (card) => message({ kind: 'chat', status: 'open', card, actions: dm.promptActions(['Bread Bot']) });
+
+test('#6404: a message asking with a Questions card hides its suggested replies, already answered or not', () => {
+  assert.equal(asksWithQuestionsCard(withCard(QUESTIONS_CARD)), true, 'open');
+  assert.equal(asksWithQuestionsCard(withCard({ ...QUESTIONS_CARD, answered: ['Bread Bot'] })), true, 'answered');
+  assert.equal(asksWithQuestionsCard(withCard({ ...QUESTIONS_CARD, skipped: true })), true, 'skipped');
+  assert.equal(asksWithQuestionsCard(withCard({ type: 'options', v: 1, options: [] })), false, 'another card type');
+  assert.equal(asksWithQuestionsCard(withCard({ type: 'plan', v: 1 })), false, 'a plan is not a questions card');
+  const deleted = withCard(QUESTIONS_CARD);
+  deleted.deleted = true;
+  assert.equal(asksWithQuestionsCard(deleted), false, 'deleted');
+  const theirs = withCard(QUESTIONS_CARD);
+  theirs.sender = { id: 5, username: 'ada' };
+  assert.equal(asksWithQuestionsCard(theirs), false, 'a person\'s message');
+
+  assert.doesNotMatch(drawHidePrompts({ kind: 'chat', status: 'open', card: QUESTIONS_CARD, actions: dm.promptActions(['Bread Bot']) }),
+    /messages-bot-answers/, 'the card is the only set of answers');
+  assert.match(drawHidePrompts({ kind: 'build_failed', status: 'open', card: QUESTIONS_CARD, actions: dm.STUCK_ACTIONS.build_failed }),
+    /<span>Try again<\/span>/, 'a quoted step still draws');
+
+  const index = read('frontend/src/features/messages/index.tsx');
+  assert.match(index, /hidePrompts=\{\(plans\.answersOpen \|\| asksWithQuestionsCard\(message\) \|\| \(welcomeShown && message\.id === newestMainBotId\)\) && !!message\.sender\.bot\}/,
+    'the row hides on the message carrying the card (or under #6426\'s welcome card), and on no other');
+});
 
 test('a step to take on the message is a filled button; a suggestion keeps the pill', () => {
   const tryAgain = draw({ ...NEWS, kind: 'build_failed', actions: dm.STUCK_ACTIONS.build_failed });
@@ -144,15 +175,16 @@ test('Try again replies to its message; Add detail quotes it in the composer and
   ], 'only a prompt quotes');
 });
 
-test('the staging preview’s declared check finds the demo DM’s stopped build among its finished requests, folded, saying how it ended', () => {
-  // One request, one story: the stopped build is one row in the main chat,
-  // which opens the request's page. The
-  // demo's stopped build is no longer in the person's activity, so it is
-  // finished: folded with the finished requests beside it into one line of
-  // words that counts both (N finished · N couldn't build).
-  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
-  assert.match(check.expectSelector, /:has\(\[data-bot-settled-count=failed\]\)/);
+test('#6207: the demo DM’s stopped build is a request’s news, so the declared check finds it out of Main Chat', () => {
+  // 3 Nov 2026: Main Chat is the conversation. The demo's stopped build is
+  // news about a request, on that request's page, so Main draws no row for
+  // it: the declared check finds Main with no row about a request. The
+  // fixture still writes it, with its Try again.
+  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#6207 \(3 Nov 2026\): Main Chat holds no request's news/.test(t.name));
+  assert.ok(check, 'declared');
+  assert.match(check.expectSelector, /:not\(:has\(\[data-request-tag\]\)\)$/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
   const fixture = read('src/services/staging-messages.js');
   assert.match(fixture, /homeroomBot: \{ kind: 'build_failed', \.\.\.stuck, actions: dm\.STUCK_ACTIONS\.build_failed, status: 'open' \}/);
 });
+

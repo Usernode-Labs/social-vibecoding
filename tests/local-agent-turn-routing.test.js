@@ -19,6 +19,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { hashSecret } = require('../src/services/cli-auth');
 const constants = require('../src/services/cli-auth-constants');
@@ -613,4 +615,41 @@ test('collab access lost between the route and the conductor refuses the commit 
   assert.equal(uploads.length, 0, 'nothing reached the code host');
   assert.equal(db.updated, null, 'the turn row was not advanced');
   assert.equal(inputs.size, 0, 'no files kept');
+});
+
+// ── The platform's own dispatch path ──────────────────────────────────────
+//
+// A local turn is enqueued by the platform before anything else can fail: a
+// throw, or an interrupted wait, used to leave the row live while the
+// machine's lease kept heartbeating, so every later dispatch answered
+// session_busy with no run anywhere. These tests read the dispatch blocks
+// themselves (as tests/local-agent-tail.test.js does), because what matters is
+// that the guard sits around BOTH ways the wait can end without a terminal
+// row, in BOTH tools.
+
+const sessionsSource = fs.readFileSync(path.join(__dirname, '..', 'src/routes/sessions.js'), 'utf8');
+
+function dispatchBlock(name) {
+  const start = sessionsSource.indexOf(name);
+  assert.ok(start > 0, `found ${name}`);
+  return sessionsSource.slice(start, sessionsSource.indexOf('let result;', start));
+}
+
+test('both local dispatches close a turn the wait left live', () => {
+  for (const name of ['const dispatchLocalBuild = async ()', 'const dispatchLocalScout = async ()']) {
+    const block = dispatchBlock(name);
+    assert.match(block, /try \{[\s\S]{0,500}await localAgent\.awaitTurnResult/,
+      `${name} wraps the wait in a try`);
+    // Aborted: the signal fired before the machine answered.
+    assert.match(block, /outcome === 'aborted'/);
+    assert.match(block, /abandonTurn\(pool, turnId, 'The turn was interrupted before it finished\.'\)/);
+    // Thrown: an error (for example the database) after the row was written.
+    assert.match(block, /catch \(err\)/);
+    assert.match(block, /abandonTurn\(pool, turnId, `Sending the turn failed: \$\{agentTurn\.sanitizeError\(err\)/);
+    // Restart recovery owns the adopted turn and its tail: never abandon it.
+    assert.match(block, /err\?\.code !== 'local_turn_adopted'/);
+    // And the reason reaches the tail's result, which is the change page's
+    // existing error line.
+    assert.match(block, /buildTurnResult\(\{[\s\S]{0,160}turn: finished/);
+  }
 });

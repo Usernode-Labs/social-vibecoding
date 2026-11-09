@@ -33,6 +33,8 @@ const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
 const DEV_CHAT_SRC = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
+const APP_VIEW_SRC = read('public', 'js', 'app-view.js');
+const APP_SRC = read('public', 'js', 'app.js');
 const VENUES_SRC = read('public', 'js', 'build-venues.js');
 const MERGE_STATUS_SRC = read('public', 'js', 'merge-status.js');
 const HEADER_TSX = read('frontend', 'src', 'features', 'dev-chat', 'session-header.tsx');
@@ -232,8 +234,8 @@ test('a session with a pull request offers it; one without says so', () => {
   const withPr = headerHtml(view({ ...SESSION, pr_number: 42 }));
   // #2821: it names where it goes, not the PR number.
   assert.match(withPr, /id="dc-pr-header-link"[^>]*>Open proposal card</);
-  assert.doesNotMatch(withPr, />PR #42</);
-  assert.match(withPr, /title="[^"]*goes to PR #42/);
+  assert.doesNotMatch(withPr, />PR 42</);
+  assert.match(withPr, /title="[^"]*goes to PR 42/);
 
   const without = headerHtml(view(SESSION));
   assert.doesNotMatch(without, /dc-pr-header-link/);
@@ -904,4 +906,67 @@ test('#1941: every fact stays on the strip — nothing is folded away to make it
   const ids = top.map(c => c.id || c.class.split(' ')[0]);
   assert.deepEqual(ids, ['dc-session-title', 'dc-pr-header-link', 'dc-venue-select', 'dc-mode-switch', 'dc-session-actions']);
   for (const c of top) assert.doesNotMatch(c.class || '', /\bhidden\b|max-sm:hidden/);
+});
+
+// ── 6. The vote tally the pill reads (#6496) ───────────────────────────
+//
+// The change card updates as soon as a vote is saved, but the pill above the
+// chat is drawn from `DevChat.currentSession`, which only the best-effort
+// `vote_update` broadcast used to refresh. A dropped frame left the two
+// numbers on one screen disagreeing until a reload, so the saved vote paths
+// now re-read the open session themselves.
+
+test('a saved vote repaints the pill numerator', async () => {
+  const { DevChat, sandbox, published } = makeDevChat();
+  const id = 42;
+  DevChat.currentSession = {
+    ...SESSION, id, status: 'promoted', check_state: 'passing',
+    yes_count: 2, no_count: 0, qualified_yes_count: 2, votes_required: 5,
+  };
+  // The mid-turn repaint, which publishes the same header model
+  // `renderChatView` would without needing the whole chat screen.
+  DevChat.isStreaming = true;
+  sandbox.document.getElementById = (el) => (el === 'dc-view' ? {} : null);
+  const fetched = [];
+  sandbox.fetch = async (url) => {
+    fetched.push(url);
+    return {
+      ok: true,
+      json: async () => ({
+        session: { ...DevChat.currentSession, yes_count: 3, qualified_yes_count: 3 },
+      }),
+    };
+  };
+  published.length = 0;
+
+  await DevChat.refreshCurrentSessionStatus(id);
+
+  assert.deepEqual(fetched, [`/api/sessions/${id}`]);
+  assert.equal(published.length, 1, 'the strip repaints once');
+  const state = JSON.parse(JSON.stringify(published[0].state));
+  assert.equal(state.life.votes.yes, 3, 'the pill reads the saved tally');
+  const html = pillHtml(state.life);
+  assert.match(html, /Waiting for approval · 3\/5/, 'the numerator and threshold the card shows');
+
+  // A vote on a change that is not open leaves the pill — and the network —
+  // alone.
+  await DevChat.refreshCurrentSessionStatus(id + 1);
+  assert.equal(fetched.length, 1);
+});
+
+test('the saved vote paths refresh the open session themselves', () => {
+  // #6496: the card updated but the pill waited for a broadcast. Both saved
+  // paths — a cast vote and an undo — now ask the session directly.
+  const castAt = APP_VIEW_SRC.indexOf('AppView._publishVoteSaved(sessionId, vote, epoch);');
+  assert.ok(castAt > 0);
+  const cast = APP_VIEW_SRC.slice(castAt, APP_VIEW_SRC.indexOf('return true;', castAt));
+  assert.match(cast, /DevChat\.refreshCurrentSessionStatus\(sessionId\)/);
+
+  const undoAt = APP_VIEW_SRC.indexOf('AppView._publishVoteSaved(sessionId, null, epoch);');
+  assert.ok(undoAt > 0);
+  const undo = APP_VIEW_SRC.slice(undoAt, APP_VIEW_SRC.indexOf('return true;', undoAt));
+  assert.match(undo, /DevChat\.refreshCurrentSessionStatus\(sessionId\)/);
+
+  // Other people's votes still reach the pill through the live frame.
+  assert.match(APP_SRC, /DevChat\.refreshCurrentSessionStatus\(data\.sessionId\)/);
 });

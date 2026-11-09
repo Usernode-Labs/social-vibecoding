@@ -82,7 +82,15 @@ type Badge = { tone: Tone; label: string; title?: string };
 
 type ChromeView =
   /** `back` is false while kudos is parked (#5249): Top users is gone. */
-  | { kind: 'profile'; who: string; initial: string; canMessage?: boolean; back?: boolean }
+  | {
+      kind: 'profile';
+      who: string;
+      initial: string;
+      /** The person's picture, or null when they have none. */
+      avatarUrl?: string | null;
+      canMessage?: boolean;
+      back?: boolean;
+    }
   | {
       kind: 'tabs';
       subtitle: string;
@@ -109,6 +117,8 @@ type UserRow = {
   rank: number;
   who: string;
   initial: string;
+  /** The person's picture, or null when they have none. */
+  avatarUrl?: string | null;
   meta: { text: string; title?: string }[];
   unmergedNote: string | null;
   mergedKudos: number;
@@ -321,9 +331,17 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
         {t('leaderboard:kudos.person.back')}
       </a>}
       <div className="flex items-center gap-3">
-        <div className="w-12 h-12 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">
-          {view.initial}
-        </div>
+        {view.avatarUrl ? (
+          <img
+            src={view.avatarUrl}
+            alt=""
+            className="w-12 h-12 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
+          />
+        ) : (
+          <div className="w-12 h-12 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">
+            {view.initial}
+          </div>
+        )}
         <div className="min-w-0 flex-1">
           <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 truncate">
             {`@${view.who}`}
@@ -462,9 +480,18 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           onClick={() => controller()?._openUser(row.who)}
         >
           <div className="w-7 text-center text-sm font-mono text-zinc-500 dark:text-zinc-400">{row.rank}</div>
-          <div className="w-9 h-9 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-sm">
-            {row.initial}
-          </div>
+          {row.avatarUrl ? (
+            <img
+              src={row.avatarUrl}
+              alt=""
+              loading="lazy"
+              className="w-9 h-9 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
+            />
+          ) : (
+            <div className="w-9 h-9 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-sm">
+              {row.initial}
+            </div>
+          )}
           <div className="flex-1 min-w-0">
             <div className={ROW_TITLE}>{`@${row.who}`}</div>
             <div className={ROW_META}>

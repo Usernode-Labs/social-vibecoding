@@ -1,3 +1,4 @@
+import { readInterfaceMode } from '../settings/interface-mode';
 // The home screen's launcher grid: loads the viewer's apps, lays them out on
 // the (column, row) canvas HomeLayout models, renders the tiles, and owns the
 // drag-to-rearrange gesture.
@@ -23,7 +24,7 @@
 // The `HomeLayout` and `window.HomePanels` reads throughout stay as they are:
 // both are published by sibling modules the island imports BEFORE this one, and
 // every read happens at call time, long after the bundle has evaluated.
-import { t as message, htmlText } from '../../lib/i18n/runtime';
+import { t as message, htmlText, errorText } from '../../lib/i18n/runtime';
 import { AppCard } from '../apps/app-card.js';
 import { linkKind } from '../../lib/repo-link.js';
 import { rankSearch, searchKey } from '../../lib/search-rank.js';
@@ -31,16 +32,8 @@ import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
 import { buildLineTileClass, buildLineTileOf, buildLineTileWordsOf, tileStageOf } from '../first-session/build-line-words.js';
+import { installHomeSearchShortcut } from './search-shortcut';
 
-// Which discovery cards and add badges already carry their listeners.
-// `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
-// and React KEEPS the card nodes it can (they are keyed by slug), so a lane
-// whose only change is a badge flipping to "added" hands the same elements
-// back for a second binding — two listeners, and one tap toggling twice.
-// A WeakSet is the same idiom app-grid.tsx uses for its own once-per-card
-// attachments, and it holds no node alive past its removal.
-const wiredCards = new WeakSet();
-const wiredButtons = new WeakSet();
 
 const Home = {
   // Can this viewer create apps right now? Derived per request by
@@ -126,6 +119,10 @@ const Home = {
     // later refreshes must preserve the position the user chose.
     Home._searchReveal.sync();
     if (App.user && !App._sessionFromSnapshot) window.UsernodeReact?.appAllowance?.refresh?.();
+    // The tiles' vote counts (request 6500): a bridge read, the same as the
+    // allowance above, so every path into load() (a visit to Home, a pull,
+    // the late-answer correction) re-reads what the tiles count.
+    if (App.user) window.UsernodeReact?.homePins?.refresh?.();
     Home._probeShortcutSupport();
     // The header's standing action, from the remembered row, BEFORE the
     // fetch below rather than after it. render() is the call every path
@@ -186,12 +183,6 @@ const Home = {
       // account layout against the complete app catalog.
       Home._appsLoaded = true;
       Home.render();
-      // The #apps browse screen shares this payload and can be the screen
-      // actually on top — its cards run the same "…" menu, whose actions
-      // (add/remove, retry, lock, delete) all settle by calling back into
-      // Home.load(). Without this hand-off the browse grid would keep
-      // rendering pre-action state until the user navigated away.
-      if (window.Browse?.isOpen?.()) Browse.syncFrom(apps);
       // The shortcut probe's heal pass may have run before _apps was
       // populated (it needs the app objects for icon payloads); retry
       // now that they're here. No-op when everything has an icon.
@@ -342,17 +333,6 @@ const Home = {
   },
 
 
-  // Slugs the Discover rails keep showing even though they now count as
-  // "yours" (#1567). Adding an app from a rail repaints "Your apps"
-  // immediately, and the same paint would otherwise pull the card the finger
-  // is still on straight out of the row: the rails exclude apps you already
-  // have, so the row would reflow under the tap and the tick the viewer
-  // pressed for would never be seen. Keeping the slug holds the card in place
-  // with its badge ticked, which is also what makes the tap reversible
-  // without hunting for the app again. Per-visit and deliberately not
-  // persisted: the next load of the home screen starts from the honest list.
-  _discoverKeep: new Set(),
-
   // Set by toggleAdded for the one render that follows an ADD, then cleared.
   // The collapsed grid shows only the first couple of rows, so an app that
   // lands past the bound would be added to a section that visibly does not
@@ -382,24 +362,56 @@ const Home = {
     return !!(app && app.is_member);
   },
 
-  // The Discover card's fallback facts line — "12 users · Updated 3d ago" —
-  // for an app whose manifest declares no description. The same pair the
-  // directory's rows draw (browse.js metaLine's recommended variant), so the
-  // two surfaces say the same thing about the same app in the same words:
-  // who is using it and how recently it changed. Pure: no fetch, no state,
-  // and a null from formatRelativeTime drops that half rather than printing
-  // "Updated —".
-  discoverMetaLine(app) {
-    if (!app) return null;
-    // A zero says nothing, as on the Discover rows (polish N12).
-    const count = parseInt(app.active_users || 0, 10) || 0;
-    const users = count > 0 ? message('discover:row.meta.users', { count }) : null;
-    const when = formatRelativeTime(app.last_deploy_at || app.created_at);
-    const facts = [users, when ? message('discover:row.meta.updated', { when }) : null]
-      .filter(Boolean);
-    if (!facts.length) return null;
-    return facts.reduce((first, second) =>
-      message('discover:row.meta.pair', { first, second }));
+  // Open a project's hub: a door, so it names its place first
+  // (AppView._landOnHub), then the router's own way into a project.
+  openHub(slug) {
+    if (!slug) return;
+    try { window.AppView?._landOnHub?.(slug); } catch (err) { /* the page opens on what it remembers */ }
+    if (typeof App !== 'undefined' && App.navigateToApp) App.navigateToApp(slug, 'dev');
+    else location.hash = `#app/${encodeURIComponent(slug)}/dev/hub`;
+  },
+
+  // Home's Pinned communities (One Home, #6361), where the communities you
+  // are in live: Home, scrolled to them once they are drawn. `all` opens
+  // the section's All communities too (the ones you are in but have not
+  // pinned), which is what "All communities" anywhere else names now that
+  // the Communities screen's list is gone (features/home/pinned-communities.tsx
+  // listens for SHOW_ALL_COMMUNITIES).
+  SHOW_ALL_COMMUNITIES: 'home:show-all-communities',
+  showCommunities({ all = false } = {}) {
+    if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
+    if (all) {
+      try { document.dispatchEvent(new CustomEvent(Home.SHOW_ALL_COMMUNITIES)); } catch (err) { /* the section opens on its own press */ }
+    }
+    const scroll = () => {
+      const el = document.getElementById('home-communities-section');
+      if (el && !el.hidden) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    };
+    requestAnimationFrame(() => requestAnimationFrame(scroll));
+  },
+
+  // The sidebar's search glyph (features/nav/rail-communities.tsx): Home,
+  // with its search box focused, which finds your apps and communities by
+  // name. It opened the Communities screen's search until One Home (#6361).
+  focusSearch() {
+    if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
+    const focus = () => {
+      const input = document.getElementById('home-search-input');
+      if (!input) return;
+      try { input.focus({ preventScroll: false }); input.select?.(); } catch (err) { /* nothing to focus */ }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(focus));
+  },
+
+  // Home's Communities to join (One Home, #6361), the directory Discover
+  // was: Home, scrolled to it once it is drawn.
+  showCommunitiesToJoin() {
+    if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
+    const scroll = () => {
+      const el = document.getElementById('home-join-section');
+      if (el && !el.hidden) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    };
+    requestAnimationFrame(() => requestAnimationFrame(scroll));
   },
 
   // Split the full list into { yours, rest }. Personal ordering
@@ -516,29 +528,9 @@ const Home = {
   // (flagging one takes it off the list, and the PUT refuses it), and
   // isDiscoverable leaves one out here as well.
   //
-  // ?shot=discover-empty forces the empty answer regardless (#949), for the
-  // same reason ?shot=create-disabled exists above: "nothing left to
-  // discover" is what a viewer sees once they have added everything on
-  // offer, and no URL could reach it — so the Discover widget's compact
-  // state was invisible to the before/after screenshots and to every
-  // declared check. Pure UI state: it changes the derived lists at render
-  // time, writes nothing, and is not env-gated, so it works in production
-  // immediately.
-  //
-  // It empties BOTH halves. The block draws one lane now, so its note is the
-  // whole category's empty state; emptying only the curated half would put
-  // "nothing to discover" directly above four perfectly good popular cards.
-  _shotDiscoverEmpty() {
-    try {
-      return new URLSearchParams(location.search).get('shot') === 'discover-empty';
-    } catch (err) { return false; }
-  },
-
   featuredApps(apps) {
-    if (Home._shotDiscoverEmpty()) return [];
     return (apps || [])
-      .filter((a) => a && a.featured && Home.isDiscoverable(a)
-        && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
+      .filter((a) => a && a.featured && Home.isDiscoverable(a) && !Home.isYours(a))
       .sort((x, y) => {
         const xo = x.featured_order == null ? Infinity : x.featured_order;
         const yo = y.featured_order == null ? Infinity : y.featured_order;
@@ -571,17 +563,15 @@ const Home = {
   //   * isJoined / isYours — the whole point is communities you haven't
   //     joined. isYours stays in the exclusion too: a Home shortcut is not
   //     membership, but adding one already joins you, so offering it again
-  //     is noise either way. `_discoverKeep` still holds a card just added
-  //     with + in place for the visit (#1567).
+  //     is noise either way.
   // Pure — unit-tested in tests/home-find-more.test.js.
   popularApps(apps) {
-    if (Home._shotDiscoverEmpty()) return [];
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
     const members = (a) => (parseInt(a && a.member_count, 10) || 0);
     return (apps || [])
       .filter((a) => a && !a.featured && a.audience === 'open'
         && Home.isDiscoverable(a)
-        && ((!Home.isJoined(a) && !Home.isYours(a)) || Home._discoverKeep.has(a.slug)))
+        && !Home.isJoined(a) && !Home.isYours(a))
       .sort((x, y) => (members(y) - members(x)) || (users(y) - users(x)))
       .slice(0, Home.POPULAR_LIMIT);
   },
@@ -1107,90 +1097,7 @@ const Home = {
     // from render() on purpose — see publishImproveTarget for why that is the
     // one call that makes it consistent.
     Home.publishImproveTarget();
-    // ?shot=discover-add, once the first real paint has happened.
-    Home._maybeDiscoverAddShot();
   },
-
-  // ===== ?shot=discover-add — the add round trip, as a URL (#1567) =====
-  //
-  // Adding an app from a Discover rail is a TAP, so no URL rendered the
-  // result of one: the before/after screenshots and every declared check saw
-  // the home screen with nothing added, and the fix they exist to protect was
-  // invisible to both. This drives the flow the way a finger would — press
-  // the +, watch "Your apps" take the app WITHOUT a reload, press the ✓,
-  // watch it leave — and stamps how far it got on <body>.
-  //
-  // <body> rather than a node inside the grid: #app-list and
-  // #home-apps-section are React-owned, and an imperative write into either
-  // is a second writer that the next push paints over. `body.is-offline` is
-  // the same precedent, and six declared checks already select through it.
-  //
-  // Ungated and identical in both environments, like every other shot link
-  // here — the "before" side of a capture is shot against production, so an
-  // env-gated link would starve it forever. It writes only what the tap it
-  // imitates writes, and it ends by undoing that write, so a preview it ran
-  // in is left as it was found — except for one row, as it would be for a
-  // finger: a pin joins the app's community (the app_favorites trigger in
-  // schema.sql), and taking the pin off Home is not leaving it.
-  _discoverAddShotRan: false,
-  _quietLeaveOffer: false,
-  async _maybeDiscoverAddShot() {
-    if (Home._discoverAddShotRan) return;
-    try {
-      if (new URLSearchParams(location.search).get('shot') !== 'discover-add') return;
-    } catch (err) { return; }
-    Home._discoverAddShotRan = true;
-
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-    const until = async (pred, budgetMs) => {
-      const started = Date.now();
-      let out = pred();
-      while (!out && Date.now() - started < budgetMs) {
-        await wait(30);
-        out = pred();
-      }
-      return out;
-    };
-
-    // Every leg bails WITHOUT stamping. A half-finished round trip must not
-    // read as a passing one, and the check's selector is the final stamp.
-    // The corner control is a pill now, and the state it acts on is
-    // data-join: "join" for a card the viewer has neither joined nor added.
-    const badge = await until(() => document.querySelector(
-      '#home-discover-section .app-card:not([data-demo]) .card-add-btn[data-join="join"]',
-    ), 8000);
-    if (!badge) return;
-    const slug = badge.dataset.slug;
-    if (!slug) return;
-    badge.click();
-
-    // The tile is in "Your apps" now, painted from the cached flags with no
-    // refetch — which is the whole claim this shot is here to make.
-    const tile = await until(
-      () => document.querySelector(`#app-list .app-card[data-slug="${slug}"]`),
-      8000,
-    );
-    if (!tile) return;
-    document.body.dataset.shotAdd = 'added';
-
-    // The card stayed put in the rail (that is _discoverKeep) with its pill
-    // now saying "Joined", so the same finger can undo it. A click would open
-    // the leave confirm — a person's path — so the undo here is the call the
-    // confirm's own accept makes, quiet, as befits the fixture's finger.
-    const ticked = await until(() => document.querySelector(
-      `#home-discover-section .card-add-btn[data-slug="${slug}"][data-join="joined"]`,
-    ), 8000);
-    if (!ticked) return;
-    Home.setMembership(slug, false, undefined, { confirmed: true });
-
-    const gone = await until(
-      () => !document.querySelector(`#app-list .app-card[data-slug="${slug}"]`),
-      8000,
-    );
-    if (!gone) return;
-    document.body.dataset.shotAdd = 'round-trip';
-  },
-
 
   // One app -> the flat facts its tile renders. Every conditional the old
   // template string evaluated inline is resolved HERE, where the `App.user`
@@ -2078,12 +1985,10 @@ const Home = {
   // cold-load paint, while this consume-on-success rule remains necessary for
   // genuinely empty accounts and for the Browse grid racing the Home grid.
   //
-  // Called by BOTH launcher grids that carry the menu: home's #app-list
-  // and the #apps browse screen's #browse-list. Whichever one is actually
-  // on screen wins — a hidden grid has no offsetParent, so it neither
-  // opens a menu the user can't see nor burns the once-only flag. That is
-  // what makes `/?shot=card-menu#apps` land on the browse grid even
-  // though home rendered first during boot.
+  // Called by the launcher grid that carries the menu, home's #app-list
+  // (Discover's #browse-list was the second until One Home, #6361). A
+  // hidden grid has no offsetParent, so it neither opens a menu the user
+  // can't see nor burns the once-only flag.
   _shotMenuDone: false,
   _shotMenuPending: false,
 
@@ -2278,109 +2183,18 @@ const Home = {
         input.focus();
       });
     }
-  },
-
-  // ===== Discovery-grid card wiring (featured row, browse screen) =====
-  //
-  // Shared by Home.renderFindMore and public/js/browse.js: tiles open
-  // the app on a body tap, toggle "Your apps" membership from the add
-  // badge, and — where the grid rendered one — open the SAME "…" actions
-  // menu the home cards use (Home.openCardMenu, which resolves the app
-  // from Home._apps and adapts to an action sheet on touch / an anchored
-  // popover on desktop via PlatformUI.menu). No drag: these grids are not
-  // the user's own ordering.
-  //
-  // `onChange` (optional) is called after a successful toggle so the
-  // host can re-render its own grid; home just reloads.
-  // Binding is IDEMPOTENT (#1567): a lane re-runs this whenever its tiles
-  // change identity, and a badge flipping to "added" is now such a change
-  // while React keeps the very same card elements. The two WeakSets above
-  // are what make the second sweep a no-op instead of a duplicate listener.
-  _wireDiscoveryCards(listEl, onChange) {
-    if (!listEl) return;
-    listEl.querySelectorAll('.app-card').forEach((card) => {
-      if (wiredCards.has(card)) return;
-      wiredCards.add(card);
-      // #1036: the card can't BE an anchor (it wraps its own Add and "…"
-      // buttons), so cmd/middle-click is intercepted instead. hrefFor
-      // repeats the plain click's guards exactly, so an inert card (demo
-      // tile, an app that isn't running) stays inert under a modifier.
-      // #1562: a Discover tap opens the app's DETAIL PAGE, not the app. This
-      // is a shelf of apps you have not met, and launching one drops a
-      // stranger inside a thing they could not first read anything about.
-      // `noteDetailOrigin('home')` tells that page no browse list is behind
-      // it, so its back control is the house (browse.js `_syncChrome`). Every
-      // guard below is unchanged.
-      const detailHref = (slug) => `#apps/${encodeURIComponent(slug)}`;
-      const hrefFor = (e) => {
-        if (e.target.closest('.card-add-btn') || e.target.closest('.card-menu-btn')) return null;
-        if (card.dataset.demo === 'true') return null;
-        if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return null;
-        return card.dataset.slug ? detailHref(card.dataset.slug) : null;
-      };
-      const activate = (e) => {
-        if (e.target.closest('.card-add-btn') || e.target.closest('.card-menu-btn')) return;
-        if (card.dataset.demo === 'true') return;
-        if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
-        if (!card.dataset.slug) return;
-        window.Browse?.noteDetailOrigin?.('home');
-        location.hash = detailHref(card.dataset.slug);
-      };
-      if (window.NavLink) NavLink.wireModified(card, hrefFor, activate);
-      else card.addEventListener('click', activate);
-      Home._wirePrewarm(card);
-    });
-    // A press on one of the card's own buttons must never arm the lane's drag
-    // (#1763). The kit's recognizer listens for pointerdown on the LANE and
-    // takes the first matching card that CONTAINS the target, so without this
-    // a press on ⊕ is a press on the card — and on desktop it arms after 6px
-    // of movement, which is inside the slop of an ordinary click, so a
-    // slightly shaky click on the badge would lift the card and swallow the
-    // click instead of adding the app. Same guard, and the same reason, as
-    // home-panels.js's on the panel headers' buttons.
-    //
-    // NATIVE, not a React `onPointerDown`: React attaches its listeners at
-    // the tree's root, so a synthetic handler's stopPropagation runs long
-    // after the event has already bubbled past the lane's own listener.
-    const stopDrag = (e) => { e.stopPropagation(); };
-    listEl.querySelectorAll('.card-add-btn').forEach((btn) => {
-      if (wiredButtons.has(btn)) return;
-      wiredButtons.add(btn);
-      btn.addEventListener('pointerdown', stopDrag);
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // The pill is one control with three jobs, stamped by data-join: a
-        // real join (which also pins the card to My apps), the quiet "Joined"
-        // that taps through to the leave confirm, and a plain pin for a
-        // member whose community is not on Home yet. data-added is still
-        // stamped for the existing readers (the shot state and the checks).
-        const slug = btn.dataset.slug;
-        const join = btn.dataset.join;
-        if (!slug || !join) return;
-        if (join === 'join') {
-          // A join repaints the rail (setMembership's optimistic flip ends in
-          // Home.render), and popularApps drops joined apps from Discover —
-          // so the card has to be kept the way an add keeps it, or it
-          // vanishes the moment the join lands.
-          Home._discoverKeep.add(slug);
-          Home.setMembership(slug, true, onChange);
-        } else if (join === 'joined') {
-          Home.setMembership(slug, false, onChange);
-        } else {
-          Home.toggleAdded(slug, true, onChange);
-        }
-      });
-    });
-    listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
-      if (wiredButtons.has(btn)) return;
-      wiredButtons.add(btn);
-      btn.addEventListener('pointerdown', stopDrag);
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Pass the element so the kit popover can toggle closed on a
-        // re-click and manage aria-expanded — same call as the home grid.
-        Home.openCardMenu(btn.dataset.slug, btn);
-      });
+    // / from anywhere, and Ctrl+K (⌘K) while Home shows, put the cursor in
+    // this box (./search-shortcut.ts, #6462). From another screen / opens
+    // Home first, which is what focusSearch does.
+    installHomeSearchShortcut({
+      doc: document,
+      open: (showing) => {
+        if (!showing) { Home.focusSearch(); return; }
+        try {
+          input.focus({ preventScroll: false });
+          input.select?.();
+        } catch (err) { /* nothing to focus */ }
+      },
     });
   },
 
@@ -2402,17 +2216,10 @@ const Home = {
   // frame. `onChange` still runs, because the browse screen's own list is
   // outside Home's paint.
   async toggleAdded(slug, desired, onChange) {
-    // BOTH READERS OF /api/apps, not just this one. `Browse._apps` is the
-    // same payload — Browse._load() assigns to both — but the two DRIFT:
-    // Browse._fetchDetail adds a cold deep link's app to its own list alone,
-    // so a row this list has never heard of can be on screen with an Add
-    // button under it. Looking only in Home._apps made that button a silent
-    // no-op: no flip, no request, no toast, nothing to tell the reader their
-    // press was received. That is "add to your apps does nothing for some
-    // apps", and which apps depended on what had been opened beforehand.
+    // An app this list has not loaded yet is not a silent no-op: see
+    // _favoriteUnknown below.
     const known = (list) => (Array.isArray(list) ? list : []).find((a) => a && a.slug === slug);
-    const app = known(Home._apps)
-      || known(typeof window !== 'undefined' ? window.Browse?._apps : null);
+    const app = known(Home._apps);
     // Staging ?demo=1 tiles have no DB row — a POST would 404. An app NEITHER
     // list holds is not that case: it is a list this tab has not loaded yet,
     // and the server is the authority on whether the slug exists. Ask it, and
@@ -2420,27 +2227,13 @@ const Home = {
     // answered by a toast rather than by silence.
     if (app && app.demo) return;
     if (!app) return Home._favoriteUnknown(slug, desired, onChange);
-    // #5962: a member is asked BEFORE the tile moves, so Cancel leaves Home
-    // exactly as it was. The leave, when chosen, follows the unpin below.
-    let leaveToo = false;
-    if (!desired) {
-      const choice = await Home._askBeforeUnpin(app);
-      if (choice === 'cancel') return;
-      leaveToo = choice === 'leave';
-    }
+    // ONE HOME (#6361): pinning an app is only that. It no longer joins the
+    // app's community, and taking it off Home no longer asks about leaving
+    // (#5962's sheet): the community has its own pin, on Pinned communities,
+    // and its own Leave, on its hub.
     const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden, is_member: app.is_member };
-    // Asked BEFORE the flip, while the answer still describes where the card
-    // is: an app currently in a rail stays in it for the rest of the visit.
-    if (!Home.isYours(app)) {
-      const inLane = Home.featuredApps(Home._apps || []).some((a) => a.slug === slug)
-        || Home.popularApps(Home._apps || []).some((a) => a.slug === slug);
-      if (inLane) Home._discoverKeep.add(slug);
-    }
     app.is_favorited = desired;
     if (app.is_collaborator) app.your_apps_hidden = !desired;
-    // A pin JOINS (the app_favorites trigger in schema.sql), so the cached
-    // flag follows it, and Discover's pill and the Workshop agree at once.
-    if (desired) app.is_member = true;
     // Only an ADD needs the reveal: a removal takes a tile away, and a grid
     // that expanded itself to show an absence would be nonsense.
     if (desired) Home._revealSlug = slug;
@@ -2453,14 +2246,8 @@ const Home = {
         body: JSON.stringify({ favorited: desired }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(errorText(data) || `HTTP ${res.status}`);
       PlatformUI.toast(desired ? message('home:myApps.added') : message('home:myApps.removed'));
-      // #4600: a pin that JOINED (the server says so: `joined`, after it has
-      // counted "Join a community") is a join, and says so as setMembership
-      // does, so Home's Challenges block reads again now rather than on its
-      // next refresh.
-      if (desired && data && data.joined === true) Home._announceMembership(slug, true);
-      if (leaveToo) await Home.setMembership(app.slug, false, undefined, { confirmed: true });
     } catch (err) {
       app.is_favorited = prev.is_favorited;
       app.your_apps_hidden = prev.your_apps_hidden;
@@ -2475,46 +2262,14 @@ const Home = {
     }
   },
 
-  // Taking an app off Home is not leaving it (a pin is a shortcut), but it is
-  // the moment someone might MEAN to, so a member is asked first, in one
-  // sheet: Remove from Home, Remove and leave, or Cancel (#5962). It used to
-  // be asked after the unpin had landed, as "Leave <app> too?", so the tile
-  // was gone whichever button was pressed. A leave goes through setMembership
-  // with its own confirm skipped: this question already was the confirm.
-  //
-  // Resolves 'remove', 'leave' or 'cancel'. Nothing is asked ('remove') of
-  // someone who could not leave: never the creator (the server refuses),
-  // never someone who is not in it, nor during the ?shot=discover-add round
-  // trip, whose unpin is a fixture's, not a person's. With no native kit
-  // there is no sheet, and the unpin goes ahead unasked, as a pin always did.
-  async _askBeforeUnpin(app) {
-    if (!app || !app.is_member || app.demo || Home._quietLeaveOffer) return 'remove';
-    const me = typeof App !== 'undefined' && App.user ? App.user.id : null;
-    if (me != null && app.created_by === me) return 'remove';
-    const ui = typeof PlatformUI !== 'undefined' ? PlatformUI : null;
-    if (!ui || typeof ui.actionSheet !== 'function' || (typeof ui.hasKit === 'function' && !ui.hasKit())) {
-      return 'remove';
-    }
-    const name = app.name || app.slug;
-    const picked = await ui.actionSheet({
-      title: app.view_visibility === 'private'
-        ? message('home:unpin.ask.private', { community: name })
-        : message('home:unpin.ask.public', { community: name }),
-      actions: [
-        { label: message('home:unpin.ask.remove'), choice: 'remove' },
-        { label: message('home:unpin.ask.leave', { community: name }), destructive: true, choice: 'leave' },
-      ],
-    });
-    return picked && (picked.choice === 'remove' || picked.choice === 'leave') ? picked.choice : 'cancel';
-  },
-
   // Join or leave the community `slug` belongs to — Discover's Join pill,
   // its detail page and the join-required prompt all come through here.
   // POST /api/apps/:slug/membership (src/routes/apps.js).
   //
-  // JOINING ALSO PINS, because the button it replaced was "Add to Your
-  // apps" and the server does both (communities.join): the cached flags flip
-  // together so Home's grid and Discover's pill agree in the same paint.
+  // JOINING ALSO PINS THE COMMUNITY to Home (One Home, #6361: the server
+  // does both, communities.join), never the app: the app's pin is its own
+  // act, offered on the join's toast. Leaving unpins the community and
+  // leaves the app's pin where it is.
   //
   // LEAVING ASKS FIRST. It is the one membership change with a cost you
   // might not expect — on a private app it is your access, and everywhere it
@@ -2535,9 +2290,7 @@ const Home = {
   // Resolves true when the membership is now `desired`, false otherwise.
   async setMembership(slug, desired, onChange, opts = {}) {
     const known = (list) => (Array.isArray(list) ? list : []).find((a) => a && a.slug === slug);
-    const app = known(Home._apps)
-      || known(typeof window !== 'undefined' ? window.Browse?._apps : null)
-      || null;
+    const app = known(Home._apps) || null;
     if (app && app.demo) return false;
     const name = (app && app.name) || opts.name || slug;
     if (!desired && !opts.confirmed) {
@@ -2562,11 +2315,12 @@ const Home = {
       is_collaborator: app.is_collaborator,
       member_count: app.member_count,
     } : null;
+    // ONE HOME (#6361): joining pins the COMMUNITY to Home (the server writes
+    // it, ./home-pins-store.ts reads it back on the membership event below);
+    // the app's own pin is untouched either way.
     if (app) {
       app.is_member = desired;
-      app.is_favorited = desired;
-      if (desired) app.your_apps_hidden = false;
-      else app.is_collaborator = false;
+      if (!desired) app.is_collaborator = false;
       app.member_count = Math.max(0, (Number(app.member_count) || 0) + (desired ? 1 : -1));
       if (desired) Home._revealSlug = slug;
       Home.render();
@@ -2583,9 +2337,16 @@ const Home = {
       const retry = typeof window !== 'undefined' ? window.UsernameFirstRun?.publicRetry : null;
       const res = desired && retry ? await retry(write) : await write();
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(errorText(data) || `HTTP ${res.status}`);
       if (app && Number.isFinite(Number(data.member_count))) app.member_count = Number(data.member_count);
-      PlatformUI.toast(desired ? message('home:membership.joined', { community: name }) : message('home:membership.left', { community: name }));
+      if (desired) {
+        const pinnable = app && !Home.isYours(app) && !app.demo;
+        PlatformUI.toast(message('home:membership.joinedPinned', { community: name }), pinnable ? {
+          action: { label: message('home:membership.pinAppToo'), handler: () => { void Home.toggleAdded(slug, true); } },
+        } : undefined);
+      } else {
+        PlatformUI.toast(message('home:membership.left', { community: name }));
+      }
       Home._announceMembership(slug, desired);
       if (!app) {
         await Home.load();
@@ -2630,7 +2391,7 @@ const Home = {
         body: JSON.stringify({ favorited: desired }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(errorText(data) || `HTTP ${res.status}`);
       if (desired) Home._revealSlug = slug;
       PlatformUI.toast(desired ? message('home:myApps.added') : message('home:myApps.removed'));
       if (desired && data && data.joined === true) Home._announceMembership(slug, true);
@@ -3934,29 +3695,18 @@ const Home = {
     const user = App.user || {};
     const isRunning = app.status === 'running';
     const isError = app.status === 'error';
-    // The way to the app's own page (#apps/<slug>) — the same destination a
-    // row in the browse-all-apps list opens, so both entry points land on
-    // one screen rather than the page duplicating the menu. First in the
-    // list because it's navigation, not an action.
-    //
-    // Routed by assigning location.hash so the browser/OS back gesture
-    // works, exactly as Browse._wireRows does. Skipped for the inert
-    // ?demo=1 tiles, whose slugs 404 on GET /api/apps/:slug — and filtered
-    // out of the detail page's own action rows by
-    // Browse.DETAIL_EXCLUDED_KEYS, so the page can never link to itself.
-    //
-    // noteDetailOrigin('home') first: the browse list is never shown on
-    // this path, so the detail page's back button has to return HERE
-    // rather than to a list the user never saw.
+    // The way to the app's community, its hub (One Home, #6361: the hub
+    // is the project's page, so the details page Discover drew went). First
+    // in the list because it is navigation, not an action. A door to the
+    // hub, so it says so first (AppView._landOnHub), as Home's community
+    // tiles do. Skipped for the inert ?demo=1 tiles, whose slugs have no
+    // project behind them.
     if (!app.demo && app.slug) {
       items.push({
         key: 'app-details',
         label: message('home:menu.details.label'),
         title: message('home:menu.details.tip'),
-        run: () => {
-          window.Browse?.noteDetailOrigin?.('home');
-          location.hash = `#apps/${encodeURIComponent(app.slug)}`;
-        },
+        run: () => { Home.openHub(app.slug); },
       });
     }
     // The app's source. This was a row in the hamburger drawer's reference
@@ -4194,11 +3944,11 @@ const Home = {
     // The app's FULL pill set (missing secrets / to vote / in dev /
     // issues / privacy) — the card face carries no chips at all, so
     // this header is the one place they render.
-    const pillsHtml = Home.renderAppPillsHtml(app);
+    const basic = readInterfaceMode() === 'basic';
+    const pillsHtml = Home.renderAppPillsHtml(basic ? { ...app, open_issues: 0, open_prs: 0 } : app);
     return `
       <div class="card-menu-title">${escapeHtml(app.name || app.slug)}</div>
-      <div class="card-menu-slug">${escapeHtml(app.slug)}</div>
-      <div class="card-menu-version">${pillHtml}</div>
+${basic ? '' : `<div class="card-menu-slug">${escapeHtml(app.slug)}</div><div class="card-menu-version">${pillHtml}</div>`}
       ${updatedRel ? `<div class="card-menu-updated">${htmlText('home:menu.updated', { when: updatedRel })}</div>` : ''}
       ${pillsHtml ? `<div class="card-menu-pills">${pillsHtml}</div>` : ''}`;
   },
@@ -4210,7 +3960,8 @@ const Home = {
     Home.closeCardMenu();
     const app = (Home._apps || []).find((a) => a.slug === slug);
     if (!app) return;
-    const items = Home.menuItemsFor(app);
+    const basic = readInterfaceMode() === 'basic';
+    const items = Home.menuItemsFor(app).filter(item => !basic || !['github', 'code', 'notifications', 'check-updates', 'lock'].includes(item.key));
     if (!items.length) return;
     const anchorIsEl = !!(anchor && typeof anchor.getBoundingClientRect === 'function');
     const anchorEl = anchorIsEl && anchor.nodeType === 1 ? anchor : null;
@@ -4218,7 +3969,7 @@ const Home = {
     // the way a phone's home screen menu does. Only there: menuItemsFor also
     // fills the app's own page, search results and demo tiles carry no
     // data-yours, and while edit mode is on there is nothing to start.
-    if (!Home._editing && anchorEl && typeof anchorEl.closest === 'function'
+    if (!basic && !Home._editing && anchorEl && typeof anchorEl.closest === 'function'
         && anchorEl.closest('.app-card[data-yours]:not([data-demo])')) {
       items.push({
         key: 'edit-my-apps',
@@ -4232,7 +3983,7 @@ const Home = {
     // The kit owns clamping/flipping, dismissal, focus and menu navigation;
     // keeping the popover on touch also preserves metadata and disabled rows.
     const headerEl = document.createElement('div');
-    headerEl.className = 'card-menu-header';
+    headerEl.className = basic ? 'card-menu-header interface-mode-basic' : 'card-menu-header interface-mode-advanced';
     headerEl.innerHTML = Home.renderMenuHeaderHtml(app);
     const menu = PlatformUI.popover({
       anchorEl: anchorIsEl ? anchor : undefined,
@@ -4824,7 +4575,7 @@ const Home = {
       const res = await fetch(`/api/apps/${app.slug}/check-updates`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        PlatformUI.toast(data.error || message('home:menu.checkUpdates.failedHttp', { status: res.status }));
+        PlatformUI.toast(errorText(data) || message('home:menu.checkUpdates.failedHttp', { status: res.status }));
       } else {
         Home.reportCheckResult(data);
       }
@@ -4846,7 +4597,7 @@ const Home = {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        PlatformUI.toast(data.error || message('home:menu.lock.failedHttp', { status: res.status }));
+        PlatformUI.toast(errorText(data) || message('home:menu.lock.failedHttp', { status: res.status }));
         return;
       }
       Home.updateAppCardLock(app.slug, nextLocked);
@@ -5393,66 +5144,6 @@ const Home = {
       const first = Home._overlayEl && Home._overlayEl.querySelector('[data-cell="0,0"]');
       if (first) first.classList.add('home-grid-cell--on');
     }
-  },
-
-  // Screenshot-state deep link (?shot=discover-drag, #1763): the sibling of
-  // the one above, for the drag that starts in a Discover rail. It exists
-  // only mid-gesture for the same reason, so no capture and no declared check
-  // could otherwise see it — and this is the state worth seeing, because it
-  // is the whole feature: a Discover card lifted, the launcher's overlay up
-  // underneath it, and the cell it would land in tinted.
-  //
-  // The preview is computed through THE SAME `_incoming` item the real
-  // gesture uses, so this link cannot drift into describing a drop the
-  // recognizer would not make. `_incoming` is cleared again as soon as the
-  // (synchronous) preview has read it: leaving it set would put a phantom
-  // item on every later currentLayoutCached() call.
-  //
-  // Pure UI state — no writes, no env gate — so the production "before" side
-  // of a capture pair works too, and, like ?shot=home-grid, it is deliberately
-  // repeatable rather than once-per-load: a repaint that drops the overlay
-  // should get it back.
-  _maybeShowShotIncoming() {
-    let shot = null;
-    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    if (shot !== 'discover-drag') return;
-    if (Home._dragActive) return; // a real gesture owns the overlay
-    if (typeof document === 'undefined') return;
-    // ACROSS BOTH RAILS, and it takes no element on purpose. Featured leads
-    // with the staging demo rows on ?demo=1 and those are drag-inert by
-    // construction (#746), so a lane-local search finds nothing there and the
-    // state never paints; Popular ranks by active users, which no demo row
-    // has, so that is where the first real card usually is. The other caller
-    // — the grid's post-commit effect, which is what puts this state back
-    // after a repaint took `un-reordering` off #app-list — has no rail to
-    // hand over anyway.
-    // A non-demo card FIRST, because that is what a real lift looks like:
-    // the recognizer ignores demo rows (#746), so a state painted on one
-    // would be showing a drag the gesture would not make.
-    //
-    // But not ONLY a non-demo card. Which apps land in these two lanes is
-    // data, and it moved under this state twice: curation (#1753) put demos
-    // behind "Show more", and a staging clone can fill both rails with rows
-    // that are all demo. A screenshot state that paints or does not paint
-    // depending on which apps happen to exist is a check that fails for
-    // reasons that have nothing to do with the feature it guards — which is
-    // exactly what it did. The fallback is a card, any card: this state is
-    // synthetic, it writes classes and a preview and clears itself, and it
-    // never reaches the recognizer that has a reason to care.
-    const card = document.querySelector('.home-discover-rail .app-card[data-slug]:not([data-demo])')
-      || document.querySelector('.home-discover-rail .app-card[data-slug]');
-    if (!card || !card.dataset || !card.dataset.slug) return;
-    const listEl = document.getElementById('app-list');
-    if (!listEl || listEl.offsetParent === null) return; // not the visible grid
-    const cols = Home.currentCols();
-    Home._incoming = { type: 'app', slug: card.dataset.slug, col: 0, row: HomeLayout.MAX_ROWS };
-    Home._showGridOverlay(listEl, cols, card);
-    listEl.classList.add('un-reordering');
-    // The dashed, contents-hidden origin slot a real lift leaves behind
-    // (native.css .un-reorder-slot), on the card rather than on a tile.
-    card.classList.add('un-reorder-slot');
-    Home._previewDrop(card, { col: 0, row: 0 }, true, cols);
-    Home._incoming = null;
   },
 
   // Screenshot-state deep link (?shot=widget-drop, #2894): the third sibling,

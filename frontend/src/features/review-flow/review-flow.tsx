@@ -1,13 +1,13 @@
 /**
- * EXPERIMENTAL (Settings › Experimental, "New Needs you"; ./settings.ts):
- * the Communities tab's Needs you as one run through the changes waiting
- * on you: look, decide, move on, with nothing else in the way.
+ * The Communities tab's Needs you as one run through the changes waiting on
+ * you: look, decide, move on, with nothing else in the way.
  *
  * ── The run ─────────────────────────────────────────────────────────────
  * Needs you opens straight on the first change waiting on you, across your
  * communities, in the feed's own order (GET /api/workshop/needs-feed). There
- * is no list to pick from. On a phone the page covers the shell's header
- * with a light bar of its own: Back, the change's title on one line, and ⌄.
+ * is no list to pick from. On a phone the page sits in the tab, below the
+ * shell's header and above its tab bar, with a light bar of its own: Back,
+ * the change's title on one line, and ⌄.
  * Back always leaves the run, for Communities or the project's hub. Next
  * PUSHES the next change in from the side; it goes only to a change you have
  * not voted on or skipped, and carries how many are left after this one (the
@@ -38,32 +38,34 @@
  * over it. A change with one screen opens it by itself; a change with
  * nothing to compare shows its drawn picture, as before.
  *
- * From 768px the same page is a panel (app.css): under the app's header,
- * rounded, as tall as what it holds, with the vote sheet as its foot and
- * the pane behind it dimmed. A click on the dim is Back. A project's own
- * Needs you is the same run, under that project's header, which already
- * names the community and the place.
+ * From 768px the same page is a panel (app.css): in the pane under the app's
+ * header, rounded, as tall as what it holds, with the vote sheet as its
+ * foot and nothing behind it dimmed. A project's own Needs you is the same
+ * run, under that project's header, which already names the community and
+ * the place.
  *
  * ── Island rules ────────────────────────────────────────────────────────
  * Rendered only while the Needs you pane shows, from data the controller
- * loads in an effect; the page is a portal on <body>.
+ * loads in an effect; the page is drawn in place, inside the tab.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
+import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { changeHref } from '../../lib/change-href';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { callAppView } from '../dev-board/card/fold';
 import type { NeedsFeedItem } from '../workshop/needs-reel';
+import { filterByVoteType, voteTallies, VoteTypeChips, type VoteFilter, type VoteType } from '../workshop/vote-filter';
 import { CompareSlider } from './compare';
 import { Illustration } from './illustrations';
 import { readInks, useInks } from './ink';
 import {
-  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pictoMarks, screenLine, toReviewItems,
-  type AreaKind, type BenefitKind, type DecisionKind, type GlyphBar, type Ink, type Placement, type ReviewItem, type SheetPlate,
+  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pageItems, pictoMarks, screenLine, toReviewItems,
+  type AreaKind, type BenefitKind, type DecisionKind, type GlyphBar, type Ink, type PageKind, type Placement, type ReviewItem, type SheetPlate,
 } from './model';
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
 import { dirSign } from '../../lib/i18n/direction';
@@ -100,6 +102,24 @@ export function heroHeight(inner: number, pageH: number, strip: boolean): number
   const room = pageH - PAGE_CHROME - (strip ? STRIP_H : 0);
   return Math.round(Math.max(inner * 0.5, Math.min(inner * 1.5, room)));
 }
+/** From 768px, what the panel keeps clear under its foot (app.css `--rf-room`). */
+const FOOT_CLEAR = 16;
+/** The least the panel is clamped to: past it the window scrolls, never clips. */
+const ROOM_FLOOR = 360;
+
+/**
+ * #6356: the panel's room from 768px. app.css's `--rf-room` assumes the
+ * panel starts right under the platform header; on a project's page it starts
+ * under the project's own header and tabs too, and a room that tall pushed
+ * the vote off the bottom of the window. So the room is also what the window
+ * leaves below the panel's top, less 16px clear under it, never under
+ * ROOM_FLOOR. A phone's page (no max height, `cssMax` NaN) is left alone.
+ */
+export function pageRoom(cssMax: number, top: number, viewH: number, wide: boolean): number {
+  if (!wide || !Number.isFinite(cssMax) || cssMax <= 0) return cssMax;
+  const fit = Math.max(ROOM_FLOOR, Math.round(viewH - top - FOOT_CLEAR));
+  return Math.min(cssMax, fit);
+}
 /** The change page is never wider than this (app.css `.rf-page`). */
 const COLUMN = 520;
 
@@ -116,6 +136,13 @@ const cam = (p: Placement) => `translate(${p.tx}px, ${p.ty}px) scale(${p.scale})
 const clipOf = (p: SheetPlate, w: number, h: number) =>
   `inset(${p.y}px ${w - p.x - p.w}px ${h - p.y - p.h}px ${p.x}px round ${p.r}px)`;
 const OPEN_CLIP = 'inset(0px 0px 0px 0px round 32px)';
+
+/**
+ * #6199: a review item's kind, for the vote-type chip. Advisory when the
+ * feed marks it so; a plain change, a group decision, a ballot and the bot's
+ * question all decide.
+ */
+const reviewVoteType = (it: ReviewItem): VoteType => (it.advisory || it.uncounted ? 'advisory' : 'deciding');
 
 /* ── Drawn pictures ──────────────────────────────────────────────────── */
 
@@ -146,6 +173,12 @@ const DECISION_LABEL: Record<DecisionKind, string> = {
   rename: 'communities:review.decision.rename',
   secret_change: 'communities:review.decision.secret',
   decision: 'communities:review.decision.other',
+};
+/** What a waiting item on its own page is, under its title. */
+const PAGE_LABEL: Record<PageKind, string> = {
+  governance: 'communities:reel.pages.governance',
+  ballot: 'communities:reel.pages.ballot',
+  question: 'communities:reel.pages.question',
 };
 
 /**
@@ -488,27 +521,32 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore }
 
 /* ── The run ──────────────────────────────────────────────────────────── */
 
-export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered, onRetracted, header = 'communities' }: {
+export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered, onRetracted, onSettled, header = 'communities' }: {
   items: NeedsFeedItem[] | null;
   error: boolean;
   capped: boolean;
   onDone: () => void;
-  /** The end's way on; "Back to your communities" when not given. */
+  /** The end's way on; "Back to Home" when not given. */
   doneLabel?: string;
   /**
-   * Whose header the run sits under: the Communities screen's, which the run
-   * names (../header/review-run-store.js), or a project's, which already
-   * names the community and the place.
+   * Whose header the run sits under: Needs you's (#needs, the page left of
+   * the Communities screen, One Home #6361), whose way back is Home, or a
+   * project's, which already names the community and the place.
    */
   header?: 'communities' | 'project';
   onAnswered?: (id: number, epoch: number | null) => void;
   onRetracted?: (id: number) => void;
+  /**
+   * #6101: a vote refused because the change is not up for a vote any more
+   * (it merged while this run was open). The controller drops it from every
+   * copy of the feed and reads again.
+   */
+  onSettled?: (id: number) => void;
 }) {
   const t = useMessages('communities');
   const anchorRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  const dimRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const foldedBar = useRef(0);
@@ -519,10 +557,12 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // The run is fixed once it starts: a vote takes its change out of the
   // controller's feed, and the run must not move under you.
   const [list, setList] = useState<ReviewItem[] | null>(null);
+  // #6199: which kind of vote the run shows. Starts on All every time the
+  // run opens; the choice is not remembered.
+  const [filter, setFilter] = useState<VoteFilter>('all');
   const [index, setIndex] = useState(0);
   const [from, setFrom] = useState<{ index: number; view: View } | null>(null);
   const [done, setDone] = useState(false);
-  const [shown, setShown] = useState(true);
   const [votes, setVotes] = useState<Record<string, Vote>>({});
   const [skipped, setSkipped] = useState<Record<string, true>>({});
   const [sheet, setSheet] = useState<SheetState>('ask');
@@ -539,27 +579,45 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
 
   const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)) : null), [items]);
+  // #6344: the items the run cannot draw (a group decision, competing
+  // changes, the bot's question). Each is decided on its own page, so when
+  // nothing else waits they are listed with a way there.
+  const onPage = useMemo(() => (items ? pageItems(items, t) : []), [items, t]);
   useEffect(() => {
     if (!shaped || list) return;
     setList(shaped);
     setIndex(Math.max(0, shaped.findIndex((it) => it.kind !== 'governance')));
   }, [shaped, list]);
 
-  const run = list || [];
+  const run = list ? filterByVoteType(list, filter, reviewVoteType) : [];
+  // The chips count the whole run, whatever kind is picked: they say how
+  // much of each kind the feed holds.
+  const tallies = useMemo(() => voteTallies(list || [], reviewVoteType), [list]);
   const passed = useMemo(() => ({ ...skipped, ...votes }), [skipped, votes]);
   const item = run[index] && run[index].kind !== 'governance' ? run[index] : null;
   const leaving = from ? run[from.index] : null;
   const next = item ? nextIndex(run, index, passed) : -1;
-  const open = !!item && !done && shown;
+  const open = !!item && !done;
 
   // The page's size once it is up; again if the window changes.
   useLayoutEffect(() => {
     const page = pageRef.current;
     if (!open || !page) return undefined;
     const measure = () => {
+      // A hidden pane (the Communities screen keeps it mounted) has no top to
+      // measure from: keep the last size, and measure again once it shows.
+      if (!page.getClientRects().length) return;
+      // From 768px the panel is as tall as what it holds, up to its room:
+      // app.css's, read with this page's own clamp taken off, then clamped to
+      // what the window leaves below the panel's top (pageRoom). The clamp is
+      // set as the page's `--rf-room`, so the page's max height, the vote
+      // sheet's (a No's reason) and the picture all keep to the one budget.
+      page.style.removeProperty('--rf-room');
       const pr = page.getBoundingClientRect();
-      // From 768px the panel is as tall as what it holds, up to its room.
-      const max = parseFloat(getComputedStyle(page).maxHeight);
+      const css = parseFloat(getComputedStyle(page).maxHeight);
+      const wide = typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 768px)').matches;
+      const max = pageRoom(css, pr.top, window.innerHeight, wide);
+      if (max !== css && Number.isFinite(max)) page.style.setProperty('--rf-room', `${max}px`);
       // Less the bar over it, which on a phone also holds the status bar's
       // inset, and the home indicator's inset the vote bar keeps clear of.
       const safe = safeRef.current ? safeRef.current.offsetHeight : 0;
@@ -570,16 +628,59 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       setSize({ w: Math.min(COLUMN, pr.width), h });
     };
     measure();
+    // Again once what is above it has settled (a project's header and tabs
+    // can land a frame later and move the panel's top), and on every resize.
+    const frame = window.requestAnimationFrame(measure);
     window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
+    // And when a hidden pane comes back into view.
+    const seen = typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) measure(); })
+      : null;
+    if (seen) seen.observe(page);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', measure);
+      if (seen) seen.disconnect();
+    };
   }, [open]);
 
-  // The run comes up over the pane: the page fades in.
+  // The run comes up in the pane: the page fades in.
   useLayoutEffect(() => {
     if (!open || !pageRef.current || reducedMotion()) return;
     pageRef.current.animate([{ opacity: 0 }, { opacity: 1 }], { duration: OPEN_MS, easing: EASE });
-    dimRef.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: OPEN_MS, easing: EASE });
   }, [open]);
+
+  /* ── Swipe down: the next change, without a vote ── */
+  // A downward drag on the page, never on the picture or a control, moves on
+  // as Skip does before a vote and as Next does after one. Touch and pen
+  // only: with a mouse people use the buttons. Nothing is preventDefaulted,
+  // so native scrolling still works.
+  const swipe = useRef<{ id: number; x: number; y: number; x0: number; y0: number } | null>(null);
+  const swipeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+    const stage = stageRef.current;
+    if (!item || !stage || stage.scrollTop > 0 || sheetOpen(sheet) || desc || busy.current) return;
+    const el = e.target as Element | null;
+    if (el?.closest('[data-rf-picture], .rf-sheet, .rf-desc-wrap[data-open], button, a, input, textarea')) return;
+    swipe.current = { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY };
+  };
+  const swipeMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const s = swipe.current;
+    if (!s || s.id !== e.pointerId) return;
+    s.x = e.clientX;
+    s.y = e.clientY;
+  };
+  const swipeEnd = (e: ReactPointerEvent<HTMLDivElement>, cancelled: boolean) => {
+    const s = swipe.current;
+    if (!s || s.id !== e.pointerId) return;
+    swipe.current = null;
+    if (cancelled || !item) return;
+    const dx = e.clientX - s.x0;
+    const dy = e.clientY - s.y0;
+    if (dy >= 72 && dy > 2 * Math.abs(dx)) {
+      if (votes[item.key]) goNext(); else skip();
+    }
+  };
 
   /* ── Push: this change → the next ── */
   const goTo = (n: number) => {
@@ -620,7 +721,13 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const key = item.key;
     setVotes((cur) => ({ ...cur, [key]: v }));
     setSheet('voted');
-    const opts = v === 'no' ? { reason: reason || '' } : { reason: null };
+    // #6101: castVote calls this when the refusal means the change is no
+    // longer up for a vote, so the run drops it instead of asking again.
+    let settled = false;
+    const opts = {
+      ...(v === 'no' ? { reason: reason || '' } : { reason: null }),
+      onSettled: () => { settled = true; },
+    };
     let ok = false;
     try {
       ok = (await callAppView('castVote', item.id, v, item.epoch, opts)) === true;
@@ -628,6 +735,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     if (!ok) {
       setVotes((cur) => { const copy = { ...cur }; delete copy[key]; return copy; });
       setSheet('ask');
+      if (settled) onSettled?.(item.id);
       return false;
     }
     onAnswered?.(item.id, item.epoch);
@@ -665,25 +773,24 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     setIndex(first);
     setDone(false);
   };
+  // #6199: a new kind of vote. The run restarts at the first change of that
+  // kind with no vote or skip yet, else at its first change, so a press lands
+  // where there is still something to decide.
+  const pickFilter = (key: VoteFilter) => {
+    if (key === filter) return;
+    stop();
+    setFilter(key);
+    setDone(false);
+    const nextRun = list ? filterByVoteType(list, key, reviewVoteType) : [];
+    const first = nextRun.findIndex((it) => it.kind !== 'governance' && !passed[it.key]);
+    setIndex(first >= 0 ? first : Math.max(0, nextRun.findIndex((it) => it.kind !== 'governance')));
+  };
   // A help sheet over the page, from the card: the card folds first.
   const help = (to: SheetState) => { setDesc(false); setSheet(to); };
 
-  // Going anywhere else (a link on the page, a tab, Back) takes the page
-  // down at once: it is fixed over the shell, and the screen under it may
-  // only hide, not unmount. It comes back when the pane shows again.
-  useEffect(() => {
-    const route = () => {
-      stop();
-      setShown(false);
-      requestAnimationFrame(() => setShown(!!anchorRef.current && anchorRef.current.getClientRects().length > 0));
-    };
-    window.addEventListener('hashchange', route);
-    window.addEventListener('popstate', route);
-    return () => {
-      window.removeEventListener('hashchange', route);
-      window.removeEventListener('popstate', route);
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // The page is drawn in the tab now, so going anywhere else (a tab, another
+  // place, Back) unmounts the pane and the run with it. Nothing to take down
+  // from here.
 
   // Escape closes the help first, then leaves the run.
   useEffect(() => {
@@ -724,7 +831,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // opened from. The shell's header steps aside for it on a phone, as it did
   // for the run's old head.
   const toProject = header === 'project' && item && item.app ? item.app.name : '';
-  const backName = t('communities:review.back.label', { place: toProject || t('communities:switcher.all.name') });
+  const backName = t('communities:review.back.label', { place: toProject || t('core:tabs.home') });
 
   /* ── Drawing ── */
   if (error) {
@@ -740,6 +847,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     // a small stack, with one way to look at them again.
     return (
       <div ref={anchorRef} className="rf-run rf-feed-done" data-review-flow="">
+        {filter !== 'all' ? <VoteTypeChips tallies={tallies} pressed={filter} onPress={pickFilter} /> : null}
         {waiting.length ? (
           <div className="rf-end rf-end-alone" data-rf-end="" data-rf-end-waiting={waiting.length}>
             <span className="rf-end-stack" aria-hidden="true">
@@ -766,14 +874,51 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     );
   }
   if (!item) {
+    // #6344: the feed is not empty, but everything waiting on you (a group
+    // decision, competing changes, a question) is decided on its own page.
+    // List those rather than say nothing is waiting. A feed that also holds
+    // a change is about to open on it once the run is fixed, so until then it
+    // keeps the frame it drew before.
+    const pagesOnly = list !== null || !shaped?.some((it) => it.kind !== 'governance');
+    if (onPage.length && pagesOnly) {
+      return (
+        <div ref={anchorRef} className="rf-run" data-review-flow="" data-needs-pages={onPage.length}>
+          <p className="rf-feed-note px-4 pt-3 pb-2 text-sm text-zinc-500 dark:text-zinc-400">{t('communities:reel.pages.note')}</p>
+          <GroupedList tone="plane" aria-label={t('communities:reel.pages.label')} data-needs-pages-list="">
+            {onPage.map((p) => (
+              <ListRow
+                key={p.key}
+                as="a"
+                href={p.href}
+                data-needs-page-row={p.key}
+                leading={(
+                  <span className="app-icon-tile workshop-reel-tile" data-icon={appIconKind(p.app as never)} aria-hidden="true">
+                    <AppIconContent app={p.app as never} />
+                  </span>
+                )}
+                title={p.title}
+                subtitle={t(PAGE_LABEL[p.kind], { project: p.app?.name || p.app?.slug || '' })}
+              />
+            ))}
+          </GroupedList>
+        </div>
+      );
+    }
     return <p ref={anchorRef as never} className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{t('communities:reel.empty')}</p>;
   }
 
-  const page = open ? createPortal(
+  const page = open ? (
     <div className="rf-page-wrap" data-rf-page="">
-      {/* From 768px, the pane behind the panel, dimmed; a click on it is Back. */}
-      <div ref={dimRef} className="rf-page-dim" onClick={onDone} aria-hidden="true" />
-      <div ref={pageRef} className="rf-page" role="dialog" aria-modal="false" aria-label={item.title}>
+      <div
+        ref={pageRef}
+        className="rf-page"
+        role="region"
+        aria-label={item.title}
+        onPointerDown={swipeStart}
+        onPointerMove={swipeMove}
+        onPointerUp={(e) => swipeEnd(e, false)}
+        onPointerCancel={(e) => swipeEnd(e, true)}
+      >
         <div ref={safeRef} className="rf-safe-probe" aria-hidden="true" />
         <div ref={barRef} className="rf-bar" data-open={desc ? '' : undefined}>
           <button type="button" className="rf-back" onClick={onDone} aria-label={backName} data-rf-back="">
@@ -793,6 +938,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           >
             <ChevronDownIcon aria-hidden="true" width={18} height={18} strokeWidth="2.4" />
           </button>
+          <VoteTypeChips tallies={tallies} pressed={filter} onPress={pickFilter} />
         </div>
         <div className="rf-desc-wrap" data-open={desc ? '' : undefined} style={{ top: barTop }} aria-hidden={!desc} inert={!desc || undefined}>
           <div className="rf-desc-dim" onClick={() => setDesc(false)} />
@@ -844,13 +990,12 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           onSkip={skip}
         />
       </div>
-    </div>,
-    document.body,
+    </div>
   ) : null;
 
   return (
     <>
-      <div ref={anchorRef} className="rf-run" data-review-flow="" />
+      <div ref={anchorRef} className="rf-run" data-review-flow="" hidden={open} />
       {page}
     </>
   );

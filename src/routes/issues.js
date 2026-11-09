@@ -26,6 +26,7 @@ const repoRef = require('../services/repo-ref');
 // reports as `busy`, so an issue's work-state chip and the session card it
 // points at can never disagree about whether an agent is actually running.
 const { isSessionBusy } = require('../services/active-workers');
+const { planRecordSql } = require('../services/request-specs');
 const { workedOnSql } = require('../workflow/session-work.ts');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -41,6 +42,61 @@ const { isGovernanceKind } = require('../services/governance-kinds');
 // browser only ever intersects it with the cards it already holds.
 const BOARD_SEARCH_MIN_CHARS = 2;
 const BOARD_SEARCH_MAX_HITS = 200;
+
+// #6440: where a governance vote belongs, when it is about one request or
+// thread rather than the project. `reopen_issue` is about the request it
+// would bring back; `thread_move` is about the thread it would merge or
+// split. Both are drawn on that page, and `dev/governance/<id>` forwards
+// there. Every other kind (and a row whose target cannot be resolved) is
+// `null`: the vote has a page of its own.
+async function governanceHome(pool, proposal) {
+  const payload = (proposal && proposal.payload) || {};
+  if (proposal.kind === 'reopen_issue') {
+    const n = Number(payload.issueNumber);
+    return Number.isInteger(n) && n > 0 ? { kind: 'request', number: n } : null;
+  }
+  if (proposal.kind === 'thread_move') {
+    // The thread the move is about, through any merges, and its number: a
+    // request's and a change's numbers are one sequence (app-numbers), so
+    // the client opens the page that number names.
+    let thread = null;
+    if (payload.moveId != null && pool) {
+      try {
+        const { rows } = await pool.query('SELECT thread_id FROM thread_moves WHERE id = $1', [Number(payload.moveId)]);
+        const threadId = rows[0] && rows[0].thread_id;
+        if (threadId != null) thread = await require('../services/threads').threadById(pool, threadId);
+      } catch (err) {
+        log.warn('issues', 'Could not resolve a thread move\'s thread', { message: err.message });
+      }
+    }
+    const n = Number(thread && thread.number != null ? thread.number : payload.threadNumber);
+    return Number.isInteger(n) && n > 0 ? { kind: 'request', number: n } : null;
+  }
+  return null;
+}
+
+// #6440: how a governance vote stands or ended, in one word the decision
+// page reads: `open`, `applying` (passed, being carried out), `applied`,
+// `refused`, `withdrawn` or `superseded`. The same facts `_govApplyState`
+// reads on the client, so the page never says "waiting for votes" once the
+// vote has ended.
+function governanceOutcome(proposal) {
+  if (!proposal) return 'open';
+  const p = proposal.payload || {};
+  if (p.appliedAt) {
+    return String(p.appliedBy || '').startsWith('refused:') ? 'refused' : 'applied';
+  }
+  if (p.withdrawnAt || proposal.status === 'withdrawn') return 'withdrawn';
+  if (p.supersededAt) return 'superseded';
+  if (proposal.status && proposal.status !== 'open') return 'applied';
+  const yes = Number(proposal.qualified_yes_count != null ? proposal.qualified_yes_count : proposal.up_count) || 0;
+  const need = Number(proposal.approvals_required != null ? proposal.approvals_required : proposal.votes_required) || 0;
+  const ends = proposal.merge_window_ends_at ? Date.parse(proposal.merge_window_ends_at) : NaN;
+  if (need > 0 && yes >= need && !proposal.contested && Number.isFinite(ends) && ends <= Date.now()) {
+    return 'applying';
+  }
+  return 'open';
+}
 
 // An issue id from the path, or null when it is not a positive integer that
 // fits `issues.id` (SERIAL). Answered as 404 rather than handed to Postgres
@@ -375,6 +431,48 @@ function stagingMockIssues(repoUrl) {
       + 'building. Nobody has claimed it yet. The page says the bot is on it, '
       + 'and still offers Claim for anyone who wants to work on it alongside '
       + 'the bot, but not Start work.', 2),
+    // 3 Nov 2026 (#6213): the request Homeroom bot handed back to a person.
+    // Its discussion carries the note with the suggested replies the person
+    // it names taps (the seeded thread, seedStagingBotWaitingRows in
+    // src/db/migrate.js). A staging copy has no GitHub to read the request
+    // from, so its page's own fetch finds it here, and only the after copy
+    // has it. Nothing else reads this row; the note is the stored message.
+    mk(9103, 'Staging demo: a request handed back to a person',
+      'Staging demo: obviously fake. The bot handed this back because a '
+      + 'person must decide which of the two columns to keep.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 26),
+    // 4 Nov 2026 (#6264): the request whose discussion shows the bot
+    // keeping its word, "I'll tell you here when it's in." then the line it
+    // posted when the update was in (seedStagingBotFollowUp in
+    // src/db/migrate.js stores those messages). A staging copy has no
+    // GitHub to read the request from, so its page's own fetch finds it
+    // here, and only the after copy has it.
+    mk(9107, 'Staging demo: a request where the bot kept its word',
+      'Staging demo: obviously fake. An update to this request was asked '
+      + 'for, and the bot said it would tell the person when it was in.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 46),
+    // #6399: the request whose hand-back reason a later release lifted. Its
+    // track (seedStagingBotOutdatedReason in src/db/migrate.js) is
+    // waiting_for_you/decide with a reason given before 6 Nov 2026 13:05 UTC,
+    // so its status card says the reason may be out of date and offers
+    // "Ask Homeroom bot to read this again". A staging copy has no GitHub to
+    // read the request from, so its page's own fetch finds it here.
+    mk(9112, 'Staging demo: a request handed back over a plan the bot could not read',
+      'Staging demo: obviously fake. The bot handed this back because it '
+      + 'could not read a plan a person posted, and Homeroom can read one now.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 26),
+    // #6211: the pair whose discussions show an overlap note. 9115 is the
+    // smaller request the bot read as part of 9114: its thread carries the
+    // note and the three choices (seedStagingBotOverlap in src/db/migrate.js
+    // stores them), and 9114's thread carries the line saying what was
+    // chosen. A staging copy has no GitHub to read either request from, so
+    // each page's own fetch finds it here.
+    mk(9114, 'Staging demo: Main Chat keeps only what you said there',
+      'Staging demo: obviously fake. A request a smaller one was found to '
+      + 'be part of.\n\n**Source:** Homeroom user (usernode-capture)', 30),
+    mk(9115, 'Staging demo: a plan row opens Main Chat',
+      'Staging demo: obviously fake. One piece of the larger request.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 30),
   ];
 }
 
@@ -814,6 +912,70 @@ async function withoutBotThreadCopies(pool, appId, issueNumber, comments) {
   return list.filter((c) => !(c && c.id != null && copied.has(String(c.id))));
 }
 
+// #6497: one read of a request's GitHub comments, for a page that draws them
+// in its own discussion (src/routes/chat.js) as well as for the comments
+// route below. `max` is how many of the newest are kept (the route's own
+// default, clipIssueComments' 30, when it is null); a request's first page
+// asks for every comment the reader fetched (github.ISSUE_COMMENTS_MAX).
+// Never throws: a failure is an empty thread with a note, so the page still
+// opens with what was said here.
+async function readRequestComments(pool, app, number, { demo = false, max = null } = {}) {
+  const clip = (list, wasTruncated = false) => (max == null
+    ? github.clipIssueComments(list, { wasTruncated })
+    : github.clipIssueComments(list, { wasTruncated, max }));
+  try {
+    const parsed = parseOwnerRepo(app && app.repo_url);
+    const n = Number(number);
+
+    if (!requestsOn() || !parsed || !Number.isFinite(n)) {
+      if (!IS_STAGING) return { comments: [], truncated: false, note: 'unavailable' };
+      const mocks = stagingMockIssueComments(n);
+      const clipped = clip(mocks);
+      return { comments: clipped.comments, truncated: clipped.truncated };
+    }
+
+    // Staging demo mode (?demo=1) on one of the MOCK rows: the page is on
+    // fixtures by choice — the list route appends these rows for it — so
+    // the thread is the fixture too, served without the live round trip.
+    // No real issue has these numbers, so the live fetch can only come back
+    // empty and fall through to the same mocks; what it costs is time. From
+    // a preview container whose outbound fetch hangs, that is the whole
+    // ISSUES_FETCH_TIMEOUT_MS, and the check runner polls a presence
+    // assertion for five seconds after the page settles
+    // (capture/capture.js ASSERT_MAX_MS) — exactly how the declared
+    // issue-page check found no comment bubbles on staging while passing
+    // locally, where GitHub is off and the mocks are immediate.
+    if (IS_STAGING && demo && isStagingMockIssueNumber(n)) {
+      const clipped = clip(stagingMockIssueComments(n));
+      return { comments: clipped.comments, truncated: clipped.truncated };
+    }
+
+    const raw = await github.fetchIssueComments(parsed.owner, parsed.repo, n);
+    // #3693: the bot's posts the issue's thread already shows are left out
+    // before the clip, so they never take one of its places.
+    const shown = await withoutBotThreadCopies(pool, app.id, n, raw.comments);
+    const clipped = clip(shown, raw.truncated);
+
+    // Staging-only fallback: an empty (or degraded) live thread would render
+    // nothing in the preview, so mock comments stand in. Strictly a no-op in
+    // production. Empty as GitHub sent it: a thread emptied only by leaving
+    // out the bot's thread copies is what a preview should show.
+    if (IS_STAGING && (raw.comments || []).length === 0) {
+      const mocks = clip(stagingMockIssueComments(n));
+      return { comments: mocks.comments, truncated: mocks.truncated };
+    }
+
+    return {
+      comments: clipped.comments,
+      truncated: clipped.truncated,
+      ...(raw.note ? { note: raw.note } : {}),
+    };
+  } catch (err) {
+    log.error('issues', 'Failed to fetch GitHub issue comments', { message: err.message });
+    return { comments: [], truncated: false, note: 'unavailable' };
+  }
+}
+
 // Pick the "In progress" chip's link destination from an issue's live
 // linked sessions, per viewer. Priority: a promoted/merging session (the
 // proposal — group-visible to everyone) > the viewer's own session (their
@@ -1202,6 +1364,13 @@ function issueRoutes(config) {
       }
 
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+      // #6440: where this vote belongs. A vote about one request or thread is
+      // drawn on that page, not on a page of its own: the client forwards
+      // `dev/governance/<id>` there. Every other kind stays here (`null`).
+      proposal.home = await governanceHome(pool, proposal);
+      // #6440: how it ended, in one word the page's Votes card reads, so it
+      // never says "waiting for votes" after the vote ended.
+      proposal.outcome = governanceOutcome(proposal);
       res.json({ proposal });
     } catch (err) {
       log.error('issues', 'Failed to get governance proposal by id', { message: err.message });
@@ -1279,7 +1448,9 @@ function issueRoutes(config) {
           pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`,
         );
         if (!app) return res.status(404).json({ error: 'App not found' });
-        const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, { app, user: req.user, issueNumber: n });
+        const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, {
+          app, user: req.user, issueNumber: n, readAgain: req.body?.readAgain === true,
+        });
         if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
         return res.json(out);
       } catch (err) {
@@ -1312,6 +1483,36 @@ function issueRoutes(config) {
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // #6420: a change's `linked_issues` is a claim, not a merge. The request's
+  // requester can answer "This doesn't close it": the claim is marked (the
+  // change's vote card reads the same row) and one line is posted in the
+  // change's discussion so voters see it. The request stays linked: only its
+  // builder can remove it, and merging still closes it.
+  //
+  //   POST /api/apps/:slug/issues/:number/changes/:sessionId/not-closing
+  router.post('/api/apps/:slug/issues/:number/changes/:sessionId/not-closing', issueKindLimiter, sameOriginBrowserOnly,
+    communities.requireAppMembership(pool), async (req, res) => {
+      try {
+        const n = Number(req.params.number);
+        const sessionId = Number(req.params.sessionId);
+        if (!Number.isSafeInteger(n) || n <= 0 || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
+          return res.status(400).json({ error: 'Invalid request or change' });
+        }
+        const app = await appAccess.getAppForUser(
+          pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS,
+        );
+        if (!app) return res.status(404).json({ error: 'App not found' });
+        const out = await require('../services/change-claims').dispute(pool, {
+          appId: app.id, requestNumber: n, sessionId, userId: req.user.id, username: req.user.username,
+        });
+        if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
+        return res.json({ ok: true, disputed: true });
+      } catch (err) {
+        log.error('issues', 'Answering a change\'s claim failed', { message: err.message, slug: req.params.slug });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    });
 
   router.post('/api/apps/:slug/issues', issueKindLimiter, communities.requireAppMembership(pool), async (req, res) => {
     let { title, description, kind = 'general', payload = {} } = req.body || {};
@@ -2205,6 +2406,9 @@ function issueRoutes(config) {
       // session must not flip the label) and 'archived' rows are excluded
       // so the button reverts to "Create proposal" after the viewer
       // abandons their session. Independent of the headless lookup above.
+      // A person's posted plan (request-specs.js) is not work: it has no
+      // branch, so it never counts as the viewer's own session here — the
+      // same rule as issue-proposal-ref.js (1 Nov 2026, #6385).
       const { rows: prSessionRows } = await pool.query(
         `SELECT DISTINCT ON (created_from_issue_number)
                 created_from_issue_number AS n, id
@@ -2212,6 +2416,7 @@ function issueRoutes(config) {
           WHERE app_id = $1 AND user_id = $2
             AND created_from_issue_number IS NOT NULL
             AND status <> 'archived'
+            AND NOT ${planRecordSql('')}
           ORDER BY created_from_issue_number, created_at DESC`,
         [app.id, req.user.id]
       );
@@ -2226,7 +2431,10 @@ function issueRoutes(config) {
       // in 'merged', so those exclude themselves). Headless runs are
       // deliberately NOT part of this field — they already ship as
       // issue.headless above, and the FE ORs the two (keeps the 8s
-      // headless poller's field-scoped merge correct).
+      // headless poller's field-scoped merge correct). A person's posted
+      // plan (request-specs.js) is not work: a planning record with no
+      // branch never counts, the same rule as issue-proposal-ref.js
+      // (1 Nov 2026, #6385).
       const { rows: inProgressRows } = await pool.query(
         `SELECT UNNEST(cs.linked_issues) AS n,
                 cs.id, cs.user_id, cs.status, cs.shared_at,
@@ -2236,6 +2444,7 @@ function issueRoutes(config) {
           WHERE cs.app_id = $1 AND cs.is_headless = FALSE
             AND cardinality(cs.linked_issues) > 0
             AND u.is_synthetic IS NOT TRUE
+            AND NOT ${planRecordSql('cs')}
             AND (cs.status IN ('active','promoted','merging')
                  OR (cs.status = 'paused'
                      AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,
@@ -2619,26 +2828,6 @@ function issueRoutes(config) {
       const used = await countWeeklyBountiesUsed(pool, req.user.id, weekStartUtc());
       const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
-      // #4772: what Homeroom bot waits on this viewer for here (its plans
-      // waiting for their Build it and its open questions to them), for the
-      // Workshop's Waiting on you. A back and forth with it is not listed
-      // (#5229). Best-effort: services/workshop-waiting.js never throws. The
-      // staging demo shows one of each on the mock requests.
-      const workshopWaiting = require('../services/workshop-waiting');
-      const waitingOnYou = IS_STAGING && req.query.demo === '1'
-        ? workshopWaiting.demoWaiting()
-        : await workshopWaiting.waitingOnViewer(pool, { appId: app.id, userId: req.user.id });
-
-      // #5385: what Homeroom bot has in hand for this viewer on THIS
-      // project, and where it needs them, as the Activity drawer's tracks
-      // (services/homeroom-bot-tray.js workFor, already keyed to the signed-
-      // in person), so the Workshop's What's happening draws the work as it
-      // happens and cannot disagree with the drawer. The staging demo shows
-      // the two mock requests' rows.
-      const homeroomBotWork = IS_STAGING && req.query.demo === '1'
-        ? workshopWaiting.demoBotWork(app)
-        : await workshopWaiting.botWorkOnApp(pool, { app, user: req.user });
-
       res.json({
         issues,
         truncatedList: !!result.truncatedList,
@@ -2652,8 +2841,6 @@ function issueRoutes(config) {
         myRemaining,
         limit: WEEKLY_BOUNTY_LIMIT,
         ...(botDoor ? { homeroomBot: botDoor } : {}),
-        waitingOnYou,
-        homeroomBotWork,
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });
@@ -2895,57 +3082,12 @@ function issueRoutes(config) {
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
 
-      const number = parseInt(req.params.number, 10);
-      const parsed = parseOwnerRepo(app.repo_url);
-
-      if (!requestsOn() || !parsed || !Number.isFinite(number)) {
-        if (!IS_STAGING) {
-          return res.json({ comments: [], truncated: false, note: 'unavailable' });
-        }
-        const mocks = stagingMockIssueComments(number);
-        const clipped = github.clipIssueComments(mocks);
-        return res.json({ comments: clipped.comments, truncated: clipped.truncated });
-      }
-
-      // Staging demo mode (?demo=1) on one of the MOCK rows: the page is on
-      // fixtures by choice — the list route appends these rows for it — so
-      // the thread is the fixture too, served without the live round trip.
-      // No real issue has these numbers, so the live fetch can only come
-      // back empty and fall through to the same mocks; what it costs is
-      // time. From a preview container whose outbound fetch hangs, that is
-      // the whole ISSUES_FETCH_TIMEOUT_MS, and the check runner polls a
-      // presence assertion for five seconds after the page settles
-      // (capture/capture.js ASSERT_MAX_MS) — which is exactly how the
-      // declared issue-page check found no comment bubbles on staging while
-      // passing locally, where GitHub is off and the mocks are immediate.
-      if (IS_STAGING && req.query.demo === '1' && isStagingMockIssueNumber(number)) {
-        const clipped = github.clipIssueComments(stagingMockIssueComments(number));
-        return res.json({ comments: clipped.comments, truncated: clipped.truncated });
-      }
-
-      const raw = await github.fetchIssueComments(parsed.owner, parsed.repo, number);
-      // #3693: the bot's posts the issue's thread already shows are left
-      // out before the clip, so they never take one of its places.
-      const shown = await withoutBotThreadCopies(pool, app.id, number, raw.comments);
-      let { comments, truncated } = github.clipIssueComments(shown, { wasTruncated: raw.truncated });
-
-      // Staging-only fallback: an empty (or degraded) live thread would
-      // render nothing in the preview — substitute mocks so the section is
-      // reviewable. Strictly a no-op in production. Empty as GitHub sent it:
-      // a thread emptied only by leaving out the bot's thread copies is what
-      // a preview should show, not a gap to fill with fixtures.
-      if (IS_STAGING && (raw.comments || []).length === 0) {
-        const clipped = github.clipIssueComments(stagingMockIssueComments(number));
-        comments = clipped.comments;
-        truncated = clipped.truncated;
-        return res.json({ comments, truncated });
-      }
-
-      return res.json({
-        comments,
-        truncated,
-        ...(raw.note ? { note: raw.note } : {}),
-      });
+      // The route keeps the newest 30 (`clipIssueComments`' default). A
+      // request's first page, which draws them as its discussion, asks
+      // readRequestComments for more (#6497).
+      res.json(await readRequestComments(pool, app, parseInt(req.params.number, 10), {
+        demo: req.query.demo === '1',
+      }));
     } catch (err) {
       log.error('issues', 'Failed to fetch GitHub issue comments', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3361,6 +3503,7 @@ function issueRoutes(config) {
         [app.id, issueNumber, targetUserId]
       );
       const cleared = rows.length > 0;
+      if (cleared) await require('../services/work-state').touched(pool, [{ appId: app.id, issueNumber }]);
 
       if (cleared) {
         const content = targetUserId === req.user.id
@@ -3515,6 +3658,8 @@ module.exports = {
   shouldCreateGithubTwin,
   issueBodyWithScreenshots,
   MAX_GITHUB_ISSUE_BODY_CHARS,
+  // #6497: a request's GitHub comments, read beside its thread.
+  readRequestComments,
   // "In progress" derivation pieces, exported for unit tests.
   pickInProgressTarget,
   composeInProgress,

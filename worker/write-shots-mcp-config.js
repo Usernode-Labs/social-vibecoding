@@ -127,6 +127,10 @@ const browserEnv = {
   SHOTS_ALLOWED_ORIGINS: JSON.stringify([baseOrigin, headOrigin]),
   SHOTS_BROWSER_DIAGNOSTIC_FILE: process.env.SHOTS_BROWSER_DIAGNOSTIC_FILE || '',
   SHOTS_NAVIGATION_HINTS: process.env.SHOTS_NAVIGATION_HINTS || '{}',
+  // #6379: every shots browser's screenshot first waits for the page to
+  // settle. The coding agent's in-loop browser is not written here and does
+  // not get it.
+  SHOTS_SCREENSHOT_SETTLE: '1',
   ...(deviceDensity ? { SHOTS_SCREENSHOT_SCALE: 'device' } : {}),
 };
 const config = {

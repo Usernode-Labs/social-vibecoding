@@ -38,6 +38,7 @@ const usernames = require('../services/usernames');
 const contactPrivacy = require('../services/contact-privacy');
 const contactPreferences = require('../services/contact-preferences');
 const linkedPhones = require('../services/linked-phones');
+const linkedBrowsers = require('../services/linked-browsers');
 const uiTelemetry = require('../services/ui-telemetry');
 const usageAnalytics = require('../services/usage-analytics');
 const { verificationKeyFor } = require('../services/wallet-signing-key');
@@ -68,6 +69,7 @@ const { getPlatformApp } = require('../services/platform-app');
 // Deliberately NOT destructured: tests (and the never-throws mail contract)
 // swap sendPasswordResetMail on the module object.
 const mail = require('../services/mail');
+const mailLanguage = require('../services/mail/language');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { requireAdultAttestation } = require('../services/adult-attestation');
 
@@ -77,7 +79,8 @@ const { requireAdultAttestation } = require('../services/adult-attestation');
 const SESSION_DAYS = 90;
 
 // Email password-reset magic link. The 30-minute figure is repeated in the
-// password_reset mail template copy (src/services/mail/templates.js).
+// password_reset email template's words (admin console, Email templates; its
+// first version is in src/db/email-template-seeds.js).
 const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 
 // Staging mock data (#555): llm_usage is staging:private, so in a
@@ -158,12 +161,16 @@ function createSessionCookie(res, token, expiresAt) {
   require('../services/browser-api-cache').setSessionCacheCookie(res, token, expiresAt);
 }
 
-async function createSession(queryable, userId) {
+// #5974: the row records a short class of the browser that signed in
+// (services/linked-browsers.js classifyUserAgent: 'chrome/mac' and the like,
+// never the User-Agent header itself), so Settings › Linked devices can name
+// it. `req` is the request that signs in; without one the class is null.
+async function createSession(queryable, userId, req = null) {
   const token = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
   await queryable.query(
-    'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
-    [token, userId, expiresAt]
+    'INSERT INTO sessions (token, user_id, expires_at, user_agent_class) VALUES ($1, $2, $3, $4)',
+    [token, userId, expiresAt, linkedBrowsers.classifyUserAgent(req?.headers?.['user-agent'])]
   );
   return { token, expiresAt };
 }
@@ -338,7 +345,7 @@ function authRoutes(config) {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
 
-      const { token, expiresAt } = await createSession(pool, user.id);
+      const { token, expiresAt } = await createSession(pool, user.id, req);
       createSessionCookie(res, token, expiresAt);
 
       log.info('auth', 'Login successful', { userId: user.id, username: user.username, matchedBy });
@@ -368,7 +375,7 @@ function authRoutes(config) {
   // Browser JavaScript never receives a mobile bearer.
   router.post('/api/auth/otp/request', otpRequestLimiter, otpRequestEmailLimiter, async (req, res) => {
     try {
-      await emailSignup.requestCode(pool, config, req.body?.email);
+      await emailSignup.requestCode(pool, config, req.body?.email, { locale: mailLanguage.requestLanguage(req) });
       return res.json({ ok: true });
     } catch (error) {
       if (error instanceof emailSignup.EmailSignupError) {
@@ -721,8 +728,8 @@ function authRoutes(config) {
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
       await pool.query(
-        'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
-        [token, userId, expiresAt]
+        'INSERT INTO sessions (token, user_id, expires_at, user_agent_class) VALUES ($1, $2, $3, $4)',
+        [token, userId, expiresAt, linkedBrowsers.classifyUserAgent(req.headers['user-agent'])]
       );
 
       createSessionCookie(res, token, expiresAt);
@@ -1010,6 +1017,12 @@ function authRoutes(config) {
         // analytics. The client waits for this server-owned decision.
         // People who objected to being recorded answer false too (#3369).
         uiTelemetryEligible: await uiTelemetry.isRecordable(pool, req.user),
+        // The shell's one Google Analytics sign_up (#6314). A browser-check
+        // account is not somebody signing up.
+        analyticsCounted: await uiTelemetry.countsInGoogleAnalytics(pool, req.user),
+        justSignedUp: uiTelemetry.isEligibleUser(req.user)
+          && !req.user.isSynthetic
+          && await require('../services/usage-analytics').justSignedUp(pool, req.user.id),
         isAdmin: req.user.isAdmin,
         // View-only admin role (issue #311). `isAdmin` still drives every
         // client read/visibility gate; `canAdminWrite` drives mutating
@@ -1036,9 +1049,6 @@ function authRoutes(config) {
         // spec's routing tree. build-venues.js requires this AND the
         // deployment's cliAuthEnabled before offering the `local` venue.
         sessionBridgeEnabled: !!req.user.sessionBridgeEnabled,
-        // New Needs you, the experimental review flow (Settings ->
-        // Experimental). Default OFF; features/review-flow/settings.ts.
-        reviewFlowEnabled: !!req.user.reviewFlowEnabled,
         // #2779: new work starts in an agent session for everyone; the
         // per-user flag and its Settings switch are retired. Still reported
         // as true for a shell cached before that, whose entry points read it
@@ -1404,28 +1414,6 @@ function authRoutes(config) {
     }
   });
 
-  // New Needs you, the experimental review flow (Settings -> Experimental).
-  // Same shape as the session-bridge toggle above; see
-  // users.review_flow_enabled in schema.sql for why it is on the account.
-  router.post('/api/me/review-flow', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const { enabled } = req.body || {};
-    if (typeof enabled !== 'boolean') {
-      return res.status(400).json({ error: 'enabled must be a boolean' });
-    }
-    try {
-      await pool.query(
-        'UPDATE users SET review_flow_enabled = $1 WHERE id = $2',
-        [enabled, req.user.id]
-      );
-      log.info('settings', 'Review flow toggled', { userId: req.user.id, enabled });
-      res.json({ ok: true, enabled });
-    } catch (err) {
-      log.error('settings', 'Failed to toggle review flow', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
   // #5104: Settings › Privacy. Who can start a conversation or send an
   // invitation (`whoCanContact`: 'shared', the default, or 'anyone') and
   // whether people outside your projects find you in a search
@@ -1497,6 +1485,48 @@ function authRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('settings', 'Failed to unlink phone', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #5974: Settings › Linked devices, the Browsers group. The browsers signed
+  // in to this account on the web (services/linked-browsers.js: every live
+  // session row that is not a phone's), and signing one out, which deletes
+  // its session. Only the signed-in account's own rows: any other id is a
+  // 404. A row's id is a prefix of its token's digest, never the token.
+  // /api/me/phones is unchanged: the mobile app may read it.
+  router.get('/api/me/browser-sessions', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      const browsers = await linkedBrowsers.listLinkedBrowsers(pool, req.user.id, {
+        currentToken: req.cookies?.session || null,
+      });
+      res.json({ browsers });
+    } catch (err) {
+      log.error('settings', 'Failed to list browser sessions', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/me/browser-sessions/:id', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const sessionId = req.params.id;
+    if (!linkedBrowsers.isBrowserSessionId(sessionId)) return res.status(404).json({ error: 'Not found' });
+    try {
+      const currentToken = req.cookies?.session || null;
+      const { signedOut, current } = await linkedBrowsers.signOutBrowser(pool, req.user.id, sessionId, { currentToken });
+      if (!signedOut) return res.status(404).json({ error: 'Not found' });
+      log.info('settings', 'Browser session signed out', { userId: req.user.id, current });
+      // The browser in your hands was signed out with it: drop its cookies
+      // as /api/auth/logout does, so the page it reloads to is signed out.
+      if (current) {
+        res.clearCookie('session');
+        res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
+      }
+      res.json({ ok: true, current });
+    } catch (err) {
+      log.error('settings', 'Failed to sign a browser session out', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1858,7 +1888,7 @@ function authRoutes(config) {
         return res.status(401).json({ error: 'Signature verification failed' });
       }
 
-      const { token, expiresAt } = await createSession(pool, user.id);
+      const { token, expiresAt } = await createSession(pool, user.id, req);
       createSessionCookie(res, token, expiresAt);
 
       log.info('wallet-auth', 'Signature login successful', { userId: user.id, username: user.username });
@@ -1957,8 +1987,8 @@ function authRoutes(config) {
           const token = crypto.randomBytes(32).toString('hex');
           const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
           await tx.query(
-            'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
-            [token, user.id, expiresAt]
+            'INSERT INTO sessions (token, user_id, expires_at, user_agent_class) VALUES ($1, $2, $3, $4)',
+            [token, user.id, expiresAt, linkedBrowsers.classifyUserAgent(req.headers['user-agent'])]
           );
           return { token, expiresAt };
         },
@@ -1995,7 +2025,7 @@ function authRoutes(config) {
     }
     try {
       const { rows } = await pool.query(
-        `SELECT id, email FROM users
+        `SELECT id, email, locale FROM users
           WHERE lower(email) = lower($1) AND email_confirmed = TRUE`,
         [email]
       );
@@ -2015,7 +2045,9 @@ function authRoutes(config) {
         if (!issued.rowCount) return res.json({ ok: true });
         // Never throws (mail-door contract); a transport failure is logged
         // there and must not turn this into an account oracle.
-        await mail.sendPasswordResetMail(config, user.email, token);
+        // The account's own language only: whoever asked may not be its owner.
+        if (user.locale) await mail.sendPasswordResetMail(config, user.email, token, { locale: user.locale });
+        else await mail.sendPasswordResetMail(config, user.email, token);
         log.info('auth', 'Password reset link issued', { userId: user.id });
       }
       res.json({ ok: true });
@@ -2205,7 +2237,7 @@ function authRoutes(config) {
         pool, userId, config, reason: 'signup_wallet',
       });
 
-      const { token, expiresAt } = await createSession(pool, userId);
+      const { token, expiresAt } = await createSession(pool, userId, req);
       createSessionCookie(res, token, expiresAt);
 
       const memo = JSON.stringify({
@@ -2265,7 +2297,7 @@ function authRoutes(config) {
         return res.status(409).json({ error: 'This account is already linked to a different wallet' });
       }
 
-      const { token, expiresAt } = await createSession(pool, user.id);
+      const { token, expiresAt } = await createSession(pool, user.id, req);
       createSessionCookie(res, token, expiresAt);
 
       if (user.usernode_pubkey === pubkey.trim()) {

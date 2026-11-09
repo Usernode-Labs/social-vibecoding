@@ -17,9 +17,11 @@ const { REASONING_EFFORT_SET } = require('./reasoning-efforts');
 // retries.
 const DEFAULT_TIMEOUT_MS = 25_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 800;
-// Homeroom bot parity, P1: room for a long, structured answer (the bot's
-// chat asks for 4000, and 8000 once a reply was cut off at its limit).
-const MAX_OUTPUT_TOKENS = 8_192;
+// Homeroom bot parity, P1: room for a long, structured answer. Task 2020:
+// the bot's chat asks for 8000, and 16000 once a reply was cut off at its
+// limit, since a long answer carries its laid-out copy beside its words
+// (bot-profiles.js CHAT_LIMITS). Every provider of its model takes far more.
+const MAX_OUTPUT_TOKENS = 16_384;
 const MAX_MESSAGES = 100;
 const MAX_TOOLS = 80;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;

@@ -104,20 +104,20 @@ export function toneForState(state, screen) {
 }
 
 /**
- * Write the tone onto the document (`data-app-tone` on <html>, and the
- * theme-color meta the browser chrome reads), or clear both when there is
+ * Write the tone onto the document (`data-app-tone` on <html>, and every
+ * `theme-color` meta the browser chrome reads), or clear both when there is
  * none. Idempotent: a repeat publish of the same tone touches nothing, so a
  * background re-report from the app that lands on the same side costs no
  * style recalculation.
  *
- * Clearing hands the meta back to the theme module (`window.Theme.apply()`
- * re-derives it from the shell's own mode) rather than guessing a colour
- * here; when the module is absent the meta is left as it stands.
+ * Clearing hands the metas back to the theme module (`window.Theme.apply()`
+ * re-derives them from the shell's own mode) rather than guessing a colour
+ * here; when the module is absent the metas are left as they stand.
  *
- * `force` re-writes the meta even when the tone is unchanged: the theme
- * module rewrites that meta from the shell's mode on every theme change, so
- * the listener mount.ts registers on it passes `force` to put the app's
- * tone back on top.
+ * `force` re-writes the metas even when the tone is unchanged: the theme
+ * module rewrites them from the shell's mode on every theme change, so the
+ * listener mount.ts registers on it passes `force` to put the app's tone back
+ * on top.
  *
  * `screen` is passed through to `toneForState`.
  *
@@ -131,10 +131,23 @@ export function publishAppTone(doc, state, win, force = false, screen) {
   if (tone === current && !(force && tone)) return tone;
   if (tone) root.setAttribute(APP_TONE_ATTR, tone);
   else root.removeAttribute(APP_TONE_ATTR);
-  let meta = null;
-  try { meta = doc.querySelector('meta[name="theme-color"]'); } catch { /* no querySelector */ }
+  let metas = [];
+  try {
+    if (typeof doc.querySelectorAll === 'function') {
+      metas = Array.from(doc.querySelectorAll('meta[name="theme-color"]'));
+    } else {
+      // Older stubs (and any document without querySelectorAll) keep working.
+      const meta = doc.querySelector('meta[name="theme-color"]');
+      if (meta) metas.push(meta);
+    }
+  } catch { /* no querySelector */ }
   if (tone) {
-    if (meta) meta.setAttribute('content', TONE_GROUND[tone]);
+    // EVERY theme-color meta, not just the first: the head carries a
+    // media-keyed pair now (light and dark), and writing one would leave the
+    // other showing the device's ground instead of the app's tone on
+    // whichever side the OS matches.
+    const ground = TONE_GROUND[tone];
+    metas.forEach((meta) => meta.setAttribute('content', ground));
   } else {
     const theme = win && win.Theme;
     if (theme && typeof theme.apply === 'function') {

@@ -172,7 +172,7 @@ test('the row ends in its bookmark alone, 16px in, and its unread dot sits in th
   // The dot is the first thing in the row, beside the tile, before the words.
   // #5580: on Unread the row is a card in its project's stack; the dot keeps
   // its place in the card's left margin.
-  assert.match(row(10), /^data-notif-id="10" class="notifications-row col-start-1 row-start-1 w-full text-start ps-5 pe-4 [^"]*"><span class="relative flex shrink-0 self-start mt-0\.5"><span class="absolute -start-3 top-1\/2 -translate-y-1\/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label="Unread"><\/span>/);
+  assert.match(row(10), /^data-notif-id="10" class="notifications-row col-start-1 row-start-1 w-full text-start ps-5 pe-4 [^"]*"><span class="relative flex shrink-0 self-start mt-0\.5"><span class="absolute -start-3 top-1\/2 -translate-y-1\/2 w-2 h-2 rounded-full bg-violet-600 dark:bg-violet-400" aria-label="Unread"><\/span>/);
   assert.doesNotMatch(row(11), /aria-label="Unread"/, 'a read row has no dot');
   // No chevron left in a notification row (the Messages footer keeps its own).
   const rowBody = SHEET_SRC.slice(SHEET_SRC.indexOf('function ScreenRow('), SHEET_SRC.indexOf('export function NotificationsSheetView('));
@@ -187,6 +187,27 @@ test('the row ends in its bookmark alone, 16px in, and its unread dot sits in th
     'the close disc is the same 36px, in the title row\'s 16px padding');
 });
 
+// #6506: the list tells an unread notice from a read one at a glance.
+test('an unread notice is bold in the strong ink; a read one is regular and softer', () => {
+  const html = renderSheet({ list: [view(10)] });
+  // The dot is the app's blue accent now, not a near-black speck.
+  assert.match(html, /rounded-full bg-violet-600 dark:bg-violet-400" aria-label="Unread"/);
+  // The unread subject carries the strong ink and weight, and its segments
+  // keep their own emphasis.
+  assert.match(html, /class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words"/);
+  assert.match(html, /<span class="font-semibold">40 of 50 apps in use\.<\/span>/);
+
+  // The read state is the same class choice made one line over: regular
+  // weight in the softer ink, and every segment plain (no `font-bold`).
+  const { subjectClass } = loadTsx(SHEET_PATH);
+  assert.equal(subjectClass({ unread: true }),
+    'block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words');
+  assert.equal(subjectClass({ unread: false }),
+    'block text-sm font-normal text-zinc-700 dark:text-zinc-300 line-clamp-2 break-words');
+  assert.match(SHEET_SRC, /className=\{!view\.unread\s*\n\s*\? 'font-normal'/,
+    'a read row\'s segments drop every bold');
+});
+
 test('one app group says Mark all read once; two groups each keep their Mark read', () => {
   const one = renderSheet({ list: [view(10, { appId: 3, appLine: 'Notes' }), view(11, { appId: 3, appLine: 'Notes' })] });
   assert.match(one, /id="notifications-screen-mark-all"/);
@@ -195,6 +216,39 @@ test('one app group says Mark all read once; two groups each keep their Mark rea
   const two = renderSheet({ list: [view(10, { appId: 3, appLine: 'Notes' }), view(11, { appId: 4, appLine: 'Polls' })] });
   assert.match(two, /data-notif-app-read="3"/);
   assert.match(two, /data-notif-app-read="4"/);
+});
+
+// #5929 item 8: Mark read repeats down the sheet, so it must not wear the same
+// pill as the one Mark all read at the top. Only its look moved.
+test('a group\'s Mark read is words until hovered, lighter than Mark all read, and keeps its touch target and a focus ring', () => {
+  const html = renderSheet({ list: [view(10, { appId: 3, appLine: 'Notes' }), view(11, { appId: 4, appLine: 'Polls' })] });
+  const attrs = (marker) => {
+    const at = html.indexOf(marker);
+    assert.notEqual(at, -1, `${marker} renders`);
+    return html.slice(html.lastIndexOf('<button', at), html.indexOf('>', at));
+  };
+  const classes = (tag) => tag.match(/class="([^"]*)"/)[1].split(/\s+/);
+
+  const read = attrs('data-notif-app-read="3"');
+  const readClasses = classes(read);
+  assert.match(read, /^<button type="button"/, 'it stays a real button');
+  assert.match(read, /aria-label="[^"]*Notes[^"]*"/, 'it still names its project to a screen reader');
+  for (const kept of ['h-8', 'un-touch-target', 'disabled:opacity-40',
+    'focus-visible:ring-2', 'focus-visible:ring-violet-500']) {
+    assert.ok(readClasses.includes(kept), `Mark read keeps ${kept}`);
+  }
+  // At rest it has no fill of its own and the secondary ink; the fill waits for a hover.
+  assert.ok(readClasses.includes('bg-transparent'));
+  assert.ok(readClasses.includes('text-zinc-500'));
+  assert.ok(readClasses.includes('enabled:hover:bg-zinc-100'), 'a busy Mark read does not light up');
+  assert.equal(readClasses.filter((c) => /^(dark:)?bg-zinc-/.test(c)).length, 0, 'no resting fill, light or dark');
+  assert.ok(!readClasses.includes('font-semibold'));
+
+  // Mark all read is the one that stays a filled pill, which is the difference.
+  const all = classes(attrs('id="notifications-screen-mark-all"'));
+  assert.ok(all.includes('bg-zinc-100'));
+  assert.ok(all.includes('text-zinc-900'));
+  assert.ok(all.includes('font-semibold'));
 });
 
 // #5929: the group of notifications that belong to no project was headed

@@ -100,8 +100,8 @@ export interface PlanCardViewProps {
   /** Build it, with the answer picked for each choice (null for one left alone). */
   onBuild?: (answers: Array<string | null>) => void;
   onChange?: () => void;
-  /** The chat's card, or the App tab's. */
-  surface?: 'messages' | 'app';
+  /** The chat's card, the App tab's, or a request page's (3 Nov 2026). */
+  surface?: 'messages' | 'app' | 'request';
   /** #4046: the step its request is at, drawn at the top (the chat's only). */
   progress?: PlanProgress | null;
   /** Drawn last, inside the card. */
@@ -118,6 +118,18 @@ export interface PlanCardViewProps {
    * plan to open), drawn under its lines; the chat's card only.
    */
   planSpec?: ReactNode;
+  /**
+   * #6221 (3 Nov 2026): the line under the title saying who the plan waits
+   * for ("Plan for #6210 · waiting for you"), in place of a step count.
+   */
+  sub?: string | null;
+  /**
+   * #6220: the plan's own card text, a summary and whole numbered lines,
+   * the numbers matching its screens' badges. Left out, its bullets.
+   */
+  card?: { summary: string; lines: Array<{ n: number | null; text: string }> } | null;
+  /** #6221: Read the whole plan, under its lines. */
+  readWhole?: ReactNode;
 }
 
 /** #4197: a question that was answered, and the answer it went with. */
@@ -165,7 +177,10 @@ export function DoneLine({ children, spinning = false }: { children: ReactNode; 
 const SURFACES = {
   messages: 'mt-1 flex max-w-[480px] flex-col rounded-[20px] bg-[color:var(--messages-surface)] px-4 pb-3 pt-4 text-start shadow-[inset_0_0_0_1px_var(--app-sheet-line)]',
   app: 'flex w-full max-w-sm flex-col rounded-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pb-3 pt-4 text-start shadow-[inset_0_0_0_1px_var(--app-sheet-line)]',
+  request: 'flex w-full max-w-[480px] flex-col rounded-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pb-3 pt-4 text-start shadow-[inset_0_0_0_1px_var(--app-sheet-line)]',
 } as const;
+// #6220/#6221: a numbered change line's badge, matching its screen's mark.
+const LINE_BADGE = 'mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--state-ok)] text-[11px] font-bold leading-5 text-white';
 
 // #4046 (owner, 7 October): in the chat each line of the plan is a row of
 // its own, as a grouped list draws rows (15px over a 22px line, 12px above
@@ -246,7 +261,7 @@ export function PlanChoices({ questions, picked, onPick, idBase, top = 'divided'
 
 export function PlanCardView({
   appName, plan, state, choices = [], busy = false, building, onBuild, onChange, surface = 'messages', progress = null, footer = null,
-  request = null, planSpec = null,
+  request = null, planSpec = null, sub = null, card = null, readWhole = null,
 }: PlanCardViewProps) {
   const t = useMessages('messages');
   const [picked, setPicked] = useState<Array<string | null>>(() => plan.questions.map(() => null));
@@ -277,6 +292,11 @@ export function PlanCardView({
       <div className={`text-[1.0625rem] font-bold leading-[1.375rem] ${shown === 'replaced' ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
         {title}
       </div>
+      {sub ? (
+        <div className="mt-0.5 flex min-w-0" data-bot-plan-sub="">
+          <span className="min-w-0 truncate text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" role="status">{sub}</span>
+        </div>
+      ) : null}
       {progress ? (
         // The step, in words, under the title: one line whatever the width,
         // an ellipsis the last resort (owner, 7 October).
@@ -288,7 +308,19 @@ export function PlanCardView({
         <p className="messages-bot-answered">{t('messages:bot.plan.replaced')}</p>
       ) : shown === 'built' ? (
         <AnsweredChoices items={answered} className="mt-2" />
-      ) : surface === 'messages' ? (
+      ) : card?.lines.length ? (
+        <>
+          {card.summary ? <p className="mt-2.5 text-pretty text-[0.9375rem] leading-[22px] text-zinc-900 dark:text-zinc-100" data-bot-plan-summary="">{card.summary}</p> : null}
+          <ul className="mt-1 flex flex-col" data-bot-plan-lines="">
+            {card.lines.map((line, i) => (
+              <li key={`${i}:${line.text}`} className={`flex gap-2 ${i === 0 ? PLAN_ROW.first : PLAN_ROW.next}`}>
+                {line.n ? <span aria-hidden="true" className={LINE_BADGE}>{line.n}</span> : null}
+                <span className="min-w-0 flex-1">{line.text}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : surface === 'messages' || surface === 'request' ? (
         <ul className="mt-1 flex flex-col" data-bot-plan-lines="">
           {plan.bullets.map((bullet, i) => (
             <li key={bullet} className={i === 0 ? PLAN_ROW.first : PLAN_ROW.next}>{bullet}</li>
@@ -305,8 +337,9 @@ export function PlanCardView({
         </ul>
       )}
       {shown !== 'replaced' && shown !== 'built' ? planSpec : null}
+      {shown !== 'replaced' && readWhole ? <div className="mt-1 shadow-[inset_0_1px_0_var(--app-sheet-line)]">{readWhole}</div> : null}
       {open ? <PlanChoices questions={plan.questions} picked={picked} onPick={choose} idBase={uid} /> : null}
-      {open && plan.complicated ? (
+      {open && plan.complicated && !sub ? (
         <p className="messages-bot-note mt-2.5" data-bot-plan-note="">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span>{t(planSpec ? COMPLICATED_PLAN_NOTE_SHOWN : COMPLICATED_PLAN_NOTE)}</span>

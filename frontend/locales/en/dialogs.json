@@ -475,13 +475,29 @@
     "text": "{{count}} app slots · more requested",
     "description": "Line on the account panel of the profile, when only the limit is known and the person has asked the admins for more. {{count}} is how many app slots they have in total. Keep the middle dot as a separator."
   },
-  "allowance.headline.usedRequested_one": {
-    "text": "{{used}} of {{count}} app slot used · more requested",
-    "description": "Line on the account panel of the profile after the person asked the admins for more app slots. {{count}} is how many slots they have in total and {{used}} how many are taken. Keep the middle dot as a separator."
+  "allowance.line.free_one": {
+    "text": "{{count}} app slot free of {{limit}}",
+    "description": "Line under the App slots row on the viewer's own profile: how much room they have left for apps. {{count}} is how many app slots are free and {{limit}} how many they have in total."
   },
-  "allowance.headline.usedRequested_other": {
-    "text": "{{used}} of {{count}} app slots used · more requested",
-    "description": "Line on the account panel of the profile after the person asked the admins for more app slots. {{count}} is how many slots they have in total and {{used}} how many are taken. Keep the middle dot as a separator."
+  "allowance.line.free_other": {
+    "text": "{{count}} app slots free of {{limit}}",
+    "description": "Line under the App slots row on the viewer's own profile: how much room they have left for apps. {{count}} is how many app slots are free and {{limit}} how many they have in total."
+  },
+  "allowance.line.freeRequested_one": {
+    "text": "{{count}} app slot free of {{limit}} · more requested",
+    "description": "Line under the App slots row on the viewer's own profile, after they asked the admins for more app slots. {{count}} is how many app slots are free and {{limit}} how many they have in total. Keep the middle dot as a separator."
+  },
+  "allowance.line.freeRequested_other": {
+    "text": "{{count}} app slots free of {{limit}} · more requested",
+    "description": "Line under the App slots row on the viewer's own profile, after they asked the admins for more app slots. {{count}} is how many app slots are free and {{limit}} how many they have in total. Keep the middle dot as a separator."
+  },
+  "allowance.line.none": {
+    "text": "No app slots free · Request more",
+    "description": "Line under the App slots row on the viewer's own profile when every app slot is taken: pressing the row opens the App allowance card, whose button is \"Request more\"."
+  },
+  "allowance.line.noneRequested": {
+    "text": "No app slots free · more requested",
+    "description": "Line under the App slots row on the viewer's own profile when every app slot is taken and they have asked the admins for more. Keep the middle dot as a separator."
   },
   "allowance.detail.admin": {
     "text": "Admin accounts can create apps without a slot limit.",
@@ -771,13 +787,13 @@
     "text": "Only items the group voted onto you",
     "description": "Explanation under the \"Assigned to you\" switch in the board filters dialog: the group assigns an item to a person by vote."
   },
-  "boardFilters.created.title": {
-    "text": "Created by you",
-    "description": "Label of a switch in the board filters dialog: show only items this person opened."
+  "boardFilters.yours.title": {
+    "text": "Yours",
+    "description": "Title of a switch in the board's Filters dialog: show only the person's own work as the Homeroom bot tab reads it: everything they filed, built, claimed, voted on, wrote in or chose Notify me on."
   },
-  "boardFilters.created.description": {
-    "text": "Only items you opened yourself",
-    "description": "Explanation under the \"Created by you\" switch in the board filters dialog. To open an item is to file it."
+  "boardFilters.yours.description": {
+    "text": "Only what you filed, built, voted on, wrote in or follow",
+    "description": "Second line under the Yours switch in the board's Filters dialog, saying what it keeps: the person's own work as the Homeroom bot tab reads it: everything they filed, built, claimed, voted on, wrote in or chose Notify me on."
   },
   "createProgress.title.creating": {
     "text": "Creating {{app}}",
@@ -1056,8 +1072,8 @@
     "description": "Link on a row of the import dialog: opens that pull request on GitHub in a new tab. Keep the arrow at the end."
   },
   "importPr.progress": {
-    "text": "Importing PR #{{number}}: checking it on GitHub and adding it to In progress…",
-    "description": "Shown beside a spinner in the import dialog while the chosen pull request (PR) is imported. {{number}} is its number; keep the # before it. \"In progress\" is the name of a board column."
+    "text": "Importing PR {{number}}: checking it on GitHub and adding it to In progress…",
+    "description": "Shown beside a spinner in the import dialog while the chosen pull request (PR) is imported. {{number}} is its number; do not put a # before it. \"In progress\" is the name of a board column."
   },
   "importPr.slow": {
     "text": "Still working. GitHub is being slow, so don’t close this window.",
@@ -1072,8 +1088,8 @@
     "description": "Text of the import dialog's button while the pull request is being imported."
   },
   "importPr.imported": {
-    "text": "PR #{{number}} was imported. Its preview is being built now. Find it in Dev under In progress.",
-    "description": "Brief message at the bottom of the screen after an import succeeded but its page could not be opened. {{number}} is the pull request's number; keep the # before it. \"Dev\" is the name of a tab and \"In progress\" of a board column."
+    "text": "PR {{number}} was imported. Its preview is being built now. Find it in Dev under In progress.",
+    "description": "Brief message at the bottom of the screen after an import succeeded but its page could not be opened. {{number}} is the pull request's number; do not put a # before it. \"Dev\" is the name of a tab and \"In progress\" of a board column."
   },
   "importPr.error.pick": {
     "text": "Pick a pull request to import.",
@@ -1084,12 +1100,12 @@
     "description": "Error in the import dialog when the import request could not reach the server."
   },
   "importPr.error.notFound": {
-    "text": "PR #{{number}} wasn’t found on GitHub. It may have been deleted.",
-    "description": "Error in the import dialog when GitHub no longer has the chosen pull request (PR). {{number}} is its number; keep the # before it."
+    "text": "PR {{number}} wasn’t found on GitHub. It may have been deleted.",
+    "description": "Error in the import dialog when GitHub no longer has the chosen pull request (PR). {{number}} is its number; do not put a # before it."
   },
   "importPr.error.conflict": {
-    "text": "PR #{{number}} can’t be imported right now.",
-    "description": "Error in the import dialog when the chosen pull request (PR) cannot be imported in its present state. {{number}} is its number; keep the # before it."
+    "text": "PR {{number}} can’t be imported right now.",
+    "description": "Error in the import dialog when the chosen pull request (PR) cannot be imported in its present state. {{number}} is its number; do not put a # before it."
   },
   "importPr.error.restarting": {
     "text": "The platform is restarting. Try the import again in a few seconds.",
@@ -1283,6 +1299,10 @@
     "text": "{{attached}} of {{count}} images attached. Remove one to add another.",
     "description": "Small line under the attach buttons of the \"Suggest an improvement\" dialog when no more images fit. {{attached}} is how many are attached and {{count}} the most a request may carry."
   },
+  "feedback.screenshot.reorderHint": {
+    "text": "Drag a picture to change the order. The first one is shown first.",
+    "description": "Small line under the attached pictures in the \"Suggest an improvement\" dialog, shown once there are two or more. A focused picture can also be moved with the arrow keys."
+  },
   "feedback.screenshot.previewAlt": {
     "text": "Image {{number}} preview",
     "description": "Text alternative of an attached image's thumbnail in the \"Suggest an improvement\" dialog. {{number}} is its position among the attached images, starting at 1."
@@ -1462,6 +1482,14 @@
   "feedback.state.filedWithout": {
     "text": "Couldn't collect app state, so it was filed without it.",
     "description": "Sentence added to the confirmation after a request was posted, when the app did not hand over its state snapshot. The first \"it\" is the request."
+  },
+  "feedback.screenshot.filedWithout_one": {
+    "text": "{{count}} picture couldn't attach, so it was filed without it.",
+    "description": "Sentence added to the confirmation after a request was posted, when a picture that had been waiting to upload still could not be sent. {{count}} is how many. The first \"it\" is the request; the last word is the picture or pictures."
+  },
+  "feedback.screenshot.filedWithout_other": {
+    "text": "{{count}} pictures couldn't attach, so it was filed without them.",
+    "description": "Sentence added to the confirmation after a request was posted, when a picture that had been waiting to upload still could not be sent. {{count}} is how many. The first \"it\" is the request; the last word is the picture or pictures."
   },
   "feedback.bounty.label": {
     "text": "<0>Put a kudos on this</0> to thank whoever solves it",
@@ -1944,11 +1972,11 @@
     "description": "Status in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app when an earlier proposal about the app's approvers or admins is undecided. The Workshop is a tab of the app's page; keep it as a name."
   },
   "members.governance.opened": {
-    "text": "Proposal opened (PR #{{number}}). It needs the group's vote in the Dev tab's vote panel before the new settings apply.",
-    "description": "Status in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app after the change was put up as a proposal. {{number}} is the number of its pull request (PR); keep the # before it. \"Dev\" is the name of a tab."
+    "text": "Proposal opened (PR {{number}}). It needs the group's vote in the Dev tab's vote panel before the new settings apply.",
+    "description": "Status in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app after the change was put up as a proposal. {{number}} is the number of its pull request (PR); do not put a # before it. \"Dev\" is the name of a tab."
   },
   "members.governance.openedWithWarnings": {
-    "text": "Proposal opened (PR #{{number}}). It needs the group's vote in the Dev tab's vote panel before the new settings apply. Some approver invites could not be sent: {{warnings}}.",
+    "text": "Proposal opened (PR {{number}}). It needs the group's vote in the Dev tab's vote panel before the new settings apply. Some approver invites could not be sent: {{warnings}}.",
     "description": "The same status when some of the first approvers could not be invited. {{number}} is the pull request's number; {{warnings}} is the server's list of what went wrong, without a final full stop."
   },
   "members.governance.failed": {
@@ -2148,8 +2176,8 @@
     "description": "Confirming button of that confirmation: creates the proposal. \"Open\" is a verb."
   },
   "members.appAdmins.opened": {
-    "text": "Proposal opened (PR #{{number}}). It needs the group's vote in the Dev tab before the new admins apply.",
-    "description": "Status in the \"App admins\" section of the \"Members & approvals\" dialog of an app after the change was put up as a proposal. {{number}} is the number of its pull request (PR); keep the # before it. \"Dev\" is the name of a tab."
+    "text": "Proposal opened (PR {{number}}). It needs the group's vote in the Dev tab before the new admins apply.",
+    "description": "Status in the \"App admins\" section of the \"Members & approvals\" dialog of an app after the change was put up as a proposal. {{number}} is the number of its pull request (PR); do not put a # before it. \"Dev\" is the name of a tab."
   },
   "members.appAdmins.failed": {
     "text": "Could not open the admins proposal: {{reason}}",
@@ -2368,8 +2396,8 @@
     "description": "Note on a variable's row in the secrets dialog whose value is stored while the proposal that declares it is undecided. Keep the middle dot as a separator."
   },
   "secrets.row.pendingDeclarationNumbered": {
-    "text": "Value set · its declaration is waiting for approval (PR #{{number}}).",
-    "description": "The same note with the proposal's pull request (PR) number. {{number}} is that number; keep the # before it."
+    "text": "Value set · its declaration is waiting for approval (PR {{number}}).",
+    "description": "The same note with the proposal's pull request (PR) number. {{number}} is that number; do not put a # before it."
   },
   "secrets.row.orphan": {
     "text": "No longer declared in <0>dapp.json</0>. Its value is kept so a rollback still works, so clear it once you're sure.",
@@ -2532,16 +2560,16 @@
     "description": "Status line at the bottom of the secrets dialog after an admin declared a new variable. {{key}} is the variable's name, such as STRIPE_API_KEY."
   },
   "secrets.declare.opened.storedNumbered": {
-    "text": "Proposal opened for {{key}} (PR #{{number}}). Your value is stored; the declaration still needs a merge vote.",
-    "description": "Status line at the bottom of the secrets dialog after an admin declared a new variable. {{key}} is the variable's name, such as STRIPE_API_KEY. {{number}} is the pull request's number; keep the # before it."
+    "text": "Proposal opened for {{key}} (PR {{number}}). Your value is stored; the declaration still needs a merge vote.",
+    "description": "Status line at the bottom of the secrets dialog after an admin declared a new variable. {{key}} is the variable's name, such as STRIPE_API_KEY. {{number}} is the pull request's number; do not put a # before it."
   },
   "secrets.declare.opened.pending": {
     "text": "Proposal opened for {{key}}. Vote on it in the group chat panel. The value applies when it merges.",
     "description": "Status line at the bottom of the secrets dialog after a new variable was proposed. {{key}} is the variable's name, such as STRIPE_API_KEY."
   },
   "secrets.declare.opened.pendingNumbered": {
-    "text": "Proposal opened for {{key}} (PR #{{number}}). Vote on it in the group chat panel. The value applies when it merges.",
-    "description": "Status line at the bottom of the secrets dialog after a new variable was proposed. {{key}} is the variable's name, such as STRIPE_API_KEY. {{number}} is the pull request's number; keep the # before it."
+    "text": "Proposal opened for {{key}} (PR {{number}}). Vote on it in the group chat panel. The value applies when it merges.",
+    "description": "Status line at the bottom of the secrets dialog after a new variable was proposed. {{key}} is the variable's name, such as STRIPE_API_KEY. {{number}} is the pull request's number; do not put a # before it."
   },
   "secrets.declare.failed": {
     "text": "Failed: {{reason}}",
@@ -3137,7 +3165,11 @@
   },
   "whoDecides.group.creatorNobody": {
     "text": "Nobody: this project has no creator",
-    "description": "Line under the Creator group on a project with no creator."
+    "description": "Line under the Creator group on a project that has no creator by design, such as Homeroom's own project. Keep it distinct from a creator whose account no longer exists."
+  },
+  "whoDecides.group.creatorGone": {
+    "text": "The account that made this project no longer exists",
+    "description": "Line under the Creator group on the Who can see & change it sheet when the person who made the project deleted their account."
   },
   "whoDecides.group.members": {
     "text": "All members",

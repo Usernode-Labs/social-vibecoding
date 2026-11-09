@@ -70,9 +70,14 @@ export type StoryRowView = {
   storyRef?: { number: number; title: string | null } | null;
   /** Set on a card that stands for one story's notifications, newest first. */
   story?: { members: StoryRowView[] } | null;
+  /** #6441: set on a card standing for several requests that went live together. */
+  liveItems?: LiveItem[] | null;
   /** #5775: the viewer has bookmarked this notification for later. */
   saved?: boolean;
 };
+
+/** #6441: one request listed under a folded "went live" row. */
+export type LiveItem = { id: number; number: number | null; title: string; unread: boolean };
 
 export type StoryEntry<V extends StoryRowView = StoryRowView> = { type: 'notif'; key: string; at: number; view: V };
 
@@ -144,6 +149,68 @@ export function foldStories<V extends StoryRowView>(entries: StoryEntry<V>[]): S
 }
 
 const EASE = 'cubic-bezier(.32,.72,0,1)';
+
+/**
+ * #6441: "WENT LIVE" IS ONE ROW. Several requests of one project going live
+ * close together is one piece of news, not three: inside one project's
+ * entries, the "went live" ones that arrived within `windowMs` of the newest
+ * of them fold into the newest's slot, which says how many and lists each.
+ * (Two rows fold from two, so a lone "went live" is left exactly as it was.)
+ * A live row that is already part of a request's story card stays in it: the
+ * card is that request's other news, and folding it would hide it twice.
+ *
+ * The folded row keeps every member's id (`groupIds`, so opening it or any
+ * item in it reads them all), is unread while any of them is, and carries
+ * `liveItems`, newest first, as the lines under its words. The bell's count
+ * is untouched: it still counts each notification.
+ */
+export function foldLive<V extends StoryRowView>(
+  entries: StoryEntry<V>[],
+  t: Translate,
+  windowMs = 3600000,
+): StoryEntry<V>[] {
+  const live = entries.filter((entry) => {
+    const view = entry.view;
+    if (view.kind !== 'build_live') return false;
+    return !(view.story && view.story.members.length > 1);
+  });
+  if (live.length < 2) return entries;
+  const newest = live.reduce((a, b) => (b.at > a.at ? b : a), live[0]);
+  const members = live.filter((entry) => entry.at >= newest.at - windowMs);
+  if (members.length < 2) return entries;
+  const lead = members.reduce((a, b) => (b.at > a.at ? b : a), members[0]);
+  const keys = new Set(members.map((entry) => entry.key));
+  const ids = members.flatMap((entry) => (entry.view.groupIds && entry.view.groupIds.length
+    ? entry.view.groupIds : [entry.view.id]));
+  const count = ids.length;
+  const items: LiveItem[] = members
+    .slice()
+    .sort((a, b) => b.at - a.at)
+    .map((entry) => ({
+      id: entry.view.id,
+      number: entry.view.storyRef?.number ?? null,
+      title: entry.view.storyRef?.title || plain(entry.view.segments) || entry.view.label,
+      unread: !!entry.view.unread,
+    }));
+  const out: StoryEntry<V>[] = [];
+  for (const entry of entries) {
+    if (!keys.has(entry.key)) { out.push(entry); continue; }
+    if (entry.key !== lead.key) continue;
+    out.push({
+      ...entry,
+      view: {
+        ...entry.view,
+        groupIds: ids,
+        count,
+        groupLabelled: true,
+        unread: members.some((member) => member.view.unread),
+        segments: [{ t: 'strong', v: t('notifications:row.group.live', { count }) }],
+        liveItems: items,
+      },
+    });
+  }
+  return out;
+}
 
 function stillMotion(): boolean {
   return typeof window === 'undefined' || typeof window.matchMedia !== 'function'
@@ -755,13 +822,21 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
           <>
             {line.notification && line.notification.unread ? (
               <span
-                className="absolute -start-3 top-3 w-1.5 h-1.5 rounded-full bg-zinc-900 dark:bg-zinc-100"
+                className="absolute -start-3 top-3 w-1.5 h-1.5 rounded-full bg-violet-600 dark:bg-violet-400"
                 aria-label={t('notifications:row.unreadDot')}
               >
               </span>
             ) : null}
             <span className="flex items-baseline gap-2">
-              <span className="flex-1 min-w-0 truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">{line.what}</span>
+              {/* #6506: a story's unread notification is bold in the strong
+                  ink, a read one regular and softer, as the rows above are. */}
+              <span className={'flex-1 min-w-0 truncate text-xs '
+                + (line.notification?.unread
+                  ? 'font-semibold text-zinc-900 dark:text-zinc-100'
+                  : 'font-normal text-zinc-700 dark:text-zinc-300')}
+              >
+                {line.what}
+              </span>
               {stamp && stamp.text ? (
                 <time className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400" title={stamp.title}>{stamp.text}</time>
               ) : null}

@@ -51,8 +51,6 @@ import {
 import { GENERAL_FOLLOW_PX, GeneralChat, type GeneralChatProps } from './general-chat';
 import { ReactionBar, type ReactionBarProps } from './reaction-bar';
 import { reactionBarStore, type ReactionBarState } from './reaction-bar-store';
-import { SpecPanel } from './spec-panel';
-import { specPanelStore, type SpecPanelState } from './spec-panel-store';
 import { ThreadShell, type ThreadShellProps } from './thread-shell';
 import { Transcript } from './transcript';
 import {
@@ -192,6 +190,17 @@ export function appendTranscriptMessage(message: TranscriptMessage, key = 'main'
  * an append: the row may legitimately have been pruned by a reload that raced
  * the websocket event.
  */
+/** Whether a patched field says the same thing: identity, or the same plain-object facts. */
+function sameValue(before: unknown, after: unknown): boolean {
+  if (before === after) return true;
+  if (!isPlainObject(before) || !isPlainObject(after)) return false;
+  return JSON.stringify(before) === JSON.stringify(after);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
+}
+
 export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMessage>): void {
   transcriptStore.set((s: TranscriptState) => {
     let hit = false;
@@ -209,8 +218,11 @@ export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMess
           // that runs after every render: `refreshVoteControls` patches each
           // vote row's tint from the effect in transcript.tsx, so an
           // unconditional new object would render → patch → render forever.
+          // #6236: it patches `vote` too, a plain object built afresh on
+          // every refresh, so a plain object that spells the same facts is
+          // the same value here; anything else compares by identity.
           const keys = Object.keys(patch) as (keyof TranscriptMessage)[];
-          if (keys.every((key) => m[key] === patch[key])) return m;
+          if (keys.every((key) => sameValue(m[key], patch[key]))) return m;
           hit = true;
           return { ...m, ...patch };
         }),
@@ -232,15 +244,6 @@ export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMess
  * the flush is what keeps the contract rather than what changes it.
  */
 autocompleteStore.setFlush(flushSync);
-
-/**
- * The spec panel's store gets the same flush, for the same shape of reason:
- * `_renderSpecPanel` publishes and then immediately calls
- * `_applySavedSpecPanelWidth()` and adds the open class, and the resizer's
- * drag measures the panel. All of those read a panel the publish is supposed
- * to have filled.
- */
-specPanelStore.setFlush(flushSync);
 
 /**
  * And the reaction bar's, for the third instance of the same sentence:
@@ -335,33 +338,6 @@ export const completedEmojiShortcode = completedShortcodeAt;
 export function mountThreadShell(host: Element | null, props: ThreadShellProps): void {
   if (!host) return;
   mountLegacyPortal(host, createElement(ThreadShell, props));
-}
-
-// ── The shared-spec reader ────────────────────────────────────────────
-//
-// `#gc-spec-side-panel` is written into `#app-content` by
-// `AppView.renderDevChatTab`, so — like the transcript — it is a runtime host
-// that has to be (re)mounted rather than rendered from the tree, and it is
-// torn down by the same `unmountAllLegacyPortals` in
-// `AppView._teardownDevRoots`.
-
-/** Establish the panel's contents. Idempotent per host. */
-export function mountSpecPanel(host: Element | null): void {
-  if (!host) return;
-  mountLegacyPortal(host, createElement(SpecPanel));
-}
-
-/**
- * Open the panel with a document, or close it.
- *
- * Closing publishes `open: false` rather than clearing the host: the host is
- * React's subtree now, and an `innerHTML = ''` behind its back is exactly the
- * write the ownership rule forbids. The host's own
- * `gc-spec-side-panel-open` class stays group-chat.js's — it is what the
- * resizer and the width restore read.
- */
-export function publishSpecPanel(next: SpecPanelState): void {
-  specPanelStore.set(next);
 }
 
 // ── The two composers ─────────────────────────────────────────────────
@@ -470,8 +446,6 @@ if (typeof window !== 'undefined') {
     emojiShortcodeToken,
     matchEmojiShortcodes,
     completedEmojiShortcode,
-    mountSpecPanel,
-    publishSpecPanel,
     mountThreadShell,
     mountReactionBar,
     publishReactionBar,

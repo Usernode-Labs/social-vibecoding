@@ -3,6 +3,8 @@ import { SwitchRow } from '@/components/ui/switch';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 
+import { InterfaceModeControl } from '../interface-mode-control';
+
 import { LocalAgentsList } from '../local-agents-list';
 
 /**
@@ -35,17 +37,15 @@ import { LocalAgentsList } from '../local-agents-list';
  * (../../improve/suggest-settings.ts, localStorage), off only where a device
  * stored that.
  *
- * New Needs you (default OFF) is kept on the DEVICE too: there is nothing
- * to save or fail. When on,
- * the Communities tab's Needs you draws ../../review-flow/review-flow.tsx
- * (a feed of title shots, a page per change with a before/after slider and
- * a vote sheet) instead of the reel. ../../review-flow/settings.ts keeps the
- * switch and publishes window.UsernodeReact.reviewFlow for settings.js.
+ * New Needs you used to be a switch here too. The review flow is what every
+ * Needs you draws now, so there is nothing to turn on.
  *
  * New look (default OFF) is kept on the DEVICE as well. The head's
  * window.Skin (src/head.html) stores it and sets data-skin="brand" on <html>
  * before first paint; app.css draws the look from that attribute, in light
  * mode only. settings.js paints and saves the switch through window.Skin.
+ * The look is "Baseplate" (request #6278): white cards on a light warm grey
+ * plate, sun yellow for what needs you, ink for where you are.
  *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
@@ -63,6 +63,7 @@ export function ExperimentalSection() {
         <SectionHeading title={t('settings:experimental.title')}>
           {t('settings:experimental.intro')}
         </SectionHeading>
+        <InterfaceModeControl />
         <SwitchRow id="ai-progress-estimate">
           {t('settings:experimental.progressEstimate.label')}
         </SwitchRow>
@@ -81,14 +82,6 @@ export function ExperimentalSection() {
             />
           </p>
           <StatusLine id="session-bridge-status" size="xs" />
-        </div>
-        <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-          <SwitchRow id="review-flow-enabled">
-            {t('settings:experimental.reviewFlow.label')}
-          </SwitchRow>
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            {t('settings:experimental.reviewFlow.description')}
-          </p>
         </div>
         <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
           <SwitchRow id="new-look-enabled">

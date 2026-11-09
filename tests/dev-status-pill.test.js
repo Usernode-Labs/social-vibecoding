@@ -132,6 +132,22 @@ test('tier 0 — a merged row is settled and reads ✓ Live, in green', () => {
   assert.equal(edgeFor({ key: 'session:1', pill: { state: deployed } }), 'ok');
 });
 
+test('#6233: a Live change this tab is older than says so, and offers the reload', () => {
+  const AppView = makeAppView();
+  AppView.appData = { slug: 'usernode', self_hosted: true };
+  const item = PR({ status: 'merged', deployment_state: 'deployed', live_at: '2026-11-03T10:00:00Z' });
+  const plain = AppView.statusPillState(item);
+  assert.equal(plain.key, 'deployed', 'a tab on the running build reads plain Live');
+  assert.equal(plain.label, '✓ Live');
+  // The tab-build store (frontend/src/lib/tab-build.ts) says this tab's
+  // build is older than the change.
+  AppView.__sandbox.UsernodeReact = { tabBuild: { tabLacks: () => true } };
+  const stale = AppView.statusPillState(item);
+  assert.equal(stale.key, 'deployed_reload');
+  assert.equal(stale.label, '✓ Live · reload to get it');
+  assert.match(stale.title, /reload to get it here/);
+});
+
 test('tier 0 — derived deployment state distinguishes live, pending, and stalled merges', () => {
   const AppView = makeAppView();
   const deployed = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deployed' }));
@@ -865,7 +881,37 @@ test('blockReasons: severity order, labels, and the detail sentences', () => {
   assert.ok(!r[0].soft && !r[1].soft, 'a refused merge and a failing check do block');
 });
 
-// ── The invariant the whole change rests on ─────────────────────────────
+// Request 6265: an approved, passing change whose merge GitHub held back
+// (still finishing an earlier merge, or a plain refusal) draws an amber tag
+// that says so, with the queue's next try in the viewer's clock.
+test('blockReasons: a merge GitHub held back draws an amber "Waiting on GitHub" tag', () => {
+  const AppView = makeAppView();
+  const future = new Date(Date.now() + 3 * 60 * 1000).toISOString();
+  const time = new Date(Date.parse(future)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const pr = { status: 'promoted', check_state: 'passing',
+    integration: { blockReasons: ['github_busy'], heldUntil: future } };
+  const tag = AppView.statusTagSpecs(pr, {}).find((t) => t.key === 'tag-github_busy');
+  assert.ok(tag, 'the tag is drawn');
+  assert.equal(tag.label, 'Waiting on GitHub');
+  assert.equal(tag.cls, AppView.STATUS_TAG_CLS.soft, 'amber: nobody has to act on it');
+  assert.match(tag.title, /already in progress/);
+  assert.ok(tag.title.includes(time), `the tooltip names ${time}: ${tag.title}`);
+  assert.equal(tag.data['data-status-tag'], 'github_busy');
+
+  // A plain refusal says GitHub refused it, under the same label.
+  const refused = AppView.statusTagSpecs({ ...pr, integration: { blockReasons: ['github_refused'], heldUntil: future } }, {})
+    .find((t) => t.key === 'tag-github_refused');
+  assert.equal(refused.label, 'Waiting on GitHub');
+  assert.match(refused.title, /GitHub refused the merge/);
+
+  // Past its time, or no time recorded: "in a few minutes".
+  const soon = AppView.blockReasons({ ...pr, integration: { blockReasons: ['github_busy'], heldUntil: null } });
+  assert.match(soon.find((r) => r.key === 'github_busy').detail, /tries again in a few minutes/);
+
+  // Nothing served: no tag.
+  assert.equal(AppView.blockReasons({ status: 'promoted', check_state: 'passing' }).length, 0);
+});
+
 
 test('the bar can only ever be a vote state, whatever is wrong with the row', () => {
   const AppView = makeAppView();
@@ -1065,4 +1111,54 @@ test('the main_healthy gate carries "Resume merges" for an admin, and for nobody
   }
   // Never on any other gate, whatever its state.
   assert.equal(admin._requirementAction({ key: 'checks', state: 'blocked', actor: 'author' }, { isAdmin: true }), null);
+});
+
+// ── #6505: a vote already decided ───────────────────────────────────────
+//
+// Once the yes votes a change's rule asks for are in, there is nothing left
+// to press: the Vote button goes (#6505). This is the predicate every site
+// reads, and the Votes card's line, which must not promise "unless someone
+// objects" while offering no way to object.
+
+test('#6505: _votesDecided is true at the rule\'s tally, and false while a vote can still change it', () => {
+  const AppView = makeAppView();
+  // Counting down at its majority: decided, though the clock runs.
+  assert.equal(AppView._votesDecided(PR({
+    yes_count: 3, votes_required: 3, merge_window_ends_at: hoursAhead(2),
+  })), true);
+  // Approvals mode: the pill's majority is its own n.
+  assert.equal(AppView._votesDecided(PR({ yes_count: 2, approvals_required: 2 })), true);
+  // Leads but below its majority: not decided.
+  assert.equal(AppView._votesDecided(PR({
+    yes_count: 1, votes_required: 3, merge_window_ends_at: hoursAhead(2),
+  })), false);
+  // Being voted down, or contested: a vote can still change the ending.
+  assert.equal(AppView._votesDecided(PR({
+    yes_count: 3, votes_required: 3, rejection_armed: true, reject_window_ends_at: hoursAhead(2),
+  })), false);
+  assert.equal(AppView._votesDecided(PR({ yes_count: 3, votes_required: 3, contested: true })), false);
+  // The member floor: the yes it waits on is still missing.
+  assert.equal(AppView._votesDecided(PR({
+    yes_count: 3, votes_required: 3,
+    requires_explicit_approval: true, needs_other_member_yes: true, other_member_yes_count: 0,
+  })), false);
+  // Nothing to decide outside a promoted change.
+  assert.equal(AppView._votesDecided(PR({ status: 'merged', yes_count: 3, votes_required: 3 })), false);
+  assert.equal(AppView._votesDecided(PR({ first_version: true, votes_required: 0 })), false);
+});
+
+test('#6505: a decided countdown\'s Votes card drops "unless someone objects"', () => {
+  const AppView = makeAppView();
+  const decided = AppView._changeVotesView(PR({
+    yes_count: 3, votes_required: 3, check_state: 'passing', merge_window_ends_at: hoursAhead(2),
+  }), null);
+  const text = decided.note.join(' ');
+  assert.match(text, /It goes live when the countdown ends\./);
+  assert.doesNotMatch(text, /unless someone objects/);
+
+  // Short of its majority, the countdown still invites an objection.
+  const open = AppView._changeVotesView(PR({
+    yes_count: 1, votes_required: 3, check_state: 'passing', merge_window_ends_at: hoursAhead(2),
+  }), null);
+  assert.match(open.note.join(' '), /unless someone objects/);
 });

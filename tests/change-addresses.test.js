@@ -276,9 +276,9 @@ test('builders that know the PR number use it', () => {
   // Notifications open a change by its number.
   const notif = read('frontend/src/features/notifications/notifications.js');
   assert.match(notif, /_changeRef\(item\.sessionId, item\.prNumber\)/);
-  // Shared cards, the bot's tray and activity cards, the PR body's shots link.
+  // Shared cards, a request's track and activity cards, the PR body's shots link.
   for (const rel of [
-    'src/services/shared-objects.js', 'src/services/homeroom-bot-tray.js',
+    'src/services/shared-objects.js', 'src/services/homeroom-bot-track.js',
     'src/services/homeroom-bot-activity.js', 'src/services/pr-metadata.js',
     'src/services/homeroom-bot-live.js', 'src/services/suggest-back.js',
     'frontend/src/features/admin/admin-small-changes.tsx', 'frontend/src/features/admin/admin-gallery.tsx',

@@ -83,6 +83,9 @@ function makeAppView({ search = '' } = {}) {
     pr_url: 'https://github.com/acme/app/pull/1540',
     status: 'promoted', username: 'evan', created_at: at(1), promoted_at: at(1), last_message_at: at(1),
     linked_issues: [], my_vote: null, votes_for: 3, votes_against: 1, yes_count: 3, no_count: 1,
+    // More yeses still needed, so the row keeps its Vote button (#6505: a
+    // decided change draws none).
+    votes_required: 5,
     checks_state: 'success', checks_total: 412, checks_passed: 412, message_count: 5,
   }];
   AppView._govProposals = [];
@@ -1479,7 +1482,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 838 → 839: +1 (#3692): the Homeroom bot DM's activity tray strip on
   // the staging fixture (#messages/910005). It shares that route with the
   // #3624 check, but could not fold into it: that selector is already at
-  // 253 of the 256 characters the runner reads. 839 leaves 21 slots
+  // 253 characters against the runner's selector cap
+  // (`MAX_TEST_SELECTOR_LEN`). 839 leaves 21 slots
   // against MAX_DECLARED_TESTS (860).
   //
   // 839 → 840: +1 (#3755): an agent chat whose change failed its checks
@@ -1500,8 +1504,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 841 → 842: +1 (#4097): the Homeroom bot's news about a request leads
   // with the request's card on the staging fixture (#messages/910005). It
   // shares that route with the #3624 and #3692 checks, but could not fold
-  // into either: their selectors are at 253 and 245 of the 256 characters
-  // the runner reads. 842 leaves 28 slots.
+  // into either: their selectors are at 253 and 245 characters against the
+  // runner's selector cap (`MAX_TEST_SELECTOR_LEN`). 842 leaves 28 slots.
   //
   // 842 → 843: +1: the Benchmark area's Studio place
   // (#admin/homeroom-bot/benchmark/studio), the App bench studio's gallery on
@@ -1544,8 +1548,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // coding-run card checks on 990412 became ONE on the agent-session fixture
   // (#messages/agent/990801), because that card is the dev chat's `Attached`,
   // which agent sessions draw too. It could not fold into the three 990801
-  // checks on that route: their selectors leave at most 43 of the runner's
-  // 256 characters, and this one needs 191 of its own. Three groups stay,
+  // checks on that route: their selectors leave at most 43 characters under
+  // the runner's selector cap (`MAX_TEST_SELECTOR_LEN`), and this one needs
+  // 191 of its own. Three groups stay,
   // because none is the classic chat's own: the spec panel's (900830,
   // 900831), where a shared spec still opens and whose HTML-spec frames
   // (lib/spec-html) agent sessions draw; the published chat's (990002), the
@@ -1634,7 +1639,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 729 → 730: +1 (#4772): the Workshop tab's What's happening files the
   // viewer's work in sections (Waiting on you, Yours, up for a vote, Going
   // live), on the ?demo=1 mocks. Folding it into the Overview check on the
-  // same route took that selector past the runner's 256 characters. 730
+  // same route took that selector past the runner's selector cap
+  // (`MAX_TEST_SELECTOR_LEN`). 730
   // leaves 150 slots.
   //
   // 730 → 731: +1: the admin console's Apps & usage section (#admin/apps),
@@ -1719,7 +1725,47 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 751 → 752: +1 an app build that produces blocks only while open says so
   // in Settings. It is a new demo route, so nothing to fold it into. 752
   // leaves 128 slots.
-  checkCap.assertPinned(DAPP.tests.length, 752);
+  // 752 → 753: +1 (#6029) the Basic/Advanced switch on Experimental,
+  // a settings route with no existing declared check to extend.
+  // 753 → 751: −2 (#6276) the old Needs-you reel's four declared checks
+  // become the review flow's two: a project's Needs you draws it, and its
+  // change page is drawn in place in the pane.
+  // 751 → 752: +1 (#6271) a private thread marked done this week is listed
+  // under Live this week with its lock and the day it closed. Live this week
+  // had no declared check to extend. 752 leaves 128 slots.
+  //
+  // 752 → 753: #6134's Needs attention card. It needs its own ?demo= fixture
+  // (connectors-attention), so it has no check to fold into.
+  // 753 → 748: −5 (One Home, #6361) Home's Discover lane went, and its three
+  // checks with it (populated empty note, the add round trip, the drag onto
+  // the grid), the Communities tab's glyph on All communities (the tab is
+  // drawn on neither bar), and the places nested under a sidebar row (the
+  // hub lists them). Its new states folded into existing checks instead.
+  //
+  // 748 → 749: +1 (5 Nov 2026, the Homeroom bot tab is the one place for
+  // your work) a link's project filter (#homeroom-bot?project=<slug>) lights
+  // that project's chip. The checks of the removed Workshop lists and Me ›
+  // Your work were retargeted in place; the address is a route of its own,
+  // so it has no check to fold into.
+  //
+  // 749 → 750: +1 (One Home follow-up, #6361) the places nested under a
+  // community's row in the desktop sidebar come back, and their check with
+  // them (the hub still lists them too).
+  // 750 → 732: −18 (One Home follow-up, #6361) Discover's screen went: 19
+  // checks of its list, details, filters, sort and search are retired (two
+  // more now follow its old addresses: #apps opens Home's Communities to
+  // join, #apps/<slug> its project's hub), and +1 brings the details page's
+  // up-arrow check (#1036) back on Challenges, which goes up to Me. 732
+  // leaves 148 slots.
+  // 732 → 729: −3 (One Home follow-up, #6361) the Communities screen's list
+  // went to Home, and its three checks (its rows' Workshop links, their two
+  // counts, the audience chips) with it. Its page check now follows
+  // #communities to Home and finds the Needs you tile there; the two Needs
+  // you checks follow the page to #needs. 729 leaves 151 slots.
+  // 729 → 730: +1 (#6371) the This week page the weekly digest's Friday row
+  // opens is an address of its own (/?demo=1#week), so it has no check to
+  // fold into. 730 leaves 150 slots.
+  checkCap.assertPinned(DAPP.tests.length, 730);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1806,14 +1852,15 @@ test('the open card is the fold’s sheet, and never picks up the Needs-you deck
     'the deck’s dialogs are the fixed, full-screen thing');
   assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
     'and nothing is keyed on the bare name, which is one open card sitting in its row');
-  // Two dialogs since the reel redesign: the vote, and the one sheet whose
-  // two tabs are Comments and Ask.
-  for (const kind of ['vote', 'talk']) {
-    assert.match(WORKSHOP, new RegExp(`className="dev-ws-sheet-modal dev-ws-sheet-${kind}"`),
-      `the ${kind} dialog carries the deck’s base class`);
-  }
+  // The reel's vote and talk dialogs left with the reel (#6276): the review
+  // flow that replaced it draws its own sheet (`rf-*`), so no Workshop
+  // component wears the deck's full-screen class any more. The geometry
+  // rule stays keyed on that name, so only a sheet that means it can pick
+  // it up.
+  assert.ok(!/className="dev-ws-sheet-modal/.test(WORKSHOP),
+    'no Workshop component carries the deck’s full-screen class');
   assert.ok(!/className="dev-ws-sheet dev-ws-sheet-/.test(WORKSHOP),
-    'and neither carries the fold’s');
+    'and nothing carries the fold’s name as a dialog');
   // The open card keeps the bare name, because two declared checks select it
   // that way — which is also why the deck is the side that moved.
   assert.match(FOLD, /<div className="dev-feed-entry dev-ws-sheet" data-ws-sheet=\{row\.key\}>/);
@@ -1997,12 +2044,11 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   // now pins the `:has(+ …)` direction rather than just the class names.
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
-  // The Needs-you feed: the deck became a feed, and the check walks to the rail's Vote
-  // control; a second check pins the item's own order (who and when, then
-  // the title, then the sentence, then the caption) with the same `+`/`~`
-  // direction.
-  assert.match(byName(/Needs-you tab is a feed of one decision per screen/).expectSelector, /\[data-ws-needs\] > \[data-ws-rail\] > button\[data-ws-rail-btn="vote"\]/);
-  assert.match(byName(/leads with who and when, then its title, then the sentence a voter reads/).expectSelector, /> \.dev-ws-item-caption > \.dev-ws-item-by \+ \.dev-ws-item-title \+ \.dev-ws-item-summary"?$/);
+  // The Needs-you deck is the review flow now: one check holds that a
+  // project's own Needs you draws it, and another that its change page is
+  // drawn in place in the pane rather than over the shell.
+  assert.match(byName(/A project's Needs you draws the review flow/).expectSelector, /\[data-rf-project="usernode-2d5619"\] \[data-review-flow\]/);
+  assert.match(byName(/change page in place in the pane/).expectSelector, /body:not\(:has\(> \[data-rf-page\]\)\)[\s\S]*\[data-workshop-pane="needs"\] \[data-rf-page\] \[data-rf-back\]/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);

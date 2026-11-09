@@ -36,6 +36,18 @@ import type { BotDoing, Typist } from './store';
  * card shows those words under "Writing", growing, drawn as the message's
  * own words are. It is a preview: the message the bot sends, checked, takes
  * the card's place as before.
+ *
+ * 4 Nov 2026 (#6302): and the words stay under whatever the card says next.
+ * The server names a new doing as each step starts ("Reading request #436")
+ * and none while it thinks, which used to drop the answer so far and draw it
+ * again as the next round streamed: the card flashed between output and
+ * thinking. The store now holds the draft on the bot's Typist
+ * (store.ts `botTypist`) and this draws it whatever the doing kind is.
+ *
+ * 6 Nov 2026 (#6405): the draft only grows. A tail the server cut from
+ * part-way through is stitched under the words already held, and a rewrite
+ * (the correction pass) waits until it has caught up with them, so the card
+ * never shrinks and never streams the answer again from its first word.
  */
 
 type Translate = (id: string, values?: Record<string, unknown>) => string;
@@ -54,6 +66,8 @@ export function typingBesides(typing: readonly Typist[], working: Typist | null)
 const DOING_WORDS: Record<string, string> = {
   progress: 'messages:thread.botWorking.progress',
   drawing: 'messages:thread.botWorking.drawing',
+  // #6354: Homeroom is opening one of its own pages to copy it for a design.
+  capturing: 'messages:thread.botWorking.capturing',
   designing: 'messages:thread.botWorking.designing',
   drafting: 'messages:thread.botWorking.drafting',
   writing: 'messages:thread.botWorking.writing',
@@ -67,6 +81,12 @@ export function botDraftText(doing: BotDoing | null | undefined): string {
 /** What the card says the bot is doing: "Reading request #12", or "Thinking" for nothing (or a kind it does not know). */
 export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): string {
   if (doing?.kind === 'request' && doing.number) return t('messages:thread.botWorking.request', { number: doing.number });
+  // #6354: "Opening the Homeroom bot page as it is now".
+  if (doing?.kind === 'capturing') {
+    return doing.page
+      ? t('messages:thread.botWorking.capturing', { page: doing.page })
+      : t('messages:thread.botWorking.capturingUnnamed');
+  }
   if (doing?.kind === 'code') {
     return doing.project ? t('messages:thread.botWorking.code', { project: doing.project }) : t('messages:thread.botWorking.codeUnnamed');
   }
@@ -79,7 +99,10 @@ export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): 
 
 export function BotWorkingCard({ typist }: { typist: Typist }) {
   const t = useMessages('messages');
-  const draft = botDraftText(typist.doing);
+  // 4 Nov 2026 (#6302): the words already written, held by the store across
+  // the steps that follow (a read, a wordless "thinking"), so they never
+  // vanish and come back between rounds.
+  const draft = typist.draft || botDraftText(typist.doing);
   return (
     <div className="flex items-start gap-3 px-4 py-1" data-bot-working={typist.doing?.kind || 'thinking'}>
       <UserAvatar user={{ id: 0, username: typist.name, bot: true }} size="md" shape="square" />

@@ -32,11 +32,11 @@
     "description": "Error under the message box of an agent session when more files were picked than one message may carry. {{count}} is the limit (4 today)."
   },
   "session.fixChecks.headingPr_one": {
-    "text": "{{count}} check failed on PR #{{number}}",
+    "text": "{{count}} check failed on PR {{number}}",
     "description": "Heading of the card at the end of an agent session that offers to fix a change's failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number. PR is the abbreviation of pull request."
   },
   "session.fixChecks.headingPr_other": {
-    "text": "{{count}} checks failed on PR #{{number}}",
+    "text": "{{count}} checks failed on PR {{number}}",
     "description": "Heading of the card at the end of an agent session that offers to fix a change's failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number. PR is the abbreviation of pull request."
   },
   "session.fixChecks.headingChange_one": {
@@ -48,11 +48,11 @@
     "description": "Heading of the card at the end of an agent session that offers to fix a change's failing automated checks. {{count}} is how many checks failed. Used before the change has a pull request; \"change\" is a noun, the code change the agent is building."
   },
   "session.fixChecks.askPr_one": {
-    "text": "Please fix the failing check on PR #{{number}}.",
+    "text": "Please fix the failing check on PR {{number}}.",
     "description": "First line of the message that the \"Fix it\" button sends to the coding agent in the person's own name, asking it to fix failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "session.fixChecks.askPr_other": {
-    "text": "Please fix the {{count}} failing checks on PR #{{number}}.",
+    "text": "Please fix the {{count}} failing checks on PR {{number}}.",
     "description": "First line of the message that the \"Fix it\" button sends to the coding agent in the person's own name, asking it to fix failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number."
   },
   "session.fixChecks.askChange_one": {
@@ -388,7 +388,7 @@
     "description": "Line in the \"Propose to group\" confirmation panel of an agent session saying which change goes to the community's vote and that its preview build and automated checks run again first. {{title}} is the proposal title typed above. Keep the quotation marks around it."
   },
   "session.propose.line.titledPr": {
-    "text": "“{{title}}” (PR #{{number}}) goes to the vote. Its preview and checks run again on the way.",
+    "text": "“{{title}}” (PR {{number}}) goes to the vote. Its preview and checks run again on the way.",
     "description": "Line in the \"Propose to group\" confirmation panel of an agent session saying which change goes to the community's vote and that its preview build and automated checks run again first. {{title}} is the proposal title typed above; {{number}} is the pull request's number (PR is its abbreviation)."
   },
   "session.propose.line.untitled": {
@@ -396,7 +396,7 @@
     "description": "Line in the \"Propose to group\" confirmation panel of an agent session saying which change goes to the community's vote and that its preview build and automated checks run again first. Used when the title box is empty; \"change\" is a noun."
   },
   "session.propose.line.untitledPr": {
-    "text": "“This change” (PR #{{number}}) goes to the vote. Its preview and checks run again on the way.",
+    "text": "“This change” (PR {{number}}) goes to the vote. Its preview and checks run again on the way.",
     "description": "Line in the \"Propose to group\" confirmation panel of an agent session saying which change goes to the community's vote and that its preview build and automated checks run again first. Used when the title box is empty; {{number}} is the pull request's number. \"change\" is a noun."
   },
   "session.propose.titleLabel": {
@@ -490,6 +490,34 @@
   "session.checks.running": {
     "text": "Checks running",
     "description": "Short status of a change's automated checks, on its preview card and in the changes panel of an agent session: the checks are running now or waiting to start."
+  },
+  "session.checks.runningLeft_one": {
+    "text": "Checks running, about {{count}} minute left",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they are running and should finish in about {{count}} minute."
+  },
+  "session.checks.runningLeft_other": {
+    "text": "Checks running, about {{count}} minutes left",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they are running and should finish in about {{count}} minutes."
+  },
+  "session.checks.runningUnder": {
+    "text": "Checks running, less than a minute left",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they are running and should finish in under a minute."
+  },
+  "session.checks.runningLonger": {
+    "text": "Checks running, taking longer than usual",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they have gone past their usual time and are still running."
+  },
+  "session.checks.queuedWait_one": {
+    "text": "Checks waiting, about {{count}} minute until they start",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they are waiting for a free slot and should start in about {{count}} minute."
+  },
+  "session.checks.queuedWait_other": {
+    "text": "Checks waiting, about {{count}} minutes until they start",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they are waiting for a free slot and should start in about {{count}} minutes."
+  },
+  "session.checks.queuedLonger": {
+    "text": "Checks waiting, longer than usual",
+    "description": "Short status of a change's automated checks on its preview card in an agent session: they are waiting for a free slot longer than their rough wait suggested."
   },
   "session.checks.couldNotRun": {
     "text": "Checks couldn’t run",
@@ -851,6 +879,30 @@
     "text": "Archive",
     "description": "Confirm button of the dialog shown before an agent session is archived: a verb."
   },
+  "session.archiveUndo.archived_one": {
+    "text": "Archived “{{title}}”",
+    "description": "Bottom notice shown right after a person archives an agent session from Messages, with an Undo button beside it. {{title}} is the conversation's title. {{count}} (1 here) is how many archives can be undone in a row, newest first."
+  },
+  "session.archiveUndo.archived_other": {
+    "text": "Archived “{{title}}”. {{count}} to undo",
+    "description": "Bottom notice shown right after a person archives an agent session from Messages when earlier archives can still be undone too, with an Undo button beside it. {{title}} is the conversation's title; {{count}} is how many can be undone in a row, newest first, this one included."
+  },
+  "session.archiveUndo.restored_one": {
+    "text": "Brought back “{{title}}”. {{count}} more to undo",
+    "description": "Bottom notice shown after Undo brought an archived agent session back in Messages, while earlier ones can still be undone; an Undo button stays beside it. {{title}} is the conversation's title; {{count}} is how many more can be undone."
+  },
+  "session.archiveUndo.restored_other": {
+    "text": "Brought back “{{title}}”. {{count}} more to undo",
+    "description": "Bottom notice shown after Undo brought an archived agent session back in Messages, while earlier ones can still be undone; an Undo button stays beside it. {{title}} is the conversation's title; {{count}} is how many more can be undone."
+  },
+  "session.archiveUndo.restoredLast": {
+    "text": "Brought back “{{title}}”",
+    "description": "Bottom notice shown after Undo brought the last archived agent session back in Messages, with nothing left to undo and no button. {{title}} is the conversation's title."
+  },
+  "session.archiveUndo.undo": {
+    "text": "Undo",
+    "description": "Button on the bottom notice shown after archiving an agent session from Messages: brings the most recent one back. A verb."
+  },
   "session.drafts.full_one": {
     "text": "That's {{count}} saved draft. Send or delete one first",
     "description": "Toast in an agent session when the person tries to save a message for later and the list of saved drafts is full. {{count}} is the limit. No final full stop."
@@ -884,7 +936,7 @@
     "description": "Tooltip of the \"Open app\" button in the bar at the top of an agent session (the conversation with Homeroom's coding agent). {{app}} is the app's name. \"Open\" is a verb."
   },
   "session.changeRef.pr": {
-    "text": "PR #{{number}}",
+    "text": "PR {{number}}",
     "description": "How a code change is named in an agent session when it has no title: by its pull request. {{number}} is the pull request's number; PR is the abbreviation of pull request."
   },
   "session.changeRef.change": {
@@ -1197,7 +1249,7 @@
   },
   "session.spec.subtitleWithApp": {
     "text": "{{change}} · {{app}}",
-    "description": "Small line under the heading of the plan viewer: which change the plan belongs to and its app. {{change}} is the change's title, or a reference such as PR #12; {{app}} is the app's name. Keep the middle dot."
+    "description": "Small line under the heading of the plan viewer: which change the plan belongs to and its app. {{change}} is the change's title, or a reference such as PR 12; {{app}} is the app's name. Keep the middle dot."
   },
   "session.spec.versionLabel": {
     "text": "Plan version",
@@ -1476,11 +1528,11 @@
     "description": "Small upper-case heading in the panel that lists the code changes made in an agent session, over the change the conversation is working on now."
   },
   "session.drawer.activeLinePr": {
-    "text": "{{app}} · PR #{{number}} (change {{change}})",
+    "text": "{{app}} · PR {{number}} (change {{change}})",
     "description": "Small line under the active change's title in the panel that lists the code changes made in an agent session. {{app}} is the app's name, {{number}} the pull request's number, {{change}} the change's own number. \"change\" is a noun."
   },
   "session.drawer.linePr": {
-    "text": "{{app}} · PR #{{number}}",
+    "text": "{{app}} · PR {{number}}",
     "description": "Small line under an earlier change's title in the panel that lists the code changes made in an agent session. {{app}} is the app's name, {{number}} the pull request's number."
   },
   "session.drawer.lineChange": {
@@ -1693,23 +1745,23 @@
   },
   "appContext.about.open.resume": {
     "text": "Resume",
-    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": a verb, goes back to this app, which is still open in the background."
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Pin to Home\": a verb, goes back to this app, which is still open in the background."
   },
   "appContext.about.open.open": {
     "text": "Open",
-    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": a verb, opens the app."
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Pin to Home\": a verb, opens the app."
   },
   "appContext.about.open.spinningUp": {
     "text": "Spinning up…",
-    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": shown disabled while the app is being created and cannot be opened yet."
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Pin to Home\": shown disabled while the app is being created and cannot be opened yet."
   },
   "appContext.about.open.notRunning": {
     "text": "Not running",
-    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": shown disabled when the app failed to start."
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Pin to Home\": shown disabled when the app failed to start."
   },
   "appContext.about.open.unavailable": {
     "text": "Unavailable",
-    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": shown disabled when the app cannot be opened and its state is not known."
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Pin to Home\": shown disabled when the app cannot be opened and its state is not known."
   },
   "appContext.invite.error.generic": {
     "text": "Something went wrong. Try again.",
@@ -1973,15 +2025,15 @@
   },
   "appContext.about.added": {
     "text": "Added",
-    "description": "Text of the disabled button in the About pane of the app menu, beside a check mark, once the app is in the person's My apps list."
+    "description": "Text of the disabled button in the About pane of the app menu, beside a check mark, once the app is in the person's Pinned apps list."
   },
   "appContext.about.addToMyApps": {
-    "text": "Add to My apps",
-    "description": "Button in the About pane of the app menu: adds this app to the person's own list of apps on Home. \"My apps\" is that list's name."
+    "text": "Pin to Home",
+    "description": "Button in the About pane of the app menu: adds this app to the person's own list of apps on Home. \"Pinned apps\" is that list's name."
   },
   "appContext.about.invite": {
     "text": "Invite",
-    "description": "Button in the About pane of the app menu, beside Added or Add to My apps, for a member of the app's community. A verb: opens the pane that makes an invite link to the community."
+    "description": "Button in the About pane of the app menu, beside Added or Pin to Home, for a member of the app's community. A verb: opens the pane that makes an invite link to the community."
   },
   "appContext.about.contributors.heading": {
     "text": "Contributors",
@@ -2103,6 +2155,10 @@
     "text": "Report app",
     "description": "Small link at the foot of the app menu, beside a flag: a verb, reports this app to Homeroom's moderators."
   },
+  "appContext.terms": {
+    "text": "Terms",
+    "description": "Small link at the foot of the app menu (the sheet opened from the app's name in the header), before \"Privacy\" and \"Report app\": opens Homeroom's terms of service in a new tab."
+  },
   "appContext.privacy": {
     "text": "Privacy",
     "description": "Small link at the foot of the app menu (the sheet opened from the app's name in the header), before \"Report app\": opens Homeroom's privacy notice in a new tab."
@@ -2117,39 +2173,47 @@
   },
   "sidePanel.close": {
     "text": "Close panel",
-    "description": "Tooltip and accessible name of the ✕ button in the header of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page): a verb, closes the panel."
+    "description": "Tooltip and accessible name of the ✕ button in the header of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page): a verb, closes the panel. It is also the ✕ that closes a request, a change or a decision opened in the Homeroom bot page's column."
   },
   "sidePanel.frameTitle": {
     "text": "Side panel",
     "description": "Accessible title of the embedded page inside the side panel, the pane docked beside an app on a wide screen."
-  },
-  "sidePanel.main": {
-    "text": "Main Chat",
-    "description": "Beside the AI tab's page, on the column a request or a change opened in: the chip that closes it and gives Main Chat, the person's private chat with Homeroom bot, its place back. \"Main Chat\" is that chat's name; keep it the same as its title. A back chip, with a chevron before it."
-  },
-  "sidePanel.mainLabel": {
-    "text": "Back to Main Chat",
-    "description": "Screen-reader label of the \"Main Chat\" chip beside the AI tab's page: it closes the page opened in the column and shows Main Chat, the person's private chat with Homeroom bot, again."
   },
   "sidePanel.openProject": {
     "text": "Open {{project}}",
     "description": "Accessible name of the link over a request's or proposal's page beside the Homeroom bot tab's list, showing the project the page belongs to: opens that project's page. {{project}} is the project's name. \"Open\" is a verb."
   },
   "sidePanel.where.request": {
-    "text": "<0>{{project}}</0> · Request #{{number}}",
-    "description": "Beside the AI tab's page: the line under the title of a request opened in the column. {{project}} is the project's name, a link to its page (the tags); {{number}} is the request's number."
+    "text": "<0>{{project}}</0> · <1>Request #{{number}}</1>",
+    "description": "Beside the AI tab's page: the line under the title of a request opened in the column. {{project}} is the project's name, a link to its page (tag 0); {{number}} is the request's number. Tag 1 is the request's own page: pressing it opens that page full width."
   },
   "sidePanel.where.change": {
-    "text": "<0>{{project}}</0> · Change #{{number}}",
-    "description": "Beside the AI tab's page: the line under the title of a change (a proposal) opened in the column. {{project}} is the project's name, a link to its page (the tags); {{number}} is the change's number."
+    "text": "<0>{{project}}</0> · <1>Change #{{number}}</1>",
+    "description": "Beside the AI tab's page: the line under the title of a change (a proposal) opened in the column. {{project}} is the project's name, a link to its page (tag 0); {{number}} is the change's number. Tag 1 is the change's own page: pressing it opens that page full width."
   },
   "sidePanel.where.decision": {
-    "text": "<0>{{project}}</0> · Decision",
-    "description": "Beside the AI tab's page: the line under the title of a group decision (a vote on a new name, a card picture, …) opened in the column. {{project}} is the project's name, a link to its page (the tags)."
+    "text": "<0>{{project}}</0> · <1>Decision</1>",
+    "description": "Beside the AI tab's page: the line under the title of a group decision (a vote on a new name, a card picture, …) opened in the column. {{project}} is the project's name, a link to its page (tag 0). Tag 1 is the decision's own page: pressing it opens that page full width."
   },
   "sidePanel.where.project": {
     "text": "<0>{{project}}</0>",
     "description": "Beside the AI tab's page: the line under the title of any other page of a project opened in the column. {{project}} is the project's name, a link to its page (the tags)."
+  },
+  "sidePanel.moreLabel": {
+    "text": "More actions",
+    "description": "Screen-reader label and tooltip of the ⋯ button at the end of the heading beside the AI tab's page: it opens a small menu of actions for the request, change or decision shown in the column."
+  },
+  "sidePanel.menu.copyLink": {
+    "text": "Copy link",
+    "description": "The first row of the ⋯ menu in the heading beside the AI tab's page: copies a link to the request's, change's or decision's own page, which can be shared with anyone who can see the project."
+  },
+  "sidePanel.menu.openInWorkshop": {
+    "text": "Open in workshop",
+    "description": "The second row of the ⋯ menu in the heading beside the AI tab's page: leaves the AI tab and opens the project's Workshop, with this request, change or decision open in the panel beside its list. 'Workshop' is the name the project's own page gives that place; keep the word sentence-cased as here."
+  },
+  "sidePanel.linkCopied": {
+    "text": "Link copied",
+    "description": "Confirmation toast after Copy link beside the AI tab's page: the item's own page address is on the clipboard."
   },
   "sidePanel.resize": {
     "text": "Resize panel",

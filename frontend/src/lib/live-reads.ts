@@ -31,7 +31,10 @@
  *     resync (App.resyncCurrentView calls `resync('reconnect')`), when the
  *     tab comes back after `AWAY_MS` hidden, and when the browser comes back
  *     online;
- *   - one read is re-read when the service worker corrects it.
+ *   - one read is re-read when the service worker corrects it;
+ *   - a thread's reads are re-read when a change joined it or moved in it
+ *     (`thread_changed`, #6231), so a request's page shows a change the
+ *     moment it is proposed, merged or withdrawn.
  *
  * A re-read fetches with `FRESH` (`cache: 'no-cache'`): the worker then waits
  * for the network instead of answering from the copy being replaced
@@ -48,7 +51,7 @@
 
 import { API_UPDATED_EVENT } from './service-worker';
 
-export type ResyncReason = 'reconnect' | 'visible' | 'online' | 'correction' | 'manual';
+export type ResyncReason = 'reconnect' | 'visible' | 'online' | 'correction' | 'manual' | 'thread';
 
 /** What a watcher is asked to re-read: everything it shows, or these reads. */
 export interface Resync {

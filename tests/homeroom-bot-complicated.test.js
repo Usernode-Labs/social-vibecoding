@@ -9,8 +9,10 @@
 // it, or large). Such a change is not built at once: its build slot drafts
 // the spec first, with its before and after screens, and it is shown to its
 // requester with Build it and Change something, on the request (shared with
-// the group, and on GitHub) and as the plan card in their DM with the bot.
-// It never builds without an answer. Build it builds exactly that spec, with
+// the group, and on GitHub). Until 5 Nov 2026 it was also the plan card in
+// their DM with the bot; since then a request's news is said on its page
+// (docs/plans/bot-one-model.md, step 4), and a plan card sent before still
+// answers. It never builds without an answer. Build it builds exactly that spec, with
 // the choices in its build note; Change something posts their words on the
 // request and plans it again. Once built, its screens go through the check
 // round a first version gets. Small changes still go straight to a proposal,
@@ -67,6 +69,36 @@ test('the triage labels a ready change complicated only when it says so, and onl
   assert.equal(bot.parseVerdict(fence({ verdict: 'person', reason: 'x', complicated: true })).complicated, false);
 });
 
+// #6209 (4 Nov 2026, evan): a request that asks for a plan before a build is
+// still ready, and is built straight away when the change is straightforward:
+// its plan is posted on the request as a plan card, then the build goes on.
+// Only a complicated change, or one that says not to build yet, waits.
+test('a ready verdict that asks for a plan first builds straight away unless the change is complicated', async (t) => {
+  const ready = (extra) => bot.parseVerdict(fence({ verdict: 'ready', build_note: 'Add image models.', ...extra }));
+  // The triage has no separate wait signal any more: a plan-first request is
+  // not complicated by itself, and a straightforward one builds.
+  assert.equal(ready({ plan_first: true }).complicated, false, 'asking for a plan first is not complicated by itself');
+  assert.equal(ready({ plan_first: true }).planFirst, undefined, 'no separate plan-first field');
+  const md = read('src/prompts/homeroom-bot-triage.md');
+  assert.match(md.replace(/\s+/g, ' '), /A request to plan before building is `ready`, not `person`; one that says not to build yet is `complicated`\./);
+  assert.doesNotMatch(md, /plan_first/, 'the triage no longer asks for a plan-first signal');
+  const src = read('src/services/homeroom-bot.js');
+  assert.doesNotMatch(src, /v\.planFirst/, 'nothing forces every plan-first request to wait');
+  const seen = stubLive(t);
+  // Straightforward: the ordinary build path, after its plan card.
+  const small = verdictArgs({ parsed: { verdict: 'ready', buildNote: 'Add image models.' } });
+  assert.equal(await bot.actOnVerdict(small), 'build_queued');
+  assert.equal(seen.built.length, 0, 'nothing is built in the triage turn');
+  // Complicated, or told not to build yet (the triage labels that
+  // complicated): its plan is drafted and waits for Build it.
+  const big = verdictArgs({ parsed: { verdict: 'ready', buildNote: 'Add image models.', complicated: true } });
+  assert.equal(await bot.actOnVerdict(big), 'plan_queued');
+  // A first version already plans first.
+  const first = verdictArgs({ firstVersion: true, parsed: { verdict: 'ready', buildNote: 'Add image models.' } });
+  first.deps.dm = { async sendPlanCard() { return { messageId: 3 }; } };
+  assert.equal(await bot.actOnVerdict(first), 'awaiting_go');
+});
+
 test('the triage prompt says what counts as complicated, leaning towards building straight away', () => {
   const md = read('src/prompts/homeroom-bot-triage.md');
   const flat = md.replace(/\s+/g, ' ');
@@ -87,25 +119,20 @@ test('the triage prompt says what counts as complicated, leaning towards buildin
   assert.match(read('src/db/schema.sql'), /ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS complicated BOOLEAN;/);
 });
 
-test('a complicated plan counts against the daily questions and notes; a small change does not', async () => {
-  const seen = [];
-  const counting = (n) => ({ async query(sql, params) { seen.push([String(sql), params]); return { rows: [{ cnt: n }] }; } });
-  assert.equal(await bot.planTripwire(counting(10), 2), 'question_tripwire');
-  assert.equal(await bot.planTripwire(counting(9), 2), null);
-  assert.ok(seen.some(([sql]) => /verdict = ANY\(\$2::text\[\]\) OR complicated IS TRUE/.test(sql)), 'plans asked count as questions do');
+test('3 Nov 2026: a complicated plan is held only by the slots a build is, never by a daily count of questions', () => {
+  assert.equal(bot.planTripwire, undefined);
   const src = read('src/services/homeroom-bot.js');
   // (Homeroom bot parity, P4: the request it decides for, which a batch may raise the hold for.)
-  assert.match(src, /const caps = await simulateCaps\(pool, bot, app\.id, v\.verdict, settings, \{ issueNumber \}\)\n\s+\|\| \(v\.complicated \? await planTripwire\(pool, app\.id\) : null\);/,
-    'only a complicated change: a small one is not asked about');
-  assert.match(live.heldText({ cap: 'question_tripwire', verdict: 'plan', limit: 10, project: 'Chores' }),
-    /^Homeroom bot has a plan for this request, but it has already posted 10 questions and notes on Chores today\./);
+  assert.match(src, /const caps = await simulateCaps\(pool, bot, app\.id, v\.verdict, settings, \{ issueNumber \}\);\n/,
+    'the verdict\'s caps, and nothing more for a plan that asks its requester first');
+  assert.doesNotMatch(src, /planTripwire|tripwireCount/);
 });
 
 // ── What it says ──
 
 test('the plan is posted on the request and GitHub to read and answer; the build that follows does not post it again', () => {
   const text = live.planCommentText({ spec: '# Leaderboard\n\nA weekly leaderboard.', questions: PLAN.questions });
-  assert.match(text, /^Homeroom bot wrote a plan for this request, with its before and after screens, and will build it once the person who asked for it says Build it\. On Homeroom they can reply "build it" on this request when it looks right, or say what to change and it will plan it again\./);
+  assert.match(text, /^Homeroom bot wrote a plan for this request, with its before and after screens\. Nothing has been built yet\. It will build it once the person who asked for it says Build it\. On Homeroom they can reply "build it" on this request when it looks right, or say what to change and it will plan it again\./);
   assert.match(text, /One choice for them, or it goes with what it suggests:\n- Who shows on the leaderboard\? \(suggested: Everyone in the flat\)/);
   assert.match(text, /<details><summary>The plan<\/summary>\n\n# Leaderboard/);
   assert.doesNotMatch(text, /@/, 'nobody is @mentioned on GitHub');
@@ -113,7 +140,7 @@ test('the plan is posted on the request and GitHub to read and answer; the build
   assert.equal(card.msgType, 'spec_share');
   assert.equal(card.metadata.specShare.sessionId, 5, 'its card opens the spec, with its screens');
   // One request, one story: the plan in a line, saying who it waits for.
-  assert.equal(card.content, '📋 Plan v1: Leaderboard. Waiting for the person who asked for it to say Build it.');
+  assert.equal(card.content, '📋 Plan v1: Leaderboard. Nothing is built yet. Waiting for the person who asked for it to say Build it.');
   assert.equal(card.metadata.specShare.botNote, 'waiting');
   // A plan its requester said Build it to is not posted again: a note says so.
   assert.equal(live.approvedBuildHomeroomText({ requester: 'sam' }), '@sam said Build it. I\'m building it now.');
@@ -584,6 +611,31 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
       WHERE d.run_id = $1 AND d.kind = 'plan'`,
     [runId],
   )).rows[0];
+  // A plan card as sendPlanCard sent it to the requester's DM before 5 Nov
+  // 2026: its Build it offer, its message and its record, tied together.
+  const oldPlanCard = async (runId) => {
+    const opened = await conversations.ensureAdmittedDirect(pool, homeroomBot.id, maya.id);
+    const { rows: [action] } = await pool.query(
+      `INSERT INTO bot_cards (user_id, app_id, kind, title) VALUES ($1, $2, 'build_plan', 'The plan for Chores') RETURNING id`,
+      [maya.id, app.id],
+    );
+    const meta = {
+      kind: 'plan', appSlug: app.slug, appName: app.name, issueNumber: 12, issueTitle: 'Add a leaderboard', firstVersion: false,
+      plan: SHOWN, actionId: Number(action.id), status: 'open',
+    };
+    const { rows: [m] } = await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata)
+       VALUES ($1, $2, $3, jsonb_build_object('homeroomBot', $4::jsonb)) RETURNING id`,
+      [opened.conversationId, homeroomBot.id, dm.planCardText({ appName: app.name, plan: SHOWN, issueNumber: 12 }), JSON.stringify(meta)],
+    );
+    await pool.query('UPDATE bot_cards SET message_id = $2, conversation_id = $3 WHERE id = $1', [action.id, m.id, opened.conversationId]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id)
+       VALUES ($1, $2, $3, $4, 12, 'plan', $5)`,
+      [m.id, maya.id, opened.conversationId, app.id, runId],
+    );
+    return Number(m.id);
+  };
   // Their words on the request, as the discussion's own route posts them.
   const ws = {
     pushConversationEvent() {},
@@ -597,17 +649,28 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
   };
 
   let first;
-  await t.test('its requester gets the plan card in their DM: not a first version, the request under it', async () => {
+  await t.test('its requester gets no plan card in their DM: the plan waits for them on the request', async () => {
     first = await waitingRun();
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a complicated
+    // change's plan is request news, said on its page, not in the DM.
     const sent = await dm.sendPlanCard(pool, { app, issueNumber: 12, runId: first, plan: SHOWN, bot: homeroomBot });
-    assert.ok(sent?.messageId);
+    assert.deepEqual(sent, { messageId: null, stop: 'on_request' }, 'nothing sent: it waits on its request, tried no more');
+    const { rows: tried } = await pool.query("SELECT 1 FROM bot_cards WHERE kind = 'build_plan'");
+    assert.equal(tried.length, 0, 'no offer row written for a card that never goes');
+    assert.equal(await planMessage(first), undefined);
+    const { rows: said } = await pool.query('SELECT 1 FROM conversation_messages WHERE sender_id = $1', [homeroomBot.id]);
+    assert.equal(said.length, 0, 'nothing in her chat with the bot');
+    // Where it stands is its stored work state: waiting for her, on the plan.
+    const ws = require('../src/services/work-state');
+    await ws.refresh(pool, [{ appId: app.id, issueNumber: 12 }]);
+    const stored = (await ws.forRequests(pool, app.id, [12])).get(12);
+    assert.deepEqual([stored.stage, stored.why, stored.requesterId], ['waiting_for_you', 'plan', maya.id]);
+    // A plan card sent before reads as it did: not a first version.
+    await oldPlanCard(first);
     const card = await planMessage(first);
-    assert.equal(card.meta.kind, 'plan');
-    assert.equal(card.meta.firstVersion, false);
+    assert.deepEqual([card.meta.kind, card.meta.firstVersion], ['plan', false]);
     assert.deepEqual(card.meta.plan, SHOWN);
     assert.match(card.content, /^Before I build \*\*Chores\*\* request #12, here's my plan:/);
-    // The request's card goes under it (validated against GitHub, so not here).
-    assert.match(read('src/services/homeroom-bot-dm.js'), /\.\.\.\(complicated \? \{ objects: cardsFor\(PLAN_KIND, \{\}, app, issueNumber\) \} : \{\}\),/);
   });
 
   await t.test('nothing builds without an answer, and "build it" from somebody else on the request is no answer', async () => {
@@ -621,7 +684,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     await pool.query('DELETE FROM chat_messages WHERE app_id = $1', [app.id]);
   });
 
-  await t.test('Build it from the DM builds exactly that plan: the spec it showed, its screens, the choices in the note', async () => {
+  await t.test('Build it on a plan card sent before builds exactly that plan: the spec it showed, its screens, the choices in the note', async () => {
     const card = await planMessage(first);
     const tapped = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) },
       user: maya, actionId: card.meta.actionId, choice: 'build', answers: ['Only people who opt in'],
@@ -638,7 +701,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
 
   await t.test('"build it" from its requester on the request is Build it, and their card says so', async () => {
     const run = await waitingRun();
-    await dm.sendPlanCard(pool, { app, issueNumber: 12, runId: run, plan: SHOWN, bot: homeroomBot });
+    await oldPlanCard(run);
     await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref) VALUES ($1, $2, 'Build it!', 'issue', 12)`,
       [app.id, maya.id],
@@ -658,7 +721,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
   await t.test('Change something drafts their words; Post it puts them on the request, ends the wait, and the next look plans with them again', async () => {
     const mayor = require('../src/services/homeroom-bot-mayor');
     const run = await waitingRun();
-    await dm.sendPlanCard(pool, { app, issueNumber: 12, runId: run, plan: SHOWN, bot: homeroomBot });
+    await oldPlanCard(run);
     const card = await planMessage(run);
     const sent = await conversations.sendMessage(pool, maya, card.conversation_id, {
       content: 'Make it monthly, not weekly', reply_to_id: card.id,
@@ -696,7 +759,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
       'SELECT content FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 ORDER BY id DESC LIMIT 1',
       [card.conversation_id, homeroomBot.id],
     );
-    assert.equal(said.content, "Posted on the public discussion of Chores request #12, as you. I'll plan it again with it and send the new plan here.");
+    assert.equal(said.content, "Posted on the public discussion of Chores request #12, as you. I'll plan it again with it and post the new plan on the request.");
     const { rows: posted } = await pool.query(
       `SELECT user_id, content FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 12`, [app.id],
     );
@@ -718,7 +781,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     const mayor = require('../src/services/homeroom-bot-mayor');
     await pool.query('UPDATE homeroom_bot_runs SET awaiting_go_at = NULL WHERE app_id = $1 AND issue_number = 12', [app.id]);
     const run = await waitingRun();
-    await dm.sendPlanCard(pool, { app, issueNumber: 12, runId: run, plan: SHOWN, bot: homeroomBot });
+    await oldPlanCard(run);
     const card = await planMessage(run);
     const sent = await conversations.sendMessage(pool, maya, card.conversation_id, {
       content: 'Make it yearly', reply_to_id: card.id,
@@ -820,7 +883,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
   await t.test('papote #3: start_request from its requester under its plan is Build it, and nothing is read again', async () => {
     await fresh();
     const run = await waitingRun();
-    await dm.sendPlanCard(pool, { app, issueNumber: 12, runId: run, plan: SHOWN, bot: homeroomBot });
+    // 5 Nov 2026: no plan card in her DM; the plan's row on the request is all.
     const row = await planRow(run);
     // Somebody else asking is told whose OK it waits on, and nothing starts.
     const other = await mayor.startRequest(pool, ctx(sam), { project: 'chores', number: 12 });
@@ -828,7 +891,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     assert.match(other.error, /^Its plan waits for @maya to say Build it, and only they can\. Nothing was started; a new look would only plan it again\./);
     assert.ok((await runRow(run)).awaiting_go_at, 'still waiting');
     assert.deepEqual(await queued(), []);
-    // Its requester asking is Build it, through the card they were sent.
+    // Its requester asking is Build it, with no card in their DM to decide.
     const own = await mayor.startRequest(pool, ctx(maya), { project: 'chores', number: 12 });
     assert.equal(own.ok, true);
     assert.match(own.built, /^That was Build it: the plan they were shown goes ahead as written, and it was not planned again\./);
@@ -836,8 +899,6 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     assert.equal(after.awaiting_go_at, null);
     assert.ok(after.live_build_waiting_at, 'its build waits its turn');
     assert.match(after.build_note, /Approved by the person who asked for it, who said Build it under this plan and its spec:/);
-    const card = await planMessage(run);
-    assert.deepEqual([card.meta.status, card.meta.chosen], ['answered', 'build']);
     assert.deepEqual(await queued(), [], 'no new look was queued');
     // Its row on the request says it is being built (live.notePlanRows).
     assert.deepEqual(await rowOf(row), { content: "📋 Plan v1: Leaderboard. I'm building it now.", note: 'building' });
@@ -886,7 +947,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
   await t.test('papote #3: change_plan plans it again with their words, and its row says a newer plan replaced it', async () => {
     await fresh();
     const run = await waitingRun();
-    await dm.sendPlanCard(pool, { app, issueNumber: 12, runId: run, plan: SHOWN, bot: homeroomBot });
+    await oldPlanCard(run);
     const row = await planRow(run);
     const out = await mayor.replanRequest(pool, ctx(sam), { project: 'chores', number: 12 });
     assert.equal(out.ok, true);
@@ -895,7 +956,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     assert.deepEqual([after.awaiting_go_at, after.build_ok, after.build_error],
       [null, false, 'skipped: somebody asked to change the plan']);
     assert.deepEqual(await queued(), [{ priority: 0, reason: 'plan_change' }], 'read again next');
-    assert.equal((await planMessage(run)).meta.actions?.length || 0, 0, 'its card\'s buttons went');
+    assert.equal((await planMessage(run)).meta.status, 'closed', 'a card sent before gives way');
     assert.deepEqual(await rowOf(row), { content: '📋 Plan v1: Leaderboard. A newer plan replaced it.', note: 'replaced' });
     const none = await mayor.replanRequest(pool, ctx(maya), { project: 'chores', number: 12 });
     assert.match(none.error, /^No plan of yours waits for Build it on it/);
@@ -941,7 +1002,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     assert.equal((await rowOf(changed)).note, 'replaced');
     assert.deepEqual(await rowOf(wentAhead), { content: "📋 Plan v1: Leaderboard. I'm building it now.", note: 'building' });
     assert.equal((await rowOf(aWeek)).note, 'stopped');
-    assert.deepEqual(await rowOf(stillWaiting), { content: '📋 Plan v1: Leaderboard. Waiting for @maya to say Build it.', note: 'waiting' });
+    assert.deepEqual(await rowOf(stillWaiting), { content: '📋 Plan v1: Leaderboard. Nothing is built yet. Waiting for @maya to say Build it.', note: 'waiting' });
     assert.equal(await backfillPlanRows(pool), 0, 'once');
   });
 });

@@ -614,6 +614,9 @@ export interface EvalContext {
 export interface RuleResult {
   group: string; kind: Measure; n: number | null; size: number; yes: number; no: number;
   authorYes: boolean; empty: boolean; known: boolean;
+  // How many people this rule counts: the group, or its active people where
+  // the rule's measure reads them. Said on the Votes card, never decided by.
+  electorate: number;
   need: number | null; passed: boolean; gate: Gate | null;
   // The rule's minimum, and the yeses it asks for today (never more than the
   // group has); both null on a rule without one.
@@ -669,9 +672,11 @@ export function evaluateRule(rule: Rule, ctx: EvalContext): RuleResult {
   // size like atLeast, so a shrinking group never makes it impossible.
   const min = rule.kind !== 'atLeast' && rule.min != null ? rule.min : null;
   const minNeed = min != null ? Math.min(min, Math.max(tally.size, 1)) : null;
+  const readsActive = rule.kind === 'percentOfActive' || (rule.kind === 'majority' && rule.group === 'members');
   const base = {
     group: rule.group, kind: rule.kind, n: rule.n, size: tally.size, yes, no: tally.no,
     authorYes, empty: tally.size === 0, known: tally.known, min, minNeed,
+    electorate: readsActive ? Math.max(tally.active, 1) : tally.size,
   };
   if (tally.size === 0 && rule.group !== 'members') {
     return { ...base, need: null, passed: false, gate: null };

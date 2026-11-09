@@ -31,6 +31,7 @@ const { message: catalog } = require('./lib/platform-i18n');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const mayor = require('../src/services/homeroom-bot-mayor');
 const designBot = require('../src/services/design-bot');
+const designThreads = require('../src/services/design-threads');
 const realDm = require('../src/services/homeroom-bot-dm');
 
 const ROOT = path.join(__dirname, '..');
@@ -202,6 +203,27 @@ test('what counts as saying a screen is being drawn', () => {
   assert.equal(cut, 'I haven\'t drawn it yet. Ask me to draw it and I\'ll start on it.\n\nIt will match the rest of the app closely.');
 });
 
+test('#6307: a second pass replaces the first pass\'s words, so one reply is sent', async () => {
+  // 4 Nov 2026: the first pass wrote its answer beside a tool call and then
+  // claimed a draft it never made; the second pass's reply was joined under
+  // the first pass's paragraphs, which repeated them.
+  const firstPass = 'Here is where all ten stand, in the order you gave them. The Game Corner has its own thread now, '
+    + 'and the rest follow it one by one, each with its own card and its own place in the queue you can open from '
+    + 'the list on the left of this screen. A File it button will appear under this message for The Best Color, so '
+    + 'tap it whenever you are ready, and the one after it gets its own card under the reply I send you next.';
+  assert.ok(firstPass.length > 300, 'long enough to be kept as the answer\'s start');
+  const turn = mayorTurn([
+    { content: firstPass, calls: [call('my_projects', {})] },
+    'A File it button will appear under this message.',
+    { calls: [call('reply', { text: 'I have not drafted it, so there is nothing to tap.' })] },
+  ]);
+  await turn.run;
+  assert.equal(turn.seen.length, 3, 'the claim check asked it again');
+  assert.equal(turn.sent.length, 1);
+  assert.equal(turn.sent[0].content, 'I have not drafted it, so there is nothing to tap.');
+  assert.doesNotMatch(turn.sent[0].content, /Here is where all ten stand/, 'the first pass\'s words are not sent too');
+});
+
 // ── 3. The designer ──────────────────────────────────────────────────────
 
 // `files`: the project's code on main, for a design of an app (surface
@@ -225,9 +247,14 @@ function designTurn(steps, {
   const threads = {
     surfaceFor: () => surface,
     validHtml: () => true,
+    // #6353: the real module's script-free reads, which the turn uses to see
+    // whether a drawn screen shows anything without its scripts.
+    screenMarkup: designThreads.screenMarkup,
+    visibleText: designThreads.visibleText,
     async versionOf() { return current; },
     async ensureDesign() { return { threadId: 7, title: 'Main screen', app: { slug: 'ear', name: 'Ear Trainer' } }; },
     async addVersion(_pool, args) { versions.push(args.html); return { version: (current?.version || 0) + 1 }; },
+    bareNote: require('../src/services/design-threads').bareNote,
     versionLine: (version, note) => `Version ${version} · ${note}`,
     async noteVersionMessage() {},
   };
@@ -376,13 +403,16 @@ const times = (n, step) => Array.from({ length: n }, () => step);
 const reply = (text) => ({ calls: [call('reply', { text })] });
 const edit = (find, replace, note) => ({ calls: [call('edit_design', { edits: [{ find, replace }], ...(note ? { note } : {}) })] });
 const TOOL_NAMES = designBot.TOOLS.map((tool) => tool.function.name);
-const ACT_NAMES = TOOL_NAMES.filter((name) => name !== 'list_source' && name !== 'read_source');
+const ACT_NAMES = TOOL_NAMES.filter((name) => !['list_source', 'read_source', 'list_requests', 'get_request', 'read_plan'].includes(name));
 
 // An edit: a message in a thread that holds version 2 already.
 const CURRENT = { version: 2, html: '<main>Keys</main>' };
 const DESIGNED = { rootId: 500, threadId: 7, state: 'open', latest: 2, title: 'Main screen', surface: 'new' };
 const editTurn = (steps, extra = {}) => designTurn(steps, { handoff: false, design: DESIGNED, current: CURRENT, ...extra });
 const HOME = 'Keys<nav>Intervals · Chords · Progressions</nav></main>';
+// A bot row already in the thread: the designer has spoken, so this first
+// drawing is not the ask-first case (#6257) and the forced draw still applies.
+const SPOKEN = [{ id: 70, sender_id: 2, content: 'Here is a first go.' }];
 
 test('#6144: every design turn has 12 rounds, reads in the first 7, and a first drawing draws by round 8', () => {
   assert.equal(designBot.MAX_ROUNDS, 12);
@@ -395,7 +425,7 @@ test('#6144: every design turn has 12 rounds, reads in the first 7, and a first 
 });
 
 test('#6141: handed a screen, a turn that only read never posts its last words as the answer', async () => {
-  const turn = designTurn([...times(11, READ), reply('placeholder')]);
+  const turn = designTurn([...times(11, READ), reply('placeholder')], { thread: SPOKEN });
   await turn.run;
   assert.equal(turn.seen.length, designBot.MAX_ROUNDS);
   assert.deepEqual(turn.choices, [...times(7, 'auto'), FORCED('write_screen'), ...times(3, 'auto'), FORCED('reply')],
@@ -410,7 +440,7 @@ test('#6141: handed a screen, a turn that only read never posts its last words a
   // The forced draw came back with an error: told to draw twice, then the
   // same honest line.
   const broken = designTurn([...times(7, READ), { calls: [call('write_screen', { title: 'Main screen', html: '' })] },
-    reply('Here it is, in the app\'s own style.')]);
+    reply('Here it is, in the app\'s own style.')], { thread: SPOKEN });
   await broken.run;
   assert.equal(broken.sent[0].content, designBot.NOT_DRAWN_TEXT);
   assert.deepEqual(broken.recorded[0].failures, ['d8:draw_forced', 'd9:handoff', 'd10:handoff', 'end:handoff']);
@@ -420,7 +450,7 @@ test('#6142: a first drawing that reads long is made to draw in round 8, and gro
   const turn = designTurn([...times(7, READ), { calls: [call('write_screen', SCREEN)] },
     edit('Keys</main>', 'Keys<p class="score">Score 0</p></main>'), edit('Score 0', 'Score 3'),
     edit('<main class="keys">', '<main class="keys"><h1>Ear Trainer</h1>'),
-    reply('Here it is, with the score.')]);
+    reply('Here it is, with the score.')], { thread: SPOKEN });
   await turn.run;
   assert.deepEqual(turn.choices, [...times(7, 'auto'), FORCED('write_screen'), ...times(3, 'auto'), FORCED('reply')]);
   assert.equal(turn.sent.length, 1);
@@ -432,7 +462,7 @@ test('#6142: a first drawing that reads long is made to draw in round 8, and gro
   assert.deepEqual(turn.recorded[0].failures, ['d8:draw_forced'], 'it drew: no end failure');
   assert.equal(turn.recorded[0].fallback, null);
 
-  const short = designTurn([...times(7, READ), { calls: [call('write_screen', SCREEN)] }, reply('Here it is.')]);
+  const short = designTurn([...times(7, READ), { calls: [call('write_screen', SCREEN)] }, reply('Here it is.')], { thread: SPOKEN });
   await short.run;
   assert.deepEqual(short.choices, [...times(7, 'auto'), FORCED('write_screen'), 'auto']);
   assert.equal(short.sent[0].content, 'Version 1 · The main screen\n\nHere it is.');
@@ -514,7 +544,7 @@ test('#6144: filler is never an answer: sent back while rounds are left, and nev
 
 test('#6141, #6144: a real question back from the last round still goes out; asking leave to start does not', async () => {
   const handedQuestion = 'Which screen, the quiz or the results?';
-  const asks = designTurn([...times(11, READ), reply(handedQuestion)]);
+  const asks = designTurn([...times(11, READ), reply(handedQuestion)], { thread: SPOKEN });
   await asks.run;
   assert.equal(asks.sent[0].content, handedQuestion);
   assert.deepEqual(asks.recorded[0].failures, ['d8:draw_forced']);
@@ -678,7 +708,11 @@ test('why words do not end a design turn yet', () => {
 const CANT_BUILD = 'I can\'t build it myself: the request is filed with version 4 as its plan, and building starts from there '
   + 'on the project\'s side. If you want anything changed before it\'s built, tell me and I\'ll adjust the design first.';
 const FILED = { ...DESIGNED, state: 'filed', number: 14, latest: 4, app: { slug: 'ear', name: 'Ear Trainer' } };
-const BUILDING = { key: 'ear#14', appSlug: 'ear', issueNumber: 14, state: 'building', step: 'build', why: null, busy: true, try: 1 };
+// Its track (homeroom-bot-track.js trackOf): its stored work state, building.
+const BUILDING = {
+  key: 'ear#14', appSlug: 'ear', issueNumber: 14, work: { stage: 'building', why: null, reason: null, line: null, since: null },
+  step: 'build', busy: true, try: 1,
+};
 const filedTurn = (steps, extra = {}) => designTurn(steps, {
   handoff: false, design: FILED, current: { version: 4, html: '<main>Keys</main>' }, filedTrack: BUILDING,
   ask: 'will you build this now?', ...extra,
@@ -755,6 +789,53 @@ test('each tool says what the bot is doing, in kinds the screen words', () => {
   }
 });
 
+test('#6405: once the turn has named a step, an unmapped tool does not drop the card back to "Thinking"', async () => {
+  const said = [];
+  const pool = { async query() { return { rows: [] }; } };
+  const ctx = { user: { id: 9 }, deps: { doing: async (what) => { said.push(what); } } };
+  await mayor.sayDoing(pool, ctx, 'comment_on_request', {});
+  assert.deepEqual(said, [null], 'before any step is named: "Thinking"');
+  await mayor.sayDoing(pool, ctx, 'progress', {});
+  assert.deepEqual(said.at(-1), { kind: 'progress' }, 'a step of its own is named');
+  await mayor.sayDoing(pool, ctx, 'comment_on_request', {});
+  assert.equal(said.length, 2, 'a tool with no name of its own says nothing now');
+  await mayor.sayDoing(pool, ctx, 'draw_screen', {});
+  assert.deepEqual(said.at(-1), { kind: 'drawing' }, 'a newly named step still shows');
+  // A turn that never names one keeps "Thinking", as before.
+  const quiet = [];
+  const fresh = { user: { id: 9 }, deps: { doing: async (what) => { quiet.push(what); } } };
+  await mayor.sayDoing(pool, fresh, 'comment_on_request', {});
+  await mayor.sayDoing(pool, fresh, 'list_requests', {});
+  assert.deepEqual(quiet, [null, null]);
+});
+
+test('#6405: the correction pass never shows the card a shorter answer than it already has', async () => {
+  const first = 'Refreshed. Homeroom has 80 open requests. The newest is the one about the live reply jumping, '
+    + 'and it has no votes yet.';
+  let round = 0;
+  const stream = (req, text) => req.onDelta({ content: '', toolCalls: [{ index: 0, function: { name: 'reply', arguments: JSON.stringify({ text }) } }] });
+  const chat = async (req) => {
+    round += 1;
+    if (round === 1) {
+      stream(req, first);
+      // It promises a draft it never made: the claim check asks it again.
+      return { content: '', toolCalls: [call('reply', { text: `${first} A File it button will appear under this message.` })] };
+    }
+    // The rewrite starts at its first word, as the issue's reply did.
+    stream(req, 'Ref');
+    stream(req, 'Refreshed. Homeroom has 80 open requests.');
+    return { content: '', toolCalls: [call('reply', { text: 'I have not drafted it, so there is nothing to tap.' })] };
+  };
+  const turn = mayorTurn([], { chat });
+  await turn.run;
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(round, 2, 'the claim check asked it again');
+  const writing = turn.doings.filter((d) => d?.kind === 'writing');
+  assert.equal(writing.length, 1, 'the first pass was shown, and the rewrite never replaced it with less');
+  assert.equal(writing[0].text, first);
+  assert.equal(turn.sent.length, 1, 'one reply, checked');
+});
+
 test('a project it reads is named only when the person can see it, and asked about once a turn', async () => {
   const said = [];
   const queries = [];
@@ -802,6 +883,11 @@ test('in a thread, "status?" is about that thread; a screen asked for is drawn i
   assert.ok(request.includes('- Here, "status?", "how is it going?" or "where are we?" means this request: say where it stands right now,\n'
     + '  from request_detail or progress, and what happens next. Do not list the rest of their page (my_work) unless\n'
     + '  they ask about everything.'));
+  // #6390: they are on this request's page already, so a link to it says
+  // nothing; the bot says what it is doing in words.
+  assert.match(request, /never link to this request or its page/);
+  assert.match(request, /never say "follow it\n  here"/);
+  assert.doesNotMatch(main, /never link to this request or its page/, 'a chat outside a request thread keeps neither line');
   for (const prompt of [plus, bare, main, request]) {
     assert.match(prompt, /\(draw_screen\): your designer draws it from their words/);
     assert.ok(prompt.includes('and do not reply: the designer answers them. When they have asked you to draw, render, show or mock up a\n'
@@ -837,6 +923,16 @@ test('the bot\'s typing is a card with its face, its name and what it is doing; 
   assert.match(drawing, /data-bot-working="drawing"/);
   assert.match(drawing, />Drawing the screen</);
 
+  // 4 Nov 2026 (#6302): the answer so far is drawn under the doing line,
+  // whatever the doing kind is, so it no longer vanishes between rounds.
+  const held = renderToHtml(createElement(card.BotWorkingCard, {
+    typist: { ...bot, doing: { kind: 'drawing' }, draft: 'The answer so far.' },
+  }));
+  assert.match(held, /data-bot-working="drawing"/);
+  assert.match(held, />Drawing the screen</);
+  assert.match(held, /data-bot-working-draft=""/);
+  assert.match(held, /The answer so far\./);
+
   const t = catalog;
   assert.equal(card.botDoingLine(t, null), 'Thinking');
   assert.equal(card.botDoingLine(t, { kind: 'progress' }), 'Checking how your work is going');
@@ -844,6 +940,12 @@ test('the bot\'s typing is a card with its face, its name and what it is doing; 
   assert.equal(card.botDoingLine(t, { kind: 'code', project: 'Ear Trainer' }), 'Reading Ear Trainer\'s code');
   assert.equal(card.botDoingLine(t, { kind: 'code' }), 'Reading the code');
   assert.equal(card.botDoingLine(t, { kind: 'drawing' }), 'Drawing the screen');
+  // #6354: Homeroom opening one of its own pages to copy for a design.
+  assert.equal(card.botDoingLine(t, { kind: 'capturing', page: 'Homeroom bot page' }), 'Opening Homeroom bot page as it is now');
+  assert.equal(card.botDoingLine(t, { kind: 'capturing' }), 'Opening the page as it is now');
+  const capturing = renderToHtml(createElement(card.BotWorkingCard, { typist: { ...bot, doing: { kind: 'capturing', page: 'Homeroom bot page' } } }));
+  assert.match(capturing, /data-bot-working="capturing"/);
+  assert.match(capturing, />Opening Homeroom bot page as it is now</);
   assert.equal(card.botDoingLine(t, { kind: 'designing' }), 'Changing the design');
   assert.equal(card.botDoingLine(t, { kind: 'drafting' }), 'Drafting the request');
   assert.equal(card.botDoingLine(t, { kind: 'something_new' }), 'Thinking', 'a kind this screen does not know yet');
@@ -864,8 +966,9 @@ test('the card ends the transcript where the answer lands, in Main Chat and in a
   assert.match(screen, /\{rows\}\n\s+\{working \? <BotWorkingCard typist=\{working\} \/> : null\}\n\s+\{\/\* #2387: a message link opened the transcript part-way back\. \*\/\}/);
   assert.match(screen, /const threadWorking = workingBot\(threadTypists\);\n\s+const threadTyping = typingBesides\(threadTypists, threadWorking\);/);
   assert.match(screen, /\}\)\}\n\s+\{threadWorking \? <BotWorkingCard typist=\{threadWorking\} \/> : null\}\n\s+\{privateRoot && privateMine && root \? \(/);
-  // The foot is as #6091 left it: the status line still follows Jump to latest.
-  assert.match(screen, /<\/TranscriptOverlay>\n\s*<ChatStatusLine className="messages-typing">\{typingLine\(t, typing\)\}<\/ChatStatusLine>\n\s*<MessageComposer \/>/);
+  // The foot is as #6091 left it: the status line still follows Jump to
+  // latest, and #6426's Welcome back card sits between it and the box.
+  assert.match(screen, /<\/TranscriptOverlay>\n\s*<ChatStatusLine className="messages-typing">\{typingLine\(t, typing\)\}<\/ChatStatusLine>\n\s*(?:\{mainChat && botDm && conversationId \? <WelcomeBack[^\n]*\/> : null\}\n\s*)?<MessageComposer \/>/);
   assert.match(screen, /<ChatStatusLine className="messages-typing">\{typingLine\(t, threadTyping\)\}<\/ChatStatusLine>\n\s*<MessageComposer threadRootId=\{rootId\} \/>/);
   // An island's first render is the empty transcript: the card waits for the store.
   const card = read('frontend/src/features/messages/bot-working.tsx');

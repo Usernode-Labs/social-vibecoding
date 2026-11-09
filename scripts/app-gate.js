@@ -49,6 +49,9 @@ const http = require('http');
 const https = require('https');
 const net = require('net');
 const { URL } = require('url');
+// Dependency-free, like this file: the rule for offline apps' cache headers.
+const offlineCache = require('../src/services/offline-cache');
+const { createActivity } = require('../src/services/gateway-activity');
 
 // The same stripping the Caddyfile does with a header_up replacement.
 const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon)$/;
@@ -73,9 +76,9 @@ const HOP_BY_HOP = new Set([
 ]);
 // Headers only the platform may set on what the app receives. A client that
 // sends one has it discarded before anything else happens.
-const GATE_HEADERS = ['x-usernode-identity', 'x-usernode-upstream', 'x-usernode-gate', 'x-usernode-applink'];
+const GATE_HEADERS = ['x-usernode-identity', 'x-usernode-upstream', 'x-usernode-gate', 'x-usernode-applink', 'x-usernode-cache', 'x-usernode-runtime-sleep'];
 // What a refusal may carry back to the visitor.
-const RELAYED = ['location', 'set-cookie', 'content-type', 'cache-control', 'referrer-policy'];
+const RELAYED = ['location', 'set-cookie', 'content-type', 'cache-control', 'referrer-policy', 'retry-after'];
 
 function cleanHeaders(headers) {
   const out = {};
@@ -131,6 +134,9 @@ function createGate({
   decisionTimeoutMs = 10_000,
   retryWindowMs = 15_000,
   anonCacheMs = ANON_CACHE_MS,
+  wakeWaitMs = 45_000,
+  wakePollMs = 1000,
+  activity = createActivity(),
   log = console,
 } = {}) {
   if (!platformUrl) throw new Error('app-gate: GATE_PLATFORM_URL is required');
@@ -195,9 +201,19 @@ function createGate({
       const hit = anonDecisions.get(host);
       if (hit && Date.now() - hit.at < anonCacheMs) return hit.decision;
     }
-    const decision = await askWithRetry(req);
+    let decision = await askWithRetry(req);
+    // Only repeat the body's access decision. The original request has not
+    // reached the app, and is forwarded once, only after readiness. A client
+    // that disconnects while waking must never have its write sent later.
+    const wakeDeadline = Date.now() + wakeWaitMs;
+    while (decision.status === 503 && decision.headers['x-usernode-runtime-sleep'] === 'waking'
+      && Date.now() < wakeDeadline && !req.aborted && !req.socket?.destroyed) {
+      await new Promise((resolve) => setTimeout(resolve, wakePollMs));
+      decision = await askWithRetry(req);
+    }
     // Only an allow, and never one that carries an identity.
-    if (cacheable && anonCacheMs > 0 && decision.status >= 200 && decision.status < 300 && !decision.headers['x-usernode-identity']) {
+    if (cacheable && anonCacheMs > 0 && decision.status >= 200 && decision.status < 300
+      && !decision.headers['x-usernode-identity'] && !decision.headers['x-usernode-runtime-sleep']) {
       if (anonDecisions.size >= 1000) anonDecisions.clear();
       anonDecisions.set(host, { at: Date.now(), decision });
     }
@@ -249,12 +265,12 @@ function createGate({
 
   // The friendly "this app is restarting" page, from the platform, which
   // reads the app's host from Host (routes/app-error.js).
-  function unavailable(req, res) {
+  function unavailable(req, res, path = '/__app_unavailable') {
     const page = transport.request({
       protocol: platform.protocol,
       hostname: platform.hostname,
       port: platform.port || (platform.protocol === 'https:' ? 443 : 80),
-      path: '/__app_unavailable',
+      path,
       method: 'GET',
       headers: {
         host: String(req.headers.host || ''),
@@ -293,7 +309,16 @@ function createGate({
       res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8', 'retry-after': '5' });
       return res.end('Homeroom is updating. Try again in a moment.');
     }
-    if (decision.status < 200 || decision.status >= 300) return relayRefusal(res, decision);
+    if (decision.status < 200 || decision.status >= 300) {
+      if (decision.status === 503 && decision.headers['x-usernode-runtime-sleep'] === 'waking'
+        && (req.method === 'GET' || req.method === 'HEAD')
+        && (['document', 'iframe'].includes(String(req.headers['sec-fetch-dest'] || ''))
+          || String(req.headers.accept || '').includes('text/html'))) {
+        return unavailable(req, res, '/__app_starting');
+      }
+      return relayRefusal(res, decision);
+    }
+    if (req.aborted || res.destroyed) return;
 
     const upstream = String(decision.headers['x-usernode-upstream'] || '');
     if (!SERVICE_NAME_RE.test(upstream)) {
@@ -302,6 +327,7 @@ function createGate({
     }
     const applink = String(decision.headers['x-usernode-applink'] || '');
     const target = upstreamTarget(upstream);
+    const endActivity = activity.begin(upstream, req.url);
     const proxied = http.request({
       hostname: target.host,
       port: target.port,
@@ -310,6 +336,8 @@ function createGate({
       headers: upstreamHeaders(req, decision),
       agent: upstreamAgent,
     }, (upRes) => {
+      upRes.once('end', endActivity);
+      upRes.once('close', endActivity);
       // The chromeless rescue: an app that answers a top-level visit with
       // 401 is sent to the platform's view of it, carrying the path.
       if (upRes.statusCode === 401 && applink && isDocumentVisit(req)) {
@@ -318,10 +346,27 @@ function createGate({
         return res.end();
       }
       const headers = cleanHeaders(upRes.headers);
+      // Offline apps (src/services/offline-cache.js): when the platform's
+      // answer says so, the app's pages and files stay fresh for 30 days.
+      if (decision.headers[offlineCache.DECISION_HEADER] === offlineCache.DECISION_APP) {
+        const cc = offlineCache.appCacheControl({
+          method: req.method,
+          url: req.url,
+          status: upRes.statusCode,
+          cacheControl: headers['cache-control'],
+          setCookie: headers['set-cookie'],
+        });
+        if (cc) {
+          headers['cache-control'] = cc;
+          delete headers.expires;
+          delete headers.pragma;
+        }
+      }
       res.writeHead(upRes.statusCode || 502, headers);
       upRes.pipe(res);
     });
     proxied.on('error', (err) => {
+      endActivity();
       log.warn?.('[app-gate] upstream failed', upstream, err.code || err.message);
       if (res.headersSent) { res.destroy(); return; }
       unavailable(req, res);
@@ -355,12 +400,14 @@ function createGate({
       writeRefusalToSocket(socket, decision);
       return;
     }
+    if (socket.destroyed) return;
     const upstream = String(decision.headers['x-usernode-upstream'] || '');
     if (!SERVICE_NAME_RE.test(upstream)) {
       socket.end('HTTP/1.1 502 Bad Gateway\r\nconnection: close\r\ncontent-length: 0\r\n\r\n');
       return;
     }
     const target = upstreamTarget(upstream);
+    const endActivity = activity.begin(upstream, req.url);
     const headers = upstreamHeaders(req, decision);
     // The handshake itself: these two are hop-by-hop everywhere else.
     headers.connection = 'Upgrade';
@@ -375,8 +422,9 @@ function createGate({
       up.pipe(socket);
       socket.pipe(up);
     });
-    up.on('error', () => socket.destroy());
-    socket.on('close', () => up.destroy());
+    up.on('error', () => { endActivity(); socket.destroy(); });
+    up.once('close', endActivity);
+    socket.on('close', () => { endActivity(); up.destroy(); });
   }
 
   const server = http.createServer((req, res) => {
@@ -396,6 +444,7 @@ function createGate({
   // Outlive the ingress's 60-second idle timeout, as the platform does.
   server.keepAliveTimeout = 75_000;
   server.headersTimeout = 76_000;
+  server.runtimeActivity = activity.snapshot;
   return server;
 }
 
@@ -407,11 +456,20 @@ function start() {
   });
   const port = Number(process.env.PORT || 3000);
   server.listen(port, () => console.log(`app gate listening on :${port}`));
+  // No public Service or Ingress exposes this port. Network policy permits
+  // only the platform's Pods; app code cannot forge activity observations.
+  const telemetry = http.createServer((req, res) => {
+    if (req.method !== 'GET' || req.url !== '/activity') { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify({ ...server.runtimeActivity(), podUid: process.env.GATE_POD_UID || '' }));
+  });
+  telemetry.listen(Number(process.env.GATE_ACTIVITY_PORT || 3001));
   let shuttingDown = false;
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
     server.close();
+    telemetry.close();
     setTimeout(() => process.exit(0), 3000).unref();
   };
   process.on('SIGTERM', shutdown);

@@ -64,6 +64,11 @@ declare global {
       markConversationRead(conversationId: number): void;
       /** The same, for one reply thread's alerts (#2387). */
       markConversationThreadRead(conversationId: number, rootId: number): void;
+      /**
+       * A change's or proposal's page (or its before-and-after) was opened:
+       * answers its "New proposal" and "Ready to try" (#2847, #6441).
+       */
+      markProposalSeen(sessionId: number): Promise<void>;
       /** One row's descriptor: its kind line and subject segments (#3233). */
       _rowView?(row: Record<string, unknown>): unknown;
       open: boolean;
@@ -147,7 +152,8 @@ declare global {
       sheet?(opts: KitSurfaceOpts): KitHandle | null;
       panel?(opts: KitSurfaceOpts & { side?: 'left' | 'right' }): KitHandle | null;
       pullToRefresh(el: Element, fn: () => Promise<unknown> | void): void;
-      toast?(message: string): void;
+      /** The kit's transient notice; `priority` holds the slot for an undo flow, `action` is its one button. */
+      toast?(message: string, options?: { duration?: number; priority?: boolean; error?: boolean; dismissible?: boolean; action?: { label: string; handler?: () => void }; onClose?: (reason: string) => void }): unknown;
       /** A native-style confirm card; resolves true on the confirm button. */
       confirm?(opts: { title?: string; message?: string; confirmLabel?: string; cancelLabel?: string; danger?: boolean }): Promise<boolean>;
       /** A one-field prompt; resolves the text, or null when cancelled. */

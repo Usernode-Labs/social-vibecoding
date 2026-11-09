@@ -12,7 +12,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const llm = require('../src/services/llm');
 const explainer = require('../src/services/checks-explanation');
@@ -35,9 +34,9 @@ test('the checks explanation against the full PostgreSQL schema', { timeout: 180
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   const { rows: [app] } = await pool.query(
     `INSERT INTO apps (name, slug) VALUES ('Homeroom', 'homeroom-test') RETURNING id`);

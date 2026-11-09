@@ -85,6 +85,9 @@ interface Settings {
   // and whether a DM to the bot is read by its model.
   liveAtOnce: number;
   perPerson: number;
+  // 3 Nov 2026: how many of one project's requests are read at once, each
+  // on a triage session of its own.
+  readsPerApp?: number;
   dmChat: boolean;
   // Its voice outside the DM (homeroom-bot-voice.js), one switch per place.
   voiceSession?: boolean;
@@ -444,7 +447,7 @@ interface Payload {
   // votes (proposalsPerApp) by default, and byApp, by slug, the projects
   // with numbers of their own.
   caps: {
-    buildsPerApp?: number; proposalsPerApp: number; proposalsTotal: number; questionsPerAppPerDay: number;
+    buildsPerApp?: number; proposalsPerApp: number; proposalsTotal: number;
     byApp?: Record<string, { appId?: number; buildsPerApp?: number; proposalsPerApp?: number }>;
   };
   mentionOptOuts: { total: number; items: MentionOptOut[] };
@@ -551,7 +554,6 @@ export function heldLine(cap: string | null | undefined, caps?: Partial<Payload[
   if (cap === 'builds_per_app') return `held: ${n(own?.buildsPerApp ?? caps?.buildsPerApp)}builds under way on this app`;
   if (cap === 'proposals_per_app') return `held: ${n(own?.proposalsPerApp ?? caps?.proposalsPerApp)}proposals waiting for votes on this app`;
   if (cap === 'proposals_total') return `held: the bot's ceiling of ${n(caps?.proposalsTotal)}proposals open across Homeroom`;
-  if (cap === 'question_tripwire') return `held: ${n(caps?.questionsPerAppPerDay)}questions asked on this app today`;
   return `held: ${cap.replace(/_/g, ' ')}`;
 }
 
@@ -988,7 +990,9 @@ export function waitingFor(depth: number, buildsWaiting: number): string {
 // waited days behind a first version still up for a vote, saying nothing.
 const WAIT_WORDS: Record<string, string> = {
   session_busy: 'a turn is running on its session',
+  reads_per_app: 'its project is already reading as many requests as it may at once',
   allowance: 'its payer\'s week is used up',
+  cooldown: 'its look failed several times in a row, so it waits a day',
   platform_fault: 'the bot is backing off a platform fault',
   bot_paused: 'the bot is off or its weekly budget is spent',
   app_paused: 'its app is paused',
@@ -1404,6 +1408,7 @@ interface Form {
   buildConcurrency: string;
   liveAtOnce: string;
   perPerson: string;
+  readsPerApp: string;
   proposalCeiling: string;
   // #6156: the projects with numbers of their own, by app id, each number
   // as the text in its field ('' for the default).
@@ -1434,6 +1439,7 @@ const FIELD_LABEL: Record<FormKey, string> = {
   buildConcurrency: 'shadow builds at once',
   liveAtOnce: 'live requests at once',
   perPerson: 'per person at once',
+  readsPerApp: 'reads per project at once',
   proposalCeiling: 'proposals at once',
   appCaps: 'room per project',
   turnMinutes: 'minutes per issue',
@@ -1465,6 +1471,7 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     buildConcurrency: String(s.buildConcurrency ?? 2),
     liveAtOnce: String(s.liveAtOnce ?? 12),
     perPerson: String(s.perPerson ?? 3),
+    readsPerApp: String(s.readsPerApp ?? 3),
     proposalCeiling: String(s.proposalCeiling ?? 0),
     appCaps: Object.fromEntries(Object.entries(s.appCaps || {}).map(([id, own]) => [id, {
       building: own?.building == null ? '' : String(own.building),
@@ -1575,6 +1582,7 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
     else if (key === 'buildConcurrency') patch.buildConcurrency = whole(key, 1, 4, 'Shadow builds at once');
     else if (key === 'liveAtOnce') patch.liveAtOnce = whole(key, 1, 24, 'Live requests at once');
     else if (key === 'perPerson') patch.perPerson = whole(key, 1, 6, 'Per person at once');
+    else if (key === 'readsPerApp') patch.readsPerApp = whole(key, 1, 6, 'Reads per project at once');
     else if (key === 'proposalCeiling') patch.proposalCeiling = whole(key, 0, 1000, 'Proposals up for a vote at once');
     else if (key === 'appCaps') {
       const out = appCapsPatch(form.appCaps, saved.appCaps);
@@ -1941,7 +1949,7 @@ function HomeroomBotSection() {
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-identity">
               {`${bot
                 ? `Runs as ${bot.username} on ${bot.model || 'the platform default model'}, ${bot.hasIncludedKey ? 'with its included OpenRouter key' : 'with no OpenRouter key yet (the first pass mints one)'}.`
-                : 'The bot user is not set up yet; the dashboard creates it on load, so check the logs if this persists.'} Before building anything the live rules hold a ready verdict at ${payload?.caps.buildsPerApp ?? '?'} builds under way or ${payload?.caps.proposalsPerApp ?? '?'} proposals waiting for votes per app, unless the app has numbers of its own (Settings), and at ${payload?.caps.proposalsTotal ?? '?'} proposals across all apps; and a question at ${payload?.caps.questionsPerAppPerDay ?? '?'} per app per day. Rows below say when they did.`}
+                : 'The bot user is not set up yet; the dashboard creates it on load, so check the logs if this persists.'} Before building anything the live rules hold a ready verdict at ${payload?.caps.buildsPerApp ?? '?'} builds under way or ${payload?.caps.proposalsPerApp ?? '?'} proposals waiting for votes per app, unless the app has numbers of its own (Settings), and at ${payload?.caps.proposalsTotal ?? '?'} proposals across all apps. Rows below say when they did.`}
             </p>
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-cadence">
               The loop wakes the moment a request is filed, edited or discussed here, drains the queue, then sleeps until the next one. A sweep of GitHub every five minutes catches what happens there directly.
@@ -2456,6 +2464,8 @@ function HomeroomBotSection() {
                   value={form.liveAtOnce} min={1} max={24} canWrite={canWrite} onChange={(v) => setField('liveAtOnce', v)} />
                 <NumberField id="admin-homeroom-bot-per-person" label="Per person at once"
                   value={form.perPerson} min={1} max={6} canWrite={canWrite} onChange={(v) => setField('perPerson', v)} />
+                <NumberField id="admin-homeroom-bot-reads-per-app" label="Reads per project at once"
+                  value={form.readsPerApp} min={1} max={6} canWrite={canWrite} onChange={(v) => setField('readsPerApp', v)} />
                 <NumberField id="admin-homeroom-bot-proposal-ceiling" label="Proposals up for a vote at once (0: automatic)"
                   value={form.proposalCeiling} min={0} max={1000} canWrite={canWrite} onChange={(v) => setField('proposalCeiling', v)} />
                 <NumberField id="admin-homeroom-bot-turn-minutes" label="Minutes one issue may take"
@@ -2472,9 +2482,9 @@ function HomeroomBotSection() {
                   value={form.batchSize} min={1} max={500} canWrite={canWrite} onChange={(v) => setField('batchSize', v)} />
               </div>
               <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-at-once-note">
-                Live requests are counted across the whole platform. It takes one request per app at a time and shares the
-                slots between people in turns. Each slot uses a worker from the same pool as people&apos;s own coding
-                sessions.
+                Live requests are counted across the whole platform. On one project it reads as many requests at a time as
+                Reads per project at once allows, each in a session of its own, and shares the slots between people in
+                turns. Each slot uses a worker from the same pool as people&apos;s own coding sessions, only while it runs.
               </p>
               <label className="flex items-center gap-2 mt-4 text-sm" htmlFor="admin-homeroom-bot-continue-reads">
                 <input

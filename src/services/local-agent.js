@@ -69,6 +69,9 @@ const WAITER_RENEW_MS = 10 * 1000;
 const MAX_PROGRESS_LINES = 500;
 const MAX_PROGRESS_LINE_CHARS = 2000;
 const MAX_LABEL_CHARS = 64;
+// The column's own bound (local_agent_turns.error_detail). A reason cut here
+// fits the CHECK rather than making the whole UPDATE fail.
+const MAX_ERROR_DETAIL_CHARS = 4096;
 // A scout turn's product is a whole spec document, so it gets the prompt's
 // bound rather than the summary's. Matches the column's CHECK.
 const MAX_SPEC_CHARS = 262144;
@@ -385,6 +388,49 @@ async function sweepExpiredLeases(pool) {
   log.info('local-agent', 'Reaped expired agent leases', {
     leases: rows.length, abandonedTurns: turnRows.length,
   });
+  return rows.length;
+}
+
+// End a live turn that nothing is running, recording why. Conditional on the
+// live statuses for the same reason the waiter's own timeout is: a turn the
+// machine already completed, failed or stopped keeps its own outcome, and a
+// sweep racing a waiter has exactly one winner.
+async function abandonTurn(pool, turnId, detail) {
+  const text = String(detail || 'The turn was abandoned.').slice(0, MAX_ERROR_DETAIL_CHARS);
+  const { rows } = await pool.query(
+    `UPDATE local_agent_turns
+        SET status = 'abandoned', finished_at = NOW(), updated_at = NOW(),
+            error_detail = $2
+      WHERE id = $1 AND status = ANY($3::TEXT[])
+      RETURNING *`,
+    [turnId, text, LIVE_TURN_STATUSES]
+  );
+  if (rows[0]) notifyTurn(rows[0].session_id);
+  return rows[0] || null;
+}
+
+// Release turns a machine was offered but never claimed. `awaitTurnResult`
+// used to be the only place an unclaimed turn timed out, so a dispatch whose
+// process went (or whose waiter was never started) left the row live for as
+// long as the laptop's lease heartbeated — and the change answered busy to
+// every later dispatch. The age is the same offer timeout, and only
+// queued/offered rows are touched: a turn the machine accepted is a running
+// turn, bounded by TURN_TIMEOUT_MS instead.
+async function sweepUnclaimedTurns(pool, { offerTimeoutMs = OFFER_TIMEOUT_MS } = {}) {
+  const seconds = Math.round(offerTimeoutMs / 1000);
+  const { rows } = await pool.query(
+    `UPDATE local_agent_turns
+        SET status = 'abandoned', finished_at = NOW(), updated_at = NOW(),
+            error_detail = $2
+      WHERE status IN ('queued', 'offered')
+        AND created_at <= NOW() - ($1 || ' milliseconds')::INTERVAL
+      RETURNING session_id`,
+    [String(offerTimeoutMs), `Nothing picked up the turn within ${seconds} seconds.`]
+  );
+  for (const row of rows) notifyTurn(row.session_id);
+  if (rows.length) {
+    log.info('local-agent', 'Released local turns nothing picked up', { turns: rows.length });
+  }
   return rows.length;
 }
 
@@ -735,7 +781,12 @@ async function markTailFinished(pool, turnId) {
 function buildTurnResult({ turn, outcome, label, behind = 0, mode = 'build' }) {
   const explain = {
     declined: `${label} declined this turn`,
-    abandoned: `${label} disconnected before finishing this turn`,
+    // A turn nothing picked up never began: saying it "disconnected before
+    // finishing" claimed a run that did not exist. The machine's own words
+    // (error_detail) follow after the colon.
+    abandoned: turn?.accepted_at
+      ? `${label} disconnected before finishing this turn`
+      : `${label} did not start this turn`,
     stopped: 'Stopped',
     missing: 'The local turn record disappeared',
     aborted: `${label} was interrupted`,
@@ -862,6 +913,7 @@ module.exports = {
   TURN_TIMEOUT_MS,
   MAX_PROGRESS_LINES,
   MAX_LABEL_CHARS,
+  MAX_ERROR_DETAIL_CHARS,
   MAX_SPEC_CHARS,
   RUNTIMES,
   TURN_MODES,
@@ -881,6 +933,8 @@ module.exports = {
   releaseLeasesForTokens,
   notifyReleased,
   sweepExpiredLeases,
+  sweepUnclaimedTurns,
+  abandonTurn,
   getTurn,
   liveTurnForSession,
   enqueueTurn,

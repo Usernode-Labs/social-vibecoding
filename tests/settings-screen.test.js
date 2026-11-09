@@ -2247,32 +2247,45 @@ test('Re-enable re-grants by slug with the cap and BYOK choice the row carries (
 // ── The connector cards (#1191) ───────────────────────────────────────
 
 const CONNECTORS_LIST = 'frontend/src/features/settings/connectors-list.tsx';
-const connectorRows = (state) => renderComponent(CONNECTORS_LIST, 'ConnectorsListView', state);
+const toolStatus = (status) => renderComponent(CONNECTORS_LIST, 'ToolStatusView', { status });
+const toolRows = (connections) => renderComponent(CONNECTORS_LIST, 'ToolConnectionsView', { connections });
 
-test('the connections list renders its three host states', () => {
-  assert.equal(connectorRows({ phase: 'idle', connectors: [] }), '');
-  assert.equal(
-    shellMarkup().includes('<div id="connectors-list" class="space-y-2"></div>'),
-    true, 'and the prerendered document agrees');
-  assert.match(connectorRows({ phase: 'loading', connectors: [] }), /Loading connections…/);
-  assert.match(connectorRows({ phase: 'ready', connectors: [] }),
-    /No chat products connected yet\./);
+test('the cards ship their state hosts empty, so the prerender draws no status', () => {
+  const shell = shellMarkup();
+  for (const tool of ['claude', 'chatgpt', 'codex', 'generic']) {
+    assert.ok(shell.includes(`id="connector-tool-${tool}"`), `${tool} has its card`);
+    assert.match(shell, new RegExp(`<span data-connector-status="${tool}"[^>]*></span>`),
+      `${tool}'s status word waits for the list`);
+    assert.match(shell, new RegExp(`<div data-connector-connections="${tool}"[^>]*></div>`),
+      `${tool}'s connections wait for the list`);
+  }
+  assert.ok(shell.includes('<div id="connectors-list" class="space-y-3">'),
+    'the cards stack inside the host the id stayed on');
+});
+
+test('a status is a plain word, and only Needs attention carries a dot', () => {
+  assert.match(toolStatus('working'), new RegExp(message('settings:connectors.tool.status.working')));
+  assert.match(toolStatus('unused'), new RegExp(message('settings:connectors.tool.status.unused')));
+  assert.match(toolStatus('none'), new RegExp(message('settings:connectors.tool.status.none')));
+  assert.match(toolStatus('attention'), new RegExp(message('settings:connectors.tool.status.attention')));
+  for (const status of ['working', 'unused', 'none']) {
+    assert.doesNotMatch(toolStatus(status), /bg-amber-500/, `${status} has no dot`);
+  }
+  assert.match(toolStatus('attention'), /bg-amber-500/);
 });
 
 test('every connection is disconnectable, and names itself', () => {
-  const html2 = connectorRows({
-    phase: 'ready',
-    connectors: [
-      { id: '1', title: 'Claude', detail: 'connected 1 Jan · last used 2 Jan' },
-      { id: '2', title: 'Connected client', detail: 'connected 1 Jan · never used' },
-    ],
-  });
+  const html2 = toolRows([
+    { id: '1', title: 'Claude', detail: 'Last active 2 Jan', capabilities: 'Can read your apps' },
+    { id: '2', title: 'Connected client', detail: 'Connected 1 Jan · not used yet', capabilities: null },
+  ]);
   assert.equal((html2.match(/>Disconnect</g) || []).length, 2,
     'unlike a credential, a connection is always revocable');
   assert.match(html2, />Claude</);
   // The fallback title, for a client that registered without a name.
   assert.match(html2, />Connected client</);
-  assert.match(html2, /never used/);
+  assert.match(html2, /not used yet/);
+  assert.match(html2, /Can read your apps/);
 });
 
 test('settings.js publishes the connector cards rather than building them', () => {

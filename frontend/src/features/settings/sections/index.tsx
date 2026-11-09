@@ -61,6 +61,7 @@ import { PrivacySection } from './privacy';
 import { ProfileSection } from './profile';
 import { DeleteAccountSection } from './delete-account';
 import { ThemeSection } from './theme';
+import { GuideSection } from './guide';
 import { TourSection } from './tour';
 import { UsageSection } from './usage';
 import { UsernameSection } from './username';
@@ -124,10 +125,12 @@ export function SettingsSections() {
           switch (everyone) and Admin preview (real admins only). */}
       <DevConsoleSection />
       <AdminPreviewSection />
-      {/* ── Help & about ── The way back to Home's welcome tour, then the
-          native app's diagnostics and the version rows: panes you read or
-          replay rather than configure. See ./tour.tsx and ./about.tsx. */}
+      {/* ── Help & about ── The way back to Home's welcome tour, the guide to
+          read beside it, then the native app's diagnostics and the version
+          rows: panes you read or replay rather than configure. See ./tour.tsx,
+          ./guide.tsx and ./about.tsx. */}
       <TourSection />
+      <GuideSection />
       <UsernodeSection />
       <AboutSection />
       {/* ── Advanced ── #5994: the features you switch on to try, at the

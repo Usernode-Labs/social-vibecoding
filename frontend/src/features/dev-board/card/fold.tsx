@@ -110,6 +110,8 @@ export function openHref(slug: string, card: DevCardModel): string | null {
   if (!slug) return null;
   if (a['data-issue-row']) return `#app/${slug}/dev/issues/${a['data-issue-row']}`;
   if (a['data-proposal-row']) return `#app/${slug}/dev/proposals/${a['data-proposal-row']}`;
+  // #6439: a vote to close a request is decided on the request's page.
+  if (a['data-close-request']) return `#app/${slug}/dev/issues/${a['data-close-request']}`;
   if (a['data-gov-row']) return `#app/${slug}/dev/governance/${a['data-gov-row']}`;
   if (a['data-shared-session-row']) return `#app/${slug}/dev/proposals/${a['data-shared-session-row']}`;
   if (a['data-session-chip']) return `#app/${slug}/dev/proposals/${a['data-session-chip']}`;

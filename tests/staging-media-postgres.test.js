@@ -10,7 +10,6 @@ const crypto = require('node:crypto');
 const { Pool } = require('pg');
 const media = require('../src/services/media-store');
 const { withStagingMedia } = require('../src/services/staging-media');
-const { dropMediaByteColumns } = require('./lib/media-store');
 const seeds = require('../src/db/migrate');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -30,7 +29,6 @@ test('staging visual fixtures seed and serve keys without byte columns', { timeo
   pool.on('error', () => {});
   t.after(async () => { await pool.end(); await admin.query(`DROP DATABASE ${name} WITH (FORCE)`); await admin.end(); });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
-  await dropMediaByteColumns(pool);
   // Exercise the actual credential-free preview adapter, not the test mock.
   const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'staging-media-test-'));
   t.after(() => fsp.rm(directory, { recursive: true, force: true }));

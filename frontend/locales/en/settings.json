@@ -39,6 +39,50 @@
     "text": "Copy the MCP server URL",
     "description": "Accessible name of the Copy button beside the MCP server URL field in Settings > Connectors."
   },
+  "connectors.test.button": {
+    "text": "Test connection",
+    "description": "Button beside Copy in Settings > Connectors. It checks this site's MCP server and the person's own connection, without connecting anything."
+  },
+  "connectors.test.running": {
+    "text": "Testing…",
+    "description": "Label of the Test connection button in Settings > Connectors while the check runs. The button cannot be pressed again until it finishes."
+  },
+  "connectors.test.unknownProduct": {
+    "text": "your chat product",
+    "description": "Fills the {{product}} slot in the passing lines under the Test connection button in Settings > Connectors when the connected chat product's name is not known. Lowercase, because it sits inside a sentence."
+  },
+  "connectors.test.result.ok": {
+    "text": "Working: your MCP server answers and {{product}} is connected. If it still fails in {{product}}, go through its setup steps below again.",
+    "description": "Passing line under the Test connection button in Settings > Connectors when a chat product is connected and has never been used. {{product}} is the chat product's name (for example Claude.ai), taken from the Connected list below. MCP is the protocol name; keep it."
+  },
+  "connectors.test.result.okUsed": {
+    "text": "Working: your MCP server answers and {{product}} is connected, last used {{lastUsed}}. If it still fails in {{product}}, go through its setup steps below again.",
+    "description": "Passing line under the Test connection button in Settings > Connectors when the chat product was used before. {{product}} is its name (for example Claude.ai); {{lastUsed}} is a date and time formatted the same way as in the Connected list below."
+  },
+  "connectors.test.result.not_connected": {
+    "text": "Your MCP server works, but no chat product is connected yet. Choose your app below and follow its steps.",
+    "description": "Result under the Test connection button in Settings > Connectors when the server answers and the person has not connected a chat product yet."
+  },
+  "connectors.test.result.connection_expired": {
+    "text": "Your MCP server works, but your connection has expired. Reconnect from your chat product, following its steps below.",
+    "description": "Result under the Test connection button in Settings > Connectors when the person's connection exists but is no longer active."
+  },
+  "connectors.test.result.unavailable_here": {
+    "text": "Connectors are not available on this copy of Homeroom. Use the Homeroom site at its usual address.",
+    "description": "Result under the Test connection button in Settings > Connectors on a preview copy of the site, where connecting a chat product is switched off."
+  },
+  "connectors.test.result.discovery_failed": {
+    "text": "The sign-in details for the MCP server did not answer. This is on Homeroom's side: try again in a few minutes, and report it if it keeps happening.",
+    "description": "Result under the Test connection button in Settings > Connectors when the server's OAuth discovery metadata did not answer correctly. Homeroom is the product name; MCP is the protocol name."
+  },
+  "connectors.test.result.server_unreachable": {
+    "text": "The MCP server did not answer. This is on Homeroom's side: try again in a few minutes, and report it if it keeps happening.",
+    "description": "Result under the Test connection button in Settings > Connectors when the MCP server itself did not answer. Homeroom is the product name; MCP is the protocol name."
+  },
+  "connectors.test.result.test_failed": {
+    "text": "The test could not run. Check your internet connection and try again.",
+    "description": "Result under the Test connection button in Settings > Connectors when the check could not reach the site at all, for example because the person is offline."
+  },
   "connectors.howItWorks.summary": {
     "text": "How it works",
     "description": "Tappable line under the MCP server URL field in Settings > Connectors: opens a short explanation of what the address is."
@@ -56,8 +100,8 @@
     "description": "Third paragraph of the \"How it works\" explanation in Settings > Connectors: how the other app gets permission. \"The app\" is the AI app being connected."
   },
   "connectors.chooseApp": {
-    "text": "Choose your app",
-    "description": "Small heading in Settings > Connectors above the list of setup guides, one row per AI product (Claude.ai, ChatGPT, Codex, another agent)."
+    "text": "Your AI tools",
+    "description": "Small heading in Settings > Connectors above the cards, one card per AI tool (Claude.ai, ChatGPT, Codex, another agent), each with its status, its connections and its setup steps."
   },
   "connectors.claude.hint": {
     "text": "6 steps · also sets up Claude Code",
@@ -243,21 +287,9 @@
     "text": "Whichever you use, approve the connection in the browser page that opens.",
     "description": "Note under the list of setup guides in Settings > Connectors: applies to every product in the list."
   },
-  "connectors.connected": {
-    "text": "Connected",
-    "description": "Small heading in Settings > Connectors above the list of chat products that are already connected to this account."
-  },
-  "connectors.list.loading": {
-    "text": "Loading connections…",
-    "description": "Shown in place of the list of connected chat products in Settings > Connectors while it loads."
-  },
-  "connectors.list.empty": {
-    "text": "No chat products connected yet.",
-    "description": "Shown in place of the list of connected chat products in Settings > Connectors when none is connected."
-  },
   "connectors.list.disconnect": {
     "text": "Disconnect",
-    "description": "Button on a connected chat product's row in Settings > Connectors: removes that product's access to Homeroom."
+    "description": "Button on a connection's row, on its AI tool's card in Settings > Connectors: removes that connection's access to Homeroom."
   },
   "connectors.claudeSteps.open.title": {
     "text": "Open connector settings.",
@@ -1303,21 +1335,13 @@
     "text": "Adds <0>Your computer · Homeroom session</0> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Homeroom CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.",
     "description": "Explanation under the Session bridge switch in Settings > Experimental. The tagged part is the name of an option in another list, shown in a monospace font; translate it as that option is translated. CLI is the command-line tool; Claude is a product name; a \"turn\" is one request and answer of the coding agent."
   },
-  "experimental.reviewFlow.label": {
-    "text": "New Needs you",
-    "description": "Label of a switch in Settings, Experimental. When on, the Needs you list on the Communities tab becomes a calm list of changes, each opening into its own page with a before and after slider and a vote sheet."
-  },
-  "experimental.reviewFlow.description": {
-    "text": "Try a calmer way through what's waiting on you: one change at a time, with its before and after side by side. On for your account on every device.",
-    "description": "Explanation under the New Needs you switch in Settings, Experimental."
-  },
   "experimental.newLook.label": {
     "text": "New look",
-    "description": "Label of a switch in Settings, Experimental. When on, Homeroom is drawn in its new visual style: a warmer background, a new typeface and calmer colours."
+    "description": "Label of a switch in Settings, Experimental. When on, Homeroom is drawn in its new visual style: white cards on a light grey background, a new typeface, yellow for what needs the person and black for where they are."
   },
   "experimental.newLook.description": {
-    "text": "Try Homeroom's new look: a warmer background, the Geist typeface and calmer colours, closer to the Homeroom website. Light mode only. On for this browser.",
-    "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name."
+    "text": "Try Homeroom's new look: white cards on a light grey background, the Geist typeface with a serif for titles, and colours that each have a job: yellow for what needs you, black for where you are. Light mode only. On for this browser.",
+    "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name. Yellow and black name the colours of the highlights on screen."
   },
   "experimental.localAgents.title": {
     "text": "Local coding agent",
@@ -1451,12 +1475,16 @@
     "text": "Couldn't save that change. Try again in a moment.",
     "description": "Error on the Settings > Privacy page when saving a change failed; the control goes back to what it was."
   },
+  "privacy.saved": {
+    "text": "Saved",
+    "description": "Short confirmation under a block of the Settings > Privacy page when a change to one of its settings has been saved. It goes away after about three seconds."
+  },
   "privacy.usageAnalytics.title": {
     "text": "Usage analytics",
     "description": "Heading of the last block of Settings > Privacy, above the Share usage analytics switch."
   },
   "privacy.usageAnalytics.intro": {
-    "text": "Whether Homeroom may record how you use it.",
+    "text": "Whether Homeroom may keep a record of how you use it, linked to your account.",
     "description": "One line under the Usage analytics heading in Settings > Privacy."
   },
   "privacy.usageAnalytics.label": {
@@ -1464,7 +1492,7 @@
     "description": "Label of the switch in Settings > Privacy that lets Homeroom record how the person uses it. Off unless they turn it on."
   },
   "privacy.usageAnalytics.stateOff": {
-    "text": "Off. Homeroom doesn't record how you use it unless you turn this on.",
+    "text": "Off. Homeroom doesn't keep a record linked to your account unless you turn this on.",
     "description": "First line under the Share usage analytics switch in Settings > Privacy while the switch is off: what is true now."
   },
   "privacy.usageAnalytics.stateOn": {
@@ -1479,21 +1507,29 @@
     "text": "We never record: what you type or what is on screen.",
     "description": "Last line under the Share usage analytics switch in Settings > Privacy: what is never recorded, whether the switch is on or off."
   },
+  "privacy.usageAnalytics.googleAnalytics": {
+    "text": "On or off, Google Analytics counts the screens and apps you open, without your name. When this is on, those visits also carry your account number.",
+    "description": "Line under the Share usage analytics switch in Settings > Privacy. Says Google Analytics counts visits whatever the switch says, and what the switch adds."
+  },
+  "privacy.usageAnalytics.alreadyRecorded": {
+    "text": "Turning this off doesn't delete what was already recorded.",
+    "description": "Last line under the Share usage analytics switch in Settings > Privacy, shown whether the switch is on or off: switching off only stops new recording."
+  },
   "privacy.usageAnalytics.saveFailed": {
     "text": "Could not save that. Try again.",
     "description": "Error under the Share usage analytics switch in Settings > Privacy when saving the choice failed; the switch goes back to how it was."
   },
   "phones.title": {
-    "text": "Linked phones",
-    "description": "Heading of the Settings > Linked phones page, which lists the phones signed in to the account through the Homeroom mobile app."
+    "text": "Linked devices",
+    "description": "Heading of the Settings > Linked devices page, which lists the phones signed in to the account through the Homeroom mobile app and the browsers signed in on the web."
   },
   "phones.intro": {
-    "text": "Phones signed in to your account with the Homeroom app. Unlink one you no longer use, or don't recognise: it is signed out and stops getting your notifications.",
-    "description": "Explanation under the Linked phones heading in Settings > Linked phones."
+    "text": "The phones and browsers signed in to your account. Unlink or sign out any you no longer use, or don't recognise.",
+    "description": "Explanation under the Linked devices heading in Settings > Linked devices: the page lists phones (Homeroom app) and browsers (the web), each with a way to sign it out."
   },
   "phones.empty": {
     "text": "No phones are linked. Sign in with the Homeroom app on your phone and it shows up here.",
-    "description": "Shown in Settings > Linked phones when no phone is signed in to the account through the Homeroom mobile app."
+    "description": "Shown under the Phones heading of Settings > Linked devices when no phone is signed in to the account through the Homeroom mobile app."
   },
   "phones.platform.android": {
     "text": "Android phone",
@@ -1513,7 +1549,7 @@
   },
   "phones.detail": {
     "text": "Last used {{lastUsed}} · Linked {{linked}}",
-    "description": "Line under a phone in Settings > Linked phones. {{lastUsed}} is the date the Homeroom app last used the account on that phone; {{linked}} is the date it was first signed in there. Both are already-formatted dates."
+    "description": "Line under a phone in Settings > Linked devices. {{lastUsed}} is the date the Homeroom app last used the account on that phone (within the last 30 days); {{linked}} is the date it was first signed in there. Both are already-formatted dates."
   },
   "phones.unlink": {
     "text": "Unlink",
@@ -1533,11 +1569,131 @@
   },
   "phones.loadFailed": {
     "text": "Couldn't load your linked phones. Try again in a moment.",
-    "description": "Error on the Settings > Linked phones page when reading the list from the server failed."
+    "description": "Error on the Settings > Linked devices page when reading the list of phones from the server failed."
   },
   "phones.unlinkFailed": {
     "text": "Couldn't unlink that phone. Try again in a moment.",
-    "description": "Error on the Settings > Linked phones page when unlinking a phone failed; the phone stays in the list."
+    "description": "Error on the Settings > Linked devices page when unlinking a phone failed; the phone stays in the list."
+  },
+  "phones.group.phones": {
+    "text": "Phones",
+    "description": "Heading of the first group on the Settings > Linked devices page: the phones signed in to the account through the Homeroom mobile app."
+  },
+  "phones.group.browsers": {
+    "text": "Browsers",
+    "description": "Heading of the second group on the Settings > Linked devices page: the browsers (on computers, phones or tablets) signed in to the account on the web."
+  },
+  "phones.phonesNote": {
+    "text": "Each row is one install of the Homeroom app. Reinstalling the app makes a new row; unlink any you no longer use.",
+    "description": "Explanation under the Phones heading in Settings > Linked devices, saying why one phone can appear more than once: every installation of the Homeroom mobile app is its own row."
+  },
+  "phones.detailStale": {
+    "text": "Not used since {{lastUsed}} · Linked {{linked}}",
+    "description": "Line under a phone in Settings > Linked devices when the Homeroom app has not used the account on that phone for more than 30 days. {{lastUsed}} is the date it was last used; {{linked}} is the date it was first signed in there. Both are already-formatted dates."
+  },
+  "phones.browsers.note": {
+    "text": "Each row is one browser signed in to Homeroom on the web. Sign out of any you don't recognise.",
+    "description": "Explanation under the Browsers heading in Settings > Linked devices. Homeroom is the product name."
+  },
+  "phones.browsers.empty": {
+    "text": "No browsers are signed in to your account.",
+    "description": "Shown under the Browsers heading of Settings > Linked devices when the account has no browser session on the web (for example when the page is open inside the Homeroom app, whose own session is listed as a phone)."
+  },
+  "phones.browsers.name": {
+    "text": "{{browser}} on {{os}}",
+    "description": "Name of a row in Settings > Linked devices > Browsers: which browser on which system is signed in. {{browser}} is a browser name (Chrome, Safari, Firefox…) and {{os}} a system name (Mac, Windows, iPhone…), both already translated."
+  },
+  "phones.browsers.nameSystemOnly": {
+    "text": "Browser on {{os}}",
+    "description": "Name of a row in Settings > Linked devices > Browsers when Homeroom knows the system (Mac, Windows, iPhone…) the browser runs on but not which browser it is. {{os}} is already translated."
+  },
+  "phones.browsers.unknown": {
+    "text": "Browser",
+    "description": "Name of a row in Settings > Linked devices > Browsers when Homeroom does not know which browser or system it is (the session was made before Homeroom recorded that, or by a browser it does not recognise)."
+  },
+  "phones.browsers.browser.chrome": {
+    "text": "Chrome",
+    "description": "A browser's name in a row of Settings > Linked devices > Browsers. Google Chrome: a product name, usually kept as is."
+  },
+  "phones.browsers.browser.safari": {
+    "text": "Safari",
+    "description": "A browser's name in a row of Settings > Linked devices > Browsers. Apple Safari: a product name, usually kept as is."
+  },
+  "phones.browsers.browser.firefox": {
+    "text": "Firefox",
+    "description": "A browser's name in a row of Settings > Linked devices > Browsers. Mozilla Firefox: a product name, usually kept as is."
+  },
+  "phones.browsers.browser.edge": {
+    "text": "Edge",
+    "description": "A browser's name in a row of Settings > Linked devices > Browsers. Microsoft Edge: a product name, usually kept as is."
+  },
+  "phones.browsers.browser.opera": {
+    "text": "Opera",
+    "description": "A browser's name in a row of Settings > Linked devices > Browsers. Opera: a product name, usually kept as is."
+  },
+  "phones.browsers.browser.samsung": {
+    "text": "Samsung Internet",
+    "description": "A browser's name in a row of Settings > Linked devices > Browsers. Samsung Internet, the browser on Samsung phones: a product name, usually kept as is."
+  },
+  "phones.browsers.os.mac": {
+    "text": "Mac",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: an Apple Mac computer."
+  },
+  "phones.browsers.os.windows": {
+    "text": "Windows",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: a Windows computer. Microsoft Windows is a product name, usually kept as is."
+  },
+  "phones.browsers.os.linux": {
+    "text": "Linux",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: a Linux computer. Linux is a product name, usually kept as is."
+  },
+  "phones.browsers.os.android": {
+    "text": "Android",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: an Android phone or tablet. Android is a product name, usually kept as is."
+  },
+  "phones.browsers.os.ios": {
+    "text": "iPhone",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: an iPhone. A product name, usually kept as is."
+  },
+  "phones.browsers.os.ipad": {
+    "text": "iPad",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: an iPad. A product name, usually kept as is."
+  },
+  "phones.browsers.os.chromeos": {
+    "text": "Chromebook",
+    "description": "A system's name in a row of Settings > Linked devices > Browsers: a Chromebook (a ChromeOS computer). A product name, usually kept as is."
+  },
+  "phones.browsers.thisBrowser": {
+    "text": "This browser",
+    "description": "Small label beside the name of a row in Settings > Linked devices > Browsers: the row is the browser this page is open in."
+  },
+  "phones.browsers.detail": {
+    "text": "Last used {{lastUsed}} · Signed in {{signedIn}}",
+    "description": "Line under a browser in Settings > Linked devices > Browsers. {{lastUsed}} is the date that browser last used the account (within the last 30 days); {{signedIn}} is the date it signed in. Both are already-formatted dates."
+  },
+  "phones.browsers.detailStale": {
+    "text": "Not used since {{lastUsed}} · Signed in {{signedIn}}",
+    "description": "Line under a browser in Settings > Linked devices > Browsers when it has not used the account for more than 30 days. {{lastUsed}} is the date it was last used; {{signedIn}} is the date it signed in. Both are already-formatted dates."
+  },
+  "phones.browsers.signOut": {
+    "text": "Sign out",
+    "description": "Red button on a row of Settings > Linked devices > Browsers: signs that browser out of the account (verb). Pressed once it asks to confirm; pressed again it signs the browser out."
+  },
+  "phones.browsers.confirm": {
+    "text": "Press Sign out again to sign that browser out.",
+    "description": "Replaces the dates under a browser in Settings > Linked devices > Browsers after Sign out was pressed once, asking to confirm."
+  },
+  "phones.browsers.confirmThisBrowser": {
+    "text": "This is the browser you are using. Press Sign out again to sign out here.",
+    "description": "Replaces the dates under the browser this page is open in, in Settings > Linked devices > Browsers, after Sign out was pressed once: signing it out signs the person out here."
+  },
+  "phones.browsers.loadFailed": {
+    "text": "Couldn't load your browsers. Try again in a moment.",
+    "description": "Error on the Settings > Linked devices page when reading the list of signed-in browsers from the server failed."
+  },
+  "phones.browsers.signOutFailed": {
+    "text": "Couldn't sign that browser out. Try again in a moment.",
+    "description": "Error on the Settings > Linked devices page when signing a browser out failed; the browser stays in the list."
   },
   "devConsole.title": {
     "text": "Developer console",
@@ -1786,6 +1942,102 @@
   "tour.hint": {
     "text": "It starts again on your home screen.",
     "description": "Note under the \"Replay the tour\" button in Settings. \"It\" is the welcome tour."
+  },
+  "guide.title": {
+    "text": "User guide",
+    "description": "Heading of the page in Settings that explains the places in Homeroom and how a change gets voted in."
+  },
+  "guide.intro": {
+    "text": "Where things are in Homeroom, and how a change goes live.",
+    "description": "Explanation under the User guide heading in Settings."
+  },
+  "guide.places.heading": {
+    "text": "Where things are",
+    "description": "Small label over the card of Settings > User guide that explains the main places in Homeroom."
+  },
+  "guide.place.communities.title": {
+    "text": "Communities",
+    "description": "Row title in Settings > User guide, about communities and the Communities tab. Same word as the tab."
+  },
+  "guide.place.communities.body": {
+    "text": "A community is the people behind a project. It shows as Just you, Private community or Public community, depending on who it is for. The Communities tab takes you to yours, each with a hub, a Workshop for the work going on, and channels to talk in. Joining a community is what lets you propose changes, vote and post there.",
+    "description": "Paragraph in Settings > User guide. \"Just you\", \"Private community\" and \"Public community\" are the names shown on screen for who a community is for. \"Workshop\" is the name of a place on a project's page."
+  },
+  "guide.place.apps.title": {
+    "text": "Pinned apps",
+    "description": "Row title in Settings > User guide, about the Pinned apps section of the home screen. Same words as that section's heading."
+  },
+  "guide.place.apps.body": {
+    "text": "Home lists the apps from your communities under Pinned apps. Select one to open it. + New project starts your own: it asks what the app should do and what to call it, then makes a private community you can invite people to.",
+    "description": "Paragraph in Settings > User guide. \"+ New project\" is the tile on the home screen that starts a project."
+  },
+  "guide.place.appMenu.title": {
+    "text": "The Homeroom menu",
+    "description": "Row title in Settings > User guide, about the menu behind the Homeroom logo inside an app."
+  },
+  "guide.place.appMenu.body": {
+    "text": "Inside any app, select the Homeroom logo to open its menu. That is where you suggest an improvement or visit the app's community.",
+    "description": "Paragraph in Settings > User guide about the menu behind the Homeroom logo."
+  },
+  "guide.place.suggest.title": {
+    "text": "Suggest an improvement",
+    "description": "Row title in Settings > User guide. Same words as the button in the Homeroom menu."
+  },
+  "guide.place.suggest.body": {
+    "text": "Use this button in the Homeroom menu to ask for a change to any of your apps or to Homeroom itself. You can start building it, or share a request for someone in the community to pick up.",
+    "description": "Paragraph in Settings > User guide. \"This button\" is Suggest an improvement, named by the row title above it."
+  },
+  "guide.place.bot.title": {
+    "text": "Homeroom bot",
+    "description": "Row title in Settings > User guide, about the AI assistant. The bot's own name."
+  },
+  "guide.place.bot.body": {
+    "text": "Homeroom bot is your AI assistant: ask it to build a change, file an idea or fix a bug. It has its own tab, with Main Chat as the first row. Messages is a separate tab, for your conversations with people.",
+    "description": "Paragraph in Settings > User guide. \"Main Chat\" is the name of the person's main chat with the bot. \"Messages\" is the name of a tab."
+  },
+  "guide.place.you.title": {
+    "text": "You and Settings",
+    "description": "Row title in Settings > User guide, about the You tab and the Settings screen. \"You\" is the name of the tab."
+  },
+  "guide.place.you.body": {
+    "text": "The You tab holds your profile, and Settings is on it. Settings is where you change your account, how Homeroom looks, your language and your notifications, and where you can replay the welcome tour.",
+    "description": "Paragraph in Settings > User guide. \"You\" is the name of a tab."
+  },
+  "guide.vote.heading": {
+    "text": "How a change gets voted in",
+    "description": "Small label over the card of Settings > User guide that explains, in four rows, how a change to an app goes live."
+  },
+  "guide.vote.build.title": {
+    "text": "Someone builds it",
+    "description": "Row title in Settings > User guide: the first step of how a change goes live."
+  },
+  "guide.vote.build.body": {
+    "text": "A change starts when a member builds it, with Homeroom bot or a coding agent. When the bot writes a plan for a request, any member can press Build it, and the bot's building time comes out of that member's week. You can see yours in Settings, under AI usage & models.",
+    "description": "Paragraph in Settings > User guide. \"Build it\" is the button on the bot's plan. \"AI usage & models\" is the name of a page in Settings. \"Week\" means the weekly allowance of the bot's building time."
+  },
+  "guide.vote.up.title": {
+    "text": "It goes up for a vote",
+    "description": "Row title in Settings > User guide: the second step of how a change goes live."
+  },
+  "guide.vote.up.body": {
+    "text": "When it is ready, the change goes up for a vote with a preview you can try. If it is waiting on you, it shows under Needs you in the Communities tab.",
+    "description": "Paragraph in Settings > User guide. \"Needs you\" is the name of a list on the Communities tab of decisions waiting on the person."
+  },
+  "guide.vote.checks.title": {
+    "text": "Checks test it",
+    "description": "Row title in Settings > User guide: the third step of how a change goes live. \"Checks\" are automated tests."
+  },
+  "guide.vote.checks.body": {
+    "text": "Homeroom runs automated checks on the preview. A change can't go live until they pass, however the vote goes.",
+    "description": "Paragraph in Settings > User guide."
+  },
+  "guide.vote.rule.title": {
+    "text": "The project's rule decides",
+    "description": "Row title in Settings > User guide: the last step of how a change goes live. The rule is the project's rule for who has to approve a change."
+  },
+  "guide.vote.rule.body": {
+    "text": "Each project has its own rule for who has to say yes: one person's yes can be enough, or it can take most of the group. Whoever manages a project can propose a new rule from Settings & rules in its ⋯ menu, and that goes to a vote under the current rule. Once the rule is met and the checks pass, the change goes live.",
+    "description": "Paragraph in Settings > User guide. \"Settings & rules\" is the name of a row in a project's ⋯ menu."
   },
   "about.title": {
     "text": "About",
@@ -2068,8 +2320,8 @@
     "description": "Name of a part of Settings: the Privacy page (who can message or invite you, and whether people can find your profile). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
   "nav.part.phones": {
-    "text": "Linked phones",
-    "description": "Name of a part of Settings: the Linked phones page (the phones signed in to the account with the Homeroom app, and unlinking one). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+    "text": "Linked devices",
+    "description": "Name of a part of Settings: the Linked devices page (the phones signed in to the account with the Homeroom app and the browsers signed in on the web, and signing one out). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
   "nav.part.wallet": {
     "text": "Homeroom Wallet",
@@ -2143,6 +2395,10 @@
     "text": "Welcome tour",
     "description": "Name of a part of Settings: the page that replays the welcome tour. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
+  "nav.part.guide": {
+    "text": "User guide",
+    "description": "Name of a part of Settings: the page that explains the places in Homeroom and how a change gets voted in. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+  },
   "nav.part.usernode": {
     "text": "Homeroom app",
     "description": "Name of a part of Settings: the page about the Homeroom phone app. Homeroom is the product name. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
@@ -2180,8 +2436,8 @@
     "description": "One muted line under the Linked accounts row in the phone's Settings menu, saying what the page is for: connecting a GitHub or X account raises the weekly AI credits. Keep it short; it is cut to one line."
   },
   "nav.subtitle.phones": {
-    "text": "Phones signed in with the Homeroom app",
-    "description": "One muted line under the Linked phones row in the phone's Settings menu, saying what the page lists. Homeroom is the product name. Keep it short; it is cut to one line."
+    "text": "Phones and browsers signed in to your account",
+    "description": "One muted line under the Linked devices row in the phone's Settings menu, saying what the page lists. Keep it short; it is cut to one line."
   },
   "nav.subtitle.connectors": {
     "text": "Build from Claude, ChatGPT or a terminal",
@@ -2197,11 +2453,11 @@
   },
   "nav.status.linked_one": {
     "text": "{{count}} linked",
-    "description": "Muted words at the end of the Linked accounts or Linked phones row in the Settings menu: how many accounts (GitHub, X) or phones are linked. Shown only when at least one is. Keep it short."
+    "description": "Muted words at the end of the Linked accounts or Linked devices row in the Settings menu: how many accounts (GitHub, X) or devices (phones and browsers) are linked. Shown only when at least one is. Keep it short."
   },
   "nav.status.linked_other": {
     "text": "{{count}} linked",
-    "description": "Muted words at the end of the Linked accounts or Linked phones row in the Settings menu: how many accounts (GitHub, X) or phones are linked. Shown only when at least one is. Keep it short."
+    "description": "Muted words at the end of the Linked accounts or Linked devices row in the Settings menu: how many accounts (GitHub, X) or devices (phones and browsers) are linked. Shown only when at least one is. Keep it short."
   },
   "nav.status.connected_one": {
     "text": "{{count}} connected",
@@ -2296,8 +2552,8 @@
     "description": "Not shown on screen. Extra search words for \"Privacy\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.phones": {
-    "text": "phone phones mobile app device devices signed in sessions sign out log out unlink disconnect android iphone",
-    "description": "Not shown on screen. Extra search words for \"Linked phones\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+    "text": "phone phones mobile app device devices computer computers laptop desktop tablet browser browsers chrome safari firefox signed in sessions sign out log out unlink disconnect android iphone",
+    "description": "Not shown on screen. Extra search words for \"Linked devices\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.wallet": {
     "text": "crypto link qr",
@@ -2366,6 +2622,10 @@
   "nav.keywords.tour": {
     "text": "walkthrough help onboarding",
     "description": "Not shown on screen. Extra search words for \"Welcome tour\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+  },
+  "nav.keywords.guide": {
+    "text": "help how manual vote voting explain",
+    "description": "Not shown on screen. Extra search words for \"User guide\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.usernode": {
     "text": "mobile phone native diagnostics block production",
@@ -2559,25 +2819,77 @@
     "text": "{{summary}} {{advice}}",
     "description": "Status line under the \"stop the permission prompts\" advice in Settings > Connectors, about the tip Homeroom adds to its answers in a chat app (Claude, ChatGPT) telling the person how to stop those prompts. Puts two complete sentences one after the other: {{summary}} says how often the tip was sent, {{advice}} says when it will be sent again. Change only the spacing or order if your language needs it."
   },
-  "connectors.row.connectedUsed": {
-    "text": "connected {{connected}} · last used {{lastUsed}}",
-    "description": "Second line of a connected chat app's card in Settings > Connectors: when it was connected and last used. Both parameters are dates with times. Lower case: it is a detail line, not a sentence."
+  "connectors.tool.status.working": {
+    "text": "Working",
+    "description": "Status word on an AI tool's card in Settings > Connectors: it is connected and has used Homeroom."
   },
-  "connectors.row.connectedNeverUsed": {
-    "text": "connected {{connected}} · never used",
-    "description": "Second line of a connected chat app's card in Settings > Connectors: when it was connected, and that it has not been used yet. {{connected}} is a date with time. Lower case: it is a detail line, not a sentence."
+  "connectors.tool.status.unused": {
+    "text": "Not used yet",
+    "description": "Status word on an AI tool's card in Settings > Connectors: it is connected, but has not called Homeroom since."
   },
-  "connectors.row.unknownDateUsed": {
-    "text": "connected unknown date · last used {{lastUsed}}",
-    "description": "Second line of a connected chat app's card in Settings > Connectors: shown when the date it was connected is not known. {{lastUsed}} is a date with time. Lower case: it is a detail line, not a sentence."
+  "connectors.tool.status.attention": {
+    "text": "Needs attention",
+    "description": "Status word on an AI tool's card in Settings > Connectors, beside an amber dot: its sign-in ran out and it has to be connected again."
   },
-  "connectors.row.unknownDateNeverUsed": {
-    "text": "connected unknown date · never used",
-    "description": "Second line of a connected chat app's card in Settings > Connectors: shown when the date it was connected is not known and it has not been used yet. Lower case: it is a detail line, not a sentence."
+  "connectors.tool.status.none": {
+    "text": "Not connected",
+    "description": "Status word on an AI tool's card in Settings > Connectors: this account has no connection from it."
+  },
+  "connectors.row.lastActive": {
+    "text": "Last active {{lastUsed}}",
+    "description": "Line on a connection's row in Settings > Connectors. {{lastUsed}} is a date with time."
+  },
+  "connectors.row.notUsedYet": {
+    "text": "Connected {{connected}} · not used yet",
+    "description": "Line on a connection's row in Settings > Connectors when the tool has not called Homeroom since connecting. {{connected}} is a date with time."
+  },
+  "connectors.row.unknownDate": {
+    "text": "Connected on an unknown date · not used yet",
+    "description": "Line on a connection's row in Settings > Connectors when the date it was connected is not known and it has not been used."
+  },
+  "connectors.row.expired": {
+    "text": "Sign-in ran out {{when}}. Follow the steps to connect again.",
+    "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended. {{when}} is a date with time. The steps are that tool's setup steps on the same card."
+  },
+  "connectors.row.expiredUnknownDate": {
+    "text": "Sign-in ran out. Follow the steps to connect again.",
+    "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended and the date is not known. The steps are that tool's setup steps on the same card."
+  },
+  "connectors.capabilities.readWrite": {
+    "text": "Can read your apps and send proposals",
+    "description": "Line on a connection's row in Settings > Connectors: what the person approved this connection to do."
+  },
+  "connectors.capabilities.read": {
+    "text": "Can read your apps",
+    "description": "Line on a connection's row in Settings > Connectors: what the person approved this connection to do."
+  },
+  "connectors.capabilities.write": {
+    "text": "Can send proposals",
+    "description": "Line on a connection's row in Settings > Connectors: what the person approved this connection to do."
+  },
+  "connectors.capabilities.expiredReadWrite": {
+    "text": "Could read your apps and send proposals",
+    "description": "Line on a connection's row in Settings > Connectors whose sign-in has ended: what it was approved to do until then."
+  },
+  "connectors.capabilities.expiredRead": {
+    "text": "Could read your apps",
+    "description": "Line on a connection's row in Settings > Connectors whose sign-in has ended: what it was approved to do until then."
+  },
+  "connectors.capabilities.expiredWrite": {
+    "text": "Could send proposals",
+    "description": "Line on a connection's row in Settings > Connectors whose sign-in has ended: what it was approved to do until then."
+  },
+  "connectors.progress.done": {
+    "text": "{{done}} of {{total}} done",
+    "description": "Line above the numbered steps of an open setup guide in Settings > Connectors, after the person ticks a step. {{done}} is how many steps they marked done, {{total}} how many the guide has."
+  },
+  "connectors.progress.tickAria": {
+    "text": "Step {{n}} done",
+    "description": "Screen reader label of the toggle on a setup guide's step in Settings > Connectors, announced as pressed or not pressed. {{n}} is the step's number."
   },
   "connectors.row.unnamedClient": {
     "text": "Connected client",
-    "description": "Title of a connected chat app's card in Settings > Connectors when the app gave no name. \"Client\" is a program connected to Homeroom, not a customer."
+    "description": "Title of a connection's row in Settings > Connectors when the app gave no name. \"Client\" is a program connected to Homeroom, not a customer."
   },
   "connectors.disconnect.failedRetry": {
     "text": "Could not disconnect. Try again.",
@@ -4302,5 +4614,25 @@
   "privacy.contact.saveFailed": {
     "text": "Your choice could not be saved. Try again.",
     "description": "Error under the Email & texts switches in Settings > Privacy when saving a change failed; the switch goes back to what it was."
+  },
+  "experimental.interfaceMode.label": {
+    "text": "Advanced mode",
+    "description": "Label of a switch in Settings > Experimental. On selects Advanced; off selects Basic."
+  },
+  "experimental.interfaceMode.advanced": {
+    "text": "Advanced mode is selected. You are using the full Homeroom experience.",
+    "description": "Explanation below the mode switch when Advanced is selected."
+  },
+  "experimental.interfaceMode.basic": {
+    "text": "Basic mode is selected. Home app menus show fewer details and actions. More simplifications are coming soon.",
+    "description": "Explanation below the mode switch when Basic is selected."
+  },
+  "experimental.interfaceMode.device": {
+    "text": "Your choice is saved on this device.",
+    "description": "Persistence explanation below the interface mode switch."
+  },
+  "experimental.interfaceMode.saveFailed": {
+    "text": "Your choice could not be saved on this device. Try again.",
+    "description": "Error below the mode switch when browser storage refuses a save."
   }
 }

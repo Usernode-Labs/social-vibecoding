@@ -208,4 +208,108 @@ test('a bot proposal is named by its spec and led by its own description', { tim
     assert.match(open, /`SELECT content FROM chat_session_messages WHERE session_id = \$1 AND role = 'user' ORDER BY id DESC LIMIT 1`/);
     assert.match(services, /`SELECT cs\.\*, a\.slug AS app_slug, a\.name AS app_name, a\.repo_url\n\s+FROM chat_sessions cs JOIN apps a ON a\.id = cs\.app_id WHERE cs\.id = \$1`/);
   });
+
+  // #6209: a build that adds only written documents leaves its request open.
+  await t.test('#6209: a document-only change loses its request link before it is proposed', async () => {
+    const id = await buildSession({ spec: SPEC });
+    const n = issue;
+    await pool.query('UPDATE chat_sessions SET branch_name = $2 WHERE id = $1', [id, `homeroom_bot/doc-${n}`]);
+    const before = (await pool.query(
+      'SELECT linked_issues, created_from_issue_number FROM chat_sessions WHERE id = $1', [id],
+    )).rows[0];
+    assert.deepEqual(before.linked_issues, [n], 'the build linked its request, as before');
+    assert.equal(before.created_from_issue_number, n);
+    const { rows: [session] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [id]);
+    const gh = {
+      async getBranchSha() { return 'b'.repeat(40); },
+      async compareRefs(_owner, _repo, range) {
+        assert.equal(range, `${'b'.repeat(40)}...${session.branch_name}`, 'its own branch, from its base');
+        return { files: ['docs/plans/image-generation.md'], filesComplete: true };
+      },
+    };
+    const out = await live.unlinkDocOnlyBuild({
+      pool, github: gh, repo: { owner: 'usernode-bot', repo: 'todo' }, session,
+    });
+    assert.deepEqual(out, { docOnly: true });
+    const after = (await pool.query(
+      'SELECT linked_issues, created_from_issue_number FROM chat_sessions WHERE id = $1', [id],
+    )).rows[0];
+    assert.deepEqual(after.linked_issues, [], 'merging it closes nothing');
+    assert.equal(after.created_from_issue_number, n, 'it still shows on its request\'s page');
+  });
+
+  await t.test('#6209: a compare that fails keeps the link', async () => {
+    const id = await buildSession({ spec: SPEC });
+    const n = issue;
+    await pool.query('UPDATE chat_sessions SET branch_name = $2 WHERE id = $1', [id, `homeroom_bot/doc-${n}`]);
+    const { rows: [session] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [id]);
+    await assert.rejects(() => live.unlinkDocOnlyBuild({
+      pool,
+      github: { async getBranchSha() { return 'b'.repeat(40); }, async compareRefs() { throw new Error('GitHub is down'); } },
+      repo: { owner: 'usernode-bot', repo: 'todo' },
+      session,
+    }));
+    const row = (await pool.query('SELECT linked_issues FROM chat_sessions WHERE id = $1', [id])).rows[0];
+    assert.deepEqual(row.linked_issues, [n]);
+  });
+
+  await t.test('#6209: the sweep unlinks an open document-only bot proposal once', async () => {
+    const id = await buildSession({ spec: SPEC });
+    const n = issue;
+    const body = `A plan for image models.\n\nCloses [request ${n}](https://app.onhomeroom.com/x/dev/issues/${n})`;
+    await pool.query(
+      `UPDATE chat_sessions
+          SET status = 'promoted', pr_number = $2, branch_name = $3,
+              pr_linked_issues_applied = ARRAY[$4::int], pr_body = $5
+        WHERE id = $1`,
+      [id, 9000 + n, `homeroom_bot/doc-${n}`, n, body],
+    );
+    const updated = [];
+    const gh = {
+      async compareRefs() { return { files: ['docs/plans/image-generation.md'], filesComplete: true }; },
+      async getPR() { return { state: 'open', merged: false, body }; },
+      async updatePR(_owner, _repo, pr, opts) { updated.push([pr, opts.body]); },
+    };
+    const first = await live.unlinkDocOnlyProposals(pool, { github: gh });
+    assert.equal(first.unlinked, 1);
+    const row = (await pool.query(
+      'SELECT linked_issues, created_from_issue_number, pr_body FROM chat_sessions WHERE id = $1', [id],
+    )).rows[0];
+    assert.deepEqual(row.linked_issues, []);
+    assert.equal(row.created_from_issue_number, n, 'it still shows on its request\'s page');
+    assert.equal(updated.length, 1, 'the open pull request body is patched');
+    assert.doesNotMatch(updated[0][1], /Closes \[request/);
+    assert.doesNotMatch(row.pr_body, /Closes \[request/);
+    const second = await live.unlinkDocOnlyProposals(pool, { github: gh });
+    assert.equal(second.unlinked, 0, 'each change is checked once per process');
+    assert.equal(updated.length, 1);
+  });
+
+  // 4 Nov 2026 (evan): a change built from a plan its person approved is the
+  // feature the plan describes, never a document, so the sweep leaves it
+  // linked even when it happens to touch only documents.
+  await t.test('#6209: the sweep leaves a change built from an approved plan alone', async () => {
+    const id = await buildSession({ spec: SPEC });
+    const n = issue;
+    const body = `The feature the plan described.\n\nCloses [request ${n}](https://app.onhomeroom.com/x/dev/issues/${n})`;
+    await pool.query(
+      `UPDATE chat_sessions
+          SET status = 'promoted', pr_number = $2, branch_name = $3,
+              pr_linked_issues_applied = ARRAY[$4::int], pr_body = $5, built_from_session_id = $6
+        WHERE id = $1`,
+      [id, 9100 + n, `homeroom_bot/from-plan-${n}`, n, body, 1234],
+    );
+    const updated = [];
+    const gh = {
+      async compareRefs() { return { files: ['docs/plans/image-generation.md'], filesComplete: true }; },
+      async getPR() { return { state: 'open', merged: false, body }; },
+      async updatePR() { updated.push(true); },
+    };
+    const out = await live.unlinkDocOnlyProposals(pool, { github: gh });
+    assert.equal(out.unlinked, 0, 'never treated as a document');
+    const row = (await pool.query('SELECT linked_issues, pr_body FROM chat_sessions WHERE id = $1', [id])).rows[0];
+    assert.deepEqual(row.linked_issues, [n], 'its request stays linked, so a merge closes it as built');
+    assert.match(row.pr_body, /Closes \[request/);
+    assert.equal(updated.length, 0, 'its pull request body is left alone');
+  });
 });

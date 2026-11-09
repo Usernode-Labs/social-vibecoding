@@ -6,15 +6,17 @@
 // test:changed: when src/services/db-export.js (runtime exports)
 // test:changed: when src/services/db-roles.js (readonly capability bootstrap)
 // test:changed: when src/db/connection-census.js (cluster connection budget)
+// test:changed: when src/db/migrations/ (actual fresh and upgraded schema under split identities)
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { fork } = require('node:child_process');
 const { once } = require('node:events');
 const { Writable } = require('node:stream');
 const { gunzipSync } = require('node:zlib');
-const { Client } = require('pg');
+const { Client, Pool } = require('pg');
+const { applySchemaWithLockRetry } = require('../src/db/schema-migrations');
+const { seedReferenceData } = require('../src/db/reference-data');
 const access = require('../src/services/database-role-access');
 const { bootstrap } = require('../scripts/bootstrap-database-roles');
 const { ensureRuntimeGrants, takeWebWorkflowWrites } = require('../src/services/database-role-grants');
@@ -32,6 +34,15 @@ async function use(url, fn) {
   const c = new Client({ connectionString: url, connectionTimeoutMillis: 5000, query_timeout: 120000 });
   await c.connect();
   try { return await fn(c); } finally { await c.end(); }
+}
+// Match startup for both a fresh fixture and its later owner-role boot.
+// Initialization SQL cannot be replayed after contract migrations drop columns.
+async function migrateDatabase(url) {
+  const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 5000 });
+  try {
+    await applySchemaWithLockRetry(pool);
+    await seedReferenceData(pool);
+  } finally { await pool.end(); }
 }
 async function denied(c, sql) {
   await assert.rejects(c.query(sql), e => ['42501', '25006'].includes(e.code));
@@ -93,7 +104,7 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
     await c.query(`CREATE DATABASE ${source} OWNER ${sourceOwner}`);
     await c.query(`REVOKE CONNECT ON DATABASE ${source} FROM PUBLIC`);
   });
-  await use(at(PRIMARY, platform), c => c.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8')));
+  await migrateDatabase(at(PRIMARY, platform));
   await use(at(PRIMARY, source), c => c.query(`CREATE EXTENSION pg_stat_statements;
     CREATE TABLE public.notes(id serial PRIMARY KEY, body text);
     INSERT INTO public.notes(body) VALUES ('synthetic retained row');
@@ -198,13 +209,44 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
       await access.assertLogin(c, 'migrator');
       await c.query('CREATE TABLE public.role_default_grant(id serial PRIMARY KEY, body text)');
       await denied(c, 'CREATE ROLE role_probe');
-      // Every statement of the actual schema must remain runnable by its owner.
-      await c.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+      // The real migration entry point runs as the owner and verifies receipts
+      // without replaying baseline DDL over an already-contracted schema.
+      await migrateDatabase(at(PRIMARY, platform, roles.migrator, passwords.migrator));
       // The migration Job's grants: one transaction, web's writes taken last.
       await c.query('BEGIN');
       await ensureRuntimeGrants(c, env);
       await takeWebWorkflowWrites(c, env);
       await c.query('COMMIT');
+      const reconcile = async () => {
+        const statements = [];
+        const observed = { query: (sql, values) => {
+          statements.push(sql); return c.query(sql, values);
+        } };
+        await c.query('BEGIN');
+        try {
+          await ensureRuntimeGrants(observed, env);
+          await takeWebWorkflowWrites(observed, env);
+          await c.query('COMMIT');
+        } catch (err) { await c.query('ROLLBACK'); throw err; }
+        return statements.filter(sql => /^\s*(GRANT|REVOKE|ALTER)\b/.test(sql));
+      };
+      assert.deepEqual(await reconcile(), [], 'unchanged runtime permissions execute no DDL');
+      await c.query(`REVOKE SELECT ON public.apps FROM ${access.identifier(roles.web)};
+        GRANT UPDATE ON public.wf_events TO ${access.identifier(roles.web)};
+        GRANT DELETE ON public.schema_migrations TO ${access.identifier(roles.conductor)};
+        GRANT UPDATE ON public.apps TO ${access.identifier(roles.provisioner)};
+        GRANT CREATE ON SCHEMA public TO ${access.identifier(roles.web)};
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT UPDATE ON TABLES TO ${access.identifier(roles.provisioner)};
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM ${access.identifier(roles.provisioner)}`);
+      assert.ok((await reconcile()).length, 'a missing grant, default grant and excess writes cause repair');
+      const { rows: [fixed] } = await c.query(`SELECT
+        has_table_privilege($1, 'public.apps', 'SELECT') AS reads,
+        has_table_privilege($1, 'public.wf_events', 'UPDATE') AS decides,
+        has_table_privilege($2, 'public.schema_migrations', 'DELETE') AS edits_receipts,
+        has_table_privilege($3, 'public.apps', 'UPDATE') AS reader_writes,
+        has_schema_privilege($1, 'public', 'CREATE') AS creates`, [roles.web, roles.conductor, roles.provisioner]);
+      assert.deepEqual(fixed, { reads: true, decides: false, edits_receipts: false, reader_writes: false, creates: false });
+      assert.deepEqual(await reconcile(), [], 'the repaired policy returns to the no-DDL path');
       // A web process of a build that still writes the kernel's tables keeps
       // them: the grants refuse in their own transaction, changing nothing.
       await c.query("INSERT INTO public.platform_processes (id, role, heartbeat_at) VALUES ('role-probe-earlier', 'web', now())");
@@ -243,6 +285,37 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
     await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), async c => {
       assert.equal((await probe(c)).rows[0].producer, 'platform');
       await c.query("BEGIN; SET LOCAL app.wf_writer = 'transition'; DELETE FROM public.wf_events WHERE machine = 'role-probe'; COMMIT");
+    });
+    // Who is an administrator: each runtime login's change is recorded under
+    // that login, and neither can write, rewrite or switch off the record.
+    const { rows: [probeUser] } = await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), c =>
+      c.query("INSERT INTO public.users (username, password) VALUES ('privilege-probe', 'x') RETURNING id"));
+    const { rows: [probeApp] } = await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), c =>
+      c.query("INSERT INTO public.apps (name, slug, created_by, status) VALUES ('Privilege probe', 'privilege-probe', $1, 'running') RETURNING id", [probeUser.id]));
+    await use(at(PRIMARY, platform, roles.web, passwords.web), c =>
+      c.query('UPDATE public.users SET is_admin = TRUE WHERE id = $1', [probeUser.id]));
+    await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), c =>
+      c.query('INSERT INTO public.app_admins (app_id, user_id) VALUES ($1, $2)', [probeApp.id, probeUser.id]));
+    for (const kind of ['web', 'conductor']) await use(at(PRIMARY, platform, roles[kind], passwords[kind]), async c => {
+      const { rows } = await c.query(
+        'SELECT login, change, app_id, before, after FROM public.privilege_changes WHERE user_id = $1 ORDER BY changed_at', [probeUser.id]);
+      assert.deepEqual(rows, [
+        { login: roles.web, change: 'platform_admin', app_id: null,
+          before: { is_admin: false, admin_readonly: false }, after: { is_admin: true, admin_readonly: false } },
+        { login: roles.conductor, change: 'app_admin', app_id: probeApp.id,
+          before: null, after: { app_id: probeApp.id, user_id: probeUser.id } },
+      ], kind);
+      for (const sql of [
+        `INSERT INTO public.privilege_changes (login, change, user_id) VALUES ('forged', 'platform_admin', ${probeUser.id})`,
+        "UPDATE public.privilege_changes SET login = 'forged'", 'DELETE FROM public.privilege_changes',
+        'TRUNCATE public.privilege_changes', 'ALTER TABLE public.users DISABLE TRIGGER users_record_admin_change',
+        'ALTER TABLE public.app_admins DISABLE TRIGGER app_admins_record_change', 'SET session_replication_role = replica',
+      ]) await denied(c, sql);
+    });
+    await use(at(PRIMARY, platform, roles.migrator, passwords.migrator), async c => {
+      await c.query('DELETE FROM public.apps WHERE id = $1', [probeApp.id]);
+      await c.query('DELETE FROM public.users WHERE id = $1', [probeUser.id]);
+      await c.query('DELETE FROM public.privilege_changes WHERE user_id = $1', [probeUser.id]);
     });
     await use(env.DB_ADMIN_URL, c => access.assertLogin(c, 'provisioner'));
     await use(at(PRIMARY, platform), async c => {
@@ -297,6 +370,48 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
     const consoleRole = require('../src/services/topochain/db-console-role');
     assert.equal(debug.isAvailable(), true);
     assert.equal(consoleRole.isAvailable(), true);
+    const ddl = [];
+    const originalQuery = Client.prototype.query;
+    Client.prototype.query = function (...args) {
+      const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text;
+      if (/^\s*(GRANT|REVOKE|ALTER|DO)\b/.test(sql || '')) ddl.push(sql);
+      return originalQuery.apply(this, args);
+    };
+    try {
+      await require('../src/services/db-roles').ensureRoles(config);
+      assert.deepEqual(ddl, [], 'unchanged readonly capabilities execute no role or permission DDL');
+      for (const drift of [
+        'REVOKE SELECT ON public.apps FROM topochain_console_ro',
+        'GRANT UPDATE (status) ON public.apps TO topochain_console_ro',
+        'GRANT SELECT (password) ON public.users TO topochain_console_ro',
+        'ALTER ROLE topochain_console_ro SET default_transaction_read_only = off',
+        'GRANT USAGE ON SCHEMA credentials TO topochain_console_ro',
+        `ALTER DEFAULT PRIVILEGES FOR ROLE ${access.identifier(roles.migrator)} IN SCHEMA public GRANT SELECT ON TABLES TO topochain_console_ro`,
+      ]) {
+        await use(at(PRIMARY, platform), c => c.query(drift));
+        ddl.length = 0;
+        await require('../src/services/db-roles').ensureRoles(config);
+        assert.equal(consoleRole.isAvailable(), true, `repair succeeds: ${drift}`);
+        assert.equal(debug.isAvailable(), true);
+        assert.ok(ddl.length, 'incorrect permissions trigger repair');
+        ddl.length = 0;
+        await require('../src/services/db-roles').ensureRoles(config);
+        assert.deepEqual(ddl, [], 'the repaired policy returns to the no-DDL path');
+      }
+      await mainPool.query('CREATE TABLE public.fresh_permission_probe(id int)');
+      await require('../src/services/db-roles').ensureRoles(config);
+      assert.equal(consoleRole.isAvailable(), true, 'new schema objects receive their declared permissions');
+      await use(at(PRIMARY, platform, roles.web, passwords.web), async c => {
+        await c.query('BEGIN READ ONLY');
+        await c.query('SET LOCAL ROLE topochain_console_ro');
+        await c.query('SELECT * FROM public.fresh_permission_probe');
+        await c.query('ROLLBACK');
+      });
+      await mainPool.query('DROP TABLE public.fresh_permission_probe');
+      await use(at(PRIMARY, platform), c => c.query('DROP OWNED BY topochain_console_ro; DROP ROLE topochain_console_ro'));
+      await require('../src/services/db-roles').ensureRoles(config);
+      assert.equal(consoleRole.isAvailable(), true, 'a missing console role is recreated with the current policy');
+    } finally { Client.prototype.query = originalQuery; }
     await debug.closePool();
     await use(at(PRIMARY, platform, roles.web, passwords.web), async c => {
       await c.query('BEGIN READ ONLY');
@@ -311,6 +426,8 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
   await t.test('the provisioner creates and drops a production app database without the platform owner', async () => {
     const target = source + '_new'; dbs.add(target);
     const manager = require('../src/services/db-manager');
+    assert.deepEqual(await manager.existingRoles([sourceOwner, source + '_absent_owner']), new Set([sourceOwner]),
+      'the real bulk catalog lookup distinguishes existing and missing roles');
     const result = await manager.createDatabase(target);
     await use(manager.connectionUrl(target, result.password), c => c.query('CREATE TABLE public.created_by_app(id int)'));
     await manager.dropDatabase(target, { strict: true, server: manager.PRIMARY_SERVER });
@@ -356,7 +473,10 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
     });
   });
 
-  await t.test('platform previews load the deployed schema and redact data as their own owner', async () => {
+  // SEC-06: a platform preview starts EMPTY (its own boot builds and seeds
+  // it), on the preview server, owned by its own login; nothing is read from
+  // the platform's database and no template of it is made.
+  await t.test('platform previews start empty as their own owner and copy nothing', async () => {
     const username = `fixture_${id}`;
     const { rows: [user] } = await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), c =>
       c.query("INSERT INTO users(username, password) VALUES ($1, $2) RETURNING id", [username, 'synthetic-source-hash']));
@@ -367,33 +487,37 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
     const manager = require('../src/services/db-manager');
     dbs.add(platform + '_stgtmpl');
     dbs.add(platform + '_stgtmpl_next');
-    async function checkCopy(target, result) {
+    async function checkEmpty(target, result) {
+      assert.equal(result.via, 'empty');
       assert.equal(result.server, manager.PREVIEW_SERVER);
       await use(manager.connectionUrl(target, result.password, { server: result.server }), async c => {
-        const { rows } = await c.query("SELECT password FROM public.users WHERE username LIKE 'preview-user-%'");
-        assert.equal(rows.length, 1); assert.notEqual(rows[0].password, 'synthetic-source-hash');
-        assert.equal((await c.query('SELECT count(*)::int n FROM credentials.user_ai_credentials')).rows[0].n, 0);
-        const schema = await c.query("SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname='credentials'");
-        assert.equal(schema.rows[0].owner, manager.ownerRoleName(target));
+        const owner = await c.query('SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = current_database()');
+        assert.equal(owner.rows[0].owner, manager.ownerRoleName(target));
+        const relations = await c.query(`SELECT count(*)::int n FROM pg_class r JOIN pg_namespace n ON n.oid = r.relnamespace
+          WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND r.relkind IN ('r', 'p', 'v', 'm', 'S')`);
+        assert.equal(relations.rows[0].n, 0, 'no table, view or sequence: the preview\'s own boot makes them');
         await denied(c, `SET ROLE ${roles.provisioner}`);
       });
     }
     for (const [number, viaTemplate] of [[903, false], [904, true]]) {
       const target = platform + `_staging_s${number}_abcdef`; dbs.add(target);
-      const result = await manager.cloneDatabase(platform, target, { viaTemplate });
-      assert.equal(result.via, viaTemplate ? 'template' : 'direct');
-      await checkCopy(target, result);
+      await checkEmpty(target, await manager.cloneDatabase(platform, target, { viaTemplate }));
     }
     const sourceId = `role-fixture-${id}`;
     dbs.add(manager.preparedCloneSourceName(platform, sourceId));
     const prepared = await manager.prepareStagingCloneSource(platform, { sourceId });
     const target = platform + '_staging_s905_abcdef'; dbs.add(target);
     try {
-      const result = await manager.cloneFromPreparedSource(prepared, target);
-      assert.equal(result.via, 'prepared-template');
-      await checkCopy(target, result);
+      await checkEmpty(target, await manager.cloneFromPreparedSource(prepared, target));
     } finally {
       await manager.releasePreparedCloneSource(prepared);
+    }
+    for (const server of [PRIMARY, PREVIEW]) {
+      await use(server, async c => {
+        const templates = await c.query('SELECT datname FROM pg_database WHERE datname = ANY($1::text[])',
+          [[platform + '_stgtmpl', platform + '_stgtmpl_next']]);
+        assert.deepEqual(templates.rows, [], 'no template of the platform\'s database');
+      });
     }
     await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), async c => {
       assert.equal((await c.query('SELECT count(*)::int n FROM credentials.user_ai_credentials')).rows[0].n, 1);

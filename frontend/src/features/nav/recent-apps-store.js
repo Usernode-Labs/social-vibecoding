@@ -1,11 +1,12 @@
 /**
  * The apps you left, newest first, for the desktop rail's Recents (#2802).
  *
- * Nothing lists them now (18 Oct 2026): each community's app is a row under
- * it in the desktop sidebar, so the strip's Recent apps went. The sidebar
- * still reads a name and a face from here, for a community whose app is
- * still running that the list of yours does not hold
- * (./rail-communities.tsx).
+ * No list on the rail draws them now (18 Oct 2026): each community's app is a
+ * row under it in the desktop sidebar, so the strip's Recent apps went. The
+ * sidebar still reads a name and a face from here, for a community whose app
+ * is still running that the list of yours does not hold
+ * (./rail-communities.tsx). Discover's "Opened recently on this device" switch
+ * reads the times (../apps/browse.js, #4809).
  *
  * ./parked-store.js keeps ONE app: "which app am I in the middle of", drawn
  * as the phone's Resume strip. The rail's Recents list asks a wider question,
@@ -49,7 +50,7 @@ export const RECENT_APPS_MAX = 40;
  * @property {string} name
  * @property {string|null} iconUrl
  * @property {string|null} iconEmoji
- * @property {string} at  ISO time the app was left.
+ * @property {string} at  ISO time the app was left, or '' when nobody knows.
  */
 
 /** @type {{ apps: RecentApp[] }} */
@@ -68,38 +69,64 @@ function clean(entry) {
   };
 }
 
+/** The list stored for `owner` as it stands, or an empty one. Never throws. */
+function readStored(owner) {
+  try {
+    const raw = window.localStorage.getItem(KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && parsed.owner === owner && Array.isArray(parsed.apps)) {
+      return parsed.apps.map(clean).filter(Boolean);
+    }
+  } catch {
+    // Unreadable is the same as nothing stored.
+  }
+  return [];
+}
+
+/** When an entry was left, for ordering; 0 when nobody knows. */
+function leftAt(entry) {
+  return Date.parse(entry.at) || 0;
+}
+
 /**
  * The list stored for `owner`, or an empty one. Never throws.
  *
  * A device that parked an app before this list existed has it in the parked
  * entry only, so that one app seeds an empty list. It has no clock of its
- * own; it is dated "now", which is the best guess for an app that is still
- * on offer as the one you were halfway through. The parked entry is swept on
- * sign-out, so it is always the current account's.
+ * own, so its time is left empty: a guess of "now" would be written back by
+ * the next rememberRecentApp and then read as a real time by what asks how
+ * recent it is. The parked entry is swept on sign-out, so it is always the
+ * current account's.
  *
  * @param {string|null} owner  The signed-in username; null reads nothing.
  */
 export function readRecentApps(owner) {
   if (!owner) return [];
-  let list = [];
-  try {
-    const raw = window.localStorage.getItem(KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    if (parsed && parsed.owner === owner && Array.isArray(parsed.apps)) {
-      list = parsed.apps.map(clean).filter(Boolean);
-    }
-  } catch {
-    list = [];
-  }
+  let list = readStored(owner);
   if (!list.length) {
     const parked = readParked();
-    if (parked) list = [{ ...parked, at: new Date().toISOString() }];
+    if (parked) list = [{ ...parked, at: '' }];
   }
   return list.slice(0, RECENT_APPS_MAX);
 }
 
 /**
+ * Everything known about what `owner` left, for what asks how recently:
+ * this tab's live list, which still holds an app when storage refused it, and
+ * the stored one, which holds what another tab left since this one read it.
+ * A slug can appear in both.
+ *
+ * @param {string|null} owner  The signed-in username; null reads nothing stored.
+ */
+export function recentAppEntries(owner) {
+  return [...recentAppsStore.get().apps, ...readRecentApps(owner)];
+}
+
+/**
  * Record that `owner` just left `app`: it moves to the front, once.
+ *
+ * What another tab stored since this one read the list is merged in rather
+ * than written over: each app once, at the latest time either side has.
  *
  * With no owner (nobody signed in yet) the store still updates, so the rail
  * shows it for this page, but nothing is written to storage.
@@ -111,9 +138,13 @@ export function readRecentApps(owner) {
 export function rememberRecentApp(app, owner, at) {
   const next = clean({ ...app, at: at || new Date().toISOString() });
   if (!next) return;
-  const current = recentAppsStore.get().apps;
-  const apps = [next, ...current.filter((item) => item.slug !== next.slug)]
-    .slice(0, RECENT_APPS_MAX);
+  const latest = new Map();
+  for (const item of [...recentAppsStore.get().apps, ...(owner ? readStored(owner) : [])]) {
+    const known = latest.get(item.slug);
+    if (item.slug !== next.slug && (!known || leftAt(item) > leftAt(known))) latest.set(item.slug, item);
+  }
+  const others = [...latest.values()].sort((a, b) => leftAt(b) - leftAt(a));
+  const apps = [next, ...others].slice(0, RECENT_APPS_MAX);
   recentAppsStore.set({ apps });
   if (!owner) return;
   try {

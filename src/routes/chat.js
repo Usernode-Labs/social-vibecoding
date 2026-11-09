@@ -5,6 +5,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const models = require('../services/models');
 const modelCosts = require('../services/model-costs');
+const github = require('../services/github');
 const { listActiveUserIds } = require('../services/active-users');
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
@@ -31,6 +32,10 @@ const {
 // #4417: 'category' is a topic's channel (services/app-chat.js).
 const THREAD_TYPES = new Set(['issue', 'session', 'governance', appChat.MESSAGE_THREAD, appChat.CATEGORY_THREAD]);
 const MAX_THREAD_REF = 2147483647; // PostgreSQL INTEGER
+// #6497: a request's discussion opens whole. Its first page reads up to this
+// many rows, so a thread of a few dozen replies arrives in one read; past it
+// "Load earlier" still pages 50 at a time.
+const REQUEST_THREAD_CEILING = 500;
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // #2236: how a message reached the thread, as the row will carry it.
@@ -432,7 +437,7 @@ function chatRoutes(config) {
   // ── Reading a transcript (#194, #2387) ───────────────────────────
   //
   //   GET /api/apps/:slug/messages
-  //     ?limit=1..100 (default 50)
+  //     ?limit=1..100 (default 50; a request's first page: up to 500)
   //     &thread_type=&thread_ref=   one thread; absent = the general stream
   //     &before=<id>                older page, ids < before
   //     &after=<id>                 newer page, ids > after (catch-up)
@@ -440,8 +445,14 @@ function chatRoutes(config) {
   //   → { messages /* oldest first */, has_more_before, has_more_after,
   //       focus?: { message_id, thread_ref },   // around only
   //       root?: Message,                       // thread_type=message only
+  //       request_comments?: { comments, truncated, note? }, // a request's first page
   //       read?: { last_read_message_id, unread_count } }
   //                                             // the general stream's first page
+  //
+  // #6497: a request's thread (thread_type=issue) is read whole on its first
+  // page, up to REQUEST_THREAD_CEILING rows, and carries its GitHub comments
+  // as `request_comments` (up to github.ISSUE_COMMENTS_MAX), read in parallel
+  // with the rows. Every other read, and an older page, keeps pageLimit.
   //
   // At most one of before / after / around. `around` on a reply-thread
   // message while reading the general stream centres the window on the
@@ -451,8 +462,6 @@ function chatRoutes(config) {
   // Every row carries `deleted` (a placeholder: no text, no attachments, no
   // quote) and `thread` (a general-stream row's reply summary, or null).
   router.get('/api/apps/:slug/messages', async (req, res) => {
-    const limit = pageLimit(req.query.limit);
-
     // #194: optional thread scoping. Absent → the general chat: its own
     // messages (thread_type IS NULL), which keeps topic threads out of it,
     // plus — since the #2387 follow-up — the live replies of its reply
@@ -483,13 +492,23 @@ function chatRoutes(config) {
       // Reading chat history only needs view access (#621): anyone who
       // can see the app gets a read-only look at the dev surface.
       // Posting stays collab-gated at the WS layer (404 on deny so
-      // private apps aren't enumerable).
+      // private apps aren't enumerable). #6497: repo_url is what a
+      // request's first page reads its GitHub comments with.
       const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`
       );
       if (!app) {
         return res.status(404).json({ error: 'App not found' });
       }
+
+      // #6497: a request's first page is its whole discussion, up to the
+      // ceiling; an older page (before), a catch-up (after) and a permalink
+      // window (around) keep the page limit, as every other stream does.
+      const requestFirstPage = threadType === 'issue'
+        && before == null && after == null && around == null;
+      const limit = requestFirstPage
+        ? Math.min(parseInt(req.query.limit, 10) || REQUEST_THREAD_CEILING, REQUEST_THREAD_CEILING)
+        : pageLimit(req.query.limit);
 
       const appId = app.id;
       const viewerId = req.user.id;
@@ -528,6 +547,9 @@ function chatRoutes(config) {
       let hasMoreBefore = false;
       let hasMoreAfter = false;
       let focus = null;
+      // #6497: the request's first-page comments, when this read asked for
+      // them (null on every other read).
+      let requestComments = null;
       if (around != null) {
         const target = await locateAround(appId, thread, around, viewerId);
         if (!target) return res.status(404).json({ error: 'Message not found' });
@@ -555,9 +577,19 @@ function chatRoutes(config) {
           ...stream, op: '<=', pivot: after, order: 'DESC', limit: 1,
         })).length > 0;
       } else {
-        const older = await selectStream(pool, before != null
+        // #6497: a request's first page reads its GitHub comments beside
+        // its own rows, so the page waits for the slower of the two rather
+        // than for both one after the other. Every other read passes null.
+        const olderRead = selectStream(pool, before != null
           ? { ...stream, op: '<', pivot: before, order: 'DESC', limit: limit + 1 }
           : { ...stream, order: 'DESC', limit: limit + 1 });
+        const commentsRead = requestFirstPage
+          ? require('./issues').readRequestComments(pool, app, threadRef, {
+            demo, max: github.ISSUE_COMMENTS_MAX,
+          })
+          : null;
+        const [older, comments] = await Promise.all([olderRead, commentsRead]);
+        requestComments = comments || null;
         hasMoreBefore = older.length > limit;
         rows = older.slice(0, limit).reverse();
         if (before != null) {
@@ -580,11 +612,26 @@ function chatRoutes(config) {
       if (demo && before == null && after == null && around == null) {
         const mock = stagingDemoTranscript(appId, thread, messages, app);
         if (mock) {
-          return res.json({ messages: mock, has_more_before: false, has_more_after: false });
+          return res.json({
+            messages: mock,
+            has_more_before: false,
+            has_more_after: false,
+            ...(requestComments ? { request_comments: requestComments } : {}),
+          });
         }
       }
 
       const body = { messages, has_more_before: hasMoreBefore, has_more_after: hasMoreAfter };
+      if (requestComments) body.request_comments = requestComments;
+      // #6391: in a request's or a change's thread, the bot's reply carries a
+      // second button set for members it did not answer. Whether this reader
+      // is one is said once here, so the thread can draw it; posting needs
+      // membership anyway, so anyone else sees no buttons.
+      if (threadType === 'issue' || threadType === 'session') {
+        body.viewer_member = viewerId
+          ? await communities.isMember(pool, appId, viewerId).catch(() => false)
+          : false;
+      }
       if (focus) body.focus = focus;
       if (root) body.root = root;
       // The general stream's first page says where this reader's reading
@@ -642,6 +689,41 @@ function chatRoutes(config) {
                            WHERE s.id = m.thread_ref AND s.app_id = $1 AND s.thread_id = m.thread_id
                              AND s.is_headless = FALSE
                              AND ${threadsService.visibleChangeSql('s', `$${reader}`)})))`;
+        // #6229: a bot note written both on the request and on the change's
+        // own thread is one note. The change's page IS this page now (1 Nov
+        // 2026), so its copy is the twin of the request's and is not drawn:
+        // the issue copy is kept. Three shapes are folded, each only for a
+        // session row with an issue twin in the same thread: a bot post
+        // (the same post mark, or the same bot's same words within 10 s,
+        // the request's copy possibly leading with @handles), a plan card
+        // for the same version, and the workflow's promote line beside the
+        // bot's own "I built this" note for the same change. The bot is
+        // known by the mark post() writes on its issue copy, so this reads
+        // chat_messages alone (no users join). A person's rows are never
+        // folded.
+        where += ` AND NOT (m.thread_type = 'session' AND EXISTS (
+          SELECT 1 FROM chat_messages twin
+           WHERE twin.app_id = $1 AND twin.thread_type = 'issue'
+             AND twin.thread_id = m.thread_id
+             AND (
+               (m.metadata->>'hrbotPost' IS NOT NULL
+                AND twin.metadata->>'hrbotPost' = m.metadata->>'hrbotPost')
+               OR (twin.metadata->>'hrbotPost' IS NOT NULL
+                   AND twin.user_id IS NOT NULL AND twin.user_id = m.user_id
+                   AND ABS(EXTRACT(EPOCH FROM (twin.created_at - m.created_at))) <= 10
+                   AND (twin.content = m.content
+                        OR right(twin.content, length(m.content) + 1) = ' ' || m.content))
+               OR (m.msg_type = 'spec_share' AND twin.msg_type = 'spec_share'
+                   AND m.metadata->'specShare'->>'sessionId' IS NOT NULL
+                   AND twin.metadata->'specShare'->>'sessionId' = m.metadata->'specShare'->>'sessionId'
+                   AND twin.metadata->'specShare'->>'version' = m.metadata->'specShare'->>'version')
+               OR (m.msg_type = 'vote' AND m.user_id IS NULL
+                   AND twin.user_id IS NOT NULL
+                   AND twin.metadata->>'hrbotPost' IS NOT NULL
+                   AND twin.metadata->'vote'->>'sessionId' IS NOT NULL
+                   AND twin.metadata->'vote'->>'sessionId' = m.metadata->'vote'->>'sessionId')
+             )
+        ))`;
       } else {
         where += ' AND m.thread_type = $2 AND m.thread_ref = $3';
       }
@@ -1224,25 +1306,32 @@ function chatRoutes(config) {
       }
     });
 
-  //   POST /api/apps/:slug/messages/:id/bot-offer  { choice: 'yes' | 'no' }
+  //   POST /api/apps/:slug/messages/:id/bot-offer  { choice: 'yes' | 'no' | 'first' }
   //     → a tap under one of Homeroom bot's offers in a thread
   //       (homeroom-bot-voice.js decideOffer): File it, Withdraw it or
   //       Propose to close, or Not now / Keep it. Only the person it was
-  //       offered to, once, and every gate the offer met is read again.
+  //       offered to (or any member, for an "already works" note's Propose
+  //       to close, #6321), once, and every gate the offer met is read again.
   //       Members only, from the person's own browser.
   router.post('/api/apps/:slug/messages/:id/bot-offer', groupChatWriteLimiter, sameOriginBrowserOnly,
     communities.requireAppMembership(pool), async (req, res) => {
       res.set('Cache-Control', 'private, no-store');
       if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
       const choice = req.body?.choice;
-      if (choice !== 'yes' && choice !== 'no') return res.status(400).json({ error: 'Choose yes or no.' });
+      // #6211: an overlap note's third choice (build this one first) too.
+      if (choice !== 'yes' && choice !== 'no' && choice !== 'first') return res.status(400).json({ error: 'Choose yes or no.' });
+      // #6305: a many-project card's File on all says which rows are ticked.
+      const rows = Array.isArray(req.body?.rows)
+        ? req.body.rows.filter((r) => typeof r === 'string').slice(0, 12)
+        : null;
+      if (rows && choice === 'yes' && !rows.length) return res.status(400).json({ error: 'Tick at least one project.' });
       const id = Number(req.params.id);
       if (!Number.isInteger(id) || id <= 0) return res.status(404).json({ error: 'Message not found' });
       try {
         const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS);
         if (!app) return res.status(404).json({ error: 'App not found' });
         const out = await require('../services/homeroom-bot-voice').decideOffer(pool, config, {
-          app, user: req.user, messageId: id, choice,
+          app, user: req.user, messageId: id, choice, rows,
         });
         if (!out.ok) {
           return res.status(out.status || 400).json({ error: out.error || 'That didn\'t work.', said: out.said || null });

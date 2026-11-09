@@ -23,6 +23,7 @@ const buildContract = require('../services/build-contract');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
+const { planRecordSql } = require('../services/request-specs');
 const classicSessions = require('../services/classic-sessions');
 const codeMissing = require('../services/code-missing');
 const { claimIssueForUser } = require('../services/issue-claims');
@@ -2506,6 +2507,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // never counted against the viewer's session caps — see the totals
       // reducer below. The dev tab's own fetch sends no flag and sees none.
       const includeMerged = req.query.include_merged === '1';
+      // #6410: a plan a person posted is a planning record with no branch
+      // (request-specs.js), not a conversation with an agent. No agent runs
+      // in it, so it is not an agent chat and holds no slot; the plan is on
+      // its request's page. Once a build gives it a branch it is real work
+      // and lists as usual. The WHERE carries the shared definition below,
+      // the same rule the other session reads use.
       // last_activity_at = the newest message in the session's thread,
       // falling back to the session's own creation time. The dev tab's
       // card list sorts session rows by this ("most recent activity"),
@@ -2527,7 +2534,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // separates that from a genuine fork.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
-                cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
+                cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at, cs.source,
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
@@ -2569,6 +2576,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
            AND cs.is_headless = FALSE
            AND ($2::boolean OR cs.source IS DISTINCT FROM 'imported')
            AND ($3::boolean OR cs.source IS DISTINCT FROM 'settings')
+           AND NOT ${planRecordSql('cs')}
          ORDER BY last_activity_at DESC`,
         [req.user.id, includeImported, includeSettings, includeMerged]
       );
@@ -2879,7 +2887,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // the distinction a bare agent_backend cannot make — an imported row
       // has a defaulted agent_backend that no turn ever ran through.
       const { rows } = await pool.query(
-        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
+        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, proposed_pr_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
                 created_from_issue_number, agent_backend, agent_model, source, external_agent, build_venue,
                 -- #2779: the agent session a change was started from, so the
                 -- owner's Build door can lead back to that conversation.
@@ -3615,6 +3623,32 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // hosted connector's submit_platform_build still takes ownership of a
   // build this way before proposing it, so an external connector token (not
   // a delegated grant) is the one caller left.
+  // #6284: a person lets the Homeroom bot try once more at a change it
+  // stopped fixing on its own. The requester or an admin may; one grant buys
+  // exactly one more round.
+  router.post('/api/apps/:slug/changes/:id/let-it-try-again', drainGuard, communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id) return res.status(404).json({ error: 'Change not found' });
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+          WHERE cs.id = $1 AND a.slug = $2`,
+        [id, req.params.slug],
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Change not found' });
+      const out = await require('../services/homeroom-bot-retry-grants')
+        .grant(pool, { sessionId: id, user: req.user });
+      if (!out.ok) {
+        if (out.why === 'not_allowed') return res.status(403).json({ error: 'not_allowed' });
+        return res.status(409).json({ error: out.why });
+      }
+      return res.json({ granted: true });
+    } catch (err) {
+      log.error('sessions', 'Could not let the bot try again', { message: err.message });
+      return res.status(500).json({ error: 'Could not let it try again' });
+    }
+  });
+
   router.post('/api/sessions/:id/clone-headless', drainGuard, communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     if (!req.connectorClientId || req.mcpDelegation) {
       return res.status(403).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
@@ -3955,11 +3989,25 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           ? await require('../services/shots-view')
             .getForSession(pool, detail, detail.app_slug, { viewer: req.user })
           : null;
-        // #4452: how long testing usually takes on this app.
-        detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
         // An update from this version's original, as the proposal read
         // carries it (services/upstream-offers.js changeView); null otherwise.
         detail.upstream = await require('../services/upstream-offers').changeView(pool, session.id);
+      }
+      // #6122: both reads a pending run is shown through carry the usual
+      // time (the checks panel reads /checks; the change page reads /details,
+      // which keeps its estimate whether or not a run is pending).
+      if (req.path.endsWith('/details') || session.check_state === 'pending') {
+        detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
+      }
+      // #6234: Homeroom bot fixing its own change's failing checks, for the
+      // change page's Testing card (services/homeroom-bot-progress.js
+      // changeBotFix); null for any change of a person's.
+      if (req.path.endsWith('/details')) {
+        detail.bot_fix = await require('../services/homeroom-bot-progress')
+          .changeBotFix(pool, session.id, { viewer: req.user }).catch(() => null);
+        // #6116: what it has cost so far at list price, for its author or an
+        // admin only, as the dev chat's meter (services/session-cost.js).
+        detail.cost_total_cents = await sessionCost.sessionCostForViewer(pool, session, req.user);
       }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
@@ -3998,8 +4046,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       const session = rows[0];
       if (!session || !canViewSession(session, req.user)) return res.status(404).json({ error: 'Session not found' });
+      // #6288: what main is already failing, so the sentence does not blame
+      // this change for a test that fails on main through no fault of its
+      // own. The same verdict the change page's Testing card reads.
+      const main = await require('../services/main-watch').mergePause(pool, session.app_id);
       const explanation = await require('../services/checks-explanation')
-        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale) });
+        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale), main });
       return res.set('Cache-Control', 'no-store').json({ explanation, runAt: session.checks_checked_at });
     } catch (err) {
       log.error('sessions', 'Failed to explain failing checks', { message: err.message });
@@ -4063,7 +4115,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                     ORDER BY t.created_at, t.id
                     LIMIT 1),
                   cs.handoff_base_sha
-                ) AS base_sha
+                ) AS base_sha,
+                -- When the merge queue tries this change again after GitHub
+                -- held its merge back (services/integration.js HELD_UNTIL_SQL).
+                ${require('../services/integration').HELD_UNTIL_SQL} AS merge_held_until
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND (cs.user_id = $2 OR $3::boolean)`,
@@ -4306,6 +4361,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
       }
       session.freshness = require('../services/proposal-freshness').readFreshness(session);
+      // The server's own merge answers ride along, as the board card gets
+      // them (#2038): the header pill reads the same blockReasons, including
+      // a merge GitHub held back (github_busy / github_refused) and when the
+      // queue tries it again (merge_held_until, the queue's own record).
+      session.integration = require('../services/integration').readIntegration(session);
 
       res.json({ session, messages, drafts });
     } catch (err) {
@@ -6085,12 +6145,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // Same visibility rule as /checks and /details: the progress log, spend,
     // estimate and runner name below are the session's own, so a caller who
     // may not see the session gets the same 404 as for a missing one.
+    let mayReadCost = false;
     try {
       const { rows: seen } = Number.isNaN(sessionId) ? { rows: [] } : await pool.query(
         'SELECT user_id, status, shared_at FROM chat_sessions WHERE id = $1',
         [sessionId]
       );
       if (!canViewSession(seen[0], req.user)) return res.status(404).json({ error: 'Session not found' });
+      // Narrower than seeing the session: what a change cost is for its author
+      // and admins, the rule GET /api/sessions/:id applies to the same figure.
+      mayReadCost = seen[0].user_id === req.user.id || !!req.user.isAdmin;
     } catch (err) {
       log.warn('sessions', 'Status visibility lookup failed', { sessionId, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -6249,13 +6313,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
 
     // #3249: the change's running cost total for the meter, idle or busy.
-    // After the visibility check above, so only a viewer of the session
-    // gets it. `null` when the read failed: the client keeps its figure.
+    // Its author and admins only (mayReadCost above): anyone else who may
+    // view the session gets no such field, and the read does not run. `null`
+    // when the read failed: the client keeps its figure.
     let costTotalCents = null;
-    try {
-      costTotalCents = await sessionCost.sessionCostCents(pool, sessionId);
-    } catch (err) {
-      log.warn('sessions', 'Session cost read failed', { sessionId, err: err.message });
+    if (mayReadCost) {
+      try {
+        costTotalCents = await sessionCost.sessionCostCents(pool, sessionId);
+      } catch (err) {
+        log.warn('sessions', 'Session cost read failed', { sessionId, err: err.message });
+      }
     }
 
     let delivery;
@@ -6276,7 +6343,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // `resolving`.
     // Keys: busy, progress, phase, stopping, stopRequestedAt, stoppable,
     // estimate, turn ({ startedAt, kind } | null, #4533), costTotalCents
-    // (the change's cost so far in cents | null, #3249)
+    // (the change's cost so far in cents | null, #3249; author and admins only,
+    // absent for anyone else)
     // (+ resolving, sync, status, and `delivery` when asked for, #3177).
     // `estimate` is { text, remainingSeconds,
     // estimatedAt } | null — see workerProgress.setEstimate /
@@ -6284,14 +6352,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // the client's stop-escalation ladder across reloads.
     res.json({
       busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,
-      spend: busy ? workerProgress.get(sessionId)?.spend || null : null,
+      // The running turn's share of the same figure, under the same rule.
+      spend: busy && mayReadCost ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
       resolving: !!sync && sync.reason === 'conflict',
       sync,
       status: mergeStatus,
       runner, runnerLabel, localAgent: attached,
-      costTotalCents,
+      ...(mayReadCost ? { costTotalCents } : {}),
       ...(delivery !== undefined ? { delivery } : {}),
     });
   });
@@ -9931,42 +10000,64 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         };
       }
       const turnId = queued.turn.id;
-      const telemetryStartedAt = new Date();
-      localScoutAttemptNumber += 1;
-      if (stopHandle) stopHandle.localTurnId = String(turnId);
-      let announcedAccepted = false;
-      const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
-        // This process is the turn's waiter (see dispatchLocalBuild).
-        waiterId: queued.waiterId,
-        onProgress: (row) => {
-          if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
-            announcedAccepted = true;
-            onScoutProgress(`[${lease.label} accepted the scout turn]`);
-          }
-          const lines = Array.isArray(row.progress) ? row.progress : [];
-          for (const line of lines.slice(seenScoutLines)) onScoutProgress(line);
-          seenScoutLines = Math.max(seenScoutLines, lines.length);
-        },
-      });
-      if (outcome === 'adopted') {
-        // Restart recovery took the turn over and publishes its spec itself.
-        const adopted = new Error(`${lease.label}'s scout turn is being finished by restart recovery`);
-        adopted.code = 'local_turn_adopted';
-        throw adopted;
+      try {
+        const telemetryStartedAt = new Date();
+        localScoutAttemptNumber += 1;
+        if (stopHandle) stopHandle.localTurnId = String(turnId);
+        let announcedAccepted = false;
+        let { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
+          // This process is the turn's waiter (see dispatchLocalBuild).
+          waiterId: queued.waiterId,
+          onProgress: (row) => {
+            if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
+              announcedAccepted = true;
+              onScoutProgress(`[${lease.label} accepted the scout turn]`);
+            }
+            const lines = Array.isArray(row.progress) ? row.progress : [];
+            for (const line of lines.slice(seenScoutLines)) onScoutProgress(line);
+            seenScoutLines = Math.max(seenScoutLines, lines.length);
+          },
+        });
+        if (outcome === 'adopted') {
+          // Restart recovery took the turn over and publishes its spec itself.
+          const adopted = new Error(`${lease.label}'s scout turn is being finished by restart recovery`);
+          adopted.code = 'local_turn_adopted';
+          throw adopted;
+        }
+        if (outcome === 'aborted') {
+          // The dispatch was interrupted (this process is stopping, or the
+          // request went away) before the machine answered. Nothing is
+          // running, so the row must not stay live and keep the change busy.
+          finished = await localAgent
+            .abandonTurn(pool, turnId, 'The turn was interrupted before it finished.')
+            .catch(() => null) || finished;
+        }
+        recordLocalCodingInvocation(pool, {
+          session,
+          turnId,
+          turn: finished,
+          outcome,
+          component: headless ? 'coding_agent_headless' : 'coding_agent_scout',
+          attemptNumber: localScoutAttemptNumber,
+          correlationId: localScoutCorrelationId,
+          startedAt: telemetryStartedAt,
+        });
+        // Shaped and worded as restart recovery shapes a recovered one
+        // (localAgent.buildTurnResult): the spec is the result text.
+        return localAgent.buildTurnResult({ turn: finished, outcome, label: lease.label, mode: 'scout' });
+      } catch (err) {
+        // A dispatch that stopped part way must leave no live row behind:
+        // the machine still heartbeats its lease, so nothing else would ever
+        // free it and every later dispatch would answer session_busy.
+        // `local_turn_adopted` is the one throw that must leave the row
+        // alone: restart recovery owns that turn and its tail.
+        if (err?.code !== 'local_turn_adopted') {
+          await localAgent
+            .abandonTurn(pool, turnId, `Sending the turn failed: ${agentTurn.sanitizeError(err) || 'unknown error'}`)
+            .catch(() => {});
+        }
+        throw err;
       }
-      recordLocalCodingInvocation(pool, {
-        session,
-        turnId,
-        turn: finished,
-        outcome,
-        component: headless ? 'coding_agent_headless' : 'coding_agent_scout',
-        attemptNumber: localScoutAttemptNumber,
-        correlationId: localScoutCorrelationId,
-        startedAt: telemetryStartedAt,
-      });
-      // Shaped and worded as restart recovery shapes a recovered one
-      // (localAgent.buildTurnResult): the spec is the result text.
-      return localAgent.buildTurnResult({ turn: finished, outcome, label: lease.label, mode: 'scout' });
     };
 
     let result;
@@ -12419,51 +12510,73 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         };
       }
       const turnId = queued.turn.id;
-      const telemetryStartedAt = new Date();
-      localBuildAttemptNumber += 1;
-      if (stopHandle) stopHandle.localTurnId = String(turnId);
-      let announcedAccepted = false;
-      const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
-        // This process is the turn's waiter: it keeps the turn from being
-        // taken over by restart recovery while it waits, and claims the
-        // tail below under this id (services/local-agent-recovery.js).
-        waiterId: queued.waiterId,
-        onProgress: (row) => {
-          if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
-            announcedAccepted = true;
-            onAgentProgress(`[${lease.label} accepted the turn]`);
-          }
-          const lines = Array.isArray(row.progress) ? row.progress : [];
-          for (const line of lines.slice(seenLocalLines)) onAgentProgress(line);
-          seenLocalLines = Math.max(seenLocalLines, lines.length);
-        },
-      });
-      if (outcome === 'adopted') {
-        // The turn's item was claimed again while this process lost it, and
-        // that claim took the turn over and runs its tail itself. Running it here too would post every
-        // card twice.
-        const adopted = new Error(`${lease.label}'s turn is being finished by restart recovery`);
-        adopted.code = 'local_turn_adopted';
-        throw adopted;
+      try {
+        const telemetryStartedAt = new Date();
+        localBuildAttemptNumber += 1;
+        if (stopHandle) stopHandle.localTurnId = String(turnId);
+        let announcedAccepted = false;
+        let { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
+          // This process is the turn's waiter: it keeps the turn from being
+          // taken over by restart recovery while it waits, and claims the
+          // tail below under this id (services/local-agent-recovery.js).
+          waiterId: queued.waiterId,
+          onProgress: (row) => {
+            if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
+              announcedAccepted = true;
+              onAgentProgress(`[${lease.label} accepted the turn]`);
+            }
+            const lines = Array.isArray(row.progress) ? row.progress : [];
+            for (const line of lines.slice(seenLocalLines)) onAgentProgress(line);
+            seenLocalLines = Math.max(seenLocalLines, lines.length);
+          },
+        });
+        if (outcome === 'adopted') {
+          // The turn's item was claimed again while this process lost it, and
+          // that claim took the turn over and runs its tail itself. Running it here too would post every
+          // card twice.
+          const adopted = new Error(`${lease.label}'s turn is being finished by restart recovery`);
+          adopted.code = 'local_turn_adopted';
+          throw adopted;
+        }
+        if (outcome === 'aborted') {
+          // The dispatch was interrupted (this process is stopping, or the
+          // request went away) before the machine answered. Nothing is
+          // running, so the row must not stay live and keep the change busy.
+          finished = await localAgent
+            .abandonTurn(pool, turnId, 'The turn was interrupted before it finished.')
+            .catch(() => null) || finished;
+        }
+        recordLocalCodingInvocation(pool, {
+          session,
+          turnId,
+          turn: finished,
+          outcome,
+          component: headless ? 'coding_agent_headless' : 'coding_agent_build',
+          attemptNumber: localBuildAttemptNumber,
+          correlationId: localBuildCorrelationId,
+          startedAt: telemetryStartedAt,
+        });
+        // The full set awaitTurnResult can return is completed / failed /
+        // declined / stopped / abandoned / missing / aborted; the shape and the
+        // words for each are shared with restart recovery
+        // (localAgent.buildTurnResult), so a recovered local turn reaches the
+        // tail exactly as this one does.
+        return localAgent.buildTurnResult({
+          turn: finished, outcome, label: lease.label, behind: session.behind_main || 0, mode: 'build',
+        });
+      } catch (err) {
+        // A dispatch that stopped part way must leave no live row behind:
+        // the machine still heartbeats its lease, so nothing else would ever
+        // free it and every later dispatch would answer session_busy.
+        // `local_turn_adopted` is the one throw that must leave the row
+        // alone: restart recovery owns that turn and its tail.
+        if (err?.code !== 'local_turn_adopted') {
+          await localAgent
+            .abandonTurn(pool, turnId, `Sending the turn failed: ${agentTurn.sanitizeError(err) || 'unknown error'}`)
+            .catch(() => {});
+        }
+        throw err;
       }
-      recordLocalCodingInvocation(pool, {
-        session,
-        turnId,
-        turn: finished,
-        outcome,
-        component: headless ? 'coding_agent_headless' : 'coding_agent_build',
-        attemptNumber: localBuildAttemptNumber,
-        correlationId: localBuildCorrelationId,
-        startedAt: telemetryStartedAt,
-      });
-      // The full set awaitTurnResult can return is completed / failed /
-      // declined / stopped / abandoned / missing / aborted; the shape and the
-      // words for each are shared with restart recovery
-      // (localAgent.buildTurnResult), so a recovered local turn reaches the
-      // tail exactly as this one does.
-      return localAgent.buildTurnResult({
-        turn: finished, outcome, label: lease.label, behind: session.behind_main || 0, mode: 'build',
-      });
     };
 
     let result;

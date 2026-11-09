@@ -29,7 +29,6 @@ test('the Messages drawer draws and reads its panes in reading direction', () =>
   const src = read('frontend/src/features/messages/phone-drawer.tsx');
   assert.match(src, /\(pane === 'list' \? -offset : MESSAGES_AT\[1\] - offset\) \* w \* dirSign\(\)/,
     'the panes are anchored at inline-start, so their transform has to run the same way');
-  assert.match(src, /const dx = \(e\.clientX - p\.x0\) \* dirSign\(\);/, 'a mouse pan');
   assert.match(src, /const dx = \(touch\.clientX - p\.x0\) \* dirSign\(\);/, 'a finger pan');
   assert.match(src, /swipeBackMayStart\(\{ x: touch\.clientX, takesEdge, sideways, rtl, width: window\.innerWidth \}\)/,
     'the back swipe\'s edge is the inline-start one');
@@ -173,4 +172,31 @@ test('a person\'s words in a list row keep their own direction in Arabic, and no
     globalThis.document = before;
   }
   assert.match(read('frontend/src/features/messages/index.tsx'), /ownDirection\(preview \|\| conversation\.latestSummary \|\| ''\) \|\| t\('messages:inbox\.noMessages'\)/);
+});
+
+test('an arrow key moves to what is on that side of the screen, in every language', () => {
+  const { inlineStep, arrowStep } = loadTsx('frontend/src/lib/i18n/direction.ts');
+  const before = globalThis.document;
+  try {
+    globalThis.document = { documentElement: { dir: 'ltr' } };
+    assert.equal(inlineStep('ArrowRight'), 1);
+    assert.equal(inlineStep('ArrowLeft'), -1);
+    assert.equal(inlineStep('ArrowDown'), 0, 'a row of tabs leaves Up and Down to the page');
+    assert.equal(inlineStep('Home'), 0);
+
+    globalThis.document = { documentElement: { dir: 'rtl' } };
+    assert.equal(inlineStep('ArrowRight'), -1, 'the row starts on the right, so Right goes back');
+    assert.equal(inlineStep('ArrowLeft'), 1);
+    assert.equal(arrowStep('ArrowLeft'), 1);
+    assert.equal(arrowStep('ArrowDown'), 1, 'Down reads the same in every language');
+    assert.equal(arrowStep('ArrowUp'), -1);
+    assert.equal(arrowStep('Enter'), 0);
+    assert.equal(arrowStep(undefined), 0);
+  } finally {
+    globalThis.document = before;
+  }
+  assert.match(read('frontend/src/features/agent-session/composer-parts.tsx'), /const step = inlineStep\(event\.key\);/);
+  assert.match(read('frontend/src/features/dialogs/report.tsx'), /const step = arrowStep\(event\.key\);/);
+  assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const step = arrowStep\(e && e\.key\);/);
+  assert.match(read('frontend/src/features/admin/topochain/illustration-gallery.tsx'), /const step = arrowStep\(key\);/);
 });

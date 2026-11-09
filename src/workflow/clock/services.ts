@@ -188,7 +188,51 @@ export const JOBS: readonly Job[] = Object.freeze([
     // inside it. The turns it fails are finished by the item that
     // dispatched them.
     name: 'local-agent-leases', everyMs: MIN,
-    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/local-agent').sweepExpiredLeases(pool).then((n: number) => ({ released: n })),
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/local-agent').sweepExpiredLeases(pool)
+      .then(async (n: number) => ({
+        released: n,
+        // A turn a machine was offered but never picked up is not covered by
+        // a lapsed lease: the machine can heartbeat forever without claiming
+        // it. Freed at the offer timeout, so a dispatch that died partway
+        // does not leave the change answering busy (services/local-agent.js).
+        unclaimed: await legacy('services/local-agent').sweepUnclaimedTurns(pool),
+      })),
+  },
+  {
+    // What the triggers marked as changed since (work_state_dirty: a write
+    // to what a work state is derived from, made anywhere), derived again
+    // and pushed, within seconds (services/work-state.js drainDirty).
+    name: 'work-state-drain', everyMs: 3000,
+    async run(_ctx: WorkContext, { pool }: JobDeps) {
+      const ws = legacy('services/work-state');
+      let taken = 0;
+      let changed = 0;
+      const pushes: unknown[] = [];
+      // A burst (a build's many writes, a merge that closes many requests)
+      // is drained in a few passes of one run.
+      for (let pass = 0; pass < 5; pass++) {
+        const out = await ws.drainDirty(pool, { limit: 200 });
+        taken += out.taken;
+        changed += out.changed.length;
+        pushes.push(...out.pushes);
+        if (out.taken < 200) break;
+      }
+      await ws.publish(pool, pushes);
+      return { taken, changed };
+    },
+  },
+  {
+    // One work state per request and change (services/work-state.js): the
+    // rows still moving, derived again (a stage that moves on by time, a
+    // fact written where nothing refreshed it), and a row for each request
+    // the bot knows that has none yet. What changed is pushed.
+    name: 'work-states', everyMs: MIN,
+    async run(_ctx: WorkContext, { pool }: JobDeps) {
+      const ws = legacy('services/work-state');
+      const out = await ws.sweep(pool);
+      await ws.publish(pool, out.pushes);
+      return { checked: out.checked, seeded: out.seeded, changed: out.changed.length };
+    },
   },
   {
     // A coding record no work item holds (the old orphan sweep's and
@@ -407,6 +451,11 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/weekly-digest').sweep(pool),
   },
   {
+    // The Monday row: how many changes you voted on were decided last week.
+    name: 'voted-digest', everyMs: HOUR,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/voted-digest').sweep(pool),
+  },
+  {
     // A person let in gets the welcome group an admin set up.
     name: 'welcome-dm', everyMs: 30 * 1000,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/welcome-dm').sweep(pool),
@@ -458,6 +507,48 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (ctx: WorkContext, { pool, config }: JobDeps) => {
       const heal = legacy('services/app-heal');
       return heal.intervalMs(config) ? heal.scan(config, pool, { n: ctx.input.n, shouldStop: stopped(ctx) }) : { off: true };
+    },
+  },
+  {
+    name: 'production-sleep', everyMs: MIN, leaseMs: 5 * MIN,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) =>
+      legacy('services/production-sleep').sweep(config, pool, { shouldStop: stopped(ctx) }),
+  },
+  {
+    name: 'app-resource-profiles', everyMs: MIN, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) =>
+      legacy('services/app-resource-profiles').reconcile(config, pool),
+  },
+  {
+    // #6233: Homeroom's own release is Live once the web Deployment reports
+    // its rollout finished (every serving process on a build containing the
+    // merge), not when the first Pod boots one. Reads the same rollout the
+    // deploy banner does (services/deploy-status.js), under the chart's
+    // rollout-reader Role. Production only: staging previews and anything
+    // off Kubernetes have no rollout to wait for (one server's boot is the
+    // whole rollout there). Both appends are idempotent
+    // (requestKey deployed:<sha> / rolled-back:<sha>): Deployed makes the
+    // merges the build carries Live, RolledBack takes back the ones a later
+    // complete build no longer carries.
+    name: 'platform-rollout', everyMs: 20 * 1000, leaseMs: MIN,
+    run: async (_ctx: WorkContext, { config, pool }: JobDeps) => {
+      if (process.env.USERNODE_ENV === 'staging' || !process.env.KUBERNETES_SERVICE_HOST) {
+        return { skipped: 'not_production' };
+      }
+      const deploy = await legacy('services/deploy-status').read(config);
+      if (!deploy || deploy.phase !== 'complete') return { phase: deploy?.phase ?? null };
+      const sha = String(deploy.sha || '').toLowerCase();
+      if (!/^[0-9a-f]{40}$/.test(sha)) return { phase: 'complete', sha: null };
+      const { rows: [app] } = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id LIMIT 1');
+      if (!app) return { phase: 'complete', sha, app: null };
+      const platform = legacy('workflow/platform.ts');
+      // This rollout's own name: its Progressing transition. A later rollout
+      // of the same build is a new report, while the next look at this one is
+      // deduped by the event's request key.
+      const nonce = deploy.startedAt ? String(deploy.startedAt) : null;
+      await platform.productionDeployed(Number(app.id), sha, nonce);
+      await platform.productionRolledBack(Number(app.id), sha, nonce);
+      return { phase: 'complete', sha };
     },
   },
   {

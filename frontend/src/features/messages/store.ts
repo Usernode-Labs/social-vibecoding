@@ -22,6 +22,7 @@ import type {
   ConversationMessage,
   ConversationSummary,
   HomeroomBotAction,
+  MessageAttachment,
   MessageReaction,
   MessagesAgentThread,
   MessagesSnapshot,
@@ -49,6 +50,14 @@ export interface Typist {
   bot?: boolean;
   /** What the bot says it is doing now (its typing event's `doing`); null while it thinks. */
   doing?: BotDoing | null;
+  /**
+   * 4 Nov 2026 (#6302): the answer written so far, held across the doing
+   * changes that follow it (a tool step, a wordless "thinking"), so the card
+   * does not drop the words and draw them again as each round streams. It
+   * goes with the entry when the typing stops, or when a newer answer
+   * replaces it.
+   */
+  draft?: string;
 }
 
 /**
@@ -62,10 +71,18 @@ export interface BotDoing {
   project?: string;
   /** Homeroom bot parity, P1: the answer so far, while it is written (kind 'writing'). */
   text?: string;
+  /**
+   * #6405: where `text` starts in the whole answer, when the server sent only
+   * its newest part (kind 'writing'). Absent when `text` is all of it.
+   */
+  from?: number;
 }
 
 /** The longest answer-so-far a working card shows (the server sends its newest 1800 characters). */
 export const MAX_BOT_DRAFT_CHARS = 2000;
+
+/** #6405: the most of an answer the card holds, the server's own reply limit (homeroom-bot-mayor.js MAX_REPLY_CHARS). */
+export const MAX_BOT_HELD_DRAFT_CHARS = 8000;
 
 /** The `doing` of a typing event, or null: only a kind word, a request number, a short name, and the answer being written. */
 export function botDoingOf(raw: unknown): BotDoing | null {
@@ -76,12 +93,58 @@ export function botDoingOf(raw: unknown): BotDoing | null {
   const number = Number(value.number);
   const project = typeof value.project === 'string' ? value.project.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
   const text = kind === 'writing' && typeof value.text === 'string' ? value.text.trim().slice(-MAX_BOT_DRAFT_CHARS) : '';
+  // #6405: where a cut answer's newest words start in the whole answer.
+  const from = kind === 'writing' && Number.isSafeInteger(value.from) && Number(value.from) > 0 ? Number(value.from) : null;
   return {
     kind,
     ...(Number.isSafeInteger(number) && number > 0 ? { number } : {}),
     ...(project ? { project } : {}),
     ...(text ? { text } : {}),
+    ...(text && from !== null ? { from } : {}),
   };
+}
+
+/**
+ * 4 Nov 2026 (#6302): the Homeroom bot's entry on the typing line, from what
+ * its newest event says, with the answer written so far kept from `prior`
+ * unless this event writes a newer one. The server names a new doing as each
+ * tool step starts (and sends none while it thinks), so building the entry
+ * from the event alone erased the draft between rounds and the card flashed
+ * between its words and "Thinking"/"Reading request #…". The draft leaves
+ * with the entry when typing stops, which is also when the bot's message
+ * takes the card's place.
+ *
+ * #6405: the answer only ever grows. A tail the server cut from part-way
+ * through is stitched under the words already held (`from`), so the card
+ * keeps the answer's first word instead of sliding its opening with every
+ * update; and a shorter rewrite (the correction pass's "Ref", at first)
+ * leaves the fuller answer up until it overtakes it. A step with no words of
+ * its own keeps the last one named, rather than dropping back to "Thinking".
+ */
+export function botTypist(prior: Typist | undefined, shown: string, doing: BotDoing | null): Typist {
+  const priorDraft = prior?.draft || '';
+  let draft = priorDraft;
+  const written = doing?.kind === 'writing' && doing.text ? doing.text : '';
+  if (written) {
+    const from = typeof doing?.from === 'number' ? doing.from : null;
+    if (from !== null && priorDraft.length >= from) {
+      // A cut tail continues the answer held.
+      draft = priorDraft.slice(0, from) + written.replace(/^…\s*/, '');
+    } else if (from !== null && priorDraft.length >= MAX_BOT_HELD_DRAFT_CHARS) {
+      // Past what the card holds: keep all of it, rather than drop to a tail.
+      draft = priorDraft;
+    } else {
+      // A whole answer, or one whose tail starts past what this reader has.
+      draft = written;
+    }
+    // Never shrink: a rewrite shorter than the words held, and the start of
+    // them, leaves the held words in place.
+    if (priorDraft && draft.length < priorDraft.length && priorDraft.startsWith(draft)) draft = priorDraft;
+    draft = draft.slice(0, MAX_BOT_HELD_DRAFT_CHARS);
+  }
+  // The furthest step named this turn, kept through a wordless one.
+  const held = doing ?? prior?.doing ?? null;
+  return { name: shown, unnamed: false, bot: true, doing: held, ...(draft ? { draft } : {}) };
 }
 
 interface InternalState extends MessagesSnapshot {
@@ -1350,8 +1413,7 @@ export function isMobile(): boolean {
 
 /**
  * One pane at a time: a phone. (#4229's strip too narrow for both is gone:
- * on a desktop the list is in the sidebar, never beside the conversation,
- * ./index.tsx `messages-list-in-rail`.)
+ * from 768px the list sits beside the conversation, ./index.tsx.)
  */
 function listAside(): boolean {
   return isMobile();
@@ -1379,7 +1441,7 @@ export function channelHub(): string | null {
   // The same read the pane's own disc draws from (channel-hub.ts), so the
   // header's arrow and the disc name one hub.
   const platform = typeof window !== 'undefined' ? platformSlug() : null;
-  return platform ? `#app/${encodeURIComponent(platform)}/dev/hub` : '#communities';
+  return platform ? `#app/${encodeURIComponent(platform)}/dev/hub` : '/';
 }
 
 /**
@@ -1613,6 +1675,18 @@ export function takePendingAttach(conversationId: number): { object: StagedObjec
   const { object, placeholder } = pendingAttach;
   pendingAttach = null;
   return { object, placeholder };
+}
+
+/**
+ * Attach `object` to `conversationId`'s composer when it next reads its
+ * one-shot, for a page that names what Main Chat is about before that composer
+ * has mounted (a request reopened from its bot-page address, features/ai/,
+ * 3 Nov 2026). A composer already mounted takes it when the caller also sends
+ * `usernode:messages-attach`, as openBot does.
+ */
+export function stashObject(conversationId: number, object: StagedObject): void {
+  if (!validId(conversationId)) return;
+  pendingAttach = { conversationId, object, placeholder: '' };
 }
 
 // B6: a message of the bot's to quote in the composer once its chat has
@@ -1865,6 +1939,108 @@ export function setDraft(scope: ComposerScope, value: string): void {
   // on a phone made typing in a long chat visibly lag.
 }
 
+/*
+ * ATTACHED FILES ARE KEPT WITH THE DRAFT (#6249). The composer used to drop
+ * its chips whenever its scope changed, so a screenshot attached and then
+ * left behind had to be uploaded again. They follow the words: one saved
+ * list per composer scope, on this device, holding what the server answered
+ * when each file was uploaded — so coming back re-shows the same chips
+ * without uploading anything.
+ *
+ * THEY AGE OUT ON READ. Homeroom deletes an upload no message took after a
+ * day (src/services/upload-retention.js), so an entry older than
+ * DRAFT_ATTACHMENT_MAX_AGE_MS is dropped rather than drawn as a chip whose
+ * send could only fail.
+ */
+interface SavedDraftAttachment {
+  attachment: MessageAttachment;
+  savedAt: number;
+}
+
+/** A little under the 24-hour cleanup in src/services/upload-retention.js. */
+export const DRAFT_ATTACHMENT_MAX_AGE_MS = 23 * 60 * 60 * 1000;
+
+const draftAttachments = new Map<ComposerScope, SavedDraftAttachment[]>();
+
+function draftAttachmentsKey(scope: ComposerScope): string {
+  return `usernode:messages-draft-attachments:${scope}`;
+}
+
+/** Pure: the saved files a stored value names, and whether any entry was dropped. */
+function readSavedAttachments(raw: string | null): { kept: SavedDraftAttachment[]; dropped: boolean } {
+  if (!raw) return { kept: [], dropped: false };
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return { kept: [], dropped: false }; }
+  if (!Array.isArray(parsed)) return { kept: [], dropped: false };
+  const now = Date.now();
+  const kept: SavedDraftAttachment[] = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as Record<string, unknown>;
+    const item = record.attachment;
+    const savedAt = record.savedAt;
+    if (!item || typeof item !== 'object') continue;
+    const file = item as Record<string, unknown>;
+    if (typeof file.id !== 'string' || !file.id) continue;
+    if (typeof file.name !== 'string' || typeof file.url !== 'string') continue;
+    if (typeof savedAt !== 'number' || !Number.isFinite(savedAt)) continue;
+    if (now - savedAt > DRAFT_ATTACHMENT_MAX_AGE_MS) continue;
+    kept.push({
+      attachment: {
+        id: file.id,
+        name: file.name,
+        size: Number(file.size) || 0,
+        contentType: typeof file.contentType === 'string' ? file.contentType : '',
+        kind: typeof file.kind === 'string' ? file.kind : null,
+        url: file.url,
+        viewUrl: typeof file.viewUrl === 'string' ? file.viewUrl : null,
+      },
+      savedAt,
+    });
+  }
+  return { kept, dropped: kept.length !== parsed.length };
+}
+
+function writeDraftAttachments(scope: ComposerScope, saved: SavedDraftAttachment[]): void {
+  try {
+    if (saved.length) localStorage.setItem(draftAttachmentsKey(scope), JSON.stringify(saved));
+    else localStorage.removeItem(draftAttachmentsKey(scope));
+  } catch { /* storage unavailable */ }
+}
+
+function savedAttachmentsFor(scope: ComposerScope): SavedDraftAttachment[] {
+  const known = draftAttachments.get(scope);
+  if (known) return known;
+  let saved: SavedDraftAttachment[] = [];
+  try {
+    const raw = localStorage.getItem(draftAttachmentsKey(scope));
+    const read = readSavedAttachments(raw);
+    saved = read.kept;
+    // The key is rewritten now, so an entry that has aged out is not read
+    // again by the next open or another tab.
+    if (read.dropped) writeDraftAttachments(scope, saved);
+  } catch { return []; }
+  draftAttachments.set(scope, saved);
+  return saved;
+}
+
+export function draftAttachmentsFor(scope: ComposerScope): MessageAttachment[] {
+  return savedAttachmentsFor(scope).map((entry) => entry.attachment);
+}
+
+/**
+ * Save a composer's attached files. An attachment already saved keeps the
+ * time it was first saved, so a re-save does not give it another day.
+ * NOT published, for the reason setDraft is not.
+ */
+export function setDraftAttachments(scope: ComposerScope, items: MessageAttachment[]): void {
+  const previous = new Map(savedAttachmentsFor(scope).map((entry) => [entry.attachment.id, entry.savedAt]));
+  const now = Date.now();
+  const saved = items.map((attachment) => ({ attachment, savedAt: previous.get(attachment.id) ?? now }));
+  draftAttachments.set(scope, saved);
+  writeDraftAttachments(scope, saved);
+}
+
 export function replyFor(scope: ComposerScope): ConversationMessage | null {
   return replyTargets.get(scope) || null;
 }
@@ -1929,10 +2105,12 @@ export async function answerBotQuestion(question: ConversationMessage, answer: s
   const rootId = botThreadOf(question);
   const scope = scopeKey(conversationId, rootId);
   const draft = draftFor(scope);
+  const files = draftAttachmentsFor(scope);
   const staged = replyFor(scope);
   replyTargets.set(scope, question);
   const sending = send({ content: answer, threadRootId: rootId, anyThread: true });
   if (draft) setDraft(scope, draft);
+  if (files.length) setDraftAttachments(scope, files);
   if (staged && staged.id !== question.id) setReply(scope, staged);
   await sending;
 }
@@ -2101,6 +2279,7 @@ export async function send(input: {
   });
   keepOnDevice(pending.idempotencyKey);
   setDraft(scope, '');
+  setDraftAttachments(scope, []);
   setReply(scope, null);
   if (threadRootId && open && state.thread) {
     publish({ thread: { ...state.thread, messages: [...state.thread.messages, optimistic], error: null } });
@@ -3023,8 +3202,9 @@ export function handleEvent(raw: ConversationEvent): void {
         // The stand-in only while every holder is nameless: a real account under the same word is named.
         // 1 Nov 2026: the bot, with what it says it is doing (its card's words);
         // nobody else's event carries that.
+        const prior = current.find((each) => each.name === shown);
         const entry: Typist = botPeer
-          ? { name: shown, unnamed: false, bot: true, doing: botDoingOf(event.doing) }
+          ? botTypist(prior?.bot ? prior : undefined, shown, botDoingOf(event.doing))
           : { name: shown, unnamed: [...holders.values()].every(Boolean) };
         next = isShown ? current.map((each) => (each.name === shown ? entry : each)) : [...current, entry];
       }

@@ -7,7 +7,8 @@
 // the answer appearing as it is written, and a line saying what it looked
 // at. Pinned here, without a database:
 //
-//   1. The room: sixteen rounds, 4000 output tokens (8000 on a retry), 90
+//   1. The room: sixteen rounds, 8000 output tokens (16000 on a retry; task
+//      2020's laid-out copy rides beside the words), 90
 //      seconds a request, an 8000-character reply, and a prompt that allows
 //      a long, structured answer when they ask for one. The model is chosen
 //      as before.
@@ -39,15 +40,15 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 test('a turn has room: sixteen rounds, long answers, a longer clock, on the same model', () => {
   assert.equal(mayor.MAX_ROUNDS, 16);
-  assert.equal(mayor.MAX_OUTPUT_TOKENS, 4000);
-  assert.equal(mayor.RETRY_OUTPUT_TOKENS, 8000);
+  assert.equal(mayor.MAX_OUTPUT_TOKENS, 8000);
+  assert.equal(mayor.RETRY_OUTPUT_TOKENS, 16000);
   assert.equal(mayor.REQUEST_TIMEOUT_MS, 90_000);
   assert.equal(mayor.MAX_REPLY_CHARS, 8000);
   assert.ok(mayor.RETRY_WITHIN_MS >= 4 * mayor.REQUEST_TIMEOUT_MS / 2, 'a later round is asked again too');
   assert.ok(realDm.TYPING_MAX_MS >= 8 * 60 * 1000, 'the working card lasts as long as a long turn');
   // The transport takes the retry's room.
   const base = { model: 'deepseek/deepseek-v4.1-flash-1017', reasoning: 'low', messages: [], tools: [] };
-  assert.equal(openrouter.buildRequest({ ...base, maxOutputTokens: mayor.RETRY_OUTPUT_TOKENS }).max_tokens, 8000);
+  assert.equal(openrouter.buildRequest({ ...base, maxOutputTokens: mayor.RETRY_OUTPUT_TOKENS }).max_tokens, 16000);
   // The model is chosen as it was: the platform default, else the cheap one.
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /model: require\('\.\/default-model'\)\.fromSettings\(settings, config\) \|\| DEFAULT_MODEL,/);
@@ -149,7 +150,11 @@ function botTurn(chat, { extra = {}, text = 'How does Gym Tracker save a workout
 test('a turn that looks things up for sixteen rounds never sends more than 100 messages, and still replies', async () => {
   const seen = [];
   const chat = scripted((i, req) => {
-    if (typeof req.toolChoice === 'object') return { calls: [callOf(`reply${i}`, 'reply', { text: 'It saves each set as you finish it.' })] };
+    // #6346: the last round is a required choice of the turn-ending tools,
+    // not a forced reply.
+    if (req.toolChoice === 'required' || typeof req.toolChoice === 'object') {
+      return { calls: [callOf(`reply${i}`, 'reply', { text: 'It saves each set as you finish it.' })] };
+    }
     return { calls: Array.from({ length: 8 }, (_, c) => callOf(`r${i}c${c}`, 'my_projects')) };
   }, seen);
   const turn = botTurn(chat);
@@ -159,10 +164,17 @@ test('a turn that looks things up for sixteen rounds never sends more than 100 m
   for (const req of seen) assert.ok(req.messages.length <= mayor.MAX_MESSAGES, `${req.messages.length} messages`);
   assert.ok(seen.some((req) => req.messages.some((m) => typeof m.content === 'string' && m.content.startsWith(mayor.COMPACT_LEAD))),
     'its oldest lookups were folded to make room');
-  assert.deepEqual(seen.at(-1).toolChoice, { type: 'function', function: { name: 'reply' } }, 'the last round replies');
+  // #6346: the last round is told so, and must pick a tool that ends the turn.
+  const last = seen.at(-1);
+  assert.equal(last.toolChoice, 'required', 'the last round picks a turn-ending tool');
+  assert.ok(last.messages.some((m) => m.role === 'user' && /This is your last round\./.test(String(m.content))),
+    'the last round is warned');
+  const ending = (name) => name === 'reply' || name === 'draw_screen' || name.startsWith('offer_');
+  assert.ok(last.tools.every((tl) => ending(tl.function.name)), 'only turn-ending tools are offered');
+  assert.ok(last.tools.some((tl) => tl.function.name === 'reply'), 'it can still answer');
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].content, 'It saves each set as you finish it.');
-  assert.ok(seen.every((req) => req.maxOutputTokens === mayor.MAX_OUTPUT_TOKENS), '4000 tokens a round');
+  assert.ok(seen.every((req) => req.maxOutputTokens === mayor.MAX_OUTPUT_TOKENS), '8000 tokens a round');
 });
 
 // ── 3. The transport streams when asked ──────────────────────────────────
@@ -288,16 +300,28 @@ test('what is shown as it is written goes out at most every 250 ms, newest words
   writer.onDelta({ content: 'Let me', toolCalls: [] });
   await ctx.saying;
   assert.equal(said.length, 2, 'nothing new to show');
-  writer.clear();
+  // #6405: a round that calls another tool writes no answer, and says nothing:
+  // the card keeps its words rather than dropping back to "Thinking".
+  writer.onDelta({ content: '', toolCalls: [{ function: { name: 'read_source', arguments: '{' } }] });
   await ctx.saying;
-  assert.deepEqual(said.at(-1), null, 'cleared before a pass that writes it again: "Thinking"');
-  writer.onDelta(reply('Again'));
+  assert.deepEqual(said.at(-1), { kind: 'writing', text: 'One two three' }, 'an empty round sends no null');
+  // The correction pass writes the answer again: what is shown stays.
+  writer.restart();
   await ctx.saying;
-  assert.deepEqual(said.at(-1), { kind: 'writing', text: 'Again' });
+  assert.equal(said.length, 2, 'restarting says nothing');
+  writer.onDelta(reply('Ref'));
+  await ctx.saying;
+  assert.deepEqual(said.at(-1), { kind: 'writing', text: 'One two three' }, 'a shorter rewrite is not shown');
+  writer.onDelta(reply('One two three and four'));
+  await ctx.saying;
+  assert.deepEqual(said.at(-1), { kind: 'writing', text: 'One two three and four' }, 'a rewrite as long as the floor shows');
+  writer.onDelta(reply('One two three and four, five'));
+  await ctx.saying;
+  assert.deepEqual(said.at(-1), { kind: 'writing', text: 'One two three and four, five' }, 'and then grows as usual');
   writer.close();
   writer.onDelta(reply('Again, after'));
   await ctx.saying;
-  assert.deepEqual(said.at(-1), { kind: 'writing', text: 'Again' }, 'nothing once the message is on its way');
+  assert.deepEqual(said.at(-1), { kind: 'writing', text: 'One two three and four, five' }, 'nothing once the message is on its way');
   // A turn with no working card writes nothing.
   assert.equal(mayor.draftWriter({ deps: {} }), null);
 });
@@ -339,6 +363,11 @@ test('a typing event carries the answer\'s newest words, within the bus\'s budge
     const doing = realDm.typingDoing({ kind: 'writing', text });
     assert.ok(doing.text.startsWith('… '), 'a long answer shows its end');
     assert.ok(doing.text.length <= realDm.MAX_DRAFT_CHARS + 2);
+    // #6405: and says where its end starts in the whole answer, so the
+    // screen can stitch it under the words it already has.
+    assert.equal(typeof doing.from, 'number');
+    assert.ok(doing.from > 0);
+    assert.equal(doing.text, `… ${String(text).trim().slice(doing.from)}`, 'the tail from `from` on');
     const event = { type: 'conversation_typing', conversationId: 41, userId: 2, typing: true, threadRootId: 12345, doing };
     assert.ok(Buffer.byteLength(JSON.stringify(event), 'utf8') < 6500, 'fits a NOTIFY between servers with room to spare');
   }
@@ -378,6 +407,9 @@ test('what a turn looked at, in plain words, each once, code read as one line pe
   assert.equal(mayor.lookedItems([{ tool: 'list_source', project: 'gym' }], { names: new Map([['gym', 'Gym Tracker']]) })[0].what,
     'Looked through the files of Gym Tracker');
   assert.equal(mayor.lookedItems([{ tool: 'read_source', project: 'gym', path: 'a' }])[0].what, 'Read 1 file in gym');
+  // #6384: a plan read is said as a plan on its request.
+  assert.equal(mayor.lookedItems([{ tool: 'get_spec', project: 'gym', number: 12 }],
+    { names: new Map([['gym', 'Gym Tracker']]) })[0].what, 'Read the plan on Gym Tracker request #12');
   const many = Array.from({ length: 40 }, (_, i) => ({ tool: 'get_request', project: 'gym', number: i + 1 }));
   assert.equal(mayor.lookedItems(many).length, 20, 'at most twenty');
 });
@@ -468,7 +500,7 @@ test('a reply after a walkthrough written beside a call sends the walkthrough, a
         content: walk,
         toolCalls: [
           callOf('a', 'read_source', { project: 'gym', path: 'public/index.html' }),
-          callOf('b', 'offer_request', { project: 'gym', title: 'Mark today on the main screen', details: 'Mark today and who is next.' }),
+          callOf('b', 'offer_request', { project: 'gym', title: 'Mark today on the main screen', details: 'Mark today and who is next.', doneWhen: ['Today and who is next show on the main screen.'] }),
         ],
       };
     }
@@ -484,7 +516,7 @@ test('a reply after a walkthrough written beside a call sends the walkthrough, a
       async query(sql) {
         const text = String(sql);
         if (/SELECT slug, name FROM apps WHERE slug = ANY/.test(text)) return { rows: [{ slug: 'gym', name: 'Gym Tracker' }] };
-        if (/INSERT INTO homeroom_bot_dm_actions/.test(text)) return { rows: [{ id: 5 }] };
+        if (/INSERT INTO bot_cards/.test(text)) return { rows: [{ id: 5 }] };
         if (/FROM apps/.test(text)) return { rows: [{ id: 3, slug: 'gym', name: 'Gym Tracker', repo_url: 'https://github.com/o/r', view_visibility: 'public', community_id: null }] };
         return { rows: [] };
       },
@@ -523,7 +555,7 @@ test('a thread tool\'s card stays under a reply that ends in an offer', async ()
   const chat = scripted([
     { calls: [
       callOf('a', 'offer_options', { title: 'Ways to remind', options: [{ title: 'A banner' }, { title: 'A calendar file' }] }),
-      callOf('b', 'offer_request', { project: 'gym', title: 'Add a reminder banner' }),
+      callOf('b', 'offer_request', { project: 'gym', title: 'Add a reminder banner', doneWhen: ['A reminder banner shows on the main screen.'] }),
     ] },
     { calls: [callOf('c', 'reply', { text: 'Two ways; the first is drafted as a request.' })] },
   ]);
@@ -534,7 +566,7 @@ test('a thread tool\'s card stays under a reply that ends in an offer', async ()
     const pool = {
       async query(sql) {
         const text = String(sql);
-        if (/INSERT INTO homeroom_bot_dm_actions/.test(text)) return { rows: [{ id: 6 }] };
+        if (/INSERT INTO bot_cards/.test(text)) return { rows: [{ id: 6 }] };
         if (/FROM apps/.test(text)) return { rows: [{ id: 3, slug: 'gym', name: 'Gym Tracker', repo_url: 'https://github.com/o/r', view_visibility: 'public', community_id: null }] };
         return { rows: [] };
       },
@@ -588,6 +620,62 @@ test('the working card shows the answer as it grows, under "Writing"', () => {
   assert.doesNotMatch(thinking, /data-bot-working-draft/);
   assert.equal(card.botDoingLine(catalog, { kind: 'writing', text: 'x' }), 'Writing');
   assert.equal(card.botDraftText({ kind: 'drawing' }), '');
+});
+
+// 4 Nov 2026 (#6302): the card flashed between the answer so far and what the
+// bot was doing next, because each doing event replaced the whole entry. The
+// words are held on the Typist now: a read or a wordless "thinking" leaves
+// them in place, a newer answer replaces them, and they leave with the card.
+test('the answer so far stays on the working card while the bot reads or thinks', () => {
+  const store = loadTsx('frontend/src/features/messages/store.ts');
+  const writing = store.botDoingOf({ kind: 'writing', text: 'A couple of the names you gave' });
+  const first = store.botTypist(undefined, 'Homeroom bot', writing);
+  assert.equal(first.draft, 'A couple of the names you gave');
+
+  const reading = store.botTypist(first, 'Homeroom bot', store.botDoingOf({ kind: 'request', number: 436 }));
+  assert.deepEqual(reading, {
+    name: 'Homeroom bot', unnamed: false, bot: true,
+    doing: { kind: 'request', number: 436 },
+    draft: 'A couple of the names you gave',
+  }, 'held while it reads the request');
+
+  const thinking = store.botTypist(reading, 'Homeroom bot', store.botDoingOf(undefined));
+  assert.equal(thinking.draft, 'A couple of the names you gave', 'and while it thinks, with no doing');
+  assert.deepEqual(thinking.doing, { kind: 'request', number: 436 },
+    '#6405: the last step named stays, instead of dropping back to "Thinking"');
+
+  const more = store.botTypist(thinking, 'Homeroom bot', store.botDoingOf({ kind: 'writing', text: 'So I checked: the list is right' }));
+  assert.equal(more.draft, 'So I checked: the list is right', 'a newer answer replaces the one before it');
+  assert.equal(store.botTypist(undefined, 'Homeroom bot', null).draft, undefined, 'a fresh turn starts with nothing');
+
+  // #6405: the answer only ever grows.
+  const fuller = store.botTypist(undefined, 'Homeroom bot',
+    store.botDoingOf({ kind: 'writing', text: 'Refreshed. Homeroom has 80 open requests' }));
+  const prefix = store.botTypist(fuller, 'Homeroom bot', store.botDoingOf({ kind: 'writing', text: 'Ref' }));
+  assert.equal(prefix.draft, 'Refreshed. Homeroom has 80 open requests',
+    'the correction pass\'s "Ref" leaves the fuller answer up');
+  const whole = 'Refreshed. Homeroom has 80 open requests. The newest is the one about the live reply.';
+  const opened = store.botTypist(undefined, 'Homeroom bot',
+    store.botDoingOf({ kind: 'writing', text: whole.slice(0, 40) }));
+  const tail = store.botDoingOf({ kind: 'writing', text: `… ${whole.slice(20)}`, from: 20 });
+  const stitched = store.botTypist(opened, 'Homeroom bot', tail);
+  assert.equal(stitched.draft, whole, 'a cut tail is stitched under the words held, with no "… "');
+  assert.ok(store.MAX_BOT_HELD_DRAFT_CHARS >= 8000, 'as much of a long answer as the server sends');
+
+  const card = loadTsx('frontend/src/features/messages/bot-working.tsx');
+  const html = renderToHtml(createElement(card.BotWorkingCard, { typist: reading }));
+  assert.match(html, /data-bot-working="request"/);
+  assert.match(html, /<span class="min-w-0 truncate" data-bot-working-doing="">Reading request #436<\/span>/);
+  assert.match(html, /data-bot-working-draft=""/);
+  assert.match(html, /A couple of the names you gave/);
+  const heldThinking = renderToHtml(createElement(card.BotWorkingCard, { typist: thinking }));
+  assert.match(heldThinking, /data-bot-working="request"/);
+  assert.match(heldThinking, /<span class="min-w-0 truncate" data-bot-working-doing="">Reading request #436<\/span>/,
+    '#6405: a wordless step keeps the last one named, not "Thinking"');
+  assert.match(heldThinking, /data-bot-working-draft=""/, 'the words are still drawn under it');
+  // A turn that has named nothing yet still shows "Thinking".
+  const fresh = renderToHtml(createElement(card.BotWorkingCard, { typist: store.botTypist(undefined, 'Homeroom bot', null) }));
+  assert.match(fresh, /data-bot-working="thinking"/);
 });
 
 const botMessage = (homeroomBot, extra = {}) => ({

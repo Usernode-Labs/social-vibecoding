@@ -10,7 +10,8 @@
 //   POST   /api/me/avatar              raw image bytes -> user_avatars
 //   DELETE /api/me/avatar              remove the picture
 //   GET    /api/me/challenges/completed  the viewer's OWN completions
-//   GET    /api/me/summary             Me's stat cards + "Your contributions"
+//   GET    /api/me/summary             Me's stat cards, "Your contributions"
+//                                       and your own week of time in apps
 //
 // Every route is me-scoped and 401s without a session, so this router is
 // mounted AFTER authMiddleware in server.js. The public read side of an
@@ -193,6 +194,55 @@ function appIconUrl(imageId) {
     ? `/app-icons/${imageId}` : null;
 }
 
+// The "This week" card on your own profile (#5626). Time is what the App
+// frame's engaged-use collector files in app_activity: time inside apps,
+// never time on Homeroom's own screens, in UTC days, the way the recorder
+// dates its rows. The spine answers all seven days whether or not a row
+// exists. Both reads lead with the session user, on
+// idx_app_activity_user_date and idx_events_user_created, because this runs
+// on every open of the profile.
+const SUMMARY_ACTIVITY_DAYS_SQL = `
+  WITH days AS (
+    SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - n AS day
+      FROM generate_series(0, 6) AS n
+  )
+  SELECT days.day::text AS day, COALESCE(SUM(a.seconds_spent), 0)::bigint AS seconds
+    FROM days
+    LEFT JOIN app_activity a ON a.user_id = $1 AND a.date = days.day
+   GROUP BY days.day
+   ORDER BY days.day`;
+
+// Apps opened or used: an open is an event, and events are staging:private,
+// so a preview's clone still counts the apps its app_activity rows name.
+const SUMMARY_ACTIVITY_APPS_SQL = `
+  WITH since AS (
+    SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - 6 AS day
+  )
+  SELECT COUNT(DISTINCT opened.app_id)::int AS apps_opened
+    FROM (
+      SELECT a.app_id
+        FROM app_activity a, since
+       WHERE a.user_id = $1 AND a.date >= since.day AND a.seconds_spent > 0
+      UNION ALL
+      SELECT e.app_id
+        FROM events e, since
+       WHERE e.user_id = $1 AND e.event_type = 'dapp_opened'
+         AND e.created_at >= (since.day::timestamp AT TIME ZONE 'UTC')
+    ) opened`;
+
+// Pure (exported for tests): the two activity reads → the response's shape.
+function shapeActivity(dayRows, appsRow) {
+  const days = (dayRows || []).map((row) => ({
+    date: String(row.day),
+    seconds: Number(row.seconds) || 0,
+  }));
+  return {
+    days,
+    totalSeconds: days.reduce((sum, day) => sum + day.seconds, 0),
+    appsOpened: Number(appsRow && appsRow.apps_opened) || 0,
+  };
+}
+
 // Pure (exported for tests): one contributions row → the client's shape.
 function shapeContribution(r) {
   const prNumber = r.pr_number != null ? Number(r.pr_number) : null;
@@ -216,7 +266,7 @@ function shapeContribution(r) {
 
 // Pure (exported for tests): the three counts, the contributions and the
 // challenge totals → the response body.
-function shapeSummary({ counts, contributions, challenges }) {
+function shapeSummary({ counts, contributions, challenges, activity }) {
   const c = counts || {};
   return {
     merged: Number(c.merged) || 0,
@@ -233,6 +283,7 @@ function shapeSummary({ counts, contributions, challenges }) {
         : null,
     },
     contributions: (contributions || []).map(shapeContribution),
+    ...(activity ? { activity } : {}),
   };
 }
 
@@ -261,6 +312,26 @@ function withDemoSummary(summary, selfApp, now = Date.now()) {
     proposalsTotal: Math.max(summary.proposalsTotal, contributions.length),
     kudos: Math.max(summary.kudos, contributions.reduce((n, row) => n + row.kudos, 0)),
     contributions,
+    demo: true,
+  };
+}
+
+// Pure (exported for tests): the card's ?demo=1 overlay, apart from
+// withDemoSummary because a preview's account can have merged work and still
+// no app time. REAL DATA WINS here too. The days stay the read's own dates.
+const DEMO_ACTIVITY_MINUTES = [25, 0, 48, 70, 12, 35, 30];
+const DEMO_ACTIVITY_APPS = 6;
+
+function withDemoActivity(activity) {
+  if (!activity || activity.totalSeconds > 0 || activity.appsOpened > 0) return activity;
+  const days = activity.days.map((day, i) => ({
+    date: day.date,
+    seconds: (DEMO_ACTIVITY_MINUTES[i] || 0) * 60,
+  }));
+  return {
+    days,
+    totalSeconds: days.reduce((sum, day) => sum + day.seconds, 0),
+    appsOpened: DEMO_ACTIVITY_APPS,
     demo: true,
   };
 }
@@ -809,7 +880,7 @@ function profileRoutes(config) {
       express.json({ limit: '4kb' }), async (req, res) => {
         try {
           const result = action === 'request'
-            ? await accountEmail.requestCode(pool, config, req.user.id, req.body?.email, req.body?.currentPassword)
+            ? await accountEmail.requestCode(pool, config, req.user.id, req.body?.email, req.body?.currentPassword, { locale: req.user.locale })
             : await accountEmail.verifyCode(pool, req.user.id, req.body?.code);
           return res.json(result);
         } catch (error) {
@@ -893,7 +964,7 @@ function profileRoutes(config) {
     sameOriginBrowserOnly,
     async (req, res) => {
       try {
-        return res.json(await accountEmail.requestUsernameCode(pool, config, req.user.id));
+        return res.json(await accountEmail.requestUsernameCode(pool, config, req.user.id, { locale: req.user.locale }));
       } catch (error) {
         if (error instanceof accountEmail.AccountEmailError) {
           return res.status(error.status).json({ error: error.message });
@@ -1309,9 +1380,11 @@ function profileRoutes(config) {
   // only the challenge totals wait, on the season they are scoped to.
   router.get('/api/me/summary', requireUser, async (req, res) => {
     try {
-      const [countRows, contributionRows, season] = await Promise.all([
+      const [countRows, contributionRows, activityDays, activityApps, season] = await Promise.all([
         pool.query(SUMMARY_COUNTS_SQL, [req.user.id]),
         pool.query(SUMMARY_CONTRIBUTIONS_SQL, [req.user.id, SUMMARY_CONTRIBUTIONS_LIMIT]),
+        pool.query(SUMMARY_ACTIVITY_DAYS_SQL, [req.user.id]),
+        pool.query(SUMMARY_ACTIVITY_APPS_SQL, [req.user.id]),
         fetchProfileSeason(pool, IS_STAGING ? 900500 : null),
       ]);
       const totals = season ? await readChallengeTotals(pool, req.user.id, season.id) : null;
@@ -1321,10 +1394,12 @@ function profileRoutes(config) {
         challenges: season
           ? { done: totals ? totals.done : 0, total: totals ? totals.total : 0, season }
           : null,
+        activity: shapeActivity(activityDays.rows, activityApps.rows[0]),
       });
       if (IS_STAGING && req.query.demo === '1') {
         const { rows: selfRows } = await pool.query(SELF_APP_SQL);
         summary = withDemoSummary(summary, selfRows[0] || null);
+        summary = { ...summary, activity: withDemoActivity(summary.activity) };
       }
       return res.json(summary);
     } catch (err) {
@@ -1404,6 +1479,11 @@ module.exports = {
   shapeContribution,
   shapeSummary,
   withDemoSummary,
+  SUMMARY_ACTIVITY_DAYS_SQL,
+  SUMMARY_ACTIVITY_APPS_SQL,
+  shapeActivity,
+  withDemoActivity,
+  DEMO_ACTIVITY_MINUTES,
   DEMO_CONTRIBUTIONS,
   SUMMARY_CONTRIBUTIONS_LIMIT,
   shapeProposals,

@@ -83,8 +83,8 @@ import { platformSlug } from '../messages/channel-hub';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import {
   changesPicture, loadLibrary, outOfPicture, textsUnchanged,
-  closeUpView, coverCrop, cropCanvas, CROP_SHADE, dragCrop, encodeUnder, FULL_CROP, inRect, insetFrame,
-  isFullCrop, overlaysGone, pictureScale, pinInCrop, placeBeside,
+  closeUpView, coverCrop, cropCanvas, CROP_SHADE, dragCrop, encodeUnder, fitsUpload, FULL_CROP, inRect, insetFrame,
+  isFullCrop, MAX_UPLOAD_BYTES, overlaysGone, pictureScale, pinInCrop, placeBeside,
   takeBase, thumbnail, toPage, toScreen,
   type Base, type CropHandle, type Point, type Rect, type Size,
 } from './picture';
@@ -294,6 +294,9 @@ export interface CommentCarry {
   images?: Blob[];
   bounty?: boolean;
   target?: Target | null;
+  /** The app the form's "This app" option stood for, when it was the picked one. */
+  appSlug?: string | null;
+  appName?: string | null;
 }
 
 export interface OpenOptions {
@@ -590,6 +593,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const touch = useRef<{ id: number; start: Point; moved: boolean } | null>(null);
   const viewShotKeys = useRef(0);
   const viewShotUrl = useRef<string | null>(null);
+  /** The page moved while the comment box had the keyboard: the picture is
+   *  taken once the box is left (#6448). */
+  const shotPending = useRef(false);
   // The page's size as the mode keeps it. The keyboard does not change it:
   // with the keys up iOS collapses `innerHeight` to what is above them (874
   // to 539 on an iPhone 17), and read from the window the picture shrank,
@@ -703,9 +709,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // The page as a picture, shown inset so nothing reads as clickable. Taken
   // when the mode opens, and 250ms after the last scroll or resize (the
   // redraw above bumps `view` and re-renders for the pins; this redraws the
-  // picture). Until a retake lands the last one shows faded and taps wait.
-  // When the picture cannot be taken, the mode renders as it always did,
-  // over the live page, so a comment can always be left.
+  // picture). While the comment box has the keyboard the picture is left
+  // alone: a chat that scrolls a new reply in changed what was under the
+  // words being typed (#6448). The move is remembered (`shotPending`) and
+  // taken once when the box is left. Until a retake lands the last one shows
+  // faded and taps wait. When the picture cannot be taken, the mode renders
+  // as it always did, over the live page, so a comment can always be left.
   const takeViewShot = useCallback(() => {
     const shown = visibleFrame();
     const key = ++viewShotKeys.current;
@@ -764,9 +773,36 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       });
       return () => { live = false; };
     }
-    const timer = setTimeout(takeViewShot, 250);
+    // While the box has the keyboard the picture stays as it is, and the
+    // page's move is remembered for when the box is left.
+    if (textFocused(document)) { shotPending.current = true; return; }
+    const timer = setTimeout(() => {
+      if (textFocused(document)) { shotPending.current = true; return; }
+      takeViewShot();
+    }, 250);
     return () => clearTimeout(timer);
   }, [tick, takeViewShot]);
+
+  // Leaving the box: the picture catches up, once, if the page moved while it
+  // was frozen. `activeElement` has not moved yet when focusout fires, so the
+  // check waits one frame.
+  useEffect(() => {
+    let frame = 0;
+    const onFocusOut = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (!shotPending.current || textFocused(document)) return;
+        shotPending.current = false;
+        takeViewShot();
+      });
+    };
+    host.addEventListener('focusout', onFocusOut);
+    return () => {
+      host.removeEventListener('focusout', onFocusOut);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [host, takeViewShot]);
 
   useEffect(() => () => {
     if (viewShotUrl.current) URL.revokeObjectURL(viewShotUrl.current);
@@ -1033,8 +1069,14 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     if (!draft) return;
     const key = draft.key;
     const room = MAX_PICTURES - pictureCount(draft);
-    const usable = files.filter((f) => IMAGE_TYPES.includes(f.type));
-    if (usable.length < files.length) update(key, { error: t('devchat:commentPin.error.imageType') });
+    const images = files.filter((f) => IMAGE_TYPES.includes(f.type));
+    // #6121: a person's own image goes up as it is, so one over the server's
+    // limit is refused here, not after its thumbnail has promised it.
+    const usable = images.filter(fitsUpload);
+    if (images.length < files.length) update(key, { error: t('devchat:commentPin.error.imageType') });
+    if (usable.length < images.length) {
+      update(key, { error: t('devchat:commentPin.error.imageTooLarge', { megabytes: MAX_UPLOAD_BYTES / (1024 * 1024) }) });
+    }
     if (room <= 0) {
       update(key, { error: t('devchat:commentPin.error.imageLimit', { count: MAX_PICTURES }) });
       return;
@@ -1085,6 +1127,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       text: numberedWords(live.map((c) => c.text)),
       target,
       appSlug: app?.slug ?? null,
+      appName: app?.name ?? null,
       shots,
       images: d.images.map((i) => i.blob),
       title: titleToSend(d),
@@ -1112,7 +1155,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         to: name,
         number: number || null,
         href: number && slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${number}` : null,
-        pictures: (post.shots?.length || 0) + (post.images?.length || 0),
+        // #6121: what the request actually carries.
+        pictures: Math.max(0, (post.shots?.length || 0) + (post.images?.length || 0) - outcome.droppedPictures),
         comments: live.length,
         kudos: !!outcome.bounty?.placed,
       }]);
@@ -1122,13 +1166,18 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       barRef.current?.focus({ preventScroll: true });
       // Whole sentences, one after another: where it went, then what came
       // of the kudos. What joins two of them is a message too.
-      const postedLine = many
+      const lost = outcome.droppedPictures;
+      const postedLine = lost
         ? (outcome.botWillBuild
-          ? t('devchat:commentPin.toast.postedManyBuilding', { count: live.length, place: name })
-          : t('devchat:commentPin.toast.postedMany', { count: live.length, place: name }))
-        : (outcome.botWillBuild
-          ? t('devchat:commentPin.toast.postedBuilding', { place: name })
-          : t('devchat:commentPin.toast.posted', { place: name }));
+          ? t('devchat:commentPin.toast.postedPicturesLostBuilding', { count: lost, place: name })
+          : t('devchat:commentPin.toast.postedPicturesLost', { count: lost, place: name }))
+        : many
+          ? (outcome.botWillBuild
+            ? t('devchat:commentPin.toast.postedManyBuilding', { count: live.length, place: name })
+            : t('devchat:commentPin.toast.postedMany', { count: live.length, place: name }))
+          : (outcome.botWillBuild
+            ? t('devchat:commentPin.toast.postedBuilding', { place: name })
+            : t('devchat:commentPin.toast.posted', { place: name }));
       let kudosLine = '';
       // #5249: parked, no kudos sentence, whatever the answer held.
       if (outcome.bounty && !KUDOS_PARKED) {
@@ -2645,7 +2694,15 @@ export function openCommentMode(opts: OpenOptions = {}): void {
   host.id = HOST_ID;
   document.body.appendChild(host);
   openHost = host;
-  const session: Session = { host, app: appTarget(), carry: opts.carry ?? null };
+  const session: Session = {
+    host,
+    // A form that handed over an app keeps it, even with no app tab open
+    // behind the box (#6485): the destination row already showed that app.
+    app: opts.carry?.target === 'app' && opts.carry.appSlug
+      ? { slug: opts.carry.appSlug, name: opts.carry.appName || opts.carry.appSlug }
+      : appTarget(),
+    carry: opts.carry ?? null,
+  };
   const close = () => { if (openHost === host) closeCommentMode(); };
   mountLegacyPortal(host, createElement(CommentMode, { session, onClose: close }));
 }

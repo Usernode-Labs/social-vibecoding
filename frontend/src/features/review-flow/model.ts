@@ -92,6 +92,12 @@ export type ReviewItem = {
   approve: boolean;
   advisory: boolean;
   uncounted: boolean;
+  /**
+   * #6439: on a group decision that is a vote to close a request, the
+   * request's number: the page its vote is read and decided on. Null for
+   * every other item.
+   */
+  request: number | null;
 };
 
 /**
@@ -222,6 +228,17 @@ function pairUrl(value: string | null | undefined, isProtected: boolean): string
 }
 
 /**
+ * #6439: the request a group decision would close, when it is a vote to
+ * close one (routes/workshop-overview.js `decisionFacts`). The request's
+ * page is where that vote is read and decided; null for every other item.
+ */
+export function closeRequestOf(item: NeedsFeedItem): number | null {
+  const decision = item.decision as { kind?: string; issueNumber?: number } | undefined;
+  const n = decision && decision.kind === 'close_issue' ? Number(decision.issueNumber) : 0;
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
  * The feed's items as the flow draws them. `shape` is
  * `AppView._workshopVisuals` (passed in so this stays testable).
  */
@@ -230,8 +247,12 @@ export function toReviewItems(
   shape: (visuals: unknown, shots: unknown) => Visuals,
 ): ReviewItem[] {
   // #6019: a ballot and the bot's question are decided on their request's
-  // page; this experimental flow draws the changes and decisions it knows.
-  return items.filter((item) => item.kind === 'proposal' || item.kind === 'governance').map((item) => {
+  // page; this flow draws the changes and decisions it knows. #6389: a
+  // change waiting on its author's fix has nothing to vote on, so it is
+  // left out of this flow too.
+  return items
+    .filter((item) => !(item.waitingOn && item.waitingOn.length))
+    .filter((item) => item.kind === 'proposal' || item.kind === 'governance').map((item) => {
     const change = item.kind !== 'governance';
     const v = change && (item.shots || item.visuals) ? shape(item.visuals || null, item.shots || null) : null;
     const screens = pickScreens(Array.isArray(v?.screens) ? v!.screens! : []);
@@ -299,8 +320,59 @@ export function toReviewItems(
       approve: !!item.approve,
       advisory: !!item.advisory,
       uncounted: !!item.uncounted,
+      request: closeRequestOf(item),
     };
   });
+}
+
+/**
+ * The feed's items the run cannot draw: a group decision, competing changes
+ * for one request, and a question Homeroom bot asked. Each is decided on its
+ * own page, so Needs you lists them with a way there instead of skipping them
+ * (#6344). `t` is the caller's translator, so this stays pure.
+ */
+export type PageKind = 'governance' | 'ballot' | 'question';
+
+export type PageItem = {
+  key: string;
+  kind: PageKind;
+  id: number;
+  /** The item's own title, or the fallback sentence the feed already uses. */
+  title: string;
+  app: NeedsFeedItem['app'];
+  href: string;
+};
+
+export function pageItems(
+  items: NeedsFeedItem[],
+  t: (id: string, values?: Record<string, string | number>) => string,
+): PageItem[] {
+  const out: PageItem[] = [];
+  for (const item of items) {
+    const kind = item.kind;
+    if (kind !== 'governance' && kind !== 'ballot' && kind !== 'question') continue;
+    const slug = item.app?.slug;
+    // An item with no project has no page to open.
+    if (!slug) continue;
+    const app = encodeURIComponent(slug);
+    const ballot = kind === 'ballot' ? item.ballot : null;
+    const number = ballot ? (ballot.number ?? item.number) : item.number;
+    const own = kind === 'ballot' ? ballot?.title : item.title;
+    const title = cleanTitle(own || '')
+      || (kind === 'governance' ? t('communities:reel.fallbackTitle.decision')
+        : kind === 'ballot' ? t('communities:reel.ballot.fallbackTitle', { number: number ?? '' })
+        : t('communities:reel.fallbackTitle.question'));
+    // A group decision has its own page; competing changes and the bot's
+    // question are decided on their request's. With no request, the Workshop.
+    // #6439: a vote to close a request opens the request's page, where the
+    // vote already draws; every other decision keeps its own page.
+    const closing = kind === 'governance' ? closeRequestOf(item) : null;
+    const href = kind === 'governance'
+      ? (closing ? `#app/${app}/dev/issues/${closing}` : `#app/${app}/dev/governance/${Number(item.id)}`)
+      : number ? `#app/${app}/dev/issues/${Number(number)}` : `#app/${app}/workshop`;
+    out.push({ key: `${kind}:${item.id}`, kind, id: item.id, title, app: item.app, href });
+  }
+  return out;
 }
 
 /** A region's box on one side, or a mark line's box (zero height). */

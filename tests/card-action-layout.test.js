@@ -618,28 +618,15 @@ test('merged card: revert status reads on the META LINE, not as an action', () =
   assert.ok(!menuHas(AppView, html, /^Undo$/), 'no Undo once a revert exists');
 });
 
-// ── voteButtonsHtml: group-chat collapsed-vote path unchanged ──────────────
+// ── The chat's inline vote row is gone (#6236) ────────────────────────────
 
-test('voteButtonsHtml: collapseVoted returns the read-only "You voted X" box', () => {
-  const AppView = makeAppView(ME);
-  const yes = AppView.voteButtonsHtml(baseProposal({ my_vote: 'yes' }), { collapseVoted: true });
-  assert.match(yes, /gc-vote-voted-box gc-vote-voted-box-yes/);
-  assert.match(yes, />You voted Yes</);
-  // A non-promoted PR with no vote collapses to nothing.
-  const none = AppView.voteButtonsHtml(baseProposal({ status: 'merged' }), { collapseVoted: true });
-  assert.equal(none, '');
-});
-
-test('voteButtonsHtml: full set concatenates Preview/Yes/No/Admin (group-chat row)', () => {
+test('voteButtonsHtml is retired with the chat\'s inline vote row; the card keeps its own builder', () => {
   const AppView = makeAppView(ME, { admin: true });
-  // voteButtonsHtml is NOT the card's builder — it is the group chat's
-  // inline activity row, the work drawer and the home strip, all still
-  // innerHTML surfaces. It keeps its onclick attributes.
-  const html = AppView.voteButtonsHtml(baseProposal({ staging_url: 'https://stg' }));
-  assert.match(html, /swapToStagingForSession/, 'Preview');
-  assert.match(html, /castVote\(7, 'yes'\)/, 'Yes');
-  assert.match(html, /castVote\(7, 'no'\)/, 'No');
-  assert.match(html, /castAdminMerge\(7\)/, 'Admin merge');
+  assert.equal(typeof AppView.voteButtonsHtml, 'undefined', 'no Preview/Yes/No/Admin-merge concatenation left');
+  assert.equal(typeof AppView._previewAffordanceHtml, 'undefined');
+  assert.equal(typeof AppView._uncountedVoteNoteHtml, 'undefined');
+  // The board's Yes/No pair has its own builder, which never went through it.
+  assert.equal(typeof AppView._cardVoteButtonSpecs, 'function');
 });
 
 test('native vote controls and request carry the approval epoch', async () => {
@@ -648,17 +635,20 @@ test('native vote controls and request carry the approval epoch', async () => {
   // to date with main, and a guard that compared commits rejected the next
   // voter's click on every one of those merges — for code the platform had
   // just certified was unchanged.
+  // #6236: the card's Yes/No pair is the one native vote control left (the
+  // chat's inline row, whose voteButtonsHtml carried the same epoch, is
+  // retired); its act carries the epoch as the third argument.
   const AppView = makeAppView(ME);
-  const html = AppView.voteButtonsHtml(baseProposal({ approval_epoch: 3 }));
-  assert.match(html, /castVote\(7, 'yes', 3\)/);
-  assert.match(html, /castVote\(7, 'no', 3\)/);
+  // Through JSON: the specs come from the vm context, whose Array is not this one's.
+  const acts = (pr) => JSON.parse(JSON.stringify(AppView._cardVoteButtonSpecs(pr).map((s) => s.act)));
+  assert.deepEqual(acts(baseProposal({ approval_epoch: 3 })).map((a) => a.args), [[7, 'yes', 3], [7, 'no', 3]]);
+  assert.ok(acts(baseProposal({ approval_epoch: 3 })).every((a) => a.fn === 'castVote'));
 
   // Imported proposals carry an epoch too: an imported head moving is always
   // an author push, so the epoch is exactly the right thing to compare.
-  const importedHtml = AppView.voteButtonsHtml(baseProposal({
+  assert.deepEqual(acts(baseProposal({
     source: 'imported', approval_epoch: 5, imported_pr_head_sha: 'b'.repeat(40),
-  }));
-  assert.match(importedHtml, /castVote\(7, 'yes', 5\)/);
+  }))[0].args, [7, 'yes', 5]);
 
   let request = null;
   AppView.__sandbox.fetch = async (url, options) => {
@@ -767,7 +757,8 @@ test('B8: where Homeroom bot builds, asking it is the card\'s act, and building 
   // While the bot is on it there is nothing to start: the asker can follow
   // it, everybody else reads who asked; and no Build it now.
   const mineOn = AppView._issueCardModel(baseIssue({ bot: { what: 'building', since: null, askedBy: 'maya', mine: true } }));
-  assert.ok(hasAction(mineOn, 'openBotChatFromRequest'), 'See progress');
+  // #6401: the label names the card it lands on — the bot's progress card.
+  assert.ok(hasAction(mineOn, 'openBotChatFromRequest', 5, 'progress'), 'See progress, at the progress card');
   assert.match(cardHtml(mineOn), />See progress</);
   const theirs = AppView._issueCardModel(baseIssue({ bot: { what: 'queued', since: null, askedBy: 'maya', mine: false } }));
   const theirsHtml = cardHtml(theirs);

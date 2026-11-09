@@ -39,7 +39,10 @@ spec:
   # Kubernetes' Deployment controller supplies the two rollout colors as
   # old/new ReplicaSets. The new color must stay ready before it counts as
   # available, while maxUnavailable=0 keeps the old color serving until then.
-  minReadySeconds: 5
+  # Ten seconds, not five: on 6 Nov 2026 a new web Pod failed its own liveness
+  # check one second before it was declared Ready, and the release then sent
+  # every tab to that cold process (issue #6403).
+  minReadySeconds: 10
   progressDeadlineSeconds: 600
   strategy:
     type: RollingUpdate
@@ -239,8 +242,9 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: GIT_SHA, value: {{ .Values.release.sourceRevision | quote }}}
             - {name: USERNODE_DOMAIN, value: {{ .Values.config.domain | quote }}}
             - {name: USERNODE_APPS_DOMAIN, value: {{ default .Values.config.domain .Values.config.appsDomain | quote }}}
-            - {name: APP_GATE, value: {{ .Values.config.appGate | default "off" | quote }}}
+            - {name: APP_GATE, value: {{ .Values.config.appGate | default "on" | quote }}}
             - {name: APP_HOST_SIGNIN, value: {{ .Values.config.appHostSignin | default "on" | quote }}}
+            - {name: APP_OFFLINE_CACHE, value: {{ .Values.config.appOfflineCache | default "on" | quote }}}
             - {name: CLI_CANONICAL_ORIGIN, value: {{ printf "https://%s" .Values.config.domain | quote }}}
             - {name: WAITLIST_OAUTH_ORIGIN, value: {{ .Values.config.waitlistOauthOrigin | quote }}}
             - {name: PLATFORM_INTERNAL_URL, value: {{ .Values.config.internalUrl | quote }}}
@@ -278,6 +282,17 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: CAPTURE_CPUS, value: {{ .Values.config.captureCpus | quote }}}
             - {name: CHECKS_MAX_CONCURRENT_RUNS, value: {{ .Values.config.checksMaxConcurrentRuns | int64 | quote }}}
             - {name: CHECK_NODE_POOL, value: {{ .Values.config.checkNodePool | quote }}}
+            - {name: CHECK_NODE_POOL_REQUIRED, value: {{ .Values.config.checkNodePoolRequired | quote }}}
+            {{- if .Values.config.checkNodePoolRequired }}
+            # Speculative early suites do not own a shared checks-queue slot.
+            # Required-pool mode runs their suite in the admitted checks run.
+            - {name: EARLY_UNIT_SUITE, value: "0"}
+            {{- end }}
+            - {name: CHECK_POOL_METRICS_URL, value: {{ .Values.config.checkPoolMetricsUrl | quote }}}
+            - {name: KUBERNETES_APP_RESOURCE_PROFILES, value: {{ .Values.config.appResourceProfiles | toJson | quote }}}
+            - {name: PREVIEW_SLEEP_AFTER_MS, value: {{ .Values.config.previewSleepAfterMs | int64 | toString | quote }}}
+            - {name: APP_SLEEP_APP_IDS, value: {{ join "," .Values.config.appSleepAppIds | quote }}}
+            - {name: APP_SLEEP_AFTER_MS, value: {{ .Values.config.appSleepAfterMs | int64 | toString | quote }}}
             {{- if and (eq .processRole "conductor") .Values.platform.conductor.dbPoolMax }}
             - {name: DB_POOL_MAX, value: {{ .Values.platform.conductor.dbPoolMax | int64 | quote }}}
             {{- else }}
@@ -324,10 +339,11 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
-            # One answer once startup has passed: the startup probe already
-            # saw it serve, and minReadySeconds holds it ready before the old
-            # color goes.
-            successThreshold: 1
+            # Two answers in a row before a Pod counts as ready; the conductor
+            # keeps one. On 6 Nov 2026 a web Pod failed liveness one second
+            # before a single answer made it the only server, so one quick
+            # answer is not proof it can serve the release's traffic (#6403).
+            successThreshold: {{ ternary 1 2 (eq .processRole "conductor") }}
           livenessProbe:
             httpGet: {path: /health, port: http}
             periodSeconds: 15

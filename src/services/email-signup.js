@@ -63,7 +63,10 @@ async function cleanupExpiredState(pool) {
 // still unused, still unexpired, so the mail already in their inbox works.
 const OTP_REUSE_WINDOW_SECONDS = 60;
 
-async function requestCode(pool, config, rawEmail) {
+// `locale` is the language of the request, for an address with no account or
+// one with no language of its own (the shell's own order: the saved preference,
+// then the device).
+async function requestCode(pool, config, rawEmail, { locale = null } = {}) {
   const email = normalizeEmail(rawEmail);
   if (!email) throw new EmailSignupError('invalid_email', 'Enter a valid email address.');
 
@@ -96,13 +99,16 @@ async function requestCode(pool, config, rawEmail) {
   const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
   const codeHash = await bcrypt.hash(code, 10);
   const expiresAt = new Date(Date.now() + OTP_TTL_MS);
-  await pool.query(
+  const { rows: inserted } = await pool.query(
     `INSERT INTO mobile_otp_codes
        (email, code_hash, attempts, expires_at, created_at, updated_at)
-     VALUES ($1, $2, 0, $3, NOW(), NOW())`,
+     VALUES ($1, $2, 0, $3, NOW(), NOW())
+     RETURNING (SELECT u.locale FROM users u WHERE lower(u.email) = $1 AND u.email_confirmed = TRUE LIMIT 1) AS account_locale`,
     [email, codeHash, expiresAt]
   );
-  await mail.sendOtpMail(config, email, code);
+  const language = inserted?.[0]?.account_locale || locale;
+  if (language) await mail.sendOtpMail(config, email, code, { locale: language });
+  else await mail.sendOtpMail(config, email, code);
   return email;
 }
 

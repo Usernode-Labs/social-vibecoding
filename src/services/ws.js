@@ -970,10 +970,9 @@ async function handleEventsFrame(pool, client, raw) {
     replyToEventsClient(client, { type: 'session_watch', sessionId, watching: false });
     return;
   }
-  if (client.watching && client.watching.has(sessionId)) {
-    replyToEventsClient(client, { type: 'session_watch', sessionId, watching: true });
-    return;
-  }
+  // A session this socket already watches is checked again like a new one:
+  // its answer reflects access now (after a demotion, say), not when the
+  // watch began, and a refusal ends the watch.
   if (client.wantWatch.size >= MAX_WATCHED_SESSIONS_PER_SOCKET && !client.wantWatch.has(sessionId)) {
     replyToEventsClient(client, { type: 'session_watch', sessionId, watching: false, code: 'too_many' });
     return;
@@ -990,6 +989,7 @@ async function handleEventsFrame(pool, client, raw) {
   if (client.wantWatch.get(sessionId) !== token) return;
   if (!allowed || !globalClients.has(client)) {
     client.wantWatch.delete(sessionId);
+    unwatchSession(client, sessionId);
     replyToEventsClient(client, { type: 'session_watch', sessionId, watching: false, code: 'not_found' });
     return;
   }
@@ -1450,7 +1450,7 @@ async function handleMessage(pool, client, msg) {
           [client.appId, client.user.id, relayKey]);
         if (had.length) return { ok: true, message: { id: Number(had[0].id), createdAt: had[0].created_at }, again: true };
       }
-      const metadata = (quote || attRows.length || relayKey) ? {} : null;
+      let metadata = (quote || attRows.length || relayKey) ? {} : null;
       if (relayKey) metadata.relayKey = relayKey;
       if (quote) metadata.quote = quote;
       if (attRows.length) {
@@ -1469,6 +1469,35 @@ async function handleMessage(pool, client, msg) {
       // socket has no such field, so its rows stay NULL — a person typing.
       const postedVia = client.postedVia === 'agent' ? 'agent' : null;
 
+      // #6268: a person's agent writing for them is the person on a request,
+      // a change and a reply thread, so the bot answers it as it would their
+      // own message. Where it still will not (the loop guard, the voice off,
+      // a channel), the message says so under it and the connector's
+      // post_message result repeats it. Decided here, when it is posted, and
+      // stored on the row; never a reason to fail the post.
+      if (postedVia === 'agent') {
+        try {
+          const botSvc = require('./homeroom-bot');
+          const settings = await botSvc.readSettings(pool);
+          const botAccount = await require('./homeroom-bot-dm').botAccount(pool);
+          const skip = await require('./homeroom-bot-voice').connectorSkip(pool, {
+            appId: client.appId,
+            appSlug: client.appSlug,
+            thread: thread || null,
+            content,
+            metadata: metadata || {},
+            settings,
+            botId: botAccount ? botAccount.id : null,
+          });
+          if (skip && skip.why) {
+            if (!metadata) metadata = {};
+            metadata.homeroomBotSkip = { why: String(skip.why) };
+          }
+        } catch (err) {
+          log.warn('ws', 'connector skip check failed', { appId: client.appId, err: err.message });
+        }
+      }
+
       const insertSql = `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, posted_via)
          VALUES ($1, $2, $3, 'message', $4, $5, $6, $7)
          RETURNING id, created_at`;
@@ -1478,8 +1507,12 @@ async function handleMessage(pool, client, msg) {
       // 17 Oct 2026: a person's message in any place but a governance vote's
       // is heard by the Homeroom bot's voice there (src/workflow/bot-voice/)
       // in the statement that inserts it: an answer it owes is never only in
-      // this process's memory. Never a connector's post.
-      const heard = postedVia !== 'agent' && (!thread || thread.type !== 'governance');
+      // this process's memory. A connector's post is the person's words on a
+      // request, a change and a reply thread (#6268); a channel and a
+      // governance vote hear nothing from it.
+      const connectorHeard = !!thread
+        && (thread.type === 'issue' || thread.type === 'session' || thread.type === 'message');
+      const heard = (!thread || thread.type !== 'governance') && (postedVia !== 'agent' || connectorHeard);
       const insert = (db) => (heard
         ? require('../workflow/platform.ts').insertHeard(db, insertSql, insertParams, { appId: client.appId, thread: thread || null })
         : db.query(insertSql, insertParams).then((r) => r.rows));
@@ -1556,9 +1589,10 @@ async function handleMessage(pool, client, msg) {
       // A person answering on an issue's thread is exactly what the Homeroom
       // bot waits for; a system row (a claim, a bounty) is not a message. Its
       // request's instance heard it in the statement above (insertHeard).
-      // A connector's post (a person's agent writing for them) is heard
-      // after it, as what they said; one on a request the bot has no
-      // instance for yet only asks for its project's refresh.
+      // A connector's post (a person's agent writing for them) is heard in
+      // that statement too, on a request, a change and a reply thread
+      // (#6268); one on a request the bot has no instance for yet only asks
+      // for its project's refresh.
       if (thread && thread.type === 'issue' && !heard) noteIssueActivityForBot(client.appId, thread.ref, 'thread');
       else if (thread && thread.type === 'issue' && !rows[0]?.requestHeard) noteIssueActivityForBot(client.appId, thread.ref, 'posted');
       // #4974: that reply also settles the bot's asks in the requester's DM —
@@ -1571,8 +1605,27 @@ async function handleMessage(pool, client, msg) {
           chatMessageId: rows[0].id, content, createdAt: rows[0].created_at,
         }).catch((err) => log.warn('ws', 'Homeroom bot request-reply note failed', { err: err.message }));
       }
+      // #6228: a person's reply on a request is what the bot's thread line
+      // says next. Published after the insert committed, so the reply is
+      // visible to the read. Never throws, never awaited.
+      if (thread && thread.type === 'issue' && postedVia !== 'agent' && !client.viaBotDm
+        && client.user?.is_synthetic !== true) {
+        const replyStatus = require('./homeroom-bot-reply-status');
+        void replyStatus.wouldAnswer(pool, {
+          appId: client.appId, issueNumber: thread.ref, messageId: rows[0].id,
+        }).then((owed) => replyStatus.publish(pool, {
+          appId: client.appId, issueNumber: thread.ref, voiceOwed: owed,
+        })).catch((err) => log.warn('ws', 'Homeroom bot reply status failed', { err: err.message }));
+      }
       // #3264: a reply in the discussion of the bot's own proposal.
       if (thread && thread.type === 'session') noteProposalActivityForBot(pool, client.appId, thread.ref);
+      // 3 Nov 2026: any reply in a request's or a change's discussion retires
+      // the bot's older suggested replies there, as one in its chat does.
+      if (thread && (thread.type === 'issue' || thread.type === 'session')) {
+        void require('./homeroom-bot-voice').retireThreadSuggestions(pool, {
+          appId: client.appId, thread, keepMessageId: rows[0].id,
+        });
+      }
       // #2387: a reply thread grew — every row showing its root redraws its
       // "N replies" line from this frame.
       if (thread && thread.type === appChat.MESSAGE_THREAD) {

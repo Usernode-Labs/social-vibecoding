@@ -127,6 +127,17 @@ function stagingMockNotifications() {
       sessionId: null, sessionTitle: null,
       prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
+    // #5404: the Monday count of the changes you voted on that were decided.
+    // It names no project (services/voted-digest.js), so its app fields are
+    // nulled; a preview has no Monday to wait for without this row.
+    {
+      ...base,
+      id: 990230, kind: 'voted_digest',
+      createdAt: new Date(now - 3.2 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      detail: '3',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     // #5580: one request's story, from Homeroom bot: it says the change is
     // live here, and (990215, further down) that it was ready to try before
     // that. Both are about the same mock request (storyIssueNumber 990301),
@@ -160,6 +171,18 @@ function stagingMockNotifications() {
       sessionTitle: '[Mock] Session titled but not yet proposed',
       prTitle: null, branchName: 'dev/mockuser-1700000000000',
       prNumber: null, headlessIssueNumber: null,
+    },
+    // #5929: the digest that waits on the reader, with no app as a real one
+    // of several changes has, so a preview shows the amber chip and the
+    // counted subject. Unread, and newest of the "Across Homeroom" group, so
+    // it is that group's top card.
+    {
+      ...base,
+      id: 990220, kind: 'vote_digest',
+      createdAt: new Date(now - 5 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      detail: '37', digestWaiting: 37,
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
     // #3181: a session whose turn stopped before finishing. A real one needs
     // a turn to error, time out or lose its worker, which a preview cannot
@@ -209,6 +232,36 @@ function stagingMockNotifications() {
       messageContent: '[Mock] The pause button is ready to try.',
       detail: `hrbot2:${JSON.stringify({ m: 'ready', a: 'Staging demo app', t: '[Mock] A pause button for the game', i: 990301 })}`,
       storyIssueNumber: 990301,
+      sessionId: null, sessionTitle: null,
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
+    // #5929: the two other chips, each in a mock project of its own so it is
+    // a card on screen rather than folded under the demo project's closed
+    // stack. Votes met and the merge stuck: the red chip and its reason.
+    {
+      ...base,
+      id: 990221, kind: 'stale_pr', detail: 'blocked',
+      createdAt: new Date(now - 30 * 60 * 1000).toISOString(),
+      appId: 990004, appSlug: 'staging-demo-merges', appName: 'Staging demo merges',
+      sessionId: 990112,
+      sessionTitle: '[Mock] Approved proposal that cannot merge',
+      prTitle: '[Mock] Approved proposal that cannot merge',
+      prNumber: 9904, headlessIssueNumber: null,
+    },
+    // On hold because the week's building time is used up: the grey chip and
+    // its reason.
+    {
+      ...base,
+      id: 990222, kind: 'build_stopped',
+      createdAt: new Date(now - 33 * 60 * 1000).toISOString(),
+      appId: 990005, appSlug: 'staging-demo-builds', appName: 'Staging demo builds',
+      sourceUsername: 'homeroom_bot',
+      conversationId: 990402,
+      conversationKind: 'direct',
+      conversationTitle: 'Homeroom bot',
+      conversationMessageId: 990505,
+      messageContent: '[Mock] This waits until Monday.',
+      detail: `hrbot2:${JSON.stringify({ m: 'on_hold', s: 'allowance', a: 'Staging demo builds', t: '[Mock] A calendar view', i: 990303 })}`,
       sessionId: null, sessionTitle: null,
       prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
@@ -1079,8 +1132,27 @@ function notificationsRoutes(config) {
     const {
       id, ids, all, chat_message_id: chatMessageId, app_id: appId,
       conversation_id: conversationId, session_id: sessionId,
-      kinds, exclude_kinds: excludeKinds,
+      kinds, exclude_kinds: excludeKinds, older_than_days: olderThanDays,
+      keep_plain_messages: keepPlainMessages,
     } = req.body || {};
+    // #5929 (item 13): `{ all: true, older_than_days: N }` is the Unread
+    // tab's "Mark everything older than a week as read": the mark-all,
+    // kept to the rows created more than N whole days ago (1..365). It is
+    // refused rather than dropped when it is not that: a window that was
+    // quietly ignored would turn a clear of the old rows into a clear of
+    // every row, which is the one thing the control exists not to do. It
+    // goes with `all` alone: the kind scopes are another caller's, and a
+    // single id or any scoped branch above has nothing to window.
+    let olderThan = null;
+    if (olderThanDays != null) {
+      const windowOk = Number.isInteger(olderThanDays) && olderThanDays >= 1 && olderThanDays <= 365;
+      if (!windowOk || !all || id != null || ids != null || chatMessageId != null || appId != null
+        || conversationId != null || sessionId != null || kinds != null || excludeKinds != null
+        || keepPlainMessages != null) {
+        return res.status(400).json({ error: 'Invalid older_than_days' });
+      }
+      olderThan = olderThanDays;
+    }
     // `{ ids }`: one clear that is several notifications, read in one
     // statement (markRead). Positive int4 ids only, at most a page's worth.
     let idList = null;
@@ -1197,7 +1269,11 @@ function notificationsRoutes(config) {
       // making "Mark all read" look like it did nothing. Fan out exactly
       // like the branches above whenever something actually changed.
       const cleared = await notifications.markRead(pool, req.user.id, {
-        id, ids: idList, all: !!all, kinds: kindList, excludeKinds: excludeList,
+        id, ids: idList, all: !!all, kinds: kindList, excludeKinds: excludeList, olderThanDays: olderThan,
+        // #6498: opening the bell clears exactly what it counts, leaving the
+        // plain messages the Messages tab owns. `all` without this flag is
+        // still the "Mark all read" clear-all.
+        keepPlainMessages: keepPlainMessages === true,
       });
       const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
       if (cleared > 0) {

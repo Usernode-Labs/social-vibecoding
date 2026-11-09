@@ -9,7 +9,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { firstPerson } = require('../src/services/homeroom-bot-words');
+const { firstPerson, plainWords } = require('../src/services/homeroom-bot-words');
 const live = require('../src/services/homeroom-bot-live');
 const followup = require('../src/services/homeroom-bot-followup');
 const holds = require('../src/services/homeroom-bot-holds');
@@ -27,6 +27,11 @@ function notes() {
     live.questionText({ question: 'a', plan: { questions: [{ question: 'One?' }, { question: 'Two?' }] } }),
     live.personText({ reason: 'That changes sign-in.' }),
     live.personText({ reason: 'Sign-in is a platform setting', platform: true, project: 'Plant Pal' }),
+    // #6395: a go-ahead cannot settle it, so the copy offers none.
+    live.personText({ reason: 'Moving credentials outside this app is operator work.', goAheadDecides: false, firstStep: 'Remove the dead line' }),
+    live.personHomeroomText({ reason: 'Moving credentials outside this app is operator work.', goAheadDecides: false, firstStep: 'Remove the dead line' }),
+    live.goAheadCannotText({ reason: 'Moving credentials outside this app is operator work.', firstStep: 'Remove the dead line' }),
+    live.goAheadCannotText({ reason: 'The whole thing is too big for one build.' }),
     live.emptyText({ reason: 'Nothing named.' }),
     live.proposalText({ link: 'https://x/1', prNumber: 12 }),
     live.liveText({ title: 'Dark mode' }),
@@ -39,8 +44,7 @@ function notes() {
     live.heldText({ cap: 'proposals_per_app', limit: 5 }),
     live.heldText({ cap: 'proposals_per_app', limit: 5, project: 'Plant Pal' }),
     live.heldText({ cap: 'proposals_total', limit: 100 }),
-    live.heldText({ cap: 'question_tripwire', verdict: 'question', limit: 10 }),
-    live.heldText({ cap: 'question_tripwire', verdict: 'plan', limit: 10 }),
+    live.heldText({ cap: 'builds_per_app', limit: 5, project: 'Plant Pal' }),
     live.blockedText('That needs a payment provider.'),
     live.specCommentText(SPEC),
     live.specCommentText(SPEC, { approved: true }),
@@ -65,6 +69,14 @@ function notes() {
     followup.checksRevisedText({ failing: [{ name: 'a' }, { name: 'b' }], broken: [{ claim: 'Save works' }] }),
     followup.checksRevisedText({ broken: [{ claim: 'Save works' }] }),
     followup.checksRetryText(),
+    // #6234: the fix's start line (checksFixingText), in each of its shapes.
+    followup.checksFixingText({ failing: [{ name: 'Saving a list keeps it' }] }),
+    // #6409: a genuinely new attempt on a failing version.
+    followup.checksFixingAgainText(),
+    followup.checksFixingText({ failing: [{ name: 'a' }, { name: 'b' }] }),
+    followup.checksFixingText({ failing: [{ name: 'Saving a list keeps it' }], broken: [{ claim: 'Save works' }] }),
+    followup.checksFixingText({ broken: [{ claim: 'Save works' }] }),
+    followup.checksFixingText({ skipped: [{ claim: 'The list shows ten items' }] }),
     followup.checksPersonText({ why: 'That needs a decision', failingCount: 2 }),
     followup.checksPersonText({ why: 'x', broken: [{ claim: 'Save works' }] }),
     followup.checksPersonText({ why: 'it has already updated this change 3 times, as many as it may on its own', failingCount: 1 }),
@@ -103,6 +115,19 @@ test('every fixed note uses Homeroom\'s words, and the bot never speaks of itsel
   }
 });
 
+// #6234: the fix's start line, said by the bot.
+test('#6234: the fix\'s start line and the hand-off\'s ending are said in the first person', () => {
+  assert.equal(firstPerson(followup.checksFixingText({ failing: [{ name: 'Saving a list keeps it' }] })),
+    'I\'m fixing the failing check "Saving a list keeps it". I\'ll say here when it\'s done.');
+  assert.equal(firstPerson(followup.checksFixingText({ failing: [{ name: 'a' }, { name: 'b' }] })),
+    'I\'m fixing the 2 failing checks on this change. I\'ll say here when it\'s done.');
+  assert.equal(firstPerson(followup.checksFixingText({ skipped: [{}] })),
+    'I\'m adding the sample data this change\'s before and after screens need. I\'ll say here when it\'s done.');
+  assert.equal(firstPerson(followup.checksPersonText({ why: 'That needs a decision', failingCount: 2 })),
+    'I can\'t get this change past its checks on my own: 2 checks are still failing. That needs a decision. '
+    + 'The person who asked for it, or any member of this project, can take it from here.');
+});
+
 test('the words people and the model wrote pass through unchanged', () => {
   assert.equal(firstPerson('It changes sign-in, so a person decides.'), 'It changes sign-in, so a person decides.');
   assert.equal(firstPerson('The Homeroom bot docs say so.'), 'The Homeroom bot docs say so.');
@@ -113,6 +138,69 @@ test('the words people and the model wrote pass through unchanged', () => {
     // "Issue" is GitHub's word: in Homeroom the request is where you reply.
     'I have a question before I can build this:\n\nWhich list should it use?\n\nReply here and I\'ll look again.',
   );
+});
+
+// #6311: a note's reason is said in plain words, and the platform note says
+// what the copy does. None of the bot's own instructions reach a member.
+test('#6311: a note built from internal words comes out in plain words, first person', () => {
+  const reason = 'Per the platform conventions, in this checkout the live head commit is fine, '
+    + 'this build agent cannot change it, and Homeroom bot confirmed a person must authorize/route the check.';
+  const own = live.personHomeroomText({ reason, platform: true, project: 'Plant Pal' });
+  for (const word of ['checkout', 'head commit', 'build agent', 'platform conventions', 'Homeroom bot', 'authorize/route']) {
+    assert.doesNotMatch(own, new RegExp(word.replace('/', '\\/'), 'i'), `still internal: ${own}`);
+  }
+  assert.match(own, /I confirmed a person needs to decide the check/, 'the bot speaks as I');
+  assert.match(own, /I can put it on Homeroom's own board too and keep this request open here\.$/);
+  // The question and the empty note go through the same rewrite.
+  assert.doesNotMatch(firstPerson(live.questionText({ question: 'In this checkout, which list?' })), /checkout/i);
+  assert.doesNotMatch(firstPerson(live.emptyText({ reason: 'The head commit names nothing.' })), /head commit/i);
+  assert.equal(plainWords('in this checkout'), 'in the project\'s code');
+  assert.equal(plainWords(''), '');
+});
+
+test('#6395, #6430: a go-ahead that cannot settle it says what can be built, and names no Go ahead', () => {
+  const own = live.personHomeroomText({
+    reason: 'It moves credentials outside this app.', goAheadDecides: false,
+    firstStep: 'Remove the dead bot token line',
+  });
+  assert.equal(own, 'I don\'t build changes like this myself, even with a go-ahead: '
+    + 'It moves credentials outside this app. A person has to build it, for example with a coding agent, '
+    + 'and the group votes on it as usual. I can build this part now: Remove the dead bot token line.');
+  assert.doesNotMatch(own, /Go ahead/i);
+  assert.doesNotMatch(own, /@/, 'it names nobody who can say Go ahead');
+  assert.doesNotMatch(own, /\bapprove/i, 'it never tells the reader that somebody has to approve');
+  assert.doesNotMatch(own, /\byou(r)?\b/i, 'the note everyone reads does not address only the reader');
+  assert.match(own, /even with a go-ahead/);
+  assert.match(own, /A person has to build it, for example with a coding agent/);
+
+  const cannot = live.goAheadCannotText({ reason: 'It moves credentials outside this app.', firstStep: 'Remove the dead line' });
+  assert.equal(cannot, 'I don\'t build changes like this myself, even with a go-ahead: '
+    + 'It moves credentials outside this app. A person has to build it, for example you with a coding agent, '
+    + 'and the group votes on it as usual. I can build this part now: Remove the dead line.');
+  assert.match(cannot, /even with a go-ahead/);
+  assert.match(cannot, /A person has to build it, for example you with a coding agent/);
+  assert.doesNotMatch(cannot, /\bapprove/i);
+  assert.equal(live.goAheadCannotText({ reason: 'The whole thing is too big for one build.' }),
+    'I don\'t build changes like this myself, even with a go-ahead: The whole thing is too big for one build. '
+    + 'A person has to build it, for example you with a coding agent, and the group votes on it as usual. '
+    + 'Reply here if a smaller part would help.');
+  assert.doesNotMatch(live.goAheadCannotText({ reason: 'x', firstStep: 'Do the small part' }), /—/);
+  // #6430: the reply to the person who said go ahead talks to them, never
+  // about them in the third person.
+  assert.equal(live.goAheadCannotText({ reason: 'It was evan\'s go-ahead, and Evan said so.', reader: 'evan' }),
+    'I don\'t build changes like this myself, even with a go-ahead: '
+    + 'It was your go-ahead, and you said so. A person has to build it, for example you with a coding agent, '
+    + 'and the group votes on it as usual. Reply here if a smaller part would help.');
+  assert.equal(live.canBuildPart('Remove the dead line'), 'I can build this part now: Remove the dead line.');
+});
+
+test('#6430: saysGoAhead reads a plain go-ahead the same way in the thread and the chat', () => {
+  assert.equal(live.saysGoAhead('go ahead, with the full version'), true);
+  assert.equal(live.saysGoAhead('  Go ahead!  '), true);
+  assert.equal(live.saysGoAhead(`go ahead ${'x'.repeat(60)}`), false, 'longer than a plain reply');
+  assert.equal(live.saysGoAhead('yes, go ahead'), false, 'it starts with the words');
+  assert.equal(live.saysGoAhead(''), false);
+  assert.equal(live.saysGoAhead(null), false);
 });
 
 test('a follow-up\'s answer loses its header: the bubble already says who is talking', () => {

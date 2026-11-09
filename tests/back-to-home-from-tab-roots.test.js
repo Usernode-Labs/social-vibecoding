@@ -102,15 +102,18 @@ function router() {
   App = context.App;
   let messagesOpen = false;
   let workshopOpen = false;
+  const presence = [];
   context.UsernodeReact = {
     nav: { setScreen: (screen) => tabs.push(screen), setViewer() {}, park() {} },
     backButton: { set() {} },
-    sidePanel: { appPresence() {} },
+    sidePanel: { appPresence: (inApp) => presence.push(inApp) },
     messages: {
       route() { messagesOpen = true; }, isOpen: () => messagesOpen,
       close() { messagesOpen = false; }, syncChrome() {},
     },
     workshop: { open() { workshopOpen = true; }, close() { workshopOpen = false; } },
+    // The Homeroom bot tab's page (features/ai/), reached at #homeroom-bot.
+    ai: { closeColumn() {}, openItem() {} },
   };
   context.AppView = new Proxy({ close() {} }, { get: (t, k) => (k in t ? t[k] : noop) });
   context.Home = new Proxy({}, { get: () => noop });
@@ -128,12 +131,19 @@ function router() {
     // A main-realm array, so deepEqual compares contents rather than realms.
     onScreen: () => Array.from(App.SCREEN_IDS.filter(visible)),
     workshopOpen: () => workshopOpen,
+    // What App._syncPlatformTabs last told the side panel, which is what
+    // makes it drop a request opened beside the screen being left.
+    lastPresence: () => presence.at(-1),
   };
 }
 
 for (const [label, address, screen, flag] of [
   ['Messages', '#messages', 'messages-screen', '_inMessages'],
-  ['the Workshop', '#workshop', 'workshop-screen', '_inWorkshop'],
+  // One Home (#6361): the Communities screen (#workshop) is Needs you now.
+  ['Needs you', '#needs', 'workshop-screen', '_inWorkshop'],
+  // The Homeroom bot tab (#6530): it was left out of the chain, so Back from
+  // it drew Home beside the bot's list and the request panel open next to it.
+  ['Homeroom bot', '#homeroom-bot', 'ai-screen', '_inAi'],
 ]) {
   test(`QA Q1: Back from ${label} to "/" leaves exactly Home on screen, Home lit`, () => {
     const r = router();
@@ -153,10 +163,10 @@ for (const [label, address, screen, flag] of [
   });
 }
 
-test('QA Q1: the Workshop island is told it closed', () => {
+test('QA Q1: the Needs you island is told it closed', () => {
   const r = router();
   r.App.restoreFromHash();
-  r.go('#workshop');
+  r.go('#needs');
   assert.equal(r.workshopOpen(), true);
   r.back();
   assert.equal(r.workshopOpen(), false);
@@ -172,11 +182,46 @@ test('QA Q1: #create over Messages goes home first, too', () => {
   assert.deepEqual(r.onScreen(), ['home-screen']);
 });
 
+test('#6530: Back from a request opened beside the bot tab leaves Home alone', () => {
+  // The reported screen: Home's grid, the bot's list and request #6274's
+  // panel all sharing the window.
+  const r = router();
+  r.App.restoreFromHash();
+  r.go('#homeroom-bot');
+  r.go('#homeroom-bot/request/homeroom/6274');
+  assert.deepEqual(r.onScreen(), ['ai-screen']);
+
+  r.back();
+  assert.equal(r.route(), '/#homeroom-bot');
+  assert.deepEqual(r.onScreen(), ['ai-screen'], 'still the bot tab');
+
+  r.back();
+
+  assert.equal(r.route(), '/');
+  assert.deepEqual(r.onScreen(), ['home-screen'], 'only Home');
+  assert.equal(r.App._revealedScreen, 'home-screen');
+  assert.equal(r.tabs.at(-1), 'home-screen');
+  assert.equal(r.App._inAi, false);
+  assert.equal(r.lastPresence(), false,
+    'Home has no panel beside it, so the open request is dropped');
+});
+
+test('#6530: #create over the bot tab goes home first, too', () => {
+  const r = router();
+  r.App.restoreFromHash();
+  r.go('#homeroom-bot');
+  r.go('#create');
+  assert.deepEqual(r.onScreen(), ['home-screen']);
+  assert.equal(r.App._inAi, false);
+});
+
 test('QA Q1: every screen that sets an _inX flag is sent home by both "/" branches', () => {
   // A screen added later has to be added to both lists, or Back to "/" from
   // it stacks two screens again. The flags are read from app.js itself.
   const flags = [...new Set(APP_JS.match(/App\._in[A-Z][A-Za-z]*(?= = true)/g) || [])];
-  assert.ok(flags.length >= 8, `found the flags (${flags.join(', ')})`);
+  // Eight since One Home (#6361) retired Discover's screen and the bot tab's
+  // History replaced Me › Your work's, and #6530 added the bot tab itself.
+  assert.ok(flags.length >= 7, `found the flags (${flags.join(', ')})`);
   const bare = APP_JS.slice(APP_JS.indexOf('      if (!hash) {'),
     APP_JS.indexOf('      const parts = hash.split(\'/\');'));
   const create = APP_JS.slice(APP_JS.indexOf("if (parts[0] === 'create') {"),

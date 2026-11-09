@@ -189,6 +189,22 @@ migration Job applies the new schema while it still runs. A node drain
 open until it exits, so with `drainingMax` 2 up to three Pods' pools are open
 at once.
 
+The migration Job checks tenant role names in one catalog query before it
+adopts databases or recreates missing roles. A failed inventory stops that
+check instead of treating every role as missing. Previews skip the fleet
+check. Its completion log includes `inventoryMs` and the adoption, verification
+and repair counts.
+
+Release permission setup compares the live catalog with the current policy.
+Unchanged runtime grants, workflow restrictions and read-only roles execute
+no permission DDL. Missing grants, changed defaults, newly added objects and
+unexpected read-only access trigger repair. The debug role also authenticates
+with its saved encrypted credential before reusing it; an unusable credential
+is replaced. Failed read-only policy checks leave the capability unavailable.
+No saved success marker substitutes for checking actual permissions. Runtime
+permission logs include the objects examined, statements applied and elapsed
+time.
+
 ## Shared app and preview TLS
 
 Generated apps and previews share the installation-owned TLS Secret named by
@@ -287,8 +303,11 @@ Merge, archive and the preview machine's idle give-back
 (`STAGING_IDLE_TEARDOWN_MS`) retire a preview through the preview machine.
 Anything those paths leave behind is found by the `preview-gc` clock
 (`services/staging-reap.js` `leftovers`), which lists the
-`sv-preview-<appId>-s<sessionId>` Deployments in the app namespace and joins
-them back to `chat_sessions`. Every `STAGING_STALE_SWEEP_INTERVAL_MS` (15 min)
+`sv-preview-<appId>-s<sessionId>` Deployments and managed preview Services and
+Ingresses in the app namespace and joins them back to `chat_sessions`.
+Routing left after a Deployment disappeared is included once per preview;
+only objects whose app and session labels agree with the exact preview name
+are accepted. Every `STAGING_STALE_SWEEP_INTERVAL_MS` (15 min)
 it takes each preview whose session merged, was archived or no longer exists,
 and each one its row no longer names that the machine does not hold, one
 target at a time. A preview whose `usernode.env.fp` label is out of date is
@@ -301,9 +320,24 @@ preview whose row no longer names it keeps its staging database until the
 orphan database pass (`STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS`, 6 h) finds nothing
 connected to it.
 
+A preview is not already gone merely because its Deployment is gone: the
+cleanup presence check also reads its Service and Ingress. Routing-only
+leftovers are deleted with the UID and resourceVersion from inventory, so
+a same-named replacement or an object updated by a newer build survives.
+An unreadable resource list aborts that pass; failed deletes remain retryable.
+Live linked previews, sleeping previews, checks and active work stay protected.
+If a failed workflow still holds a finished session, cleanup asks that workflow
+to retire it; the transition refuses if the session reopened meanwhile.
+
+The runtime controller needs `list` on Services in the app namespace, in
+addition to its existing Deployment and Ingress inventory permissions. Apply
+the foundation RBAC change before deploying this cleanup version. It grants
+no Service-list access to the web role and no Secret-list access in the app
+namespace. Ordinary runtime status still inventories Deployments only.
+
 ## Sleeping previews
 
-A preview nobody has used for `PREVIEW_SLEEP_AFTER_MS` (2 h by default; 0
+A preview nobody has used for `PREVIEW_SLEEP_AFTER_MS` (1 h by default; 0
 switches it off) sleeps (#6157, `src/services/preview-sleep.js`): the
 `preview-sleep` clock (every 5 minutes, a few previews a run) scales its
 Deployment to `replicas: 0`. Its image, Deployment, Service, env Secret,
@@ -1096,8 +1130,9 @@ change; the single-server `rollback.sh` is not a cluster rollback mechanism.
 Cilium's Envoy has no forward-auth hook, so on this runtime nothing
 platform-owned sat in front of app and preview hosts: a view-private app was
 gated only by its own code, and an app opened at its own address could not
-sign anyone in. `APP_GATE=on` (chart `config.appGate`) puts a small proxy in
-front of every managed app and preview Ingress: the `usernode-app-gate`
+sign anyone in. `APP_GATE=on` (chart `config.appGate`, `"on"` by default since
+2 Nov 2026) puts a small proxy in front of every managed app and preview
+Ingress: the `usernode-app-gate`
 Deployment in the app namespace (two replicas, `maxUnavailable: 0`, the
 platform's own image running `scripts/app-gate.js`). It asks the platform's
 `/__caddy/access` about each request, exactly as Caddy does on the standalone
@@ -1107,7 +1142,8 @@ prefixes keep going straight to `usernode-platform-assets`.
 The gate holds no keys and reads no database. It fails closed: if the platform
 cannot be asked for 15 seconds, the visitor gets 503.
 
-Before turning it on:
+What it needs (the infra repository's foundation chart provides both in its
+tenant network policy, `tenantNetworkPolicy.enabled`):
 
 1. The app namespace's network policy (foundation repository) must allow the
    ingress controller to reach pods labelled
@@ -1118,7 +1154,7 @@ Before turning it on:
 2. `PLATFORM_INTERNAL_URL` must be set (the chart sets it from
    `config.internalUrl`).
 
-Turning it on: set `config.appGate: "on"` and sync. The app-gate clock (a
+Turning it on (the default): `config.appGate: "on"` and sync. The app-gate clock (a
 workflow job only the newest build runs, every ten minutes) brings the gate
 up, waits for it to be ready, and only then repoints every managed Ingress's
 catch-all path at it. If the gate does not come up, no Ingress is
@@ -1142,3 +1178,13 @@ This applies at once. Then set `config.appGate: "off"` too, or the clock's
 next run, or an app deploy, routes through the gate again. `config.appHostSignin: "off"`
 (`APP_HOST_SIGNIN`) separately turns off signing people in at an app's own
 address, on both runtimes; the gate still keeps private apps members-only.
+
+**Offline apps** (`config.appOfflineCache`, `APP_OFFLINE_CACHE`, `"on"` by
+default; `src/services/offline-cache.js`). With the gate on, it makes the
+gate give production app pages and files a 30-day fresh lifetime (never
+`/api/`, never a preview, never over an app's own `no-store` or `private`),
+serves the shared `/usernode-*` files stale-while-revalidate, and tells the
+shell to open apps from the browser's cache when offline. `"off"` and a sync
+turn it off; nothing in any app changes either way.
+Check: an app page's response through the gate carries
+`Cache-Control: max-age=2592000`.

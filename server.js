@@ -1,4 +1,18 @@
-require('dotenv').config();
+// A local .env is a convenience for people running the checkout themselves.
+// Every hosted deployment (staging and production) has its environment
+// injected, and its install (`npm ci --omit=dev`, or the platform's staging
+// runner) decides which modules exist. Loading the file optionally means a
+// deployment without this package still boots on the injected environment
+// instead of dying on a missing module before the first line of the app runs.
+// Only a missing package is ignorable: any other failure is real, and it is
+// said out loud rather than leaving the app running on a half-read .env.
+try {
+  require('dotenv').config();
+} catch (err) {
+  if (!err || err.code !== 'MODULE_NOT_FOUND') {
+    console.warn('[startup] could not read the local .env:', err && err.message ? err.message : err);
+  }
+}
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
@@ -25,6 +39,7 @@ const { mobileAppLinkRoutes } = require('./src/routes/mobile-app-links');
 const { authRoutes } = require('./src/routes/auth');
 const { illustrationRoutes, illustrationImageRoutes } = require('./src/routes/app-illustrations');
 const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/challenge-illustrations');
+const { emailImageRoutes } = require('./src/routes/email-images');
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
 const { conversationRoutes } = require('./src/routes/conversations');
@@ -171,6 +186,14 @@ app.use(inflightRequests.inflightRequests());
 // the server_errors signal (src/middleware/request-counts.js,
 // src/services/server-error-counts.js). It only listens for `finish`.
 app.use(require('./src/middleware/request-counts').requestCounts());
+
+// A server error people commonly see also says itself in their language, as
+// `error_message` beside the unchanged `error`. It wraps res.json here, ahead
+// of every router, so the ones mounted before auth and the error handler all
+// pass through it; it reads req.user when res.json runs, by which time auth has
+// set it. It never waits and never changes what a handler wrote
+// (src/middleware/error-language.js).
+app.use(require('./src/middleware/error-language').errorLanguage(() => getPool(config)));
 
 // Express never trusts forwarding headers globally. Docker mode resolves one
 // configured proxy peer; Kubernetes mode lets Cilium/Envoy supply the client
@@ -359,6 +382,13 @@ app.use((req, res, next) => {
       || (req.method === 'PATCH' && /^\/api\/apps\/[^/]+\/github-issues\/[^/]+\/body$/.test(req.path))) {
     return express.json({ limit: '1mb' })(req, res, next);
   }
+  // An email template or layout may be 100 KB of HTML (mail/html-safety.js
+  // MAX_EMAIL_HTML_BYTES) and as much text, which JSON escaping makes larger;
+  // the routes refuse an oversized one with the reason. A language's
+  // correction is a PUT of the same size.
+  if ((req.method === 'POST' || req.method === 'PUT') && /^\/api\/admin\/email-(?:templates|layouts)(?:\/|$)/.test(req.path)) {
+    return express.json({ limit: '1mb' })(req, res, next);
+  }
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -400,7 +430,30 @@ app.all('/__mock/*', (_req, res) => {
 //                        when the deploy workflow has flagged a redeploy in
 //                        flight (see services/deploy-status.js + deploy.yml).
 const deployStatus = require('./src/services/deploy-status');
-app.get('/api/version', async (_req, res) => {
+// #6233: which merge the build a tab loaded contains, so the client can say
+// "Live · reload to get it" beside a change this tab is older than. Asked
+// with ?have=<40-hex build sha>; cached per sha, since a build's merge order
+// never changes.
+const haveThroughCache = new Map();
+async function haveThroughFor(have) {
+  if (!/^[0-9a-f]{40}$/.test(have)) return null;
+  if (haveThroughCache.has(have)) return haveThroughCache.get(have);
+  let value = null;
+  try {
+    const pool = getPool(config);
+    const { rows: [selfApp] } = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id LIMIT 1');
+    if (selfApp) {
+      const order = await require('./src/services/release-watch').mergeOrder(pool, Number(selfApp.id), have);
+      value = order ? { at: new Date(order.at).toISOString(), id: order.id } : null;
+    }
+  } catch { value = null; }
+  if (haveThroughCache.size > 500) haveThroughCache.clear();
+  haveThroughCache.set(have, value);
+  return value;
+}
+
+app.get('/api/version', async (req, res) => {
+  const have = String(req.query.have || '').toLowerCase();
   res.json({
     sha: process.env.GIT_SHA || 'dev',
     name: process.env.USERNODE_PROJECT_NAME || 'usernode',
@@ -423,6 +476,10 @@ app.get('/api/version', async (_req, res) => {
     // (already in config) and it saves a second round-trip for any
     // future code path that needs it.
     selfAppSlug: config.selfAppSlug,
+    // The merge order of the build this tab said it has (?have=): null when
+    // nothing was asked, or the build is no merge's (a direct push), and the
+    // client then shows plain Live rather than a reload it cannot justify.
+    ...(have ? { haveThrough: await haveThroughFor(have) } : {}),
   });
 });
 
@@ -591,6 +648,10 @@ app.use(illustrationImageRoutes(config));
 // unguessable 32-hex id; the admin list/upload/archive routes live in
 // topochainAdminRoutes behind the admin gates.
 app.use(challengeIllustrationImageRoutes(config));
+// Images in admin-edited email templates (src/routes/email-images.js), public
+// because the reader's mail client loads them with no session. Access control
+// is the unguessable 32-hex id; the upload lives behind the admin gates.
+app.use(emailImageRoutes(getPool(config)));
 
 // Publicly shared locked report snapshots (report-lock-share). Mounted
 // before authMiddleware like visuals: access control is the unguessable
@@ -661,6 +722,8 @@ app.use(require('./src/middleware/moderation').moderationGuard(config));
 app.use(require('./src/routes/moderation').moderationRoutes(config));
 app.use(require('./src/routes/app-blocks').appBlockRoutes(config));
 app.use(require('./src/routes/community-pins').communityPinRoutes(config));
+app.use(require('./src/routes/home-pins').homePinRoutes(config));
+app.use(require('./src/routes/weekly-digest').weeklyDigestRoutes(config));
 app.use(require('./src/services/account-deletion-runtime').trackResponse);
 app.use(require('./src/routes/account-deletion').accountDeletionRoutes(config));
 app.use(cliBrowserRoutes(config));
@@ -675,6 +738,8 @@ app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
 // Apple and Google sign-in, and Admin → Sign-in providers, where they are set up.
 app.use(require('./src/routes/sign-in-providers').signInProviderRoutes(config));
+// #6081: translate a person's words into the reader's language, on a tap.
+app.use(require('./src/routes/user-content-translations').userContentTranslationRoutes(config));
 // Firebase phone sign-in and sign-up (routes/phone-auth.js), pre-login
 // (middleware/auth.js PUBLIC_PATHS): fail-closed 404 unless
 // FIREBASE_PHONE_AUTH_ENABLED and its three companion values are set
@@ -1204,6 +1269,11 @@ async function start() {
   // the first phone-auth request. Never fatal: an unreadable setting falls
   // back to the deploy's default.
   await require('./src/services/sms/select').selection(getPool(config)).catch(() => {});
+  // Every mail is worded from the email templates this process keeps in memory
+  // (src/services/mail/template-store.js). Read them now, so a cold server has a
+  // copy before its first sign-in code and a database problem later does not
+  // cost mail its templates. Never fails a boot; waits at most a mail's patience.
+  await require('./src/services/mail/template-store').getSnapshot(getPool(config));
   // This process, and what it holds, for every other one to see
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.
@@ -1287,6 +1357,13 @@ async function start() {
     // to wait 1-2s on `docker stats`. Subsequent loads are served from
     // cache via stale-while-revalidate (see services/status.js).
     statusService.start(config);
+    // Warm the language list every shell asks for on boot: the first call
+    // builds the packs from disk, and on a freshly started process that
+    // held the event loop for seconds, so the first page load (and a
+    // declared check run against it) could time out. The build is memoized
+    // (services/language-cache.js), so warming it here leaves the first
+    // request reading memory.
+    require('./src/services/language-cache').live(getPool(config)).catch(() => {});
   }
   // Every process writes its own server-error counts to the database once a
   // minute (services/server-error-counts.js), on an unref'd timer; a minute
@@ -1644,6 +1721,12 @@ async function cleanup() {
     log.info('server', 'In-flight requests and background work drained');
   }
   await pushStop;
+
+  // #6354: the design bot's one demo copy of Homeroom is disposable and is
+  // not serving anybody: stop it (and its database) now, before the drain
+  // spends its time. Bounded, and never a reason to hold the process.
+  await boundedStep(require('./src/services/design-capture').stopCopy(), BUILD_SHUTDOWN_MARK_TIMEOUT_MS)
+    .catch((err) => log.warn('server', 'Could not stop the design demo copy', { err: err.message }));
 
   // The checks runs this process launched go on without it: their Jobs
   // belong to the cluster. Their rows still carry this process's heartbeat,

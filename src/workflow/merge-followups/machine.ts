@@ -20,7 +20,7 @@ import { authorLine, closingComment, liveLine, threadLine } from '../rules/inclu
 import { creditsSentence, mergeCredits } from '../rules/merge-credits.ts';
 import { applyInTransaction } from '../rules/pending-secret-apply.ts';
 import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
-import { appVersion, boardMoved, chatLine, issueUpdate, toUser, voteUpdate as votePush } from '../pushes.ts';
+import { appVersion, boardMoved, chatLine, issueUpdate, threadChanged, toUser, voteUpdate as votePush } from '../pushes.ts';
 import { readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
 
@@ -82,6 +82,10 @@ export interface Data {
   answered?: boolean;              // app-delivery has answered this merge's own request
   deliveredSha: string | null;
   liveAt: string | null;
+  // #6233: it was Live once, and a later complete rollout no longer carries
+  // it (RolledBack). It is announced once, not again when a release carries
+  // it back.
+  wasLive?: boolean;
   failure: string | null;
   followups: Record<string, Followup>;
 }
@@ -153,6 +157,10 @@ const EVENTS = {
   // platform's own release booting). Whether it contains the merge is the
   // machine's to check.
   Deployed: (p: any) => ({ sha: sha(p?.sha, 'sha', true)! }),
+  // #6233: a complete rollout of the platform's own app no longer carries
+  // this change: it goes back to Going live (platform.ts
+  // productionRolledBack, decided from the build's merge order).
+  RolledBack: (p: any) => ({ sha: sha(p?.sha, 'sha', true)! }),
   // app-delivery's answer to this merge's request: the deploy that served
   // it runs `sha`, or it failed (the request stays open there, so the next
   // deploy that succeeds answers Delivered).
@@ -225,14 +233,20 @@ const carrierRef = (d: Data): CarrierRef => ({ sessionId: d.sessionId, prNumber:
 function toLive(e: Event<any>, data: Data, deliveredSha: string | null, ctx: TransitionContext, x: Extra = {}): Outcome<MFState> {
   const d = { ...data, deliveredSha, liveAt: ctx.now.toISOString(), failure: null };
   const writes = [...(x.writes || [])];
-  if (d.role === 'merge') writes.push({ type: 'mergedLine', eventId: e.id, ...lineInput(d) });
-  writes.push({ type: 'mergedNotification', sessionId: d.sessionId, appId: d.appId, userId: d.authorId, force: d.force,
-    mergedAt: d.mergedAt, includedIn: d.includedIn });
-  // A change of the Homeroom bot's: whoever asked hears it is live, and the
-  // request says so (its change machine).
-  writes.push(toBotChange(d.sessionId, 'Live'));
-  const work: WorkRequest[] = [...(x.work || []),
-    { kind: WORK.journey, key: 'journey', input: { sessionId: d.sessionId, sha: deliveredSha, at: d.mergedAt } }];
+  const work: WorkRequest[] = [...(x.work || [])];
+  // #6233: a change a complete rollout took back, then carried again, is
+  // Live again; it was already announced the first time, so nobody is told
+  // twice. What it carried is told again (an included change hears
+  // CarrierDelivered and comes back with it).
+  if (!d.wasLive) {
+    if (d.role === 'merge') writes.push({ type: 'mergedLine', eventId: e.id, ...lineInput(d) });
+    writes.push({ type: 'mergedNotification', sessionId: d.sessionId, appId: d.appId, userId: d.authorId, force: d.force,
+      mergedAt: d.mergedAt, includedIn: d.includedIn });
+    // A change of the Homeroom bot's: whoever asked hears it is live, and the
+    // request says so (its change machine).
+    writes.push(toBotChange(d.sessionId, 'Live'));
+    work.push({ kind: WORK.journey, key: 'journey', input: { sessionId: d.sessionId, sha: deliveredSha, at: d.mergedAt } });
+  }
   const messages = [...(x.messages || []), ...d.included.map((id) => ({
     to: { machine: MACHINE, key: sessionKey(id) }, event: { type: 'CarrierDelivered', payload: { sha: deliveredSha, mergeSha: d.mergeSha } },
   }))];
@@ -383,6 +397,9 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   // once, and the lists re-read;
   // issues.closeAfterMerge makes sure they close.
   const push: Push[] = [voteUpdate(d, {})];
+  // The requests it closes read their threads again (#6231): the change is
+  // merged on their pages without a reload.
+  push.push(threadChanged({ appId: d.appId, appSlug: d.appSlug, sessionId: d.sessionId, numbers: [...s.linkedIssues, d.prNumber] }));
   if (d.repo && s.linkedIssues.length) {
     // The request board changed: the Workshop re-places its cards.
     push.push(boardMoved(issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })));
@@ -399,10 +416,18 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   // recorded at once, checks nothing here.
   if (app.selfHosted && d.mergeSha) {
     const since = Date.parse(d.mergedAt) - BOOT_CLOCK_MARGIN_MS;
-    const after = app.booted.filter((b) => Date.parse(b.at) >= since);
-    const exact = after.find((b) => b.sha === d.mergeSha);
+    // Only a boot that was the WHOLE rollout counts. #6233: on Kubernetes a
+    // release replaces its servers one at a time, and one of them booting
+    // says nothing about the rest, so neither an exact match nor a verify
+    // against it means production carries the change everywhere. Those
+    // boots are marked incomplete in apps.booted_shas, and Live waits for
+    // the platform-rollout job's Deployed once the Deployment reports the
+    // rollout complete. Off Kubernetes one boot is the whole rollout, so an
+    // exact match is still Live at once.
+    const whole = app.booted.filter((b) => b.rolloutComplete && Date.parse(b.at) >= since);
+    const exact = whole.find((b) => b.sha === d.mergeSha);
     if (exact) return andTeardown(toLive(e, d, exact.sha, ctx, x));
-    if (d.repo) for (const b of after) work.push(verifyWork(d, b.sha));
+    if (d.repo) for (const b of whole) work.push(verifyWork(d, b.sha));
   }
   // The platform's own app has no deploy here to wait for, and a deploy
   // that builds its own image does not need the preview: either way it goes
@@ -627,6 +652,19 @@ const deployed = {
     deployedBuild(e, s.name, s.data, e.payload.sha, ctx),
 };
 
+// #6233: a complete rollout that no longer carries a Live change
+// (platform.ts productionRolledBack, from the build's merge order). It goes
+// back to delivering, its live_at cleared by `project`: Going live until a
+// release that carries it finishes (Deployed, checked against the build, as
+// any other deploy is). `wasLive` keeps the second going-live quiet.
+const rolledBack = {
+  guard: (_s: any, e: Event<any>): Check => (e.source.kind === 'system' ? ok() : reject('internal_only')),
+  to: (s: any): Outcome<MFState> => {
+    const d: Data = { ...s.data, liveAt: null, deliveredSha: null, failure: null, wasLive: true };
+    return { next: { name: 'delivering', data: d }, push: [voteUpdate(d, {})] };
+  },
+};
+
 // app-delivery's answer to this merge's own request. Its first answer,
 // whatever it is, lets the preview go.
 const fromDelivery = (s: any, e: Event<any>): Check =>
@@ -713,6 +751,8 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
       // A deploy anyone made: the platform's release booting (system), or
       // app-delivery's for merges whose own request it did not answer.
       Deployed: (e) => (e.source.kind === 'system' ? ok() : deliveryMessage(e)),
+      // #6233: the platform-rollout job's own report (a system event).
+      RolledBack: (e) => (e.source.kind === 'system' ? ok() : reject('internal_only')),
       Delivered: deliveryMessage,
       DeliveryFailed: deliveryMessage,
       CarrierDelivered: ownMessage,
@@ -746,6 +786,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         DeliveryFailed: deliveryFailed,
         CarrierDelivered: { guard: fromCarrier, to: (s, e, f, ctx) => carrierLive(e, (s as Going).data, ctx) },
         CarrierDeployFailed: { guard: fromCarrier, to: (s, e) => toFailed(e, (s as Going).data, e.payload.message) },
+        RolledBack: { ignore: 'not_live' },
         RetryDelivery: { ignore: 'not_failed' },
         RetryFollowup: retryFollowup,
       },
@@ -757,6 +798,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         DeliveryFailed: deliveryFailed,
         CarrierDelivered: { guard: fromCarrier, to: (s, e, f, ctx) => carrierLive(e, (s as Going).data, ctx) },
         CarrierDeployFailed: { ignore: 'already_failed' },
+        RolledBack: { ignore: 'not_live' },
         RetryDelivery: {
           guard: (s) => ((s as Going).data.role === 'merge' && !(s as Going).data.selfHosted ? ok() : reject('carrier_delivers')),
           // Asked of app-delivery again (also for a merge whose own deploy,
@@ -778,6 +820,8 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         CarrierDelivered: { ignore: 'already_live' },
         CarrierDeployFailed: { ignore: 'already_live' },
         RetryDelivery: { ignore: 'already_live' },
+        // #6233: a later complete rollout does not carry it.
+        RolledBack: rolledBack,
         RetryFollowup: retryFollowup,
       },
     },
@@ -835,6 +879,11 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         }
         if (live && before.name !== 'live') {
           await tx.query('UPDATE chat_sessions SET live_at = $2 WHERE id = $1', [d.sessionId, live]);
+        } else if (!live && before.name === 'live') {
+          // #6233: RolledBack. The build serving no longer carries it, so it
+          // is not Live: back to Going live (live_at is the machine's alone,
+          // so this is the one write that may clear it).
+          await tx.query('UPDATE chat_sessions SET live_at = NULL WHERE id = $1', [d.sessionId]);
         }
       }
     },

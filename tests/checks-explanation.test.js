@@ -86,6 +86,58 @@ test('the model reads the failing checks and their tests\' output, fenced as dat
   assert.ok(seen.includes('Release blocked'), 'the found excerpt survives clipping');
 });
 
+test('tests main is already failing are read as not this change\'s', () => {
+  const onMain = { file: 'tests/i18n.test.js', test: 'every message the server can send has a Spanish wording' };
+  const input = explainer.explanationInput([PASSED, UNIT], {
+    mainFailures: [onMain],
+    mainSha: 'ABCDEF0123456789ABCDEF0123456789ABCDEF01',
+  });
+  assert.match(input, /These tests were already failing on main at commit ABCDEF01234… when this change was checked: "every message the server can send has a Spanish wording" in tests\/i18n\.test\.js\. They are not this change's failure/);
+  assert.match(input, /printed \(this test also fails on main, so it is not this change's failure\):/);
+  // Without main's red the input is exactly what it was: the change's own.
+  assert.ok(!explainer.explanationInput([PASSED, UNIT]).includes('already failing on main'));
+  // The rule itself, shared with the card: the same test, and the same file
+  // when both name one.
+  assert.equal(explainer.isMainFailure(onMain, [onMain]), true);
+  assert.equal(explainer.isMainFailure(onMain, [{ file: 'tests/other.test.js', test: onMain.test }]), false);
+  assert.equal(explainer.isMainFailure(onMain, [{ file: null, test: onMain.test }]), true);
+  assert.equal(explainer.isMainFailure(onMain, [{ file: onMain.file, test: 'another test' }]), false);
+  // #6388: main's own line is in the input only when this run actually fails
+  // one of main's tests, never merely because main is red elsewhere.
+  assert.equal(explainer.marksMain([PASSED, UNIT], [onMain]), true);
+  assert.equal(explainer.marksMain([PASSED, DECLARED], [onMain]), false, 'declared checks never run on main');
+  assert.equal(explainer.marksMain([PASSED, UNIT], []), false);
+  const elsewhere = explainer.explanationInput([PASSED, DECLARED], { mainFailures: [onMain], mainSha: 'a'.repeat(40) });
+  assert.ok(!elsewhere.includes('already failing on main'), 'main red elsewhere is not this run\'s line');
+});
+
+test('a sentence about main\'s failure is written again when main\'s red moves', async () => {
+  await withModel(async (calls) => {
+    const pool = fakePool();
+    const failing = {
+      tests: [{ file: 'tests/i18n.test.js', test: 'every message the server can send has a Spanish wording' }],
+      complete: true,
+    };
+    const main = (sha) => ({ state: 'failing', paused: true, sha, detail: { failingTests: failing.tests, failingTestsComplete: true } });
+    assert.equal(await explainer.explain(pool, SESSION, { now: NOW, main: main('a'.repeat(40)) }), 'Every message needs a Spanish version.');
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].input, /already failing on main/);
+    assert.equal(calls[0].mainMarked, true, 'the model is told main is marked; the prompt keeps its rule');
+    // The same run and the same red: the stored sentence is read, not asked again.
+    await explainer.explain(pool, SESSION, { now: NOW, main: main('a'.repeat(40)) });
+    assert.equal(calls.length, 1);
+    // Main's fix landed and a new red began: the old sentence is stale.
+    await explainer.explain(pool, SESSION, { now: NOW, main: main('b'.repeat(40)) });
+    assert.equal(calls.length, 2);
+    // A partial list of main's failures is not trusted: no main sentence.
+    const partial = { state: 'failing', paused: true, sha: 'c'.repeat(40), detail: { failingTests: failing.tests, failingTestsComplete: false } };
+    await explainer.explain(pool, SESSION, { now: NOW, main: partial });
+    assert.equal(calls.length, 3);
+    assert.ok(!calls[2].input.includes('already failing on main'));
+    assert.equal(calls[2].mainMarked, false, 'and the prompt is told not to say main fails it too');
+  });
+});
+
 // A pool that answers the statements the service makes, keeping the row
 // and its claim (tests/checks-explanation-postgres.test.js runs the SQL).
 function fakePool(initial = null) {
@@ -95,20 +147,27 @@ function fakePool(initial = null) {
     async query(sql, params) {
       if (/FROM check_explanations/.test(sql)) return { rows: state.row ? [state.row] : [] };
       if (/RETURNING generating_until/.test(sql)) {
-        const [, , runAt] = params;
+        const [, , runAt, mainSha] = params;
         const at = new Date(runAt).getTime();
         const r = state.row;
-        if (r && (Date.parse(r.run_at) > at || state.claimedUntil > Date.now() || (Date.parse(r.run_at) === at && r.explanation))) return { rows: [] };
-        state.row = { run_at: new Date(runAt), explanation: null, failed_at: null };
+        const sameMain = (r && (r.main_sha || null)) === (mainSha || null);
+        if (r && (Date.parse(r.run_at) > at || state.claimedUntil > Date.now()
+          || (Date.parse(r.run_at) === at && sameMain && r.explanation))) return { rows: [] };
+        state.row = {
+          run_at: new Date(runAt), main_sha: mainSha || null, explanation: null, failed_at: null,
+        };
         state.claimedUntil = Date.now() + explainer.CLAIM_LEASE_MS;
         return { rows: [{}] };
       }
       if (/INSERT INTO check_explanations/.test(sql)) {
         state.claimedUntil = 0;
-        const [sessionId, language, runAt, explanation, model, failed] = params;
-        state.writes.push({ sessionId, language, runAt, explanation, model, failed });
+        const [sessionId, language, runAt, mainSha, explanation, model, failed] = params;
+        state.writes.push({ sessionId, language, runAt, mainSha, explanation, model, failed });
         if (!state.row || Date.parse(state.row.run_at) <= new Date(runAt).getTime()) {
-          state.row = { run_at: new Date(runAt), explanation, failed_at: failed ? new Date(NOW) : null };
+          state.row = {
+            run_at: new Date(runAt), main_sha: mainSha || null, explanation,
+            failed_at: failed ? new Date(NOW) : null,
+          };
         }
         return { rows: [] };
       }
@@ -254,6 +313,14 @@ test('the model call: a helper call that says what is wrong in plain words, one 
     assert.match(system, /No file names, line numbers, test or function names/);
     assert.match(system, /Do not say how to fix it/);
     assert.match(system, /Write in Español \(es\)\./);
+    // #6388: with nothing marked as main's, the prompt forbids the claim;
+    // only an input that marks one keeps the "say main fails it too" rule.
+    assert.match(system, /Nothing here is marked as failing on main: never say main fails it too\./);
+    assert.doesNotMatch(system, /Some failures are marked as also failing on main/);
+    await llm.generateChecksExplanation({ input: 'the failing checks', mainMarked: true });
+    const marked = openrouter.calls[1].messages[0].content;
+    assert.match(marked, /Some failures are marked as also failing on main/);
+    assert.doesNotMatch(marked, /Nothing here is marked as failing on main/);
     assert.equal(sent.messages[1].content, 'the failing checks');
     await assert.rejects(llm.generateChecksExplanation({ input: '  ' }), /Nothing to explain/);
   } finally {
@@ -270,7 +337,10 @@ test('the route reads the change by the rule its check results are read by', () 
   assert.ok(at > 0);
   const route = src.slice(at, src.indexOf('\n  });', at));
   assert.match(route, /if \(!session \|\| !canViewSession\(session, req\.user\)\) return res\.status\(404\)/);
-  assert.match(route, /\.explain\(pool, session, \{ language: req\.query\.lang \|\| \(req\.user && req\.user\.locale\) \}\)/);
+  // #6288: main's own red is passed with the read, so the sentence does not
+  // blame the change for a test main is already failing.
+  assert.match(route, /const main = await require\('\.\.\/services\/main-watch'\)\.mergePause\(pool, session\.app_id\);/);
+  assert.match(route, /\.explain\(pool, session, \{ language: req\.query\.lang \|\| \(req\.user && req\.user\.locale\), main \}\)/);
   assert.ok(src.indexOf("router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));") < at,
     'and behind the app\'s own guard, like every /api/sessions/:id read');
   const schema = read('src/db/schema.sql');

@@ -117,6 +117,22 @@ test('the detail and workspace share one request lock and completed actions cann
   assert.equal(av._changeActions.size, 0);
 });
 
+test('the pending submission carries busy so its button draws the spinner', async () => {
+  const { c, action, click } = fixture(ready());
+  let finish;
+  c.response = () => new Promise(resolve => { finish = resolve; });
+  const atRest = action(ready());
+  assert.ok(!atRest.busy, 'a button at rest is not busy');
+  const pending = click(atRest);
+  const button = action(ready());
+  assert.equal(button.busy, true);
+  assert.equal(button.disabled, true);
+  assert.equal(button.label, 'Submitting…');
+  finish({ ok: true, json: async () => ({ ok: true }) });
+  await pending;
+  assert.ok(!action(ready()).busy);
+});
+
 test('failed submissions show feedback, release the lock and can be retried on the same page', async () => {
   for (const response of [
     async () => ({ ok: false, json: async () => ({ message: 'Please retry this submission.' }) }),

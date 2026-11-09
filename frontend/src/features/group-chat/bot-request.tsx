@@ -3,24 +3,17 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { waitingWords } from '../messages/approval-words';
 import { releaseSentence } from '../../lib/release-eta';
 import { useReleaseNow } from '../../lib/use-release-now';
-import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcript-store';
+import type { BotRequestCard, BotRequestState } from './transcript-store';
 
 /*
  * B9: a request asked of Homeroom bot in a project's chat, on the message
  * that asked it (services/homeroom-bot-chat.js). WP-C: or an idea of a
  * newcomer's, which their card offers to suggest to the group.
  *
- * THE CHIP is what everybody in the room sees, first in the message's
- * reactions row: its status, set by the server alone, never a reaction
- * anybody can add or toggle, in the bot's own periwinkle rather than the
- * accent a reaction of yours wears. An emoji and a sentence that says who has
- * the message and what it is doing ("Homeroom bot is looking at this"), so
- * the room can tell from the chip alone that the bot took it. It said one
- * word ("👀 Reading") until 5 October 2026, when the person who suggested an
- * idea read it as part of their private card and asked for the group to be
- * told the bot had it (CHIP_WORDS). Ready is a Try it chip that opens the
- * change's preview for anyone. When the work stops the chip goes; the
- * requester's card and their chat with the bot say why.
+ * 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): the status chip the
+ * room saw on the message is gone; where a request stands is on its own
+ * page, in the stage words every screen uses. BOT_CHIP_CLASS is still the
+ * bot's own periwinkle pill, which the composer's status wears.
  *
  * THE CARD is under the requester's own message only, "Only you can see
  * this": what was taken from it and how long it usually takes, or the
@@ -44,80 +37,17 @@ import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcri
 
 // `max-w-full`: on a narrow phone a sentence wraps inside the chip rather
 // than running past the message.
-const CHIP_CLASS = 'inline-flex max-w-full items-center gap-1 rounded-full bg-[color:var(--brand-tint)] px-2.5 py-0.5 text-start text-[0.8125rem] font-semibold text-[color:var(--brand-ink)]';
-
-/**
- * What each chip says (`words`), and what a screen reader hears (`said`)
- * when the words alone leave out who has it or why it waits. Every chip but
- * Live names Homeroom bot: the room learns from it that the bot has the
- * message. Each fits on one line under a message on a 390px phone.
- */
-// `words` and `said` are message ids (frontend/locales/en/chat.json), read
-// when the chip renders.
-export const CHIP_WORDS: Readonly<Record<Exclude<BotRequestChip['status'], 'ready'>, { glyph: string; words: string; said?: string }>> = Object.freeze({
-  reading: { glyph: '👀', words: 'chat:group.botChip.reading' },
-  building: { glyph: '🔨', words: 'chat:group.botChip.building' },
-  fixing: { glyph: '🔧', words: 'chat:group.botChip.fixing' },
-  waiting_first_version: {
-    glyph: '⏳',
-    words: 'chat:group.botChip.hasThis',
-    said: 'chat:group.botChip.hasThisSaid',
-  },
-  live: { glyph: '✅', words: 'chat:group.botChip.live', said: 'chat:group.botChip.liveSaid' },
-});
-
-/** Pure: what a screen reader hears for a chip (the Try it button says Try it). */
-export function chipLabel(status: Exclude<BotRequestChip['status'], 'ready'>): string {
-  const { words, said } = CHIP_WORDS[status];
-  return translate(said || words);
-}
-
-export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
-  chip: BotRequestChip;
-  mine?: boolean;
-  onTry?: (sessionId: number) => void;
-  /** The requester's own chip opens their chat with the bot, where the progress is. */
-  onProgress?: () => void;
-}) {
-  const t = useMessages('chat');
-  if (chip.status === 'ready') {
-    return (
-      <button
-        type="button"
-        className={CHIP_CLASS}
-        data-bot-request={chip.status}
-        disabled={!chip.sessionId}
-        onClick={() => { if (chip.sessionId) onTry?.(chip.sessionId); }}
-      >
-        <span aria-hidden="true">▶</span>
-        <span>{t('chat:group.botChip.tryIt')}</span>
-      </button>
-    );
-  }
-  const { glyph, words } = CHIP_WORDS[chip.status];
-  const label = chipLabel(chip.status);
-  return mine ? (
-    <button type="button" className={CHIP_CLASS} data-bot-request={chip.status} aria-label={label} onClick={() => onProgress?.()}>
-      <span aria-hidden="true">{glyph}</span>
-      <span>{t(words)}</span>
-    </button>
-  ) : (
-    <span className={CHIP_CLASS} data-bot-request={chip.status} aria-label={label}>
-      <span aria-hidden="true">{glyph}</span>
-      <span>{t(words)}</span>
-    </span>
-  );
-}
+export const BOT_CHIP_CLASS = 'inline-flex max-w-full items-center gap-1 rounded-full bg-[color:var(--brand-tint)] px-2.5 py-0.5 text-start text-[0.8125rem] font-semibold text-[color:var(--brand-ink)]';
 
 // The stages at which a filed request's card still says "Got it": the bot
-// has it and has not started building. Its chip names the bot for the room.
+// has it and has not started building.
 const JUST_FILED = new Set(['waiting_first_version', 'reading', 'waiting']);
 
 /**
- * Pure: whether a card says that the room can see the bot has it
- * (chat:group.botCard.shared). The card is theirs alone, but the chip on
- * their message is the room's. 5 October 2026: an idea suggested with
- * Suggest it read as if it had stayed private.
+ * Pure: whether a card says that the group can see the request
+ * (chat:group.botCard.shared): the card is theirs alone, but the request
+ * is the project's. 5 October 2026: an idea suggested with Suggest it read
+ * as if it had stayed private.
  */
 export function sharedNow(card: BotRequestCard): boolean {
   return card.kind === 'filed' && !!card.issueNumber && (!card.state?.stage || JUST_FILED.has(card.state.stage));

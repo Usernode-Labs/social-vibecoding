@@ -446,6 +446,13 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     ], { timeout: 5000 });
     const resolvedRevision = (revisionOut || '').trim();
     const prodDbName = dbManager.appDbName(app.slug);
+    // A platform preview starts from an empty database its own code fills;
+    // code from before that cannot (platform-preview-data-policy.js).
+    const previewPolicy = require('./platform-preview-data-policy');
+    if (previewPolicy.sourceIdentity(prodDbName) && !await commitStartsEmpty(cloneDir)) {
+      await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
+      throw Object.assign(new Error(previewPolicy.NEEDS_UPDATE), { name: 'PreviewNeedsUpdateError' });
+    }
     const stagingDbNameStr = attempt.dbName;
     // Retries may address the database of a still-serving preview. Only
     // overlap a clone when its target is confirmed absent; otherwise keep
@@ -834,6 +841,18 @@ function reusedBuild(offered, mergedTree) {
   if (!offered || !offered.imageRef || !offered.treeSha) return null;
   if (!mergedTree || mergedTree !== String(offered.treeSha).toLowerCase()) return null;
   return { imageRef: offered.imageRef, buildRef: offered.buildRef || null, reused: true };
+}
+
+// Whether the checked-out commit can start a platform preview empty
+// (platform-preview-data-policy.js startsEmpty), read from the commit rather
+// than the working tree: on Kubernetes the clone carries only the root's
+// files (rootOnly), so src/ is not on disk, and git fetches this one file's
+// contents on demand. False when git cannot say, which refuses.
+async function commitStartsEmpty(dir) {
+  const previewPolicy = require('./platform-preview-data-policy');
+  const text = await docker.execFileAsync('git', ['-C', dir, 'show', `HEAD:${previewPolicy.BOOT_FILE}`], { timeout: 30000 })
+    .then(({ stdout }) => stdout, () => null);
+  return previewPolicy.bootFileStartsEmpty(text);
 }
 
 // The tree the working copy is at, or null when git cannot say — in which
@@ -1264,6 +1283,7 @@ module.exports = {
   // around it is a clone, a database and a cluster.
   reusedBuild,
   treeShaOf,
+  commitStartsEmpty,
   // Exported for services/app-rollover.js: its cheap respawn path
   // (appRespawn.runExistingImage) does its own stopAndRemove +
   // runContainer without going through deployProduction, so it has to

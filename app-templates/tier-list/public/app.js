@@ -1085,6 +1085,39 @@
       });
   }
 
+  // ── Offline: the last read, kept on this device ────────────────────────
+  //
+  // The read the screen opens on goes through the platform bridge's
+  // usernode.offline.read: it keeps the last answer on this device, sealed
+  // for the person signed in and gone when they sign out, and gives it back
+  // when the read cannot be answered (no connection, or the server is down).
+  // The line under the title says so, and how old it is, until a read works
+  // again. api() marks the server's own answers (err.status), which are
+  // never covered over with the copy. Outside Homeroom nothing is kept.
+
+  function kept(name, read) {
+    if (window.usernode && window.usernode.offline) return window.usernode.offline.read(name, read);
+    return read().then(function (value) { return { value: value, fromCopy: false }; });
+  }
+
+  function savedWhen(at) {
+    var then = new Date(at);
+    var today = new Date();
+    var time = then.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    if (then.toDateString() === today.toDateString()) return 'at ' + time;
+    if (then.toDateString() === new Date(today.getTime() - 86400000).toDateString()) return 'yesterday at ' + time;
+    return 'on ' + then.toLocaleDateString(undefined, { day: 'numeric', month: 'long' }) + ' at ' + time;
+  }
+
+  function showSaved(got) {
+    var strip = document.getElementById('saved-strip');
+    if (!strip) return;
+    strip.hidden = !got.fromCopy;
+    strip.textContent = got.fromCopy
+      ? (navigator.onLine === false ? 'Offline.' : 'Can\'t reach the server.') + ' Showing what was saved ' + savedWhen(got.savedAt) + '.'
+      : '';
+  }
+
   var loaded = false;
   var loading = null;
   var again = false;
@@ -1092,17 +1125,19 @@
     // A read already on its way may have left before the change just made:
     // read once more when it is back.
     if (loading) { again = true; return loading; }
-    var itemsRead = api('GET', '/api/items');
+    var itemsRead = kept('items', function () { return api('GET', '/api/items'); });
     // The Other people row is read beside the board; a failed read leaves it empty
     // rather than failing the screen.
-    var peopleRead = api('GET', '/api/people').catch(function () { return { people: [] }; });
+    var peopleRead = kept('people', function () { return api('GET', '/api/people'); })
+      .then(function (got) { return got.value; }, function () { return { people: [] }; });
     loading = Promise.all([itemsRead, peopleRead])
       .then(function (out) {
         // Not while somebody is mid-drag: the board would move under them.
         // It is fetched again the moment the drag is over.
         if (drag) { if (live) live.changed(); return null; }
         loaded = true;
-        data = out[0];
+        data = out[0].value;
+        showSaved(out[0]);
         // Everyone else: your own board is Yours.
         people = (out[1].people || []).filter(function (p) { return !p.you; });
         choosePerson();

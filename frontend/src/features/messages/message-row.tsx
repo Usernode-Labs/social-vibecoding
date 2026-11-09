@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 
 import {
-  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
+  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, GlobeIcon, LinkIcon, NoSymbolIcon,
   PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
@@ -23,10 +23,11 @@ import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
 import { alsoInChat, botRequestNames, botThreadLabel, threadsAllowed, type ChangeBlock } from './bot-shared';
 import { openRequestPage, requestPageOf } from './request-page';
-import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
+import { BotHeadWords, botHead, draftPreviewOf, isHeadCard } from './bot-head-card';
 import { DesignVersionCard, designVersionOf } from './design-card';
 import { BotRichCard, botCardOf } from './bot-cards';
 import { BotLookedLine } from './bot-looked';
+import { BotHtmlReply, botReplyHtml } from './bot-html';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
 import { confirmAction } from '../../lib/confirm';
@@ -41,6 +42,7 @@ import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadSummaryChip } from '../message-actions/thread-summary';
 import { useDismiss } from '../message-actions/use-dismiss';
+import { TranslateNote, observeAutoTranslate, useTranslate, worthAsking } from './translate';
 
 /*
  * A CONVERSATION HAS SIDES (#5680). A direct message and a group chat — the
@@ -177,6 +179,30 @@ export const MessageRow = memo(function MessageRow({
 }) {
   const t = useMessages('messages');
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
+  // #6081: someone else's words can be read in the reader's language. A
+  // request's words are asked for only on a tap; a chat's ask for themselves
+  // when they come into view (#6525). Only what a person wrote: the bot's
+  // cards and the platform's notices are not translated.
+  const canTranslate = !mine && !message.sender.bot && !message.system
+    && !!message.content && !message.deleted && !message.moderated;
+  // #6525: a message that is still on its way (or failed) is not translated
+  // yet, and one with no words of its own — emoji, a link, a name — is not
+  // worth a request. A signed-out reader of a public channel is not either.
+  const autoTranslate = canTranslate
+    && !message.pending && !message.queued && !message.failed
+    && typeof window !== 'undefined' && !!window.App?.user && worthAsking(message.content);
+  const translation = useTranslate(message.content ? [message.content] : [], {
+    enabled: canTranslate,
+    auto: autoTranslate,
+  });
+  const article = useRef<HTMLElement>(null);
+  const { askAuto } = translation;
+  // #6525: the first time the row is (nearly) on screen, ask for its words.
+  useEffect(() => {
+    const el = article.current;
+    if (!el || !autoTranslate) return undefined;
+    return observeAutoTranslate(el, askAuto);
+  }, [autoTranslate, askAuto]);
   // #4655: in a direct message people are named bare ("ada", not "@ada") in
   // the Block and Report labels; group chats and channels keep the @ there.
   // The author line, a quote and the sheet's header name them bare in every
@@ -304,6 +330,26 @@ export const MessageRow = memo(function MessageRow({
   if (message.content) {
     items.push({ key: 'copy', label: t('messages:row.menu.copyText'), icon: CopyIcon, onSelect: () => { void copyToClipboard(message.content, t('messages:row.textCopied')); } });
   }
+  // #6081: someone else's words, in the reader's language. One more item in
+  // the same menu, so a chat does not fill up with a button on every message.
+  if (canTranslate) {
+    // #6081: while it is being translated the words stay as written and the
+    // item says so, rather than offering a second tap that does nothing.
+    const label = translation.state === 'pending'
+      ? t('messages:translate.pending')
+      : translation.state === 'shown'
+        ? t('messages:row.menu.showOriginal')
+        : translation.state === 'original'
+          ? t('messages:row.menu.showTranslation')
+          : t('messages:row.menu.translate');
+    items.push({
+      key: 'translate', label, icon: GlobeIcon, disabled: translation.state === 'pending',
+      onSelect: () => {
+        if (translation.state === 'shown' || translation.state === 'original') translation.toggle();
+        else translation.ask();
+      },
+    });
+  }
   // #4055: its pictures onto the device, whoever sent them.
   const pictures = downloadableImages(images.map((att) => ({ src: att.url, name: att.name })));
   if (pictures.length) items.push({ key: 'download', label: downloadLabel(pictures.length), icon: DownloadIcon, onSelect: () => { void saveImages(pictures); } });
@@ -366,9 +412,18 @@ export const MessageRow = memo(function MessageRow({
   // #6151: a design filed as a request says what happens to it next, after
   // its line, in the reader's language (./bot-track.tsx filedNextLine).
   const filedNext = botMeta(message)?.kind === 'design_filed' ? filedNextLine(botMeta(message)?.filedNext) : null;
+  // #6248: a request draft Homeroom bot offered to file, still waiting, has
+  // its card open a read-only preview beside the chat (./request-draft-pane.tsx).
+  const draft = botChat && kind === 'direct'
+    ? draftPreviewOf(head, botMeta(message), message.threadRootId, message.conversationId || conversationId)
+    : null;
+  // Task 2020: a bot answer laid out is drawn in place of its words, which
+  // stay its fallback (./bot-html.tsx).
+  const richHtml = head ? null : botReplyHtml(message);
+  const markdown = <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
   const words = !message.content ? null : head
-    ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
-    : <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
+    ? <BotHeadWords head={head} objects={message.objects} channels={channels} draft={draft} />
+    : richHtml ? <BotHtmlReply html={richHtml} fallback={markdown} /> : markdown;
 
   // #5680: which rows have a side. A DM and a group do; a channel does not
   // (#2783), and neither does a row that is not something a person said: the
@@ -385,11 +440,12 @@ export const MessageRow = memo(function MessageRow({
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its
   // place and nothing else (#2387).
+  const quote = <>{message.reply && !quoteAgain ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare: true })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}</>;
   const body = message.deleted ? (
     <p className="messages-deleted">{t('messages:row.deleted')}</p>
   ) : (
     <>
-      {message.reply && !quoteAgain ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare: true })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}
+      {quote}
       {/* Homeroom bot parity, P1: what the reply looked at, above its words (./bot-looked.tsx). */}
       {!editing ? <BotLookedLine message={message} /> : null}
       {editing ? (
@@ -430,6 +486,13 @@ export const MessageRow = memo(function MessageRow({
       ) : words}
     </>
   );
+
+  // #6081: a person's words read in another language on a tap. The quoted
+  // reply stays above them, and the same markdown renderer draws the
+  // translation, so the row reads as it did.
+  const translatedBody = translation.state === 'shown' && !editing
+    ? <>{quote}<MessageMarkdown content={translation.texts[0]} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} /></>
+    : null;
 
   // Everything a message carries besides its text: files, shared items,
   // reactions, the thread under it and the status line.
@@ -556,7 +619,7 @@ export const MessageRow = memo(function MessageRow({
   const blockAttrs = block ? { 'data-bot-block': block.key, 'data-bot-block-part': block.part } : {};
 
   return (
-    <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${sided ? 'messages-message-bubble ' : ''}${grouped ? 'messages-message-grouped' : ''}${blockClass} ${stateClasses}`} {...blockAttrs} {...longPress}>
+    <article ref={article} id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${sided ? 'messages-message-bubble ' : ''}${grouped ? 'messages-message-grouped' : ''}${blockClass} ${stateClasses}`} {...blockAttrs} {...longPress}>
       {/* #5680: your own message is already on its side — the tint and the
           right edge say whose it is — so it needs no face, as ChatMessageRow
           draws a turn (`from="me"`) in the general chat. A channel row keeps
@@ -587,7 +650,10 @@ export const MessageRow = memo(function MessageRow({
         {/* #5680: in a conversation the words sit in a bubble on their
             sender's side; the head above them, and everything under them
             (pictures, shared items, reactions, a thread) stays outside it. */}
-        {sided ? <div className="messages-bubble" dir="auto">{body}</div> : body}
+        {/* Task 2020: a laid-out answer takes the bubble's full width (app.css .messages-bubble-rich). */}
+        {sided ? <div className={richHtml && !translatedBody && !editing ? 'messages-bubble messages-bubble-rich' : 'messages-bubble'} dir="auto">{translatedBody || body}</div> : translatedBody || body}
+        {/* #6081: under the words, the way back to them, or why they stayed. */}
+        {canTranslate ? <TranslateNote view={translation} className="mt-1" /> : null}
         {extras}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}
         {failedNote}

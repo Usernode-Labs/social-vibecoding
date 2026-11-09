@@ -208,8 +208,8 @@ test('the new-change banner appears only past the active-editing stage', () => {
     assert.equal(got ? got.state : null, expected, status);
     if (got) assert.equal(got.prNumber, 7, status);
   }
-  assert.match(message('devchat:banner.newChange.proposed', { number: 7 }), /^This change has been proposed to the group \(PR #7\)\./);
-  assert.match(message('devchat:banner.newChange.merged', { number: 7 }), /^This change has been merged \(PR #7\)\./);
+  assert.match(message('devchat:banner.newChange.proposed', { number: 7 }), /^This change has been proposed to the group \(PR 7\)\./);
+  assert.match(message('devchat:banner.newChange.merged', { number: 7 }), /^This change has been merged \(PR 7\)\./);
   // No PR yet — nothing to say about bundling work into one.
   DevChat.currentSession = { ...SESSION, status: 'promoted', pr_number: null };
   assert.equal(view().newChange, null);

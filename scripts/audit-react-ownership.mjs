@@ -136,15 +136,15 @@ const OWNED = [
   // (features/settings/sections/profile.tsx). Stateful, like Theme: settings.js
   // binds nothing inside it.
   { sel: '#settings-profile-section' },
-  // The transcript (features/group-chat/transcript.tsx). A vote row's inline
-  // controls are the one exception, and they are the controller-host seam
-  // AGENTS.md documents: transcript.tsx renders `.gc-vote-inline` ONCE as an
-  // empty span with a constant className and never looks inside it, and
-  // group-chat.js's `refreshVoteControls` fills it from AppView.voteState.
-  // The row's TINT is not exempt — that is a view-model field React renders,
-  // and the module patches the model rather than the class list.
-  { sel: '#gc-messages', except: ['[data-vote-controls]'] },
-  { sel: '#gc-thread-messages', except: ['[data-vote-controls]'] }, // 'thread' key
+  // The transcript (features/group-chat/transcript.tsx), React's end to end.
+  // A vote row's inline controls were the one exception until #6236 — a
+  // `[data-vote-controls]` span group-chat.js's `refreshVoteControls` filled
+  // from AppView.voteState. The row models the vote now (`vote`, patched
+  // onto the view model, as its tint always was) and features/group-chat/
+  // vote-card.tsx draws it, so no legacy write below either host is
+  // sanctioned any more.
+  { sel: '#gc-messages' },
+  { sel: '#gc-thread-messages' }, // 'thread' key
   // The app's own menu, behind the Homeroom mark
   // (features/app-context/app-context-sheet.tsx). Its rows are React's end to
   // end and it is mounted on every route, so no `when` clause. It earns an
@@ -161,7 +161,8 @@ const OWNED = [
   { sel: '#gc-mention-menu' },               // features/group-chat/autocomplete.tsx
   { sel: '#gc-ref-menu' },                   // ditto
   { sel: '#gc-emoji-menu' },                 // ditto
-  { sel: '#gc-spec-side-panel' },            // features/group-chat/spec-panel.tsx
+  { sel: '#gc-spec-side-panel' },            // features/detail/detail-slot.tsx (#6230)
+  { sel: '#gc-spec-resizer' },               // ditto: the drag is React's now
   // The card metadata picker (features/dev-board/attr-popover.tsx). Its host
   // is created and removed by app-view.js on every open, so it is only on
   // screen mid-gesture — this sweep never opens one, and the coverage for it
@@ -317,13 +318,15 @@ const OWNED = [
   { sel: '#about-row-native-app-version' },
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
-  { sel: '#connectors-list' },               // features/settings/connectors-list.tsx
+  // Not #connectors-list: that holds the cards, whose Disclosure bodies are
+  // static markup settings.js writes into (the ticks, the Copy labels, the
+  // case filtering). The hosts of the two store-reading leaves are what React owns.
+  { sel: '[data-connector-status]' },        // features/settings/connectors-list.tsx
+  { sel: '[data-connector-connections]' },   // ditto
   { sel: '#github-link-body' },              // features/settings/social-identity.tsx
   { sel: '#settings-local-agents-list' },    // features/settings/local-agents-list.tsx
   { sel: '#agent-files-instructions-list' }, // features/settings/agent-files-list.tsx
   { sel: '#agent-files-skills-list' },
-  { sel: '#browse-list' },                   // features/apps/browse-list.tsx
-  { sel: '#browse-sort-bar' },               // features/apps/browse-screen.tsx (#1383)
   // The WHOLE Workshop screen (#workshop): features/workshop/index.tsx renders
   // and reconciles every node under this root, and no public/js/** module has
   // ever written inside it — App.navigateToWorkshop drives it through the
@@ -331,6 +334,7 @@ const OWNED = [
   // uses. Listed on the day it shipped so it cannot acquire a second author
   // later without the sweep saying so.
   { sel: '#workshop-screen' },               // features/workshop/index.tsx
+  { sel: '#weekly-digest-screen' },          // features/weekly-digest/index.tsx (#6371)
   { sel: '#standings-tabs' },                // @/components/ui/tabs, via the leaderboard
   { sel: '#leaderboard-event-bar' },         // features/leaderboard/event-bar.tsx
   { sel: '#admin-section-content', when: '#admin/e2e' },     // features/admin/admin-e2e.tsx
@@ -340,6 +344,7 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/push' },    // features/admin/admin-push.tsx
   { sel: '#admin-section-content', when: '#admin/campaigns' }, // features/admin/admin-campaigns.tsx
   { sel: '#admin-section-content', when: '#admin/mail' },    // features/admin/admin-mail.tsx
+  { sel: '#admin-section-content', when: '#admin/email-templates' }, // features/admin/admin-email-templates.tsx
   { sel: '#admin-section-content', when: '#admin/sms' },     // features/admin/admin-sms.tsx
   { sel: '#admin-section-content', when: '#admin/status' },  // features/admin/admin-status.tsx
   { sel: '#admin-section-content', when: '#admin/incidents' }, // features/admin/admin-incidents.tsx (#4296)
@@ -395,7 +400,7 @@ const OWNED = [
 const ROUTES = [
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990411',
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401',
-  '#home', '#apps', '#apps/recipebot', '#workshop', '#ai', '#settings', '#settings/app-ai',
+  '#home', '#workshop', '#week', '#ai', '#settings', '#settings/app-ai',
   '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/linked-accounts', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#messages', '#notifications',
   '#agent/990801', '#agent/990801/changes', '#messages/agent/990801',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
@@ -419,7 +424,7 @@ const ROUTES = [
   // #4455: a change's page in the same layout (`.dev-request.dev-change`),
   // on the demo proposal whose testing is part way through.
   '?demo=1#app/usernode-2d5619/dev/proposals/9000026',
-  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/apps', '#admin/rollover', '#admin/staging-reap', '#admin/templates', '#admin/workflows',
+  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/email-templates', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/apps', '#admin/rollover', '#admin/staging-reap', '#admin/templates', '#admin/workflows',
   '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/test-accounts', '#admin/access-review', '#admin/compliance', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
   // Its Configurations (once Bot configurations, #admin/bot-configs) and Calls tabs.
   '#admin/homeroom-bot/configs', '#admin/homeroom-bot/calls',
@@ -442,9 +447,9 @@ function instrument(owned) {
       // A documented legacy-filled host INSIDE an owned one: rendered once
       // with constant props and never looked inside. Writes below it are the
       // sanctioned pattern, not a second author.
-      // ALL matches, not the first: `[data-vote-controls]` is one seam with
-      // one host per votable row, and `querySelector` would exempt only the
-      // topmost one and report every row below it.
+      // ALL matches, not the first: a seam can have one host per row (the
+      // retired `[data-vote-controls]` did), and `querySelector` would exempt
+      // only the topmost one and report every row below it.
       if (except && except.some((s2) => [...document.querySelectorAll(s2)]
         .some((h) => h === node || h.contains(node)))) continue;
       const host = document.querySelector(sel);

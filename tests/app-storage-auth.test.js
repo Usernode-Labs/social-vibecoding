@@ -65,7 +65,7 @@ function userJwt(user = { id: 7, username: 'tester' }, { appId = APP_ID, ttl } =
 // separate authority. See tests/app-llm-proxy-auth.test.js.
 function forgedIdentity(extra) {
   return jwt.sign(
-    { id: 7, username: 'tester', pur: 'iframe', ...extra },
+    { id: 7, username: 'tester', pur: 'iframe', env: 'production', ...extra },
     keys.IFRAME_JWT_PRIVATE_KEY,
     {
       algorithm: 'RS256',

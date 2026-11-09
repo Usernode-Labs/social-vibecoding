@@ -41,7 +41,7 @@ const HEAD = 'frontend/src/features/messages/bot-head-card.tsx';
 // server's reading (tests/messages-link-embeds.test.js pins the real one).
 let asked = [];
 let answer = null;
-const { botHead, isHeadCard, BotHeadWords } = loadTsx(HEAD, {
+const { botHead, draftPreviewOf, isHeadCard, BotHeadWords } = loadTsx(HEAD, {
   stubs: {
     './link-cards': {
       useLinkCards: (links) => {
@@ -256,7 +256,7 @@ test('a message that names no project draws the card without a link and asks not
 test('a project’s card opens its App tab, and a first version gone live with its Open button draws none', () => {
   answer = { type: 'hub', available: true, title: 'Never asked' };
   const html = draw(botHead('**Todo List**, its first version\n\nBuilding the first version now.', FIRST));
-  // B21: with no icon from the tray or the message, the project's hub card
+  // B21: with no icon from the viewer's tracks or the message, the project's hub card
   // is read for its icon alone; the line is still the card.
   assert.deepEqual(asked, [['hub:todo-list-b91765:']], 'its hub, read for its icon');
   assert.match(html, /data-bot-head-card="project"><a href="#app\/todo-list-b91765\/app" class="messages-object-card" rel="noopener noreferrer"><span class="messages-object-icon">◆<\/span>/,
@@ -264,7 +264,7 @@ test('a project’s card opens its App tab, and a first version gone live with i
   answer = { type: 'hub', available: true, title: 'Never asked', iconUrl: '/app-icons/f00d' };
   assert.match(draw(botHead('**Todo List**, its first version\n\nBuilding the first version now.', FIRST)),
     /data-bot-head-card="project"><a href="#app\/todo-list-b91765\/app" class="messages-object-card" rel="noopener noreferrer"><span class="messages-object-icon overflow-hidden" data-object-icon="image"><img src="\/app-icons\/f00d"/,
-    'B21: a newcomer\'s first project, in none of the tray\'s lists, wears its own icon');
+    'B21: a newcomer\'s first project, with no track of the viewer\'s, wears its own icon');
   assert.match(html, />Todo List<\/div><div class="text-sm text-zinc-500 dark:text-zinc-400 truncate">First version</);
   assert.doesNotMatch(html, /data-bot-request-card|Never asked/);
 
@@ -275,7 +275,7 @@ test('a project’s card opens its App tab, and a first version gone live with i
 });
 
 // Run four (13 Oct 2026): the card for the maker's new app read "◆". It
-// wears the app's own icon, the tray's as the strip and the news lines draw
+// wears the app's own icon, its requests' tracks' as the news lines draw
 // it, else the emoji the message carries; with neither, the glyph.
 test('a project’s card wears the project’s own icon when it is known', () => {
   let work = null;
@@ -288,18 +288,19 @@ test('a project’s card wears the project’s own icon when it is known', () =>
   const drawn = (meta = FIRST) => renderToHtml(createElement(iconic.BotHeadWords, {
     head: iconic.botHead('**Todo List**, its first version\n\nBuilding the first version now.', meta), objects: [],
   }));
-  const job = (patch) => ({ appSlug: 'todo-list-b91765', appName: 'Todo List', iconUrl: null, iconEmoji: null, ...patch });
-  work = { needsYou: [], now: [job({ iconUrl: '/app-icons/a1b2c3' })], history: [] };
+  // The viewer's tracks (./bot-work.tsx), which carry each project's artwork.
+  const job = (patch) => ({ appSlug: 'todo-list-b91765', appName: 'Todo List', iconUrl: null, iconEmoji: null, work: { stage: 'building' }, ...patch });
+  work = { tracks: [job({ iconUrl: '/app-icons/a1b2c3' })] };
   assert.match(drawn(), /<span class="messages-object-icon overflow-hidden" data-object-icon="image"><img src="\/app-icons\/a1b2c3" alt="" class="h-full w-full object-cover" loading="lazy" draggable="false"\/><\/span>/);
   assert.doesNotMatch(drawn(), /◆/);
-  work = { needsYou: [], now: [], history: [job({ iconEmoji: '🗳️' })] };
+  work = { tracks: [job({ iconEmoji: '🗳️', work: { stage: 'live' } })] };
   assert.match(drawn(), /<span class="messages-object-icon text-\[22px\] leading-none" data-object-icon="emoji" aria-hidden="true">🗳️<\/span>/);
-  // Not in the tray: the emoji the message carries, else the glyph.
-  work = { needsYou: [], now: [job({ appSlug: 'elsewhere', iconUrl: '/app-icons/zz' })], history: [] };
+  // No track for the project: the emoji the message carries, else the glyph.
+  work = { tracks: [job({ appSlug: 'elsewhere', iconUrl: '/app-icons/zz' })] };
   assert.match(drawn({ ...FIRST, appEmoji: '📚' }), /data-object-icon="emoji" aria-hidden="true">📚</);
   assert.match(drawn(), /<span class="messages-object-icon">◆<\/span>/);
-  // A request's card keeps its number sign, whatever the tray says.
-  work = { needsYou: [], now: [job({ iconUrl: '/app-icons/a1b2c3' })], history: [] };
+  // A request's card keeps its number sign, whatever the tracks say.
+  work = { tracks: [job({ iconUrl: '/app-icons/a1b2c3' })] };
   const request = renderToHtml(createElement(iconic.BotHeadWords, { head: iconic.botHead(`${LINE}\n\n${WORDS}`, META), objects: [] }));
   assert.match(request, /<span class="messages-object-icon">#<\/span>/);
 });
@@ -341,6 +342,34 @@ test('an offer draws the change it carries in its line’s place, or the request
   assert.equal(botHead('Want me to withdraw it?\n\n**Plant pal** · proposal: Plant photos', { ...offer, issueNumber: 14 }).kind, 'change');
 });
 
+// #6248: while a file-request offer waits, its draft's card opens the
+// read-only preview in the AI tab's column. A filed or declined draft's card
+// goes back to what it did.
+test('an open draft’s card offers a preview, and only while the offer waits', () => {
+  const offer = { kind: 'confirm', appSlug: 'plant-pal', appName: 'Plant pal', actionId: 42, status: 'open' };
+  const head = botHead('Want me to file this?\n\n**Plant pal** · new request: Add a search box\n\nSearch notes by their text.', offer);
+  const at = draftPreviewOf(head, offer, null, 7);
+  assert.deepEqual(at, {
+    conversationId: 7, rootId: null, actionId: 42,
+    title: 'Add a search box', project: 'Plant pal', details: 'Search notes by their text.', appSlug: 'plant-pal',
+  }, 'a draft said in Main: no thread root, and the message’s own copy');
+  assert.equal(draftPreviewOf(head, offer, 9, 7).rootId, 9, 'in its own thread: that thread');
+  assert.equal(draftPreviewOf(head, { ...offer, status: 'answered' }, null, 7), null, 'answered');
+  assert.equal(draftPreviewOf(head, { ...offer, actionId: undefined }, null, 7), null, 'no action to read');
+  assert.equal(draftPreviewOf(head, offer, null, 0), null, 'no conversation');
+  assert.equal(draftPreviewOf({ ...head, kind: 'change' }, offer, null, 7), null, 'a change’s offer has no draft');
+  const filed = botHead('Want me to file this?\n\n**Plant pal** · new request: Add a search box',
+    { ...offer, issueNumber: 14, issueTitle: 'Add a search box', status: 'answered', chosen: 'yes' });
+  assert.equal(draftPreviewOf(filed, offer, null, 7), null, 'filed: it is the request’s card now');
+
+  // Drawn with the preview it opens: a button, with the › every openable card has.
+  const html = renderToHtml(createElement(BotHeadWords, { head, objects: [], draft: at }));
+  assert.match(html, /data-bot-head-card="draft"><button type="button" class="messages-object-card w-full text-start">/);
+  assert.match(html, /<span aria-hidden="true" class="text-zinc-500 dark:text-zinc-400">›<\/span>/);
+  assert.match(html, />Add a search box</);
+  assert.match(html, />Plant pal · not filed yet</);
+});
+
 test('a line with nothing after it is the card alone', () => {
   answer = null;
   assert.doesNotMatch(draw(botHead(LINE, META)), /messages-markdown/);
@@ -350,11 +379,13 @@ test('a line with nothing after it is the card alone', () => {
 
 test('the row draws the card in place of the line, and not again under the words', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /import \{ BotHeadWords, botHead, isHeadCard \} from '\.\/bot-head-card';/);
+  assert.match(row, /import \{ BotHeadWords, botHead, draftPreviewOf, isHeadCard \} from '\.\/bot-head-card';/);
   assert.match(row, /const head = botHead\(message\.content, botMeta\(message\)\);/,
     'only the bot’s own messages (botMeta reads it off a bot sender only)');
   assert.match(row, /const objects = head \? message\.objects\.filter\(\(object\) => !isHeadCard\(head, object\)\) : message\.objects;/);
-  assert.match(row, /\? <BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} \/>/);
+  // #6248: only in the bot's DM, and only for a draft.
+  assert.match(row, /const draft = botChat && kind === 'direct'\n\s+\? draftPreviewOf\(head, botMeta\(message\), message\.threadRootId, message\.conversationId \|\| conversationId\)\n\s+: null;/);
+  assert.match(row, /<BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} draft=\{draft\} \/>/);
   assert.match(row, /\{objects\.length \? <div className="messages-object-list">\{objects\.map\(/);
   assert.doesNotMatch(row, /message\.objects\.map\(/);
 });
@@ -365,33 +396,24 @@ test('the two-questions card leads with the request’s card too', () => {
   assert.match(plan, /\{head \? <BotHeadWords head=\{head\} objects=\{message\.objects\} \/>\s*: meta\.lead \? <MessageMarkdown content=\{meta\.lead\} appSlug=\{meta\.appSlug\} \/> : null\}/);
 });
 
-test('the staging preview’s declared check finds the demo DM’s news as one row per request', () => {
-  // One request, one story: the request's card no longer leads a big card
-  // in the main chat; each request is one row (./bot-news-line.tsx), its
-  // earlier news folded into its newest, which counts the updates. The card
-  // still leads the message inside the request's thread. A finished request
-  // (the first version that went live) folds with the others beside it into
-  // one line of words (N finished · N couldn't build).
-  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
+test('#6207: the staging preview’s declared check finds Main Chat without any request’s news', () => {
+  // 3 Nov 2026: Main Chat is the conversation. A request's news (its rows,
+  // the finished group, its question) is on the request's page, which its
+  // row on the Homeroom bot page opens; the demo DM still holds it, and Main
+  // draws none of it.
+  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#6207 \(3 Nov 2026\): Main Chat holds no request's news/.test(t.name));
   assert.ok(check, 'declared');
-  // 1 Nov 2026: the chat with the bot is the Homeroom bot tab's alone, in its column.
   assert.equal(check.path, '/?demo=1#homeroom-bot/main');
-  assert.match(check.expectSelector, /^#ai-main-pane \.messages-thread-scroll:has/);
-  assert.match(check.expectSelector, /:has\(\[data-bot-settled-count=finished\]\)/, 'a first version that went live is folded with the finished');
-  // 31 Oct 2026: the request still waiting is a row that counts its updates,
-  // and its question is drawn whole in the chat, its answers under it: the
-  // thread that drew it whole is gone (./bot-request-page.test.js).
-  assert.match(check.expectSelector, /:has\(\[data-bot-news-state=needs\] \[data-bot-thread-link\]\)/, 'the request still waiting counts its updates');
-  assert.match(check.expectSelector, /article:has\(\[data-bot-thread-label\]\) \[data-bot-question=open\] \[data-bot-answer\]$/, 'its question, whole, with its answers');
+  // A request's row wears its number tag; a first version's news, which stays, wears none.
+  assert.equal(check.expectSelector, '#ai-main-pane[data-ai-column=main] .messages-thread-scroll:not(:has([data-request-tag]))');
+  assert.match(read('frontend/src/features/messages/bot-news-line.tsx'), /\{meta\.firstVersion \? null : <RequestTag number=\{meta\.issueNumber\} size="line" \/>\}/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
-  assert.equal(check.expectText, 'Which night should the rota start on?', 'the question still waiting, in its own words');
-  // The fixture it reads (services/staging-messages.js ensureBotDmStory):
-  // request #18's question, open, in the story the bot told before Main
-  // Chat was one conversation.
+  assert.equal(check.expectText, 'Main Chat');
+  // The fixture still writes the story (services/staging-messages.js ensureBotDmStory).
   const fixture = read('src/services/staging-messages.js');
   assert.match(fixture, /const question = 'Which night should the rota start on\?';/);
-  assert.match(fixture, /kind: 'question', \.\.\.about, mirrors: true, status: 'open',/);
 });
+
 
 // ── Chat replies (homeroom-bot-mayor.js) ────────────────────────────────
 

@@ -34,6 +34,9 @@ const FIRST_PERSON = Object.freeze([
   [/Homeroom bot thinks a person should take this one from here:/, 'I think a person should take this one from here:'],
   [/Homeroom bot thinks this is about Homeroom itself, not /, 'I think this is about Homeroom itself, not '],
   [/can have Homeroom bot move it to Homeroom's own board\./, 'can have me move it to Homeroom\'s own board.'],
+  // #6311: the bot never speaks of itself in the third person, even about
+  // what it confirmed or found.
+  [/\bHomeroom bot (confirmed|checked|found|tested)\b/g, 'I $1'],
   [/can say Go ahead in a chat with Homeroom bot, or reply here\./, 'can say Go ahead in a chat with me, or reply here.'],
   [/Homeroom bot couldn't find anything to build in this request:/, 'I couldn\'t find anything to build in this request:'],
   [/Homeroom bot built this\. It's up for a vote:/, 'I built this. It\'s up for a vote:'],
@@ -41,15 +44,13 @@ const FIRST_PERSON = Object.freeze([
   [/Homeroom bot will build this when one of its (\d+|several|many) changes (on|across)/, 'I\'ll build this when one of my $1 changes $2'],
   // #6156: held for its turn among the project's builds (live.heldText).
   [/Homeroom bot will build this when one of the (\d+|several|many) changes it is building on/, 'I\'ll build this when one of the $1 changes I\'m building on'],
-  [/Homeroom bot has (a question about|a plan for|a note on) this request, but it has already posted/, 'I have $1 this request, but I\'ve already posted'],
-  [/It will come back to it once\b/g, 'I\'ll come back to it once'],
   [/Homeroom bot started on this and found it cannot be built as asked:/, 'I started on this and found it can\'t be built as asked:'],
   [/, so Homeroom bot is building the plan above now\./, ', so I\'m building the plan above now.'],
   [/Homeroom bot's first try at building this didn't finish, so it is trying once more from the same plan\./,
     'My first try at building this didn\'t finish, so I\'m trying once more from the same plan.'],
   [/Homeroom bot wrote a plan for this request and is building it now\./, 'I wrote a plan for this request and I\'m building it now.'],
-  [/Homeroom bot wrote a plan for this request, with its before and after screens, and will build it once/,
-    'I wrote a plan for this request, with its before and after screens, and will build it once'],
+  [/Homeroom bot wrote a plan for this request, with its before and after screens\. Nothing has been built yet\. It will build it once/,
+    'I wrote a plan for this request, with its before and after screens. Nothing has been built yet. I\'ll build it once'],
   [/or it goes with what it suggests:/g, 'or I\'ll go with what I suggest:'],
   [/Homeroom bot's plan for this request/g, 'My plan for this request'],
   [/It builds nothing until the person who asked says so:/, 'I\'ll build nothing until the person who asked says so:'],
@@ -60,6 +61,9 @@ const FIRST_PERSON = Object.freeze([
   [/Homeroom bot updated this change:/, 'I updated this change:'],
   [/Homeroom bot couldn't update this change: it has already updated it as many times as it may on its own,/,
     'I couldn\'t update this change: I\'ve already updated it as many times as I may on my own,'],
+  // #6284: the cap on updates people asked for (followup.revisionFailedText).
+  [/Homeroom bot couldn't update this change: it has already made (\d+) updates people asked for on it, as many as it may\./,
+    'I couldn\'t update this change: I\'ve already made $1 updates people asked for on it, as many as I may.'],
   [/Homeroom bot is working on it…/, 'I\'m working on it…'],
   [/Homeroom bot saw your message, but another update to this change is running right now\. It will answer once that finishes\./,
     'I saw your message, but another update to this change is running right now. I\'ll answer once that finishes.'],
@@ -79,6 +83,9 @@ const FIRST_PERSON = Object.freeze([
   [/It is trying once more\./, 'I\'m trying once more.'],
   [/Homeroom bot can't get this change working on its own:/, 'I can\'t get this change working on my own:'],
   [/Homeroom bot can't get this change past its checks on its own:/, 'I can\'t get this change past its checks on my own:'],
+  // #6234: the fix's start line (homeroom-bot-followup.js checksFixingText).
+  [/^Homeroom bot is (fixing|adding) /, 'I\'m $1 '],
+  [/It will say here when it's done\./, 'I\'ll say here when it\'s done.'],
   // A fix round's note (homeroom-bot-followup.js checksRevisedText).
   [/^Homeroom bot (fixed|added) (the |what |sample )/, 'I $1 $2'],
   // Why a fix of its checks stopped (homeroom-bot-followup.js whySentence).
@@ -93,6 +100,8 @@ const FIRST_PERSON = Object.freeze([
   [/can tap Try again in their chat with Homeroom bot, and it will finish it\./,
     'can tap Try again in their chat with me, and I\'ll finish it.'],
   [/: it ended up with no changes to show\./, ': I ended up with no changes to show.'],
+  // #6313: a failure the bot is already trying again by itself.
+  [/\. It is trying again\./, '. I\'m trying again.'],
   [/Homeroom bot couldn't\b/g, 'I couldn\'t'],
   // Leaving a request to the people holding it (homeroom-bot-holds.js).
   [/, so Homeroom bot is leaving it to the vote\./, ', so I\'m leaving it to the vote.'],
@@ -105,6 +114,31 @@ const FIRST_PERSON = Object.freeze([
   [/and it will (look again|try again)\./g, 'and I\'ll $1.'],
 ]);
 
+// #6311: the words the bot picked up from its own instructions and then said
+// to a member ("in this checkout", "the live head commit", "this build
+// agent", "per the platform conventions"). A note's reason is rewritten
+// before it is posted, so a model that slips says the plain thing.
+const INTERNAL_WORDS = Object.freeze([
+  [/\bin this checkout\b/gi, 'in the project\'s code'],
+  [/\bthe live head commit\b/gi, 'the live version'],
+  [/\bthe head commit\b/gi, 'the live version'],
+  [/\bthis build agent\b/gi, 'I'],
+  [/\bper the platform conventions,?\s*/gi, ''],
+  [/\ba person must authorize\/route\b/gi, 'a person needs to decide'],
+]);
+
+/**
+ * Pure: a reason, question or first step said in words a member understands.
+ * The bot's own instructions are not its vocabulary. Anything else passes
+ * through.
+ */
+function plainWords(text) {
+  if (typeof text !== 'string' || !text) return text;
+  let out = text;
+  for (const [re, to] of INTERNAL_WORDS) out = out.replace(re, to);
+  return out.trim();
+}
+
 /** Pure: a note's Homeroom copy, in the bot's own voice. Anything else passes through. */
 function firstPerson(text) {
   if (typeof text !== 'string' || !text) return text;
@@ -113,4 +147,4 @@ function firstPerson(text) {
   return out;
 }
 
-module.exports = { firstPerson, FIRST_PERSON };
+module.exports = { firstPerson, FIRST_PERSON, plainWords, INTERNAL_WORDS };

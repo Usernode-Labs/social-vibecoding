@@ -19,6 +19,7 @@ const api = read('frontend/src/features/messages/api.ts');
 const store = read('frontend/src/features/messages/store.ts');
 const screen = read('frontend/src/features/messages/index.tsx');
 const composer = read('frontend/src/features/messages/composer.tsx');
+const attachmentLimits = read('frontend/src/features/attachments/limits.ts');
 const row = read('frontend/src/features/messages/message-row.tsx');
 const markdown = read('frontend/src/features/messages/format.tsx');
 const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
@@ -41,17 +42,18 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   assert.match(html, /id="platform-tabs-badge"/, 'the tab is what can carry a count');
   // The bar's order, pinned as a declared check. `+` rather than `~`: the
   // tabs are adjacent siblings. The markup is the desktop rail's order
-  // (#6019, 29 Oct 2026): Home, Discover, Messages, AI, Communities (key
-  // `workshop`), you; app.css lays the phone's five out as Home,
-  // Communities, AI, Messages, you. v3: Messages' nested conversations
-  // follow it, an empty element when shut. D (18 Oct 2026): the communities
-  // you pinned, then your others, sit just above the Communities tab, drawn
+  // (#6019, 29 Oct 2026; One Home #6361 put AI above Messages and retired
+  // Discover's tab): Home, AI, Messages, Communities (key `workshop`), you;
+  // app.css draws no Communities, on either bar, and lays the phone's four
+  // out as Home, AI, Messages, you. D (18 Oct 2026): Recents (the
+  // communities pinned to its top, then your others) sits after them, drawn
   // only on a desktop.
-  // Most hrefs are left out: the runner clips a selector at 256 characters
-  // (tests/proposal-tests-manifest.test.js), and the render tests pin them.
+  // Most hrefs are left out: the runner's selector cap
+  // (`MAX_TEST_SELECTOR_LEN`, tests/proposal-tests-manifest.test.js) would
+  // clip them, and the render tests pin them.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages'
-      + ' + #platform-rail-conversations + #platform-tab-ai[href="#homeroom-bot"] + #platform-rail-pinned'
+    === '#platform-tabs #platform-tab-home + #platform-tab-ai[href="#homeroom-bot"]'
+      + ' + #platform-tab-messages + #platform-rail-pinned'
       + ' + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me'),
   'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
@@ -360,7 +362,10 @@ test('attachment ids remain opaque hex and a denied preview stays null', () => {
 });
 
 test('composer and moderation payloads match the backend contracts', () => {
-  assert.match(composer, /const MAX_ATTACHMENTS = 4/);
+  // #6256: the cap and the per-type ceiling live once, in the module both the
+  // conversation composer and the blank thread's composer read.
+  assert.match(attachmentLimits, /const MAX_ATTACHMENTS = 4/);
+  assert.match(composer, /import \{ MAX_ATTACHMENTS, stageFiles \} from '\.\.\/attachments\/limits'/);
   assert.match(composer, /slice\(0, 8000\)/);
   const shareHandler = composer.slice(composer.indexOf('const onShare ='),
     composer.indexOf("window.addEventListener('usernode:messages-object-selected'"));
@@ -395,6 +400,53 @@ test('composer and moderation payloads match the backend contracts', () => {
   assert.match(sharedReport, /maxLength=\{1000\}/);
   assert.match(sharedReport, /fetch\('\/api\/reports'/);
 
+});
+
+test('#6212: the composer keeps the list\'s attachment apart from the person\'s own', () => {
+  // Where the chip came from decides whether moving around the bot page may
+  // take it off; the person's own (Share, Ask for changes, the picker) stays.
+  assert.match(composer, /const objectFrom = useRef<'list' \| 'person' \| null>\(null\);/);
+  assert.match(composer, /const objectRef = useRef<StagedObject \| null>\(null\);/);
+  assert.match(composer, /const \{ conversationId: to, source, \.\.\.object \} = detail;/, 'the source never rides along as part of the item');
+  assert.match(composer, /if \(source === 'list' && objectFrom\.current === 'person' && objectRef\.current\) return;/,
+    'the list never replaces an item the person chose');
+  assert.match(composer, /setChip\(object, source === 'list' \? 'list' : 'person'\)/, 'a detail with no source is the person\'s');
+  assert.match(composer, /setChip\(pending\.object, 'person'\)/, 'Ask for changes is the person\'s');
+  assert.match(composer, /window\.addEventListener\('usernode:messages-object-cleared', onCleared\);/);
+  assert.match(composer, /window\.removeEventListener\('usernode:messages-object-cleared', onCleared\);/);
+  assert.match(composer, /const onCleared = \(event: Event\) => \{[\s\S]{0,420}if \(objectFrom\.current !== 'list'\) return;\s+setChip\(null, null\);/,
+    'a clear takes off only what the list attached');
+  // Sending, changing scope and × also forget where the chip came from.
+  assert.match(composer, /objectRef\.current = null; objectFrom\.current = null;\s+const input = \{ content: value\.trim\(\)/,
+    'sending forgets where the chip came from');
+  assert.match(composer, /setValue\(draftFor\(scope\)\); setAttachments\(draftAttachmentsFor\(scope\)\); setChip\(null, null\);/);
+  assert.match(composer, /onClick=\{\(\) => \{ setChip\(null, null\); setPrompt\(null\); \}\}/);
+  // A request page opened from a bot message in Main Chat is the same
+  // automatic attach the list itself makes.
+  assert.match(read('frontend/src/features/messages/request-page.ts'),
+    /issueNumber: page\.issueNumber, title: page\.label, conversationId, source: 'list' \}/);
+});
+
+test('#6249: attached files are kept with the draft they were attached in', () => {
+  assert.match(store, /export function draftAttachmentsFor\(scope: ComposerScope\): MessageAttachment\[\]/);
+  assert.match(store, /export function setDraftAttachments\(scope: ComposerScope, items: MessageAttachment\[\]\): void/);
+  assert.match(store, /`usernode:messages-draft-attachments:\$\{scope\}`/, 'one saved list per composer scope');
+  // A file Homeroom has already cleaned up (24 hours) is never drawn again.
+  assert.match(store, /export const DRAFT_ATTACHMENT_MAX_AGE_MS = 23 \* 60 \* 60 \* 1000;/);
+  assert.match(store, /if \(now - savedAt > DRAFT_ATTACHMENT_MAX_AGE_MS\) continue;/);
+  assert.match(store, /if \(read\.dropped\) writeDraftAttachments\(scope, saved\);/,
+    'the key is rewritten once an entry has aged out');
+  // Sending clears the saved files beside the saved words.
+  assert.match(store, /setDraft\(scope, ''\);\s+setDraftAttachments\(scope, \[\]\);/);
+  // An answer tapped on a bot question does not wipe the person's files.
+  assert.match(store, /const files = draftAttachmentsFor\(scope\);[\s\S]{0,400}if \(files\.length\) setDraftAttachments\(scope, files\);/);
+  // The composer restores them, saves on add against the scope it started in,
+  // and saves on ×.
+  assert.match(composer, /setValue\(draftFor\(scope\)\); setAttachments\(draftAttachmentsFor\(scope\)\);/);
+  assert.match(composer, /const startScope = scopeRef\.current;/);
+  assert.match(composer, /updateAttachments\(startScope, \(items\) => \[\.\.\.items, attachment\]\);/);
+  assert.match(composer, /updateAttachments\(scope, \(items\) => items\.filter\(\(candidate\) => candidate\.id !== item\.id\)\)/);
+  assert.match(composer, /setDraftAttachments\(target, next\);/);
 });
 
 test('blocking and access-revocation purge an active direct thread locally', () => {

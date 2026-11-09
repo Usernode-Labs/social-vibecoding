@@ -97,49 +97,32 @@ const app = { id: 11, slug: 'flat-4b-chores', name: 'Flat 4B Chores' };
 const homeroomBot = { id: 1, username: 'homeroom_bot' };
 const sam = { userId: 8, username: 'sam', hasPlatformAccess: true, issueTitle: 'Bin day reminder', firstVersion: false };
 
-test('a queued or filed card asks whether the project\'s first version holds the request', async () => {
+// 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): an ordinary request's
+// card no longer goes to its requester's chat with the bot, so no card says
+// it waits for the first version. Its stored stage does, on every screen
+// (work-state.js: reading · first_version_wait, by the same rule:
+// tests/work-state.test.js), and a project chat's card as before.
+test('no card asks about the hold for an ordinary request; a first version\'s own card never did', async () => {
   const held = startDeps({ holds: new Map([[11, 1]]) });
-  await activity.startCard(held.pool, { inDm: true,
+  assert.equal(await activity.startCard(held.pool, { inDm: true,
     app, issueNumber: 2, requester: sam, bot: homeroomBot, jobKey: 41, settings: held.settings, queued: true,
     deps: { dm: held.dm, botSvc: held.botSvc },
-  });
-  assert.deepEqual(held.asked, [[11]]);
-  assert.match(held.sent[0].content, /\n\nWaiting for the first version to go live\. I'll start on this as soon as it does\.$/);
-  assert.equal(held.sent[0].idempotencyKey, 'hrbot-activity-41', 'the same key its look will start from');
+  }), null);
+  assert.deepEqual([held.asked, held.sent], [[], []], 'nothing asked, nothing sent');
 
-  const filed = startDeps({ holds: new Map([[11, 1]]) });
-  await activity.startCard(filed.pool, { inDm: true,
-    app, issueNumber: 5, requester: sam, bot: homeroomBot, jobKey: 42, settings: filed.settings, filed: true,
-    deps: { dm: filed.dm, botSvc: filed.botSvc },
-  });
-  assert.match(filed.sent[0].content, /\n\nFiled\. Waiting for the first version to go live\./);
-
-  const free = startDeps();
-  await activity.startCard(free.pool, { inDm: true,
-    app, issueNumber: 2, requester: sam, bot: homeroomBot, jobKey: 43, settings: free.settings, queued: true,
-    deps: { dm: free.dm, botSvc: free.botSvc },
-  });
-  assert.match(free.sent[0].content, /Waiting for a free builder/, 'nothing pending: as before');
-
-  const broken = startDeps({ holdsThrow: true });
-  await activity.startCard(broken.pool, { inDm: true,
-    app, issueNumber: 2, requester: sam, bot: homeroomBot, jobKey: 44, settings: broken.settings, queued: true,
-    deps: { dm: broken.dm, botSvc: broken.botSvc },
-  });
-  assert.match(broken.sent[0].content, /Waiting for a free builder/, 'a read that fails costs the card nothing');
-
-  // The first version's own card, and a look that started, never ask.
   const own = startDeps({ holds: new Map([[11, 1]]) });
   await activity.startCard(own.pool, { inDm: true,
     app, issueNumber: 1, requester: { ...sam, firstVersion: true }, bot: homeroomBot, jobKey: 45, settings: own.settings, queued: true,
     deps: { dm: own.dm, botSvc: own.botSvc },
   });
-  const started = startDeps({ holds: new Map([[11, 1]]) });
-  await activity.startCard(started.pool, { inDm: true,
-    app, issueNumber: 2, requester: sam, bot: homeroomBot, jobKey: 46, settings: started.settings,
-    deps: { dm: started.dm, botSvc: started.botSvc },
-  });
-  assert.deepEqual([...own.asked, ...started.asked], []);
+  assert.deepEqual(own.asked, []);
+  assert.equal(own.sent.length, 1, 'the first version\'s own card');
+});
+
+test('the stored stage reads the hold by the bot\'s own rule', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/services/work-state.js'), 'utf8');
+  assert.match(src, /const holds = await bot\.firstVersionHolds\(db, \[\.\.\.new Set\(rows\.map\(\(r\) => Number\(r\.app_id\)\)\)\]\)/);
+  assert.match(src, /row\.held_first_version = bot\.heldForFirstVersion\(holds, \{/);
 });
 
 test('the read lane and the build lane both hold for the first version; the merge wakes the lane', () => {

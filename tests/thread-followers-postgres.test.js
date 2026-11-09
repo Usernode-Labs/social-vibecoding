@@ -24,7 +24,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const express = require('express');
 
 const DSN = process.env.TEST_DATABASE_URL
@@ -52,9 +51,9 @@ test('thread followers against the full schema', { timeout: 120000 }, async (t) 
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   require('../src/db/pool').getPool = () => pool;
   const wsBus = require('../src/services/ws-bus');
@@ -276,6 +275,19 @@ test('thread followers against the full schema', { timeout: 120000 }, async (t) 
     const change = page.body.items.find((i) => i.type === 'change' && i.number === 8);
     assert.ok(change.folded.every((r) => r.username !== 'tf_dave'));
     await pool.query('DELETE FROM user_blocks WHERE blocker_id = $1', [erin.id]);
+  });
+
+  await t.test('a merged change carries its live time, so the page says Going live until it runs', async () => {
+    const at = '2026-11-03T10:00:00.000Z';
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = NULL WHERE id = $1`, [change.id]);
+    const waiting = await read(erin, `/api/apps/${app.slug}/threads/7`);
+    const notRunning = waiting.body.items.find((i) => i.type === 'change' && i.id === change.id);
+    assert.equal(notRunning.state, 'merged');
+    assert.equal(notRunning.liveAt, null, 'merged but not running yet');
+
+    await pool.query(`UPDATE chat_sessions SET live_at = $2 WHERE id = $1`, [change.id, at]);
+    const running = await read(erin, `/api/apps/${app.slug}/threads/7`);
+    assert.equal(running.body.items.find((i) => i.type === 'change' && i.id === change.id).liveAt, at);
   });
 
   await t.test('the read answers only for a project the viewer may see, and a number it holds', async () => {

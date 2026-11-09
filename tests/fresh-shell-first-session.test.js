@@ -110,7 +110,9 @@ function harness({
     URLSearchParams,
     AbortController,
     fetch: async (url, init) => {
-      assert.equal(url, '/api/version');
+      // #6233: the poll names the build this tab loaded (?have=), so the
+      // answer can say which merge that build contains.
+      assert.ok(url === '/api/version' || /^\/api\/version\?have=[0-9a-f]{40}$/.test(url), `unexpected ${url}`);
       requests.push({ url, init: init || null });
       const fresh = init && init.cache === 'no-store';
       return {

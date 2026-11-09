@@ -350,11 +350,6 @@ test('both hosted bridge copies carry the block', () => {
 
 // ── 5. The seams ──────────────────────────────────────────────────────
 
-test('the Workshop claims its C, so the two never both open', () => {
-  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(ws, /if \(k === 'c' \|\| k === 'C'\) \{ e\.preventDefault\(\); toggleSheet\('comments'\); return; \}/);
-});
-
 test('the bundle installs the shortcut, which loads comment mode on the first C', () => {
   assert.match(read('frontend/src/main.tsx'), /^import '\.\/features\/improve\/suggest-shortcut';$/m);
   const src = read('frontend/src/features/improve/suggest-shortcut.ts');
@@ -376,10 +371,10 @@ test('Settings, Experimental no longer has the switch', () => {
   const html = renderToHtml(createElement(ExperimentalSection));
   assert.doesNotMatch(html, /suggest-shortcut-enabled/, 'the switch is gone');
   assert.doesNotMatch(html, /Comment on the page/);
+  assert.doesNotMatch(html, /review-flow-enabled/, 'the Needs you switch is gone too');
   // The other experiments keep their switches and their order.
   assert.ok(html.indexOf('id="ai-progress-estimate"') < html.indexOf('id="session-bridge-enabled"'));
-  assert.ok(html.indexOf('id="session-bridge-enabled"') < html.indexOf('id="review-flow-enabled"'));
-  assert.ok(html.indexOf('id="review-flow-enabled"') < html.indexOf('id="settings-local-agents-section"'));
+  assert.ok(html.indexOf('id="session-bridge-enabled"') < html.indexOf('id="settings-local-agents-section"'));
 
   const settings = read('frontend/src/features/settings/settings.js');
   assert.doesNotMatch(settings, /suggest-shortcut-enabled/, 'nothing paints or saves it there');

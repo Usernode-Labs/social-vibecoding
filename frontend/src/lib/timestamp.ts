@@ -68,7 +68,7 @@
  * features/messages/format.tsx.
  */
 
-import { t } from './i18n/runtime';
+import { getDateLocale, t } from './i18n/runtime';
 
 export interface Stamp {
   /** What the row shows: the time, preceded by the date when it is not today. */
@@ -92,14 +92,18 @@ const FULL: Intl.DateTimeFormatOptions = {
  * were a measurable share of opening a long chat. Every option set here names
  * its own date/time fields, so the `toLocale*String` defaults never apply and
  * a cached formatter prints exactly what those calls printed. The locale is
- * still the runtime default, read once — it does not change under a page.
+ * the one rule the product uses (#6103): the interface language with the
+ * device's region, read through `getDateLocale()`. The cache key carries it,
+ * because the interface language can change under a page.
  */
 const formatters = new Map<string, Intl.DateTimeFormat>();
 function formatDate(date: Date, key: string, options: Intl.DateTimeFormatOptions): string {
-  let formatter = formatters.get(key);
+  const locale = getDateLocale();
+  const id = `${locale}|${key}`;
+  let formatter = formatters.get(id);
   if (!formatter) {
-    formatter = new Intl.DateTimeFormat(undefined, options);
-    formatters.set(key, formatter);
+    formatter = new Intl.DateTimeFormat(locale, options);
+    formatters.set(id, formatter);
   }
   return formatter.format(date);
 }
@@ -169,6 +173,21 @@ export function timeOfDay(
   if (!date) return '';
   const hour = opts.hour ?? 'numeric';
   return formatDate(date, `time-${hour}`, { hour, minute: '2-digit' });
+}
+
+/**
+ * The day alone, in the product's one short form: "2 Nov", or "2 Nov 2025"
+ * outside the current year (#6103). For a screen that names a date rather
+ * than when something was said — a claim's "clears itself on", a custom
+ * domain's "Live since". It reads the same language and order as every
+ * message stamp, so two screens can no longer spell one day two ways.
+ */
+export function shortDate(
+  value: string | number | Date | null | undefined,
+  now: Date = new Date(Date.now()),
+): string {
+  const date = parse(value);
+  return date ? datePart(date, now) : '';
 }
 
 /** The floor under the relative form, in milliseconds. See the header. */

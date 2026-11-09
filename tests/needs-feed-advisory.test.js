@@ -150,6 +150,7 @@ test('the demo feed’s shopping-list card is the advisory one', () => {
 const { reelRows } = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
 const { NeedsVoteForm } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
 const WORKSHOP = fs.readFileSync(path.join(root, 'frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
+const FLOW = fs.readFileSync(path.join(root, 'frontend/src/features/review-flow/review-flow.tsx'), 'utf8');
 
 const noop = () => {};
 const sheetForm = (over = {}) => {
@@ -175,4 +176,15 @@ test('the item’s eyebrow reads the new catalog entry for a marked row', () => 
   assert.equal(message('project:needsYou.eyebrow.changeAdvisory'), 'Change · Your vote is advisory');
   assert.match(WORKSHOP, /needsYou\.eyebrow\.changeAdvisory/, 'FeedItem names the id where the eyebrow is drawn');
   assert.match(WORKSHOP, /row\.yes && \(row\.yes\.advisory \|\| row\.yes\.uncounted\)/, 'on a change row whose Yes carries a flag');
+});
+
+// #6199: the run opens at the first change waiting on you, never on a
+// governance row. The reel's unseen-row resume went with the reel (#6276).
+test('the run opens at the first change waiting on you', () => {
+  assert.match(
+    FLOW,
+    /setIndex\(Math\.max\(0, shaped\.findIndex\(\(it\) => it\.kind !== 'governance'\)\)\)/,
+    'the run starts on its first change, never on a governance row',
+  );
+  assert.doesNotMatch(FLOW, /firstUnseenIndex/, 'the reel’s unseen-row resume is gone with the reel');
 });

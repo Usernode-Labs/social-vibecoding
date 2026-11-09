@@ -1,8 +1,7 @@
 'use strict';
 
-// The new Needs you review flow (frontend/src/features/review-flow/), an
-// experiment behind Settings › Experimental ("New Needs you"), off by
-// default and kept on the device.
+// The Needs you review flow (frontend/src/features/review-flow/), what every
+// Needs you draws now, in the tab.
 //
 // What is pinned, and each is a way it can be quietly wrong:
 //
@@ -33,20 +32,9 @@ const { message } = require('./lib/platform-i18n');
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-const settings = loadTsx('frontend/src/features/review-flow/settings.ts');
 const model = loadTsx('frontend/src/features/review-flow/model.ts');
 const compare = loadTsx('frontend/src/features/review-flow/compare.tsx');
 const sheet = loadTsx('frontend/src/features/review-flow/vote-sheet.tsx');
-
-function memoryStorage(on) {
-  const map = new Map(on ? [[settings.REVIEW_FLOW_STORAGE_KEY, '1']] : []);
-  return {
-    getItem: (k) => (map.has(k) ? map.get(k) : null),
-    setItem: (k, v) => { map.set(k, String(v)); },
-    removeItem: (k) => { map.delete(k); },
-    map,
-  };
-}
 
 const SCREEN = {
   viewport: 'mobile',
@@ -66,71 +54,6 @@ function feedItem(over = {}) {
     ...over,
   };
 }
-
-// ── 1. The switch ────────────────────────────────────────────────────────
-
-test('the switch is off by default and kept on the account; a failed save changes nothing', async () => {
-  assert.equal(settings.reviewFlowEnabled({ user: {} }), false);
-  assert.equal(settings.reviewFlowEnabled(null), false, 'signed out reads as off');
-  const app = { user: { reviewFlowEnabled: false } };
-  const sent = [];
-  const ok = (v) => { sent.push(v); return Promise.resolve(true); };
-  assert.equal(await settings.setReviewFlowEnabled(true, app, ok), true);
-  assert.deepEqual(sent, [true]);
-  assert.equal(settings.reviewFlowEnabled(app), true);
-  assert.equal(await settings.setReviewFlowEnabled(false, app, () => Promise.resolve(false)), false);
-  assert.equal(settings.reviewFlowEnabled(app), true, 'the account keeps what the server has');
-});
-
-test('a device that had it on carries it over to the account once, then forgets it', async () => {
-  const app = { user: { reviewFlowEnabled: false } };
-  const store = memoryStorage(true);
-  const sent = [];
-  await settings.carryOverDeviceSwitch(app, store, (v) => { sent.push(v); return Promise.resolve(true); });
-  assert.deepEqual(sent, [true]);
-  assert.equal(app.user.reviewFlowEnabled, true);
-  assert.equal(store.map.has(settings.REVIEW_FLOW_STORAGE_KEY), false);
-  await settings.carryOverDeviceSwitch(app, store, (v) => { sent.push(v); return Promise.resolve(true); });
-  assert.deepEqual(sent, [true], 'nothing left to carry');
-  const failing = memoryStorage(true);
-  await settings.carryOverDeviceSwitch({ user: { reviewFlowEnabled: false } }, failing, () => Promise.resolve(false));
-  assert.equal(failing.map.get(settings.REVIEW_FLOW_STORAGE_KEY), '1', 'kept to try again when the save failed');
-});
-
-test('the server keeps the switch on the account and serves it with the user', () => {
-  assert.match(read('src/db/schema.sql'), /ALTER TABLE users ADD COLUMN IF NOT EXISTS review_flow_enabled BOOLEAN NOT NULL DEFAULT FALSE;/);
-  const routes = read('src/routes/auth.js');
-  assert.match(routes, /router\.post\('\/api\/me\/review-flow'[\s\S]{0,400}UPDATE users SET review_flow_enabled = \$1 WHERE id = \$2/);
-  assert.match(routes, /reviewFlowEnabled: !!req\.user\.reviewFlowEnabled/);
-  const mw = read('src/middleware/auth.js');
-  assert.equal((mw.match(/review_flow_enabled/g) || []).length, 4, 'both reads select it and both shapes carry it');
-});
-
-test('the bridge settings.js reads and saves the switch through', () => {
-  const win = {};
-  settings.installReviewFlowBridge(win);
-  assert.equal(typeof win.UsernodeReact.reviewFlow.enabled, 'function');
-  assert.equal(typeof win.UsernodeReact.reviewFlow.setEnabled, 'function');
-});
-
-test('Settings, Experimental carries the switch, and settings.js paints and saves it', () => {
-  const section = read('frontend/src/features/settings/sections/experimental.tsx');
-  assert.match(section, /<SwitchRow id="review-flow-enabled">/);
-  assert.match(section, /settings:experimental\.reviewFlow\.label/);
-  const js = read('frontend/src/features/settings/settings.js');
-  assert.match(js, /getElementById\('review-flow-enabled'\)[\s\S]{0,400}UsernodeReact\?\.reviewFlow[\s\S]{0,80}setEnabled\(e\.target\.checked\)[\s\S]{0,80}if \(!ok\) reviewToggle\.checked = !!pref\?\.enabled\(\)/);
-  assert.match(js, /review\.checked = !!reviewPref\?\.enabled\(\)/);
-  assert.match(read('frontend/src/main.tsx'), /import '\.\/features\/review-flow\/settings';/);
-  assert.equal(message('settings:experimental.reviewFlow.label'), 'New Needs you');
-});
-
-test('the Communities tab draws the new flow only while the switch is on', () => {
-  const src = read('frontend/src/features/workshop/index.tsx');
-  assert.match(src, /const reviewFlow = useReviewFlowEnabled\(\);/);
-  assert.match(src, /reviewFlow \? \(\s*\/\/[\s\S]*?<ReviewFlow[\s\S]*?\) : \(\s*<NeedsReel/);
-  assert.match(src, /onRetracted=\{\(id\) => workshopController\.retracted\(id\)\}/);
-  assert.match(src, /retracted\(id: number\) \{[\s\S]*?answeredVotes\.delete\(key\)[\s\S]*?this\.refreshNeeds\(\)/);
-});
 
 // ── 2. The pictures' maths ──────────────────────────────────────────────
 
@@ -156,6 +79,47 @@ test('feed items become review items: plain summary, shaped screens, phone first
 
   const [legacy] = model.toReviewItems([feedItem({ shots: null, visuals: {} })], () => ({ before: 'c'.repeat(32), after: 'd'.repeat(32) }));
   assert.deepEqual(legacy.pair, { before: '/visuals/' + 'c'.repeat(32), after: '/visuals/' + 'd'.repeat(32) });
+});
+
+test('#6344: the decisions, ballots and questions the run cannot draw become rows on their own page', () => {
+  const t = (id, values) => message(id, values);
+  const feed = [
+    feedItem({ kind: 'proposal', id: 1 }),
+    feedItem({ kind: 'governance', id: 9, title: 'Rename the app to Recipe Box', number: null }),
+    feedItem({
+      kind: 'ballot', id: 12, title: 'a ballot has its own title', number: 4,
+      ballot: { number: 3, title: 'Which sign-in screen should go live?', options: [], close: null },
+    }),
+    feedItem({ kind: 'question', id: 15, title: '', number: 7 }),
+    feedItem({ kind: 'governance', id: 20, title: '', number: null }),
+    feedItem({ kind: 'ballot', id: 22, title: '', number: null, ballot: { number: null, title: null, options: [], close: null } }),
+    feedItem({ kind: 'governance', id: 30, title: 'No project here', app: null }),
+    // #6439: a vote to close a request is decided on the request's page.
+    feedItem({ kind: 'governance', id: 24, title: 'Close it: covered elsewhere', number: null, decision: { kind: 'close_issue', issueNumber: 7 } }),
+  ];
+  const pages = model.pageItems(feed, t);
+  assert.deepEqual(pages.map((p) => p.key), ['governance:9', 'ballot:12', 'question:15', 'governance:20', 'ballot:22', 'governance:24'],
+    'the feed order, only the kinds decided on their own page, and none without a project');
+  assert.deepEqual(pages.map((p) => p.href), [
+    '#app/homeroom/dev/governance/9',
+    '#app/homeroom/dev/issues/3',
+    '#app/homeroom/dev/issues/7',
+    '#app/homeroom/dev/governance/20',
+    '#app/homeroom/workshop',
+    '#app/homeroom/dev/issues/7',
+  ], 'a decision opens its own page; a close vote, a ballot and a question their request\'s, else the Workshop');
+  assert.deepEqual(pages.map((p) => p.kind), ['governance', 'ballot', 'question', 'governance', 'ballot', 'governance']);
+  assert.deepEqual(pages.map((p) => p.title), [
+    'Rename the app to Recipe Box',
+    'Which sign-in screen should go live?',
+    message('communities:reel.fallbackTitle.question'),
+    message('communities:reel.fallbackTitle.decision'),
+    message('communities:reel.ballot.fallbackTitle', { number: '' }),
+    'Close it: covered elsewhere',
+  ], 'its own title, else the fallback the feed already uses');
+  const close = model.toReviewItems([feed[7]], () => null)[0];
+  assert.equal(close.request, 7, '#6439: the review item knows the request its vote would close');
+  assert.equal(model.toReviewItems([feed[1]], () => null)[0].request, null, 'a rename has no request');
 });
 
 test('the title shot crops the after side to what changed, at its own proportions', () => {
@@ -283,6 +247,27 @@ test('the picture takes the page\'s free height, up to 3:2, and gives way to 2:1
   assert.match(read('frontend/src/features/review-flow/review-flow.tsx'), /const PAGE_CHROME = 6 \+ 42 \+ 14 \+ 120;/);
   assert.match(read('public/css/app.css'), /\.rf-claim \{ flex: none; margin: 0 0 14px; padding: 6px 16px 0; min-height: 42px;/, 'the budget is the line\'s own box');
 });
+test('#6356: from 768px the panel\'s room stops at the window\'s foot, whatever is above it', () => {
+  const flow = loadTsx('frontend/src/features/review-flow/review-flow.tsx');
+  // Under the platform header alone (top 72 in a 965 window) app.css's room already fits.
+  assert.equal(flow.pageRoom(845, 72, 965, true), 845, 'the card under the header keeps app.css\'s room');
+  // Under a project's header and tabs (top 240) the room is what the window leaves, 16px clear.
+  assert.equal(flow.pageRoom(845, 240, 965, true), 965 - 240 - 16, 'a project page: the vote stays on screen');
+  // A very short window keeps a floor: the stage scrolls inside, the window past it.
+  assert.equal(flow.pageRoom(845, 500, 600, true), 360, 'never under the floor');
+  // A phone's page has no max height and is left exactly as it was.
+  assert.ok(Number.isNaN(flow.pageRoom(NaN, 240, 844, true)), 'no max height: nothing to clamp');
+  assert.equal(flow.pageRoom(700, 240, 844, false), 700, 'under 768px: unchanged');
+  // The picture is sized from the same clamped budget as the page itself.
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(src, /page\.style\.removeProperty\('--rf-room'\);\s*const pr = page\.getBoundingClientRect\(\);\s*const css = parseFloat\(getComputedStyle\(page\)\.maxHeight\);/);
+  assert.match(src, /window\.matchMedia\('\(min-width: 768px\)'\)\.matches;\s*const max = pageRoom\(css, pr\.top, window\.innerHeight, wide\);/);
+  assert.match(src, /if \(max !== css && Number\.isFinite\(max\)\) page\.style\.setProperty\('--rf-room', `\$\{max\}px`\);/);
+  assert.match(src, /const h = \(Number\.isFinite\(max\) && max > 0 \? max : pr\.height\) - bar - safe;/);
+  assert.match(src, /window\.addEventListener\('resize', measure\);/, 'measured again on a resize');
+  assert.match(src, /if \(!page\.getClientRects\(\)\.length\) return;/, 'a hidden pane keeps its last size');
+  assert.match(src, /new IntersectionObserver\(/, 'measured again when a hidden pane shows');
+});
 // ── 2b. The preview card ────────────────────────────────────────────────
 
 test('the page leads with what the change does, then its picture, then the strip', () => {
@@ -295,7 +280,7 @@ test('the page leads with what the change does, then its picture, then the strip
   const strip = body.indexOf('<Strip');
   assert.ok(claim > 0 && claim < picture && picture < strip, 'the line, the picture, the strip');
   // The title is the bar's, one line; the line under it is body text.
-  assert.match(src, /className="rf-page" role="dialog" aria-modal="false" aria-label=\{item\.title\}/);
+  assert.match(src, /className="rf-page"\s+role="region"\s+aria-label=\{item\.title\}/);
   assert.doesNotMatch(src, /rf-head|rf-preview|rf-thumbs|planTitleFlight|coverGhost/, 'no old head, no feed card, no flight');
   const css = read('public/css/app.css');
   assert.match(css, /\.rf-claim \{ flex: none; margin: 0 0 14px; padding: 6px 16px 0; min-height: 42px; font-size: 15px; font-weight: 400; line-height: 21px; color: var\(--rf-muted\);/, 'body text under the title, not a second title');
@@ -342,21 +327,21 @@ test('votes go through castVote with the epoch, a No may carry a line, a vote ta
   assert.equal(sheet.NO_LINE_MAX, 280, 'the server\'s VOTE_REASON_MAX');
 });
 
-test('going anywhere else takes the page down at once, and it comes back with the pane', () => {
+test('the page lives in the pane, so leaving the place unmounts it with the pane', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
-  assert.match(src, /window\.addEventListener\('hashchange', route\)/);
-  assert.match(src, /window\.addEventListener\('popstate', route\)/);
-  assert.match(src, /setShown\(!!anchorRef\.current && anchorRef\.current\.getClientRects\(\)\.length > 0\)/);
+  assert.doesNotMatch(src, /createPortal/);
+  assert.doesNotMatch(src, /setShown\(/);
+  assert.match(src, /<div ref=\{anchorRef\} className="rf-run" data-review-flow="" hidden=\{open\} \/>/);
 });
 
 test('the run\'s bar: back, the title and ⌄; the title, ⌄ or the line opens the change in full', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   // Back is the arrow alone, named for where it goes, and it leaves the run.
   assert.match(src, /const toProject = header === 'project' && item && item\.app \? item\.app\.name : '';/);
-  assert.match(src, /t\('communities:review\.back\.label', \{ place: toProject \|\| t\('communities:switcher\.all\.name'\) \}\)/);
+  assert.match(src, /t\('communities:review\.back\.label', \{ place: toProject \|\| t\('core:tabs\.home'\) \}\)/);
   assert.match(src, /<button type="button" className="rf-back" onClick=\{onDone\} aria-label=\{backName\} data-rf-back="">/);
   assert.match(src, /header="project"/);
-  assert.match(read('frontend/src/features/workshop/index.tsx'), /onDone=\{\(\) => workshopController\.setTab\('status'\)\}/, 'from Communities, back to Communities');
+  assert.match(read('frontend/src/features/workshop/index.tsx'), /onDone=\{leaveNeeds\}/, 'from Needs you, back to Home (One Home, #6361)');
   assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => openTab\('status'\)\} \/>/, 'from a project, back to its hub');
   // Three ways in, one state.
   assert.match(src, /<button type="button" className="rf-bar-title-btn" onClick=\{\(\) => setDesc\(\(d\) => !d\)\} aria-expanded=\{desc\} aria-controls="rf-desc">\{item\.title\}<\/button>/);
@@ -373,10 +358,16 @@ test('the run\'s bar: back, the title and ⌄; the title, ⌄ or the line opens 
   assert.doesNotMatch(read('frontend/src/features/header/header-title.tsx'), /reviewRun/);
   assert.doesNotMatch(read('frontend/src/features/header/platform-header.tsx'), /reviewRun/);
   const css = read('public/css/app.css');
-  // A detail view: on a phone the page covers the header and the tab bar
-  // (z 30) top to bottom; the vote bar clears the home indicator itself, and
-  // the page's height budget counts that inset.
-  assert.match(css, /\n\.rf-page-wrap \{ position: fixed; inset-inline-start: var\(--platform-rail-w, 0px\); inset-inline-end: 0; top: 0; bottom: 0; z-index: 35;/);
+  // A page inside the tab: drawn in place, below the header and above the tab
+  // bar, never over the shell. The vote bar clears the home indicator itself,
+  // and the page's height budget counts that inset.
+  assert.match(css, /\n\.rf-page-wrap \{ position: relative; \}/);
+  assert.match(css, /\.rf-page \{ position: relative; width: min\(100%, 520px\); margin-inline: auto; height: calc\(100dvh - var\(--browser-banner-h, 0px\) - var\(--platform-header-h\) - var\(--platform-safe-top, 0px\) - var\(--platform-tabs-h, 0px\)\);/);
+  assert.match(css, /\[data-workshop-pane="needs"\]:has\(\[data-rf-page\]\) \[data-workshop-needs-head\] \{ display: none; \}/);
+  assert.doesNotMatch(src, /createPortal/, 'the page is drawn in place');
+  assert.doesNotMatch(css, /\.rf-page-dim/, 'nothing dims the pane');
+  assert.match(src, /<div ref=\{anchorRef\} className="rf-run" data-review-flow="" hidden=\{open\} \/>/);
+  assert.match(src, /role="region"\s+aria-label=\{item\.title\}/);
   assert.match(css, /\.rf-sheet-inner \{ display: flex; flex-direction: column; max-height: inherit; padding: 0 16px calc\(10px \+ var\(--platform-safe-bottom, 0px\)\); \}/);
   assert.match(css, /\.rf-safe-probe \{ [^}]*height: var\(--platform-safe-bottom, 0px\);/);
   assert.match(src, /const h = \(Number\.isFinite\(max\) && max > 0 \? max : pr\.height\) - bar - safe;/);
@@ -614,10 +605,10 @@ test('the title shot zooms in on the biggest change, not every change at once', 
   assert.ok(crop.place.ty < -400, 'it moves to the big change far down the screen');
 });
 
-test('a project\'s Needs you draws the same flow when the switch is on', () => {
+test('a project\'s Needs you always draws the same flow', () => {
   const src = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(src, /const reviewFlow = useReviewFlowEnabled\(\);/);
-  assert.match(src, /tab === 'needs' && reviewFlow && slug \? \([\s\S]*?<ProjectReviewFlow slug=\{slug\}/);
+  assert.doesNotMatch(src, /useReviewFlowEnabled/);
+  assert.match(src, /tab === 'needs' && slug \? \([\s\S]*?<ProjectReviewFlow slug=\{slug\}/);
   const flow = read('frontend/src/features/review-flow/review-flow.tsx');
   assert.match(flow, /export function ProjectReviewFlow\(/);
   assert.match(flow, /all\.filter\(\(it\) => it\.app && it\.app\.slug === slug\)/);
@@ -769,9 +760,14 @@ test('on a wide window the run is one column as wide as the page', () => {
   assert.ok(col, 'the run\'s pane and its notes share one column rule');
   assert.match(col[1], new RegExp(`max-width: ${cap}px;`));
   assert.match(col[1], /margin-inline-start: auto; margin-inline-end: auto;/);
-  assert.match(css, new RegExp(`\\.rf-page \\{[^}]*inset-inline-start: max\\(0px, calc\\(50% - ${cap / 2}px\\)\\); width: min\\(100%, ${cap}px\\);`));
+  assert.match(css, new RegExp(`\\.rf-page \\{[^}]*width: min\\(100%, ${cap}px\\); margin-inline: auto;`));
   assert.match(src, /<p className="rf-feed-note [^"]*" data-needs-error="">/);
   assert.match(src, /data-needs-empty="" data-review-flow="">/);
+  // #6344: when something waits that the run cannot draw, the same branch
+  // lists it rather than saying nothing does.
+  assert.match(src, /if \(onPage\.length && pagesOnly\) \{/);
+  assert.match(src, /data-needs-pages=\{onPage\.length\}/);
+  assert.match(src, /t\('communities:reel\.pages\.note'\)/);
   assert.match(src, /<div ref=\{anchorRef\} className="rf-run rf-loading" data-review-flow=""/);
 });
 test('a small change inside a close-up is drawn from it, big and sharp; without one it keeps the still\'s size', () => {
@@ -800,27 +796,42 @@ test('_workshopVisuals passes a screen\'s close-ups through, and only valid ones
   assert.match(src, /Number\(a\.density\) > 1/);
 });
 
-test('from 768px the change page is a panel under the header, its vote sheet at its foot, the pane dimmed behind it', () => {
+test('from 768px the change page is a panel in the pane, its vote sheet at its foot, and nothing behind it dimmed', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   const css = read('public/css/app.css');
-  const at = css.indexOf('.rf-page-dim { display: none; }');
-  assert.ok(at > 0, 'the dim is drawn on a wide window only');
-  // After the sheet's own rules, so the panel's foot overrides them at equal specificity.
-  assert.ok(at > css.indexOf('\n.rf-sheet {'), 'the panel block follows the sheet\'s rules');
-  const block = css.slice(at, css.indexOf('\n}\n', at) + 3);
+  const at = css.indexOf('/* From 768px the change page is a panel inside the pane.');
+  assert.ok(at > 0, 'the wide-window block is there');
+  const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('@media (min-width: 768px) {', at)) + 3);
   assert.match(block, /@media \(min-width: 768px\) \{/, 'a phone keeps the full page');
-  // Under the app's header, measured by the shell's own tokens, never over it.
-  assert.match(block, /\.rf-page-wrap \{\s*top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\)\);/);
   assert.match(block, /--rf-room: calc\(100dvh - var\(--browser-banner-h, 0px\) - var\(--platform-header-h\) - var\(--platform-safe-top, 0px\) - var\(--platform-tabs-h, 0px\) - 32px\);/, '16px clear above and below');
   // A rounded panel as tall as what it holds, up to the room; the stage scrolls past it.
-  assert.match(block, /\.rf-page \{ top: 16px; bottom: auto; max-height: var\(--rf-room\); border-radius: 20px; box-shadow: 0 0 0 1px var\(--rf-line\), [^;]+; \}/);
+  assert.match(block, /\.rf-page \{ height: auto; max-height: var\(--rf-room\); border-radius: 20px; box-shadow: 0 0 0 1px var\(--rf-line\); \}/);
   assert.match(block, /\.rf-stage \{ flex: 0 1 auto; \}/);
   // The vote sheet is the panel's foot, not a sheet pinned to the window.
   assert.match(block, /\.rf-sheet \{ max-height: calc\(var\(--rf-room\) - 52px\); border-radius: 0; box-shadow: inset 0 1px 0 var\(--rf-line\); \}/);
-  // The pane behind is dimmed, and a click on it is Back.
-  assert.match(block, /\.rf-page-dim \{ display: block; position: absolute; inset: 0; [^}]*pointer-events: auto; \}/);
-  assert.match(src, /<div ref=\{dimRef\} className="rf-page-dim" onClick=\{onDone\} aria-hidden="true" \/>\s*<div ref=\{pageRef\} className="rf-page"/);
-  assert.match(src, /dimRef\.current\?\.animate\(\[\{ opacity: 0 \}, \{ opacity: 1 \}\], \{ duration: OPEN_MS, easing: EASE \}\)/, 'the dim fades in as the run comes up');
+  // Nothing behind the page is dimmed or clickable, and no shadow lifts it.
+  assert.doesNotMatch(block, /rf-page-dim/);
+  assert.doesNotMatch(block, /0 24px 64px/);
+  assert.doesNotMatch(src, /dimRef|rf-page-dim/);
+});
+
+test('a downward swipe on a change moves on: Skip before a vote, Next after one, never on the picture', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  // Touch and pen only, and only from the top of the stage.
+  assert.match(src, /if \(e\.pointerType !== 'touch' && e\.pointerType !== 'pen'\) return;/);
+  assert.match(src, /const stage = stageRef\.current;\s*if \(!item \|\| !stage \|\| stage\.scrollTop > 0 \|\| sheetOpen\(sheet\) \|\| desc \|\| busy\.current\) return;/);
+  // The picture keeps its own gestures, and controls their taps.
+  assert.match(src, /el\?\.closest\('\[data-rf-picture\], \.rf-sheet, \.rf-desc-wrap\[data-open\], button, a, input, textarea'\)/);
+  // On release: down, and clearly down rather than sideways.
+  assert.match(src, /if \(dy >= 72 && dy > 2 \* Math\.abs\(dx\)\) \{/);
+  assert.match(src, /onPointerMove=\{swipeMove\}/);
+  assert.match(src, /if \(votes\[item\.key\]\) goNext\(\); else skip\(\);/);
+  assert.match(src, /onPointerDown=\{swipeStart\}/);
+  assert.match(src, /onPointerUp=\{\(e\) => swipeEnd\(e, false\)\}/);
+  assert.match(src, /onPointerCancel=\{\(e\) => swipeEnd\(e, true\)\}/);
+  // No preventDefault and no touch-action change: native scrolling stays.
+  assert.doesNotMatch(src, /preventDefault\(\)/);
+  assert.doesNotMatch(src.replace(/[\s\S]*?const swipeStart/, ''), /touch-action/);
 });
 
 // ── #6098: a keyboard vote keeps the reader's place ────────────────────
@@ -844,4 +855,26 @@ test('#6098: the vote pair is shown busy, not switched off, so it keeps keyboard
   assert.match(vs, /await cast\('no', text\)\) \{ setShared\(text\); setRefocus\(\(n\) => n \+ 1\); \}/);
   assert.match(vs, /querySelector<HTMLElement>\('\[data-rf-vote="no"\]'\)\?\.focus\(\{ preventScroll: true \}\)/);
   assert.match(read('public/css/app.css'), /\.rf-pair-btn\[aria-disabled="true"\] \{ opacity: \.6; \}/);
+});
+
+// #6199: the run's order is the feed's — the changes that decide come first
+// (the server's decidingFirst) — and the vote-type chips narrow the run
+// without reordering it. A fresh or remounted run opens on the first change,
+// so a feed of [deciding, advisory] opens on the deciding one rather than on
+// the advisory row below it.
+test('#6199: the run opens on the change that decides, and a filter holds only its kind', () => {
+  const voteFilter = loadTsx('frontend/src/features/workshop/vote-filter.tsx');
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(src, /const \[filter, setFilter\] = useState<VoteFilter>\('all'\);/);
+  assert.match(src, /const run = list \? filterByVoteType\(list, filter, reviewVoteType\) : \[\];/);
+  const feed = [feedItem({ id: 41 }), feedItem({ id: 42, advisory: true })];
+  const shaped = model.orderForReview(model.toReviewItems(feed, () => null));
+  const openOn = (which) => {
+    const run = voteFilter.filterByVoteType(shaped, which, (it) => (it.advisory || it.uncounted ? 'advisory' : 'deciding'));
+    return run.find((it) => it.kind !== 'governance');
+  };
+  assert.equal(openOn('all').id, 41, 'the deciding change is where a remounted run opens');
+  assert.equal(openOn('deciding').id, 41);
+  assert.equal(openOn('advisory').id, 42, 'the advisory filter holds only the advisory change');
+  assert.equal(shaped.filter((it) => it.advisory).length, 1, 'the advisory mark survives to the flow');
 });

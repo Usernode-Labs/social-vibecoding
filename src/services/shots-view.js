@@ -324,17 +324,12 @@ function serialize(run, session, slug, currentHead, { dense = false } = {}) {
   };
 }
 
-// Who is shown stills at device density: an account in the New Needs you
-// experiment (users.review_flow_enabled), read here so this works whichever
-// of the two changes reached the database first. Anyone else, a guest
-// included, is shown the 1x copies.
+// Who is shown stills at device density: every signed-in viewer is, so the
+// before/after pictures are the sharper copies. A guest, with no account, is
+// shown the 1x copies.
 async function viewerSeesDense(pool, viewer) {
   const id = Number(viewer?.id);
-  if (!Number.isSafeInteger(id) || id <= 0) return false;
-  try {
-    const { rows } = await pool.query('SELECT review_flow_enabled FROM users WHERE id = $1', [id]);
-    return rows[0]?.review_flow_enabled === true;
-  } catch { return false; }
+  return Number.isSafeInteger(id) && id > 0;
 }
 
 async function getForSession(pool, session, slug = session?.app_slug, { viewer = null } = {}) {

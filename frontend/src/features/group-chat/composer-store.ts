@@ -60,6 +60,12 @@ export interface ComposerSlot {
    */
   status: string;
   /**
+   * #6228: what Homeroom bot is doing with the newest reply in this thread,
+   * shown in the status slot only while nothing else (typing, reconnecting)
+   * is saying something there. `mine`: the viewer wrote the reply.
+   */
+  bot?: { state: 'will_read' | 'reading' | 'quiet'; mine: boolean } | null;
+  /**
    * #4065: a file is being dragged over this composer or its messages, so the
    * card shows its drop zone. Published by the module's drag tracker
    * (`GroupChat._wireDropZone`), which never sets it on a read-only thread.

@@ -214,6 +214,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // count glyphs are the same pair the app's own Workshop tab uses, which is
   // the point: the number on a row and the pane it counts wear one mark.
   const expected = [
+    // ── One Home (#6361) retired Discover's screen and its tab ──────────
+    //
+    // The rail's Discover tab drew CompassIcon (two paths) in the static
+    // document; the compass still draws behind state (a Settings row). Its
+    // filter sheet's button drew FilterIcon there too.
+    'M12 3.5a8.5 8.5 0 110 17 8.5 8.5 0 010-17z',
+    'M15.5 8.5l-2 5-5 2 2-5z',
+    'M4 6h16M7 12h10M10 18h4',
     // ── The create dialog is retired ───────────────────────────────────
     //
     // Its "A private community" row drew LockIcon in the static document;
@@ -339,7 +347,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // behind state too.
     'M4 6h16M4 12h16M4 18h16',
     'M4.5 12.75l6 6 9-13.5',
-    'M5 13l4 4L19 7',
+    // CheckIcon ('M5 13l4 4L19 7') left this list with #6136: every setup step's
+    // tick in Settings > Connectors carries one, hidden until it is pressed.
     'M5 15l7-7 7 7',
     'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
@@ -487,6 +496,13 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
     'M9.143 17.082a24.248 24.248 0 0 0 3.844.148m-3.844-.148a23.856 23.856 0 0 1-5.455-1.31 8.964 8.964 0 0 0 2.3-5.542m3.155 6.852a3 3 0 0 0 5.667 1.97m1.965-2.277L21 21m-4.225-4.225a23.81 23.81 0 0 0 3.536-1.003A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6.53 6.53m10.245 10.245L6.53 6.53M3 3l3.53 3.53',
     'M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5',
+    // ── One Home (#6361): the sidebar's pin ───────────────────────────
+    //
+    // PushPinIcon (two paths, the needle and the head) draws on each row of
+    // the sidebar's Recents, which render once the list of yours is read,
+    // never in the static document.
+    'M12 17v5',
+    'M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

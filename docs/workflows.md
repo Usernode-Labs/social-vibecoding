@@ -185,9 +185,12 @@ Admission trusts the actor its producer names: web authenticates people, so a ro
 `user:<id>` is web's word. What web cannot do is speak for the conductor: its login
 appends only the events its machines list (`producer` above) and writes no machine
 state, receipt, work item or outcome. Web can still write the application tables that
-admission and machine facts read (`users`, `app_admins`, a check's result), which is
-separate work. All deciding processes must run the updated code before a new admission
-rule applies across the fleet.
+admission and machine facts read (`users`, `app_admins`, a check's result): since it
+can name any person as the actor anyway, protecting them would not stop a compromised
+web from acting as an administrator (docs/security/database-roles.md, "Web is the
+authentication boundary"). A change to who is an administrator is recorded where
+neither runtime login can alter it (`privilege_changes`). All deciding processes must
+run the updated code before a new admission rule applies across the fleet.
 
 **Pushes.** What browsers should hear is part of the transition. A transition returns
 `push`, and a domain write adds what it inserted with `ctx.push` (a thread line with its
@@ -884,7 +887,10 @@ projection, guarded so only its transitions write a row it holds.
   are read again by the next refresh. `NotOwed` from the refresh prunes what it no longer
   wants.
 - **A look** starts when the lane grants a slot (`Granted`): `bot.look` (`homeroom-bot.js
-  lookAt`), a read on the project's triage session or a reply or fix on its change. Its
+  lookAt`), a read on the triage session of the read slot its grant names (`readSlot`:
+  slot 0 is the project's triage session, each further slot a session of its own, made
+  on its first read and marked with its slot, `source` `homeroom_bot_read:<slot>`), or a
+  reply or fix on its change. Its
   turns are durable steps naming the item, and every effect (the run, the spend, the
   notes, the act, the asks' tag) is a keyed step, so a restart follows the turn and says
   and spends nothing twice. A project's first read is granted before its triage session
@@ -922,11 +928,19 @@ projection, guarded so only its transitions write a row it holds.
 
 How much the Homeroom bot runs at once, and when it looks at GitHub
 (`src/workflow/bot-lane/`). One instance (`bot`), so the caps hold however many processes
-run the workflow: `liveAtOnce` looks and builds, `perPerson`, one read at a time on a
-project's triage session, three builds per project.
+run the workflow: `liveAtOnce` looks and builds, `perPerson`, `readsPerApp` reads at once
+on a project (`homeroom_bot_reads_per_app`, 3 unless an admin sets 1 to 6), each on a read
+slot no other read holds while it runs, three builds per project.
 - **Grants** under its lock, in the queue's order (a person's ask, follow-ups, priority,
   age), as `Granted` messages; what is in use is read from the requests (their `slot`, and
-  grants not applied yet), never kept here.
+  grants not applied yet), never kept here. A read takes its project's lowest free read
+  slot. bot-request is at version 2 since read slots: an older release runs every read of
+  a project on its newest triage session whatever its grant says, so a read an older
+  release may run (its request last written by version 1, or granted with no slot) holds
+  all its project's read slots, and is granted only while nothing else reads it. Older
+  code leaves the requests version 2 wrote, and their looks, alone; a rollback past it
+  lowers them (`UPDATE wf_instances SET machine_version = 1 WHERE machine = 'bot-request'`,
+  in a transition, once no process of the newer release is live).
 - **Pauses**: a fault (a look's platform failure) pauses every grant 2 minutes doubling to
   an hour, ended by a look that ran; the bot's weekly cap a minute at a time; GitHub's
   hourly budget nearly used up (`services/github-budget.js`: a look, a build's start, the
@@ -1311,7 +1325,7 @@ release built is known, and retired by identity once a newer attempt serves).
   else given back. An older Pod during a rollout never judges the new build's previews by
   its own fingerprint.
 - **Sleep** (#6157) is outside the machine: the `preview-sleep` clock scales a Kubernetes
-  preview unused for `PREVIEW_SLEEP_AFTER_MS` (2 h) to no replicas, vote-backed ones
+  preview unused for `PREVIEW_SLEEP_AFTER_MS` (1 h) to no replicas, vote-backed ones
   included, only while the instance rests in a state where an attempt serves
   (`settled`, `deferred`, `failed`) and nothing works on the session; the row records it
   (`staging_asleep_at`). The machine is not told: its `checks.run` wakes the preview

@@ -47,6 +47,7 @@
 // `window.ScreenshotSelect`, which the capture path below reads by name.
 import './screenshot-select';
 
+import { arrowStep } from '../../lib/i18n/direction';
 import { t } from '../../lib/i18n/runtime';
 import { isRepoAddress } from '../../lib/repo-link.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
@@ -126,7 +127,10 @@ export const Feedback = {
   // replaces it with its own state setter (`_preview = setPreview`), the same
   // split as `_open`; the thumbnails built below call it on a tap.
   _preview: (_item = null) => {},
-  /** @returns {{ text: string, title: string, images: Blob[], bounty: boolean, target: 'app' | 'platform' | null }} */
+  /**
+   * @returns {{ text: string, title: string, images: Blob[], bounty: boolean,
+   *   target: 'app' | 'platform' | null, appSlug?: string, appName?: string }}
+   */
   _takeDraft: () => ({ text: '', title: '', images: [], bounty: false, target: null }),
 };
 
@@ -380,7 +384,9 @@ export function init() {
     // traversal and the viewer ended up back where they sent the report from.
     // Closing second finds the page already moved off the record, and
     // lib/back-stack.ts leaves a record it is not standing on alone.
-    const SEE_MINE_ROUTE = '#profile/your-requests';
+    // 5 Nov 2026: your requests are the Homeroom bot tab's (History lists the
+    // finished ones; the lists above it what is still moving).
+    const SEE_MINE_ROUTE = '#homeroom-bot';
     const openMine = () => {
       location.hash = SEE_MINE_ROUTE;
       closeFeedback();
@@ -564,6 +570,11 @@ export function init() {
     // from the mounted iframe. Computed on each modal open; the "Include
     // app state" row shows only while this holds AND the target is 'app'.
     let stateAvailable = false;
+    // #6485: the app the "This app" option stands for — the one the request
+    // will be filed on. Captured when the person picks it (or when a comment
+    // hands its app over), not read from whatever app is mounted at submit,
+    // so moving between screens never retargets a request.
+    let targetApp = null; // { slug, name } | null
     const stateRow = document.getElementById('feedback-state-row');
     const stateCheckbox = document.getElementById('feedback-state-checkbox');
     // #964: the opt-in kudos-bounty row. Unlike the state row this shows for
@@ -775,6 +786,7 @@ export function init() {
       feedbackTargetAppSub?.classList.toggle('hidden', !named);
     };
     const applyTargetAvailability = (canTargetApp, appData) => {
+      targetApp = canTargetApp ? { slug: App.currentApp, name: appData?.name || '' } : null;
       if (canTargetApp) {
         labelAppTarget(appData);
         setAppTargetEnabled(true);
@@ -790,14 +802,38 @@ export function init() {
         setFeedbackTarget('platform');
       }
     };
+    // #6485: take the app a comment (or a returned draft) brought with it as
+    // this open's destination, whatever app is mounted. The slug is what the
+    // request is filed on, so it is checked before it becomes one; the name
+    // is only for the option's own label, and falls back to the address.
+    const APP_SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
+    const adoptTargetApp = (slug, name) => {
+      if (typeof slug !== 'string' || !APP_SLUG_RE.test(slug)) return;
+      targetApp = { slug, name: name || '' };
+      const shown = typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug === slug
+        ? AppView.appData.name
+        : '';
+      labelAppTarget({ name: name || shown || slug });
+      setAppTargetEnabled(true);
+      setAwaitingTarget(false);
+      // #685: the state to collect is the mounted app's own, so it can only
+      // travel with a request filed on that app.
+      if (slug !== App.currentApp) {
+        stateAvailable = false;
+        stateRow.classList.add('hidden');
+      }
+      setFeedbackTarget('app');
+    };
     // #2707: a destination that comes back with a returned draft is the
     // person's OWN earlier pick, not a default — handing it back is not an
     // accidental preselection, and re-asking for a decision they already
     // made would quietly lose it. It still wins over the open app's default
     // (#5992). 'platform' is restored as well as 'app': dropping it would
     // leave a rescued draft pointing somewhere other than the person chose.
-    const restoreChosenTarget = (target) => {
-      if (target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
+    // #6485: with a slug, the app itself comes back, not the one open now.
+    const restoreChosenTarget = (target, slug, name) => {
+      if (target === 'app' && slug) adoptTargetApp(slug, name);
+      else if (target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
       else if (target === 'platform') setFeedbackTarget('platform');
     };
 
@@ -1026,6 +1062,9 @@ export function init() {
           title,
           titleDirty,
           target: feedbackTarget,
+          // #6485: the app the person picked, so it comes back with the words.
+          ...(feedbackTarget === 'app' && targetApp
+            ? { appSlug: targetApp.slug, appName: targetApp.name } : {}),
           savedAt: Date.now(),
         }));
       } catch { /* private mode or quota — the words are still on screen */ }
@@ -1143,6 +1182,18 @@ export function init() {
       feedbackText.removeAttribute('aria-describedby');
     };
 
+    // #6127: the pictures can be dragged into the order the request should
+    // show them in, and the first one is the one the request shows first.
+    // The line that says so lives inside the thumbnail row (basis-full wraps
+    // it under them), is created here rather than in feedback.tsx so no new
+    // prerendered shell id is needed, and carries no [data-feedback-screenshot]
+    // so the reorder kit ignores it.
+    const screenshotOrderHint = document.createElement('p');
+    screenshotOrderHint.id = 'feedback-screenshot-order-hint';
+    screenshotOrderHint.className = 'basis-full text-xs text-zinc-500 dark:text-zinc-400';
+    screenshotOrderHint.textContent = t('dialogs:feedback.screenshot.reorderHint');
+    screenshotOrderHint.classList.add('hidden');
+
     const paintScreenshotActions = () => {
       const count = screenshots.length;
       const full = count >= MAX_SCREENSHOTS;
@@ -1164,12 +1215,22 @@ export function init() {
       }
       screenshotPreview.classList.toggle('hidden', count === 0);
       screenshotPreview.classList.toggle('flex', count > 0);
+      // #6127: the hint appears once there is something to reorder, and once
+      // it is in the row it stays its last child, so it wraps under the
+      // pictures rather than sitting between them.
+      const canReorder = count >= 2;
+      screenshotOrderHint.classList.toggle('hidden', !canReorder);
+      if (canReorder || screenshotOrderHint.parentNode === screenshotPreview) {
+        screenshotPreview.appendChild(screenshotOrderHint);
+      }
       // Numbered from what is on screen now, so removing the middle image
       // renumbers the rest rather than leaving a gap in the labels.
       screenshots.forEach((shot, i) => {
         shot.img.alt = t('dialogs:feedback.screenshot.previewAlt', { number: i + 1 });
         shot.removeBtn.setAttribute('aria-label', t('dialogs:feedback.screenshot.remove', { number: i + 1 }));
         shot.openBtn.setAttribute('aria-label', t('dialogs:feedback.screenshot.view', { number: i + 1 }));
+        if (canReorder) shot.openBtn.setAttribute('aria-describedby', 'feedback-screenshot-order-hint');
+        else shot.openBtn.removeAttribute('aria-describedby');
       });
     };
 
@@ -1191,6 +1252,40 @@ export function init() {
     const removeScreenshot = (shot) => {
       discardScreenshot(shot);
       paintScreenshotActions();
+    };
+
+    // #6127: put the picture at `from` at `to`, thumbnail and all. The kit's
+    // onReorder arrives AFTER it has moved the node, so the node is only
+    // moved here when the DOM order does not already match — the keyboard
+    // path. The shot object travels whole, so an upload still in flight
+    // (which finds its shot by identity) lands at its new position.
+    const thumbnailNodes = () => {
+      const nodes = [];
+      const children = screenshotPreview.children;
+      for (let i = 0; i < children.length; i += 1) {
+        const child = children[i];
+        if (child.getAttribute && child.getAttribute('data-feedback-screenshot') !== null) nodes.push(child);
+      }
+      return nodes;
+    };
+    const moveScreenshot = (from, to) => {
+      const count = screenshots.length;
+      if (from === to || from < 0 || to < 0 || from >= count || to >= count) return false;
+      const shot = screenshots[from];
+      screenshots.splice(from, 1);
+      screenshots.splice(to, 0, shot);
+      const dom = thumbnailNodes();
+      const inOrder = dom.length === screenshots.length
+        && screenshots.every((entry, i) => dom[i] === entry.node);
+      if (!inOrder && shot.node) {
+        const next = screenshots[to + 1];
+        if (next && next.node) screenshotPreview.insertBefore(shot.node, next.node);
+        else if (screenshotOrderHint.parentNode === screenshotPreview) {
+          screenshotPreview.insertBefore(shot.node, screenshotOrderHint);
+        } else screenshotPreview.appendChild(shot.node);
+      }
+      paintScreenshotActions();
+      return true;
     };
 
     const resetScreenshotState = () => {
@@ -1221,6 +1316,21 @@ export function init() {
       openBtn.setAttribute('data-feedback-screenshot-open', '');
       openBtn.addEventListener('click', () => {
         Feedback._preview({ kind: 'image', src: shot.objectUrl, alt: shot.img.alt, pins: shot.pins || null });
+      });
+      // #6127: with a keyboard, a focused picture moves with the arrow keys.
+      // Up moves it earlier and down later; left and right move it that way
+      // on screen, which in Arabic, where the row starts on the right, is the
+      // other way through the list. At either end it stays put (so the page
+      // keeps its own scrolling there).
+      openBtn.addEventListener('keydown', (e) => {
+        const from = screenshots.indexOf(shot);
+        const step = arrowStep(e && e.key);
+        const to = step ? from + step : -1;
+        if (from < 0 || to < 0 || to >= screenshots.length) return;
+        if (e.preventDefault) e.preventDefault();
+        if (moveScreenshot(from, to)) {
+          try { openBtn.focus({ preventScroll: true }); } catch { /* detached in tests */ }
+        }
       });
       const stateEl = document.createElement('span');
       stateEl.className = 'text-xs text-zinc-500 dark:text-zinc-400';
@@ -1253,6 +1363,20 @@ export function init() {
       screenshotPreview.appendChild(item);
       Object.assign(shot, { node: item, img, stateEl, removeBtn, openBtn });
     };
+
+    // #6127: dragging a picture reorders the row. No handle: on touch the
+    // kit lifts on a long press (its default 400 ms), on a computer once the
+    // pointer passes the slop, and it suppresses the click after a drag, so
+    // a tap still opens the picture and the ✕ still removes it. onReorder
+    // arrives after the kit has moved the node; moveScreenshot splices the
+    // array (and repaints the labels) to match.
+    if (window.unNative && typeof window.unNative.attachReorder === 'function') {
+      window.unNative.attachReorder(screenshotPreview, {
+        grid: true,
+        itemSelector: '[data-feedback-screenshot]',
+        onReorder: (from, to) => { moveScreenshot(from, to); },
+      });
+    }
 
     const uploadScreenshot = (blob) => fetch('/api/feedback/screenshot', {
       method: 'POST',
@@ -1972,7 +2096,7 @@ export function init() {
           const p = failed.payload || {};
           feedbackText.value = p.description || '';
           if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
-          restoreChosenTarget(p.target);
+          restoreChosenTarget(p.target, p.appSlug, p.appName);
           showFeedbackNotice(failed.lastError
             ? t('dialogs:feedback.queue.rejectedReason', { reason: failed.lastError })
             : t('dialogs:feedback.queue.rejected'), true);
@@ -2250,7 +2374,9 @@ export function init() {
         // typed or edited (titleDirty) is always sent verbatim.
         const customTitle = feedbackTitle.value.trim();
         if (customTitle && (titleDirty || text === lastGeneratedFor)) body.title = customTitle;
-        if (target === 'app') body.appSlug = App.currentApp;
+        // #6485: the app the person picked when they picked it, not whatever
+        // app happens to be mounted now.
+        if (target === 'app') body.appSlug = targetApp?.slug || App.currentApp;
         // #5048: a private request goes to Homeroom alone. It never takes
         // the outbox or /api/feedback, both of which file a public GitHub
         // issue, and nothing attached goes with it.
@@ -2314,6 +2440,7 @@ export function init() {
         // timeout) files without state with a non-blocking notice.
         let stateNotice = '';
         const wantState = stateAvailable && target === 'app'
+          && body.appSlug === App.currentApp
           && !stateRow.classList.contains('hidden') && stateCheckbox.checked;
         if (wantState && typeof AppView !== 'undefined'
             && typeof AppView.collectIssueState === 'function') {
@@ -2398,7 +2525,7 @@ export function init() {
                 : t('dialogs:feedback.bounty.failed');
             }
           }
-          const appName = AppView?.appData?.name || '';
+          const appName = targetApp?.name || '';
           // The confirmation's heading (no full stop) and the status line's
           // sentence are two messages, each whole, for each place it can go.
           const postedTo = target === 'app'
@@ -2409,7 +2536,14 @@ export function init() {
             : t('dialogs:feedback.posted.platform');
           // The bounty outcome and the app-state note are sentences of their
           // own, said after it.
-          feedbackStatus.textContent = joinSentences([postedSentence, bountyNotice, stateNotice]);
+          // #6121: a picture whose upload failed earlier and failed again on
+          // the retry above kept its thumbnail until now and did not go with
+          // the request. Filing without it is deliberate; not saying so was not.
+          const lostPictures = screenshots.filter((shot) => !shot.id && shot.blob).length;
+          const picturesNotice = lostPictures
+            ? t('dialogs:feedback.screenshot.filedWithout', { count: lostPictures })
+            : '';
+          feedbackStatus.textContent = joinSentences([postedSentence, bountyNotice, stateNotice, picturesNotice]);
           feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           lastFiled = rememberEdit(data.edit);
@@ -2452,7 +2586,7 @@ export function init() {
             const first = !!data.firstFeedback && Number(data.firstFeedback.userId) === Number(App.user?.id);
             // A request sent to Homeroom names Homeroom, not the app that
             // happened to be open.
-            showSent(postedTo, joinSentences([bountyNotice, stateNotice]), data.homeroomBot,
+            showSent(postedTo, joinSentences([bountyNotice, stateNotice, picturesNotice]), data.homeroomBot,
               first ? { name: target === 'platform' ? 'Homeroom' : appName } : null, false, data.filed || null);
             return;
           }
@@ -2466,7 +2600,7 @@ export function init() {
           // instead of closing itself (see showSent above). #3971: "Thanks!"
           // leads it again, as it did before #3400.
           if (!showFirstFeedback(data.firstFeedback, feedbackStatus.textContent)) {
-            showSent(thanks, joinSentences([bountyNotice, stateNotice]), null, null, false, data.filed || null);
+            showSent(thanks, joinSentences([bountyNotice, stateNotice, picturesNotice]), null, null, false, data.filed || null);
           }
           return;
         }
@@ -2599,7 +2733,10 @@ export function init() {
       // #4635 retired the card). That press was the choice #2707 asks for,
       // and #5992 makes the open app the default anyway; this stays as the
       // explicit form, applied only when "This app" is really there.
-      if (opts.target === 'app' && canTargetApp) setFeedbackTarget('app');
+      // #6485: a comment hands over the app the person picked; it comes
+      // first, so it is taken even with no app tab open behind it.
+      if (opts.target === 'app' && opts.appSlug) adoptTargetApp(opts.appSlug, opts.appName);
+      else if (opts.target === 'app' && canTargetApp) setFeedbackTarget('app');
       // The experimental C comment (features/comment-pin/) hands itself over
       // here when it cannot post on its own (offline, the server failing):
       // its words, its screenshot and the destination the person already
@@ -2663,7 +2800,7 @@ export function init() {
           const p = failed.payload || {};
           feedbackText.value = p.description || '';
           if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
-          restoreChosenTarget(p.target);
+          restoreChosenTarget(p.target, p.appSlug, p.appName);
           feedbackStatus.textContent = failed.lastError
             ? t('dialogs:feedback.queue.rejectedReason', { reason: failed.lastError })
             : t('dialogs:feedback.queue.rejected');
@@ -2687,7 +2824,7 @@ export function init() {
             feedbackTitle.value = rescued.title;
             titleDirty = rescued.titleDirty !== false;
           }
-          restoreChosenTarget(rescued.target);
+          restoreChosenTarget(rescued.target, rescued.appSlug, rescued.appName);
           showFeedbackNotice(t('dialogs:feedback.screenshot.lost'), false);
           queueLineText = '';
         }
@@ -2811,6 +2948,9 @@ export function init() {
         images: screenshots.map((shot) => shot.blob).filter(Boolean),
         bounty: !!(bountyCheckbox.checked && !bountyCheckbox.disabled),
         target: chosen,
+        // #6485: the app the option stood for, so comment mode files on it
+        // even with no app tab open.
+        ...(chosen === 'app' && targetApp ? { appSlug: targetApp.slug, appName: targetApp.name } : {}),
       };
       if (!feedbackText.readOnly) {
         feedbackText.value = '';

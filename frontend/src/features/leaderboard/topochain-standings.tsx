@@ -4,7 +4,7 @@
  *
  * The only writer of the DOM below that root. ./topochain-leaderboard.js still
  * owns everything that makes this pane WORK — the four public `/api/v4` reads,
- * the event-context subscription, the staleness guards, the page cursor, the
+ * the event-context subscription, the staleness guards, the loading state, the
  * season-vs-event column decision — and hands over two descriptors,
  * `bodyView()` and `drillView()`. This file spells them as markup, class string
  * for class string.
@@ -83,13 +83,6 @@ type BodyView =
       rows: RowView[];
       you?: YouView | null;
       nonPodiumToggle: NonPodiumToggle | null;
-      pagination: {
-        page: number;
-        totalPages: number;
-        total: number;
-        prevDisabled: boolean;
-        nextDisabled: boolean;
-      } | null;
     };
 
 type Triple = { loading: boolean; error: string | null };
@@ -255,8 +248,8 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
 
 /**
  * #5275: "You · #22 · 10,823 points", above the table, so the viewer sees
- * their own place without paging to it. Pressing it opens their details,
- * under their row when it is on this page.
+ * their own place without scrolling the whole board. Pressing it opens their
+ * details, under their row when it is in the list.
  */
 function YouLine({ you }: { you: YouView | null | undefined }): ReactNode {
   const t = useMessages('leaderboard');
@@ -313,7 +306,7 @@ function StandingsTable(
                 {view.columns.map((c) => <Cell key={c} column={c} row={row} />)}
               </tr>
               {/* #5275: the row's details open under it, not at the foot of
-                  a 25-row table. */}
+                  a long table. */}
               {openIndex === row.index && drill ? (
                 <tr>
                   <td colSpan={view.columns.length} className="px-4 pb-4">
@@ -325,39 +318,6 @@ function StandingsTable(
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function Pagination(
-  { meta }: { meta: Extract<BodyView, { state: 'table' }>['pagination'] },
-): ReactNode {
-  const t = useMessages('leaderboard');
-  if (!meta) return null;
-  const btn = 'rounded-full bg-white dark:bg-zinc-900 px-3 py-1 text-xs font-medium disabled:opacity-40';
-  return (
-    <div className="flex items-center justify-between mt-3 text-sm">
-      <span className="text-zinc-500 dark:text-zinc-400">
-        {t('leaderboard:standings.page', { page: meta.page, pages: meta.totalPages, count: meta.total })}
-      </span>
-      <div className="flex gap-2">
-        <button
-          id="tc-lb-prev"
-          className={btn}
-          disabled={meta.prevDisabled}
-          onClick={() => controller()?._prevPage()}
-        >
-          {t('leaderboard:standings.prev')}
-        </button>
-        <button
-          id="tc-lb-next"
-          className={btn}
-          disabled={meta.nextDisabled}
-          onClick={() => controller()?._nextPage()}
-        >
-          {t('leaderboard:standings.next')}
-        </button>
-      </div>
     </div>
   );
 }
@@ -462,7 +422,6 @@ function Body({ view, drill }: { view: BodyView | null; drill: DrillView | null 
       <YouLine you={view.you} />
       <NonPodiumChip toggle={view.nonPodiumToggle} />
       <StandingsTable view={view} drill={drill} />
-      <Pagination meta={view.pagination} />
     </>
   );
 }
@@ -573,9 +532,9 @@ function Figures({ figures }: { figures: DrillView['figures'] }): ReactNode {
 
 /**
  * The details themselves. Drawn under the open row of the table (#5275),
- * or, for the viewer's own row opened from the "You" line while it is on
- * another page, under the table on its own card. Either way the panel is
- * #tc-lb-drill, once.
+ * or, for the viewer's own row opened from the "You" line while the
+ * non-podium filter leaves it out of the list, under the table on its own
+ * card. Either way the panel is #tc-lb-drill, once.
  */
 function DrillPanel({ view }: { view: DrillView }): ReactNode {
   const t = useMessages('leaderboard');

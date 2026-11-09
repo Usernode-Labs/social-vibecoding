@@ -23,10 +23,11 @@
  * markup the page first paints is the markup it painted before.
  */
 
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { useMessages } from '../../../lib/i18n/react';
+import { FRESH, watch } from '../../../lib/live-reads';
 import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/feed';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
@@ -55,6 +56,25 @@ export function pageSlug(): string | null {
 }
 
 /**
+ * The reads a thread page owns, for lib/live-reads.ts (#6231): its own thread
+ * (today's rule), and the address a change's move is announced at
+ * (`/api/apps/<slug>/threads/change/<id>`) for any change the last read
+ * listed — the ones ./thread-model.ts `threadLayout` turns into `changes`. The
+ * set is the caller's, read when the trigger arrives, so ids from a newer read
+ * count. Pure.
+ */
+export function threadReads(pathname: string | null, slug: string | null, changeIds: ReadonlySet<number>): (url: URL) => boolean {
+  const prefix = slug ? `/api/apps/${encodeURIComponent(slug)}/threads/change/` : null;
+  return (url) => {
+    if (!pathname) return false;
+    if (url.pathname === pathname) return true;
+    if (!prefix || !url.pathname.startsWith(prefix)) return false;
+    const id = Number(url.pathname.slice(prefix.length));
+    return Number.isInteger(id) && changeIds.has(id);
+  };
+}
+
+/**
  * A page's read of its thread (routes/threads.js), and a way to read it
  * again after something on the page changed it (a vote, a move). Null until
  * it is read, so the page's first paint is the one it had before.
@@ -63,23 +83,62 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
   data: ThreadPayload | null;
   setData: (update: (was: ThreadPayload | null) => ThreadPayload | null) => void;
   reread: () => void;
+  /** True until the first read of this path settles, whether it answers or fails. */
+  loading: boolean;
 } {
   const [data, setData] = useState<ThreadPayload | null>(null);
   // Read again after a move changed the thread (./thread-moves.tsx).
   const [revision, setRevision] = useState(0);
+  // #6387: the path whose read settled, so "still loading" and "nothing to
+  // show" stop looking the same: a failed read clears it too.
+  const [settledPath, setSettledPath] = useState<string | null>(null);
+  // #6139: a gap (a dropped socket, a sleeping tab) reads it again, past any saved copy.
+  const freshNext = useRef(false);
+  const readPath = useRef<string | null>(null);
+  // #6231: the changes this page last read, so a move announced by the
+  // change's own id (`thread_changed`) still reaches this thread.
+  const changeIds = useRef<Set<number>>(new Set());
+  const path = skip ? null : number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}${asChange ? '?as=change' : ''}`
+    : threadId ? `/api/threads/${threadId}` : null;
+  // A re-read of the same path keeps `data`, so it never shows as loading.
+  const loading = !!path && !data && settledPath !== path;
   useEffect(() => {
-    if (!revision) setData(null);
-    const path = skip ? null : number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}${asChange ? '?as=change' : ''}`
-      : threadId ? `/api/threads/${threadId}` : null;
+    // Reading the same thread again keeps what the page shows, also if that
+    // read fails; another thread starts empty.
+    const again = !!path && readPath.current === path;
+    readPath.current = path;
+    const ids = changeIds.current;
+    if (!again) { setData(null); ids.clear(); }
     if (!path) return undefined;
     let live = true;
-    fetch(path, { credentials: 'same-origin' })
+    const init: RequestInit = { credentials: 'same-origin', ...(freshNext.current ? FRESH : {}) };
+    freshNext.current = false;
+    fetch(path, init)
       .then((res) => (res.ok ? res.json() : null))
-      .then((json) => { if (live) setData(json && Array.isArray(json.items) ? json : null); })
-      .catch(() => { if (live) setData(null); });
-    return () => { live = false; };
-  }, [slug, number, threadId, revision, skip, asChange]);
-  return { data, setData, reread: () => setRevision((n) => n + 1) };
+      .then((json) => {
+        if (!live) return;
+        setSettledPath(path);
+        if (json && Array.isArray(json.items)) {
+          ids.clear();
+          for (const item of json.items) {
+            if (item && item.type === 'change' && Number.isInteger(Number(item.id))) ids.add(Number(item.id));
+          }
+          setData(json);
+        } else if (!again) setData(null);
+      })
+      .catch(() => {
+        if (!live) return;
+        setSettledPath(path);
+        if (!again) setData(null);
+      });
+    const pathname = path.split('?')[0];
+    const unwatch = watch(() => {
+      freshNext.current = true;
+      setRevision((n) => n + 1);
+    }, { reads: threadReads(pathname, slug, ids) });
+    return () => { live = false; unwatch(); };
+  }, [path, revision, slug]);
+  return { data, setData, reread: () => setRevision((n) => n + 1), loading };
 }
 
 export function ThreadItems({ slug, number = null, asChange = false, threadId = null, here, payload, items, onChanged, menuKey }: {
@@ -188,6 +247,7 @@ export function ThreadItems({ slug, number = null, asChange = false, threadId = 
               <ListRow
                 as="button"
                 title={say(row.title)}
+                tooltip={say(row.title)}
                 subtitle={row.facts.map(say).join(' · ')}
                 data-thread-item={row.key}
                 onClick={() => openTopic(row.open)}

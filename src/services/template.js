@@ -842,6 +842,19 @@ you add a table that keys a person's rows another way (\`author_id\`), add it
 to \`OWNED_BY\`; when a table's \`user_id\` is not the person the row is
 about, add it to \`SKIP\`. Keep the file and its mount in \`server.js\`.
 
+## Offline
+
+Homeroom opens this app with no connection too, but every \`/api/*\` read
+fails then. Wrap each screen's opening read in the platform bridge's
+\`usernode.offline.read(name, readFn)\`: it keeps the last answer on this
+device, sealed for the person signed in and gone when they sign out, and
+gives it back when the read cannot be answered, as
+\`{ value, fromCopy, savedAt }\`. Draw \`value\` either way, and while
+\`fromCopy\` is true say so under the title, with how old it is ("Offline.
+Showing what was saved at 10:42."). Set \`err.status\` in \`api()\` on an
+error the server answered, so a 403 or 404 is never covered over with an
+old copy. "Offline" in the platform conventions has the rest.
+
 ${DESIGN_CLAUDE_SECTION}
 
 ## App-specific conventions
@@ -1391,7 +1404,15 @@ app.get('*', (req, res) => {
   ${server.sendPage}
 });
 
-${server.start}start().catch(err => { console.error(err); process.exit(1); });
+${server.start}start().catch((err) => {
+  // Say why before stopping: a crash that printed nothing is a deploy whose
+  // log only ever reads "exited 1". Write the error, close the pool, and
+  // keep a timer as the backstop in case a listener holds the process open.
+  console.error(err);
+  process.exitCode = 1;
+  pool.end().catch(() => {});
+  setTimeout(() => process.exit(1), 1000).unref();
+});
 `,
     },
     {

@@ -37,6 +37,7 @@ import {
 import { Profile } from './profile.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
+import { AppSlotsSheet } from './app-slots-sheet';
 import { FeedbackSheet } from './feedback-sheet';
 import { FriendsSheet } from './friends-sheet';
 import { ProfileEditSheet } from './profile-edit-sheet';
@@ -178,6 +179,97 @@ function StatCards({ stats }: { stats: Array<{ key: string; value: string; label
   );
 }
 
+interface ActivityDay {
+  key: string;
+  label: string;
+  spoken: string;
+  heightPct: number;
+  zero: boolean;
+  today: boolean;
+  peakLabel: string | null;
+}
+
+interface ActivityCardView {
+  empty: boolean;
+  time?: string | null;
+  apps?: string | null;
+  appsLabel?: string;
+  days?: ActivityDay[];
+}
+
+// The plot's height for the busiest day, in px, under which a day's share is
+// drawn. A data bar in --lit-ink, as a moving progress bar is: the card asks
+// for nothing, so it does not wear the action accent.
+const ACTIVITY_PLOT_PX = 64;
+
+/** "This week" (#5626): your own time in apps, day by day. One series, so the
+ *  title names it and there is no legend. Each day's words are in its `title`
+ *  and for a screen reader; the busiest day's figure gives the bars a scale. */
+function ActivityCard({ activity }: { activity: ActivityCardView | null }): ReactNode {
+  const t = useMessages('profile');
+  if (!activity) return null;
+  const title = <h2 className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('profile:activity.title')}</h2>;
+  if (activity.empty) {
+    return (
+      <section id="profile-activity" className={`rounded-2xl ${PLANE_FILL} p-4 mb-2`}>
+        {title}
+        <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('profile:activity.empty')}</p>
+      </section>
+    );
+  }
+  const days = activity.days || [];
+  return (
+    <section id="profile-activity" className={`rounded-2xl ${PLANE_FILL} p-4 mb-2`}>
+      {title}
+      <div className="mt-2 flex gap-6">
+        {activity.time ? (
+          <div>
+            <div className="text-xl font-bold text-zinc-900 dark:text-zinc-100">{activity.time}</div>
+            <div className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{t('profile:activity.timeLabel')}</div>
+          </div>
+        ) : null}
+        {activity.apps ? (
+          <div>
+            <div className="text-xl font-bold text-zinc-900 dark:text-zinc-100">{activity.apps}</div>
+            <div className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{activity.appsLabel}</div>
+          </div>
+        ) : null}
+      </div>
+      {days.length ? (
+        <ul aria-label={t('profile:activity.chartLabel')} className="mt-3 flex gap-1.5 list-none p-0">
+          {days.map((day) => (
+            <li key={day.key} title={day.spoken} data-activity-day={day.key} className="flex-1 min-w-0 flex flex-col items-center">
+              <span className="sr-only">{day.spoken}</span>
+              <span aria-hidden="true" className="w-full h-[84px] flex flex-col items-center justify-end">
+                {day.peakLabel ? (
+                  <span className="mb-1 text-[11px] leading-none whitespace-nowrap text-zinc-500 dark:text-zinc-400">{day.peakLabel}</span>
+                ) : null}
+                {day.zero ? (
+                  <span className="block w-full max-w-6 h-0.5 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                ) : (
+                  <span
+                    className="block w-full max-w-6 rounded-t bg-[color:var(--lit-ink)]"
+                    style={{ height: `${Math.round((day.heightPct * ACTIVITY_PLOT_PX) / 100)}px` }}
+                  />
+                )}
+              </span>
+              <span
+                aria-hidden="true"
+                className={day.today
+                  ? 'mt-1.5 text-xs font-bold text-zinc-900 dark:text-zinc-100'
+                  : 'mt-1.5 text-xs text-zinc-500 dark:text-zinc-400'}
+              >
+                {day.label}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">{t('profile:activity.note')}</p>
+    </section>
+  );
+}
+
 /**
  * The profile's loading state, at the SCREEN's own shape.
  *
@@ -216,6 +308,15 @@ function ProfileSkeleton(): ReactNode {
                 <Skeleton shape="muted" className="mt-1.5 w-14" />
               </div>
             ))}
+          </div>
+          {/* This week: its title, two figures and the plot. */}
+          <div className={`rounded-2xl ${PLANE_FILL} p-4 mb-2`}>
+            <Skeleton className="w-20 h-4" />
+            <div className="mt-3 flex gap-6">
+              <Skeleton shape="block" className="w-16 h-6" />
+              <Skeleton shape="block" className="w-12 h-6" />
+            </div>
+            <Skeleton shape="block" className="mt-3 w-full h-24" />
           </div>
         </div>
         {/* Your work, then Rewards: the right column's rows. */}
@@ -331,6 +432,9 @@ export function ProfileRoot(): ReactNode {
           status={state.friendsStatus || ''}
         />
       ) : null}
+      {/* #6446: the App allowance card, opened by the App slots row when no
+          slot is free. */}
+      {state.appSlotsOpen ? <AppSlotsSheet /> : null}
       {/*
           Two columns from lg (the navigation review): who you are on the
           left, with your Account group under it; Your work and Rewards on
@@ -349,6 +453,7 @@ export function ProfileRoot(): ReactNode {
         <div className="lg:col-start-1 lg:row-start-1">
           <IdentityCard identity={view.identity} />
           <StatCards stats={view.stats} />
+          <ActivityCard activity={view.activity} />
         </div>
         <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
           <WorkPanel rows={view.rows} />

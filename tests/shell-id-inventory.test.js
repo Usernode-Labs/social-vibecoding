@@ -58,6 +58,18 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── One Home (#6361): the Discover screen (#apps) is retired ────────
+  // Home's Communities to join is the directory, and #apps / #apps/<slug>
+  // rewrite to Home and to the project's hub (app.js), so the screen and its
+  // two levels left the shell with features/apps/browse*.
+  'browse-screen': 'Discover\'s screen root (#apps). Retired with the screen: Home\'s Communities to join is the directory (One Home, #6361).',
+  'browse-search-bar': 'Discover\'s search bar, gone with its screen (One Home, #6361); Home\'s search reads apps and communities.',
+  'browse-search-input': 'Discover\'s search field, gone with its screen (One Home, #6361).',
+  'browse-search-clear': 'Discover\'s search clear button, gone with its screen (One Home, #6361).',
+  'browse-list-level': 'Discover\'s list level, gone with its screen (One Home, #6361).',
+  'browse-list': 'Discover\'s rows, gone with its screen (One Home, #6361): Communities to join draws the directory on Home.',
+  'browse-empty': 'Discover\'s empty note, gone with its screen (One Home, #6361).',
+  'browse-detail': 'Discover\'s app details level (#apps/<slug>), gone with its screen (One Home, #6361): the address rewrites to the project\'s hub, and the tile menu\'s row opens the hub.',
   // ── Overnight UI audit D10: the selection carets are gone ─────────
   // The owner's decision of 2 Nov 2026. Each pointed from the chosen option
   // to nothing below it, and read as a stray tooltip arrow once the option
@@ -376,10 +388,26 @@ const RETIRED_IDS = {
   'waitlist-discovery-chips': 'The join form\'s "How did you find us?" chips. Asked in the waiting room as #waiting-about-discovery, and saved to the same answers.discovery.source.',
   'waitlist-submit': 'The join form\'s submit. Continue is the one way to join.',
   'waitlist-queued': 'The "already on the list" note a signed-in visitor saw in place of the join form. A signed-in #waitlist goes to the waiting room now, which shows their spot.',
+  // ── #6276: Needs you is the review flow, with no switch ────────────
+  'review-flow-enabled': 'The New Needs you switch in Settings, Experimental. The review flow is what every Needs you draws now, so there is nothing to turn on and the row is gone (features/settings/sections/experimental.tsx).',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #6371: This week, the page the weekly digest opens ─────────────
+  'weekly-digest-screen': 'This week (frontend/src/features/weekly-digest/index.tsx, #week): what each project did in the last seven days, which the Friday "Your weekly digest is ready" row opens. Ships hidden and empty; the read runs from its controller\'s open(), so the prerender and the first client render agree. App.REACT_SCREEN_IDS lists it, as it lists #workshop-screen.',
+  // ── One Home (#6361): Home's sections for communities ─────────────
+  'home-communities-section': 'Home\'s Pinned communities (features/home/pinned-communities.tsx), under Pinned apps: the communities you pinned, each a tile that opens its hub, then All communities and New community. Ships hidden: the pins load after mount. The tours and dapp.json\'s checks select it.',
+  'home-join-section': 'Home\'s Communities to join (features/home/home-join.tsx over communities-to-join.tsx), last on Home: the public directory\'s picture cards, each with Join, more as you scroll. Discover\'s lane went with it (#home-browse-btn, its See all, left this map with that lane). Ships hidden; signed out, the landing draws the same section without the id.',
+  // ── #6134, #6136: Settings > Connectors, one card per AI tool ───────
+  'connector-tool-claude': 'The Claude.ai card in Settings > Connectors (features/settings/sections/connectors.tsx): its status word, its setup steps and its connections. The four cards replace one list of setup rows; #connectors-list stays as what holds them.',
+  'connector-tool-chatgpt': 'The ChatGPT card, the same shape as #connector-tool-claude.',
+  'connector-tool-codex': 'The Codex card, the same shape as #connector-tool-claude.',
+  'connector-tool-generic': 'The Another agent card, the same shape as #connector-tool-claude. Any connected program that names none of the other three lands here under its own name.',
+  'connector-chatgpt-url-copy': 'Copy beside the MCP server URL in the ChatGPT guide\'s step 3 (features/settings/connector-setup-steps.tsx). Rendered only when Settings passes `track`, so the hand-off and the launchpad card do not get a duplicate id. settings.js wires it through _wireCopyControl.',
+  // ── #6135: Test connection, Settings > Connectors ───────────────────
+  'connector-url-test': 'The Test connection button beside Copy in Settings > Connectors (features/settings/sections/connectors.tsx). Read-only: it checks this site\'s MCP server and the account\'s connection. settings.js labels it and disables it while a check runs.',
+  'connector-test-status': 'The line under the MCP server URL that reports the last Test connection result (features/settings/sections/connectors.tsx). Ships hidden and empty; settings.js fills it and colours a failure.',
   // ── #6000: propose reopening a closed request ───────────────────────
   'reopen-issue-modal': 'The Propose reopening dialog (features/dialogs/reopen-issue.tsx), the mirror of #close-issue-modal, opened from a closed request\'s status card or its ⋯ menu. Ships hidden.',
   'reopen-issue-number': 'The dialog title\'s #N span, filled from the issue the dialog was opened for.',
@@ -393,8 +421,6 @@ const ADDED_IDS = {
   // ── iPhone Duo: the side strip (24 Oct 2026) ───────────────────────
   'platform-side-strip-top': 'iPhone Duo: the top of the column of system chrome down the screen\'s edge, holding the header\'s back controls while <html data-side-strip> is set (features/nav/strip-back.tsx, app.css THE SIDE STRIP). Ships drawn as nothing; display:none off the strip.',
   'platform-side-strip-back': 'iPhone Duo: #back-btn\'s copy in the side strip, rendered from the same useBackSlot hook and handing its press to #back-btn. Ships hidden with no href, as #back-btn does.',
-  // ── New Needs you (an experiment) ──────────────────────────────────
-  'review-flow-enabled': 'New Needs you: the switch in Settings, Experimental (off by default, kept on the device by features/review-flow/settings.ts) that draws the Communities tab\'s Needs you as the new review flow. settings.js paints and saves it through window.UsernodeReact.reviewFlow.',
   // ── New look (an experiment) ───────────────────────────────────────
   'new-look-enabled': 'New look: the switch in Settings, Experimental (off by default, kept on the device by the head\'s window.Skin) that sets data-skin="brand" on <html>, which app.css draws the new look from in light mode. settings.js paints and saves it through window.Skin.',
   // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────
@@ -464,8 +490,9 @@ const ADDED_IDS = {
   'settings-contact-privacy-section': '#5104: the Privacy page root, inside its [data-settings-section="contact-privacy"] wrapper.',
   'settings-who-can-message': '#5104: the "Who can message or invite me" radio group (People in projects I\'m in, the default, or Anyone).',
   'settings-profile-discoverable': '#5104: the "Let people find my profile" switch, off by default.',
-  'settings-phones-section': '#4938: the Linked phones page root, inside its [data-settings-section="phones"] wrapper.',
+  'settings-phones-section': '#4938: the Linked phones page root, inside its [data-settings-section="phones"] wrapper. #5974 named the page Linked devices; the ids and the key stay.',
   'settings-phones-list': '#4938: the list of phones signed in with the Homeroom app, one row per phone with Unlink; empty until the account is read.',
+  'settings-browsers-list': '#5974: the Browsers group of Linked devices, under the phones: the account\'s web sessions, one row per browser with Sign out; empty until the account is read.',
   'settings-high-contrast': '#3969: the High contrast switch (the RailPinnedRow pattern, at every width).',
   // ── #4289: comment mode stops being an experiment ───────────────
   //
@@ -512,9 +539,9 @@ const ADDED_IDS = {
   // somebody has tapped or once a tab has filtered to nothing, so none of
   // them is in the prerendered document, which is what this map is for.
   // #workshop-scope left this map with the chip itself (#2759), came back
-  // with it in #3051, and left again in #852: the Communities screen's "All
-  // ⌄" is the header's #header-scope-switch at every width now, which is
-  // conditional and so not in this map. The chip on an app's own Workshop
+  // with it in #3051, and left again in #852 for the header's
+  // #header-scope-switch, which was conditional and left with the screen's
+  // list (One Home, #6361). The chip on an app's own Workshop
   // was #dev-ws-scope-chip, which rendered client-side and was never in the
   // prerendered document; #3295 retired it for the header's
   // #header-app-switch, which is conditional and so not in this map either.
@@ -561,7 +588,6 @@ const ADDED_IDS = {
   // #6019: Discover left the phone's bar for a page Home's Discover block
   // opens; its seat there went to AI, the Homeroom bot's chat, which left
   // the Messages list. The desktop rail keeps a Discover tab (29 Oct 2026).
-  'platform-tab-discover': '#2718: the Discover tab, to #apps. #6019 retired it with Discover\'s seat on the phone\'s bar; it comes back on 29 Oct 2026 as the DESKTOP RAIL\'S, under Home (Evan: Home, Discover, Messages, AI, Communities). app.css hides it below 768px, where Home\'s Discover block opens the page.',
   'platform-tab-ai': '#6019: the AI tab, to #homeroom-bot (#ai until 29 Oct 2026): the Homeroom bot\'s chat, lit while it is the conversation on the Messages screen (features/nav/tab-bar.tsx). Takes the seat the Discover tab (#platform-tab-discover, #2718) had on the phone\'s bar, which left it for a page of Home\'s there.',
   // #6019 follow-up: the AI tab's own page, which #homeroom-bot opens.
   'ai-screen': '#6019 follow-up: the AI tab\'s main view (features/ai/index.tsx): Your work, In progress (Up next until 29 Oct 2026) and Live this week, with Main, the chat with Homeroom bot, docked beside it on a wide window. Ships hidden and empty; its lists load in effects.',
@@ -627,10 +653,7 @@ const ADDED_IDS = {
   // The app's own Workshop page answers "what is happening in THIS app";
   // nothing answered "which of my apps wants something from me", short of
   // opening each one in turn. This is that page's two numbers, once per app.
-  'workshop-screen': 'The Workshop SCREEN root (#workshop), a React-owned sibling of #messages-screen: every app in the viewer\'s "Your apps", with how many items that app\'s own Workshop page holds for them. Ships hidden and EMPTY — the rows arrive from GET /api/apps + GET /api/workshop/counts in the controller\'s open() — so the prerender and the first client render agree.',
-  'profile-proposals-screen': '#5310: the "Your proposals" SCREEN root (#profile/proposals), a React-owned sibling of #workshop-screen: every proposal the viewer has started, grouped by status. Ships hidden and EMPTY; the rows arrive from GET /api/me/proposal-history in the controller\'s open(), so the prerender and the first client render agree.',
-  'workshop-list': 'That screen\'s card of rows — a <GroupedList> from @/components/ui/grouped-list, the widget language\'s primary content shape, so the id sits on the primitive rather than on a hand-rolled div. It carries no rows in the prerender, like #browse-list beside it; a row is a <ListRow as="a"> with `[data-workshop-app="<slug>"]` carrying `[data-workshop-working]` and `[data-workshop-needs]`, which is what the declared checks select on.',
-  'workshop-empty': 'Its nothing-to-show state, for an account with no apps. #2445 made it a CARD rather than the grey caption line it shipped as — a <ListRow as="a" href="#apps"> reading as an invitation to the directory, the way Home\'s Discover block\'s own empty card does (#1913): title over subtitle with the row\'s disclosure chevron. THE ID IS ON A WRAPPER <div>, NOT ON THAT ANCHOR, and that is load-bearing in two directions. dapp.json selects `#workshop-empty.hidden`, so the id and the `hidden` class toggle stay together on one element and visibility is never conditional rendering; and a SECOND declared check selects `#workshop-list a[data-workshop-app]:first-of-type`, which an `<a id="workshop-empty">` sibling of the rows silently steals — `:first-of-type` is structural and `display: none` does not exempt it. That shipped once and failed on the next run; the wrapper is the fix. Ships `hidden`, and stays hidden while the list is still loading — the skeleton rows are that state, and an empty list that reads as "you have no apps" before the fetch lands is the bug this distinction prevents. It is the list\'s FIRST child, not its last: GroupedList\'s row separator is `[&:not(:last-child)]:after:*` on the row, so a note after the rows would leave the last one drawing a hairline under nothing.',
+  'workshop-screen': 'The Needs you SCREEN root (#needs; One Home, #6361: it was the Communities screen, #communities, whose list went to Home), a React-owned sibling of #messages-screen: every decision owed by the viewer across their projects, as the review flow. Ships hidden and EMPTY — the feed arrives from GET /api/workshop/needs-feed in the controller\'s open() — so the prerender and the first client render agree. Its list\'s #workshop-list, #workshop-empty and #workshop-search went with it.',
   'app-settings-modal': '#2158: dedicated app settings and danger zone.',
   'app-delete-name': '#2158: named confirmation before app deletion.',
   // ── #2304: access is an app setting ──────────────────────────────
@@ -688,7 +711,6 @@ const ADDED_IDS = {
   'improve-working-dot': 'What was left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse (a small blue corner spinner since the #2779 follow-up), rendered only while a dev session the viewer can see is mid-turn (their own, since the same follow-up). It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact that needs no dismissal. #2718 retired the button and the dot outlived it: it is on the Homeroom mark\'s tile now, which is the control on screen on every route. Top-right, so it cannot hide under the bottom-left outbox dot, which followed it there.',
   'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty. Opened ONLY from Settings → Homeroom app → connection ("Connect existing wallet"); it used to open itself on every failed admission attempt, which is the pop-up that was reported.',
   // ── Home area labels: the block chrome moved above the card ──────
-  'home-browse-btn': 'Discover\'s way into the #apps directory. Not a new control — it has always been the block\'s browse link — but it is in the COLD DOCUMENT now, which is why it is a new id here. The block\'s title moved out of the card to become the section\'s label, its controls followed (a card whose first row was chrome with one link floating at the end of it reads worse than one that opens on content), and a section heading is constant markup where the block behind it is fetched. So the control ships with the shell instead of appearing when /api/home-panels answers — which is also one less thing that pops in on a cached load.',
   // ── Platform UI pass: the update state, and where the versions live ──
   'settings-about-section': 'Settings → About: the three version rows. They have moved twice before (#1431 built an About block, #1443 took them to the Improve panel\'s footer). They are back because the question they were being read for — "is something happening, and is there a new version yet" — is answered directly by that footer now, as a note and a reload button. What is left over is reference material, and this is the reference screen.',
   'about-row-app-version': 'The open app\'s latest merged main, in that pane. Gated on `slug && !selfHosted`, exactly as the Improve panel\'s copy was: on the platform\'s own app this row IS the platform, so it and "Platform version" under it printed the same seven characters twice.',
@@ -700,6 +722,9 @@ const ADDED_IDS = {
   // ── #6043: the other two legal pages the terms name ──────────────────
   'settings-about-child-safety': 'Its Child safety standards row (#6043): a new-tab link to child_safety_link from GET /api/public/waitlist/options (src/services/marketing-links.js), the page the terms cite for child safety. Opened like the privacy row.',
   'settings-about-account-deletion': 'Its "Delete your account and data" row (#6043): a new-tab link to account_deletion_link from the same options, the page the terms and the app stores name for deleting an account. Opened like the privacy row.',
+  // ── #5926: Settings › Privacy says when a change saved ───────────────
+  'settings-contact-privacy-status': 'The status line under Who can find me: "Saved" for a few seconds, or what went wrong. Always in the pane now, empty until then, so a screen reader announces its words.',
+  'settings-profile-discoverable-description': 'The line under "Let people find my profile", inside its label; the switch\'s aria-describedby.',
   // ── #6044: Settings › Privacy › Email & texts ─────────────────────────
   'settings-contact-preferences-section': 'Settings › Privacy\'s Email & texts block (#6044), before Share usage analytics: what Homeroom may send you. Its own state and GET/PUT /api/me/contact-preferences (src/services/contact-preferences.js).',
   'settings-contact-marketing-email': 'Its "Homeroom news by email" switch: marketing email, off until switched on, disabled without a confirmed address. Every change is recorded as proof of consent.',
@@ -845,6 +870,9 @@ const ADDED_IDS = {
   'settings-tour-section': 'Settings -> Welcome tour, the pane holding the replay control (#2255).',
   'settings-tour-replay': 'Clears this account\'s "finished" flag, asks for the tour and goes to Home.',
   'settings-tour-hint': 'The line under it saying where the tour starts.',
+  // #5973: Settings -> User guide, the tour's places to read.
+  'settings-guide-section': 'Settings -> User guide, the pane root inside its [data-settings-section="guide"] wrapper.',
+  'settings-guide-voting': 'The card saying how a change gets voted in; dapp.json selects on it.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
@@ -932,7 +960,9 @@ const ADDED_IDS = {
   // grid host did so the dapp.json checks still select on it.
   'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the others.',
   'home-apps-more': '"Show all N apps" — revealed only when a viewer has more than the two-row default shows. The cap is on what is DRAWN, never on what they may have.',
-  'home-discover-section': 'Area 2: featured tiles, the Popular lane and the way into the app directory.',
+  // #home-discover-section (area 2) left this map when One Home (#6361) took
+  // Discover's lane off Home; #home-join-section, below #home-challenges-section,
+  // is the directory there now.
   'home-challenges-section': 'Area 3: the season\'s open challenges, and under them the leaderboard standings the retired #drawer-row-leaderboard used to point at.',
   // #home-create-section (area 4) left this map when Create moved into the
   // launcher grid; it is recorded in RETIRED_IDS.
@@ -942,7 +972,7 @@ const ADDED_IDS = {
   // public/index.html because the chassis is React-owned markup now, so it is
   // prerendered instead of assembled at mount. Nothing below them moved —
   // #admin-section-content is still an innerHTML host owned by the module.
-  'admin-nav-desktop': 'Admin console desktop sidebar host, empty until AdminConsole._renderShell fills it (#1082).',
+  'admin-nav-desktop': 'Admin console desktop nav host, empty until AdminConsole._renderShell fills it (#1082); the top bar and open-section tabs since #6456, a sidebar before.',
   'admin-view-only-banner': 'Admin console view-only banner (#311), ships hidden and is toggled through classList (#1082).',
   'admin-section-content': 'Admin console section host — the phone level-1 menu and every section render into it (#1082).',
   'admin-temp-pw-modal': 'Admin console temporary-password dialog root (#282), now static React markup (#1082).',
@@ -1128,9 +1158,6 @@ const ADDED_IDS = {
   'side-panel-body': 'The panel\'s body: the one <iframe> of the panel\'s document (#side-panel-frame, rendered only while open, so absent here) and the loading spinner after it.',
   'side-panel-loading': 'The spinner shown over the panel\'s body until its document has booted and drawn its first page. Ships hidden.',
   // ── Discover's view switch, type row and Filters button ────────────
-  'browse-view-switch': 'The For you / Browse / Joined switch under Discover\'s search field. It replaced the All / Featured / Not joined / Joined / New chip row; the store\'s prerender value (For you) is the pressed part.',
-  'browse-type-row': 'The always-drawn row holding Discover\'s app-type chips and the Filters button at its end. It is rendered even when no project has a type, because the Filters button lives here and must stay reachable.',
-  'browse-filters-btn': 'The Filters button at the end of Discover\'s type row. It opens the Filters sheet, and carries data-active-count (the number of filters on) only when one is on.',
   // The prototype's History segment (#leaderboard-history-root, added above
   // as the Leaderboard screen's fourth pane) retired with the seasons it
   // listed (the Semi design, 2026-10-16); #leaderboard/seasons lands on
@@ -1191,16 +1218,14 @@ const ADDED_IDS = {
   // rows arrive with the community list, so they carry no ids.
   'platform-rail-communities': 'D: the sidebar\'s Communities section (role=group), between #platform-tab-messages and #platform-tab-workshop. dapp.json pins the bar order through it.',
   'platform-rail-communities-label': 'D: the section\'s "Communities" heading, which names the group.',
-  'platform-rail-conversations': 'v3: the conversations nested under Messages in the sidebar of rows, right after #platform-tab-messages; an empty element while shut, so the bar\'s order is one order. dapp.json pins it there.',
   // 18 Oct 2026: the communities you pinned, under their own heading above
   // yours (features/nav/rail-pinned.tsx). Each community's app is a row
   // under it now, so #platform-strip-apps, the strip's Pinned and Recent
   // apps (#4417), went: a pin is a community's. It ships hidden with its
   // heading and no rows; the pins arrive from localStorage after mount.
-  'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-rail-conversations and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
+  'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-tab-messages and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
   'platform-rail-pinned-label': 'The section\'s "Pinned" heading, which names the group.',
-  'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: All communities with its search box focused and lit (features/workshop/communities-search.ts). dapp.json selects on it.',
-  'workshop-search': 'D: the search at the head of All communities (features/workshop/index.tsx), at every width since #5296: your communities by name, in the one list. Prerendered empty.',
+  'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: Home with its search box focused (features/workshop/communities-search.ts; All communities\' search until One Home, #6361). dapp.json selects on it.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

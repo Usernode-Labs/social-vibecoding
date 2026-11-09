@@ -124,7 +124,7 @@ test('a board column draws the board variant: no tile, the line in words, the ca
   const under = column(html, 'inprogress');
   assert.match(under, /<div class="dev-ws-wrow dev-ws-brow" data-ws-row="issue:1575" data-ws-kind="request" data-ws-open="issue:1575" data-issue-row="1575">/,
     'the item’s hook rides on the row, as on the folded card it replaces');
-  assert.match(under, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/issues\/1575">Replace the oversized Game Corner header with bottom tabs<\/a><span class="dev-ws-wrow-sub">#1575 · sam · 4d ago<\/span>/);
+  assert.match(under, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Replace the oversized Game Corner header with bottom tabs<\/a><span class="dev-ws-wrow-sub">#1575 · sam · 4d ago<\/span>/);
   assert.match(under, /<span class="dev-ws-wrow-status"><button type="button" class="attr-chip dev-badge [^"]*" data-attr-chip="" data-attr-field="category"[^>]*>[\s\S]*?Bug[\s\S]*?<\/button><span class="dev-chat-badge dev-badge [^"]*" data-count="3"[^>]*>💬 3<\/span><span class="dev-ws-tag" data-tone="plain">Picked up · zura<\/span><\/span>/,
     'category chip, then 💬, then who is on it');
   assert.ok(!/data-attr-field="assignee"/.test(under), 'no @ chip: the tag says who');
@@ -134,7 +134,7 @@ test('a board column draws the board variant: no tile, the line in words, the ca
   // A change waiting for approval: "for #1574", "Checks passed", and the
   // card's bar with Vote across the row.
   const wait = column(html, 'inreview');
-  assert.match(wait, /<span class="dev-ws-wrow-sub">PR #1540 · evan · for #1574 · 1d ago<\/span>/);
+  assert.match(wait, /<span class="dev-ws-wrow-sub">PR 1540 · evan · for #1574 · 1d ago<\/span>/);
   assert.match(wait, /<span class="dev-ws-tag" data-tone="ok"><svg[^>]*>[\s\S]*?<\/svg>Checks passed<\/span>/);
   assert.match(wait, /<span class="dev-ws-row-band"><span class="dev-ws-row-state dev-ws-row-state-[a-z]+"[^>]*>Vote · 0\/1<\/span><span class="dev-ws-row-trailing"><button type="button" class="dev-vote-btn"/,
     'the bar with its own words, then Vote, and none of the band’s chips');
@@ -143,7 +143,7 @@ test('a board column draws the board variant: no tile, the line in words, the ca
   // Done: every row is live, so the bar leads the tags at its words' width,
   // and there is no band.
   const done = column(html, 'done');
-  assert.match(done, /<span class="dev-ws-wrow-sub">PR #1572 · alice · closed #1500 · 2d ago<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-row-state dev-ws-row-state-ok dev-ws-wrow-live"[^>]*>✓ Live<\/span><span class="dev-ws-wrow-tally" title="3 yes and 1 no\. It needed 3 yes to pass\.">3 yes · 1 no<\/span>/,
+  assert.match(done, /<span class="dev-ws-wrow-sub">PR 1572 · alice · closed #1500 · 2d ago<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-row-state dev-ws-row-state-ok dev-ws-wrow-live"[^>]*>✓ Live<\/span><span class="dev-ws-wrow-tally" title="3 yes and 1 no\. It needed 3 yes to pass\.">3 yes · 1 no<\/span>/,
     '#6075: the final counted vote sits beside the live pill');
   assert.ok(!done.includes('dev-ws-row-band'), 'no bar across a live row');
   assert.ok(!/data-tone="ok"[^>]*>(?:<svg[^>]*>[\s\S]*?<\/svg>)?Live</.test(done), 'and no second, small Live tag');
@@ -263,7 +263,7 @@ test('a column is one card: Waiting keeps its order toggle at its top, Done says
   const wait = column(html, 'inreview');
   assert.match(wait, /^id="dev-kanban-col-inreview"[^>]*><div class="dev-kanban-card"><div class="dev-kanban-lead"><button type="button" class="dev-ws-chip dev-kanban-sort" aria-label="Sort Waiting for approval: Newest\. Switch to Vote priority\."/);
   const done = column(html, 'done');
-  assert.match(done, /<div class="dev-kanban-card"><p data-kanban-col-status="done" class="dev-kanban-lead dev-kanban-status [^"]*"[^>]*>Live in production through PR #1572 · abcdef0<\/p>/);
+  assert.match(done, /<div class="dev-kanban-card"><p data-kanban-col-status="done" class="dev-kanban-lead dev-kanban-status [^"]*"[^>]*>Live in production through PR 1572 · abcdef0<\/p>/);
   assert.match(done, /<div class="dev-kanban-foot"><button type="button" class="dev-ws-reveal dev-kanban-more">Show 2,749 more<\/button><\/div><\/div><\/div>/,
     'Load more (N) is Show N more, at the foot of the card');
   assert.match(CSS, /\.dev-kanban-card \{\s*border-radius: 20px; padding: 2px 14px 8px;\s*background: var\(--dc-sheet-solid, var\(--bg-primary\)\);\s*box-shadow: inset 0 0 0 1px var\(--app-sheet-line\);/,

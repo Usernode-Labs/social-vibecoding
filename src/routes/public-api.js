@@ -50,6 +50,7 @@ const waitlist = require('../services/waitlist');
 const releaseLinks = require('../services/release-links');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
+const mailLanguage = require('../services/mail/language');
 const {
   accountDeletionUrl,
   childSafetyUrl,
@@ -414,7 +415,10 @@ function publicApiRoutes(config) {
         // Best-effort like the mail itself: a code that cannot be minted
         // must not fail the join, and the one-click link still confirms.
         const code = await waitlist.issueVerificationCode(pool, email).catch(() => null);
-        sendWaitlistJoinMail(config, email, { moreToken, code }); // fire-and-forget, never throws
+        // fire-and-forget, never throws; the address has no account, so the words
+        // follow the browser that asked.
+        const locale = mailLanguage.requestLanguage(req);
+        sendWaitlistJoinMail(config, email, { moreToken, code, ...(locale ? { locale } : {}) });
         return res.json({
           ok: true,
           message: "You're on the waitlist. We'll email you when access opens up.",
@@ -467,7 +471,7 @@ function publicApiRoutes(config) {
       // waitlist_joined's one-per-day rule would drop this send anyway.
       // Fire-and-forget, and the mail throttle plus the reuse window in
       // resendConfirmation are what bound how often it actually sends.
-      await resendConfirmation(email).catch(() => {});
+      await resendConfirmation(email, mailLanguage.requestLanguage(req)).catch(() => {});
       return res.json({
         ok: true,
         message: "You're already on the waitlist. We've sent a fresh six-digit "
@@ -499,7 +503,7 @@ function publicApiRoutes(config) {
   // including "not on the list", because the only way a caller could learn
   // which branch ran is if a response differed. Failures are swallowed the
   // same way the mail itself is best-effort.
-  async function resendConfirmation(email) {
+  async function resendConfirmation(email, locale = null) {
     const row = await waitlist.getSignupByEmail(pool, email);
     // Not on the list. No row to confirm, so no code and no mail — sending
     // one would tell a stranger's inbox that somebody typed it here.
@@ -530,7 +534,7 @@ function publicApiRoutes(config) {
       // true thing to say — there is nothing to type — so it stays as the
       // degradation rather than leaving the address with silence.
       if (confirmed) {
-        sendWaitlistCodeMail(config, email, { code: null, moreToken: row.more_token || null });
+        sendWaitlistCodeMail(config, email, { code: null, moreToken: row.more_token || null, ...(locale ? { locale } : {}) });
       }
       return;
     }
@@ -541,6 +545,7 @@ function publicApiRoutes(config) {
       // and carries no capability token, a confirmation code leads to
       // "confirm my email".
       confirmed,
+      ...(locale ? { locale } : {}),
     });
   }
 
@@ -582,7 +587,7 @@ function publicApiRoutes(config) {
       return res.status(422).json({ error: 'A valid email address is required.' });
     }
     try {
-      await resendConfirmation(email);
+      await resendConfirmation(email, mailLanguage.requestLanguage(req));
     } catch (err) {
       // Deliberately NOT a 500. A failure here is ours, and letting it
       // change the status code would separate "something went wrong for

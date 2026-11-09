@@ -227,6 +227,28 @@ test('on a phone the keyboard is not the page moving, and the sheet stays under 
   assert.match(css, /#comment-pin-box\.comment-sheet \.comment-sheet-actions \{\s*position: sticky;\s*bottom: calc\(-1 \* var\(--comment-sheet-pb\)\);/);
 });
 
+test('the picture stays still while the comment box has the keyboard (#6448)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // While the person is typing, a chat that scrolls a reply in must not
+  // rewrite the picture under their words. The retake is skipped, and the
+  // move is remembered.
+  assert.match(src, /const shotPending = useRef\(false\);/);
+  assert.match(src, /if \(textFocused\(document\)\) \{ shotPending\.current = true; return; \}\s*const timer = setTimeout\(\(\) => \{/,
+    'the tick effect skips the retake while a text field has the keyboard');
+  // And again when the timer fires: focusing the box during the 250ms wait
+  // freezes the picture too.
+  assert.match(src, /const timer = setTimeout\(\(\) => \{\s*if \(textFocused\(document\)\) \{ shotPending\.current = true; return; \}\s*takeViewShot\(\);\s*\}, 250\);/);
+  // Leaving the box catches up, once, and only when the page moved while it
+  // was frozen. `activeElement` has not moved when focusout fires, so the
+  // check waits a frame.
+  assert.match(src, /host\.addEventListener\('focusout', onFocusOut\);/);
+  assert.match(src, /frame = requestAnimationFrame\(\(\) => \{\s*frame = 0;\s*if \(!shotPending\.current \|\| textFocused\(document\)\) return;\s*shotPending\.current = false;\s*takeViewShot\(\);\s*\}\);/);
+  assert.match(src, /host\.removeEventListener\('focusout', onFocusOut\);\s*if \(frame\) cancelAnimationFrame\(frame\);/,
+    'the listener and its frame go with the mode');
+  // The first picture is still taken as it always was: only the redraws after it freeze.
+  assert.match(src, /const ahead = takeAhead\(sizeRef\.current\);\s*void Promise\.all\(\[ahead, overlaysGone\(\)\]\)\.then\(\(\[got\]\) => \{\s*if \(!live\) return;\s*if \(!got\) \{ takeViewShot\(\); return; \}/);
+});
+
 test('on a phone a tap leaves a small comment, and only its field opens the sheet', () => {
   // Evan, 14 Oct 2026: a tap opened the whole sheet with the keyboard over
   // the page he was still looking at, the sheet's ✕ was hard to find and to
@@ -818,9 +840,10 @@ test('takeBase asks the side panel for its picture with the others, and lays it 
   // any other frame the picture fills in.
   assert.match(src, /getElementById\('side-panel-frame'\)/);
   assert.match(src, /export function panelFrame\(\): \{ frame: HTMLIFrameElement; rect: Rect \} \| null \{/);
-  // Asked once, in the same Promise.all as the shell and the app's picture,
-  // so the slowest of the three bounds the wait.
-  assert.match(src, /Promise\.all\(\[shell, app, panelPicture\]\)/);
+  // Asked once, in the same Promise.all as the shell, the app's picture and
+  // the designs' (they were added beside it), so the slowest leg bounds the
+  // wait.
+  assert.match(src, /Promise\.all\(\[shell, app, panelPicture, designs\]\)/);
   // Laid in at the frame's rectangle times the picture's real scale, on the
   // first canvas and on the retake (the same blob, asked once).
   assert.match(src, /await layInPanel\(canvas, actual, panel\?\.rect, panelBlob\);/);
@@ -991,6 +1014,123 @@ test('takeBase bounds the shell\'s own draw, and layInPanel bounds the panel blo
   assert.match(lay[0], /if \(!bitmap\) return;/);
 });
 
+// ── 3c. Designs draw their own picture (#6261) ────────────────────────
+
+test('takeBase asks each design frame for its own picture and lays it in on the first picture and the retake', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  // Both design iframes carry the marker the shell finds them by.
+  assert.match(read('frontend/src/features/messages/design-pane.tsx'), /data-design-frame=""/);
+  assert.match(read('frontend/src/features/messages/design-card.tsx'), /data-design-frame=""/);
+  assert.match(src, /iframe\[\$\{DESIGN_FRAME_ATTR\}\]/);
+  // Asked beside the shell, the app and the panel, bounded like the panel: a
+  // design that misses its bound draws nothing, holding no longer than it.
+  assert.match(src, /const designs = within\(designPictures\(scale\), PANEL_PICTURE_TIMEOUT_MS, \[\]\);/);
+  assert.match(src, /Promise\.all\(\[shell, app, panelPicture, designs\]\)/);
+  // Its picture goes into the frame's own rectangle, clipped to its wrapper,
+  // on the first canvas and on the retake (the blobs are asked once).
+  assert.match(src, /for \(const design of designBlobs\) await layInDesign\(canvas, actual, design\.rect, design\.clip, design\.blob\);/);
+  assert.match(src, /for \(const design of designBlobs\) await layInDesign\(again, retaken, design\.rect, design\.clip, design\.blob\);/);
+  // drawDocument, the panel's own page, runs the same leg before encoding.
+  const draw = src.match(/export async function drawDocument[\s\S]*?\n\}\n\nexport interface Base/);
+  assert.ok(draw, 'drawDocument is exported beside drawShell');
+  assert.match(draw[0], /within\(designPictures\(scale\), PANEL_PICTURE_TIMEOUT_MS, \[\]\)/);
+  assert.match(draw[0], /layInDesign\(canvas, scale, design\.rect, design\.clip, design\.blob\)/);
+  // No blob draws nothing: the shell's hidden frame keeps its place, which is
+  // today's empty box, never a wrong claim about the design.
+  const lay = src.match(/async function layInDesign[\s\S]*?\n\}/);
+  assert.ok(lay, 'layInDesign exists beside layInPanel');
+  assert.match(lay[0], /if \(!blob\) return;/);
+  assert.match(lay[0], /ctx\.save\(\)/);
+  assert.match(lay[0], /ctx\.clip\(\)/);
+  assert.match(lay[0], /ctx\.restore\(\)/);
+  // Every frame is still hidden by the shell's own draw, so none is drawn
+  // twice and the ones that are not designs keep their blank place.
+  assert.match(src, /exclude: \[\(el: Element\) => el === host, 'iframe'\],\s*excludeMode: 'hide'/);
+});
+
+test('designFrames finds the marked frames on screen and stops at eight', () => {
+  const prev = { document: globalThis.document, window: globalThis.window };
+  const frameAt = (r, extra = {}) => ({
+    contentWindow: {},
+    getBoundingClientRect: () => r,
+    checkVisibility: () => true,
+    parentElement: { getBoundingClientRect: () => r },
+    ...extra,
+  });
+  const good = frameAt({ left: 10, top: 20, width: 100, height: 200, right: 110, bottom: 220 });
+  const tiny = frameAt({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 });
+  const hidden = frameAt({ left: 10, top: 10, width: 50, height: 50, right: 60, bottom: 60 }, { checkVisibility: () => false });
+  const offscreen = frameAt({ left: 900, top: 0, width: 100, height: 100, right: 1000, bottom: 100 });
+  const gone = frameAt({ left: 0, top: 0, width: 10, height: 10, right: 10, bottom: 10 }, { contentWindow: null });
+  globalThis.document = {
+    querySelectorAll: (sel) => (sel === 'iframe[data-design-frame]' ? [good, tiny, hidden, offscreen, gone] : []),
+    documentElement: {},
+  };
+  globalThis.window = { innerWidth: 800, innerHeight: 600 };
+  try {
+    const found = picture.designFrames();
+    assert.equal(found.length, 1, 'only a frame that is really on screen');
+    assert.equal(found[0].frame, good);
+    assert.deepEqual(found[0].rect, { x: 10, y: 20, width: 100, height: 200 });
+    assert.deepEqual(found[0].clip, { x: 10, y: 20, width: 100, height: 200 }, 'its wrapper, inside the viewport');
+    // A frame partly out of the viewport is clipped to the part that shows.
+    const partial = frameAt({ left: -50, top: -10, width: 100, height: 100, right: 50, bottom: 90 });
+    globalThis.document = { querySelectorAll: () => [partial], documentElement: {} };
+    assert.deepEqual(picture.designFrames()[0].clip, { x: 0, y: 0, width: 50, height: 90 });
+    // More than a page normally shows: the first eight only.
+    const many = Array.from({ length: 12 }, () => frameAt({ left: 0, top: 0, width: 10, height: 10, right: 10, bottom: 10 }));
+    globalThis.document = { querySelectorAll: () => many, documentElement: {} };
+    assert.equal(picture.designFrames().length, 8);
+  } finally {
+    globalThis.document = prev.document;
+    globalThis.window = prev.window;
+  }
+});
+
+test('requestDesignPicture takes only this frame\'s answer with the id it sent, and gives up after its bound', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const prev = globalThis.window;
+  const listeners = [];
+  const sent = [];
+  const target = { postMessage: (message) => sent.push(message) };
+  const other = {};
+  const frame = { contentWindow: target };
+  globalThis.window = {
+    addEventListener: (type, fn) => { if (type === 'message') listeners.push(fn); },
+    removeEventListener: (type, fn) => { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); },
+  };
+  try {
+    const asked = picture.requestDesignPicture(frame, 2, '/* snapdom */', 1000);
+    assert.equal(sent.length, 1, 'one request is posted');
+    assert.equal(sent[0].__design, 'picture');
+    assert.equal(sent[0].scale, 2);
+    assert.equal(sent[0].lib, '/* snapdom */');
+    assert.equal(typeof sent[0].id, 'string');
+    const id = sent[0].id;
+    const blob = new Blob(['png'], { type: 'image/png' });
+    // Another frame's answer, and this frame's answer with another id, are
+    // both ignored: a design's script can supply only its own frame's image.
+    for (const answer of [
+      { source: other, data: { __design: 'picture', id, blob } },
+      { source: target, data: { __design: 'picture', id: 'another', blob } },
+      { source: target, data: { __design: 'pin', id, blob } },
+    ]) listeners.slice().forEach((fn) => fn(answer));
+    assert.equal(listeners.length, 1, 'still waiting after the wrong answers');
+    listeners.slice().forEach((fn) => fn({ source: target, data: { __design: 'picture', id, blob } }));
+    assert.equal(await asked, blob);
+    assert.equal(listeners.length, 0, 'the listener is gone once answered');
+    // Nothing said: the bound resolves null, and the listener is gone too.
+    const slow = picture.requestDesignPicture(frame, 1, 'lib', 1000);
+    assert.equal(listeners.length, 1);
+    t.mock.timers.tick(1000);
+    assert.equal(await slow, null);
+    assert.equal(listeners.length, 0);
+  } finally {
+    t.mock.timers.reset();
+    globalThis.window = prev;
+  }
+});
+
 // ── 2. Posting ────────────────────────────────────────────────────────
 
 test('the request is the comment\'s words, plus a link to the change it was pinned in', () => {
@@ -1025,7 +1165,7 @@ test('a comment is the dialog\'s two requests: the picture, then the request nam
   { status: 200, body: { url: 'u', homeroomBot: { botWillBuild: true } } },
 ], async (calls) => {
   const out = await post.postComment(base);
-  assert.deepEqual(out, { ok: true, botWillBuild: true, url: 'u', title: '', bounty: null });
+  assert.deepEqual(out, { ok: true, botWillBuild: true, url: 'u', title: '', bounty: null, droppedPictures: 0 });
   assert.equal(calls[0].url, '/api/feedback/screenshot');
   assert.equal(calls[0].init.headers['Content-Type'], 'application/octet-stream');
   assert.equal(calls[0].init.body, blob);
@@ -1048,9 +1188,41 @@ test('a picture the server will not take does not cost the words', () => withFet
   { status: 400, body: { error: 'Not a PNG or JPEG' } },
   { status: 200, body: {} },
 ], async (calls) => {
-  assert.deepEqual(await post.postComment(base), { ok: true, botWillBuild: false, url: '', title: '', bounty: null });
+  assert.deepEqual(await post.postComment(base), { ok: true, botWillBuild: false, url: '', title: '', bounty: null, droppedPictures: 1 });
   assert.equal(JSON.parse(calls[1].init.body).screenshotIds, undefined);
 }));
+
+// #6121: "it looked attached, then vanished on save. no error, just gone."
+test('#6121: a post counts the pictures that did not make it, a refused one or one past the limit', () => withFetch([
+  { status: 413, body: { error: 'Screenshot too large' } },
+  { status: 200, body: { id: 'b'.repeat(32) } },
+  { status: 429, body: { error: 'Too many' } },
+  { status: 200, body: {} },
+], async (calls) => {
+  const out = await post.postComment({ ...base, shots: [], images: [imageA, imageB, imageA, imageB] });
+  assert.equal(out.ok, true);
+  assert.equal(out.droppedPictures, 3, 'two refused and the fourth, never sent');
+  assert.equal(calls.length, 4);
+  assert.deepEqual(JSON.parse(calls[3].init.body).screenshotIds, ['b'.repeat(32)]);
+}));
+
+test('#6121: the box refuses an image over the server\'s limit up front, and says so', () => {
+  assert.equal(picture.MAX_UPLOAD_BYTES, feedbackRoute.MAX_SCREENSHOT_BYTES, 'the box stops where the server does');
+  assert.equal(picture.fitsUpload({ size: picture.MAX_UPLOAD_BYTES }), true);
+  assert.equal(picture.fitsUpload({ size: picture.MAX_UPLOAD_BYTES + 1 }), false);
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /const usable = images\.filter\(fitsUpload\);/);
+  assert.match(src, /if \(usable\.length < images\.length\) \{\s*update\(key, \{ error: t\('devchat:commentPin\.error\.imageTooLarge', \{ megabytes: MAX_UPLOAD_BYTES \/ \(1024 \* 1024\) \}\) \}\);/);
+  assert.equal(message('devchat:commentPin.error.imageTooLarge'), "Images over {{megabytes}} MB can't be attached.");
+});
+
+test('#6121: the toast names the lost pictures and the posted row does not count them', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /const postedLine = lost\s*\? \(outcome\.botWillBuild\s*\? t\('devchat:commentPin\.toast\.postedPicturesLostBuilding', \{ count: lost, place: name \}\)\s*: t\('devchat:commentPin\.toast\.postedPicturesLost', \{ count: lost, place: name \}\)\)/);
+  assert.match(src, /pictures: Math\.max\(0, \(post\.shots\?\.length \|\| 0\) \+ \(post\.images\?\.length \|\| 0\) - outcome\.droppedPictures\),/);
+  assert.equal(message('devchat:commentPin.toast.postedPicturesLost_one'), "Posted to {{place}}, but {{count}} picture couldn't attach.");
+  assert.equal(message('devchat:commentPin.toast.postedPicturesLost_other'), "Posted to {{place}}, but {{count}} pictures couldn't attach.");
+});
 
 const imageA = new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: 'image/jpeg' });
 const imageB = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1])], { type: 'image/png' });
@@ -1072,7 +1244,7 @@ test('the box posts every picture first, then its title, Kudos and the page\'s p
   const out = await post.postComment(full);
   assert.deepEqual(out, {
     ok: true, botWillBuild: false, url: 'https://github.com/o/r/issues/4490', title: 'Bigger Join button',
-    bounty: { placed: true, remaining: 4, error: undefined },
+    bounty: { placed: true, remaining: 4, error: undefined }, droppedPictures: 0,
   });
   assert.deepEqual(calls.slice(0, 3).map((c) => c.init.body), [blob, imageA, imageB], 'the page first, then the person\'s own');
   assert.deepEqual(JSON.parse(calls[3].init.body), {
@@ -1168,6 +1340,9 @@ test('handing over opens the dialog with the words, the pictures, the pin, the t
   assert.deepEqual(got, {
     target: 'app',
     description: 'Make the Join   button\nbigger',
+    // #6485: the app the person picked travels with the words, so the form
+    // files there even with no app tab open behind it.
+    appSlug: 'demo',
     screenshots: [{ blob, pins: [{ x: 0.25, y: 0.5, n: null, note: 'Make the Join button bigger' }] }, { blob: imageA }, { blob: imageB }],
     title: 'Bigger Join button',
     bounty: true,
@@ -1185,6 +1360,25 @@ test('handing over opens the dialog with the words, the pictures, the pin, the t
   // The form sends the pins beside the pictures it was handed with.
   assert.match(fc, /const pinned = screenshots\.filter\(\(shot\) => shot\.id && shot\.pins && shot\.pins\.length\)\s*\.flatMap\(/);
   assert.match(fc, /if \(pinned\.length\) body\.screenshotPins = pinned;/);
+});
+
+// #6485: the destination the person picked is the app the form files on, so
+// the hand-over carries the app itself — its address and the name the box
+// showed — and the form's own row names that app.
+test('the hand-over carries the picked app, and only when the app is the destination', () => {
+  assert.deepEqual(post.handOverOptions({ ...base, appName: 'Inbox' }), {
+    target: 'app',
+    description: 'Make it bigger',
+    appSlug: 'demo',
+    appName: 'Inbox',
+    screenshots: [{ blob }],
+  });
+  assert.deepEqual(post.handOverOptions({ ...base, target: 'platform', appName: 'Inbox' }), {
+    target: 'platform',
+    description: 'Make it bigger',
+    screenshots: [{ blob }],
+  }, 'Homeroom takes no app with it');
+  assert.equal(post.handOverOptions({ ...base, appSlug: null }).appSlug, undefined, 'nor an app with no address');
 });
 
 // ── 2b. The pin as data (#4482) ───────────────────────────────────────

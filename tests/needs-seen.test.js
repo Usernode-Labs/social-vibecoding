@@ -145,20 +145,6 @@ test('a storage that refuses is a count that is not lowered for long, never an e
 
 // ── The feed marks, the page counts ────────────────────────────────────
 
-test('the feed marks the vote you move on from, forward and unanswered only', () => {
-  const WORKSHOP = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const land = /const landOn = \(idx: number\) => \{([\s\S]*?)\n {2}\};/.exec(WORKSHOP);
-  assert.ok(land, 'landOn, where a swipe, a key and an arrow all arrive');
-  assert.match(land[1], /if \(c > i && row && !answered\[row\.key\] && !sendingRef\.current\.has\(row\.key\)\) \{\s*markNeedsSeen\(rowSlug\(row, slug\), needsRowKey\(row\)\);\s*\}/,
-    'the row you were on, going forward, not answered here and no vote of yours on its way');
-  // The band's count and the one the Communities tab works out are the
-  // unseen votes, from the same keys.
-  assert.match(WORKSHOP, /const owed = unseenNeeds\(v\.slug \|\| '', owedRows\.length, owedKeys\);/);
-  assert.match(WORKSHOP, /describeCommunity\(v\.slug, \{\s*owedCount: owedRows\.length,\s*owed: owedKeys,/);
-  assert.match(WORKSHOP, /<ForYouCard\s+slug=\{slug\}[\s\S]{0,80}queue=\{v\.queue\}/);
-  // Nothing else in the feed moves: the order stays the one published.
-  assert.match(WORKSHOP, /const live = rows\.filter\(\(r\): r is QueueRow => r\.t === 'card'\);/);
-});
 
 test('the hub\'s Needs you counts what you have not seen, and stays a door to the rest', () => {
   fakeWindow(7);
@@ -227,6 +213,35 @@ test('a row that is not a vote is never recorded as passed over, so the scan sto
   assert.equal(seen.firstUnseenIndex(rows, () => 'garden'), 1, 'the non-vote row counts as not seen');
 });
 
+// #6199: leaving Needs you after swiping past the one change your vote
+// decides must not reopen past it on the advisory rows below.
+test('a vote that decides stops the resume even when it was passed over', () => {
+  fakeWindow(7);
+  const seen = loadTsx(SEEN_SRC);
+  seen.hydrateNeedsSeen();
+  const deciding = (id, title) => ({
+    ...voteRow(id, title),
+    yes: { label: 'Yes', act: { fn: 'castVote', args: [id, 'yes', 0] } },
+  });
+  const advisory = (id, title) => ({
+    ...voteRow(id, title),
+    yes: { label: 'Yes', act: { fn: 'castVote', args: [id, 'yes', 0] }, advisory: true },
+  });
+  const isDeciding = (row) => !(row.yes && (row.yes.advisory || row.yes.uncounted));
+  // The feed's order: the vote that decides is first, then the advisory ones.
+  const rows = [deciding(1, 'Add a new level'), advisory(2, 'Tags'), advisory(3, 'Export')];
+  seen.markNeedsSeen('garden', 'proposal:1@0');
+  assert.equal(seen.firstUnseenIndex(rows, () => 'garden'), 1,
+    'today: the advisory row below it, which is where the deciding vote looked lost');
+  assert.equal(seen.firstUnseenIndex(rows, () => 'garden', isDeciding), 0,
+    'with the deciding stop, the vote that decides is on screen again');
+  // A feed of advisory votes only behaves exactly as before.
+  const advisories = [advisory(2, 'Tags'), advisory(3, 'Export')];
+  seen.markNeedsSeen('garden', 'proposal:2@0');
+  assert.equal(seen.firstUnseenIndex(advisories, () => 'garden', isDeciding), 1,
+    'only advisory votes already passed over are skipped');
+});
+
 test('the Communities reel: each row is checked against its own project', () => {
   fakeWindow(7);
   const seen = loadTsx(SEEN_SRC);
@@ -241,22 +256,6 @@ test('the Communities reel: each row is checked against its own project', () => 
     'the garden vote is seen, the swap one is not, though they share an id');
 });
 
-test('NeedsFeed opens on the first unseen item, and only when no other open is owed (#4753)', () => {
-  const WORKSHOP = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  // The record is read in an effect, not the render (the island rule): the
-  // seed stays the end card's count or 0.
-  assert.match(WORKSHOP, /const \[at, setAt\] = useState\(\(\) => \(endOnOpen \? rows\.filter\(\(r\) => r\.t === 'card'\)\.length : 0\)\);/,
-    'the seed never reads the record');
-  assert.match(WORKSHOP, /const resumeRef = useRef<boolean>\(!endOnOpen && !approveOpenRef\.current && !openOn\);/,
-    'resume only when no other open is owed: no end card, no shot target, no New for you row');
-  const resume = /useLayoutEffect\(\(\) => \{\s*const el = scrollRef\.current;\s*if \(!resumeRef\.current \|\| !el \|\| !el\.clientHeight \|\| !items\.length\) return;\s*resumeRef\.current = false;\s*const idx = firstUnseenIndex\(items, \(r\) => rowSlug\(r, slug\)\);([\s\S]*?)\n {2}\}, \[items\]\);/.exec(WORKSHOP);
-  assert.ok(resume, 'the resume open: once, on the first publish that has rows and a laid-out scroller');
-  assert.match(resume[1], /if \(idx <= 0\) return;/, 'the first unseen item is the first item: nothing to move for');
-  assert.match(resume[1], /curKeyRef\.current = items\[idx\]\.key;\s*setAt\(idx\);\s*el\.style\.scrollBehavior = 'auto';\s*el\.scrollTop = idx \* el\.clientHeight;\s*el\.style\.scrollBehavior = '';/,
-    'instantly, the way the opens above land, and the re-sync then follows the row by key');
-  assert.doesNotMatch(resume[1], /landOn|markNeedsSeen/, 'the jump passes nothing new over: the rows were already seen');
-  assert.match(WORKSHOP, /import \{ firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen \} from '\.\.\/\.\.\/workshop\/needs-seen';/);
-});
 
 // ── The Communities tab, its switcher and its list ─────────────────────
 
@@ -288,35 +287,6 @@ test('the Communities tab\'s count drops as votes are swiped past anywhere', () 
   assert.match(SRC, /owedCount: Number\(counts\[r\.slug\]\?\.needs\) \|\| 0,\s*owed: Array\.isArray\(owed\) \? owed\.map\(String\) : undefined,/);
 });
 
-test('the Communities list and its Needs you row leave out what you skipped, and keep the door', () => {
-  const seen = loadTsx(SEEN_SRC);
-  // Loaded before the window exists, as the screen's own tests load it: its
-  // imports bind browser listeners when there is one.
-  const mod = loadTsx('frontend/src/features/workshop/index.tsx', { stubs: { './needs-seen': seen } });
-  fakeWindow(7);
-  seen.hydrateNeedsSeen();
-  const rows = mod.joinCounts([{ slug: 'garden', name: 'Garden' }, { slug: 'swap', name: 'Swap' }], {
-    garden: { working: 0, needs: 2, owed: ['proposal:1@0', 'proposal:2@0'] },
-    swap: { working: 0, needs: 1, owed: ['governance:9'] },
-  });
-  assert.deepEqual(rows[0].owed, ['proposal:1@0', 'proposal:2@0'], 'the counts say which votes, and the row keeps them');
-  const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
-  mod.workshopStore.set({ open: true, error: false, tab: 'status', rows, feed: null, feedError: false, feedCapped: false });
-  assert.match(html(), /3 votes waiting on you/);
-  seen.markNeedsSeen('garden', 'proposal:1@0');
-  seen.markNeedsSeen('garden', 'proposal:2@0');
-  let out = html();
-  assert.match(out, /1 vote waiting on you/);
-  assert.match(out, /data-workshop-needs-door=""[\s\S]*?>Swap</, 'naming only the projects with something new');
-  seen.markNeedsSeen('swap', 'governance:9');
-  out = html();
-  assert.match(out, /data-workshop-needs-door=""/, 'the only door to the feed on this screen stays');
-  assert.match(out, /3 votes you skipped/);
-  assert.match(out, /Garden, Swap/);
-  assert.equal(mod.unseenRow({ slug: 'garden', name: 'Garden', working: 0, needs: 2, owed: ['proposal:1@0', 'proposal:2@0'] }).needs, 0);
-  mod.workshopStore.set({ open: false, rows: null });
-});
-
 test('the app menu\'s "to vote" is the same number', () => {
   const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(SHEET, /unseenNeeds\(slug, c\.needs, Array\.isArray\(c\.owed\) \? c\.owed : null\)/);
@@ -330,7 +300,7 @@ test('GET /api/workshop/counts says which votes `needs` counts, in the record\'s
   assert.match(cte('owed_proposals'), /array_agg\('proposal:' \|\| cs\.id \|\| '@' \|\| cs\.approval_epoch\) AS keys/);
   assert.match(cte('owed_governance'), /array_agg\('governance:' \|\| i\.id\) AS keys/);
   // #6019: and the bot's open questions, by the message that asks.
-  assert.match(cte('owed_questions'), /array_agg\('question:' \|\| q\.message_id\) AS keys/);
+  assert.match(cte('owed_questions'), /array_agg\('question:' \|\| q\.id\) AS keys/);
   assert.match(route.COUNTS_SQL, /\(COALESCE\(op\.keys, '\{\}'::text\[\]\) \|\| COALESCE\(og\.keys, '\{\}'::text\[\]\) \|\| COALESCE\(oq\.keys, '\{\}'::text\[\]\)\) AS owed/);
   assert.match(read('src/routes/workshop-overview.js'), /owed: Array\.isArray\(row\.owed\) \? row\.owed\.map\(String\) : \[\],/);
 

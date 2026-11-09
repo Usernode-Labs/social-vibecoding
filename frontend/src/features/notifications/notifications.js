@@ -603,19 +603,26 @@ const Notifications = {
   // behaviour; there is no anchored dropdown any more, and a side drawer left
   // open over the screen you just navigated to is the same problem the touch
   // sheet had.
-  // #4367: a change's topic ref, carrying its pull request's number when it
-  // has one, so the page opens at `dev/changes/<N>`.
+  // #4367: a change's topic ref. #6099: the row's own session id is what its
+  // title comes from, so when we have one the ref names that session and
+  // nothing else. A pull request number is only a fallback for a row that has
+  // no usable session id: several sessions can share one (a change carried in
+  // another change's PR), and looking the number up on the server picks one of
+  // them, so a notice could open an older change than its text names.
   _changeRef(sessionId, prNumber) {
     const id = parseInt(sessionId, 10);
+    if (Number.isInteger(id) && id > 0) return { kind: 'proposal', id };
     const pr = Number(prNumber);
-    return Number.isInteger(pr) && pr > 0 ? { kind: 'proposal', id, pr } : { kind: 'proposal', id };
+    return Number.isInteger(pr) && pr > 0 ? { kind: 'proposal', pr } : { kind: 'proposal', id };
   },
 
   // The same change as an address (lib/change-href.ts; spelled out here,
-  // as this module keeps its one bundle import).
+  // as this module keeps its one bundle import). Once the page has drawn,
+  // AppView._canonicalizeChangeAddress replaces a session-id address with the
+  // change's `dev/changes/<N>` one.
   _changeHash(slug, sessionId, prNumber) {
     const ref = Notifications._changeRef(sessionId, prNumber);
-    return ref.pr ? `#app/${slug}/dev/changes/${ref.pr}` : `#app/${slug}/dev/proposals/${ref.id}`;
+    return ref.id ? `#app/${slug}/dev/proposals/${ref.id}` : `#app/${slug}/dev/changes/${ref.pr}`;
   },
 
   _dismissSheetForNav() {
@@ -662,6 +669,65 @@ const Notifications = {
     } catch (err) {
       console.warn('[notifications] markAllRead failed', err);
       failed();
+    }
+  },
+
+  // #6527: opening the bell no longer marks anything read. The sheet only
+  // refreshes on open; reading is explicit (markAllRead, clearNotification,
+  // markOlderRead, opening a row). The server's narrow-clear option that
+  // opening used to send (#6498) remains on the route, though nothing in the
+  // app sends it now.
+
+  // #5929 (item 13): mark every unread notification older than `days` whole
+  // days read — the Unread tab's "Mark everything older than a week as
+  // read", which lets a 99+ backlog go while this week's news stays unread.
+  //
+  // The route's `{ all: true, older_than_days }` window (markRead) is the
+  // whole of what the server does: the clear reaches every unread row of
+  // that age the server has, including ones the sheet has not paged in,
+  // and its `unread` figure is the account-wide truth the badge adopts.
+  // Cross-tab refresh is the route's own `notifications_changed` push.
+  //
+  // markAllRead's rule: nothing clears until the server answers, so a failed
+  // request leaves every unread mark where it was and says so with the same
+  // toast. Locally only the rows the window covers flip, by the same cutoff
+  // the server applies (created more than `days` days before now).
+  async markOlderRead(days = 7) {
+    const span = Number.isInteger(days) && days >= 1 && days <= 365 ? days : 7;
+    const cutoff = Date.now() - span * 24 * 60 * 60 * 1000;
+    const inWindow = (n) => !!n && !n.readAt && (Date.parse(n.createdAt) || 0) < cutoff;
+    // Nothing in hand that old (another tab or a refresh got there first):
+    // no request, and the caller's button has nothing to wait on.
+    if (!Notifications.items.some(inWindow)) return false;
+    const failed = () => window.PlatformUI?.toast?.(t('notifications:toast.markAllFailed'));
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true, older_than_days: span }),
+      });
+      if (!res.ok) { failed(); return false; }
+      const data = await res.json();
+      Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
+      // Flip only what is still unread and old enough: a refresh that landed
+      // while the request was running replaced `items` with the server's
+      // own rows, which already say what is true.
+      const now = new Date().toISOString();
+      for (const n of Notifications.items) {
+        if (inWindow(n)) n.readAt = now;
+      }
+      Notifications._reconcileCompletionTitle();
+      Notifications._renderBadge();
+      Notifications._renderList();
+      // #449's reason: an open group chat may be drawing dots for the
+      // notifications that were just cleared.
+      window.GroupChat?.reconcileDotsFromNotifications?.();
+      return true;
+    } catch (err) {
+      console.warn('[notifications] markOlderRead failed', err);
+      failed();
+      return false;
     }
   },
 
@@ -986,12 +1052,16 @@ const Notifications = {
   // delegated card click) through `window.Notifications`. Skipped when
   // nothing is unread, so the common click costs no request; the server
   // scopes the clear to pr_proposed rows for this one session.
+  // #6441: opening a change's page (which for most changes is its request's
+  // page) or its before-and-after also answers its "ready to try", so the
+  // same call clears that too.
   async markProposalSeen(sessionId) {
     const id = Number(sessionId);
     if (!Number.isSafeInteger(id) || id <= 0 || Notifications.unread === 0) return;
     const now = new Date().toISOString();
     for (const n of Notifications.items) {
-      if (n && !n.readAt && n.kind === 'pr_proposed' && Number(n.sessionId) === id) n.readAt = now;
+      if (n && !n.readAt && (n.kind === 'pr_proposed' || n.kind === 'build_ready')
+        && Number(n.sessionId) === id) n.readAt = now;
     }
     try {
       const res = await fetch('/api/notifications/read', {
@@ -1130,6 +1200,13 @@ const Notifications = {
         const href = conversationNotificationHref(item);
         if (messages?.openAddress) messages.openAddress(href);
         else window.location.hash = href;
+      } else {
+        // A request's moment with no chat behind it opens the request.
+        const href = conversationNotificationHref(item);
+        if (href) {
+          Notifications._dismissSheetForNav();
+          window.location.hash = href;
+        }
       }
       return;
     }
@@ -1313,10 +1390,27 @@ const Notifications = {
       window.location.hash = `#app/${encodeURIComponent(item.appSlug)}`;
       return;
     }
+    // #6371: the one weekly digest covers every project and names none, so
+    // its row (no app) opens the This week page. An older per-project row
+    // still falls through with its app and opens that project's discussion.
+    if (item.kind === 'weekly_digest' && !item.appSlug && /^w:/.test(String(item.detail || ''))) {
+      Notifications._dismissSheetForNav();
+      window.location.hash = '#week';
+      return;
+    }
     if (item.kind === 'vote_digest' && !item.appSlug) {
       Notifications._dismissSheetForNav();
-      window.UsernodeReact?.workshop?.setTab?.('needs');
-      window.location.hash = '#communities';
+      // Needs you, the page of every vote owed across your projects (One
+      // Home, #6361: the Communities screen's list is gone).
+      window.location.hash = '#needs';
+      return;
+    }
+    // #5404: the Monday count of the changes you voted on that were decided
+    // names no change and no project; the Homeroom bot tab's History lists
+    // them, narrowed to votes (it was Me › Your votes until 5 Nov 2026).
+    if (item.kind === 'voted_digest') {
+      Notifications._dismissSheetForNav();
+      window.location.hash = '#homeroom-bot/history?kind=vote';
       return;
     }
     if (item.appSlug) {
@@ -1395,10 +1489,11 @@ const Notifications = {
       }
       // Every kind that is ABOUT A PROPOSAL opens that proposal — the vote
       // nudge, the going-stale warning, the blocked check and the kudos.
-      // `subTab: 'proposals'` plus the session id is the legacy spelling of a
-      // typed topic ref; _normalizeTab turns it into { kind: 'proposal', id }
-      // and the topic view opens full-screen. Without an id there is no
-      // proposal to open and it falls back to the board, which is where the
+      // #6099: the row's own session id is passed as a typed topic ref, so
+      // _normalizeTab opens exactly the change the row's title names; the
+      // legacy `subTab: 'proposals'` spelling (an id ref too) is no longer
+      // needed. Only a row with no session id falls back to its pull request
+      // number, and with neither it lands on the board, which is where the
       // card is.
       // #1374 adds three more that are ABOUT A PROPOSAL: it merged, somebody
       // voted on it, and the daily digest of what is waiting on you. The
@@ -1438,15 +1533,22 @@ const Notifications = {
         Notifications._openAppDiscussion(item.appSlug, item.chatMessageId);
         return;
       }
+      // #6099: a row that names a change always opens by its OWN session id
+      // when it has one, on every change kind and on both tabs, so two notices
+      // about two changes cannot both land on an older change that shares a
+      // pull request number. A row with only a number keeps that as its
+      // address; one with neither still falls back to the board.
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', toProposals
-          ? (item.sessionId && Number(item.prNumber) > 0
+          ? (item.sessionId || Number(item.prNumber) > 0
             ? { subTab: 'topic', ref: Notifications._changeRef(item.sessionId, item.prNumber) }
             : { subTab: 'proposals', ref: item.sessionId || null })
           : { subTab: 'issues', ref: issueNumber });
       } else {
         window.location.hash = toProposals
-          ? (item.sessionId ? Notifications._changeHash(item.appSlug, item.sessionId, item.prNumber) : `#app/${item.appSlug}/dev/proposals`)
+          ? (item.sessionId || Number(item.prNumber) > 0
+            ? Notifications._changeHash(item.appSlug, item.sessionId, item.prNumber)
+            : `#app/${item.appSlug}/dev/proposals`)
           : `#app/${item.appSlug}/dev/issues/${issueNumber}`;
       }
     }
@@ -2126,6 +2228,14 @@ const CONVERSATION_NOTIF_KINDS = new Set([
 function conversationNotificationHref(n) {
   const valid = (v) => Number.isSafeInteger(v) && v > 0 && v <= 2147483647;
   const conversationId = Number(n && n.conversationId);
+  // 5 Nov 2026: a request's moment rung from its stage (services/work-state.js)
+  // to somebody who never wrote to the bot names no chat; it opens the request.
+  if (!valid(conversationId) && n && BUILD_KIND_MOMENTS[n.kind]) {
+    const detail = parseBotDetail(n.detail) || {};
+    const slug = BOT_SLUG_RE.test(String(n.appSlug || '')) ? String(n.appSlug) : (detail.appSlug || '');
+    const issue = storyIssueOf(n) || detail.issueNumber;
+    return slug && valid(Number(issue)) ? `#homeroom-bot/request/${slug}/${Number(issue)}` : null;
+  }
   if (!valid(conversationId)) return null;
   const messageId = Number(n.conversationMessageId);
   const rootId = Number(n.conversationThreadRootId);
@@ -2137,9 +2247,18 @@ function conversationNotificationHref(n) {
   // detail names (services/homeroom-bot-notify-copy.js); else the message
   // itself, whose permalink lands inside its thread. 1 Nov 2026: on the bot's
   // tab, the chat's only place (features/ai/door.ts botTabAddress).
-  if (BUILD_KIND_MOMENTS[n.kind] || isBotMomentDetail(n.detail)) {
+  // 4 Nov 2026 (#6290): a request's news lives in the request's OWN thread
+  // since #6207, so a moment (or a bot reply) that names a request opens it
+  // there (#homeroom-bot/request/<slug>/<n>, features/ai/door.ts
+  // botItemAddress) rather than landing in Main Chat with nothing about it.
+  if (BUILD_KIND_MOMENTS[n.kind] || isBotMomentDetail(n.detail)
+      || (isBotUsername(n.sourceUsername) && storyIssueOf(n) && n.appSlug)) {
     const root = valid(rootId) ? rootId : (parseBotDetail(n.detail) || {}).threadRootId;
     if (valid(root)) return `#homeroom-bot/thread/${root}`;
+    const detail = parseBotDetail(n.detail) || {};
+    const slug = BOT_SLUG_RE.test(String(n.appSlug || '')) ? String(n.appSlug) : (detail.appSlug || '');
+    const issue = storyIssueOf(n) || detail.issueNumber;
+    if (slug && valid(Number(issue))) return `#homeroom-bot/request/${slug}/${Number(issue)}`;
     if (valid(messageId)) return `#homeroom-bot/main/m/${messageId}`;
     return '#homeroom-bot/main';
   }
@@ -2556,6 +2675,9 @@ function screenViews(items) {
 // tests/homeroom-bot-notify.test.js holds the two together).
 const BOT_DETAIL_PREFIX = 'hrbot2:';
 const BOT_LEGACY_RE = /^hrbot:([a-z_]{1,20}):(.*)$/;
+// A project slug, as features/ai/door.ts reads one (SLUG there): a request's
+// address is `#homeroom-bot/request/<slug>/<n>`, so both parts must be its shape.
+const BOT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,254}$/;
 const BOT_MOMENT_ALIASES = { question: 'needs_you', held: 'on_hold' };
 const BOT_LABEL_IDS = {
   needs_you: 'notifications:row.bot.label.needsYou',
@@ -2621,6 +2743,7 @@ function parseBotDetail(detail) {
       deciders: oneLine(raw.d, 120),
       count: positiveId(raw.c),
       issueNumber: positiveId(raw.i),
+      appSlug: BOT_SLUG_RE.test(String(raw.p || '')) ? String(raw.p) : '',
       threadRootId: positiveId(raw.r),
     };
   }
@@ -2637,9 +2760,21 @@ function parseBotDetail(detail) {
     deciders: '',
     count: null,
     issueNumber: null,
+    appSlug: '',
     threadRootId: null,
   };
 }
+// #5929 item 5: why a request is on hold, by which of the moment's words the
+// server chose (homeroom-bot-notify-copy.js, SAID_BY_MOMENT.on_hold, and its
+// thread copy for each). Only `allowance` is about this week's building time,
+// so the reason follows `said`; a row from before `said` was written says none.
+const BOT_ON_HOLD_NOTE_IDS = {
+  allowance: 'notifications:row.bot.onHoldNote.allowance',
+  paused: 'notifications:row.bot.onHoldNote.paused',
+  slots: 'notifications:row.bot.onHoldNote.slots',
+  builds: 'notifications:row.bot.onHoldNote.builds',
+  taken: 'notifications:row.bot.onHoldNote.taken',
+};
 function isBotMomentDetail(detail) {
   const d = parseBotDetail(detail);
   return !!d && d.moment !== 'reply';
@@ -2668,6 +2803,17 @@ function bellWords(words) {
   const room = words.slice(0, 139);
   const space = room.lastIndexOf(' ');
   return `${(space > 70 ? room.slice(0, space) : room).replace(/[\s.,;:!?-]+$/, '')}…`;
+}
+
+// A message's words as a row's title (#5929 item 3): the markdown stripped,
+// its lines joined, and cut at the last whole word, the way the bot's own
+// replies already read. A bare `slice(0, 140)` put a raw message on the row:
+// "Feedback: This is a strong settings screen. The copy is clear and the…"
+// was the start of a reply, cut mid-word, under a label that said what it
+// was. The label stays the kind ("Mentioned you", "Replied on request #12");
+// the words are what was said, readable.
+function messageWords(content) {
+  return bellWords(plainMarkdown(content));
 }
 
 // The row's words for one of the bot's notifications: { label, subject, meta },
@@ -2706,7 +2852,18 @@ function botMomentLine(detail, message) {
   // #5929: a needs-you asks the reader for something, except the one that
   // says it waits on somebody else.
   const needsYou = d.moment === 'needs_you' && d.said !== 'decide_others';
-  return { label, subject, meta, needsYou };
+  const noteId = d.moment === 'on_hold' && Object.prototype.hasOwnProperty.call(BOT_ON_HOLD_NOTE_IDS, d.said)
+    ? BOT_ON_HOLD_NOTE_IDS[d.said] : null;
+  return { label, subject, meta, needsYou, ...(noteId ? { note: t(noteId) } : {}) };
+}
+
+// #6494: a storage token carries MiB used and MiB of cap. MB below 1 GiB,
+// else GB with at most one decimal ("1.6 GB", "3 GB").
+function storageSizeText(mib) {
+  const n = Number(mib);
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n < 1024) return `${Math.round(n)} MB`;
+  return `${(n / 1024).toFixed(1).replace(/\.0$/, '')} GB`;
 }
 
 // A whole message with one emphasised part, as a row's segments: the catalog
@@ -2810,13 +2967,35 @@ function storyRefOf(n) {
   return { number, title: n.storyTitle || (bot && bot.requestTitle) || null };
 }
 
+// #5929 item 4: where an unread row stands, which the sheet draws as a chip
+// first on the row (RowLabel): 'needs' it waits on the reader, 'blocked' its
+// votes are met and its merge stands still, 'hold' the bot has put it on
+// hold. A read row has none: a vote cast or a merge decided reads the row
+// (DECIDED_ASK_KINDS, change-notifications.ts), so on a read row the colour
+// could be saying what is no longer so.
+function rowTone(n, view) {
+  if (n.readAt) return null;
+  if (view.needsYou) return 'needs';
+  if (n.kind === 'stale_pr' && n.detail === 'blocked') return 'blocked';
+  const bot = view.botMoment ? parseBotDetail(n.detail) : null;
+  return bot && bot.moment === 'on_hold' ? 'hold' : null;
+}
+
 function rowView(n) {
-  // #103: keep the violet left line on every row, read or unread, so a
-  // notification never "loses its line" when read. Only the background
-  // tint stays unread-conditional (the unread dot below is the other cue).
+  const view = rowWords(n);
+  const tone = rowTone(n, view);
+  return tone ? { ...view, tone } : view;
+}
+
+function rowWords(n) {
+  // #6506: the subject line's weight and ink. An unread notice is bold in the
+  // strong ink; a read one is regular and softer, so a list holding both
+  // tells them apart at a glance. The unread dot in ./notifications-sheet.tsx
+  // is the other cue; the sheet chooses by `unread` so a story card, whose
+  // view is rebuilt, reads its own state.
   const unreadCls = n.readAt
-    ? 'border-s-2 border-violet-500'
-    : 'bg-violet-500/5 border-s-2 border-violet-500';
+    ? 'font-normal text-zinc-700 dark:text-zinc-300'
+    : 'font-semibold text-zinc-900 dark:text-zinc-100';
   // WHERE this came from, for the meta line — and EMPTY when there is no
   // app, not the literal string 'app'. Plenty of kinds have no app at all (a
   // conversation, an account-level key, an agent question the platform cannot
@@ -2900,7 +3079,7 @@ function rowView(n) {
     // the sender, so it is headed with them.
     const conversation = n.conversationTitle
       || (n.conversationKind === 'direct' && n.sourceUsername ? `@${n.sourceUsername}` : t('notifications:row.conversation.untitled'));
-    const snippet = (n.messageContent || '').slice(0, 140);
+    const snippet = messageWords(n.messageContent);
     // The conversation is the SUBJECT of every one of these, so it leads —
     // and for a plain message the snippet follows it, which is the only part
     // of a message notification anybody reads. The other four say what
@@ -2961,6 +3140,7 @@ function rowView(n) {
         appLine: bot.meta || t('notifications:row.source.messages'),
         botMoment: true,
         needsYou: !!bot.needsYou,
+        ...(bot.note ? { note: bot.note } : {}),
         // Run six: the row wears the bot's own face (the sheet's AvatarChip),
         // never a letter tile of its handle — unless it is about a project,
         // which then wears that project's tile (#5877).
@@ -3198,7 +3378,7 @@ function rowView(n) {
       ...base,
       icon: n.detail || '❤️',
       by: n.sourceUsername || null,
-      ...headline(t('notifications:row.reaction.label'), (n.messageContent || '').slice(0, 140)),
+      ...headline(t('notifications:row.reaction.label'), messageWords(n.messageContent)),
     };
   }
 
@@ -3212,6 +3392,10 @@ function rowView(n) {
     return {
       ...base,
       icon: '⏳',
+      // #5929 item 5: the server knows the votes are met and the merge has
+      // stood still (machine.ts staleWarned), not why, so this names no cause
+      // as the cause. It can also be shots not ready or a variable with no value.
+      ...(n.detail === 'blocked' ? { note: t('notifications:row.stale.blockedNote') } : {}),
       ...headline(t(n.detail === 'blocked' ? 'notifications:row.stale.blocked' : 'notifications:row.stale.label'),
         prLabel || n.sessionTitle || t('notifications:row.stale.yourChange')),
     };
@@ -3373,7 +3557,34 @@ function rowView(n) {
   // #1688: the Friday card. `detail` is "<merged>:<open>" — what went live
   // this week and what is waiting on votes. This is the whole card now: a
   // channel carries no activity (services/ws.js sendSystemMessage).
+  //
+  // #6371: one row now covers every project, with `w:<projects>:<merged>:<open>`
+  // (services/weekly-digest.js notifyPeople). Its label says the digest is
+  // ready and its subject adds up the week; tapping it opens This week. An
+  // older per-project row keeps its wording and still opens its project.
   if (n.kind === 'weekly_digest') {
+    const week = /^w:(\d+):(\d+):(\d+)$/.exec(String(n.detail || ''));
+    if (week) {
+      const merged = Number(week[2]);
+      const open = Number(week[3]);
+      const shipped = merged === 0
+        ? t('notifications:row.weekly.nothing')
+        : t('notifications:row.weekly.wentLive', { count: merged });
+      const waiting = open
+        ? t('notifications:row.weekly.waiting', { count: open })
+        : '';
+      return {
+        ...base,
+        // The shell's own newspaper glyph (components/ui/icons), drawn by
+        // the sheet's tile: an icon is a line icon, never an emoji.
+        icon: null,
+        lineIcon: 'newspaper',
+        ...headline(
+          t('notifications:row.weekly.ready'),
+          waiting ? t('notifications:row.factPair', { first: shipped, second: waiting }) : shipped,
+        ),
+      };
+    }
     const counts = /^(\d+):(\d+)$/.exec(String(n.detail || ''));
     const merged = counts ? Number(counts[1]) : 0;
     const open = counts ? Number(counts[2]) : 0;
@@ -3434,6 +3645,23 @@ function rowView(n) {
     // the app. The app name leads the line on purpose: this row is only
     // ever about one app, and "has used most of its storage" with nothing
     // in front of it reads as the platform talking about itself.
+    // #6494: the early and warning tokens carry the figures, so the row says
+    // how full the database is ("1.6 GB of 3 GB") instead of only "most of".
+    // A bare token from a row written before this change keeps its old words.
+    const storage = /^storage_(early|warn):(\d{1,9}):(\d{1,9})$/.exec(String(n.detail || ''));
+    if (storage) {
+      const key = storage[1] === 'early' ? 'early' : 'warnSized';
+      const values = { used: storageSizeText(Number(storage[2])), limit: storageSizeText(Number(storage[3])) };
+      return {
+        ...base,
+        wrap: true,
+        icon: '\u{1F4BE}',
+        label: t('notifications:row.health.storage.label'),
+        segments: n.appName
+          ? messageSegments(`notifications:row.health.storage.${key}`, { ...values, app: n.appName })
+          : messageSegments(`notifications:row.health.storage.${key}Unnamed`, values),
+      };
+    }
     if (n.detail === 'storage_warn') {
       return {
         ...base,
@@ -3489,7 +3717,22 @@ function rowView(n) {
       icon: '\u{1F5F3}\uFE0F',
       ...headline(
         t('notifications:row.voteDigest.label'),
-        t('notifications:row.voteDigest.count', { count }),
+        n.appName
+          ? t('notifications:row.voteDigest.countIn', { count, project: n.appName })
+          : t('notifications:row.voteDigest.count', { count }),
+      ),
+    };
+  }
+
+  // #5404: the Monday count. `detail` is the count when it was sent, with no
+  // project on the row (services/voted-digest.js), and a tap opens Your votes.
+  if (n.kind === 'voted_digest') {
+    return {
+      ...base,
+      icon: '\u{1F4CB}',
+      ...headline(
+        t('notifications:row.votedDigest.label'),
+        t('notifications:row.votedDigest.count', { count: Number(n.detail) || 0 }),
       ),
     };
   }
@@ -3612,7 +3855,7 @@ function rowView(n) {
   if (n.kind === 'channel_message') {
     const count = /^\d{1,6}$/.test(String(n.detail || '')) ? Number(n.detail) : 1;
     const project = n.appName || '';
-    const snippet = (n.messageContent || '').slice(0, 140);
+    const snippet = messageWords(n.messageContent);
     const username = n.sourceUsername || '';
     const asked = count === 1 && n.requestNumber != null;
     // Each line is a whole message, picked by what is known: who wrote, and
@@ -3682,7 +3925,7 @@ function rowView(n) {
           : t('notifications:row.inviteLink.joined'), null)
         : headline(asked ? t('notifications:row.inviteLink.asked')
           : (count > 1 ? t('notifications:row.inviteLink.saidHiWithOthers', { count: count - 1 })
-            : t('notifications:row.inviteLink.saidHi')), (n.messageContent || '').slice(0, 140))),
+            : t('notifications:row.inviteLink.saidHi')), messageWords(n.messageContent))),
     };
   }
 
@@ -3734,10 +3977,10 @@ function rowView(n) {
               // `detail` is the change's number, empty for a decision.
               : n.kind === 'change_thread_reply'
                 ? (/^\d+$/.test(String(n.detail || ''))
-                  ? t('notifications:row.chat.changeReply', { number: n.detail })
+                  ? t(n.changeOnGithub ? 'notifications:row.chat.changeReplyPr' : 'notifications:row.chat.changeReply', { number: n.detail })
                   : t('notifications:row.chat.decisionReply'))
                 : t('notifications:row.chat.posted'),
-      (n.messageContent || '').slice(0, 140),
+      messageWords(n.messageContent),
     ),
   };
 }

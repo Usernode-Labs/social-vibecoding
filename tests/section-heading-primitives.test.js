@@ -64,46 +64,6 @@ const headerHtml = (props, label) => renderToHtml(createElement(SectionHeader, p
 
 // ── Half A: the six sites ──────────────────────────────────────────────
 
-test('the browse directory’s tier labels ARE grouped-list’s SectionHeader', () => {
-  // A label over a group of CARDS: the rows under it are that same file's
-  // ListRow, and below md the #browse-list container IS the card they sit in.
-  const { BrowseRows } = loadTsx('frontend/src/features/apps/browse-list.tsx');
-  const row = (slug, directoryTier) => ({
-    app: { slug, name: slug, directory: { tier: directoryTier, state: 'working' } },
-    slug, name: slug, meta: '1 user', status: 'Running', statusDot: 'bg-green-500',
-    demo: false, openable: true, added: false, addTitle: 'Add to Your apps', directoryTier,
-  });
-  const html = renderToHtml(createElement(BrowseRows, {
-    rows: [row('ready-app', 'ready'), row('new-app', 'unreviewed')],
-    curated: true,
-  }));
-  const picked = { ...row('picked-app', 'ready'), recommended: true };
-  const html2 = renderToHtml(createElement(BrowseRows, {
-    rows: [picked, row('ready-app', 'ready'), row('new-app', 'unreviewed')],
-    curated: true,
-  }));
-  for (const label of ['Featured', 'More apps']) {
-    assert.ok(
-      html2.includes(headerHtml({ className: 'md:col-span-full' }, label)),
-      `“${label}” no longer renders through SectionHeader: it is hand-written again`,
-    );
-  }
-  for (const label of ['Apps to try']) {
-    assert.ok(
-      html.includes(headerHtml({ className: 'md:col-span-full' }, label)),
-      `“${label}” no longer renders through SectionHeader — it is hand-written again`,
-    );
-  }
-  // `md:col-span-full` is the ONE thing the site adds: at md+ the container is
-  // a 2/3-column grid and a heading has to span it.
-  assert.match(html, /<h2 class="[^"]*md:col-span-full"/);
-  // It stays an <h2> with the label as its only child: dapp.json's `?sort=`
-  // check reads `#browse-list[data-sort="users"]…:not(:has(h2))` to say the
-  // ungrouped list draws no tier headings at all, and that only means anything
-  // while the grouped list draws them AS h2.
-  assert.match(html, /<h2[^>]*>Apps to try</);
-});
-
 test('the challenge detail page’s What counts label IS field’s SectionHeading', () => {
   // What counts sits tight above the block it names, flush on the screen's
   // own surface — no gutter, no card, so not the grouped-list label. (Scoring

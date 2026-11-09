@@ -162,6 +162,24 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     return designs.designFor(pool, { userId: owner.id, rootId: line.messageId });
   }
 
+  // A design drawn from words for a screen that has no project yet (C1
+  // drafts these): app_id NULL, surface 'new'.
+  async function drawnNew(owner, title) {
+    const line = await dm.sendDm(pool, { bot, userId: owner.id, content: `New thread, about ${title}.`, threadRootId: false, moment: null,
+      metadata: { kind: 'opened_thread', changeKind: 'any' } });
+    const { rows: [row] } = await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+       VALUES ($1, $2, $3, NULL, 'design', 'open') RETURNING id`,
+      [owner.id, line.conversationId, line.messageId],
+    );
+    await pool.query(
+      `INSERT INTO design_threads (private_thread_id, title, surface, route, width, height) VALUES ($1, $2, 'new', NULL, 390, 844)`,
+      [row.id, title],
+    );
+    await designs.addVersion(pool, { threadId: row.id, html: DRAWN, author: 'bot', note: 'A saved replies list' });
+    return designs.designFor(pool, { userId: owner.id, rootId: line.messageId });
+  }
+
   let about;
   await t.test('a design posts as a plan on the request its thread is about, and again as its next version', async () => {
     const opened = await designs.startDesign(pool, config, {
@@ -256,7 +274,7 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     const meta = card.metadata.homeroomBot;
     assert.equal(meta.kind, 'confirm');
     assert.deepEqual(meta.actions.map((a) => [a.id, a.label, a.type]), [['yes', 'Post as a plan on #12', 'server'], ['no', 'Not yet', 'server']]);
-    const { rows: [action] } = await pool.query('SELECT * FROM homeroom_bot_dm_actions WHERE id = $1', [meta.actionId]);
+    const { rows: [action] } = await pool.query('SELECT * FROM bot_cards WHERE id = $1', [meta.actionId]);
     assert.deepEqual([action.kind, action.source_issue_number, Number(action.private_thread_id), action.design_version, action.message_id],
       ['post_design', 12, about.threadId, 2, sent.messageId]);
 
@@ -273,7 +291,7 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     assert.equal((await specs.listRequestSpecs(pool, { appId: app.id, issueNumber: 12, viewerId: ada.id })).length, before + 1, 'posted');
     const after = (await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [sent.messageId])).rows[0].metadata.homeroomBot;
     assert.deepEqual([after.status, after.answer, after.chosen], ['answered', 'Post as a plan on #12', 'yes']);
-    const { rows: [done] } = await pool.query('SELECT status, issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [meta.actionId]);
+    const { rows: [done] } = await pool.query('SELECT status, issue_number FROM bot_cards WHERE id = $1', [meta.actionId]);
     assert.deepEqual(done, { status: 'done', issue_number: 12 });
     const twice = await mayor.decideOfferTap(pool, config, { user: ada, actionId: meta.actionId, choice: 'yes', deps: { replies } });
     assert.deepEqual([twice.ok, twice.status], [false, 409]);
@@ -300,6 +318,88 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     // A design of a project is no new project.
     assert.equal(mayor.checkProjectOffer({ design: words, args: { name: 'Plant pal 2' } }).ok, false);
     assert.equal(mayor.checkProjectOffer({ design: { ...words, app: null }, args: { name: 'Watering can' } }).offer.name, 'Watering can');
+  });
+
+  await t.test('a design with no project is filed on a project they name', async () => {
+    const idea = await drawnNew(ada, 'Saved replies');
+    assert.equal(idea.app, null, 'no project yet');
+    assert.equal(idea.surface, 'new');
+
+    // No project named: the bot asks which one.
+    const noName = await mayor.checkPlanOffer(pool, { user: ada, design: idea, args: {} });
+    assert.equal(noName.ok, false);
+    assert.match(noName.error, /^Which project should it go on\?/);
+
+    // Named: the card on that project, exactly as a project's own design.
+    const checked = await mayor.checkPlanOffer(pool, { user: ada, design: idea, args: { project: 'Plant pal' } });
+    assert.equal(checked.ok, true, JSON.stringify(checked));
+    assert.equal(Number(checked.offer.app.id), Number(app.id));
+    const cardMessage = (await conversations.sendMessage(pool, ada, idea.conversationId, {
+      content: 'under Plant pal', thread_root_id: idea.rootId,
+    })).message;
+    const sent = await mayor.sendDesignOffer(pool, {
+      bot, user: ada, conversationId: idea.conversationId, message: cardMessage,
+      design: idea, offer: checked.offer, key: 'test-new-project-offer', deps,
+    });
+    const card = (await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [sent.messageId])).rows[0];
+    assert.match(card.content, /^Tap New request to file a request on Plant pal with version 1 as its plan, publicly, under your name, or add it to a request you name\./);
+    const meta = card.metadata.homeroomBot;
+    assert.deepEqual(meta.actions.map((a) => [a.label, a.type]),
+      [['New request', 'server'], ['Add to an existing request…', 'prompt']]);
+    const { rows: [action] } = await pool.query('SELECT app_id, kind, design_version FROM bot_cards WHERE id = $1', [meta.actionId]);
+    assert.deepEqual([Number(action.app_id), action.kind, action.design_version], [Number(app.id), 'post_design', 1]);
+
+    // The tap files the request on that project, and the thread joins it.
+    const replies = {
+      async tapDmAction(a) {
+        await mayor.actOnTap(pool, config, { ...a, key: `action:${a.actionId}`, deps });
+        return { ok: true };
+      },
+    };
+    const tapped = await mayor.decideOfferTap(pool, config, { user: ada, actionId: meta.actionId, choice: 'yes', deps: { replies } });
+    assert.deepEqual(tapped, { ok: true, choice: 'yes', label: 'New request' });
+    const filedLine = await lastSaid(idea.rootId);
+    const number = Number(/request #(\d+)/.exec(filedLine.content)[1]);
+    assert.match(filedLine.content, new RegExp(`^Filed it as request #${number} on Plant pal, under your name, with version 1 as its plan\\.`));
+    const { rows: [spec] } = await pool.query(
+      `SELECT spec_html FROM chat_sessions WHERE app_id = $1 AND created_from_issue_number = $2 AND source = 'request_spec'`,
+      [app.id, number],
+    );
+    assert.match(spec.spec_html, /<div data-side="before">[\s\S]*Saved replies is not there yet\./, 'nothing there today');
+    assert.match(spec.spec_html, /<div data-side="after" data-change="1">[\s\S]*Water now/);
+    assert.match(spec.spec_html, /drawn with Homeroom's own stylesheets/);
+    const { rows: [thread] } = await pool.query('SELECT app_id, state, result_ref FROM private_threads WHERE id = $1', [idea.threadId]);
+    assert.deepEqual([Number(thread.app_id), thread.state, Number(thread.result_ref)], [Number(app.id), 'filed', number], 'the thread is attached');
+
+    // A later version, no appId: designFor now knows the project.
+    const later = await designs.designFor(pool, { userId: ada.id, rootId: idea.rootId });
+    assert.equal(later.app.slug, app.slug);
+    const again = await designs.postDesignPlan(pool, config, { user: ada, rootId: idea.rootId, deps });
+    assert.equal(again.ok, true, JSON.stringify(again));
+    assert.equal(again.app.slug, app.slug, 'still on the project it was filed on');
+
+    // A non-member naming it is told to join first.
+    const samsIdea = await drawnNew(sam, 'Reminders');
+    const sams = await mayor.checkPlanOffer(pool, { user: sam, design: samsIdea, args: { project: 'Plant pal' } });
+    assert.equal(sams.ok, false);
+    assert.match(sams.error, /join Plant pal before a plan can go on it/);
+    const samPosted = await designs.postDesignPlan(pool, config, { user: sam, rootId: samsIdea.rootId, appId: app.id, deps });
+    assert.deepEqual([samPosted.ok, samPosted.status, samPosted.code], [false, 403, 'join_required']);
+
+    // A design that is a screen of a project posts there, and no other.
+    const { rows: [other] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, repo_url, view_visibility, collab_visibility)
+       VALUES ('Fern friend', 'dp-fern-friend', 'running', $1, 'https://github.com/usernode-bot/dp-fern-friend', 'public', 'public')
+       RETURNING id`,
+      [ada.id],
+    );
+    assert.ok(other.id, 'a second project to name');
+    const wrong = await mayor.checkPlanOffer(pool, { user: ada, design: words, args: { project: 'Fern friend' } });
+    assert.equal(wrong.ok, false);
+    assert.match(wrong.error, /This design is a screen of Plant pal, so it posts there\. Offer it without project\./);
+    const same = await mayor.checkPlanOffer(pool, { user: ada, design: words, args: { project: 'Plant pal' } });
+    assert.equal(same.ok, true, 'naming its own project falls through');
+    assert.equal(Number(same.offer.app.id), Number(app.id));
   });
 
   await t.test('the bot builds from a person\'s plan that is enough, and plans from one that is not', async () => {

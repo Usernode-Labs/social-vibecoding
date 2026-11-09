@@ -1,7 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 import * as api from './api';
-import { SPINNING_OUTCOMES, WORK_CHANGED_EVENT } from './bot-shared';
+import { WORK_CHANGED_EVENT } from './bot-shared';
 import { handleEvent } from './store';
 import type { HomeroomBotActivity, HomeroomBotGoesLive, HomeroomBotReadyNow } from './types';
 
@@ -13,13 +13,13 @@ import type { HomeroomBotActivity, HomeroomBotGoesLive, HomeroomBotReadyNow } fr
  * viewer's from the bot's records in one go (services/homeroom-bot-
  * activity.js), and this keeps that one read for the whole transcript. It
  * reads again when the bot's news lands in the DM (the newest bot message
- * changes, which is also how a new card arrives), when the loop starts or
- * ends work for the viewer (`homeroom_bot_work_changed`, which
- * public/js/app.js turns into the tray's window event, as it does after a
- * socket reconnects), and, only while a card is still going and the page is
- * in view, once a minute: the one step the loop announces nothing for is the
- * plan starting after the read. Like every conversation event, none of them
- * carries data.
+ * changes, which is also how a new card arrives), and when a request's
+ * stage moves or the loop starts or ends work for the viewer (`work_state`,
+ * `homeroom_bot_work_changed`, which public/js/app.js turns into one window
+ * event, as it does after a socket reconnects). 5 Nov 2026: no timer. Every
+ * step of the bot's work is a stage change now (services/work-state.js:
+ * the plan starting after the read too), so nothing goes unannounced. Like
+ * every conversation event, none of them carries data.
  *
  * Opening the DM also asks the server, once, to give a card to any of the
  * viewer's work the bot has under way without one (work begun before cards
@@ -31,18 +31,6 @@ import type { HomeroomBotActivity, HomeroomBotGoesLive, HomeroomBotReadyNow } fr
  * one of them announces `homeroom_bot_work_changed` to whoever asked for it.
  */
 
-/** Asked again this often while a card is going, in case a step was not announced. */
-export const POLL_MS = 60 * 1000;
-
-
-/** Pure: whether anything the read holds is still moving, so it is read again now and then. */
-export function stillMoving(snap: Pick<BotActivitySnapshot, 'cards' | 'ready'>): boolean {
-  for (const card of snap.cards.values()) {
-    if (card.state === 'working' || (card.outcome && SPINNING_OUTCOMES.has(card.outcome))) return true;
-  }
-  for (const ready of snap.ready.values()) if (ready.state === 'going_live') return true;
-  return false;
-}
 
 export interface BotActivitySnapshot {
   cards: ReadonlyMap<number, HomeroomBotActivity>;
@@ -132,20 +120,11 @@ export function approvedHere(sessionId: number, epoch: number | null): { epoch: 
 }
 
 /**
- * The same record for a React reader that does not subscribe to the cards'
- * snapshot (bot-strip.tsx's row): redraws the row the moment a Yes lands
- * here, from the row's own tap or the card's.
- */
-export function useApprovedHere(sessionId: number, epoch: number | null): { epoch: number | null; goesLive: HomeroomBotGoesLive | null } | null {
-  return useSyncExternalStore(subscribe, () => approvedHere(sessionId, epoch), () => null);
-}
-
-/**
- * A Yes just cast here (bot-ready.tsx's card, bot-strip.tsx's row), once the
- * server has said yes: keep it for the page's lifetime, redraw every card
- * subscriber, read the change's state again fresh, and fire the tray's event
- * so the tray readers (the Activity bar, the inbox's Homeroom bot row) read
- * again too, socket or not (#5484). The rest of the page hears it the way
+ * A Yes just cast here (bot-ready.tsx's card), once the server has said
+ * yes: keep it for the page's lifetime, redraw every card subscriber, read
+ * the change's state again fresh, and fire the work event so the readers of
+ * where requests stand (bot-work.tsx: the Messages list's Homeroom bot row,
+ * a request's track) read again too, socket or not (#5484). The rest of the page hears it the way
  * castVote announces a vote, through the window bridge, never an import, each
  * call in its own try — none of them is needed for the vote itself, which is
  * already saved.
@@ -202,8 +181,6 @@ export function cardRecord(snap: BotActivitySnapshot, messageId: number, drawnAt
  * BotActivitySync. `newsKey` is the newest message the bot sent there.
  */
 export function useBotActivitySync(conversationId: number, newsKey: number | null): void {
-  const snap = useBotActivity();
-  const going = stillMoving(snap);
   // The newest bot message already accounted for: the first one the
   // transcript draws is what was there when the read below was made.
   const seenNews = useRef<number | null>(null);
@@ -230,11 +207,4 @@ export function useBotActivitySync(conversationId: number, newsKey: number | nul
     return () => window.removeEventListener(WORK_CHANGED_EVENT, changed);
   }, []);
 
-  useEffect(() => {
-    if (!going) return undefined;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState !== 'hidden') void loadBotActivity();
-    }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [going]);
 }

@@ -2,7 +2,7 @@
 
 // Communities (src/services/communities.js and the "Communities" block at the
 // end of src/db/schema.sql) against the REAL schema in a throwaway PostgreSQL
-// database: schema.sql applied twice (the boot migration is idempotent), then
+// database: tracked migrations applied on startup and verified on reboot, then
 // the triggers, the one-time backfill and the service's join/leave/gate.
 // Skipped when no server is reachable, and required when TEST_DATABASE_URL is
 // set — the same contract as tests/user-merge-postgres.test.js.
@@ -32,9 +32,10 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema);
+  const baseline = fs.readFileSync(require.resolve('../src/db/migrations/0001-baseline.sql'), 'utf8');
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   let seq = 0;
   async function user({ platform = true, isAdmin = false } = {}) {
@@ -94,16 +95,15 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.deepEqual((await members(a.id)).map((m) => m.user_id), [owner.id]);
   });
 
-  await t.test('a pin joins; taking it off Home does not leave', async () => {
+  await t.test('One Home (#6361): pinning an app joins nobody', async () => {
     const fan = await user();
     const a = await app();
     await pool.query('INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)', [a.id, fan.id]);
-    assert.deepEqual(await members(a.id), [{ user_id: fan.id, source: 'favorite' }]);
+    assert.deepEqual(await members(a.id), [], 'an app pin is only a pin');
+    await communities.join(pool, a, fan.id);
+    assert.equal((await members(a.id)).length, 1);
     await pool.query('DELETE FROM app_favorites WHERE app_id = $1 AND user_id = $2', [a.id, fan.id]);
     assert.equal((await members(a.id)).length, 1, 'unpinning is not leaving');
-    const hider = await user();
-    await pool.query('INSERT INTO app_favorites (app_id, user_id, hidden) VALUES ($1, $2, TRUE)', [a.id, hider.id]);
-    assert.ok(!(await members(a.id)).some((m) => m.user_id === hider.id), 'a hidden row is an opt-out, not a pin');
   });
 
   await t.test('the platform project takes in everyone with platform access', async () => {
@@ -134,14 +134,17 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     m = await communities.getMembership(pool, a, joiner.id);
     assert.equal(m.is_member, true);
     assert.equal(m.member_count, 2);
-    const pin = await pool.query('SELECT hidden FROM app_favorites WHERE app_id = $1 AND user_id = $2', [a.id, joiner.id]);
-    assert.equal(pin.rows[0]?.hidden, false, 'joining pins the app to Home, as Add did');
+    const pin = await pool.query('SELECT 1 FROM app_favorites WHERE app_id = $1 AND user_id = $2', [a.id, joiner.id]);
+    assert.equal(pin.rows.length, 0, 'joining does not pin the app (One Home, #6361)');
+    const homePin = await pool.query('SELECT 1 FROM home_community_pins WHERE community_id = $1 AND user_id = $2', [a.community_id, joiner.id]);
+    assert.equal(homePin.rows.length, 1, 'it pins the community');
     assert.deepEqual(await communities.leave(pool, a, owner.id), {
       ok: false, status: 409, error: 'You started this project, so you can’t leave it.',
     });
     assert.deepEqual(await communities.leave(pool, a, joiner.id), { ok: true });
     assert.equal(await communities.isMember(pool, a.id, joiner.id), false);
-    assert.equal((await pool.query('SELECT 1 FROM app_favorites WHERE app_id = $1 AND user_id = $2', [a.id, joiner.id])).rows.length, 0);
+    assert.equal((await pool.query('SELECT 1 FROM home_community_pins WHERE community_id = $1 AND user_id = $2', [a.community_id, joiner.id])).rows.length, 0,
+      'leaving unpins the community');
 
     const solo = await app({ createdBy: owner.id, view: 'private', collab: 'private' });
     await collaborate(solo.id, owner.id);
@@ -235,10 +238,23 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
         policy: 'anyone', approvals_required: null, electorate: 1, required: 1,
         mode: 'columns', preset: 'group_vote', rules: null, groups: [],
         creator: { id: owner.id, username: owner.username, display_name: null },
+        creator_gone: false,
         // Polish board #13: the invited approvers' names, so the Workshop's
         // rule line is drawn once. None here: approval is not by invitation.
         approvers: null,
       });
+      // #6281: a creator who deleted their account leaves apps.created_by
+      // NULL (ON DELETE SET NULL), so the sheet is told the account is gone
+      // rather than that the project never had a creator. The platform's own
+      // project has no creator by design, and keeps saying so.
+      await pool.query('UPDATE apps SET created_by = NULL WHERE id = $1', [a.id]);
+      got = await call('GET', `/api/apps/${a.slug}/community`);
+      assert.equal(got.body.approval.creator, null);
+      assert.equal(got.body.approval.creator_gone, true);
+      await pool.query('UPDATE apps SET self_hosted = true WHERE id = $1', [a.id]);
+      got = await call('GET', `/api/apps/${a.slug}/community`);
+      assert.equal(got.body.approval.creator_gone, false, 'no creator by design is not a gone account');
+      await pool.query('UPDATE apps SET self_hosted = false, created_by = $2 WHERE id = $1', [a.id, owner.id]);
       assert.deepEqual(got.body.visibility, { build: 'public', view: 'public' });
       assert.deepEqual(got.body.channel, {
         last_message: null, last_at: null, last_by: null, unread_count: 0,
@@ -266,7 +282,7 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       assert.equal(listed.member_count, 2);
       assert.equal(listed.audience, 'open');
       assert.ok(listed.last_active_at, 'joining is activity, so the Workshop can order by it');
-      assert.equal(listed.is_favorited, true, 'and Join pinned it, as Add did');
+      assert.equal(listed.is_favorited, false, 'Join pins the community, not the app (One Home, #6361)');
 
       got = await call('POST', `/api/apps/${a.slug}/membership`, { joined: false });
       assert.equal(got.body.is_member, false);
@@ -365,8 +381,9 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
   });
 
   await t.test('the backfill runs once and takes in today\'s participants', async () => {
-    // A second database state: rows written with the marker absent, as on
-    // the first boot after this ships.
+    // Exercise only the historical membership transformation with its marker
+    // absent. Current boots verify receipts rather than replaying the baseline.
+    const backfillSql = baseline.match(/DO \$\$\nBEGIN\n  IF NOT EXISTS \(SELECT 1 FROM platform_settings WHERE key = 'community_members_backfilled'\)[\s\S]*?END \$\$;/)[0];
     const owner = await user();
     const regular = await user();
     const voter = await user();
@@ -385,14 +402,15 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       [a.id, owner.id]
     );
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s[0].id, voter.id]);
-    await pool.query(schema);
+    await pool.query(backfillSql);
     const got = await members(a.id);
     assert.deepEqual(got.map((m) => [m.user_id, m.source]), [
       [owner.id, 'creator'], [regular.id, 'active'], [voter.id, 'voter'],
     ]);
     await communities.leave(pool, a, regular.id);
-    await pool.query(schema);
-    assert.ok(!(await members(a.id)).some((m) => m.user_id === regular.id), 'the marker keeps a leaver out');
+    await pool.query(backfillSql);
+    await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+    assert.ok(!(await members(a.id)).some((m) => m.user_id === regular.id), 'the marker and a reboot keep a leaver out');
   });
   await t.test('#general is the Homeroom community\'s channel: members post, everyone reads; its old channel is archived', async () => {
     const owner = await user();
@@ -560,9 +578,13 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     const stranger = await app({ createdBy: author.id });
     await communities.join(pool, garden, me.id);
     await communities.join(pool, swap, me.id);
+    // #6245: the feed is ordered by when the vote opened (promoted_at), never
+    // by a change's last activity, so that is what these rows set.
+    // #6402: a change is owed only once its checks passed, so these fixtures
+    // are ready changes; this test is about the feed's order and contents.
     const promote = async (a, title, ago) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, pr_summary_md, pr_number, last_activity_at)
-       VALUES ($1, $2, 'promoted', $3, '## Why\n- because', 7, NOW() - $4::interval) RETURNING id`,
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, pr_summary_md, pr_number, promoted_at, check_state)
+       VALUES ($1, $2, 'promoted', $3, '## Why\n- because', 7, NOW() - $4::interval, 'passing') RETURNING id`,
       [a.id, author.id, title, ago])).rows[0].id;
     const older = await promote(garden, 'Older change', '2 days');
     const newer = await promote(swap, 'Newer change', '1 hour');
@@ -609,9 +631,11 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     for (const a of [mine, strict]) await collaborate(a.id, me.id);
     // A rule asking for two Yes votes keeps the vote, as on the card.
     await pool.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [strict.id]);
+    // #6245: a vote's place is when it opened, not the change's last activity.
+    // #6402: ready changes only, so the feed still owes these votes.
     const promote = async (a, title, ago) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, last_activity_at)
-       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval) RETURNING id`,
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at, check_state)
+       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval, 'passing') RETURNING id`,
       [a.id, bot.id, title, ago])).rows[0].id;
     await promote(mine, 'Sunday reminder', '1 hour');
     await promote(strict, 'Two to say yes', '2 hours');
@@ -640,9 +664,11 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     // approver roster, under approver_policy='invited'.
     await pool.query('UPDATE apps SET approver_policy = \'invited\' WHERE id = $1', [approvers.id]);
     await pool.query('INSERT INTO app_approvers (app_id, user_id) VALUES ($1, $2)', [approvers.id, author.id]);
+    // #6245: a vote's place is when it opened, not the change's last activity.
+    // #6402: ready changes only, so the feed still owes these votes.
     const promote = async (a, title, ago) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, last_activity_at)
-       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval) RETURNING id`,
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at, check_state)
+       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval, 'passing') RETURNING id`,
       [a.id, author.id, title, ago])).rows[0].id;
     const older = await promote(plain, 'Older deciding change', '2 days');
     const newer = await promote(approvers, 'Newer advisory change', '1 hour');
@@ -668,7 +694,8 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     for (const a of [kept, suspended]) {
       await communities.join(pool, a, me.id);
       const { rows: [s] } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, status, pr_title) VALUES ($1, $2, 'promoted', 'Owed vote') RETURNING id`,
+        `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, check_state)
+         VALUES ($1, $2, 'promoted', 'Owed vote', 'passing') RETURNING id`,
         [a.id, author.id]);
       owedIds[a.slug] = s.id;
     }
@@ -691,5 +718,36 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
         [me.id, isAdmin, isAdmin, overview.NEEDS_FEED_MAX])).rows.map((r) => r.slug);
       assert.ok(feed.includes(kept.slug) && !feed.includes(suspended.slug), 'no Needs you card for a suspended app');
     }
+  });
+
+  // #6124: a change renamed before it has a pull request was saved as the
+  // name that pull request would take (proposed_pr_title) and nothing else.
+  // These lists read it now, so the row saved that way shows the chosen
+  // name — and a change the update path renames from now on writes both.
+  await t.test('#6124: the chosen title outranks the old session name in Workshop and Needs you', async () => {
+    const overview = require('../src/routes/workshop-overview');
+    const me = await user();
+    const author = await user();
+    const mine = await app({ createdBy: me.id });
+    const theirs = await app({ createdBy: author.id });
+    await communities.join(pool, theirs, me.id);
+    await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, session_title, proposed_pr_title, branch_name)
+       VALUES ($1, $2, 'active', 'Add dark mdoe toggel', 'Add a dark mode toggle', 'feature/typo')`,
+      [mine.id, me.id]);
+    await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, session_title, proposed_pr_title, pr_title, check_state)
+       VALUES ($1, $2, 'promoted', 'Add dark mdoe toggel', 'Add a dark mode toggle', NULL, 'passing')`,
+      [theirs.id, author.id]);
+
+    const items = (await pool.query(overview.ITEMS_SQL,
+      [me.id, false, false, overview.ITEMS_PER_APP, overview.ITEMS_TOTAL])).rows;
+    assert.equal(items.find((r) => r.slug === mine.slug && r.section === 'working').title,
+      'Add a dark mode toggle', 'the Workshop row is the chosen name, not the old session one');
+
+    const feed = (await pool.query(overview.NEEDS_FEED_SQL,
+      [me.id, false, false, overview.NEEDS_FEED_MAX])).rows;
+    assert.equal(feed.find((r) => r.slug === theirs.slug).title,
+      'Add a dark mode toggle', 'and so is the vote owed on it');
   });
 });

@@ -134,6 +134,13 @@ export interface ActionSpec {
   title?: string;
   cls?: string;
   disabled?: boolean;
+  /**
+   * The action is in flight: its press was received and the work is under
+   * way, so the button draws the spinner arc beside its label and says
+   * `aria-busy`. It does NOT disable the button on its own — `disabled`
+   * still does that, and the two are usually set together.
+   */
+  busy?: boolean;
   act?: ActionRef;
   /**
    * Append the clicked button itself to the call — the model can't hold a
@@ -251,6 +258,8 @@ export interface RequirementSpec {
   state: string;
   /** The one-line "why", when the gate recorded one. */
   note?: string | null;
+  /** Done because an admin's force merge skips it, not because it was cleared. */
+  skipped?: boolean;
   /**
    * The one control a gate can carry, for the viewer who can clear it. Today
    * only `main_healthy` has one: an admin's "Resume merges" while main's
@@ -686,27 +695,19 @@ export interface DevWorkshopView {
   };
 
   /**
-   * The viewer's OWN work in flight on this app: their dev sessions and the
-   * proposals they opened. Unfiltered, like `votes` — your own work is yours
-   * whatever the board is narrowed to.
+   * The viewer, as their own work here needs them (5 Nov 2026). Their work
+   * itself is the Homeroom bot tab's, which the Workshop's and the Hub's Your
+   * work row count and open (../workshop/your-work.tsx); the board no longer
+   * lists it a second time.
    */
   mine: {
     /** A signed-in viewer, who can have work (a guest has none to have none of). */
     viewer?: boolean;
     /**
      * Homeroom bot builds requests here for this viewer (AppView._botDoor),
-     * so the empty strip points at asking for a change.
+     * so the start-here banner points at asking for a change.
      */
     bot?: boolean;
-    count: number;
-    shown: number;
-    rows: ListRow[];
-    /**
-     * #4772: what Homeroom bot waits on the viewer for on an item that is not
-     * otherwise theirs (a plan or a question on their request, a back and
-     * forth on a change), drawn under Waiting on you after `rows`' own.
-     */
-    extra?: ListRow[];
   };
   /**
    * What happened since the viewer last opened this app's Workshop, or null

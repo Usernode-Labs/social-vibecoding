@@ -1,4 +1,5 @@
 const appAllowance = require('../services/app-allowance');
+const mailLanguage = require('../services/mail/language');
 const platformLimits = require('../services/platform-limit-alerts');
 const appLimit = require('../services/app-limit');
 const { NAME_BEING_PURGED, NAME_BEING_PURGED_ERROR } = require('../services/app-data-retention');
@@ -17,6 +18,8 @@ const platformEnv = require('../services/platform-env');
 const pendingSecrets = require('../services/pending-secrets');
 const { encrypt: encryptSecret } = require('../services/secrets');
 const appManifest = require('../services/app-manifest');
+const offlineCache = require('../services/offline-cache');
+const offlineCacheRefusals = require('../services/offline-cache-refusals');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const topicsPr = require('../services/topics-pr');
@@ -1060,6 +1063,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           // of this payload (see summarizeManifestSnapshot). GET
           // /api/apps/:slug still answers the whole snapshot.
           manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
+          // Offline apps (services/offline-cache.js): the shell frames this app
+          // at its cacheable address.
+          offline_cache: offlineCache.forApp(a),
           contributor_count: contributorCount,
           first_version_line: firstVersionLines.get(Number(a.id)) || null,
           first_version_phase: firstVersionPhases.get(Number(a.id)) || null,
@@ -1536,6 +1542,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (inviteEmails.length) {
         const byEmail = await emailInvites.inviteByEmail(pool, config, {
           app: appRow, emails: inviteEmails, inviter: { id: req.user.id, username: req.user.username },
+          locale: req.user.locale || mailLanguage.requestLanguage(req),
         });
         invited += byEmail.invited + byEmail.mailed;
       }
@@ -1974,6 +1981,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           ? { manifest_snapshot: appAccess.summarizeManifestSnapshot(appRow.manifest_snapshot) }
           : {}),
         demo_partner: demoPartner,
+        offline_cache: offlineCache.forApp(appRow),
         contributor_count: contributorCount,
         // Server-built icon URL so the client never assembles ids into
         // paths (and staging demo rows can inject arbitrary sources) —
@@ -4082,32 +4090,19 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(404).json({ error: 'App not found' });
       }
       const appId = appRows[0].id;
-      // #4600: whether this pin JOINED the app's community. A pin joins
-      // through the app_favorites trigger (schema.sql,
-      // sync_favorite_community_member), so Home's featured list's ⊕ is a
-      // join as much as /membership is, and is counted the same way: on the
-      // spot (scoreOnJoin), not on the rule's next pass, and said so in the
-      // answer (`joined`) so the client can tell its Challenges block to
-      // read again.
-      let joined = false;
+      // One Home (#6361): pinning an app is only that. It joined the app's
+      // community until the app_favorites trigger went (one-home-pins.sql);
+      // joining is POST /membership now, and pins the community instead.
+      // `joined` stays in the answer, always false, for clients that read it.
+      const joined = false;
       if (favorited) {
-        const { rows: joinRows } = await pool.query(
-          `SELECT (a.community_id IS NOT NULL AND NOT EXISTS (
-                    SELECT 1 FROM community_members m
-                     WHERE m.community_id = a.community_id AND m.user_id = $2)) AS joins
-             FROM apps a WHERE a.id = $1`,
-          [appId, req.user.id]
-        );
         // DO UPDATE (not DO NOTHING) so the same statement also clears a
-        // member's hidden=TRUE opt-out row — "Add to Your apps" un-hides.
+        // member's hidden=TRUE opt-out row — "Pin to Home" un-hides.
         await pool.query(
           `INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)
            ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE`,
           [appId, req.user.id]
         );
-        joined = joinRows[0]?.joins === true;
-        // Never throws, so the pin answers the same either way.
-        if (joined) await challengeScorer.scoreOnJoin(pool, config);
       } else if (await appAccess.isCollaborator(pool, appId, req.user.id)) {
         // #618: membership (creator or accepted invite) pins the app into
         // "Your apps", so a member's "remove" must persist as an explicit
@@ -4414,6 +4409,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           rules: described ? described.rules : null,
           groups: described ? described.groups : [],
           creator,
+          // #6281: the creator's account is gone (apps.created_by is
+          // ON DELETE SET NULL), so the sheet says that rather than
+          // "this project has no creator", which reads like a bug. The
+          // platform's own project has no creator by design, hence the
+          // self_hosted check.
+          creator_gone: !app.self_hosted && !creator,
           approvers: approverNames,
         },
         // #4666: who can see it, as the two columns say, for the sheet.
@@ -4586,6 +4587,31 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.status(result.duplicate ? 200 : 201).json({ ok: true, ...result });
     } catch (err) {
       log.error('apps', 'Failed to record app opening', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Offline apps: this viewer's frame did not say it opened at the cacheable
+  // address on build `body.build` (public/js/app-view.js
+  // _offlineCacheDidNotOpen). Two people on the same build switch that
+  // address off for the app until it deploys again
+  // (services/offline-cache-refusals.js). Same visibility guard as the app
+  // detail request. Always 204 for a report it can take, so the shell never
+  // retries it.
+  router.post('/api/apps/:slug/offline-cache/did-not-open', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+    const build = offlineCacheRefusals.parseBuild(req.body && req.body.build);
+    if (!build) return res.status(400).json({ error: 'A build sha is required' });
+    try {
+      const appRow = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, main_sha`
+      );
+      if (!appRow) return res.status(404).json({ error: 'App not found' });
+      if (appRow.self_hosted) return res.status(204).end();
+      await offlineCacheRefusals.recordRefusal(pool, { app: appRow, userId: req.user.id, build });
+      return res.status(204).end();
+    } catch (err) {
+      log.error('apps', 'Failed to record an offline-cache refusal', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

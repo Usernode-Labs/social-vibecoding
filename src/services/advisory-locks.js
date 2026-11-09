@@ -140,9 +140,15 @@ const WORKER_EVICTION_LOCK = 991024;
 // end of its sleep. A wake that comes during a sleep waits for it and then
 // finds it asleep; a sleep never scales down what a wake just scaled up.
 const PREVIEW_SLEEP_LOCK = 991025;
+// One person's Monday row of the changes they voted on (services/voted-digest.js):
+// the CLASSIFIER half of a transaction lock on the person, as VOTE_DIGEST_LOCK.
+const VOTED_DIGEST_LOCK = 991026;
+// A production app's activity admission and scale-to-zero claim. Workflows
+// perform wake/deploy work; one process lock connection serves all app keys.
+const APP_SLEEP_LOCK = 991027;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK,
   VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
   CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK, SESSION_BRANCH_LOCK, CAPACITY_CLAIM_LOCKS, WORKER_EVICTION_LOCK,
-  PREVIEW_SLEEP_LOCK };
+  PREVIEW_SLEEP_LOCK, VOTED_DIGEST_LOCK, APP_SLEEP_LOCK };

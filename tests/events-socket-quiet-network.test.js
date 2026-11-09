@@ -75,7 +75,7 @@ function makeApp() {
     location: { search: '', protocol: 'https:', host: 'app.example' },
     document: { visibilityState: 'visible', addEventListener() {}, querySelectorAll() { return []; } },
     WebSocket: FakeWebSocket,
-    Offline: { nudge() { nudges.push(clock.now()); }, isOffline: () => false },
+    Offline: { nudge() { nudges.push(clock.now()); }, restartDone() {}, isOffline: () => false },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;

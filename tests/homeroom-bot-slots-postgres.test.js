@@ -175,31 +175,33 @@ test('the bot\'s slots on a project count its builds under way, against the full
     const view = await track.slotsView(pool, { app: { id: app.id, slug: 'plant-pal', name: 'Plant Pal' }, settings, deps: { liveSvc } });
     assert.equal(view.buildCap, bot.BUILDS_PER_APP);
     assert.equal(view.waitCap, bot.WAITING_PER_APP);
+    assert.equal(view.buildsAtOnce, view.buildCap, '#6216: the builds at once are the project\'s real number');
     assert.equal(view.acts, true);
     assert.deepEqual(view.slots.map((s) => `${s.kind}#${s.issueNumber}`),
       ['proposal#1', 'proposal#2', 'build#6', 'build#7', 'build#14', 'build#15', 'build#16']);
     // A project's own numbers are the page's.
     const own = await track.slotsView(pool, {
-      app: { id: app.id, slug: 'plant-pal', name: 'Plant Pal' }, settings: { ...settings, appCaps: { [String(app.id)]: { waiting: 30 } } }, deps: { liveSvc },
+      app: { id: app.id, slug: 'plant-pal', name: 'Plant Pal' },
+      settings: { ...settings, appCaps: { [String(app.id)]: { waiting: 30, building: 2 } } }, deps: { liveSvc },
     });
-    assert.deepEqual([own.buildCap, own.waitCap], [bot.BUILDS_PER_APP, 30]);
+    assert.deepEqual([own.buildCap, own.waitCap, own.buildsAtOnce], [2, 30, 2]);
     const six = view.slots.find((s) => s.issueNumber === 6);
     assert.equal(six.title, 'Sunlight log');
-    assert.equal(six.track.state, 'queued', 'ready, waiting its turn to be built');
+    assert.deepEqual([six.track.work.stage, six.track.work.line.code], ['building', 'queued'], 'ready, waiting its turn to be built');
     assert.equal(six.track.step, 'build');
-    // And what it waits for, as its requester's chat says it: nothing is
-    // ahead of it, so it starts next, never a bare "waiting its turn" (#5323).
-    assert.equal(six.track.why, 'next');
-    assert.equal(view.slots.find((s) => s.issueNumber === 7).track.state, 'planning', 'its build session is open; no plan posted yet');
+    // And its place among the project's builds waiting to start: nothing is
+    // ahead of it, never a bare "waiting its turn" (#5323).
+    assert.equal(six.track.work.line.place, 1);
+    assert.equal(view.slots.find((s) => s.issueNumber === 7).track.work.stage, 'planning', 'its build session is open; no plan posted yet');
     assert.deepEqual(view.waiting.map((w) => [w.issueNumber, w.position, w.limit, w.title]), [[8, 1, 'slots', 'Repotting reminders']]);
-    assert.equal(view.waiting[0].track.state, 'held');
+    assert.deepEqual(view.waiting[0].track.work.line, { code: 'held_waiting' });
     assert.deepEqual(view.waiting[0].track.held, { limit: 'slots', position: 1, until: null });
     assert.equal(view.week, null, 'nobody signed in, no week');
     // #6156: one held because the builds are all in use waits in a line of its own, for the bot's turn.
     await run(17, { waiting: true, cap: 'builds_per_app', ago: 0 });
     const turn = await track.slotsView(pool, { app: { id: app.id, slug: 'plant-pal', name: 'Plant Pal' }, settings, deps: { liveSvc } });
     assert.deepEqual(turn.waiting.map((w) => [w.issueNumber, w.position, w.limit]), [[8, 1, 'slots'], [17, 1, 'builds']]);
-    assert.equal(turn.waiting[1].track.why, 'builds');
+    assert.deepEqual(turn.waiting[1].track.work.line, { code: 'held_builds' });
     assert.deepEqual(turn.waiting[1].track.held, { limit: 'builds', position: 1, until: null });
     await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 17', [app.id]);
 
@@ -210,8 +212,8 @@ test('the bot\'s slots on a project count its builds under way, against the full
     await pool.query('UPDATE chat_sessions SET pr_number = 5247 WHERE id = $1', [shipped]);
     const tracks = await track.tracksForRequests(pool, { appId: app.id, numbers: [30, 999] });
     assert.deepEqual([...tracks.keys()], [30], 'only requests the bot had');
-    assert.equal(tracks.get(30).state, 'done_elsewhere');
-    assert.deepEqual(tracks.get(30).doneBy, { username: 'lee', prNumber: 5247 });
+    // The change that shipped it is the request's own change now: it is live.
+    assert.equal(tracks.get(30).work.stage, 'live', 'shipped by somebody else\'s change, it is live');
   });
 
   // 16 Oct 2026: the platform's slots page listed 25 requests "waiting for a
@@ -251,11 +253,11 @@ test('the bot\'s slots on a project count its builds under way, against the full
     assert.equal(water.askedBy, 'lee');
     assert.equal(water.excerpt, 'Remind me to water each plant on its own schedule.', 'the asker\'s words, not the lines around them');
     assert.deepEqual(view.taken.map((w) => [w.issueNumber, w.by, w.title, w.excerpt]), [[41, 'lee', 'Frost alerts', 'Warn me before a frost.']]);
-    assert.equal(view.taken[0].track.why, 'taken');
-    assert.deepEqual(view.taken[0].track.held, { limit: 'taken', position: null, until: null, by: 'lee' });
+    // A person is building it: whose it is, as a claim says it.
+    assert.deepEqual(view.taken[0].track.work.line, { code: 'claimed', by: 'lee' });
     // The request's own page says the same.
     const own = await track.tracksForRequests(pool, { appId: app.id, numbers: [41] });
-    assert.equal(own.get(41).why, 'taken');
+    assert.deepEqual(own.get(41).work.line, { code: 'claimed', by: 'lee' });
 
     // A list that is not whole says nothing about what closed: #42 stays.
     const unsure = { fetchPublicIssues: async () => ({ issues: [], note: 'issues unavailable' }) };

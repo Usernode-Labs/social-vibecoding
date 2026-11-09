@@ -27,7 +27,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { shellMarkup } = require('./lib/shell-markup');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
+const importOnce = require('./lib/import-once');
 
 const root = path.join(__dirname, '..');
 const html = shellMarkup();
@@ -145,4 +148,87 @@ test('tooltips need no escaping, because nothing builds an attribute string', ()
   const row = fs.readFileSync(
     path.join(root, 'frontend/src/features/header/ai-budget.tsx'), 'utf8');
   assert.match(row, /title=\{view\.title\}/, 'the tooltip is a prop');
+});
+
+// ── #6493: adopt() is the one writer ────────────────────────────────────
+//
+// Every credit surface (this row, the composer's pill and ring, the dev chat's
+// meter and Settings' spend card) reads `AiCredit.Budget.adopt/current()`.
+// These drive the real module: a /api/budget answer must normalise the BYOK
+// spelling and render the row, and an answer whose request started before a
+// newer write must be dropped rather than jumping the figure backwards.
+
+const CREDIT_OPTIONS_SRC = fs.readFileSync(path.join(root, 'public/js/credit-options.js'), 'utf8');
+
+async function loadCredit() {
+  const g = globalThis;
+  if (!g.window) g.window = g;
+  if (!g.PlatformI18n) g.PlatformI18n = englishPlatformI18n();
+  if (!g.CreditOptions) {
+    const sandbox = { module: { exports: {} }, window: {}, console };
+    sandbox.globalThis = sandbox;
+    sandbox.PlatformI18n = englishPlatformI18n();
+    vm.createContext(sandbox);
+    vm.runInContext(CREDIT_OPTIONS_SRC, sandbox);
+    g.CreditOptions = sandbox.module.exports;
+    g.window.CreditOptions = g.CreditOptions;
+  }
+  await importOnce(path.join(root, 'frontend/src/features/header/ai-credit.js'));
+  const store = await importOnce(
+    path.join(root, 'frontend/src/features/header/ai-budget-store.js'));
+  return { AiCredit: g.window.AiCredit, aiBudgetStore: store.aiBudgetStore };
+}
+
+const budgetAnswer = (over = {}) => ({
+  limitCents: 84000,
+  spentCents: 8000,
+  remainingCents: 76000,
+  byokSpentCents: 0,
+  hasByokKey: false,
+  capWindow: 'weekly',
+  windowLabel: 'This week',
+  resetLabel: 'Monday 00:00 UTC',
+  ...over,
+});
+
+test('adopt maps a /api/budget payload onto the shared state and renders the row', async () => {
+  const { AiCredit, aiBudgetStore } = await loadCredit();
+  AiCredit.Budget._ticket = 0;
+  AiCredit.Budget._lastApplied = 0;
+  aiBudgetStore.set({ view: null, hidden: false, figures: null });
+
+  const ok = AiCredit.Budget.adopt(budgetAnswer({ byokSpentCents: 450, hasByokKey: true }));
+  assert.equal(ok, true);
+  assert.equal(AiCredit.Budget.current().limitCents, 84000);
+  assert.equal(AiCredit.Budget.current().byokCents, 450,
+    'the route\'s byokSpentCents is normalised to the snapshot\'s byokCents');
+  const text = JSON.stringify(aiBudgetStore.get().view);
+  assert.match(text, /\$760/, 'the row renders the shared figure');
+  assert.match(text, /\$4\.50/, 'and the BYOK figure it normalised');
+});
+
+test('a stale fetch answer cannot undo a newer write', async () => {
+  const { AiCredit, aiBudgetStore } = await loadCredit();
+  AiCredit.Budget._ticket = 0;
+  AiCredit.Budget._lastApplied = 0;
+
+  const startedBefore = AiCredit.Budget._takeTicket();
+  AiCredit.Budget.applyPush(budgetAnswer({ spentCents: 8000, remainingCents: 76000 }));
+  const newer = AiCredit.Budget.current().spentCents;
+
+  const adopted = AiCredit.Budget.adopt(
+    budgetAnswer({ spentCents: 4000, remainingCents: 80000 }), { seq: startedBefore });
+  assert.equal(adopted, false, 'the slower answer is dropped');
+  assert.equal(AiCredit.Budget.current().spentCents, newer,
+    'the figure on screen stays the newer one');
+  assert.match(JSON.stringify(aiBudgetStore.get().view), /\$760/);
+});
+
+test('adopt rejects a snapshot without a numeric limit', async () => {
+  const { AiCredit } = await loadCredit();
+  AiCredit.Budget._ticket = 0;
+  AiCredit.Budget._lastApplied = 0;
+  for (const bad of [null, undefined, {}, { limitCents: 'lots' }, 'nope']) {
+    assert.equal(AiCredit.Budget.adopt(bad), false);
+  }
 });

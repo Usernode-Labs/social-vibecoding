@@ -629,14 +629,14 @@ test('the release mail is the "you\'re in" welcome, with its list and sign-off',
 });
 
 test('the release mail offers mobile steps only for a published store link', () => {
-  const IOS = 'https://testflight.apple.com/join/abc';
+  const IOS = 'https://apps.apple.com/app/id6814786047';
   const ANDROID = 'https://play.google.com/store/apps/details?id=x';
   const both = templates.buildMessage('waitlist_released', {
     url: 'https://x.invalid/?login=1', hasAccount: true, mobile: { ios: IOS, android: ANDROID },
   });
   assert.match(both.text, /Try it on mobile/);
   assert.match(both.html, /Try it on mobile/);
-  assert.ok(both.text.includes(`open the Homeroom invite (${IOS}).`));
+  assert.ok(both.text.includes(`Get Homeroom on the App Store (${IOS}).`));
   assert.ok(both.text.includes(`Open the Homeroom testing link (${ANDROID}) while signed into Google Play`));
   assert.ok(both.html.includes(`<a href="${IOS}"`));
   assert.ok(both.html.includes(`<a href="${ANDROID.replace(/&/g, '&amp;')}"`));
@@ -653,8 +653,8 @@ test('the release mail offers mobile steps only for a published store link', () 
     const none = templates.buildMessage('waitlist_released', {
       url: 'https://x.invalid/?login=1', hasAccount: true, mobile,
     });
-    assert.doesNotMatch(none.text, /on mobile|TestFlight|Google Play/);
-    assert.doesNotMatch(none.html, /on mobile|TestFlight|Google Play/);
+    assert.doesNotMatch(none.text, /on mobile|App Store|Google Play/);
+    assert.doesNotMatch(none.html, /on mobile|App Store|Google Play/);
   }
 });
 

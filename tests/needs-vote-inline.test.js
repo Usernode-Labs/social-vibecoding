@@ -39,12 +39,6 @@ const form = (over) => renderToHtml(createElement(NeedsVoteForm, {
   ...(over || {}),
 }));
 
-test('pressing Vote on a Needs you row opens the sheet, and the sheet holds the inline form', () => {
-  assert.match(WORKSHOP, /data-ws-rail-btn="vote"[\s\S]{0,400}?onClick=\{\(\) => toggleSheet\('vote'\)\}/, 'Vote opens the vote sheet');
-  const sheet = WORKSHOP.slice(WORKSHOP.indexOf('data-ws-sheet="vote"'), WORKSHOP.indexOf('dev-ws-keys-hint'));
-  assert.match(sheet, /<NeedsVoteForm\b/, 'and the sheet draws the form');
-  assert.ok(!/data-ws-answer-btn="(yes|no)"/.test(sheet), 'not the bare Yes/No pair that led to the prompt card');
-});
 
 test('the form is the card\'s vote picker: the switch, the line for the group, Cancel and the send', () => {
   const html = form();
@@ -74,51 +68,12 @@ test('on No the sheet lists the reasons, and the send stays off until one is pic
   assert.match(form({ side: 'yes' }), /class="dev-vote-reason-send dev-vote-reason-send-yes">Vote yes</, 'a Yes needs nothing');
 });
 
-test('the sheet sends its line with the vote, so castVote does not ask again', () => {
-  assert.match(WORKSHOP, /answer\('yes', undefined, voteTrimmed \|\| null\)/, 'a Yes sends its line');
-  assert.match(WORKSHOP, /if \(voteSide === 'no'\) \{\s*if \(!voteChoice\) return;/, 'a No sends only once an answer is picked');
-  assert.match(WORKSHOP, /answer\('no', undefined, composeNoReason\(choice, voteLine,/, 'and carries the answer with its line');
-  assert.match(WORKSHOP, /const opts = reason === undefined \? \{ onSend \} : \{ onSend, reason \};/,
-    'a line (or null) rides in the options bag; only the swipe leaves it out');
-  // castVote asks only when the bag has no `reason` key at all.
-  const resolve = APP_VIEW.slice(APP_VIEW.indexOf('  async _resolveVoteReason(vote, opts)'), APP_VIEW.indexOf('  async castVote(sessionId'));
-  assert.match(resolve, /hasOwnProperty\.call\(o, 'reason'\)[\s\S]*return AppView\._askVoteReason\(vote\);/);
-  // Y and N turn the switch rather than voting by themselves.
-  assert.match(WORKSHOP, /\(k === 'y' \|\| k === 'Y'\) && sheet === 'vote'\) \{ setVoteSide\('yes'\); return; \}/);
-  assert.match(WORKSHOP, /\(k === 'n' \|\| k === 'N'\) && sheet === 'vote'\) \{ setVoteSide\('no'\); return; \}/);
-});
 
 // #4794: a vote saved from the Communities reel takes its card out of the
 // screen's own feed copy at once, so going back and re-entering Needs you
 // cannot redraw it as still owed. The reel learns of the vote ONLY where the
 // feed has it: inside the `ok === true` branch, after setAnswered — never on
 // a cancel, a refusal or a network failure.
-test('#4794: onAnswered fires only where the vote is saved, and the reel keeps the feed it was drawn', () => {
-  const REEL = read('frontend/src/features/workshop/needs-reel.tsx');
-  const SCREEN = read('frontend/src/features/workshop/index.tsx');
-  const answer = WORKSHOP.slice(WORKSHOP.indexOf('const answer = (which'), WORKSHOP.indexOf('const voteTrimmed'));
-  const okBranch = answer.slice(answer.indexOf('if (ok === true) {'), answer.indexOf('} else if (pinnedHere)'));
-  assert.match(okBranch, /setAnswered\(/, 'the confirmation is drawn first, as it is today');
-  assert.match(okBranch, /try \{ onAnswered\(row, which\); \} catch/, 'then the screen that owns the feed copy is told');
-  assert.equal((answer.match(/onAnswered/g) || []).length, 2,
-    'the hook appears twice in answer() — the guard and the call, both inside the ok branch');
-  assert.ok(!WORKSHOP.includes('onAnswered={'), 'a project page passes nothing; its refresh already drops the row');
-
-  // The reel acts only on a proposal's answer, with the epoch of the source
-  // item; a group decision has no Yes or No in the feed and never reaches it.
-  assert.match(REEL, /onAnswered\?: \(id: number, epoch: number \| null\) => void;/);
-  assert.match(REEL, /row\.askAbout\.kind === 'proposal'/);
-  assert.match(REEL, /epochs\.get\(row\.key\)/);
-  // A vote on the last card empties the feed copy; once the feed has been
-  // drawn this mount, the reel keeps it drawn instead of switching to the
-  // empty line over the viewer's head.
-  assert.match(REEL, /drawnRef\.current = true/);
-  assert.match(REEL, /!items && !drawnRef\.current/);
-  assert.match(REEL, /!shown\.length && !drawnRef\.current/);
-  // And the screen wires the reel to the controller that owns the store.
-  assert.match(SCREEN, /onAnswered=\{\(id, epoch\) => workshopController\.answered\(id, epoch\)\}/);
-  assert.match(SCREEN, /answered\(id: number, epoch: number \| null\)/);
-});
 
 // An approval row (a change on a project that is just yours) asks for a note
 // from the row itself, before the community read has landed and on the
@@ -167,5 +122,4 @@ test('#22: on a solo project the Yes line is a note, asked of the row\'s own pro
 
   audience = 'invited';
   assert.match(draw(), /Add a line for the group, if you like\./, 'a group keeps its wording');
-  assert.match(WORKSHOP, /<NeedsVoteForm\s+row=\{row\}\s+slug=\{slug\}/, 'the sheet hands the form the page\'s project for rows without their own');
 });

@@ -20,8 +20,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
-const path = require('node:path');
 const express = require('express');
 
 const DSN = process.env.TEST_DATABASE_URL
@@ -82,9 +80,9 @@ async function openDatabase(t) {
     await admin.query(`DROP DATABASE IF EXISTS ${name}`).catch(() => {});
     await admin.end().catch(() => {});
   });
-  const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema); // boot-idempotent, including the new FK and index
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   // #5104: accounts start out reachable only by people they share a project
   // with, and out of searches. This file's people are strangers who write
   // to, invite and find each other, which is what it pins, so here they
@@ -360,6 +358,16 @@ test('conversation threads, soft delete, permalinks and mark-unread on the real 
     assert.equal((await conversations.markRead(pool, bob, paging, m[1])).messageId, m[1]);
     assert.equal((await conversations.markRead(pool, bob, paging, m[0])).messageId, m[1]);
 
+    // #6426: a main-stream read is a VISIT, recorded even when the cursor
+    // does not move; reading a thread is not a visit to Main Chat.
+    const visitAt = async (userId) => (await pool.query(
+      'SELECT last_visit_at FROM conversation_members WHERE conversation_id = $1 AND user_id = $2',
+      [paging, userId]
+    )).rows[0].last_visit_at;
+    assert.ok(await visitAt(bob.id), 'reading the main stream records the visit');
+    assert.ok(typeof (await conversations.getConversation(pool, bob, paging)).lastVisitAt === 'string',
+      'the conversation carries the visit to the client');
+
     // Reading a THREAD clears its alerts and leaves the cursor alone; reading
     // the main stream past a thread reply's id does not clear its alert.
     const aliceAlert = () => alerts(`user_id = $1 AND conversation_message_id = $2`, [alice.id, reply]);
@@ -375,9 +383,13 @@ test('conversation threads, soft delete, permalinks and mark-unread on the real 
     const mainRead = await conversations.markRead(pool, alice, paging, later.messageId);
     assert.equal(mainRead.threadRootId, null);
     assert.equal((await aliceAlert())[0].read_at, null, 'the main stream does not read threads');
+    const aliceVisit = await visitAt(alice.id);
+    assert.ok(aliceVisit, 'her main-stream read is a visit');
     const threadRead = await conversations.markRead(pool, alice, paging, reply);
     assert.equal(threadRead.threadRootId, m[2]);
     assert.equal(threadRead.messageId, later.messageId, 'the cursor did not move');
+    assert.equal((await visitAt(alice.id)).getTime(), aliceVisit.getTime(),
+      'a thread read leaves the Main Chat visit where it was');
     assert.notEqual((await aliceAlert())[0].read_at, null);
     assert.equal((await conversations.listThread(pool, alice, paging, m[2])).read, undefined,
       'read: it opens at its newest reply');

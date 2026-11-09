@@ -323,21 +323,13 @@
     "text": "Profile",
     "description": "Title shown in the header bar, and as the browser tab's title, on the signed-in person's own profile screen. A noun."
   },
-  "title.yourChanges": {
-    "text": "Your changes",
-    "description": "Title shown in the header bar, and as the browser tab's title, on the list of changes the person has proposed. \"changes\" is a noun: proposed changes to apps."
-  },
-  "title.yourRequests": {
-    "text": "Your requests",
-    "description": "Title shown in the header bar, and as the browser tab's title, on the list of requests the person has filed. \"requests\" is a noun: things they asked to have built or fixed."
-  },
-  "title.yourVotes": {
-    "text": "Your votes",
-    "description": "Title shown in the header bar, and as the browser tab's title, on the list of votes the person has cast on proposals."
-  },
   "title.allApps": {
     "text": "Discover",
     "description": "Title shown in the header bar, and as the browser tab's title, on the screen that lists every app on Homeroom."
+  },
+  "title.needs": {
+    "text": "Needs you",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the Needs you page: every vote and decision waiting on the person across their projects, one at a time."
   },
   "title.communities": {
     "text": "Communities",

@@ -540,7 +540,10 @@ function isConnectorSurfacePath(pathname) {
 // read real credential state.
 function isStagingReadableConnectorPath(method, pathname) {
   if (method !== 'GET') return false;
-  return pathname === '/api/me/connectors';
+  return pathname === '/api/me/connectors'
+    // The panel's Test connection: read-only, answers from a fixture or
+    // "not available here", and never touches real credential state.
+    || pathname === '/api/me/connectors/test';
 }
 
 // Exactly one syntactically valid Bearer credential. Duplicate headers,

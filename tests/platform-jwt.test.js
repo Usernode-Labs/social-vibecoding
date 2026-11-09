@@ -448,14 +448,19 @@ test('a preview process also restricts identities it mints for nested apps', () 
   }
 });
 
-test('rolling deployment still accepts old unmarked identities, with the existing expiry', () => {
-  const old = ttl => jwt.sign({ ...USER, pur: 'iframe' }, privateKey, {
+// Every signer has marked its identities since #5873 (an iframe token lives an
+// hour at most), so a production consumer refuses one without the claim. A
+// preview still takes it: the in-loop and bench workers sign their own viewer
+// tokens without one (worker/usernode-run-inloop, usernode-bench-capture.js).
+test('an unmarked identity is refused by production and still entered in a preview', () => {
+  const unmarked = ttl => jwt.sign({ ...USER, pur: 'iframe' }, privateKey, {
     algorithm: 'RS256', issuer: 'usernode', audience: `usernode:app:${APP_ID}`, expiresIn: ttl,
   });
-  for (const allowPreview of [false, true]) {
-    assert.equal(pj.verifyAppIdentityToken(old('1h'), { appId: APP_ID, allowPreview }).id, USER.id);
-    assert.throws(() => pj.verifyAppIdentityToken(old(-1), { appId: APP_ID, allowPreview }), /expired/);
-  }
+  assert.throws(() => pj.verifyAppIdentityToken(unmarked('1h'), { appId: APP_ID, allowPreview: false }), /no environment/);
+  assert.equal(pj.verifyAppIdentityToken(unmarked('1h'), { appId: APP_ID, allowPreview: true }).id, USER.id);
+  assert.throws(() => pj.verifyAppIdentityToken(unmarked(-1), { appId: APP_ID, allowPreview: true }), /expired/);
+  assert.equal(pj.verifyAppIdentityToken(pj.signAppIdentityToken({ appId: APP_ID, user: USER, environment: 'production' }),
+    { appId: APP_ID, allowPreview: false }).id, USER.id, 'a marked production identity still passes');
 });
 
 test('unknown identity environments are refused even with a trusted signature', () => {

@@ -256,6 +256,7 @@ function EntryRow({ entry, section, slug, openKey, onOpen }: {
           <span className="truncate">{title}</span>
         </span>
       )}
+      tooltip={title || undefined}
       subtitle={entry.excerpt || facts || track ? (
         <span className="flex flex-col gap-1.5">
           {entry.excerpt ? (
@@ -267,7 +268,7 @@ function EntryRow({ entry, section, slug, openKey, onOpen }: {
       ) : null}
       subtitleClassName="whitespace-normal"
       data-ws-bot-slot={entry.issueNumber || ''}
-      data-ws-bot-slot-state={track?.state || ''}
+      data-ws-bot-slot-state={track?.work.stage || ''}
       data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
     />
   );

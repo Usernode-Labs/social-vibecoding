@@ -334,6 +334,9 @@ function waitlistAdminRoutes(config) {
       // does not already hold — and unlike the address itself it is safe
       // in a query string, which is what survives a link rewriter.
       moreToken: released.more_token || null,
+      // The account's language. An address with no account yet has none: the
+      // admin's browser says nothing about the person being let in.
+      ...(released.recipient_locale ? { locale: released.recipient_locale } : {}),
     });
   }
 

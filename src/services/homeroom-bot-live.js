@@ -60,7 +60,7 @@
 // constructs nothing but routes, and dispatches the request into it. There
 // stays exactly one implementation of "put a change up for a vote".
 
-const { firstPerson } = require('./homeroom-bot-words');
+const { firstPerson, plainWords } = require('./homeroom-bot-words');
 const { FIX_COMMIT_MESSAGES, buildCommitMessage } = require('./homeroom-commits');
 const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
@@ -70,7 +70,7 @@ const { withoutEmDashes } = require('./em-dashes');
 const repoRef = require('./repo-ref');
 const {
   SPEC_DESIGN_BRIEF, FIRST_VERSION_SPEC_DESIGN_BRIEF, FIRST_VERSION_SCREENS_BRIEF, getDesignGuidance, specHtmlContract,
-  getConventionSection,
+  cardRepairPrompt, getConventionSection,
 } = require('./prompts');
 const specHtml = require('./spec-html');
 const specVisibleChanges = require('./spec-visible-changes');
@@ -179,20 +179,30 @@ function questionText({ question, plan = null }) {
     ? [
       'Homeroom bot has two questions before it can build this:',
       '',
-      ...two.map((q, i) => `${i + 1}. ${clipText(q.question, 500)}`),
+      ...two.map((q, i) => `${i + 1}. ${clipText(plainWords(q.question), 500)}`),
     ]
     : [
       'Homeroom bot has a question before it can build this:',
       '',
-      clipText(question) || '(no question text)',
+      clipText(plainWords(question)) || '(no question text)',
     ];
   lines.push('', REPLY_HINT);
   return lines.join('\n');
 }
 
 // A reason the model wrote, as a whole sentence: it ends with a full stop.
-function reasonSentence(reason) {
-  const text = clipText(reason);
+// 6 Nov 2026 (#6430): in a reply to the person who said go ahead, `reader`
+// (their username) becomes "your" or "you", so the note never talks about the
+// reader in the third person ("evan's go-ahead").
+function reasonSentence(reason, { reader = null } = {}) {
+  let text = clipText(plainWords(reason));
+  const name = typeof reader === 'string' ? reader.trim() : '';
+  if (text && name) {
+    const at = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    text = text
+      .replace(new RegExp(`@?${at}'s\\b`, 'gi'), 'your')
+      .replace(new RegExp(`@?${at}\\b`, 'gi'), 'you');
+  }
   if (!text) return 'No reason given.';
   return /[.!?…)"']$/.test(text) ? text : `${text}.`;
 }
@@ -206,14 +216,35 @@ function decidersPhrase(names) {
   return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
 }
 
-function personText({ reason, platform = false, project = null }) {
+function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null }) {
   // #4239: about Homeroom itself. The requester is offered the move in their
   // DM; the project's creator and admins, who see only this note, are told
   // they can move it too (homeroom-bot-move.js moveGate).
   const name = project ? clipText(project, 80) : 'this project';
   if (platform) {
     return `Homeroom bot thinks this is about Homeroom itself, not ${name}: ${reasonSentence(reason)}\n\n`
-      + `Whoever asked for it, or ${project ? `${name}'s` : 'this project\'s'} creator or admins, can have Homeroom bot move it to Homeroom's own board.`;
+      + `Whoever asked for it, or ${project ? `${name}'s` : 'this project\'s'} creator or admins, can have it filed on Homeroom's own board too, or moved there.`;
+  }
+  // #6306: the ask is already there, so there is nothing to build and no
+  // decision to make: it only waits to be closed.
+  if (done) {
+    return `Homeroom bot found this already works: ${reasonSentence(reason)}\n\n`
+      + 'Anyone in the project can propose to close it, or reply here if something is missing.';
+  }
+  // #6413: its requester or a decider asked to close it, so it waits for the
+  // same vote, not for a Go ahead.
+  if (withdrawn) {
+    return `Homeroom bot was asked to close this: ${reasonSentence(reason)}\n\n`
+      + 'Anyone in the project can propose to close it, or reply here to keep it going.';
+  }
+  // 6 Nov 2026 (#6395): a go-ahead cannot settle this one (credentials,
+  // auth, billing, permissions, operator work outside the app, a database
+  // change that is not append-only, or too big for one build), so the copy
+  // names no Go ahead and leads with the part it can build.
+  if (goAheadDecides === false) {
+    return `I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason)} `
+      + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
+      + canBuildPart(firstStep);
   }
   // GitHub never carries a platform username (#723): its copy names nobody.
   // Homeroom's names who can say Go ahead (personHomeroomText).
@@ -222,20 +253,115 @@ function personText({ reason, platform = false, project = null }) {
 }
 
 /**
+ * 6 Nov 2026 (#6395): the part of a request the bot can still build, as the
+ * sentence that follows "I can't build all of this one: ...". `firstStep` is
+ * the smaller step the read named, if any. Pure.
+ */
+function canBuildPart(firstStep) {
+  const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
+  return step ? `I can build this part now: ${step}.` : 'Reply here if a smaller part would help.';
+}
+
+/**
  * The Homeroom copy of a note for a person: who can say Go ahead, by name.
  * `deciders` are the people who decide on the project when the requester
  * does not (homeroom-bot.js whoDecides); else the requester. Pure.
  */
-function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [] }) {
-  if (platform) return firstPerson(personText({ reason, platform, project }));
+function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false, goAheadDecides = null, firstStep = null }) {
+  // #4239, #6311: about Homeroom itself. The requester is offered the copy
+  // in the thread and the move in their DM. Plain words, in the first
+  // person: no checkout, no head commit, no build agent.
+  if (platform) {
+    return firstPerson(`I think this is about Homeroom itself, not ${project ? clipText(project, 80) : 'this project'}: ${reasonSentence(reason)} `
+      + 'I can put it on Homeroom\'s own board too and keep this request open here.');
+  }
+  // #6306: already there: no Go ahead, only a close vote. #6321: its buttons
+  // are under the note (homeroom-bot.js doneCloseOffer).
+  if (done) {
+    return `Already works: ${reasonSentence(reason)} Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.`;
+  }
+  // 6 Nov 2026 (#6395): no Go ahead can settle this one, and nobody is named
+  // as able to say it. It says what it can build here instead.
+  if (goAheadDecides === false) {
+    return firstPerson(`I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason)} `
+      + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
+      + canBuildPart(firstStep));
+  }
   const named = (Array.isArray(deciders) && deciders.length ? deciders : [requester]).filter(Boolean);
   const who = named.length ? decidersPhrase(named) : 'The person who asked for it';
-  return `I think a person needs to decide this one: ${reasonSentence(reason)} ${who} can say Go ahead in a chat with me, or reply here.`;
+  return firstPerson(`I think a person needs to decide this one: ${reasonSentence(reason)} ${who} can say Go ahead in a chat with me, or reply here.`);
+}
+
+/**
+ * #6413: the note for a request its requester (or a decider) asked to close.
+ * It offers the close vote the finished-request note does, not a Go ahead.
+ * Pure.
+ */
+function withdrawnHomeroomText({ reason }) {
+  return `Asked to close: ${reasonSentence(reason)} Tap Propose to close below to start a vote. It stays open until the group votes for it, or reply here to keep it going.`;
+}
+
+// The note's fixed replies, beside its own sentence: words the bot offers for
+// a person to send as their own, server text rather than shell catalog text.
+const GO_AHEAD_LABEL = 'Go ahead';
+const SMALLER_STEP_LABEL = 'Start with a smaller first step';
+const NOT_NOW_LABEL = 'Not now';
+
+/**
+ * Pure: the replies offered under a person note, as prompt actions, or []
+ * when the note is about Homeroom itself, says the request is done, or says
+ * it was asked to close (Go ahead applies to none). `firstStep` is the
+ * smaller step the bot would build, when it named one; the fixed label stands
+ * in when it did not.
+ * 6 Nov 2026 (#6395): when `goAheadDecides` is false a go-ahead cannot settle
+ * the request, so Go ahead is not offered and the smaller step is primary.
+ */
+function personSuggestions({ firstStep = null, platform = false, done = false, withdrawn = false, goAheadDecides = null } = {}) {
+  if (platform || done || withdrawn) return [];
+  const cannot = goAheadDecides === false;
+  const mayor = require('./homeroom-bot-mayor');
+  const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
+  const usableStep = step && step.length <= mayor.MAX_SUGGESTION_CHARS ? step : '';
+  const candidates = [
+    ...(cannot ? [] : [{ id: 'go_ahead', label: GO_AHEAD_LABEL, style: 'primary' }]),
+    { id: 'smaller', label: usableStep || SMALLER_STEP_LABEL, style: cannot ? 'primary' : 'secondary' },
+    { id: 'not_now', label: NOT_NOW_LABEL, style: 'secondary' },
+  ];
+  const labels = mayor.suggestionLabels(candidates.map((c) => c.label));
+  const out = [];
+  for (const candidate of candidates) {
+    if (!labels.some((label) => label.toLowerCase() === candidate.label.toLowerCase())) continue;
+    if (out.some((seen) => seen.label.toLowerCase() === candidate.label.toLowerCase())) continue;
+    out.push({ ...candidate, type: 'prompt' });
+  }
+  return out;
+}
+
+/**
+ * 6 Nov 2026 (#6395): the one plain reply to a go-ahead that cannot settle a
+ * request, instead of the note again. It says what a go-ahead cannot change,
+ * then the part the bot can still build. Server text, like the labels.
+ */
+function goAheadCannotText({ reason, firstStep = null, reader = null } = {}) {
+  return `I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason, { reader })} `
+    + 'A person has to build it, for example you with a coding agent, and the group votes on it as usual. '
+    + canBuildPart(firstStep);
+}
+
+// 6 Nov 2026 (#6430): a plain reply that starts with "go ahead" and is no
+// longer than this is a go-ahead, when the bot's last note named the speaker.
+const GO_AHEAD_REPLY_MAX_CHARS = 60;
+
+/** Pure: whether a message's words are a plain go-ahead. */
+function saysGoAhead(text) {
+  const words = typeof text === 'string' ? text.trim() : '';
+  return !!words && words.length <= GO_AHEAD_REPLY_MAX_CHARS
+    && words.slice(0, 8).toLowerCase() === 'go ahead';
 }
 
 function emptyText({ reason }) {
   return [
-    `Homeroom bot couldn't find anything to build in this request: ${clipText(reason) || 'no reason given.'}`,
+    `Homeroom bot couldn't find anything to build in this request: ${clipText(plainWords(reason)) || 'no reason given.'}`,
     '',
     'If there is more to it, add the details here (or on the GitHub issue) and it will look again.',
   ].join('\n');
@@ -244,13 +370,55 @@ function emptyText({ reason }) {
 // GitHub's copy links the change; Homeroom's names it by its title, and the
 // vote card under the message is the way to it (homeroom-bot.js
 // announceBuilt). No pull request number in either.
-function proposalText({ link }) {
+// #6209: a change that adds only written documents says so, so nobody reads
+// its vote as the request's feature being built.
+function proposalText({ link, docOnly = false }) {
+  if (docOnly) {
+    return `Homeroom bot wrote a plan document for this. It adds a written plan; nothing changes in the app. It's up for a vote: ${link}`;
+  }
   return `Homeroom bot built this. It's up for a vote: ${link}`;
 }
 
-function proposalHomeroomText({ title }) {
+function proposalHomeroomText({ title, docOnly = false }) {
   const name = clipText(title, 200);
+  if (docOnly) {
+    return name
+      ? `This adds a written plan; nothing changes in the app. It's up for a vote: ${name}`
+      : 'This adds a written plan; nothing changes in the app. It\'s up for a vote.';
+  }
   return name ? `I built this. It's up for a vote: ${name}` : 'I built this. It\'s up for a vote.';
+}
+
+// #6209: a change that touches only written documents (a plan under docs/,
+// a Markdown file) is not the request's answer. Pure: true when the list is
+// non-empty and every path is a Markdown file or sits under docs/. An
+// incomplete list is never trusted, so a caller keeps the links then.
+function isDocOnlyChange(files) {
+  const list = (Array.isArray(files) ? files : []).filter((f) => typeof f === 'string' && f.trim());
+  return list.length > 0 && list.every((f) => /\.mdx?$/i.test(f) || f.startsWith('docs/'));
+}
+
+// #6209: the build's own check, before its pull request is opened: does it
+// touch only written documents? If it does, its linked requests are cleared
+// (no PR exists yet), so a merge cannot close one as done.
+// `created_from_issue_number` stays, so the change still shows on its
+// request's page. Anything unreadable, or an incomplete file list, keeps the
+// links as every build had them before. Throws on a read failure, which the
+// caller answers by keeping the links.
+async function unlinkDocOnlyBuild({ pool, github, repo, session }) {
+  const gh = github || require('./github');
+  if (!gh || typeof gh.compareRefs !== 'function' || !repo?.owner || !repo?.repo || !session?.branch_name) {
+    return { docOnly: false };
+  }
+  const baseSha = typeof gh.getBranchSha === 'function'
+    ? await gh.getBranchSha(repo.owner, repo.repo, 'main')
+    : null;
+  const compared = await gh.compareRefs(repo.owner, repo.repo, `${baseSha || 'main'}...${session.branch_name}`);
+  if (!compared?.filesComplete || !isDocOnlyChange(compared.files)) return { docOnly: false };
+  await require('./proposal-update').storeLinkedIssues({
+    pool, session, removeIssues: session.linked_issues,
+  });
+  return { docOnly: true };
 }
 
 // The request's ending (announceLive): its change is live.
@@ -283,10 +451,19 @@ function liveHomeroomText({ title, project }) {
 // reply here does not do (it reads the request again and starts over): its
 // maker's Try again in their chat with the bot proposes what was built
 // (homeroom-bot.js finishBuiltFirstVersion).
-function buildFailedText(reason, { firstVersion = false } = {}) {
+function buildFailedText(reason, { firstVersion = false, retrying = false } = {}) {
   const dm = require('./homeroom-bot-dm');
+  const read = dm.buildFailedCause(reason);
   const words = dm.buildFailedWords(reason, 'this', 'bot', { first: firstVersion });
-  if (firstVersion && dm.buildFailedCause(reason).cause === 'unproposed') {
+  // #6267: a temporary refusal is being retried by the platform, so there is
+  // nothing for a person to do; the other two push causes say how to help.
+  if (read.cause === 'push') return words;
+  // #6313: a failure the bot is already trying again by itself says so, and
+  // asks nobody for a reply that is already on its way.
+  if (retrying) return `${words} It is trying again.`;
+  if (read.cause === 'push_permanent') return `${words} Reply here (or on the GitHub issue) and it will try again.`;
+  if (read.cause === 'push_gave_up') return `${words} Reply here (or on the GitHub issue) and it will send it again.`;
+  if (firstVersion && read.cause === 'unproposed') {
     return `${words} Whoever asked for it can tap Try again in their chat with Homeroom bot, and it will finish it.`;
   }
   return `${words} Reply here (or on the GitHub issue) and it will try again.`;
@@ -301,8 +478,10 @@ function retryCommentText() {
 
 // #3152: a verdict a live cap held. One line, so the person who filed the
 // issue is not left with silence, and a promise the refresh keeps: a held
-// issue is queued again as soon as the cap that held it has room.
-function heldText({ cap, verdict, limit, project = null }) {
+// issue is queued again as soon as the cap that held it has room. Only a
+// ready verdict is held, by one of the three caps (homeroom-bot.js
+// SLOT_CAPS): 3 Nov 2026, there is no daily limit on questions and notes.
+function heldText({ cap, limit, project = null }) {
   const name = project ? clipText(project, 80) : 'this project';
   // #6156: the project's builds are full. It waits for the bot's turn, not
   // for a vote.
@@ -312,12 +491,7 @@ function heldText({ cap, verdict, limit, project = null }) {
   if (cap === 'proposals_per_app') {
     return `Homeroom bot will build this when one of its ${limit} changes on ${name} is voted in or closed.`;
   }
-  if (cap === 'proposals_total') {
-    return `Homeroom bot will build this when one of its ${limit} changes across Homeroom is voted in or closed.`;
-  }
-  const what = verdict === 'question' ? 'a question about' : verdict === 'plan' ? 'a plan for' : 'a note on';
-  return `Homeroom bot has ${what} this request, but it has already posted ${limit} questions and notes `
-    + `on ${name} today. It will come back to it once some of those are a day old.`;
+  return `Homeroom bot will build this when one of its ${limit} changes across Homeroom is voted in or closed.`;
 }
 
 function heldKind(cap) {
@@ -334,6 +508,132 @@ async function lastPostKind(pool, appId, issueNumber) {
     [appId, issueNumber],
   );
   return rows[0]?.kind || null;
+}
+
+// #6313: "I couldn't finish building this: something went wrong during the
+// build. Reply here and I'll try again." was posted five times in 28 minutes
+// on one request (#6306). A failure line the bot's last post in the request's
+// thread already says is not said again: that post is updated with how many
+// tries it has been, and nobody is told again (no new post, no GitHub
+// comment, no DM, no mention notification). The same words mean the same
+// failure; different words (a different cause) are news and go out normally.
+const FAILURE_TRIES_MARK = /\s*\(Tried \d+ times\.\)$/;
+
+async function updateRepeatedBuildFailure(pool, ws, { appId, issueNumber, content }) {
+  const want = String(content || '').trim();
+  if (!want) return null;
+  const { rows } = await pool.query(
+    `SELECT p.id AS post_id, m.id AS message_id, m.content, m.metadata,
+            m.thread_type, m.thread_ref
+       FROM homeroom_bot_posts p
+       JOIN chat_messages m ON m.id = p.thread_message_id
+      WHERE p.app_id = $1 AND p.issue_number = $2 AND p.kind = 'build_failed'
+        AND m.deleted_at IS NULL
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT 1`, [appId, issueNumber]);
+  const last = rows[0];
+  if (!last) return null;
+  // Who the post tagged is not part of the failure: the handles are put on
+  // the same text, and a different tagger does not make it new news.
+  const said = String(last.content || '')
+    .replace(/^(?:@[A-Za-z0-9_.-]+\s+)+/, '')
+    .replace(FAILURE_TRIES_MARK, '')
+    .trim();
+  if (said !== want) return null;
+  const metadata = last.metadata && typeof last.metadata === 'object' && !Array.isArray(last.metadata) ? last.metadata : {};
+  const bot = metadata.homeroomBot && typeof metadata.homeroomBot === 'object' ? metadata.homeroomBot : {};
+  const tries = (Number(bot.tries) || 1) + 1;
+  const next = `${want} (Tried ${tries} times.)`;
+  const nextMeta = { ...metadata, homeroomBot: { ...bot, tries } };
+  await pool.query(
+    'UPDATE chat_messages SET content = $2, metadata = $3, edited_at = NOW() WHERE id = $1',
+    [Number(last.message_id), next, JSON.stringify(nextMeta)],
+  );
+  try {
+    if (ws && typeof ws.broadcast === 'function') {
+      ws.broadcast(Number(appId), {
+        type: 'chat_edit',
+        messageId: Number(last.message_id),
+        content: next,
+        editedAt: new Date().toISOString(),
+        thread: { type: last.thread_type || 'issue', ref: Number(last.thread_ref || issueNumber) },
+      });
+    }
+  } catch { /* the next read draws it */ }
+  log.info('homeroom-bot', 'A repeated build failure updated its one post instead of saying it again', {
+    appId, issueNumber, messageId: Number(last.message_id), tries,
+  });
+  return { repeated: true, id: Number(last.post_id), threadMessageId: Number(last.message_id) };
+}
+
+// 5 Nov 2026 (docs/plans/bot-one-model.md, step 4, decision 6): what the
+// bot says in a request's thread, and nothing else. Its question or plan
+// (`question`, `person` and `empty` ask its requester something; `plan` and
+// `spec` are the plan), the change built and up for a vote (`proposal`), one
+// failure post (FAILURE_KINDS, updated in place, replaceFailurePost), live
+// (`live`), and its answer to somebody who wrote to it there (`going_ahead`,
+// `held_by_person`, homeroom-bot-holds.js sayHeld). Where the work stands
+// otherwise is the request's stage, on its page (services/work-state.js):
+// "looking at this now" and the like go nowhere. Another kind is still
+// recorded, and still a GitHub comment on a project hosted there.
+const FAILURE_KINDS = new Set(['build_failed', 'followup_failed', 'followup_person', 'blocked']);
+const THREAD_KINDS = new Set([
+  'question', 'person', 'empty', 'plan', 'spec', 'proposal', ...FAILURE_KINDS, 'live', 'going_ahead', 'held_by_person',
+]);
+
+/** Pure: whether a post of this kind is said in the request's thread. */
+function saidInThread(kind) {
+  return THREAD_KINDS.has(String(kind || ''));
+}
+
+/**
+ * Decision 6: a failure, when the bot's last post in the request's thread
+ * was a failure too, takes that post's place: its message gets the new
+ * words and metadata (an offer to try again included), and the room hears
+ * both (chat_edit, chat_message_updated). The same words again
+ * are updateRepeatedBuildFailure's, before this. Resolves { id } of the
+ * message, or null when there is no such post to replace (it is then
+ * posted as new). `postId` is this post's own row, left out of the look.
+ */
+async function replaceFailurePost(pool, ws, { appId, issueNumber, postId, content, metadata }) {
+  const { rows: [last] } = await pool.query(
+    `SELECT p.kind, m.id AS message_id
+       FROM homeroom_bot_posts p
+       JOIN chat_messages m ON m.id = p.thread_message_id AND m.deleted_at IS NULL
+      WHERE p.app_id = $1 AND p.issue_number = $2 AND p.id <> $3 AND p.thread_message_id IS NOT NULL
+      ORDER BY p.id DESC
+      LIMIT 1`,
+    [appId, issueNumber, postId],
+  );
+  if (!last || !FAILURE_KINDS.has(last.kind)) return null;
+  const text = String(content || '').trim();
+  if (!text) return null;
+  const { rows: [updated] } = await pool.query(
+    `UPDATE chat_messages SET content = $2, metadata = $3::jsonb, edited_at = NOW()
+      WHERE id = $1 AND deleted_at IS NULL
+      RETURNING id, edited_at, thread_type, thread_ref`,
+    [Number(last.message_id), text, JSON.stringify(metadata || {})],
+  );
+  if (!updated) return null;
+  try {
+    if (ws && typeof ws.broadcast === 'function') {
+      ws.broadcast(Number(appId), {
+        type: 'chat_edit',
+        messageId: Number(updated.id),
+        content: text,
+        editedAt: updated.edited_at,
+        thread: { type: updated.thread_type || 'issue', ref: Number(updated.thread_ref || issueNumber) },
+      });
+      ws.broadcast(Number(appId), {
+        type: 'chat_message_updated', id: Number(updated.id), metadata: metadata || {},
+        thread: { type: updated.thread_type || 'issue', ref: Number(updated.thread_ref || issueNumber) },
+      });
+    }
+  } catch { /* the next read draws it */ }
+  log.info('homeroom-bot', 'A failure took the place of the request\'s last failure post', {
+    appId, issueNumber, messageId: Number(updated.id), was: last.kind,
+  });
+  return { id: Number(updated.id) };
 }
 
 // #4367: by its pull request's number once it has one.
@@ -1365,8 +1665,8 @@ const PLAN_REPLY_HINT = 'reply "build it" here when it looks right, or say what 
 function planCommentText({ spec, questions = [] }) {
   const asks = (Array.isArray(questions) ? questions : []).filter((q) => q && q.question);
   return [
-    'Homeroom bot wrote a plan for this request, with its before and after screens, and will build it once the person '
-      + 'who asked for it says Build it. On Homeroom they can '
+    'Homeroom bot wrote a plan for this request, with its before and after screens. Nothing has been built yet. '
+      + 'It will build it once the person who asked for it says Build it. On Homeroom they can '
       + PLAN_REPLY_HINT.replace(/ here /, ' on this request '),
     ...(asks.length ? [
       '',
@@ -1387,23 +1687,27 @@ function planCommentText({ spec, questions = [] }) {
  * posts (metadata.specShare), opening the version the build worked from.
  */
 function specCard({
-  sessionId, version, spec, bot, proposed = false, revised = false, asking = false, requester = null,
+  sessionId, version, spec, bot, proposed = false, revised = false, asking = false, waiting = false, requester = null,
 }) {
+  // #6280 (4 Nov 2026): a plan that waits for Build it is posted in the
+  // waiting form, and the building form only once its build has started.
+  // `waiting` says so by the plan's own state; `asking` is the older name.
+  const waits = asking || waiting;
   const title = specTitle(spec);
   // One sentence, as the request page draws the row (transcript.tsx
   // RequestEvent): "Plan v1: {title}. I'm building it now." The page reads
   // `botNote` (and `waitingFor`) off the metadata; the content is the same
   // words for anything that draws the message itself.
   const head = `📋 Plan v${Number(version)}${title ? `: ${title.replace(/[.!?]+$/, '')}` : ''}`;
-  const waitingFor = asking && requester ? String(requester) : null;
+  const waitingFor = waits && requester ? String(requester) : null;
   const content = proposed
     ? `${head}${revised ? ', updated for this change' : ''}.`
-    : asking
-      ? `${head}. Waiting for ${waitingFor ? `@${waitingFor}` : 'the person who asked for it'} to say Build it.`
+    : waits
+      ? `${head}. Nothing is built yet. Waiting for ${waitingFor ? `@${waitingFor}` : 'the person who asked for it'} to say Build it.`
       // #4488: a plan its requester approved was posted when they were
       // asked; its build says so in a note, with no second card.
       : `${head}. I'm building it now.`;
-  const botNote = proposed ? null : asking ? 'waiting' : 'building';
+  const botNote = proposed ? null : waits ? 'waiting' : 'building';
   return {
     content,
     msgType: 'spec_share',
@@ -1450,7 +1754,7 @@ async function notePlanRows(pool, runIds, note, { ws = null } = {}) {
     const { rows } = await pool.query(
       `UPDATE chat_messages m
           SET metadata = jsonb_set(m.metadata, '{specShare,botNote}', to_jsonb($2::text)),
-              content = regexp_replace(m.content, '\\. Waiting for [^\\n]*$', $3)
+              content = regexp_replace(m.content, '\\.(?: Nothing is built yet\\.)? Waiting for [^\\n]*$', $3)
          FROM homeroom_bot_posts p
         WHERE p.run_id = ANY($1::int[]) AND p.kind = 'plan' AND m.id = p.thread_message_id
           AND m.metadata->'specShare'->>'botNote' = 'waiting'
@@ -1465,9 +1769,83 @@ async function notePlanRows(pool, runIds, note, { ws = null } = {}) {
         thread: { type: row.thread_type, ref: Number(row.thread_ref) },
       });
     }
+    // #6535: once its plan stops waiting and starts building, an overlap
+    // question asked before that point has been overtaken: its buttons go.
+    if (note === 'building') {
+      for (const row of rows) {
+        if (row.thread_type !== 'issue') continue;
+        await retireOverlapOffers(pool, {
+          appId: Number(row.app_id), issueNumber: Number(row.thread_ref),
+          beforeMessageId: Number(row.id), deps: { ws },
+        });
+      }
+    }
     return rows.length;
   } catch (err) {
     log.warn('homeroom-bot-live', 'Could not say what became of a plan on its request', { runs: ids, note, err: err.message });
+    return 0;
+  }
+}
+
+/**
+ * #6535: once a request's plan stops waiting and starts building, an open
+ * "This overlaps #N" question asked before that point is no longer a choice
+ * worth making: the build has gone ahead. Its message keeps its words and
+ * its card, and loses its three buttons, as an answered offer does; the
+ * row behind it is expired so a tap from a screen that has not drawn again
+ * records nothing. Nothing is posted on either request and no ordering is
+ * recorded. Never throws; resolves how many questions closed.
+ */
+async function retireOverlapOffers(pool, { appId, issueNumber, beforeMessageId, deps = {} } = {}) {
+  const app = Number(appId);
+  const issue = Number(issueNumber);
+  const before = Number(beforeMessageId);
+  if (!Number.isSafeInteger(app) || app <= 0
+    || !Number.isSafeInteger(issue) || issue <= 0
+    || !Number.isSafeInteger(before) || before <= 0) return 0;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE chat_messages
+          SET metadata = jsonb_set(
+                jsonb_set(
+                  jsonb_set(metadata, '{homeroomBot,offer,status}', '"expired"'::jsonb, true),
+                  '{homeroomBot,actions}', '[]'::jsonb, true),
+                '{homeroomBot,othersActions}', '[]'::jsonb, true)
+        WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2 AND id < $3
+          AND metadata->'homeroomBot'->'offer'->>'kind' = 'overlap'
+          AND metadata->'homeroomBot'->'offer'->>'status' = 'open'
+        RETURNING id, metadata, thread_type, thread_ref,
+                  metadata->'homeroomBot'->'offer'->>'id' AS offer_id`,
+      [app, issue, before],
+    );
+    const offerIds = [...new Set(rows
+      .map((row) => Number(row.offer_id))
+      .filter((id) => Number.isSafeInteger(id) && id > 0))];
+    if (offerIds.length) {
+      await pool.query(
+        `UPDATE bot_cards SET status = 'expired'
+          WHERE place = 'thread' AND id = ANY($1::int[]) AND status = 'open'`,
+        [offerIds],
+      );
+      await pool.query(
+        `UPDATE homeroom_bot_voice_offers SET status = 'expired'
+          WHERE id = ANY($1::int[]) AND status = 'open'`,
+        [offerIds],
+      );
+    }
+    const sock = deps.ws || require('./ws');
+    for (const row of rows) {
+      if (typeof sock?.broadcast !== 'function') break;
+      sock.broadcast(app, {
+        type: 'chat_message_updated', id: Number(row.id), metadata: row.metadata,
+        thread: { type: row.thread_type, ref: Number(row.thread_ref) },
+      });
+    }
+    return rows.length;
+  } catch (err) {
+    log.warn('homeroom-bot-live', 'Could not close an overlap question once its build started', {
+      appId: app, issueNumber: issue, beforeMessageId: before, err: err.message,
+    });
     return 0;
   }
 }
@@ -1489,6 +1867,28 @@ async function shareSpecVersion(pool, sessionId, version) {
 async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec, revised = false }) {
   if (!spec || !version || !sessionId) return null;
   await shareSpecVersion(pool, sessionId, version);
+  // #6229: the plan the build asked approval for is already on the request's
+  // page, and the change's page is that page now (1 Nov 2026). Posting the
+  // proposed card there would draw "📋 Plan v1" a second time. An updated
+  // plan is new information, so `revised` still posts; a change with no
+  // request still has a page of its own. A failed lookup posts as before.
+  if (!revised && await changeOnRequestPage(pool, app?.id, sessionId)) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT 1 FROM chat_messages
+          WHERE app_id = $1 AND thread_type = 'issue' AND msg_type = 'spec_share'
+            AND metadata->'specShare'->>'sessionId' = $2
+            AND metadata->'specShare'->>'version' = $3
+          LIMIT 1`,
+        [app.id, String(Number(sessionId)), String(Number(version))],
+      );
+      if (rows.length) return null;
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not check the request for its plan card (posting it)', {
+        app: app?.slug, sessionId, version, err: err.message,
+      });
+    }
+  }
   const card = specCard({ sessionId, version, spec, bot, proposed: true, revised });
   return ws.sendBotMessage(pool, app.id, {
     user: bot, content: card.content, metadata: card.metadata,
@@ -1847,6 +2247,33 @@ async function threadMessageOf(pool, app, issueNumber, postId) {
   return rows[0] ? { id: rows[0].id } : null;
 }
 
+// 1 Nov 2026 (one page per thread): whether a change lives on its request's
+// page. The rule threads.requestHome uses, without the viewer check: a
+// request leads the thread (its number is a request in that thread), so the
+// change has no page of its own and its replies are read on the request's.
+// A change with no request keeps a page of its own. A failed lookup answers
+// false, so the note is written where it was always written.
+async function changeOnRequestPage(pool, appId, sessionId) {
+  const id = Number(sessionId);
+  if (!appId || !Number.isSafeInteger(id) || id <= 0) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM chat_sessions s
+         JOIN threads t ON t.id = s.thread_id AND t.number IS NOT NULL
+         JOIN requests r ON r.thread_id = t.id AND r.number = t.number
+        WHERE s.id = $1 AND s.app_id = $2 AND s.is_headless = FALSE
+        LIMIT 1`,
+      [id, appId],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not tell whether a change has its own page (writing both copies)', {
+      appId, sessionId: id, err: err.message,
+    });
+    return false;
+  }
+}
+
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
@@ -1867,7 +2294,14 @@ async function post({
   // then hears only milestones) are left out, and the post is recorded,
   // and relayed to the requester's DM when it carries `dm`, as before.
   const noComment = proposalOnly || !!skipGithub;
-  const noIssueThread = proposalOnly || !!skipIssueThread;
+  const noIssueThread = proposalOnly || !!skipIssueThread || !saidInThread(kind);
+  // #6229: a change built for a request has no page of its own (1 Nov 2026),
+  // so the request's page is where its note is read. It is said once there,
+  // tagged with the change, rather than twice (the request's copy and the
+  // change's own). A change with no request still gets its own copy.
+  const onRequestPage = proposalSessionId && !proposalOnly && !noIssueThread
+    ? await changeOnRequestPage(pool, app?.id, proposalSessionId)
+    : false;
   // Everybody this post tags (mentionTargets); `mention` is the one-person
   // form the older callers pass. #4488: `untag` is somebody already told in
   // their DM with the bot, as untaggedRequester leaves them out below.
@@ -1902,6 +2336,19 @@ async function post({
       WHERE app_id = $1 AND issue_number = $2 AND kind = $3 AND run_id IS NULL AND pending IS TRUE ORDER BY id DESC LIMIT 1`,
     [app.id, issueNumber, kind],
   )).rows[0] || null : null;
+  // #6313: the same failure, already said as the bot's last post in the
+  // request's thread, updates that post and tells nobody again.
+  if (!had && kind === 'build_failed' && !noIssueThread) {
+    const repeated = await updateRepeatedBuildFailure(pool, ws, {
+      appId: app.id, issueNumber, content: homeroomText || firstPerson(text),
+    }).catch((err) => {
+      log.warn('homeroom-bot', 'Could not check the request\'s last failure line (posting again)', {
+        app: app.slug, issueNumber, err: err.message,
+      });
+      return null;
+    });
+    if (repeated) return repeated;
+  }
   let postId = had ? had.id : null;
   if (!postId) {
     const { rows } = await pool.query(
@@ -1986,23 +2433,50 @@ async function post({
   }
   if (!noIssueThread && !message) {
     // The post's mark on its message, so a retry finds it (threadMessageOf).
-    const marked = (meta) => ({ ...(meta || {}), hrbotPost: String(postId) });
+    const marked = (meta) => ({
+      ...(meta || {}),
+      ...(onRequestPage ? { aboutChange: { sessionId: Number(proposalSessionId) } } : {}),
+      hrbotPost: String(postId),
+    });
     try {
+      // Decision 6: one failure post, updated in place. Nobody is tagged or
+      // told again for it: its requester's bell rang from its stage.
+      const replaced = FAILURE_KINDS.has(kind) && sender && !threadMessage
+        ? await replaceFailurePost(pool, ws, {
+          appId: app.id, issueNumber, postId, content: threadText, metadata: marked(metadata),
+        })
+        : null;
+      if (replaced) messageSentBefore = true;
       // A spec is a card in the thread (its full text is on GitHub, and one
       // click away from the card), not a wall of markdown in a chat bubble.
-      message = threadMessage && sender
+      message = replaced || (threadMessage && sender
         ? await ws.sendBotMessage(pool, app.id, {
           user: sender, content: handles ? `${handles} ${firstPerson(threadMessage.content)}` : firstPerson(threadMessage.content),
           metadata: marked(threadMessage.metadata),
           thread: { type: 'issue', ref: issueNumber }, msgType: threadMessage.msgType,
         })
-        : await inThread(threadText, { type: 'issue', ref: issueNumber }, marked(metadata));
+        : await inThread(threadText, { type: 'issue', ref: issueNumber }, marked(metadata)));
     } catch (err) {
       log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
       failed.push(`the thread message (${err.message})`);
     }
     if (message?.id != null) {
       await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id]).catch(() => {});
+    }
+    // A newer word from the bot in the request's discussion retires the
+    // suggested replies on its older messages there (homeroom-bot-voice.js),
+    // as a newer word in its own chat does.
+    if (message?.id != null && !messageSentBefore) {
+      await require('./homeroom-bot-voice').retireThreadSuggestions(pool, {
+        appId: app.id, thread: { type: 'issue', ref: issueNumber }, keepMessageId: Number(message.id), deps: { ws },
+      });
+    }
+    // #6535: the card that says its plan is building also overtakes an
+    // overlap question the bot asked in this thread before it.
+    if (message?.id != null && threadMessage?.metadata?.specShare?.botNote === 'building') {
+      await retireOverlapOffers(pool, {
+        appId: app.id, issueNumber, beforeMessageId: Number(message.id), deps: { ws },
+      });
     }
   }
   // A system message fires no mention notifications of its own, so the
@@ -2027,7 +2501,9 @@ async function post({
   // the proposal's own discussion, the reply goes there too, as a message
   // from the bot (#3288).
   let proposalMessage = null;
-  if (proposalSessionId) {
+  // #6229: the change's page is the request's, so the request's copy above
+  // is the whole post. Only a change with no request gets the second one.
+  if (proposalSessionId && !onRequestPage) {
     try {
       proposalMessage = await inThread(own, { type: 'session', ref: Number(proposalSessionId) }, null, 'system');
     } catch (err) {
@@ -2055,7 +2531,12 @@ async function post({
     ...(tagged.length ? { mentioned: tagged, notified } : {}),
     ...(proposalSessionId ? { proposalThread: !!proposalMessage } : {}),
   });
-  return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!(message || proposalMessage) };
+  return {
+    postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!(message || proposalMessage),
+    // #6311: the note's message in the request's thread, for an offer that
+    // was written before it (a platform verdict's copy offer).
+    messageId: (message || (proposalOnly ? proposalMessage : null))?.id ?? null,
+  };
 }
 
 /**
@@ -2084,6 +2565,13 @@ async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, 
   if (postId && message?.id) {
     await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id])
       .catch(() => {});
+  }
+  if (message?.id) {
+    // A newer word from the bot in the change's discussion retires the
+    // suggested replies on its older messages there.
+    await require('./homeroom-bot-voice').retireThreadSuggestions(pool, {
+      appId: app.id, thread: { type: 'session', ref: Number(sessionId) }, keepMessageId: Number(message.id), deps: { ws },
+    });
   }
   log.info('homeroom-bot', 'Posted on its proposal', { app: app.slug, issueNumber, kind, sessionId, thread: !!message });
   return { postId, thread: !!message };
@@ -3052,6 +3540,10 @@ function specForBuild(specMd, startingScreens = null) {
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
   clock = null, starter = null,
+  // #6209: the spec is the plan the person who asked for the change approved
+  // before the build (Build it). The build makes the feature it plans; the
+  // plan itself is already on the request and is never committed as a doc.
+  approvedPlan = false,
   // L2: the turn's runner writes the app's check command (buildTurnRunner
   // `checksGate`), so the prompt says how to run it.
   appChecks = false,
@@ -3086,6 +3578,17 @@ function buildPrompt({
       '',
       '==== END SPEC ====',
       '',
+      ...(approvedPlan ? [
+        'This SPEC is the plan the person who asked for the change approved before this build. Build the feature it',
+        'describes. The plan is already shown on the request: do not add it to the repository as a document, and do',
+        'not make it the change.',
+      ] : [
+        // #6209 (4 Nov 2026, evan): a plan asked for first is posted as a
+        // plan card, and the build makes the feature it plans. The plan is
+        // never the change, whatever the plan asked the bot to write.
+        'The plan is already shown on the request: do not add it to the repository as a document, and do not make',
+        'it the change.',
+      ]),
       'Build what the SPEC describes. The plan above is the triage\'s short version of it: where they differ,',
       'the spec wins. The repository\'s own agent instructions still come first.',
     ]
@@ -3532,6 +4035,9 @@ async function draftSpec({
   // Newcomer run six: the early first look's screen, to start the main
   // screen from (specPrompt `earlyLook`), or null.
   earlyLook = null,
+  // #6269: whether a card that failed its checks gets one repair turn. Only
+  // a plan built to be shown (buildAndPropose `planOnly`) pays for one.
+  repairCard = false,
 }) {
   const { worker, sessions, agentTurn } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -3557,7 +4063,12 @@ async function draftSpec({
   // A durable build's spec turn is a durable step (services/durable-turn.js):
   // a restart's next attempt follows it instead of writing the plan again.
   const steps = durableSteps.of(deps);
-  const dispatch = (extra = {}) => sessions.runCodexAttemptLoop({
+  // One dispatcher per prompt, bound here. A durable step calls its dispatch
+  // as dispatch(extra, { budgetMs }) (durable-turn.js), so a second parameter
+  // is the clock, never a prompt: taking it as one sent every production
+  // spec turn "[object Object]" on 4 Nov 2026 while the inert context, which
+  // passes one argument, kept the tests green.
+  const dispatchWith = (promptText) => (extra = {}) => sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
       turnModel: model, resumeThreadId: null, mode: 'scout',
       telemetryComponent,
@@ -3573,7 +4084,7 @@ async function draftSpec({
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'scout',
-        prompt,
+        prompt: promptText,
         model,
         commitMsg: '',
         resumeSessionId: null,
@@ -3595,7 +4106,7 @@ async function draftSpec({
       pool, session, mode: 'scout', budgetMs, deps,
       stop: () => stopOnClock(pool, worker, session.id),
       onProgress: teeProgress(progress, watching),
-      dispatch,
+      dispatch: dispatchWith(prompt),
     });
     routed = turn.routed;
     stopped = turn.stopped || !!turn.stoppedBy;
@@ -3607,7 +4118,7 @@ async function draftSpec({
   await noteSavedScreens(pool, {
     screens: specHtml.htmlSpecsEnabledFor(config, session.app_slug) ? savedScreens : null, session, startedAt, model, ok: !!(routed && !routed.error), stopped,
   });
-  const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
+  let costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
   // The turn's ledger rows, for its tokens in a cost breakdown (stage-costs.js).
   const turn = routed?.logicalTurnId ? { turnId: routed.logicalTurnId } : {};
   if (stopped) return { ok: false, stopped: true, costUsd, ...turn, error: `the spec ran past its time limit${progress.suffix()}` };
@@ -3623,16 +4134,66 @@ async function draftSpec({
     return { ...read, costUsd, ...turn };
   }
   if (read.joined) log.info('homeroom-bot', 'The spec came in several messages; kept it whole', { sessionId: session.id });
-  const { specMd } = read;
-  const version = await publishSpec({ pool, sessions, session, specMd, specHtml: read.specHtml, model });
+  let { specMd } = read;
+  let specHtmlText = read.specHtml || null;
+  // #6269: a plan whose card text breaks a rule gets ONE repair turn, shown
+  // only the problems and asked for only the failing part; a failed or
+  // stopped repair keeps the spec as it was and never fails the plan.
+  if (repairCard && specHtmlText) {
+    const before = specHtml.specCard(specHtmlText);
+    if (before && before.problems.length) {
+      const repairBudgetMs = Math.max(0, Math.min(2 * 60 * 1000, budgetMs - (Date.now() - startedAt)));
+      let reply = '';
+      if (repairBudgetMs > 0) {
+        try {
+          const repairTurn = await durableTurn.runTurn(steps, 'card_repair', {
+            pool, session, mode: 'scout', budgetMs: repairBudgetMs, deps,
+            stop: () => stopOnClock(pool, worker, session.id),
+            onProgress: teeProgress(progress, watching),
+            dispatch: dispatchWith(cardRepairPrompt({
+              title: specHeading(specMd) || '', summary: before.summary, lines: before.lines, problems: before.problems,
+            })),
+          });
+          const out = repairTurn?.routed;
+          if (Number.isFinite(out?.estimatedCostUsd)) costUsd = (costUsd || 0) + out.estimatedCostUsd;
+          if (out && !out.error && !repairTurn.stopped && !repairTurn.stoppedBy) reply = String(out.result?.lastResultText || '');
+        } catch (err) {
+          durableSteps.rethrowStop(err, 'card repair turn');
+          log.warn('homeroom-bot', 'A plan card\'s repair turn failed; its card keeps what passed', { sessionId: session.id, err: err.message });
+        }
+      }
+      let repaired = false;
+      if (reply.trim()) {
+        const fixed = specHtml.applyCardRepair(specHtmlText, reply);
+        if (fixed.changed) {
+          const rebuilt = specHtml.normalizeSpecOutput(fixed.html);
+          if (rebuilt.html) {
+            const rebuiltMd = withoutEmDashes(specFromTitle(String(rebuilt.markdown || '').trim()));
+            if (rebuiltMd) specMd = rebuiltMd;
+            specHtmlText = withoutEmDashes(rebuilt.html);
+            repaired = true;
+          }
+        }
+      }
+      const after = specHtml.specCard(specHtmlText) || before;
+      const used = !after.problems.length ? 'whole' : after.lineProblems.length ? 'fallback' : 'lines';
+      await events.record(pool, {
+        type: events.EVENT_TYPES.BOT_PLAN_CARD,
+        appId: session.app_id ?? null,
+        sessionId: session.id,
+        metadata: { kinds: before.kinds, repaired, kindsAfter: after.kinds, used, model: model || null },
+      });
+    }
+  }
+  const version = await publishSpec({ pool, sessions, session, specMd, specHtml: specHtmlText, model });
   // How much its drawn screens hold (spec-html.js screenStats): measured,
   // never cut.
-  const screens = read.specHtml ? specHtml.screenStats(read.specHtml) : [];
+  const screens = specHtmlText ? specHtml.screenStats(specHtmlText) : [];
   // #4387: the HTML too, for a first version's first look (buildAndPropose
   // `onFirstLook`); never carried onto a result (specOut).
   return {
     ok: true, specMd, version, costUsd, ...turn, ...(screens.length ? { screens } : {}),
-    ...(read.specHtml ? { specHtml: read.specHtml } : {}),
+    ...(specHtmlText ? { specHtml: specHtmlText } : {}),
   };
 }
 
@@ -4237,6 +4798,14 @@ async function buildAndPropose({
   // its merge deploys over its container, so it waits for the project to
   // run. Every other build passes none.
   setupCheck = null,
+  // #6389: the change this build makes its own version of, so its branch
+  // starts from that change's head (session-lifecycle.ensureSessionBranch)
+  // and the request's page links them.
+  fromSessionId = null,
+  // #6423: the change touching the same files this one is built on top of
+  // (`{ sessionId, branch }`): its branch is this change's base, and it
+  // waits for it the way a stacked import does.
+  stackOn = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle } = deps;
   // Each step below is a durable step of the build's work item when the
@@ -4274,14 +4843,21 @@ async function buildAndPropose({
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless,
                                   created_from_issue_number, linked_issues, issue_link_seeded,
                                   session_title, agent_backend, agent_provider, agent_model,
-                                  agent_reasoning_effort, workflow_owner, workflow_step)
+                                  agent_reasoning_effort, workflow_owner, workflow_step, rebuilt_from_session_id,
+                                  waits_for_session_id, imported_pr_base_ref)
        VALUES ($1, $2, NULL, 'active', FALSE, $3,
                CASE WHEN $3::int IS NULL THEN '{}'::int[] ELSE ARRAY[$3::int] END, TRUE, $4,
-               'codex_openrouter', 'openrouter', $5, $6, $7, $8)
+               'codex_openrouter', 'openrouter', $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [app.id, bot.id, propose ? issueNumber : null,
         sessionTitle || `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
-        model, config.openrouterDefaultCodexReasoning || 'low', owner, step],
+        model, config.openrouterDefaultCodexReasoning || 'low', owner, step,
+        Number.isInteger(Number(fromSessionId)) && Number(fromSessionId) > 0 ? Number(fromSessionId) : null,
+        // #6423: a build on top of another change waits for it, as a
+        // stacked import does (rules/pr-base.ts). Never rebuilt_from: that
+        // would close the parent as an "own version".
+        Number.isInteger(Number(stackOn?.sessionId)) && Number(stackOn.sessionId) > 0 ? Number(stackOn.sessionId) : null,
+        stackOn?.branch ? String(stackOn.branch).slice(0, 255) : null],
     );
     openedRow = rows[0];
     return { id: Number(openedRow.id) };
@@ -4503,6 +5079,7 @@ async function buildAndPropose({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs, firstVersion, starter, guidance: specGuidance, onProgress,
       locale, onScreen, tweaks: buildTweaks, earlyLook: typeof startingLook === 'string' ? startingLook : null,
+      repairCard: !!planOnly,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
       ...(harnessOf ? {
         harness: harnessOf(specModel || model, config),
@@ -4635,6 +5212,7 @@ async function buildAndPropose({
   const turnStartedMs = Number(await steps.once('build_clock', async () => Date.now())) || Date.now();
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? specForBuild(spec.specMd, startingScreens) : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
+    approvedPlan: checkedFirst,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
     reviewed: Boolean(review?.reviewer),
     locale,
@@ -4810,9 +5388,28 @@ async function buildAndPropose({
     // not land (worker.js unpushedCommit: ahead > 0, push_ok=0). It was
     // recorded as "no change", which said the build had done nothing.
     const unpushed = result.pushOk === false && Number(result.ahead) > 0;
+    const pushFailure = result.pushFailure && typeof result.pushFailure === 'object' ? result.pushFailure : null;
+    const pushCode = result.pushFailed || pushFailure?.code || 'push_failed';
+    // #6267: a temporary refusal is not a failed build. Keep the session and
+    // its worker volume (the commit is recorded in session_workers), leave
+    // it paused, and wait to push: homeroom-bot.js finishWaitingPush sends
+    // this exact commit later, or a person's reply does, without building
+    // it again.
+    if (unpushed && pushFailure && pushFailure.permanent !== true) {
+      log.warn('homeroom-bot', 'A finished build waits for its upload', {
+        app: app.slug, issueNumber, sessionId: session.id, code: pushCode, sha: (result.sha || '').slice(0, 8),
+      });
+      steps.fence();
+      return {
+        ok: false, waitingToPush: true, sessionId: session.id,
+        branchName: session.branch_name || null, sha: result.sha || null,
+        error: `waiting to push: couldn't push the build's commit (${pushCode}, temporary)`,
+        ...specOut(), ...costsOut(),
+      };
+    }
     return {
-      ...(await fail(result.pushFailed
-        ? `couldn't push the build's commit (${result.pushFailed})`
+      ...(await fail(pushFailure
+        ? `couldn't push the build's commit (${pushCode}${pushFailure.permanent === true ? ', permanent' : ''})`
         : unpushed ? 'couldn\'t push the build\'s commit'
           : 'the build produced no change to propose')),
       costUsd,
@@ -4903,6 +5500,29 @@ async function buildAndPropose({
     };
   }
   if (setupReady) return { ...(await fail(setupReady.error)), setupFailed: true, costUsd, ...reviewOut };
+  // #6209: a build that came out as only written documents is unlinked from
+  // its request before the pull request is opened, so merging it cannot
+  // close the request as done. `created_from_issue_number` stays, so the
+  // change still shows on its request's page. Anything unreadable keeps the
+  // links, as every build had them before.
+  //
+  // 4 Nov 2026 (evan on #6209): never for a plan the person approved. After
+  // Build it, the plan stays a plan card and the build is a normal change
+  // that implements the feature it plans: it keeps its link to the request
+  // and its "I built this" wording. The document-only path stays for a build
+  // whose request really is a written document.
+  const docOnlyCheck = checkedFirst ? null : await steps.once('doc_only', async () => {
+    try {
+      return await unlinkDocOnlyBuild({ pool, github: deps.github, repo, session });
+    } catch (err) {
+      durableSteps.rethrowStop(err, 'doc-only check');
+      log.warn('homeroom-bot', 'Could not check whether the build adds only documents (keeping its links)', {
+        sessionId: session.id, err: err.message,
+      });
+      return { docOnly: false };
+    }
+  });
+  const docOnly = docOnlyCheck?.docOnly === true;
   // Named and described first: the route reads both as it opens the pull
   // request (#3518).
   await steps.once('prepared', async () => {
@@ -4953,7 +5573,7 @@ async function buildAndPropose({
   await step('proposed', { prNumber: promoted.body.prNumber || null });
   return {
     ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut(), ...reviewOut,
-    ...costsOut(), ...noChangeOut(), ...partialOut,
+    ...costsOut(), ...noChangeOut(), ...partialOut, docOnly,
   };
 }
 
@@ -5192,7 +5812,91 @@ async function reviewLanded({
   }
 }
 
+// #6209: a bot change that is only documents must not close the request it
+// plans for. Changes promoted before the build's own check are repaired
+// here: each session is read once per process, and one whose files are all
+// documents loses its linked requests and the `Closes` line in its open pull
+// request body. It stays on its request's page through
+// `created_from_issue_number`. A build from a plan its requester approved is
+// left alone (4 Nov 2026): it is the feature the plan describes, not a
+// document. Never throws.
+const docOnlyChecked = new Set();
+async function unlinkDocOnlyProposals(pool, deps = {}) {
+  const gh = deps.github;
+  if (!gh || typeof gh.compareRefs !== 'function') return { unlinked: 0 };
+  let rows = [];
+  try {
+    ({ rows } = await pool.query(
+      `SELECT cs.id, cs.linked_issues, cs.pr_number, cs.branch_name, cs.pr_linked_issues_applied, a.repo_url
+         FROM chat_sessions cs
+         JOIN users u ON u.id = cs.user_id
+         JOIN apps a ON a.id = cs.app_id
+        WHERE u.username = $1 AND u.is_synthetic = TRUE
+          AND cs.status = 'promoted' AND cs.pr_number IS NOT NULL
+          AND cardinality(cs.linked_issues) > 0
+          AND cs.built_from_session_id IS NULL
+        ORDER BY cs.id DESC
+        LIMIT 50`,
+      [BOT_USERNAME],
+    ));
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the bot changes to check for documents only', { err: err.message });
+    return { unlinked: 0 };
+  }
+  let unlinked = 0;
+  for (const row of rows) {
+    const id = Number(row.id);
+    if (docOnlyChecked.has(id)) continue;
+    const ref = repoRef.ownerRepo(row.repo_url);
+    if (!ref || !row.branch_name) { docOnlyChecked.add(id); continue; }
+    try {
+      const compared = await gh.compareRefs(ref.owner, ref.repo, `main...${row.branch_name}`);
+      docOnlyChecked.add(id);
+      if (!compared?.filesComplete || !isDocOnlyChange(compared.files)) continue;
+      // The row as updateLinkedIssues reads it; removal wins, and the PR body
+      // is patched from the association it recorded when the PR was opened.
+      const session = {
+        id, linked_issues: row.linked_issues, pr_number: row.pr_number, branch_name: row.branch_name,
+        pr_linked_issues_applied: row.pr_linked_issues_applied,
+      };
+      const out = await require('./proposal-update').updateLinkedIssues({
+        pool, gh, session, owner: ref.owner, repo: ref.repo, removeIssues: row.linked_issues,
+      });
+      if (out?.changed) unlinked += 1;
+      log.info('homeroom-bot', 'A bot change that adds only documents no longer links its request', {
+        sessionId: id, prNumber: row.pr_number, removed: out?.removedIssues || [],
+      });
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not check whether a bot change adds only documents (leaving it linked)', {
+        sessionId: id, err: err.message,
+      });
+    }
+  }
+  return { unlinked };
+}
+
+/**
+ * #6389: the two lines on the changes' threads once the bot's own version of
+ * somebody's change is proposed: on the original, that a version exists and
+ * the votes do not carry over; on the new one, who it was made from. Each
+ * names its change's own thread, as AGENTS.md requires.
+ */
+async function sayOwnVersionProposed(pool, { app, ws, originalId, originalNumber, newId, newNumber, author }) {
+  const send = (ws && ws.sendSystemMessage) || require('./ws').sendSystemMessage;
+  const from = author ? `@${author}'s change` : 'a person\'s change';
+  await send(pool, app.id,
+    `Homeroom bot made its own version of this change${newNumber ? `, change #${newNumber}` : ''}. Votes on this one do not carry over to it. This one closes if that one goes live.`,
+    'system', null, { type: 'session', ref: Number(originalId) }).catch(() => {});
+  await send(pool, app.id,
+    `Made from ${from}${originalNumber ? ` #${originalNumber}` : ''}. Votes on that one do not carry over.`,
+    'system', null, { type: 'session', ref: Number(newId) }).catch(() => {});
+}
+
 module.exports = {
+  FAILURE_KINDS,
+  THREAD_KINDS,
+  saidInThread,
+  replaceFailurePost,
   BOT_STOP_KEY,
   stopOnClock,
   botStopOf,
@@ -5213,6 +5917,15 @@ module.exports = {
   questionText,
   personText,
   personHomeroomText,
+  withdrawnHomeroomText,
+  personSuggestions,
+  goAheadCannotText,
+  canBuildPart,
+  saysGoAhead,
+  GO_AHEAD_REPLY_MAX_CHARS,
+  GO_AHEAD_LABEL,
+  SMALLER_STEP_LABEL,
+  NOT_NOW_LABEL,
   emptyText,
   proposalText,
   proposalHomeroomText,
@@ -5227,6 +5940,7 @@ module.exports = {
   heldText,
   heldKind,
   lastPostKind,
+  _updateRepeatedBuildFailure: updateRepeatedBuildFailure,
   proposalLink,
   tagsPoster,
   issuePoster,
@@ -5347,12 +6061,16 @@ module.exports = {
   specCard,
   planCommentText,
   PLAN_REPLY_HINT,
+  isDocOnlyChange,
+  unlinkDocOnlyBuild,
+  unlinkDocOnlyProposals,
   specBlocked,
   specFromTitle,
   blockedText,
   shareSpecVersion,
   notePlanRows,
   PLAN_ROW_ENDINGS,
+  retireOverlapOffers,
   postSpecOnProposal,
   revisedSpecCommentText,
   postRevisedSpecComment,
@@ -5362,4 +6080,5 @@ module.exports = {
   publishSpec,
   specShaped,
   MAX_SPEC_COMMENT_CHARS,
+  sayOwnVersionProposed,
 };

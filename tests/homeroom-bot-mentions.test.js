@@ -180,9 +180,9 @@ test('who is tagged, and who can opt out, against the full PostgreSQL schema', {
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   const user = async (username, { synthetic = false, login = null } = {}) => (await pool.query(
     `INSERT INTO users (username, password, is_synthetic, github_login) VALUES ($1, 'x', $2, $3) RETURNING id, username`,

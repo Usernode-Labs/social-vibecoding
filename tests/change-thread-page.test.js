@@ -148,7 +148,8 @@ test('the shell draws a change page as the request page’s sheet, with Messages
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, change: true,
   });
   assert.match(html, /^<div class="dev-request dev-change platform-kb-column"><div id="gc-thread-back" class="dev-request-back"><\/div><section class="dev-request-sheet dc-lift dc-lift-session" aria-label="Change"><div id="gc-thread-bar" class="dev-request-bar"><\/div>/);
-  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-pin"><\/div><div id="gc-thread-messages"><\/div>/);
+  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-messages"><\/div>/);
+  assert.doesNotMatch(html, /gc-thread-pin/, 'a change page has no pin host any more (#6419)');
   // The bar is the chat foot's (1 November 2026), Messages' own classes kept.
   assert.match(html, /class="messages-composer messages-composer-thread chat-composer-bar platform-safe-bar"/);
   const request = renderComponent(SHELL, 'ThreadShell', {
@@ -158,46 +159,54 @@ test('the shell draws a change page as the request page’s sheet, with Messages
   assert.doesNotMatch(request, /gc-thread-pin/, 'a request page has no pin host');
 });
 
-// #5725: on a long change page the Votes card sat far above the conversation.
-// A second copy is drawn in a host at the top of the scroller, from the first
-// paint, and sticks there while the replies scroll under it. It is hidden
-// while the card at the top is on screen (evan: it should stick as you scroll
-// rather than only sit at the bottom).
-test('the Votes card repeats at the top of a change’s page and sticks while the top one is out of view', () => {
+// #6419 (replacing #5725's repeat): on a long change page the real Votes
+// and Testing card pair sticks under the sheet's header and shrinks to one
+// line each, and lets go at the end of the change's own content, above the
+// replies. There is no second Votes card any more.
+test('a change page’s gate pair sticks and shrinks instead of repeating', () => {
   const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
-  // The repeat portals into the shell's pin host, in its own class, and is
-  // drawn whether or not the top card is on screen: a reader who scrolled
-  // before it mounted still finds it. While the top card is on screen it is
-  // hidden, so a short page shows one card, not two.
-  assert.match(src, /\{pin \? createPortal\(\s*<div className="dev-change-gate-repeat" hidden=\{topInView\}>/);
-  assert.match(src, /<GateCard which="votes" g=\{v\.votes\} action=\{voteAction\} id=\{id\} repeat \/>/);
-  // The host is the scroller's own child and is what sticks: a wrapper
-  // inside a plain host would only travel the host's own height.
-  const css = read('public/css/app.css');
-  assert.match(css, /#gc-thread-pin \{ position: sticky; top: -4px; z-index: 10; \}/);
-  assert.match(css, /\.dev-change-gate-repeat\[hidden\] \{ display: none; \}/);
-  assert.match(css, /\.dev-change-gate-repeat \{[^}]*padding: 8px 16px 12px;[^}]*background-color: var\(--dc-sheet-solid\);[^}]*\}/);
-  // BOTH ends come from the card: the pin host through the scroller that
-  // holds it, and visibility through an observer with no root, which applies
-  // every clipping ancestor itself. Never a document-wide id: another pane's
-  // `#gc-thread-scroll` or `#gc-thread-pin` can win that lookup (#4640).
-  assert.match(src, /const scroller = card \? card\.closest<HTMLElement>\('#gc-thread-scroll'\) : null;/);
-  assert.match(src, /setPin\(scroller \? scroller\.querySelector\('#gc-thread-pin'\) : null\);/);
+  assert.doesNotMatch(src, /dev-change-gate-repeat|topInView|gc-thread-pin/);
+  assert.doesNotMatch(src, /repeat\?: boolean/);
+  // Only the change's own page holds the pair in `dev-change-root`, which is
+  // what asks it to stick; a change section on a request's page draws it as
+  // before. The caller stays one plain element either way.
+  assert.match(src, /<ChangeGates ref=\{pair\} id=\{id\} card=\{card\} v=\{v\} \/>/);
+  assert.match(src, /setStick\(!!pair\.current\?\.closest\('\.dev-change-root'\)\);/);
+  // The scroller comes from the mark itself, never by a document-wide id:
+  // another pane can hold the same id (#4640).
+  assert.match(src, /const scroller = el \? el\.closest<HTMLElement>\('#gc-thread-scroll'\) : null;/);
+  assert.match(src, /\{ root: scroller, rootMargin: '4px 0px 0px 0px' \}/);
   assert.doesNotMatch(src, /document\.getElementById\('gc-thread-(scroll|pin)'\)/);
-  assert.doesNotMatch(src, /host\('gc-thread-pin'\)/);
-  assert.match(src, /const io = new IntersectionObserver\(\(entries\) => \{[\s\S]*?setTopInView\(entry\.isIntersecting\);[\s\S]*?\}\);/);
-  assert.doesNotMatch(src, /root: document\.getElementById/);
-  // A scroll listener only hears the scroller it was attached to; the
-  // fallback for a browser without the observer hears every one.
-  assert.match(src, /document\.addEventListener\('scroll', schedule, \{ capture: true, passive: true \}\);/);
-  assert.match(src, /const \[topInView, setTopInView\] = useState\(true\);/);
-  // A repeat is the same card in every state, including with no action.
-  assert.match(src, /repeat\?: boolean/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-change-pair\[data-stick\] \{ position: sticky; top: -4px; z-index: 10; \}/);
+  assert.match(css, /\.dev-change-pair\[data-stuck\] \{[^}]*background-color: var\(--dc-sheet-solid\);[^}]*\}/);
+  assert.match(css, /\.dev-change-pair\[data-stuck\] :is\([^)]*\.dev-change-bar[^)]*\) \{ display: none; \}/);
+  assert.doesNotMatch(css, /\.dev-change-gate-repeat|#gc-thread-pin/);
+});
+
+test('the gate pair paints plain and decides in the browser whether it sticks', () => {
+  const gate = (name, figure, tone) => ({
+    name, figure, tone, done: false, label: `x`, note: [], segments: [{ weight: 1, pct: 0, state: 'moving' }],
+  });
+  const v = {
+    votes: gate('Votes', 'Needs 1 more yes', 'ask'),
+    testing: gate('Testing', 'Checking it', 'muted'),
+  };
+  // Effects do not run under renderToStaticMarkup, so the first paint is the
+  // plain pair at full size; `data-stick` and the sentinel follow on mount.
+  const plain = renderComponent('frontend/src/features/dev-board/topic/change-head.tsx', 'ChangeGates', {
+    id: 7, card: {}, v,
+  });
+  assert.doesNotMatch(plain, /dev-change-pair-mark|data-stick/);
+  assert.match(plain, /^<div class="dev-change-pair">/);
+  assert.ok(plain.indexOf('data-change-gate="votes"') < plain.indexOf('data-change-gate="testing"'), 'Votes leads');
 });
 
 test('group-chat.js carries the change language from the mount to the shell and the transcript', () => {
   const src = read('public/js/group-chat.js');
-  assert.match(src, /const language = \['chat', 'request', 'change'\]\.includes\(opts\.language\) \? opts\.language : 'flat';/);
+  // #6440 adds a governance vote's page ('decision') as a fourth language;
+  // the change page's own wiring is unchanged.
+  assert.match(src, /const language = \['chat', 'request', 'change', 'decision'\]\.includes\(opts\.language\) \? opts\.language : 'flat';/);
   assert.match(src, /change: fill && language === 'change',/);
   assert.match(src, /if \(closed\) return;\n\s+if \(!st\.loaded\) GroupChat\.loadThreadHistory\(type, ref\);/,
     'an unshared change\'s thread is not read');
@@ -282,16 +291,17 @@ test('a moving bar is the lit ink, a finished one green with its check, and AGEN
   assert.match(read('AGENTS.md'), /A finished progress bar may be green \(`--state-ok`/);
 });
 
-// #5725: declared checks, votes-in-view and the tests find exactly one
-// `[data-change-gate="votes"]`, so the repeat names itself differently.
-test('a repeated gate card carries data-change-gate-repeat, never data-change-gate', () => {
+// #6419: the real Votes card is the only one, so `data-change-gate` always
+// names the card itself, and no declared check selects the stuck form (the
+// checks run on a page nobody scrolled).
+test('a gate card always carries its own data-change-gate, and nothing selects the stuck form', () => {
   const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
-  assert.match(src, /data-change-gate=\{repeat \? undefined : which\}/);
-  assert.match(src, /data-change-gate-repeat=\{repeat \? which : undefined\}/);
+  assert.match(src, /data-change-gate=\{which\}/);
   const dapp = JSON.parse(read('dapp.json'));
   const selectors = dapp.tests.map((t) => t.expectSelector).filter(Boolean);
   assert.ok(selectors.some((s) => String(s).includes('[data-change-gate=')), 'declared checks read the attribute');
-  assert.ok(!selectors.some((s) => String(s).includes('data-change-gate-repeat')), 'none selects the repeat');
+  assert.ok(!selectors.some((s) => String(s).includes('data-change-gate-repeat') || String(s).includes('data-stuck')),
+    'none selects the stuck form');
 });
 
 // Issue #5712: at phone width the Testing card's buttons took the auto
@@ -307,15 +317,12 @@ test('on a phone the gate card stacks its buttons under its line', () => {
   assert.match(phone, /\.dev-change-gate-head \{ flex-wrap: wrap; row-gap: 2px; \}/);
   assert.match(phone, /\.dev-change-gate-name \{ min-width: 0; \}/);
   assert.match(phone, /\.dev-change-gate-figure \{ white-space: nowrap; \}/);
-  // #5991: on a phone the pinned repeat keeps only the heading, the figure,
-  // the bar and the vote, and sits a little tighter; its note stays on the
-  // full card in the thread.
-  assert.match(phone, /\.dev-change-gate-repeat \{ padding: 4px 12px 8px; \}/);
-  assert.match(phone, /\.dev-change-gate-repeat \.dev-change-gate \{ padding: 10px 12px; \}/);
-  assert.match(phone, /\.dev-change-gate-repeat \.dev-change-gate-act \{ margin-top: 8px; \}/);
-  assert.match(phone, /\.dev-change-gate-repeat \.dev-change-gate-note \{ display: none; \}/);
+  // #6419: while stuck the pair keeps one line on a phone too, the Vote
+  // button back on the card's own line rather than under it.
+  assert.match(phone, /\.dev-change-pair\[data-stuck\] \.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\) auto; padding: 8px 12px; \}/);
+  assert.match(phone, /\.dev-change-pair\[data-stuck\] \.dev-change-gate-act \{ order: 0; margin-top: 0; flex-wrap: nowrap; \}/);
   const wider = css.replace(/@media \(max-width: 640px\) \{[\s\S]*?\n\}/g, '');
-  assert.doesNotMatch(wider, /\.dev-change-gate-repeat \.dev-change-gate-note/, 'desktop keeps the note in the pin');
+  assert.doesNotMatch(wider, /\.dev-change-pair\[data-stuck\] \.dev-change-gate-act/, 'the phone-only part of the stuck card lives in the phone block');
   // Desktop keeps today's two columns: one for the text, one for the buttons.
   assert.match(css, /\.dev-change-gate \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto;/);
 });
@@ -328,6 +335,18 @@ test('on a phone the gate card stacks its buttons under its line', () => {
 const view = (status) => ({
   number: 81, category: null, author: 'snait', at: null, time: '10:03', timeTitle: '',
   via: 'via Claude Code', status, votes: {}, testing: {}, shots: null, thanks: false,
+});
+
+test('the change bar publishes the page\'s pill and its ⋯ key for the column beside the bot page (#6431)', () => {
+  const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  // The bar itself does not change: the column's heading draws the pill and
+  // the rows beside the bot page, and this is what tells it which.
+  assert.match(src, /usePanelHead\(\{ kind: 'change', pill: v\.status \|\| null, menuKey: menuKey \|\| null \}\);/);
+  // A change's number was a button in its own bar, and that bar goes beside
+  // the bot page; the column's heading still links "Change #N" to its page.
+  const store = read('frontend/src/features/side-panel/head-store.ts');
+  assert.match(store, /if \(!isEmbeddedPanel\(\)\) return undefined;/,
+    'and nothing is published where the page keeps its own bar');
 });
 
 test('the header shows the status pill beside "Change #N", in the card\'s capsule form', () => {
@@ -391,4 +410,98 @@ test('the title button opens details the way the ⋯ row does, on the row\'s gat
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-thread-name-link:hover \{ text-decoration: underline;/);
   assert.match(css, /\.messages-thread-name-link:focus-visible \{ outline: 2px solid var\(--accent\);/);
+});
+
+// 3 Nov 2026 (#6237): a change's number comes from GitHub's own pull request
+// counter on a project whose code is on GitHub, so it reads "PR 6230" and a
+// "#6230" can only be a request. On Homeroom's git host requests and changes
+// share one counter, so both keep "#N".
+const CHANGES = 'frontend/src/features/dev-board/topic/thread-changes.tsx';
+const githubChange = {
+  type: 'change', id: 91, number: 6230, title: 'Put plans in their own column',
+  status: 'promoted', state: 'review', replies: 0, by: 'homeroom_bot', closes: [6231],
+};
+const withRepo = (repoUrl, run) => {
+  const wasWindow = globalThis.window;
+  globalThis.window = {
+    AppView: { appData: { slug: 'homeroom', repo_url: repoUrl } },
+    addEventListener() {}, removeEventListener() {},
+  };
+  try { return run(); } finally {
+    if (wasWindow === undefined) delete globalThis.window; else globalThis.window = wasWindow;
+  }
+};
+
+test('#6237: on a GitHub-hosted project a change reads "PR 6230", and "#" is a request', () => {
+  const html = withRepo('https://github.com/Usernode-Labs/social-vibecoding', () =>
+    renderComponent(CHANGES, 'ChangeLine', { item: githubChange, view: null }));
+  assert.match(html, /Change · PR 6230 · homeroom_bot/, 'the change\'s heading');
+  assert.doesNotMatch(html, /Change #6230/, 'never the request form');
+  assert.equal(message('project:topic.thread.page.changeNumberedPr', { number: 6230, by: 'homeroom_bot' }),
+    'Change · PR 6230 · homeroom_bot');
+
+  // The elsewhere card: its own change reads PR, the request it lives on
+  // keeps '#', so the two numbers can never be mistaken for one another.
+  const elsewhere = withRepo('https://github.com/Usernode-Labs/social-vibecoding', () =>
+    renderComponent(CHANGES, 'Elsewhere', { list: [{ id: 91, number: 6223, on: 6207, request: 6210 }] }));
+  assert.match(elsewhere, /Change PR 6223/);
+  assert.match(elsewhere, /says it closes this/);
+  assert.match(elsewhere, /href="#app\/homeroom\/dev\/issues\/6207"/);
+  assert.doesNotMatch(elsewhere, /Change #6223/);
+  assert.equal(message('project:topic.thread.page.claimsPr', { number: 6223 }),
+    '<0>Change PR 6223</0> says it closes this');
+
+  // The tag on a reply written on the change.
+  assert.equal(message('project:topic.request.stream.onChangePr', { number: 6230 }), 'on change PR 6230');
+  assert.match(read(TRANSCRIPT),
+    /projectChangesOnGithub\(\) \? 'project:topic\.request\.stream\.onChangePr' : 'project:topic\.request\.stream\.onChange'/);
+});
+
+test('#6237: on Homeroom\'s git host, requests and changes share one counter and keep "#N"', () => {
+  const html = withRepo('https://git.onhomeroom.com/apps/social-vibecoding', () =>
+    renderComponent(CHANGES, 'ChangeLine', { item: githubChange, view: null }));
+  assert.match(html, /Change #6230 · homeroom_bot/);
+  assert.doesNotMatch(html, /PR 6230/);
+  const elsewhere = withRepo('https://git.onhomeroom.com/apps/social-vibecoding', () =>
+    renderComponent(CHANGES, 'Elsewhere', { list: [{ id: 91, number: 6223, on: 6207, request: 6210 }] }));
+  assert.match(elsewhere, /Change #6223/);
+  assert.match(elsewhere, /says it closes this/);
+});
+
+test('#6406: a change built from v1, with a v2 on the request, says so on its plan line', () => {
+  const plan = {
+    key: 'spec:5:2', title: 'Design: Recipe home, warm and visual', version: 2, by: 'evan', at: null, time: '',
+    timeTitle: '', read: { kind: 'shared', sessionId: 5, version: 2, previewTitle: 'Design: Recipe home, warm and visual' },
+  };
+  const html = withRepo('https://git.onhomeroom.com/apps/recipe-bot', () =>
+    renderComponent(CHANGES, 'PlanLine', {
+      plan,
+      builtFrom: { sessionId: 5, version: 1, newer: { version: 2, author: 'evan', sameAuthor: true } },
+    }));
+  assert.match(html, /Built from v1 of the plan/);
+  assert.match(html, /v2 is newer/);
+  assert.ok(html.indexOf('Built from v1') < html.indexOf('v2 is newer'), 'the note follows the plan line');
+  assert.match(html, /data-thread-change-newer-plan="2"/);
+
+  const other = withRepo('https://git.onhomeroom.com/apps/recipe-bot', () =>
+    renderComponent(CHANGES, 'PlanLine', {
+      plan,
+      builtFrom: { sessionId: 5, version: 1, newer: { version: 2, author: 'ana', sameAuthor: false } },
+    }));
+  assert.match(other, /ana(?:&#x27;|')s plan is newer/);
+
+  const none = withRepo('https://git.onhomeroom.com/apps/recipe-bot', () =>
+    renderComponent(CHANGES, 'PlanLine', { plan, builtFrom: { sessionId: 5, version: 1 } }));
+  assert.match(none, /Built from v1 of the plan/);
+  assert.doesNotMatch(none, /is newer/);
+});
+
+test('#6237: a stored line\'s "PR #N" is shown as "PR N"; requests keep "#N"', () => {
+  const { plainPrRefs, changesOnGithub } = loadTsx('frontend/src/lib/change-ref.ts');
+  assert.equal(plainPrRefs('The staging preview for PR #4368 is ready…'), 'The staging preview for PR 4368 is ready…');
+  assert.equal(plainPrRefs('Included in #4368'), 'Included in #4368', 'a request keeps its #');
+  assert.equal(plainPrRefs('Two: PR #1 and PR #22'), 'Two: PR 1 and PR 22');
+  assert.equal(changesOnGithub('https://github.com/a/b'), true);
+  assert.equal(changesOnGithub('https://git.onhomeroom.com/apps/b'), false);
+  assert.equal(changesOnGithub(null), false, 'no address counts as not GitHub');
 });

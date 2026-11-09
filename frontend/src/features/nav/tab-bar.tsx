@@ -68,7 +68,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ChatIcon,
   CogIcon,
-  CompassIcon,
   HomeIcon,
   HomeroomBotIcon,
   Squares2X2Icon,
@@ -93,7 +92,6 @@ import { navStore } from './nav-store.js';
 import { runningAppStore } from './parked-store.js';
 import { SideApps } from './side-apps';
 import { RAIL_COMMUNITIES, RailCommunities, useRailCommunities } from './rail-communities';
-import { RailConversations } from './rail-conversations';
 import { RailPinned } from './rail-pinned';
 import { useSidebarRows } from './sidebar-rows';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
@@ -131,11 +129,8 @@ import { schedulePress, type PendingPress } from './tab-press';
  * own projects"). Inside a project, "Workshop" is the build tab beside its
  * hub — the one place that word is shown now.
  *
- * Discover is a compass (v3, 18 Oct 2026), on every bar alike, where it
- * kept the magnifier the app menu's `#switcher-row-discover` drew: it is
- * where you go to find something new, and a magnifier says "search", which
- * the sidebar's Communities heading and the inbox already offer. One glyph
- * a destination, whatever bar it is on.
+ * Discover was a compass tab until One Home (#6361) retired its screen:
+ * Home's Communities to join is the directory now.
  */
 // `label` is a message id (frontend/locales/en/core.json), read when the bar
 // renders so the words follow the language on screen.
@@ -151,15 +146,14 @@ const TABS = [
     href: '/',
     Icon: HomeIcon,
   },
-  // The rail's alone: app.css hides it on the phone's bar (see above).
-  { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: CompassIcon },
-  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   // #6019: the Homeroom bot's chat, which left the Messages list for a tab
   // of its own. `#homeroom-bot` opens it (app.js; `#ai`, its old address,
   // still does), and the tab is lit while it is the
   // conversation on screen (the nav store's `bot`). Its glyph is the bot's
-  // own picture in line, not a sparkle (29 Oct 2026).
+  // own picture in line, not a sparkle (29 Oct 2026). One Home (#6361) put
+  // it above Messages, on the phone's bar and the desktop sidebar alike.
   { key: 'ai' as const, label: 'core:tabs.ai', href: '#homeroom-bot', Icon: HomeroomBotIcon },
+  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
   // "You", signed in or not (N7 of the 19 Oct polish board); the accessible
   // name adds whose account it is — see tabLabel below.
@@ -352,11 +346,17 @@ function VotesBadge({ count }: { count: number }) {
  * The TEXT is React's, and it is empty at zero, so the prerender and the
  * first client render agree on an empty hidden span.
  */
-function TabBadge({ count, id = 'platform-tabs-badge', label }: {
+function TabBadge({ count, id = 'platform-tabs-badge', label, title }: {
   count: number;
   id?: string;
   /** The accessible name, already in the language on screen. */
   label: string;
+  /**
+   * What the number counts, shown as a tooltip on the number itself (#6194).
+   * Only above zero, as the badge is: at zero it is hidden and the prerender
+   * (count 0) ships no title, so the first client render still agrees.
+   */
+  title?: string;
 }) {
   const ref = useRef<HTMLSpanElement | null>(null);
   useHiddenClass(ref, count <= 0);
@@ -366,6 +366,7 @@ function TabBadge({ count, id = 'platform-tabs-badge', label }: {
       id={id}
       className="platform-tab-badge hidden"
       aria-label={label}
+      title={count > 0 ? title : undefined}
     >
       {count > 0 ? (count > 99 ? '99+' : String(count)) : ''}
     </span>
@@ -889,9 +890,10 @@ function openCommunitiesPage(): void {
  * The Duo's side strip is left alone: its Apps section is the bar's first
  * child, which this list would not reach.
  */
+// ONE HOME (#6361): four tabs, in the markup's own order now; the
+// Communities tab (#platform-tab-workshop) is drawn on neither bar.
 export const PHONE_TAB_ORDER = [
   'platform-tab-home',
-  'platform-tab-workshop',
   'platform-tab-ai',
   'platform-tab-messages',
   'platform-tab-me',
@@ -1235,7 +1237,14 @@ export function PlatformTabs() {
             */}
             {key === 'messages' ? <TabBadge count={messages} label={t('core:tabs.unreadConversations')} /> : null}
             {/* #6019: the bot's chat has something unread. */}
-            {key === 'ai' ? <TabBadge count={ai} id="platform-tabs-ai-badge" label={t('core:tabs.unreadAi')} /> : null}
+            {key === 'ai' ? (
+              <TabBadge
+                count={ai}
+                id="platform-tabs-ai-badge"
+                label={t('core:tabs.unreadAi')}
+                title={t('core:tabs.unreadAiTitle', { count: ai })}
+              />
+            ) : null}
             {/*
                 THE CHANNELS' COUNT, on Communities. A project's channel lives
                 on its hub now, not in Messages, so "something was said in a
@@ -1273,11 +1282,10 @@ export function PlatformTabs() {
             </span>
           ) : null}
         </a>,
-        // v3 (18 Oct 2026): THE CONVERSATIONS, nested under Messages while
-        // its screen is up in the sidebar of rows (./rail-conversations.tsx).
-        // The element is there at every width and on every screen, empty
-        // when shut, so the bar's sibling order is one order.
-        key === 'messages' ? <RailConversations key="conversations" /> : null,
+        // Messages nested its five most recent conversations under its row
+        // here (v3, 18 Oct 2026) until the sidebar kept its nesting for
+        // communities alone (7 Nov 2026): the inbox draws its own list
+        // beside an open conversation.
       ])}
       {/*
           SETTINGS, ONE CLICK FROM THE RAIL'S FOOT (#3120). A cog beside the

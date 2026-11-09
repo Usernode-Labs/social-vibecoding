@@ -136,6 +136,8 @@ export interface DevBoardBridge {
   publishVoteSaved(sessionId: number, vote: 'yes' | 'no' | null, epoch: number | null): void;
   /** Run four (13 Oct 2026): the next page of change `sessionId` opens at its Votes card (topic/votes-in-view.ts). */
   showVotes(sessionId: number): void;
+  /** #6439: the next request's page opens at its vote to close it (topic/votes-in-view.ts). */
+  showClose(closeId: number): void;
   publishViewMode(mode: string): void;
   publishWorkshopGroup(mode: string): void;
   /** #3700: the invite link a project's page was opened from (App._followInvite). */
@@ -410,6 +412,8 @@ export const devBoardBridge: DevBoardBridge = {
 
   // A door that sends someone to vote: the change's page opens at its Votes card.
   showVotes: (sessionId: number) => askVotesInView(sessionId),
+  // #6439: a door to a vote to close a request: the request's page opens at it.
+  showClose: (closeId: number) => askVotesInView(`close:${Number(closeId)}`),
 
   publishViewMode,
   publishWorkshopGroup,

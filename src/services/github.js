@@ -1293,8 +1293,11 @@ function _setCreatePrRetryDelaysForTests(delays) {
 // note at the call below for why the default is not safe there.
 async function createPR(owner, repo, {
   branch, title, body, head, headRepo, maintainerCanModify, draft,
+  // The branch it merges into: main unless the change is built on top of
+  // another open change (#6423, a stacked change's imported_pr_base_ref).
+  base = 'main',
 }) {
-  if (onGitHost(owner)) return nativePulls().create(owner, repo, { branch, head, title, body, draft });
+  if (onGitHost(owner)) return nativePulls().create(owner, repo, { branch, head, title, body, draft, base });
   require('./code-host-write').requireCodeHostWrite('github.createPR');
   const octokit = await getOctokit(owner);
   const headRef = head || branch;
@@ -1324,7 +1327,7 @@ async function createPR(owner, repo, {
           ? { maintainer_can_modify: maintainerCanModify }
           : {}),
         ...(typeof draft === 'boolean' ? { draft } : {}),
-        base: 'main',
+        base: base || 'main',
       }));
       break;
     } catch (err) {
@@ -2051,6 +2054,7 @@ module.exports = {
   fetchPublicIssue,
   fetchIssueComments,
   clipIssueComments,
+  ISSUE_COMMENTS_MAX,
   refreshPublicIssues,
   truncateIssueBodies,
   listActionsSecrets,

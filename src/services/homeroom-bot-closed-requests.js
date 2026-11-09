@@ -209,7 +209,7 @@ async function tellDoneElsewhere(pool, { appId, numbers, deps = {}, strict = fal
     );
     if (!bot) return 0;
     const dm = deps.dm || require('./homeroom-bot-dm');
-    const tray = deps.tray || require('./homeroom-bot-tray');
+    const tray = deps.workChanged || require('./bot-work-changed');
     for (const row of rows) {
       const n = Number(row.issue_number);
       const sent = await dm.sendDm(pool, {
@@ -275,6 +275,7 @@ async function recordClosed(pool, { appId, numbers }) {
   const list = numbersOf(numbers);
   if (!pool || !(Number(appId) > 0) || !list.length) return;
   await pool.query(RECORD_CLOSED_SQL, [Number(appId), list]);
+  await require('./work-state').touched(pool, list.map((n) => ({ appId: Number(appId), issueNumber: n })));
 }
 
 // The bot's lane hears a slot came free: the project is refreshed soon (a
@@ -295,6 +296,34 @@ function wakeFor(appId, deps) {
  */
 // `tellStrict` (default: as `strict`): whether a requester's DM that fails
 // fails the call, for a caller whose retry would gate something else on it.
+/**
+ * #6159: closed requests finish their private threads. `how` is 'merged'
+ * when a change that went in closed them (issue-close-watcher.js), else
+ * 'closed'. A request the bot's own merged change shipped is skipped: its
+ * live line finishes them (homeroom-bot-dm.js noteProposalMerged). Never
+ * throws.
+ */
+async function finishThreadsFor(pool, { appId, numbers, how = 'closed', deps = {} }) {
+  try {
+    const { rows: [app] = [] } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [appId]);
+    if (!app) return;
+    const dm = deps.dm || require('./homeroom-bot-dm');
+    for (const issueNumber of numbers) {
+      if (how === 'merged') {
+        const { rows: built } = await pool.query(
+          `SELECT 1 FROM homeroom_bot_runs r JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+            WHERE r.app_id = $1 AND r.issue_number = $2 AND cs.status = 'merged' LIMIT 1`,
+          [appId, issueNumber],
+        );
+        if (built.length) continue;
+      }
+      await dm.finishRequestThreads(pool, { app, issueNumber, how, deps });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-closed-requests', 'Could not finish the private threads of closed requests', { appId, err: err.message });
+  }
+}
+
 async function noteRequestsClosed(pool, { appId, closed, strict = false, tellStrict = strict, deps = {} } = {}) {
   const numbers = numbersOf(closed);
   if (!pool || !(Number(appId) > 0) || !numbers.length) return { withdrawn: [] };
@@ -317,6 +346,9 @@ async function noteRequestsClosed(pool, { appId, closed, strict = false, tellStr
     // 16 Oct 2026 (V4): whoever asked the bot for one of them hears it was
     // done another way, when somebody else's merged change shipped it.
     if (deps.tellDoneElsewhere !== false) await tellDoneElsewhere(pool, { appId: Number(appId), numbers, deps, strict: tellStrict });
+    // #6159: the private threads about them, or filed as them, are done.
+    // Best effort: a thread left open never fails the close.
+    await finishThreadsFor(pool, { appId: Number(appId), numbers, how: deps.closedHow || 'closed', deps });
     return { withdrawn };
   } catch (err) {
     if (strict) throw err;
@@ -398,7 +430,10 @@ async function closeRequestRows(pool, { appId, appSlug, repoUrl, openNumbers, de
   if (!pool || !(Number(appId) > 0) || !repo || !Array.isArray(openNumbers)) return { closed: [] };
   try {
     // A request back on the open list is open again (CLEAR_REOPENED_SQL).
-    if (numbers.length) await pool.query(CLEAR_REOPENED_SQL, [Number(appId), numbers]);
+    if (numbers.length) {
+      await pool.query(CLEAR_REOPENED_SQL, [Number(appId), numbers]);
+      await require('./work-state').touched(pool, numbers.map((n) => ({ appId: Number(appId), issueNumber: Number(n) })));
+    }
     const { rows: candidates } = await pool.query(OPEN_TRACKED_SQL, [Number(appId), numbers, RECONCILE_LIMIT]);
     const isClosed = deps.isClosed || githubClosed(repo, deps);
     const confirmed = [];
@@ -441,7 +476,7 @@ async function announceClosed(pool, { repo, appId, appSlug, closed, watcher, dep
     log.warn('homeroom-bot-closed-requests', 'Cache bust / broadcast after closing request rows failed', { appId, err: err.message });
   }
   try {
-    const tray = deps.tray || require('./homeroom-bot-tray');
+    const tray = deps.workChanged || require('./bot-work-changed');
     const { rows } = await pool.query(
       'SELECT DISTINCT user_id FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = ANY($2::int[])',
       [appId, closed],

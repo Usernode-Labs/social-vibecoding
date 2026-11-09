@@ -139,8 +139,9 @@ function llmGrantsRoutes(config) {
 
   // Create / re-activate a grant (the consent dialog's Allow button).
   // Upsert keyed on (app, user): re-granting after a revoke reuses the
-  // row, keeping usage history.
-  router.post('/api/me/llm-grants', async (req, res) => {
+  // row, keeping usage history. Only the Homeroom page itself may write one,
+  // as for the revoke below.
+  router.post('/api/me/llm-grants', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const { appSlug, dailyCapCents, allowByok } = req.body || {};
     if (!appSlug || typeof appSlug !== 'string') {

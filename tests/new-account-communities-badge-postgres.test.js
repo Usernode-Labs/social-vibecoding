@@ -20,7 +20,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -45,9 +44,9 @@ test('the Communities tab\'s badge against the full PostgreSQL schema', { timeou
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
-  await pool.query(schema);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
 
   const communities = require('../src/services/communities');
   const overview = require('../src/routes/workshop-overview');
@@ -86,8 +85,11 @@ test('the Communities tab\'s badge against the full PostgreSQL schema', { timeou
     // Read back: the AFTER INSERT trigger sets community_id after RETURNING.
     return (await pool.query('SELECT * FROM apps WHERE id = $1', [rows[0].id])).rows[0];
   }
+  // #6402: a change is owed only once its checks passed, so these fixtures
+  // are ready changes. This test is about the tab's badge, not the check.
   const promote = async (a, author, title) => (await pool.query(
-    `INSERT INTO chat_sessions (app_id, user_id, status, pr_title) VALUES ($1, $2, 'promoted', $3) RETURNING id`,
+    `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, check_state)
+     VALUES ($1, $2, 'promoted', $3, 'passing') RETURNING id`,
     [a.id, author.id, title])).rows[0].id;
   const decide = async (a, author, title) => (await pool.query(
     `INSERT INTO issues (app_id, title, created_by, kind) VALUES ($1, $2, $3, 'rename') RETURNING id`,

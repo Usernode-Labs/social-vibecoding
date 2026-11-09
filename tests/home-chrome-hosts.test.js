@@ -359,9 +359,13 @@ test('nothing on the home screen is an innerHTML host any more', () => {
   // empty <section> left for a module to find by id and fill.
   const island = read('frontend/src/features/home/index.tsx');
   for (const tag of ['<AppGrid />', '<AppsMore />', '<WidgetStrip />',
-    '<DiscoverSection />', '<ChallengesSection />']) {
+    '<PinnedCommunities />', '<ChallengesSection />', '<HomeJoin />']) {
     assert.ok(island.includes(tag), `the island mounts ${tag}`);
   }
+  // One Home (#6361): Discover's lane and the continue card left Home; its
+  // Communities to join is the directory now.
+  assert.ok(!island.includes('<DiscoverSection />'), 'no Discover lane on Home');
+  assert.ok(!island.includes('<ContinueCard />'), 'no continue card on Home');
   // Create is no host of its own: it is #app-list's trailing tile, rendered by
   // AppGrid from the grid model (tests/home-create-tile.test.js).
   assert.ok(!island.includes('<CreateSection />'), 'the Create section is retired');
@@ -392,12 +396,16 @@ test('the panel sections publish through a store, on one paint', () => {
 
   const state = JSON.parse(JSON.stringify(store.get()));
   assert.equal(state.painted, true, 'Home.render() paints the panels too');
-  assert.equal(state.discover.title, 'Discover');
+  // One Home (#6361): the registry's `discover` marker builds nothing now,
+  // as `create` does not: Home draws no Discover lane.
+  assert.equal('discover' in state, false, 'no discover block in the panels model');
   assert.equal(state.challenges, null, 'a block the registry does not carry is absent');
   // The server's registry still lists `create` (an older cached shell renders
   // its section from it), but the panels no longer build it: Create is the
   // grid's trailing tile, and it arrives on the grid model in the same paint.
   assert.equal('create' in state, false, 'no create block in the panels model');
   const grid = JSON.parse(JSON.stringify(sandbox.gridStore.get()));
-  assert.equal(grid.create.enabled, false, 'no App.user quota in this harness');
+  assert.ok(grid.create && typeof grid.create === 'object',
+    '#6522: the grid carries its trailing New project tile again');
+  assert.equal(typeof grid.create.enabled, 'boolean', 'the view is a real create view, not a placeholder');
 });

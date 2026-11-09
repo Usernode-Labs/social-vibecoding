@@ -202,8 +202,9 @@ test('people, rows with buttons and rows with no project never fold', () => {
 test('All stays the archive: nothing folds there', () => {
   assert.match(SHEET_SRC, /const groupedUnread = tab === 'unread' && !olderShown;/);
   // #5580: a project's stories fold first (one request's news is one card),
-  // then what is left folds by kind.
-  assert.match(SHEET_SRC, /if \(group\.appId != null\) group\.entries = foldRepeats\(foldStories\(group\.entries\), t\);/);
+  // #6441: the requests that went live close together are one row next, so
+  // the fold by kind cannot split them; then what is left folds by kind.
+  assert.match(SHEET_SRC, /if \(group\.appId != null\) group\.entries = foldRepeats\(foldLive\(foldStories\(group\.entries\), t\), t\);/);
 });
 
 test('opening a folded row opens the newest and reads them all', async () => {
@@ -243,11 +244,78 @@ test('clearing a folded row clears every member', async () => {
 // ── two lines, and the whole phone ──────────────────────────────────────
 
 test('a subject runs to two lines before it is cut', () => {
-  assert.match(SHEET_SRC, /<span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words">/);
+  // #6506: the unread subject is the strong one; a read subject is the same
+  // shape in regular weight and the softer ink.
+  assert.match(SHEET_SRC, /'block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words'/);
+  assert.match(SHEET_SRC, /'block text-sm font-normal text-zinc-700 dark:text-zinc-300 line-clamp-2 break-words'/);
 });
 
 test('on a phone the sheet is the screen\'s height, not two thirds', () => {
   assert.doesNotMatch(APP_CSS, /66dvh/);
   assert.match(APP_CSS, /\.platform-sheet-adopted#notifications-sheet \{\s*height: calc\(100dvh - env\(safe-area-inset-top, 0px\)/);
   assert.match(APP_CSS, /height: calc\(100dvh - env\(safe-area-inset-top, 0px\) - 0\.75rem\);/);
+});
+
+// ── #6441: "went live" is one row ───────────────────────────────────────
+
+const liveRow = (id, minutesAgo, overrides = {}) => ({
+  ...view(id, overrides),
+  kind: 'build_live',
+  label: message('notifications:row.bot.label.live'),
+  segments: [{ t: 'strong', v: `Request ${id}` }],
+  storyKey: `issue:${id}`,
+  storyRef: { number: 100 + id, title: `Request ${id}` },
+  createdAtMs: Date.now() - minutesAgo * MIN,
+  ...overrides,
+});
+
+test('three requests that went live within an hour are one row with three items', () => {
+  const html = renderSheet({ list: [liveRow(1, 2), liveRow(2, 4), liveRow(3, 6)] });
+  // One row where the newest stood, standing for all three.
+  assert.match(html, /data-notif-id="1"/);
+  assert.doesNotMatch(html, /data-notif-id="2"|data-notif-id="3"/, 'the other two are inside it');
+  // Its subject says how many, and each request is a line of its own.
+  assert.ok(html.includes('3 of your requests went live'));
+  assert.match(html, /data-notif-live-item="1"[^>]*>#101 · Request 1</);
+  assert.match(html, /data-notif-live-item="2"[^>]*>#102 · Request 2</);
+  assert.match(html, /data-notif-live-item="3"[^>]*>#103 · Request 3</);
+  // Still the app's own word for it on the kind line.
+  assert.ok(html.includes('Live'));
+  // The label carries the number, so no count pill says it twice.
+  assert.doesNotMatch(html, /aria-label="3 notifications"/);
+});
+
+test('a "went live" two hours older stays a row of its own', () => {
+  const html = renderSheet({ list: [liveRow(1, 2), liveRow(2, 4), liveRow(4, 150)] });
+  // The two close together are one row...
+  assert.equal((html.match(/2 of your requests went live/g) || []).length, 1);
+  // ...and the older one is not in it.
+  assert.match(html, /data-notif-id="4"/);
+  assert.doesNotMatch(html, /data-notif-live-item="4"/);
+});
+
+test('another project\'s "went live" is not folded in', () => {
+  const html = renderSheet({
+    list: [liveRow(1, 2), liveRow(2, 4), liveRow(5, 3, { appId: 6, appLine: 'Tasks' })],
+  });
+  assert.equal((html.match(/2 of your requests went live/g) || []).length, 1, 'two in Notes fold');
+  // ...and the other project's live row is a row of its own in its own group.
+  assert.match(html, /data-notif-app-group="a:6"[\s\S]*data-notif-id="5"/);
+});
+
+test('a "went live" inside a request\'s own story card is not folded out of it', () => {
+  // One request's news (a mention, then its going live) is that request's
+  // card (#5580): folding the live line again would hide the story.
+  const mention = (id, minutesAgo) => view(id, {
+    kind: 'issue_mention', label: 'Mentioned you', storyKey: 'issue:9',
+    storyRef: { number: 109, title: 'Request 9' }, createdAtMs: Date.now() - minutesAgo * MIN,
+  });
+  const html = renderSheet({
+    list: [
+      mention(1, 1), mention(2, 2),
+      liveRow(3, 3, { storyKey: 'issue:9', storyRef: { number: 109, title: 'Request 9' } }),
+    ],
+  });
+  assert.equal((html.match(/of your requests went live/g) || []).length, 0, 'no live fold here');
+  assert.doesNotMatch(html, /data-notif-live-item/);
 });

@@ -68,16 +68,32 @@ const READS = Object.freeze(['ready', 'question', 'person', 'done', 'reading', '
 
 // A track's state, as the roll-up counts it. `active` states are work the
 // batch still holds its raise for.
+// The roll-up's bucket of each stage of a request's work state
+// (services/work-state.js), as its track carries it (bucketOf).
 const BUCKET_OF = Object.freeze({
-  live: 'live', done_elsewhere: 'live', going_live: 'live',
-  vote: 'ready',
-  checks: 'checks',
+  live: 'live', going_live: 'live',
+  up_for_vote: 'ready',
+  checking: 'checks',
   building: 'building', planning: 'building',
-  queued: 'waiting', held: 'waiting', waiting: 'waiting',
+  reading: 'waiting', waiting_for_you: 'waiting',
   stopped: 'stopped', closed: 'stopped',
 });
 const BUCKETS = Object.freeze(['live', 'ready', 'checks', 'building', 'waiting', 'stopped']);
-const ACTIVE_STATES = new Set(['queued', 'planning', 'building', 'checks', 'held']);
+// The stages that hold a batch open: the bot is still at it.
+const ACTIVE_STAGES = new Set(['reading', 'planning', 'building', 'checking']);
+// A request ready to build, waiting its turn or a limit (work-state.js READY).
+const READY_LINES = new Set(['queued', 'held_builds', 'held_waiting']);
+// The card's own word for work under way, by stage.
+const UNDERWAY_WHY = Object.freeze({ building: 'building', checking: 'checks', up_for_vote: 'vote', going_live: 'going_live' });
+
+/** Pure: a track's roll-up bucket. Done by somebody else's change counts as live; held for a limit, as waiting. */
+function bucketOf(track) {
+  const work = track?.work;
+  if (!work) return 'waiting';
+  if (work.stage === 'closed' && track.doneBy) return 'live';
+  if (work.stage === 'building' && READY_LINES.has(work.line?.code)) return 'waiting';
+  return BUCKET_OF[work.stage] || 'waiting';
+}
 
 function botModule(deps) { return deps.botSvc || require('./homeroom-bot'); }
 function mayorModule(deps) { return deps.mayor || require('./homeroom-bot-mayor'); }
@@ -120,23 +136,33 @@ function numbersOf(list) {
  * build), `closed` for a request closed since (left out of a batch).
  */
 function readOf({ track = null, run = null, queued = false, personAt = null, now = Date.now() } = {}) {
-  const s = track?.state || null;
+  const work = track?.work || null;
+  const s = work?.stage || null;
+  const code = work?.line?.code || null;
+  if (s === 'closed' && track.doneBy) return { read: 'done', note: null, why: 'live' };
   if (s === 'closed') return { read: 'done', closed: true, note: null, why: null };
-  if (s === 'live' || s === 'done_elsewhere') return { read: 'done', note: null, why: 'live' };
-  if (s === 'building' || s === 'checks' || s === 'vote' || s === 'going_live') return { read: 'underway', note: null, why: s };
-  if (s === 'queued' && track.step === 'build') return { read: 'underway', note: null, why: 'build_queued' };
-  if (s === 'queued' || s === 'planning') return { read: 'reading', note: null, why: null };
-  if (s === 'waiting' && track.why === 'plan') return { read: 'ready', note: null, why: 'plan' };
-  if (s === 'waiting' && track.why === 'question') {
+  if (s === 'live') return { read: 'done', note: null, why: 'live' };
+  // Held for a limit: read and ready, waiting for room (on hold for the
+  // week's building time is the allowance's).
+  if (track?.held?.limit) return { read: 'ready', note: null, why: track.held.limit === 'allowance' ? 'allowance' : 'held' };
+  if (s === 'building' && code === 'queued') return { read: 'underway', note: null, why: 'build_queued' };
+  if (UNDERWAY_WHY[s]) return { read: 'underway', note: null, why: UNDERWAY_WHY[s] };
+  if (s === 'reading' || s === 'planning') return { read: 'reading', note: null, why: null };
+  if (s === 'waiting_for_you' && work.why === 'plan') return { read: 'ready', note: null, why: 'plan' };
+  if (s === 'waiting_for_you' && work.why === 'question') {
     return { read: 'question', note: run?.verdict === 'question' && run.question ? clip(run.question, NOTE_CHARS) : null, why: null };
   }
-  if (s === 'held') return { read: 'ready', note: null, why: track.why === 'allowance' ? 'allowance' : 'held' };
   if (queued) return { read: 'reading', note: null, why: null };
   const at = toMs(run?.created_at);
   const fresh = !!run && at > 0 && now - at <= FRESH_DAYS * 24 * 3600 * 1000 && !(toMs(personAt) > at);
   if (fresh) {
     if (run.verdict === 'ready') return { read: 'ready', note: null, why: null };
     if (run.verdict === 'question') return { read: 'question', note: run.question ? clip(run.question, NOTE_CHARS) : null, why: null };
+    // #6306: a request the triage found already done is done, not a decision
+    // for the group: it counts with the finished ones and offers a close.
+    if (run.verdict === 'person' && run.already_done === true) {
+      return { read: 'done', note: run.reason ? clip(run.reason, NOTE_CHARS) : null, why: 'works' };
+    }
     if (run.verdict === 'person') return { read: 'person', note: run.reason ? clip(run.reason, NOTE_CHARS) : null, why: null };
     if (run.verdict === 'empty') return { read: 'done', note: run.reason ? clip(run.reason, NOTE_CHARS) : null, why: 'empty' };
   }
@@ -176,10 +202,9 @@ function rollupOf(numbers, tracks) {
   let active = 0;
   for (const n of numbers || []) {
     const track = tracks instanceof Map ? tracks.get(Number(n)) : null;
-    const state = track?.state || 'queued';
-    const bucket = BUCKET_OF[state] || 'waiting';
+    const bucket = bucketOf(track);
     counts[bucket] += 1;
-    if (ACTIVE_STATES.has(state)) active += 1;
+    if (!track?.work || ACTIVE_STAGES.has(track.work.stage)) active += 1;
     progress.push({ number: Number(n), state: bucket, ...(track?.title ? { title: clip(track.title, TITLE_CHARS) } : {}) });
   }
   return { counts: { ...counts, total: progress.length }, progress, active };
@@ -287,8 +312,10 @@ const TITLES_SQL = `
                   (SELECT i.created_by FROM issues i WHERE i.app_id = $1 AND i.github_issue_number = x.n
                     ORDER BY i.id LIMIT 1)) AS requester_id
     FROM unnest($2::int[]) AS x(n)`;
+// #6306: `already_done` rides along so a person verdict that found the ask
+// already there reads as done, not as a decision for the group.
 const RUNS_SQL = `
-  SELECT DISTINCT ON (r.issue_number) r.issue_number, r.id, r.verdict, r.question, r.reason, r.created_at
+  SELECT DISTINCT ON (r.issue_number) r.issue_number, r.id, r.verdict, r.question, r.reason, r.already_done, r.created_at
     FROM homeroom_bot_runs r
    WHERE r.app_id = $1 AND r.issue_number = ANY($2::int[]) AND r.mode = 'live'
      AND r.verdict IN ('ready', 'question', 'person', 'empty')

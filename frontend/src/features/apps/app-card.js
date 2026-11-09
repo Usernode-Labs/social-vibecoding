@@ -89,7 +89,15 @@ export function iconTileFor(app) {
 // chips a record earns, renderAppPillsHtml turns that decision into the string
 // the launcher grid and the app view still splice in. One decision, two
 // renderers — the same shape the notifications rows landed in.
-export function appPillsFor(app) {
+// A "New" chip's window (#5928 item 9): an app CREATED within this many days.
+// The same fortnight as Discover's New filter (browse.js NEW_WINDOW_DAYS, which
+// cannot be imported here without a cycle; a test holds the two equal).
+export const NEW_PILL_DAYS = 14;
+
+// `opts.newBadge` asks for the "New" chip, which Discover's rows want (a
+// directory is where "new" means something) and Home's tiles do not: your own
+// project is not news to you for a fortnight. `opts.now` is for the tests.
+export function appPillsFor(app, opts = {}) {
   const openPrs = parseInt(app.open_prs || 0);
   const activeSessions = parseInt(app.active_sessions || 0);
   const openIssues = parseInt(app.open_issues || 0);
@@ -126,6 +134,20 @@ export function appPillsFor(app) {
       label: PlatformI18n.t('discover:pill.issues', { count: openIssues }),
       tip: PlatformI18n.t('discover:pill.issuesTip', { count: openIssues }),
     });
+  }
+  // #5928 item 9: a trust signal on a directory row. The quietest chip, after
+  // anything that asks for attention, so a brand-new app with nothing going on
+  // still says one true thing about itself.
+  if (opts.newBadge && app.created_at) {
+    const created = new Date(app.created_at).getTime();
+    const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+    if (!Number.isNaN(created) && now - created <= NEW_PILL_DAYS * 24 * 60 * 60 * 1000) {
+      chipDefs.push({
+        cls: 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400',
+        label: PlatformI18n.t('discover:pill.new'),
+        tip: PlatformI18n.t('discover:pill.newTip', { count: NEW_PILL_DAYS }),
+      });
+    }
   }
   // Visibility chip for non-default settings. View-private dominates (it
   // implies collab-private); collab-private alone reads as "invite-only
@@ -180,7 +202,7 @@ export function renderAppPillsHtml(app) {
 }
 
 export const AppCard = {
-  iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor,
+  iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor, NEW_PILL_DAYS,
 };
 
 // Published for the legacy half of the split. Both in-bundle consumers

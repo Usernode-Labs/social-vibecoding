@@ -12,7 +12,7 @@
 // challenges tab joined the screen — one selection, shared with that tab, so
 // the standings and the challenge list can never describe different weeks.
 // This module subscribes to it and keeps only what is genuinely
-// standings-specific: the disclaimer line, the table, pagination and the
+// standings-specific: the disclaimer line, the whole-board table and the
 // per-row drill-down. (`disclaimer` / `status` / `has_ended` live on the
 // `event` object inside GET /api/v4/leaderboard, NOT on /season-events/:id,
 // which is why the disclaimer stays here rather than in the shared hero.)
@@ -25,7 +25,7 @@
 //
 // No isAdmin gate: this is a public read, reachable by anyone, signed in
 // or not. Everything below _renderShell is unchanged by the merge — the
-// module still owns #tc-lb-body / #tc-lb-drill and its own event/page
+// module still owns #tc-lb-body / #tc-lb-drill and its own event/loading
 // state (deliberately NOT routed through Leaderboard._cache).
 //
 // Every fetch here hits the public /api/v4 group (src/routes/topochain/
@@ -71,13 +71,17 @@ const TopochainLeaderboard = {
 
   // Unsubscribe handle from TopochainEventContext.onChange.
   _unsub: null,
-  _page: 1,
-  _perPage: 25,
+  // The whole board loads in one go, `_perPage` rows at a time. `_maxPages`
+  // is a safety cap against a runaway `total_pages`; `_loadSeq` marks the
+  // newest walk so a previous one's late pages are dropped.
+  _perPage: 100,
+  _maxPages: 50,
+  _loadSeq: 0,
 
   // #3887: podium-excluded users are hidden by default and shown grayed-out
-  // when this is true (the chip above the table). Session-sticky like
-  // _page — close() deliberately keeps it so a re-open paints the same
-  // choice — and reset only by a full page load.
+  // when this is true (the chip above the table). Session-sticky like the
+  // event choice — close() deliberately keeps it so a re-open paints the
+  // same choice — and reset only by a full page load.
   _showNonPodium: false,
 
   // Last successful /leaderboard payload: { event, leaderboard } + meta.
@@ -168,7 +172,6 @@ const TopochainLeaderboard = {
     if (window.TopochainEventContext?.onChange) {
       TopochainLeaderboard._unsub = TopochainEventContext.onChange(() => {
         if (!TopochainLeaderboard._open) return;
-        TopochainLeaderboard._page = 1;
         TopochainLeaderboard._drillRow = null;
         TopochainLeaderboard._challengeCounts = { total: 0, done: null };
         TopochainLeaderboard.loadLeaderboard();
@@ -214,6 +217,10 @@ const TopochainLeaderboard = {
   // ── Data loading ─────────────────────────────────────────────────────
 
   async loadLeaderboard() {
+    // Every call starts a new walk over the whole board. Bumping the token
+    // first means an older walk still in flight can never append its rows to
+    // this one's list — an event switch or a chip flip drops it mid-way.
+    const seq = (TopochainLeaderboard._loadSeq += 1);
     TopochainLeaderboard._loading = true;
     TopochainLeaderboard._error = null;
     TopochainLeaderboard._empty = null;
@@ -224,7 +231,6 @@ const TopochainLeaderboard = {
     if (eventId != null) {
       params.set('season_event_id', String(eventId));
     }
-    params.set('page', String(TopochainLeaderboard._page));
     params.set('per_page', String(TopochainLeaderboard._perPage));
     // #3887: the chip's ask. The server filters by default, so the param
     // only goes out when the viewer chose to see the excluded rows.
@@ -232,25 +238,17 @@ const TopochainLeaderboard = {
       params.set('include_non_podium', '1');
     }
 
-    const { status, ok, data } = await TopochainLeaderboard.fetchJson(
-      `/api/v4/leaderboard?${params.toString()}`
-    );
-    if (!TopochainLeaderboard._open) return;
-    TopochainLeaderboard._loading = false;
+    const fetchPage = (page) => {
+      const p = new URLSearchParams(params);
+      p.set('page', String(page));
+      return TopochainLeaderboard.fetchJson(`/api/v4/leaderboard?${p.toString()}`);
+    };
 
-    if (ok && data?.success) {
-      TopochainLeaderboard._data = data.data;
-      TopochainLeaderboard._meta = data.meta || null;
-      // Learn the server-resolved event id (relevant the first time, when
-      // no season_event_id was requested) so the shared picker highlights
-      // it and pagination/drill-downs stay pinned to the same event. Fed
-      // back silently — a server resolution is not a user choice, so it
-      // must not clear the event bar's "nothing is running" caption nor
-      // re-notify us (and the challenges pane) into a reload loop.
-      if (data.data?.event?.id != null && window.TopochainEventContext?.select) {
-        TopochainEventContext.select(data.data.event.id, { silent: true });
-      }
-    } else {
+    const { status, ok, data } = await fetchPage(1);
+    if (!TopochainLeaderboard._open || seq !== TopochainLeaderboard._loadSeq) return;
+
+    if (!(ok && data?.success)) {
+      TopochainLeaderboard._loading = false;
       TopochainLeaderboard._data = null;
       TopochainLeaderboard._meta = null;
       if (status === 404) {
@@ -264,13 +262,53 @@ const TopochainLeaderboard = {
         TopochainLeaderboard._error = (data && data.error)
           || PlatformI18n.t('leaderboard:standings.loadFailed');
       }
+      TopochainLeaderboard._renderBody();
+      return;
     }
+
+    TopochainLeaderboard._data = data.data;
+    TopochainLeaderboard._meta = data.meta || null;
+    // Learn the server-resolved event id (relevant the first time, when
+    // no season_event_id was requested) so the shared picker highlights
+    // it and the drill-downs stay pinned to the same event. Fed
+    // back silently — a server resolution is not a user choice, so it
+    // must not clear the event bar's "nothing is running" caption nor
+    // re-notify us (and the challenges pane) into a reload loop.
+    if (data.data?.event?.id != null && window.TopochainEventContext?.select) {
+      TopochainEventContext.select(data.data.event.id, { silent: true });
+    }
+    // The table paints as soon as the first page is in; the rest of the
+    // board is appended under it as each page arrives.
     TopochainLeaderboard._renderBody();
     // The tally lands in a second pass so the table never waits on it. Read
     // the event id back through _eventId() rather than reusing the local
     // above: on the FIRST load that local is null and the id we want is the
     // one the server just resolved and fed into the picker silently.
     TopochainLeaderboard._loadChallengeCounts(TopochainLeaderboard._eventId());
+
+    const totalPages = Math.min(
+      Math.max(Number(data.meta?.total_pages) || 1, 1),
+      TopochainLeaderboard._maxPages,
+    );
+    for (let page = 2; page <= totalPages; page += 1) {
+      const next = await fetchPage(page);
+      if (!TopochainLeaderboard._open || seq !== TopochainLeaderboard._loadSeq) return;
+      if (!(next.ok && next.data?.success && Array.isArray(next.data.data?.leaderboard))) {
+        // A walk that breaks partway is an error, not a list that silently
+        // stops short of the board.
+        TopochainLeaderboard._loading = false;
+        TopochainLeaderboard._data = null;
+        TopochainLeaderboard._meta = null;
+        TopochainLeaderboard._error = (next.data && next.data.error)
+          || PlatformI18n.t('leaderboard:standings.loadFailed');
+        TopochainLeaderboard._renderBody();
+        return;
+      }
+      TopochainLeaderboard._data.leaderboard = TopochainLeaderboard._data.leaderboard
+        .concat(next.data.data.leaderboard);
+      TopochainLeaderboard._renderBody();
+    }
+    TopochainLeaderboard._loading = false;
   },
 
   // The selected event's challenge tally, for the cross-link above the table
@@ -311,8 +349,8 @@ const TopochainLeaderboard = {
   // ── Rendering ────────────────────────────────────────────────────────
 
   // Every branch below used to end in an `innerHTML` assignment plus a sweep
-  // that re-attached the row / pagination / cross-link listeners it had just
-  // destroyed. It builds a DESCRIPTOR now and pushes it into the store;
+  // that re-attached the row / cross-link listeners it had just destroyed. It
+  // builds a DESCRIPTOR now and pushes it into the store;
   // ./topochain-standings.tsx renders it and carries its own handlers, which
   // is why the three `addEventListener` sweeps and _wireChallengeLink are
   // gone. The BRANCHING is untouched — the states, their order and their copy
@@ -429,10 +467,10 @@ const TopochainLeaderboard = {
       };
     });
 
-    // #5275: the viewer's own place, pinned above the table so nobody pages
-    // through 25 rows to find themselves. The server sends it whichever page
-    // it falls on (`viewer_row`); a guest, a viewer with no score here, or a
-    // viewer excluded from the ranking gets none, since there is no rank to
+    // #5275: the viewer's own place, pinned above the table so nobody has to
+    // scroll the whole board to find themselves. The server sends it whichever
+    // page it falls on (`viewer_row`); a guest, a viewer with no score here, or
+    // a viewer excluded from the ranking gets none, since there is no rank to
     // show.
     const own = payload.viewer_row;
     const you = own && !own.is_non_podium && own.rank != null
@@ -442,15 +480,6 @@ const TopochainLeaderboard = {
         count: Math.round(Number(own.total_points) || 0),
       }
       : null;
-
-    const meta = TopochainLeaderboard._meta;
-    const pagination = meta ? {
-      page: meta.page,
-      totalPages: Math.max(meta.total_pages, 1),
-      total: meta.total,
-      prevDisabled: meta.page <= 1,
-      nextDisabled: meta.page >= meta.total_pages,
-    } : null;
 
     return {
       state: 'table',
@@ -462,7 +491,6 @@ const TopochainLeaderboard = {
       rows,
       you,
       nonPodiumToggle,
-      pagination,
     };
   },
 
@@ -526,7 +554,7 @@ const TopochainLeaderboard = {
   },
 
   // #5275: the pinned "You" line. Opens the viewer's row in place when it
-  // is on this page, else their details on their own under the table.
+  // is in the list, else their details on their own under the table.
   _openViewerRow() {
     const rows = TopochainLeaderboard._shownRows();
     const index = rows.findIndex((r) => r && r.is_viewer);
@@ -544,25 +572,12 @@ const TopochainLeaderboard = {
     TopochainLeaderboard._openDrill(own);
   },
 
-  _prevPage() {
-    if (TopochainLeaderboard._page > 1) {
-      TopochainLeaderboard._page -= 1;
-      TopochainLeaderboard.loadLeaderboard();
-    }
-  },
-
-  // #3887: the chip. Flipping changes which rows exist, so the table
-  // restarts at page 1 — the same reset an event switch does. The drill
-  // stays open like on a page turn; its rows are matched by identity, not
-  // by index, so it is not invalidated by the row set changing.
+  // #3887: the chip. Flipping changes which rows exist, so the whole board
+  // is fetched again — the same reload an event switch does. The drill stays
+  // open across it; its rows are matched by identity, not by index, so it is
+  // not invalidated by the row set changing.
   _toggleNonPodium() {
     TopochainLeaderboard._showNonPodium = !TopochainLeaderboard._showNonPodium;
-    TopochainLeaderboard._page = 1;
-    TopochainLeaderboard.loadLeaderboard();
-  },
-
-  _nextPage() {
-    TopochainLeaderboard._page += 1;
     TopochainLeaderboard.loadLeaderboard();
   },
 
@@ -783,8 +798,8 @@ const TopochainLeaderboard = {
     return {
       displayName: TopochainLeaderboard._rowName(row) || PlatformI18n.t('leaderboard:standings.anonymous'),
       // Where the details are drawn: under this row of the table, or (the
-      // viewer's own row opened from the pinned line while it is on another
-      // page) under the table.
+      // viewer's own row opened from the pinned line while the filter leaves
+      // it out of the list) under the table.
       index: index === -1 ? null : index,
       figures,
       walletAddress: row.wallet_address ? str(row.wallet_address) : null,

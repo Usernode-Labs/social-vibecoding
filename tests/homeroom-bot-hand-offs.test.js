@@ -30,6 +30,27 @@ test('the triage sends an approval-rule or visibility change to the sheet, as a 
   assert.doesNotMatch(read('src/prompts/homeroom-bot-triage.md'), /Who can see & change it/);
 });
 
+test('#6252: a go-ahead from the person the note named is decided in the read, and not asked for again', () => {
+  const bot = require('../src/services/homeroom-bot');
+  assert.equal(bot.goAheadNote(null), null);
+  assert.equal(bot.goAheadNote({}), null);
+  const note = bot.goAheadNote({ by: 'evan' });
+  assert.match(note, /^==== A GO-AHEAD FROM THEIR CHAT ====/);
+  assert.match(note, /@evan, who your last note on this request named, said to go ahead in their private chat with you just now\./);
+  assert.match(note, /is decided: judge the rest as usual\. Do not return `person` for it again\./);
+  assert.match(note, /Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still `person`, with `go_ahead` false; `reason` says what kind of change this is in plain words, that you do not build it yourself even with a go-ahead, and that a person has to build it \(for example with a coding agent\)\./);
+  assert.match(note, /It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it\./);
+  // #6430: the same go-ahead typed in the request's own discussion.
+  const inThread = bot.goAheadNote({ by: 'evan', where: 'thread' });
+  assert.match(inThread, /^==== A GO-AHEAD FROM THIS REQUEST'S DISCUSSION ====/);
+  assert.match(inThread, /said to go ahead in this request's discussion just now, in reply to your last note\. Their words are below in the discussion\./);
+  const decider = { requester: 'evan', members: 1, requesterDecides: true };
+  const withGoAhead = bot.triagePromptFor({ seed: 'SEED', issueNumber: 13, decider, goAhead: { by: 'evan' } });
+  assert.ok(withGoAhead.indexOf(note) > withGoAhead.indexOf(bot.deciderNote(decider)), 'after the decider note');
+  assert.equal(bot.triagePromptFor({ seed: 'SEED', issueNumber: 13 }), bot.triagePromptFor({ seed: 'SEED', issueNumber: 13, goAhead: null }),
+    'unchanged without a go-ahead, as the benchmark replays');
+});
+
 test('the DM chat and the thread replies say where those are set, and that it is not built', () => {
   const mayor = require('../src/services/homeroom-bot-mayor').systemPrompt({ username: 'ann' });
   assert.match(mayor, SHEET);
@@ -41,7 +62,7 @@ test('the DM chat and the thread replies say where those are set, and that it is
 
 test('"it already exists" says where to find it, in the words on screen', () => {
   const triage = read('src/prompts/homeroom-bot-triage.md');
-  assert.match(triage, /- `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its requester is offered a vote to close it\./);
+  assert.match(triage, /- `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its members are offered a vote to close it\./);
   const mayor = require('../src/services/homeroom-bot-mayor').systemPrompt({ username: 'ann' });
   assert.match(mayor, /When something they ask for already exists, say where they find it, in the words they see on screen: the\n {2}screen or tab and the button to tap\./);
   const voice = require('../src/services/homeroom-bot-voice').systemPrompt({ app: { name: 'Maps' }, place: { type: 'issue' }, tools: [] });

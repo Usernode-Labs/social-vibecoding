@@ -62,8 +62,10 @@ test('the list is the other items, oldest first, each named and placed in words'
   assert.deepEqual(JSON.parse(JSON.stringify(onChange[0].open)), { kind: 'issue', id: 7 });
   assert.deepEqual(onChange[0].folded, [], 'a request\'s replies are its own page, never folded');
 
-  const live = threadRows(payload([{ ...change, state: 'merged', replies: 1 }]), { type: 'request', id: 7 });
+  const live = threadRows(payload([{ ...change, state: 'merged', liveAt: '2026-11-03T10:00:00.000Z', replies: 1 }]), { type: 'request', id: 7 });
   assert.equal(live[0].facts.map(words).join(' · '), 'Change #8 · Live · 1 reply');
+  const goingLive = threadRows(payload([{ ...change, state: 'merged', liveAt: null, replies: 1 }]), { type: 'request', id: 7 });
+  assert.equal(goingLive[0].facts.map(words).join(' · '), 'Change #8 · Going live · 1 reply');
   const untitled = threadRows(payload([{ ...change, title: null, number: null, state: 'underway' }]), null);
   assert.equal(words(untitled[0].title), 'A change');
   assert.equal(untitled[0].facts.map(words).join(' · '), 'A change · Being made · 2 replies');
@@ -91,13 +93,35 @@ test('its first render is nothing; the thread is read in an effect', () => {
   const html = renderComponent(ITEMS, 'ThreadItems', { slug: 'p', number: 7, here: { type: 'request', id: 7 } });
   assert.equal(html, '');
   const src = read(ITEMS);
-  assert.match(src, /useEffect\(\(\) => \{\s+if \(!revision\) setData\(null\);/, 'cleared on a new page, kept while a move re-reads it');
+  assert.match(src, /const again = !!path && readPath\.current === path;\s+readPath\.current = path;\s+const ids = changeIds\.current;\s+if \(!again\) \{ setData\(null\); ids\.clear\(\); \}/, 'cleared on a new page, kept while a move re-reads it');
   assert.match(src, /`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/threads\/\$\{number\}\$\{asChange \? '\?as=change' : ''\}`/,
     'a change\'s page reads its own thread (a request may share its number)');
   assert.match(src, /`\/api\/threads\/\$\{threadId\}`/, 'a decision is read by its thread');
   assert.match(src, /fetch\(`\/api\/threads\/\$\{data\.thread\.id\}\/follow`, \{\s+method: 'PUT'/);
   assert.match(src, /import \{ GroupedList, ListRow, SectionHeader \} from '@\/components\/ui\/grouped-list';/,
     'drawn from the shell\'s own list');
+});
+
+// #6387: "still loading" and "nothing to show" stop looking the same, so the
+// request's page can hold the change section's place instead of drawing a
+// status card it will swap out. A failed read settles too.
+test('#6387 the thread read says when it is loading, and settles on success or failure', () => {
+  const src = read(ITEMS);
+  assert.match(src, /const loading = !!path && !data && settledPath !== path;/);
+  assert.match(src, /\.then\(\(json\) => \{\s+if \(!live\) return;\s+setSettledPath\(path\);/);
+  assert.match(src, /\.catch\(\(\) => \{\s+if \(!live\) return;\s+setSettledPath\(path\);/);
+  assert.match(src, /return \{ data, setData, reread: \(\) => setRevision\(\(n\) => n \+ 1\), loading \};/);
+  assert.match(src, /const again = !!path && readPath\.current === path;/, 'a re-read of the same path keeps data, so it is never loading');
+});
+
+// #6387: the Votes and Testing cards keep their place while a change's own
+// read lands, so they fill in rather than pushing the page down.
+test('#6387 a change\'s cards keep their place until its own read lands', () => {
+  const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
+  assert.match(src, /\) : view \? \(\s+<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>\s+\) : \([\s\S]*?<ChangeGatesSkeleton \/>/);
+  assert.match(src, /export function ChangeSectionSkeleton\(\): ReactNode/);
+  assert.match(src, /data-thread-change-skeleton=""/);
+  assert.match(src, /label=\{t\('project:topic\.thread\.page\.changeLoading'\)\}/);
 });
 
 test('the request, change and decision pages draw it', () => {
@@ -172,6 +196,14 @@ test('competing changes are one ballot; a pick is votes, cast only where they ch
   assert.equal(`${words(lines.what)}. ${words(lines.when)}`, 'Proposed: merge into #12. Happens in 24 hours unless someone objects');
   assert.equal(words(moveLines({ id: 2, kind: 'split', state: 'voting', input: { items: [{ type: 'request', number: 9 }] }, deadline: '', agreed: [], governanceId: 4 }).when),
     'Up for a vote, as someone objected');
+  // #6421: a change's question to a request's other askers, and who still
+  // has to answer.
+  const consent = moveLines({
+    id: 3, kind: 'merge', state: 'pending', input: { intoNumber: 6207 }, deadline: '', agreed: [], governanceId: null,
+    forChange: { id: 9, number: 6223 }, askOf: ['sam'], canAnswer: true,
+  });
+  assert.equal(words(consent.what), 'Move into #6207\'s thread? Change #6223 closes this request, and lives there.');
+  assert.equal(words(consent.when), 'Waiting for sam to answer');
   // A split may take anything but the lead.
   assert.deepEqual(splittable(payload([request, a])).map((i) => i.id), [51]);
 });
@@ -260,8 +292,70 @@ test('the bar\'s pill says where the request\'s work stands', () => {
   assert.equal(requestPill(layoutOf([{ ...close, target: 7 }]), null).key, 'close');
   assert.equal(requestPill(layoutOf([{ ...review, state: 'underway' }]), null).tone, 'progress');
   assert.equal(requestPill(layoutOf([]), 'building').key, 'building', 'the bot building it');
-  assert.equal(requestPill(layoutOf([{ ...review, state: 'merged' }]), null).tone, 'ok');
+  assert.equal(requestPill(layoutOf([]), 'ready_to_build').key, 'ready_to_build', 'ready, and waiting its turn');
+  assert.equal(requestPill(layoutOf([]), 'ready_to_build').spinner, undefined, 'a waiting build does not turn');
+  assert.equal(requestPill(layoutOf([]), 'ready_to_build').tone, 'neutral', 'the plain tone of Ready for a vote');
+  assert.equal(
+    requestPill(layoutOf([{ ...review, state: 'underway', ready: false }]), 'ready_to_build').key,
+    'building',
+    'a change underway still wins over a queued build',
+  );
+  assert.equal(requestPill(layoutOf([{ ...review, state: 'merged', liveAt: '2026-11-03T10:00:00.000Z' }]), null).tone, 'ok');
   assert.equal(message('project:topic.thread.pill.choosing'), 'Pick one');
+});
+
+test('a merged change that is not live yet says Going live, in the pill and in the list', () => {
+  const { requestPill, threadLayout, threadRows } = loadTsx(MODEL);
+  const here = { type: 'request', id: 7 };
+  const layoutOf = (items) => threadLayout(payload([request, ...items]), here);
+  const merged = { type: 'change', id: 51, number: 8, title: 'A', status: 'merged', state: 'merged', replies: 0, closes: [7] };
+  const live = { ...merged, id: 52, liveAt: '2026-11-03T10:00:00.000Z' };
+
+  const pending = requestPill(layoutOf([{ ...merged, liveAt: null }]), null, message);
+  assert.equal(pending.key, 'going_live');
+  assert.equal(pending.tone, 'progress');
+  assert.equal(pending.spinner, true);
+  assert.equal(pending.label, 'Going live…');
+
+  const done = requestPill(layoutOf([live]), null, message);
+  assert.equal(done.key, 'live');
+  assert.equal(done.tone, 'ok');
+  assert.equal(done.label, 'Live');
+
+  assert.equal(requestPill(layoutOf([live, { ...merged, id: 53, liveAt: null }]), null, message).key, 'going_live',
+    'an older live change does not hide a newer one still going live');
+  assert.equal(requestPill(layoutOf([live]), null).key, 'live', 'a change sent without a live time reads as live');
+
+  const rows = (items) => threadRows(payload([request, ...items]), here);
+  assert.ok(rows([{ ...merged, liveAt: null }])[0].facts.some((f) => f.id === 'project:topic.thread.state.goingLive'));
+  assert.ok(rows([live])[0].facts.some((f) => f.id === 'project:topic.thread.state.live'));
+  assert.equal(message('project:topic.thread.state.goingLive'), 'Going live');
+  assert.equal(message('project:topic.thread.pill.goingLive'), 'Going live…');
+});
+
+test('#6139: a change that finished building reads as ready, with no spinner, and only when all of them have', () => {
+  const { requestPill, threadLayout, threadRows } = loadTsx(MODEL);
+  const here = { type: 'request', id: 7 };
+  const layoutOf = (items) => threadLayout(payload([request, ...items]), here);
+  const building = { type: 'change', id: 51, number: 8, title: 'A', status: 'active', state: 'underway', ready: false, replies: 0, closes: [7] };
+  const ready = { ...building, id: 52, ready: true };
+
+  const pill = requestPill(layoutOf([ready]), null, message);
+  assert.equal(pill.key, 'ready');
+  assert.equal(pill.label, 'Ready for a vote');
+  assert.equal(pill.tone, 'neutral');
+  assert.ok(!pill.spinner, 'nothing is running');
+
+  const still = requestPill(layoutOf([ready, building]), null, message);
+  assert.equal(still.key, 'building', 'another change is still being built');
+  assert.equal(still.spinner, true);
+  assert.equal(requestPill(layoutOf([ready]), 'building').key, 'building', 'the bot is really building for it');
+  assert.equal(requestPill(layoutOf([ready]), 'queued').key, 'ready', 'a build that has not started says nothing');
+  assert.equal(requestPill(layoutOf([ready, { ...building, id: 53, status: 'promoted', state: 'review' }]), null).key, 'vote', 'one up for a vote still leads');
+
+  const [row] = threadRows(payload([ready]), null);
+  assert.ok(JSON.stringify(row.facts).includes('project:topic.thread.state.ready'), 'the list says it too');
+  assert.equal(message('project:topic.thread.state.ready'), 'Ready for a vote');
 });
 
 test('the request\'s changes are drawn from their own pages\' reads, and the ballot lives with them', () => {
@@ -269,7 +363,7 @@ test('the request\'s changes are drawn from their own pages\' reads, and the bal
   assert.match(src, /readChangeDetail\(\{ id: item\.id, status: item\.status \}, false, abort\.signal\)/, 'read as its own page reads it');
   assert.match(src, /const built = av\._topicViewFor\('proposal', row\);/);
   // 1 Nov 2026: folded under a ballot, without its own Vote (thread-one-page.test.js).
-  assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} \/>/, 'its own page\'s two cards');
+  assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>/, 'its own page\'s two cards');
   assert.match(src, /changeDetailAsk\(\(event as CustomEvent\)\.detail, item\.id\)/, 'and it moves when its page would');
   assert.match(src, /av\.castIssueVote\?\.\(v\.issueId, 'up', \{ reason: null \}\)/, 'a close is voted the platform\'s way');
   const head = read('frontend/src/features/dev-board/topic/change-head.tsx');

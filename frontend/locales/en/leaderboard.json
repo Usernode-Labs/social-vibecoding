@@ -227,6 +227,14 @@
     "text": "See your feedback",
     "description": "Link on the page of the feedback challenge: opens the list of feedback the viewer has sent."
   },
+  "challenges.detail.counted": {
+    "text": "What counted",
+    "description": "Heading on a challenge's page over the list of the viewer's own credits that make up its count."
+  },
+  "challenges.detail.countedWeek": {
+    "text": "What counted this week",
+    "description": "The same heading on a weekly challenge's page, whose count starts again every Monday: the list holds this week's credits only."
+  },
   "challenges.detail.requirements": {
     "text": "What counts",
     "description": "Heading on a challenge's page over the organiser's words on what counts towards it and how."
@@ -622,22 +630,6 @@
   "standings.openDetailsAnonymous": {
     "text": "Open Anonymous's details",
     "description": "Accessible name of a row in the Standings table: pressing it shows that participant's activities. \"Open\" is a verb. Used for a person with no display name, who is listed as \"Anonymous\"."
-  },
-  "standings.page_one": {
-    "text": "Page {{page}} of {{pages}} · {{count}} total",
-    "description": "Under the Standings table: which page is shown, how many pages there are, and how many participants in all."
-  },
-  "standings.page_other": {
-    "text": "Page {{page}} of {{pages}} · {{count}} total",
-    "description": "Under the Standings table: which page is shown, how many pages there are, and how many participants in all."
-  },
-  "standings.prev": {
-    "text": "Prev",
-    "description": "Button under the Standings table: shows the previous page. Short for \"previous\"."
-  },
-  "standings.next": {
-    "text": "Next",
-    "description": "Button under the Standings table: shows the next page."
   },
   "drill.activities": {
     "text": "Activities",

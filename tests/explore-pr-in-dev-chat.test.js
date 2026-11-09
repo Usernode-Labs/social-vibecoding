@@ -124,7 +124,7 @@ const TAIL =
   + 'change any code or open a PR.';
 
 const EXPECTED_SEED =
-  'Let\'s explore PR #9300 in this app: "Adjust kanban breakpoint to 640px" by alice.\n'
+  'Let\'s explore PR 9300 in this app: "Adjust kanban breakpoint to 640px" by alice.\n'
   + 'PR link: https://github.com/acme/app/pull/9300\n'
   + 'Linked issues: #822.\n\n'
   + TAIL;
@@ -149,7 +149,7 @@ test('seed: a merged proposal says so, so the reply does not talk about voting',
   const seed = AppView._exploreSeed({ ...PR, status: 'merged' });
   assert.equal(
     seed,
-    'Let\'s explore PR #9300 in this app: "Adjust kanban breakpoint to 640px" by alice.\n'
+    'Let\'s explore PR 9300 in this app: "Adjust kanban breakpoint to 640px" by alice.\n'
     + 'PR link: https://github.com/acme/app/pull/9300\n'
     + 'Linked issues: #822.\n'
     + 'This proposal is already merged.\n\n'
@@ -208,7 +208,7 @@ test('resolves a merged row from the Completed cache, skipping close-issue rows'
 
   AppView.exploreProposalInDevChat(7);
 
-  assert.match(calls.started[0].message, /^Let's explore PR #9300 /);
+  assert.match(calls.started[0].message, /^Let's explore PR 9300 /);
   assert.match(calls.started[0].message, /This proposal is already merged\./);
 });
 

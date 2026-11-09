@@ -68,8 +68,66 @@ test('the checks, as the card says them', () => {
   assert.deepEqual(transcript.checksSummary('failing', 1), { key: 'failing', text: '1 check failing' });
   assert.deepEqual(transcript.checksSummary('failing', 0), { key: 'failing', text: 'Checks failing' });
   assert.deepEqual(transcript.checksSummary('pending', 0), { key: 'running', text: 'Checks running' });
+  // #6122: a pending run says how much longer, or that it is late.
+  const now = Date.now();
+  const est = { buildMs: 3 * 60000, checksMs: 9 * 60000, runs: 12, rough: false, slots: 4 };
+  assert.deepEqual(
+    transcript.checksSummary('pending', 0, null, { phase: 'testing', checkedAt: new Date(now - 6 * 60000).toISOString(), estimate: est, now }),
+    { key: 'running', text: 'Checks running, about 6 minutes left' });
+  assert.deepEqual(
+    transcript.checksSummary('pending', 0, null, { phase: 'testing', checkedAt: new Date(now - 11.8 * 60000).toISOString(), estimate: est, now }),
+    { key: 'running', text: 'Checks running, less than a minute left' });
+  assert.deepEqual(
+    transcript.checksSummary('pending', 0, null, { phase: 'testing', checkedAt: new Date(now - 15 * 60000).toISOString(), estimate: est, now }),
+    { key: 'running', text: 'Checks running, taking longer than usual' });
+  assert.deepEqual(
+    transcript.checksSummary('pending', 0, null, { phase: 'queued', queueAhead: 2, checkedAt: new Date(now - 4 * 60000).toISOString(), estimate: est, now }),
+    { key: 'running', text: 'Checks waiting, about 5 minutes until they start' });
+  assert.deepEqual(
+    transcript.checksSummary('pending', 0, null, { phase: 'queued', queueAhead: 2, checkedAt: new Date(now - 12 * 60000).toISOString(), estimate: est, now }),
+    { key: 'running', text: 'Checks waiting, longer than usual' });
+  assert.deepEqual(
+    transcript.checksSummary('pending', 0, null, { phase: 'deferred', checkedAt: new Date(now - 20 * 60000).toISOString(), estimate: est, now }),
+    { key: 'running', text: 'Checks running' }, 'a deferred run is not running, so it gets no time');
+  assert.deepEqual(
+    transcript.checksSummary('pending', 0, null, { phase: 'testing', checkedAt: new Date(now).toISOString(), estimate: null, now }),
+    { key: 'running', text: 'Checks running' }, 'without an estimate the card reads as before');
   assert.equal(transcript.checksSummary('error', 0).key, 'error');
   assert.equal(transcript.checksSummary(null, 0), null, 'no run yet, nothing said');
+});
+
+test('a change carries where its pending run stands, for the staging card (#6122)', () => {
+  // shapeChangeRow is pure; run it without loading the service's own modules.
+  const source = read('src/services/agent-sessions.js');
+  const start = source.indexOf('function shapeChangeRow(row) {');
+  assert.ok(start > 0);
+  let depth = 0;
+  let end = start;
+  for (; end < source.length; end += 1) {
+    if (source[end] === '{') depth += 1;
+    else if (source[end] === '}') {
+      depth -= 1;
+      if (depth === 0) break;
+    }
+  }
+  const sandbox = { shapeFailingChecks: () => null, CAPTURING_STATES: new Set() };
+  require('node:vm').runInNewContext(
+    `${source.slice(start, end + 1)}\n;globalThis.shapeChangeRow = shapeChangeRow;`, sandbox);
+  const checkedAt = '2026-11-02T12:00:00.000Z';
+  const shaped = sandbox.shapeChangeRow({
+    change_id: 77,
+    change_check_state: 'pending',
+    change_check_phase: 'queued',
+    change_checks_checked_at: checkedAt,
+    change_checks_queue: { ahead: 2, since: checkedAt },
+  });
+  assert.equal(shaped.checkPhase, 'queued');
+  assert.equal(shaped.checksCheckedAt, checkedAt);
+  assert.equal(shaped.checksQueueAhead, 2);
+  const bare = sandbox.shapeChangeRow({ change_id: 78 });
+  assert.equal(bare.checkPhase, null);
+  assert.equal(bare.checksCheckedAt, null);
+  assert.equal(bare.checksQueueAhead, null);
 });
 
 test('why checks were skipped is one sentence, the same fallback the panel and the pill use (#3180)', () => {

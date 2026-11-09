@@ -1,0 +1,162 @@
+{
+  "general.internal": {
+    "text": "Internal server error",
+    "description": "Error shown when something went wrong on Homeroom's side and the person's action did not happen. Say plainly that it is Homeroom's fault, not theirs."
+  },
+  "general.internalStop": {
+    "text": "Internal server error.",
+    "description": "Error shown when something went wrong on Homeroom's side and the person's action did not happen. Keeps its closing full stop."
+  },
+  "general.invalidData": {
+    "text": "The given data was invalid.",
+    "description": "Error shown when what the person entered or sent was refused because some of it was not acceptable."
+  },
+  "general.notFound": {
+    "text": "Not found",
+    "description": "Error shown when the thing the person opened or acted on does not exist or is no longer there."
+  },
+  "general.tooLarge": {
+    "text": "Request body too large",
+    "description": "Error shown when what the person tried to send or upload is bigger than Homeroom accepts."
+  },
+  "general.uploadFailed": {
+    "text": "Upload failed",
+    "description": "Error shown when a file the person chose could not be uploaded."
+  },
+  "project.notFound": {
+    "text": "App not found",
+    "description": "Error shown when the app or project the person opened or acted on does not exist or is no longer there."
+  },
+  "project.proposalNotFound": {
+    "text": "Proposal not found",
+    "description": "Error shown when the proposed change the person opened or acted on does not exist or is no longer there."
+  },
+  "project.issueNotFound": {
+    "text": "Issue not found",
+    "description": "Error shown when the request (an issue on a project) the person opened or acted on does not exist or is no longer there."
+  },
+  "project.sessionNotFound": {
+    "text": "Session not found",
+    "description": "Error shown when the working session the person opened or acted on does not exist or is no longer there."
+  },
+  "project.agentSessionNotFound": {
+    "text": "Agent session not found",
+    "description": "Error shown when the AI agent's working session the person opened or acted on does not exist or is no longer there."
+  },
+  "project.eventNotFound": {
+    "text": "Event not found.",
+    "description": "Error shown when the season event the person opened does not exist or is no longer there. Keeps its closing full stop."
+  },
+  "chat.messageNotFound": {
+    "text": "Message not found",
+    "description": "Error shown when the chat message the person acted on does not exist or was deleted."
+  },
+  "chat.threadNotFound": {
+    "text": "Thread not found",
+    "description": "Error shown when the chat thread the person opened does not exist or is no longer there."
+  },
+  "chat.notificationNotFound": {
+    "text": "Notification not found",
+    "description": "Error shown when the notification the person acted on does not exist or is no longer there."
+  },
+  "account.userNotFound": {
+    "text": "User not found",
+    "description": "Error shown when the person's account or the account they looked for does not exist."
+  },
+  "account.userNotFoundStop": {
+    "text": "User not found.",
+    "description": "Error shown when the person's account or the account they looked for does not exist. Keeps its closing full stop."
+  },
+  "account.notFound": {
+    "text": "Account not found",
+    "description": "Error shown during sign-in when no account matches what the person gave."
+  },
+  "signIn.notAuthenticated": {
+    "text": "Not authenticated",
+    "description": "Error shown when an action needs the person to be signed in and they are not."
+  },
+  "signIn.notSignedIn": {
+    "text": "Not signed in.",
+    "description": "Error shown when an action needs the person to be signed in and they are not. Keeps its closing full stop."
+  },
+  "signIn.signInFirst": {
+    "text": "Sign in first",
+    "description": "Error shown when a person who is not signed in tries something that needs an account: asks them to sign in."
+  },
+  "signIn.signOutFirst": {
+    "text": "Sign out before signing in again.",
+    "description": "Error shown when a person already signed in starts another sign-in: asks them to sign out first."
+  },
+  "signIn.invalidCredentials": {
+    "text": "Invalid credentials",
+    "description": "Error shown on the sign-in screen when the username or email and password do not match."
+  },
+  "signIn.usernamePasswordRequired": {
+    "text": "Username and password required",
+    "description": "Error shown on the sign-in screen when the username or the password was left empty."
+  },
+  "signIn.emailRequired": {
+    "text": "Email required",
+    "description": "Error shown on the sign-in or password reset screen when the email address was left empty."
+  },
+  "signIn.tooLong": {
+    "text": "That sign-in took too long, or started somewhere else. Try again.",
+    "description": "Error shown when a sign-in with an outside provider expired or was begun on another device or browser."
+  },
+  "signIn.notSetUp": {
+    "text": "That sign-in is not set up.",
+    "description": "Error shown when the person chose an outside sign-in provider that this Homeroom has not been configured for."
+  },
+  "signIn.signatureFailed": {
+    "text": "Signature verification failed",
+    "description": "Error shown when signing in with a crypto wallet: the wallet's signature could not be confirmed."
+  },
+  "signUp.usernameTaken": {
+    "text": "Username already taken",
+    "description": "Error shown when creating an account or changing a username: somebody else already has that username."
+  },
+  "signUp.usernameTakenStop": {
+    "text": "That username is taken.",
+    "description": "Error shown when creating an account or changing a username: somebody else already has that username."
+  },
+  "signUp.sessionExpired": {
+    "text": "Your signup session expired. Request a new code.",
+    "description": "Error shown while creating an account when too much time has passed since the emailed or texted code: asks the person to request another code."
+  },
+  "signUp.activationCode": {
+    "text": "Invalid or already used activation code",
+    "description": "Error shown when the activation code the person entered is wrong or has been used."
+  },
+  "signUp.tooManyFromAddress": {
+    "text": "Too many signups from this address. Try again in a few minutes.",
+    "description": "Error shown when too many accounts were started from one internet connection: asks the person to wait a few minutes."
+  },
+  "signUp.tooManyUsernames": {
+    "text": "Too many username attempts. Try again in a little while.",
+    "description": "Error shown when the person tried too many usernames in a row: asks them to wait a little."
+  },
+  "access.notLetInYet": {
+    "text": "Your account does not have platform access yet.",
+    "description": "Error shown to a person still on the waitlist when they try something only let-in people can do."
+  },
+  "password.resetLinkInvalid": {
+    "text": "Invalid or expired reset link",
+    "description": "Error shown when the emailed password reset link is wrong or too old: the person needs a new link."
+  },
+  "password.currentRequired": {
+    "text": "Current password is required",
+    "description": "Error shown on the change password form when the current password was left empty."
+  },
+  "password.currentIncorrect": {
+    "text": "Current password is incorrect",
+    "description": "Error shown on the change password form when the current password entered is wrong."
+  },
+  "password.noMatch": {
+    "text": "Passwords do not match.",
+    "description": "Error shown when the two new password fields differ."
+  },
+  "password.mustDiffer": {
+    "text": "New password must be different from your current password",
+    "description": "Error shown on the change password form when the new password is the same as the old one."
+  }
+}

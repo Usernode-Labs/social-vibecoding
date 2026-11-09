@@ -1,8 +1,10 @@
 // bot-lane: how much the Homeroom bot runs at once, and when it looks at
 // GitHub. One instance (`bot`), so the caps hold however many processes run
 // the workflow: at most `liveAtOnce` looks and builds in all, `perPerson`
-// for any one person, one read at a time on a project's triage session,
-// BUILDS_PER_PROJECT builds per project. A request owed a look tells it
+// for any one person, `readsPerApp` reads at once on a project, each on a
+// triage session of its own (its read slot, named in its grant: never two
+// reads on one), the project's builds-per-project setting at once on it
+// (BUILDS_PER_APP, or its own number). A request owed a look tells it
 // (Look); it grants slots under its lock, in the queue's order, as messages
 // (Granted), and reads what is in use from the requests themselves (their
 // `slot`, and grants not applied yet), so a slot is never counted from this
@@ -17,7 +19,7 @@
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Event, Json, MessageRequest, Outcome, TransitionContext, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 import {
-  BOT_LANE, BOT_REQUEST, BUDGET_PAUSE_MS, LANE_KEY, REFRESH_EVERY_MS, REFRESH_SOON_MS,
+  BOT_LANE, BOT_REQUEST, BUILDS_PER_APP, BUDGET_PAUSE_MS, LANE_KEY, REFRESH_EVERY_MS, REFRESH_SOON_MS,
   faultMs, pickLive, pickLiveBuilds, requestKey,
 } from '../rules/bot-loop.ts';
 import type { Slot } from '../rules/bot-loop.ts';
@@ -97,17 +99,27 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
   if (f.acting && !paused) {
     const inUse: Slot[] = f.inUse.slice();
     let room = Math.max(0, f.settings.liveAtOnce - inUse.length);
-    const reads = pickLive(f.reads, { inUse, slots: room, perPerson: f.settings.perPerson, raised: f.raised });
+    const reads = pickLive(f.reads, {
+      inUse, slots: room, perPerson: f.settings.perPerson, raised: f.raised, readsPerApp: f.settings.readsPerApp,
+    });
     for (const pick of reads) {
       const grant = d.grants + 1;
       d = { ...d, grants: grant };
       const kind = pick.followUp ? 'followUp' : 'read';
-      const sessionId = pick.followUp ? Number(pick.follow_up_session_id) : (pick.triage_session_id == null ? null : Number(pick.triage_session_id));
-      messages.push(grantTo(Number(pick.app_id), Number(pick.issue_number), { grant, kind, sessionId, person: pick.person }));
-      inUse.push({ kind, appId: Number(pick.app_id), person: pick.person });
+      // A read's session is its read slot's: the project's triage session
+      // for slot 0, when it has one yet; a further slot's is found (or made)
+      // by its look, which tells its request (LookOn).
+      const sessionId = pick.followUp ? Number(pick.follow_up_session_id)
+        : (pick.readSlot === 0 && pick.triage_session_id != null ? Number(pick.triage_session_id) : null);
+      const readSlot = pick.followUp ? null : pick.readSlot;
+      messages.push(grantTo(Number(pick.app_id), Number(pick.issue_number), { grant, kind, sessionId, person: pick.person, readSlot }));
+      inUse.push({ kind, appId: Number(pick.app_id), person: pick.person, ...(readSlot != null ? { readSlot } : {}) });
     }
     room = Math.max(0, f.settings.liveAtOnce - inUse.length);
-    const builds = pickLiveBuilds(f.builds, { inUse, slots: room, perPerson: f.settings.perPerson, raised: f.raised });
+    const builds = pickLiveBuilds(f.builds, {
+      inUse, slots: room, perPerson: f.settings.perPerson, perProject: BUILDS_PER_APP,
+      perApp: f.settings.buildsByApp, raised: f.raised,
+    });
     for (const pick of builds) {
       const grant = d.grants + 1;
       d = { ...d, grants: grant };
@@ -124,8 +136,12 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
   return step(d, { work, messages, timer });
 }
 
-const grantTo = (appId: number, issueNumber: number, p: { grant: number; kind: string; sessionId: number | null; person: string }): MessageRequest =>
-  ({ to: { machine: BOT_REQUEST, key: requestKey(appId, issueNumber) }, event: { type: 'Granted', payload: { appId, issueNumber, ...p } as Json }, appId });
+const grantTo = (appId: number, issueNumber: number,
+  p: { grant: number; kind: string; sessionId: number | null; person: string; readSlot?: number | null }): MessageRequest => {
+  const { readSlot, ...rest } = p;
+  const payload = { appId, issueNumber, ...rest, ...(readSlot != null ? { readSlot } : {}) };
+  return { to: { machine: BOT_REQUEST, key: requestKey(appId, issueNumber) }, event: { type: 'Granted', payload: payload as Json }, appId };
+};
 
 function released(s: LState, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<LState> {
   let d = live(s, ctx);

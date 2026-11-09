@@ -44,6 +44,7 @@ import { cn } from '@/lib/utils';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { Message, RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
@@ -77,6 +78,7 @@ import {
 } from './sign-in-sheet';
 import { Story } from './story';
 import { cardCover, morph, projectHero } from '../guest/card-morph';
+import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../guest/device-pins';
 import { GuestDiscover } from '../guest/guest-discover';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
 import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, projectHash } from '../guest/guest-data';
@@ -957,6 +959,13 @@ export function LandingScreen() {
   // show, i.e. after hydration.
   const [session, setSession] = useState(false);
   const [openApp, setOpenApp] = useState<{ slug: string; name: string } | null>(null);
+  // #6433: what this device has pinned while signed out (features/guest/
+  // device-pins.ts), for the bar's Pin while an app is open. A visitor has no
+  // app menu and no About pane, so the bar is where an app is pinned; Home's
+  // Pinned apps reads the same store. Loaded in an effect, so the first
+  // render is the prerender's.
+  const devicePins = useStoreState(devicePinsStore);
+  useEffect(() => { loadDevicePins(); }, []);
   // The public directory (loadLandingApps), for the guest Discover and the
   // guest project pages: null until it has been read, and `appsFailed` when
   // it could not be.
@@ -1755,6 +1764,23 @@ export function LandingScreen() {
           data-landing-actions=""
           className={hiddenLast(session || !guestPages, guestTop ? 'flex shrink-0 items-center gap-1.5' : `absolute bottom-4 end-4 flex items-center gap-1.5 ${GUEST_BAR_RIGHT}`)}
         >
+          {/* #6433: an app open for a visitor is pinned HERE, to this device,
+              because a visitor has no app menu or About pane. The same quiet
+              button as Sign in beside it, drawn at the row's 28px with a 44px
+              touch box, so the bar keeps its height. Not in the first render
+              (`openApp` starts null), so hydration is unaffected. */}
+          {openApp && !session ? (
+            <button
+              type="button"
+              data-landing-pin-app={openApp.slug}
+              aria-pressed={devicePins.apps.includes(openApp.slug)}
+              aria-label={t('auth:landing.pinAppNamed', { app: openApp.name })}
+              className="un-touch-target -my-2 min-h-11 rounded-full px-2 text-[15px] font-semibold text-zinc-950 hover:text-zinc-600 dark:text-white dark:hover:text-zinc-300"
+              onClick={() => { toggleDevicePin('apps', openApp.slug); }}
+            >
+              {devicePins.apps.includes(openApp.slug) ? t('auth:landing.pinnedApp') : t('auth:landing.pinApp')}
+            </button>
+          ) : null}
           <button
             type="button"
             data-landing-sign-in=""
@@ -1769,7 +1795,7 @@ export function LandingScreen() {
             size="none"
             ink="solid"
             data-landing-sign-up=""
-            className={guestTop ? 'un-touch-target -my-2 min-h-11 px-3.5 text-[15px] font-semibold' : 'un-touch-target hidden md:inline-flex -my-2 min-h-11 px-3.5 text-[15px] font-semibold'}
+            className={guestTop ? 'un-touch-target items-center justify-center -my-2 min-h-11 px-3.5 text-[15px] font-semibold' : 'un-touch-target items-center justify-center hidden md:inline-flex -my-2 min-h-11 px-3.5 text-[15px] font-semibold'}
             onClick={() => { noteSignUpFrom('header_sign_up'); setSheet('start'); }}
           >
             {t('auth:guest.header.signUp')}
@@ -2236,6 +2262,8 @@ export function LandingScreen() {
               apps={apps}
               failed={appsFailed && !apps}
               signedIn={waitingGuest}
+              onIntent={askFor}
+              onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
               hero={waitingGuest ? (
                 <WaitlistCard email={sessionEmail()} />

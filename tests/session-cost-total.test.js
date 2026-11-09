@@ -44,7 +44,8 @@ test('both session payloads the dev chat reads carry the total', () => {
   const visibility = status.indexOf('canViewSession(seen[0], req.user)');
   const read = status.indexOf('sessionCost.sessionCostCents(pool, sessionId)');
   assert.ok(visibility > 0 && read > visibility, 'the total is read only after the visibility check');
-  assert.match(status.slice(0, status.indexOf('router.post(')), /costTotalCents,/);
+  // Who gets it, through the real route: tests/session-status-cost-route.test.js.
+  assert.match(status.slice(0, status.indexOf('router.post(')), /\.\.\.\(mayReadCost \? \{ costTotalCents \} : \{\}\),/);
 });
 
 // ── Client ──────────────────────────────────────────────────────────────
@@ -104,6 +105,8 @@ test('a /status answer moves the total; another session\'s answer does not', () 
   assert.equal(text(), `$3.20/$50.00 · ${change('2.50')}`);
   chat._applyLiveSpend({ busy: false, costTotalCents: null }, 42);
   assert.equal(text(), `$3.20/$50.00 · ${change('2.50')}`, 'a failed read keeps the figure');
+  chat._applyLiveSpend({ busy: false }, 42);
+  assert.equal(text(), `$3.20/$50.00 · ${change('2.50')}`, 'an answer without the field keeps the figure');
 });
 
 test('an idle OpenRouter snapshot still updates the total and keeps "this turn"', () => {

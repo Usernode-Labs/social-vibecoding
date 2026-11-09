@@ -98,10 +98,3 @@ test('SQL validation always audits debug permissions on the existing complete sh
   assert.match(checker, /DROP OWNED BY/);
   assert.match(checker, /DROP ROLE/);
 });
-
-
-test('SQL validation audits preview data approval on the same complete shadow database', () => {
-  const checker=read('scripts/check-sql.js');
-  assert.match(checker,/await applySchema\(shadow\.shadowUrl\);\s+const previewPolicy = await validatePlatformPreviewPolicy\(shadow\.shadowUrl\);/);
-  assert.match(checker,/preview\.verifyCatalog\(catalog\)/);
-});

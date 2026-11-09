@@ -8,7 +8,6 @@
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { WORK } from './machine.ts';
-import { lateNotice } from '../rules/late-notice.ts';
 
 interface Deps { config: any; pool: Pool }
 
@@ -69,16 +68,33 @@ export function botChangeServices({ pool }: Deps): Record<string, WorkHandler> {
       },
     },
 
-    // A yes: a quiet line in the request's thread, under its key per voter
-    // and epoch.
+    // A yes was a quiet line in the request's thread. Not said any more
+    // (5 Nov 2026, decision 6): work owed before this release settles here.
     [WORK.approved]: {
+      maxAttempts: 1,
+      backoffMs: backoff,
+      async run(): Promise<Json> {
+        return { skipped: 'retired' };
+      },
+    },
+
+    // #6264: a promise somebody asked for, kept at the change's own moment:
+    // one line where they asked, mentioning them. A close cancels every
+    // promise still waiting and says so.
+    [WORK.followups]: {
       maxAttempts: 5,
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
-        if (lateNotice(input.owedAt)) return { skipped: 'late' };
-        const sent = await legacy('services/homeroom-bot-dm').sayApproved(pool, Number(input.sessionId),
-          { voterId: Number(input.voterId), voter: input.voter ?? null, epoch: Number(input.epoch) || 0 });
-        return { said: !!sent };
+        const followups = legacy('services/thread-followups');
+        const sessionId = Number(input.sessionId);
+        if (input.event === 'closed') return { told: await followups.cancel(pool, { sessionId }) };
+        const told = await followups.fire(pool, {
+          sessionId,
+          event: String(input.event),
+          head: input.head ?? null,
+          verdict: input.verdict ?? null,
+        });
+        return { told: Number(told) || 0 };
       },
     },
 

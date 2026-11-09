@@ -45,7 +45,9 @@ import { StatusPill, TitleContent } from '../card/dev-card';
 import type { StatusPillState } from '../card/model';
 import { normalizeBotTrack } from '../../messages/api';
 import { TrackCard, trackLinks } from '../../messages/bot-track';
+import { RequestPlan } from './request-plan';
 import type { RequestStatusView, RequestView } from './model';
+import { TranslateNote, useTranslate } from '../../messages/translate';
 import {
   STAGES,
   newestSpecVersion,
@@ -57,12 +59,14 @@ import {
 } from './request-model';
 import { requestShots, togglePinShot } from './request-shots';
 import { ThreadItems, pageSlug, useThreadPayload } from './thread-items';
-import { ThreadChanges } from './thread-changes';
+import { ThreadChanges, ChangeSectionSkeleton } from './thread-changes';
 import { requestPill, threadLayout, type ThreadHere } from './thread-model';
+import { rereadOnChangeNews } from './change-detail-refresh';
 import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
 import { OwnAgentLink } from './own-agent-link';
 import { requestMenuKey, useThreadMenu } from './thread-menu';
+import { usePanelHead } from '../../side-panel/head-store';
 
 function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -76,6 +80,23 @@ function call(fn: string, args: unknown[] = []): void {
 /** One of the layout's empty hosts, or null when the shell is not the request layout. */
 function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
+}
+
+/**
+ * #6081: translated words as the markup RequestWords draws. The same
+ * markdown renderer the request's own words go through, and the same wrapper
+ * `_issueBodyHtml` gives them, so a translated request looks like the one it
+ * replaces.
+ */
+function translatedWords(markdown: string): string {
+  const devChat = typeof window !== 'undefined' ? (window as any).DevChat : null;
+  if (!devChat?.renderMarkdown) {
+    const escaped = markdown.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+    return `<div class="dev-issue-body">${escaped}</div>`;
+  }
+  const rendered = devChat.renderMarkdown(markdown, { images: true });
+  const mentions = typeof window !== 'undefined' ? (window as any).renderRequestMentions : null;
+  return `<div class="dev-issue-body">${mentions ? mentions(rendered) : rendered}</div>`;
 }
 
 /**
@@ -98,6 +119,11 @@ export function RequestBar({ r, pill = null, threadMenu = false }: {
     : r.status.stage === 'voted'
       ? t('project:topic.request.bar.kickerDone', { number: r.number })
       : t('project:topic.request.bar.title', { number: r.number });
+  // #6431: beside the Homeroom bot page this bar is not drawn at all (app.css),
+  // and the column's heading carries its pill and its rows instead. Publishing
+  // them is all this does there; nowhere else does it publish anything.
+  const menuKey = r.menuKey || threadMenu ? requestMenuKey(r.menuKey, r.number) : null;
+  usePanelHead({ kind: 'request', pill, menuKey });
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
@@ -110,11 +136,11 @@ export function RequestBar({ r, pill = null, threadMenu = false }: {
         <div className="messages-thread-name line-clamp-2 dev-request-bar-title">{r.title}</div>
         {r.category ? <div className="messages-thread-sub" data-request-category="">{r.category}</div> : null}
       </div>
-      {r.menuKey || threadMenu ? (
+      {menuKey ? (
         <button
           type="button"
           className="messages-thread-action dev-card-menu-btn"
-          data-card-menu={requestMenuKey(r.menuKey, r.number)}
+          data-card-menu={menuKey}
           aria-haspopup="true"
           aria-label={t('project:topic.request.bar.more')}
           title={t('project:topic.request.bar.more')}
@@ -153,7 +179,13 @@ function reducedMotion(): boolean {
  * and the screenshots leave the fold and are always shown under it, so
  * "Show more" opens only the words (#4481).
  */
-export function RequestWords({ html }: { html: string }): ReactNode {
+export function RequestWords({ html, translate, note }: {
+  html: string;
+  /** #6081: the Translate control that sits beside Show more, when the reader may ask. */
+  translate?: ReactNode;
+  /** The line under the words saying what happened, or how to go back. */
+  note?: ReactNode;
+}): ReactNode {
   const t = useMessages('project');
   const text = useRef<HTMLDivElement>(null);
   // `t` is the language on screen's: a switch lifts the pictures again, so
@@ -163,6 +195,33 @@ export function RequestWords({ html }: { html: string }): ReactNode {
   // a comment someone hid.
   const inner = useInnerHtml(words);
   const shotsInner = useInnerHtml(shots);
+  // #6387: a picture or video keeps a fixed box (app.css) until it has its
+  // own shape, so the cards under it do not jump as it loads. The nodes come
+  // from `dangerouslySetInnerHTML`, which React does not reconcile, so the
+  // attribute it writes is safe.
+  const shotBox = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const box = shotBox.current;
+    if (!box) return undefined;
+    const cleanups: Array<() => void> = [];
+    const settle = (el: Element, ready: () => boolean, events: string[]) => {
+      if (ready()) { el.setAttribute('data-shot-ready', ''); return; }
+      const done = () => {
+        el.setAttribute('data-shot-ready', '');
+        off();
+      };
+      const off = () => { for (const name of events) el.removeEventListener(name, done); };
+      for (const name of events) el.addEventListener(name, done);
+      cleanups.push(off);
+    };
+    for (const img of Array.from(box.querySelectorAll<HTMLImageElement>('img.dc-inline-img'))) {
+      settle(img, () => img.complete && img.naturalWidth > 0, ['load', 'error']);
+    }
+    for (const video of Array.from(box.querySelectorAll<HTMLVideoElement>('video.dc-inline-video'))) {
+      settle(video, () => video.readyState >= 1, ['loadedmetadata', 'error']);
+    }
+    return () => { for (const off of cleanups) off(); };
+  }, [shots]);
   // `open` is what the clamp says; `shown` is what the button says, which
   // turns with the press rather than when the text has finished moving.
   const [open, setOpen] = useState(false);
@@ -213,7 +272,19 @@ export function RequestWords({ html }: { html: string }): ReactNode {
   const togglePin = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (togglePinShot(event.target, event.currentTarget)) event.preventDefault();
   };
-  if (!words && !shots) return null;
+  if (!words && !shots && !translate && !note) return null;
+  const showMore = words && (folds || open);
+  const more = showMore ? (
+    <button
+      type="button"
+      className="dev-ws-reveal dev-ws-reveal-start touch-target-32 dev-request-more"
+      aria-expanded={shown}
+      onClick={toggle}
+    >
+      <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+      {shown ? t('project:topic.request.words.showLess') : t('project:topic.request.words.showMore')}
+    </button>
+  ) : null;
   return (
     <div className="dev-request-ask" onClick={togglePin}>
       {/* DevChat.renderMarkdown's output, sanitised where it is built. The
@@ -221,18 +292,9 @@ export function RequestWords({ html }: { html: string }): ReactNode {
           the length of the animation, and puts the clamp back as it ends so
           React's next render agrees with the DOM. */}
       {words ? <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} /> : null}
-      {words && (folds || open) ? (
-        <button
-          type="button"
-          className="dev-ws-reveal dev-ws-reveal-start touch-target-32 dev-request-more"
-          aria-expanded={shown}
-          onClick={toggle}
-        >
-          <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-          {shown ? t('project:topic.request.words.showLess') : t('project:topic.request.words.showMore')}
-        </button>
-      ) : null}
-      {shots ? <div className="dev-request-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null}
+      {translate ? <div className="mt-1 flex flex-wrap items-center gap-4">{more}{translate}</div> : more}
+      {note}
+      {shots ? <div ref={shotBox} className="dev-request-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null}
     </div>
   );
 }
@@ -432,6 +494,23 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const specs = thread.number === r.number ? thread.specs : [];
   const [editing, setEditing] = useState(false);
   const images = useInlineImageViewer();
+  // #6081: the reader's language, asked for on a tap. The title and the words
+  // are translated together so the pair reads as one; a request with no words
+  // sends only its title.
+  const t = useMessages('project');
+  const myUsername = typeof window !== 'undefined' ? String((window as any).App?.user?.username || '') : '';
+  const sources: string[] = [];
+  const titleAt = r.title?.trim() && r.title.length <= 8000 ? sources.push(r.title) - 1 : -1;
+  // The route takes at most 8000 characters per text; a longer body leaves
+  // its title to be translated on its own rather than failing the pair.
+  const bodyAt = r.bodyMarkdown?.trim() && r.bodyMarkdown.length <= 8000 ? sources.push(r.bodyMarkdown) - 1 : -1;
+  const canTranslate = !!myUsername && !!r.asker && r.asker !== myUsername && sources.length > 0;
+  const translation = useTranslate(sources, { enabled: canTranslate });
+  const shownTitle = translation.state === 'shown' && titleAt >= 0 ? translation.texts[titleAt] : r.title;
+  const shownBody = translation.state === 'shown' && bodyAt >= 0 ? translation.texts[bodyAt] : null;
+  // Rendering markdown on every render would rebuild the body's nodes under a
+  // reader who is just scrolling; the strings are the key, not the arrays.
+  const bodyHtml = useMemo(() => (shownBody == null ? r.bodyHtml : translatedWords(shownBody)), [shownBody, r.bodyHtml]);
   // ⋯ "Edit request" asks for the editor by event, as a change page's
   // "Edit description" does: the menu's row is a closure in AppView.
   useEffect(() => {
@@ -451,11 +530,28 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const here = useMemo<ThreadHere>(() => ({ type: 'request', id: r.number }), [r.number]);
   const threadRead = useThreadPayload(slug, r.number);
   const layout = useMemo(() => threadLayout(threadRead.data, here), [threadRead.data, here]);
+  // #6387: the row says a change addresses this request, so while its thread
+  // is still being read the page holds the change section's place instead of
+  // drawing a status card that may contradict it ("needs 1 more yes" while a
+  // check has failed) and swapping it out a moment later.
+  const holding = !r.status.closed && !!r.status.changeExpected && threadRead.loading;
   // Once a change is built for it (or a vote to close it is open), the
   // change's own cards say where it stands, so the steps and the bot's track
-  // give way to them; a closed request still says how it ended.
-  const working = layout.changes.length > 0 || !!layout.close;
-  const pill = requestPill(layout, r.status.closed ? 'closed' : track ? track.state : null, (id) => translate(id));
+  // give way to them; a closed request still says how it ended. A change
+  // section held open while the thread loads counts the same way: its own
+  // outline already says where things stand.
+  const working = layout.changes.length > 0 || (!!layout.close && layout.close.status === 'open') || holding;
+  // #6532: a build waiting its turn reads Ready to build, as the progress
+  // card under the bar does, never Being built.
+  const stand = useMemo(() => {
+    if (r.status.closed) return 'closed';
+    if (!track) return null;
+    const code = track.work.line?.code;
+    if (track.work.stage === 'building' && !track.busy
+      && (code === 'queued' || code === 'held_builds' || code === 'held_waiting')) return 'ready_to_build';
+    return track.work.stage;
+  }, [track, r.status.closed]);
+  const pill = requestPill(layout, stand, (id) => translate(id));
   // A plan a change in the thread was built from goes with that change.
   const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
   // 1 Nov 2026 (one page per thread): its changes' replies are in its one
@@ -467,6 +563,9 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     publishRequestChanges(r.number, layout.changes);
     (window as any).GroupChat?.setThreadMembers?.('issue', r.number, layout.changes.map((c) => c.id));
   }, [r.number, changeKey, !!threadRead.data]);
+  // #6139: the pill and the line say whether a change underway has finished.
+  const underwayKey = layout.changes.filter((c) => c.state === 'underway').map((c) => c.id).join(',');
+  useEffect(() => rereadOnChangeNews(window, layout.changes, threadRead.reread, (window as any).SessionState), [underwayKey]);
   // #5987, 31 Oct 2026: Build it with your own Claude Code is a ⋯ row; it
   // opens its panel under the request.
   const agentSlug = r.slug || '';
@@ -504,12 +603,51 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             {r.askedTime ? <time dateTime={r.askedAt || undefined} title={r.askedTitle}>{r.askedTime}</time> : null}
           </div>
           <h1 className="dev-request-title" data-issue-title={r.number}>
-            <TitleContent t={{ text: r.title, title: r.title, editing: r.titleEditing || undefined }} />
+            <TitleContent t={{ text: shownTitle, title: r.title, editing: r.titleEditing || undefined }} />
           </h1>
-          {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : <RequestWords html={r.bodyHtml} />}
+          {/* #6421: a request in a merged thread says which thread it is one of
+              and opens its lead's page. */}
+          {(() => {
+            const held = threadRead.data?.thread;
+            if (!slug || !held || Number(held.requests) <= 1 || held.number == null || held.number === r.number) return null;
+            return (
+              <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-part-of={held.number}>
+                <RichMessage
+                  id="project:topic.thread.page.partOf"
+                  values={{ count: Number(held.requests), name: held.name || `#${held.number}` }}
+                  components={[(
+                    <a
+                      key="lead"
+                      href={`#app/${encodeURIComponent(slug)}/dev/issues/${held.number}`}
+                      className="font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                      data-thread-part-of-link={held.number}
+                    />
+                  )]}
+                />
+              </p>
+            );
+          })()}
+          {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : (
+            <RequestWords
+              html={bodyHtml}
+              translate={!canTranslate || editing || (translation.state !== 'idle' && translation.state !== 'pending') ? null : (
+                <button
+                  type="button"
+                  className="dev-ws-reveal dev-ws-reveal-start touch-target-32 dev-request-more"
+                  onClick={translation.ask}
+                  disabled={translation.state === 'pending'}
+                >
+                  {translation.state === 'pending' ? translate('messages:translate.pending') : t('project:topic.request.words.translate')}
+                </button>
+              )}
+              note={!canTranslate || translation.state === 'idle' ? undefined : <TranslateNote view={translation} className="mt-1" />}
+            />
+          )}
           {working && !r.status.closed ? null : (
             <RequestStatus s={r.status} specs={specs} tracked={!!track} />
           )}
+          {/* #6207/#6210: Homeroom bot's plan, public, with Build it for any member. */}
+          {working || r.status.closed || !slug ? null : <RequestPlan slug={slug} number={r.number} specs={specs} />}
           {ownAgent && agentOpen ? <OwnAgentLink slug={agentSlug} number={r.number} startOpen onClose={() => setAgentOpen(false)} /> : null}
           {track && !working ? (
             // 16 Oct 2026 (C4, V3): the same card a request's thread leads
@@ -517,7 +655,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             // of having to open the chat to find out. Drawn from the board's
             // older row it holds its place unseen (`trackPending`, app.css),
             // and says where the work is once the fresh row lands.
-            <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.state} inert={!!r.trackPending}>
+            <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.work.stage} inert={!!r.trackPending}>
               <TrackCard track={track} title={r.title} links={trackLinks(track, { request: false })} pictures />
             </div>
           ) : null}
@@ -530,6 +668,8 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               thread, under a rule; then the rest of it as a list. */}
           {threadRead.data ? (
             <ThreadChanges slug={slug} data={threadRead.data} number={r.number} changes={layout.changes} close={layout.close} plans={plans} onChanged={threadRead.reread} />
+          ) : holding ? (
+            <ChangeSectionSkeleton />
           ) : null}
           <ThreadItems slug={slug} number={r.number} here={here} payload={threadRead.data} items={layout.listed} onChanged={threadRead.reread} menuKey={menuKey} />
         </div>

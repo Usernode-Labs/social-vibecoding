@@ -92,8 +92,9 @@ const KINDS = Object.freeze([
   { kind: 'pr_merged', app: true },
   { kind: 'change_closed', app: true, detail: 'event:1' },
   { kind: 'voted_change_merged', app: true, detail: 'yes' },
-  { kind: 'weekly_digest', app: true, detail: '2:1' },
+  { kind: 'weekly_digest', app: false, detail: 'w:3:12:3' },
   { kind: 'vote_digest', detail: '3' },
+  { kind: 'voted_digest', detail: '3' },
   // A project's own news.
   { kind: 'issue_opened', app: true, actor: true, detail: '1' },
   { kind: 'app_health', app: true, detail: 'deploy_failed' },

@@ -221,6 +221,42 @@ test('the prompt: a thread with no screen yet is drawn; one with a version is ed
   assert.match(some, /THE CURRENT VERSION \(version 3\), its whole HTML:\n<p>x<\/p>$/);
 });
 
+// #6257: asked to "work on a design together", the thread drew a generic
+// to-do list before the person had said anything. With nothing to go on, the
+// first drawing asks what the app is for and what the screen should do, and
+// draws nothing until they answer.
+test('#6257: a first drawing with nothing to go on asks first, and quotes a question, not a claim', () => {
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  assert.equal(designBot.askFirst({}), true, 'no version, no pictures, no about, no bot row');
+  assert.equal(designBot.askFirst({ current: { version: 1, html: '<p>x</p>' } }), false, 'the thread holds a version');
+  assert.equal(designBot.askFirst({ pictures: [{ id: 'p1' }] }), false, 'they sent a picture');
+  assert.equal(designBot.askFirst({ added: [{ id: 'a1' }] }), false, 'a picture was added to the design');
+  assert.equal(designBot.askFirst({ about: 'REQUEST #18 Dark mode' }), false, 'the thread is about a request or change');
+  assert.equal(designBot.askFirst({ history: [{ role: 'user', content: 'hi' }] }), true, 'only their words yet');
+  assert.equal(designBot.askFirst({ history: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'Hello.' }] }), false,
+    'the bot has spoken: it asks at most once');
+
+  const asked = designBot.designPrompt({ username: 'ada', surface: 'new', askFirst: true });
+  assert.match(asked, /FIRST SCREEN: Before you draw/);
+  assert.match(asked, /draw nothing: ask one short question/);
+  assert.match(asked, /Never start from a placeholder/);
+  assert.match(asked, /THERE IS NO SCREEN YET: draw it with write_screen, or ask first as FIRST SCREEN says\.$/);
+  assert.doesNotMatch(asked, /—/);
+  assert.doesNotMatch(designBot.designPrompt({ username: 'ada', surface: 'new' }), /FIRST SCREEN/,
+    'a drawing with something to go on is unchanged');
+
+  assert.equal(designBot.notDrawnYet('I\'ll draw it for you. What is the app for, and what should this screen do?',
+    { handoff: true, mayAsk: true, mayor }), null, 'the question is the answer');
+  assert.equal(designBot.notDrawnYet('I\'ll draw it for you. What is the app for, and what should this screen do?',
+    { handoff: true, mayor }), 'claimed', 'without the gate it is a claim');
+  assert.equal(designBot.notDrawnYet('Tell me what it is for.', { handoff: true, mayAsk: true, mayor }), 'handoff',
+    'a statement is not a question, even when asking is allowed');
+
+  const prompt = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'design', appSlug: null } } });
+  assert.match(prompt, /your designer asks them in the thread before it draws/);
+  assert.match(prompt, /Put in only what they said of the app and the screen/);
+});
+
 test('their pictures: as pictures for a model that reads them, else in the words a cheap one said', () => {
   const pictures = [{ id: 'p1', messageId: 7, filename: 'sketch.png', mimeType: 'image/png', data: 'AAAA' }];
   const history = [{ role: 'assistant', content: 'Hi' }, { role: 'user', content: 'like this' }];
@@ -246,7 +282,8 @@ test('Main Chat draws a screen in place of the screen picker: draw_screen, no Pi
   assert.match(prompt, /\(draw_screen\): your designer draws it from their words/);
   assert.doesNotMatch(prompt, /offer_design|Pick the screen/);
   const src = read('src/services/homeroom-bot-mayor.js');
-  assert.match(src, /while \(rounds < limit && !ctx\.reply && !ctx\.drawScreen\) \{/, 'the turn ends with it');
+  // The chat is a profile on the turn engine: its rounds end with a reply or a screen handed over.
+  assert.match(src, /done: \(\) => !!ctx\.reply \|\| !!ctx\.drawScreen,/, 'the turn ends with it');
   assert.match(src, /if \(ctx\.drawScreen\) \{\n(?:\s+\/\/[^\n]*\n)*\s+const where = ctx\.projectThread \? [^\n]+\n\s+return \(deps\.designBot \|\| require\('\.\/design-bot'\)\)\.draw\(pool, config, \{/);
   // B01: drawn in the new project's thread when this turn opened one.
   assert.match(src, /const where = ctx\.projectThread \? \{ \.\.\.deps, threadRootId: ctx\.projectThread\.rootId, threadRequest: null \} : deps;/);
@@ -263,15 +300,23 @@ test('the preview: its own column beside the thread, three where they fit, halve
   assert.equal(preview.previewLayout({ phone: false, three: false }), 'halves');
   assert.equal(preview.THREE_COLUMNS, '(min-width: 1500px)');
   const ai = read('frontend/src/features/ai/index.tsx');
-  assert.match(ai, /data-ai-preview=\{previewUp \? layout : undefined\}/);
-  assert.match(ai, /<aside className="ai-preview-pane" data-ai-preview-pane=\{layout\} aria-label=\{t\('messages:design\.pane\.label'\)\}>\n\s+<DesignPane/);
-  assert.match(ai, /onClose=\{closePreview\}\n\s+closeAs=\{layout === 'full' \? 'back' : 'close'\}/);
-  assert.match(ai, /const previewUp = mounted && !!preview && !!botId && preview\.conversationId === botId && openRoot === preview\.rootId/,
+  // #6230: the preview is one kind of the detail column, drawn by
+  // ../detail/detail-pane.tsx; the page still sets data-ai-preview for it.
+  assert.match(ai, /data-ai-preview=\{detailHere \? layout : undefined\}/);
+  assert.match(ai, /<aside\n\s+ref=\{previewRef\}\n\s+id="ai-preview-pane"\n\s+className="ai-preview-pane"\n\s+data-ai-preview-pane=\{layout\}\n\s+aria-label=\{detail\.kind === 'draft' \? t\('messages:draft\.pane\.label'\) : t\('messages:design\.pane\.label'\)\}\n\s+>/);
+  assert.match(ai, /probe=\{previewProbe\}\n\s+\/>\n\s+\)\}\n\s+<DetailPane layout=\{layout\} \/>/);
+  assert.match(read('frontend/src/features/detail/detail-pane.tsx'),
+    /onClose=\{closeDetail\}\n\s+closeAs=\{layout === 'full' \? 'back' : 'close'\}/);
+  assert.match(ai, /const detailHere = !!detail && !!botId && \(detail\.kind === 'design'\n\s+\? detail\.ref\.conversationId === botId && openRoot === detail\.ref\.rootId/,
     'only beside the thread it is the design of');
-  assert.match(ai, /if \(preview && openRoot && openRoot !== preview\.rootId\) closePreview\(\);/, 'another thread in the column closes it');
-  assert.match(ai, /const back = \(\) => \{ if \(window\.location\.hash === BOT_TAB\) closePreview\(\); \};/, 'the tab brings the list back');
+  assert.match(ai, /if \(detail\.kind === 'design' && openRoot && openRoot !== detail\.ref\.rootId\) closeDetail\(\);/, 'another thread in the column closes it');
+  assert.match(ai, /if \(window\.location\.hash === BOT_TAB\) closeDetail\(\);/, 'the tab brings the list back');
   const css = read('public/css/app.css');
-  assert.match(css, /#ai-screen\[data-ai-preview="three"\] \{\n\s+--ai-col-w: min\(var\(--ai-main-w\), 440px\);/);
+  // #6394: the widths are on the body, where the side panel (an island beside
+  // #ai-screen) can read them too; the screen inherits them.
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) \{\n\s+--ai-preview-auto: max\(360px, calc\(var\(--ai-room\) - 480px - min\(var\(--ai-main-w\), 440px\)\)\);/);
+  assert.match(css, /\n\s+--ai-col-w: max\(320px, min\(var\(--ai-col-chosen-w, min\(var\(--ai-main-w\), 440px\)\), calc\(var\(--ai-room\) - 480px - var\(--ai-preview-w\)\)\)\);/,
+    'until its edge is dragged the thread is Main\'s width, 440px at most');
   assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \.ai-screen-body \{ display: none; \}/, 'the list steps aside');
   assert.match(css, /#ai-screen\[data-ai-preview="full"\] \.ai-preview-pane \{\n\s+position: absolute;\n\s+inset: 0;/);
 });

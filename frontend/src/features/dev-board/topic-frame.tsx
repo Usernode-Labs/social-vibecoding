@@ -63,6 +63,7 @@
  */
 
 import { useMessages } from '../../lib/i18n/react';
+import { DetailSlot } from '../detail/detail-slot';
 import { skeletonListHtml } from './card/skeleton';
 
 /**
@@ -97,14 +98,7 @@ export function DevTopicSubView() {
           className="flex-1 min-w-0 min-h-0"
           dangerouslySetInnerHTML={THREAD_INITIAL}
         />
-        <div
-          id="gc-spec-resizer"
-          className="gc-spec-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t('project:topic.frame.resizeSpecPanel')}
-        />
-        <div id="gc-spec-side-panel" className="gc-spec-side-panel" />
+        <DetailSlot surface="topic" resizerLabel={t('project:topic.frame.resizeSpecPanel')} />
       </div>
     </div>
   );

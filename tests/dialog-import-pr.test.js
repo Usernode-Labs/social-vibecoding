@@ -218,7 +218,7 @@ test('the freeze covers the list, both buttons and the progress row', () => {
   assert.match(freeze, /setProgressPr\(prNumber \?\? null\)/, 'progress names the PR');
   assert.match(SRC, /t\('dialogs:importPr\.progress', \{ number: progressPr \}\)/);
   assert.equal(message('dialogs:importPr.progress', { number: 12 }),
-    'Importing PR #12: checking it on GitHub and adding it to In progress…');
+    'Importing PR 12: checking it on GitHub and adding it to In progress…');
   assert.match(freeze, /clearTimeout\(slowTimer\.current\)/, 'every call clears the slow timer first');
   assert.match(freeze, /if \(!on\) return;/, 'unfreezing never arms a new one');
   assert.match(freeze, /setTimeout\(\(\) => \{[\s\S]*setSlow\(true\);[\s\S]*\}, 8000\)/,
@@ -270,9 +270,9 @@ test('each failure names its own cause instead of "Import failed (HTTP N)"', () 
   // The server's own 404/409 strings are already user-grade, so they win.
   assert.match(map, /if \(serverError\) return serverError;/, 'a server message wins');
   assert.match(map, /status === 404\) return translate\('dialogs:importPr\.error\.notFound', \{ number: prNumber \}\)/, '404 without a message');
-  assert.match(message('dialogs:importPr.error.notFound', { number: 12 }), /^PR #12 wasn’t found on GitHub/);
+  assert.match(message('dialogs:importPr.error.notFound', { number: 12 }), /^PR 12 wasn’t found on GitHub/);
   assert.match(map, /status === 409\) return translate\('dialogs:importPr\.error\.conflict', \{ number: prNumber \}\)/, '409 without a message');
-  assert.match(message('dialogs:importPr.error.conflict', { number: 12 }), /^PR #12 can’t be imported right now/);
+  assert.match(message('dialogs:importPr.error.conflict', { number: 12 }), /^PR 12 can’t be imported right now/);
   assert.match(map, /status === 503\) return translate\('dialogs:importPr\.error\.restarting'\)/, '503 is the drain guard');
   assert.match(message('dialogs:importPr.error.restarting'), /platform is restarting/);
   assert.match(map, /return translate\('dialogs:importPr\.error\.generic'\)/,
@@ -311,7 +311,7 @@ test('a throwing navigation still closes the dialog and toasts', () => {
   const tail = submit.slice(submit.indexOf('setImportBusy(false);\n    try {'));
   assert.match(tail, /PlatformUI\?\.toast\?\.\(/, 'the user is told');
   assert.match(tail, /t\('dialogs:importPr\.imported', \{ number: pr \}\)/, 'by PR number');
-  assert.match(message('dialogs:importPr.imported', { number: 12 }), /^PR #12 was imported/);
+  assert.match(message('dialogs:importPr.imported', { number: 12 }), /^PR 12 was imported/);
   // #866: and told that the Preview button isn't there yet — the staging
   // build takes minutes.
   assert.match(message('dialogs:importPr.imported', { number: 12 }), /Its preview is being built now/, 'with the preview expectation set');

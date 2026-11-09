@@ -145,3 +145,17 @@ export function sessionState(row: SessionStateRow, busy: boolean, at: Date): Pus
 // A session's card moved on a board or list (ws.pushSessionUpdate, without
 // its in-process Workshop listener).
 export const sessionUpdate = (data: JsonObject) => scoped('session_update', data);
+
+// A change joined a thread or moved in it (proposed, back to underway,
+// paused, resumed, merged, withdrawn, brought back, or its checks starting
+// or settling): the pages that read that thread read it again, through the
+// one live-reads seam (public/js/app.js → liveReads.resync('thread')).
+// `numbers` names the requests it closes and its own pull request, so a
+// request's page hears of a change listed under it by the change's id alone.
+// Same audience as session_update: everyone who may view the app.
+export function threadChanged(d: {
+  appId: number; appSlug: string; sessionId: number; numbers: Array<number | null | undefined>;
+}): Push {
+  const numbers = [...new Set(d.numbers.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  return scoped('thread_changed', { appId: d.appId, appSlug: d.appSlug, sessionId: d.sessionId, numbers });
+}

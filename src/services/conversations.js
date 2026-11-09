@@ -172,9 +172,9 @@ const HOMEROOM_BOT_USERNAME = 'homeroom_bot';
 
 /**
  * Whether a conversation is a person's direct chat with the Homeroom bot:
- * the one direct conversation with reply threads, one per request (the
- * request's card is the thread's first message). Other direct chats keep
- * none. The client reads the same off a conversation's `homeroomBot` flag
+ * the one direct conversation with reply threads (its private threads: an
+ * ask, a draft, an idea, a design, and older requests' card threads, which
+ * take no new news). Other direct chats keep none. The client reads the same off a conversation's `homeroomBot` flag
  * (frontend/src/features/messages threadsAllowed).
  */
 async function isHomeroomBotDirect(db, conversationId) {
@@ -420,9 +420,50 @@ function isBotNewsRow(row) {
   return Number(meta.issueNumber) > 0 || !!meta.firstVersion || meta.kind === 'activity';
 }
 
+/**
+ * Pure (5 Nov 2026, docs/plans/bot-one-model.md step 4): whether a message
+ * of the bot's, by its metadata, is a request's news (REQUEST_NEWS_KINDS
+ * below), as a test of one message about to be sent. Such a message is no longer sent
+ * at all (homeroom-bot-dm.js sendDm): a request's news is said on its own
+ * page, and its requester's bell rings from its stage (services/work-state.js).
+ * A first version's news is not one: it has no request page yet.
+ */
+// The kinds of the bot's messages that report how a request is going, as
+// its senders stamp them: the posts relayed from its thread (homeroom-bot-
+// live.js post kinds), its activity card and quiet step lines, its plan card
+// for a complicated request, and the notes on its change (a preview that
+// failed, a look owed, merged) and on the request (closed by somebody
+// else's change, taken by a person). Anything else is the conversation: a
+// reply to what the person said or tapped (`closing`, `ack`, …), a hello, a
+// notice about their account (`allowance`, `paused`). Named, not inferred
+// from an issue number: a reply about a request is still a reply.
+const REQUEST_NEWS_KINDS = new Set([
+  'activity', 'step', 'plan', 'plan_stopped', 'looking', 'question', 'spec', 'proposal', 'checks',
+  'build_failed', 'followup_failed', 'followup_person', 'blocked', 'empty', 'person', 'live',
+  'preview_failed', 'needs_look', 'merged', 'request_closed', 'request_taken',
+]);
+
+function isRequestNewsMeta(meta) {
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
+  if (meta.moment === 'reply' || meta.firstVersion === true) return false;
+  return REQUEST_NEWS_KINDS.has(String(meta.kind || ''));
+}
+
 /** The cards a main-stream page of this conversation carries: all of them, but in the chat with the bot. */
 async function mainStreamCards(db, membership) {
   return membership.kind === 'direct' && (await threadsAllowed(db, membership)) ? (row) => !isBotNewsRow(row) : null;
+}
+
+/**
+ * #6250: whether a reply's thread root is a private thread started from the
+ * bot's "+" (metadata kind `opened_thread` with no quoted message), which
+ * Main Chat never lists. Read from the root's own columns in MESSAGE_SELECT;
+ * the SQL test is PLUS_THREAD_REPLY.
+ */
+function plusThreadRoot(row) {
+  const meta = row.thread_root_metadata && typeof row.thread_root_metadata === 'object'
+    ? row.thread_root_metadata[BOT_METADATA_KEY] : null;
+  return !!meta && typeof meta === 'object' && meta.kind === 'opened_thread' && row.thread_root_reply_to_id == null;
 }
 
 // `cards`, when given, says which rows get their cards filled; the others
@@ -487,7 +528,7 @@ async function hydrateMessages(db, user, rows, { cards = null } = {}) {
     // #6071: a person's message shows its design pin alone (a comment pinned
     // on a design's preview, routes/conversations.js), never anything else.
     const metadata = deleted || moderated || system ? null
-      : row.sender_is_synthetic ? publicMetadata(row.metadata) : personMetadata(row.metadata);
+      : row.sender_is_synthetic ? publicMetadata(row.metadata, user) : personMetadata(row.metadata);
     return {
       id: row.id,
       conversationId: row.conversation_id,
@@ -528,6 +569,10 @@ async function hydrateMessages(db, user, rows, { cards = null } = {}) {
         senderUsername: row.thread_root_sender_username || 'Deleted user',
         content: row.thread_root_deleted_at ? '' : snippet(row.thread_root_content),
         deleted: !!row.thread_root_deleted_at,
+        // #6250: a thread from the bot's "+" stays out of Main Chat, and the
+        // client reads the same origin from its root (bot-shared.ts). The
+        // server's test is PLUS_THREAD_REPLY.
+        ...(plusThreadRoot(row) ? { plusThread: true } : {}),
       },
     };
   });
@@ -554,6 +599,7 @@ const MESSAGE_SELECT = `
          ru.username AS reply_sender_username, rua.id AS reply_sender_avatar_id,
          ru.is_synthetic AS reply_sender_is_synthetic, ru.display_name AS reply_sender_display_name,
          tr.content AS thread_root_content, tr.deleted_at AS thread_root_deleted_at,
+         tr.reply_to_id AS thread_root_reply_to_id, tr.metadata AS thread_root_metadata,
          tru.username AS thread_root_sender_username
     FROM conversation_messages m
     LEFT JOIN users su ON su.id = m.sender_id
@@ -595,14 +641,51 @@ function pageLimit(limit) {
 // buttons. A person's own replies and the bot's quiet lines stay in the
 // thread.
 const ALSO_IN_CHAT = `(m.metadata->'homeroomBot'->>'alsoInChat') = 'true'`;
+// #6207 (3 Nov 2026): a request's news from Homeroom bot is not Main
+// Chat's. Main holds what the person said there and the bot's replies to it
+// (`moment: 'reply'`, and the kinds that are conversation); a request's
+// activity card, plan, questions and building / ready / live lines are on
+// that request's page, which is where its row goes. Nothing is deleted: old
+// news is only left out of the stream, its unread count and its preview. A
+// first version's news stays, as it has no request page yet. The client's
+// copy of this test is frontend/src/features/messages/bot-request.ts
+// isRequestNews, for a message that arrives live; isBotNewsRow above is its
+// row form, less the first version's news.
+const REQUEST_NEWS = `COALESCE(m.metadata->'homeroomBot' IS NOT NULL
+          AND COALESCE(m.metadata->'homeroomBot'->>'moment', '') <> 'reply'
+          AND COALESCE(m.metadata->'homeroomBot'->>'firstVersion', '') <> 'true'
+          AND COALESCE(m.metadata->'homeroomBot'->>'kind', '') NOT IN (${[...BOT_CONVERSATION_KINDS].map((k) => `'${k}'`).join(', ')})
+          AND (COALESCE(m.metadata->'homeroomBot'->>'issueNumber', '') ~ '^[1-9][0-9]{0,9}$'
+               OR m.metadata->'homeroomBot'->>'kind' = 'activity'), FALSE)`;
+// #6250 (4 Nov 2026): a private thread's ORIGIN decides whether Main Chat
+// shows it (Evan, 4 Nov). One started from the bot's "+" (private-threads.js
+// startThread) stays out of Main altogether: its opener line and its replies
+// are the thread's own, and the Homeroom bot page's list is the only way in.
+// One the bot opened from Main, answering what the person said there (a
+// draft, a new project, a screen asked for: opened_draft, opened_thread with
+// changeKind project or design) quotes that message, so `reply_to_id` is
+// set; it stays in Main, as the way to its row in the list. A thread opened
+// from a request's page or a captured screen carries its own kind
+// (`opened_about`, `opened_design`) and stays too. Nothing is deleted, so a
+// link still opens the thread. Kind, not LIKE: `_` would be a wildcard.
+const PLUS_THREAD_OPENER = `COALESCE(m.metadata->'homeroomBot'->>'kind' = 'opened_thread'
+          AND m.reply_to_id IS NULL, FALSE)`;
+// A reply in a thread started from the bot's "+": its root is that opener.
+// Main Chat leaves it out as well, so such a thread lives only in the list.
+const PLUS_THREAD_REPLY = `EXISTS (SELECT 1 FROM conversation_messages plus_root
+          WHERE plus_root.id = m.thread_root_id
+            AND plus_root.metadata->'homeroomBot'->>'kind' = 'opened_thread'
+            AND plus_root.reply_to_id IS NULL)`;
 const MAIN_STREAM_ROW = `(m.thread_root_id IS NULL OR (
           m.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM conversation_messages hidden_root
                             JOIN user_blocks hb ON hb.blocked_user_id = hidden_root.sender_id
                            WHERE hidden_root.id = m.thread_root_id AND hb.blocker_id = $2)
-          AND (${ALSO_IN_CHAT}
+          AND ((${ALSO_IN_CHAT} AND NOT ${PLUS_THREAD_REPLY})
                OR NOT EXISTS (SELECT 1 FROM conversations dc
-                               WHERE dc.id = m.conversation_id AND dc.kind = 'direct'))))`;
+                               WHERE dc.id = m.conversation_id AND dc.kind = 'direct'))))
+        AND NOT ${REQUEST_NEWS}
+        AND NOT ${PLUS_THREAD_OPENER}`;
 async function mainStreamBefore(db, user, conversationId, before, count) {
   if (before) {
     return (await db.query(
@@ -969,6 +1052,7 @@ async function conversationRow(db, user, conversationId) {
             me.role AS my_role, me.status AS membership_status, me.invited_by,
             me.invite_note,
             me.last_read_message_id,
+            me.last_visit_at,
             inviter.username AS requester_username,
             inviter_avatar.id AS requester_avatar_id,
             peer.user_id AS peer_id, peer.status AS peer_status, peer_user.username AS peer_username,
@@ -997,10 +1081,12 @@ async function conversationRow(db, user, conversationId) {
        LEFT JOIN LATERAL (
          -- #2387: the list's latest message is the main stream's latest
          -- message anyone still has: thread replies and deletions skip,
-         -- apart from a bot moment shown in the main chat too.
+         -- apart from a bot moment shown in the main chat too (never one in
+         -- a thread from the bot's "+", #6250).
          SELECT id FROM conversation_messages m
           WHERE m.conversation_id = c.id
-            AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL
+            AND (m.thread_root_id IS NULL OR (${ALSO_IN_CHAT} AND NOT ${PLUS_THREAD_REPLY})) AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
+            AND NOT ${PLUS_THREAD_OPENER}
             AND NOT EXISTS (SELECT 1 FROM user_blocks b
                              WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
           ORDER BY id DESC LIMIT 1
@@ -1023,7 +1109,8 @@ async function countUnread(db, conversationId, userId, cursor) {
   const result = await db.query(
     `SELECT COUNT(*)::int AS count FROM conversation_messages m
       WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0)
-        AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL
+        AND (m.thread_root_id IS NULL OR (${ALSO_IN_CHAT} AND NOT ${PLUS_THREAD_REPLY})) AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
+        AND NOT ${PLUS_THREAD_OPENER}
         AND (m.metadata->'homeroomBot'->>'quiet') IS DISTINCT FROM 'true'
         AND m.msg_type = 'message'
         AND m.sender_id IS DISTINCT FROM $3
@@ -1068,9 +1155,14 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
   // a member who has read nothing, which countUnread reads the same way; null
   // is "not yours to know", hidden until acceptance like the count itself.
   let lastReadMessageId = null;
+  // #6426: when the viewer last looked at this conversation, for Main Chat's
+  // "Welcome back" card. A member's own reading state, hidden like the
+  // cursor until acceptance.
+  let lastVisitAt = null;
   if (row.membership_status === 'member' && !row.deleted_peer) {
     unread = await countUnread(db, row.id, user.id, row.last_read_message_id);
     lastReadMessageId = Number(row.last_read_message_id) || 0;
+    lastVisitAt = row.last_visit_at ? new Date(row.last_visit_at).toISOString() : null;
   }
   // An invitation is a consent envelope, not conversation access. The
   // requester identity is shown so the recipient can decide; roster, peer,
@@ -1124,6 +1216,7 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     lastActivityAt: accepted ? (latest?.createdAt || row.created_at) : (row.updated_at || row.created_at),
     unreadCount: unread,
     lastReadMessageId,
+    lastVisitAt,
     awaitingAcceptance,
     canSend: row.membership_status === 'member' && row.status === 'active'
       && !(awaitingAcceptance && row.has_messages),
@@ -1501,9 +1594,21 @@ async function setMessageMetadata(db, messageId, metadata) {
 }
 
 /** What of a message's metadata a reader is shown: the bot's part, or nothing. */
-function publicMetadata(raw) {
+function publicMetadata(raw, viewer = null) {
   const value = raw && typeof raw === 'object' ? raw[BOT_METADATA_KEY] : null;
-  return value && typeof value === 'object' && !Array.isArray(value) ? { [BOT_METADATA_KEY]: value } : null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  // 3 Nov 2026: a set of suggested replies is offered to the people it names
+  // (forUserIds). Anyone else is shown the message without its buttons, so a
+  // "Go ahead" never appears to somebody the note did not offer it to.
+  const suggest = value.suggest;
+  if (suggest && typeof suggest === 'object' && Array.isArray(value.actions)) {
+    const forIds = Array.isArray(suggest.forUserIds) ? suggest.forUserIds.map(Number) : [];
+    const me = Number(viewer?.id);
+    if (suggest.status === 'open' && forIds.length && (!Number.isSafeInteger(me) || !forIds.includes(me))) {
+      return { [BOT_METADATA_KEY]: { ...value, actions: [] } };
+    }
+  }
+  return { [BOT_METADATA_KEY]: value };
 }
 
 /** #6071: what of a person's message's metadata a reader is shown: its design pin, or nothing. */
@@ -2206,8 +2311,11 @@ async function markRead(pool, user, conversationId, messageId) {
       };
     }
     const cursor = Math.max(current, messageId);
+    // #6426: this is a VISIT to the main stream. `last_visit_at` moves on
+    // every read, even when the cursor is already at the same message, so
+    // Main Chat can tell a return after hours away from a glance.
     await db.query(
-      `UPDATE conversation_members SET last_read_message_id = $1
+      `UPDATE conversation_members SET last_read_message_id = $1, last_visit_at = NOW()
         WHERE conversation_id = $2 AND user_id = $3`,
       [cursor, conversationId, user.id]
     );
@@ -2524,7 +2632,12 @@ module.exports = {
   threadsAllowed,
   isBotNewsRow,
   BOT_CONVERSATION_KINDS,
+  isRequestNewsMeta,
+  REQUEST_NEWS_KINDS,
   ALSO_IN_CHAT,
+  REQUEST_NEWS,
+  PLUS_THREAD_OPENER,
+  PLUS_THREAD_REPLY,
   BOT_METADATA_KEY,
   updateTitle,
   respond,

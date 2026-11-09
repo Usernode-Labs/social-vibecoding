@@ -58,14 +58,13 @@ test('reader release can publish keyed files and retake a keyed slot without ret
   } catch (err) { await tx.query('ROLLBACK'); throw err; } finally { tx.release(); }
   const { rows: [published] } = await pool.query('SELECT * FROM shot_artifacts WHERE run_id = $1', [runId]);
   assert.equal(published.object_key, oldKey);
-  assert.equal(published.data, null);
+  assert.equal(published.data, undefined);
   assert.deepEqual(await media.bytes(store, published), old);
-  // The existing <table>_media_check only validates png/webm/gif. It must
-  // not mask the new invariant after data becomes nullable.
-  await assert.rejects(pool.query('UPDATE shot_run_files SET object_key = NULL WHERE run_id = $1', [runId]), { code: '23514' });
-  await assert.rejects(pool.query('UPDATE shot_run_files SET data = $2 WHERE run_id = $1', [runId, old]), { code: '23514' });
-  await assert.rejects(pool.query('UPDATE shot_artifacts SET object_key = NULL WHERE run_id = $1', [runId]), { code: '23514' });
-  await assert.rejects(pool.query('UPDATE shot_artifacts SET data = $2 WHERE run_id = $1', [runId, old]), { code: '23514' });
+  // Keys are mandatory and byte columns are gone.
+  await assert.rejects(pool.query('UPDATE shot_run_files SET object_key = NULL WHERE run_id = $1', [runId]), { code: '23502' });
+  await assert.rejects(pool.query('UPDATE shot_run_files SET data = $2 WHERE run_id = $1', [runId, old]), { code: '42703' });
+  await assert.rejects(pool.query('UPDATE shot_artifacts SET object_key = NULL WHERE run_id = $1', [runId]), { code: '23502' });
+  await assert.rejects(pool.query('UPDATE shot_artifacts SET data = $2 WHERE run_id = $1', [runId, old]), { code: '42703' });
   const owner = await pool.connect();
   await owner.query('BEGIN');
   await owner.query('SELECT slot FROM shot_run_files WHERE run_id = $1 FOR UPDATE', [runId]);
@@ -73,8 +72,7 @@ test('reader release can publish keyed files and retake a keyed slot without ret
   try {
     assert.equal((await within(sweep, 2000, 'cleanup to retain a locked referenced row')).removed, 0);
   } finally { await owner.query('ROLLBACK'); owner.release(); await sweep; }
-  // A reader release still writes bytes; the next release writes keys.
-  // Both must replace the old key/density and read the actual new bytes.
+  // A retake replaces the old keys/density and reads the actual new object.
   await pool.query("UPDATE chat_sessions SET shots_state = 'exploring' WHERE id = $1", [session.id]);
   const fresh = fixtures.png({ shade: 200 });
   await control.withControl(pool, { runId, sessionId: session.id },
@@ -84,7 +82,8 @@ test('reader release can publish keyed files and retake a keyed slot without ret
   const { rows: [row] } = await pool.query('SELECT * FROM shot_run_files WHERE run_id = $1', [runId]);
   assert.notEqual(row.object_key, oldKey);
   assert.equal(row.dense_object_key, null);
-  assert.equal(row.dense_data, null);
+  assert.equal(row.dense_data, undefined);
   assert.equal(row.density, 1);
-  assert.notEqual(row.data === null, row.object_key === null, 'exactly one representation');
+  assert.equal(row.data, undefined);
+  assert.ok(row.object_key);
 });
