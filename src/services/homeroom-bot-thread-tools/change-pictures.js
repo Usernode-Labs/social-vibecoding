@@ -58,7 +58,15 @@ async function show(pool, ctx, args = {}) {
   if (made.gallery) ctx.card = made.gallery;
   return {
     ...out,
-    ...(out.images ? { shown: 'As a gallery under your reply. Say in one sentence what it shows; you cannot see the pictures.' } : {}),
+    ...(out.images ? {
+      // #6541: the reply names the version the pictures were drawn from.
+      shown: 'As a gallery under your reply. Say in one sentence what it shows; you cannot see the pictures.'
+        + (out.drawnFrom
+          ? (out.headSource === 'newest'
+            ? ` Say they are drawn from ${out.drawnFrom}, the change's newest version.`
+            : ` Say they are drawn from ${out.drawnFrom}, the last version checked; a newer push may not be drawn.`)
+          : ''),
+    } : {}),
     note: 'A plan is posted from the change\'s own thread, where its request is; the pictures stay here.',
   };
 }

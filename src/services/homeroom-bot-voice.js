@@ -456,19 +456,45 @@ async function answersQuestion(pool, { app, issueNumber, bot, row }) {
  * in this thread, this soon after it. A person's follow-up to the bot's note
  * is to the bot, with no @ and no Reply needed. The same test a reply thread
  * uses (`continued`).
+ *
+ * #6539: the thread is the one the place sits in, so a change's discussion
+ * (`session`) gets the test a request's does. Resolves the bot's post
+ * ({ id, user_id, created_at }), or null when this does not follow one.
  */
 async function followsBotPost(pool, { app, place, row, bot }) {
-  if (!app?.id || place?.type !== 'issue' || !row?.id || !bot?.id) return false;
+  if (!app?.id || !['issue', 'session'].includes(place?.type) || !row?.id || !bot?.id) return null;
   const { rows } = await pool.query(
-    `SELECT m.user_id, m.created_at FROM chat_messages m
-      WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2 AND m.id < $3
+    `SELECT m.id, m.user_id, m.created_at FROM chat_messages m
+      WHERE m.app_id = $1 AND m.thread_type = $4 AND m.thread_ref = $2 AND m.id < $3
         AND m.deleted_at IS NULL
       ORDER BY m.id DESC LIMIT 1`,
-    [app.id, Number(place.ref), Number(row.id)],
+    [app.id, Number(place.ref), Number(row.id), place.type],
   );
   const before = rows[0];
-  if (!before || Number(before.user_id) !== Number(bot.id)) return false;
-  return Date.now() - new Date(before.created_at).getTime() < CONTINUE_MINUTES * 60 * 1000;
+  if (!before || Number(before.user_id) !== Number(bot.id)) return null;
+  return Date.now() - new Date(before.created_at).getTime() < CONTINUE_MINUTES * 60 * 1000 ? before : null;
+}
+
+/**
+ * #6539: whether `speaker`, writing straight after one of the bot's posts on
+ * a change's thread, is somebody whose message that post is an answer to:
+ * the person its last finished turn was answering, the change's author, or a
+ * project admin. Anyone else's follow-up needs an @ or a Reply, as before.
+ */
+async function answersChangePost(pool, { app, place, speaker }) {
+  const { rows } = await pool.query(
+    `SELECT speaker_id FROM homeroom_bot_voice_turns
+      WHERE place_key = $1 AND finished_at IS NOT NULL
+      ORDER BY id DESC LIMIT 1`,
+    [placeKey(app.id, place)],
+  );
+  const answered = rows[0]?.speaker_id;
+  if (answered != null && Number(answered) === Number(speaker.id)) return true;
+  const change = await changeRow(pool, place.ref);
+  if (change && Number(change.user_id) === Number(speaker.id)) return true;
+  // The project's check (homeroom-bot-batches.js): its owner, its admins, and
+  // a platform admin who may write.
+  return require('./homeroom-bot-batches').managesApp(pool, app, speaker);
 }
 
 /** The bot's own change a session is, as the gate and the facts read it, or null. */
@@ -566,6 +592,24 @@ const SPEAK_RULES = Object.freeze({
     const change = await changeRow(s.pool, s.place.ref);
     const own = change && Number(change.user_id) === Number(s.bot.id) && !change.is_headless && change.status === 'promoted';
     return own ? yes(s.addressed || 'own_change') : null;
+  },
+  // #6539: on a change's thread, the person the bot's post answered, the
+  // change's author or a project admin writing straight after it, this soon
+  // after, is answering it: no @ and no Reply needed. Anybody else's
+  // follow-up stays unanswered, as today.
+  followed_change_post: async (s) => {
+    if (s.addressed || s.place?.type !== 'session' || !s.row?.id) return null;
+    try {
+      const post = await followsBotPost(s.pool, { app: s.app, place: s.place, row: s.row, bot: s.bot });
+      if (post && await answersChangePost(s.pool, { app: s.app, place: s.place, speaker: s.speaker })) {
+        s.addressed = 'followed';
+      }
+    } catch (err) {
+      log.warn('homeroom-bot-voice', 'Could not check whether a change-thread message follows the bot\'s', {
+        app: s.app?.slug, err: err.message,
+      });
+    }
+    return null;
   },
   // A request whose change the bot built is up for a vote: what people say
   // there is about that change, as on the change itself.
@@ -869,14 +913,22 @@ async function goAheadCannotReply(pool, { app, place, row, speaker, deps = {} })
 async function runTurn(pool, config, { appId, place, through = 0, sorry = false, turnKey, deps = {} }) {
   const turnId = await claim(pool, { appId, place, turnKey });
   if (!turnId) throw new PlaceBusy();
-  // #6228: on a request, the thread's status line follows this turn: reading
-  // once it starts, and its answer (or silence) once it ends. Best-effort.
-  const noteStatus = () => {
-    if (!place || place.type !== 'issue' || place.ref == null) return;
+  // #6228/#6538: the thread's status line follows this turn, in every place
+  // the voice answers in: reading once it starts, and its answer (or
+  // silence) once it ends. Best-effort, never awaited. Outside a request a
+  // status is broadcast only when there is one to say, so a turn that showed
+  // nothing sends nothing; a line that was shown is always cleared.
+  let announced = false;
+  let pending = Promise.resolve();
+  const noteStatus = (final = false) => {
+    if (!place) return;
     try {
-      void require('./homeroom-bot-reply-status')
-        .publish(pool, { appId: Number(appId), issueNumber: Number(place.ref) })
-        .catch(() => {});
+      const replyStatus = require('./homeroom-bot-reply-status');
+      pending = pending.then(() => replyStatus.publish(pool, {
+        appId: Number(appId),
+        place,
+        ...(place.type === 'issue' ? {} : { skipEmpty: final ? !announced : true }),
+      })).then((sent) => { if (sent) announced = true; }).catch(() => {});
     } catch { /* best effort */ }
   };
   noteStatus();
@@ -884,7 +936,7 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   const finishWith = async (outcome) => {
     record.outcome = outcome;
     await finishTurn(pool, turnId, record);
-    noteStatus();
+    noteStatus(true);
     return { outcome, throughId: record.throughId || null, replyId: record.replyId || null };
   };
   const cfg = configOf(config);

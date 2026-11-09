@@ -14,7 +14,8 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const YAML = require('yaml');
 
-const { npmGate, npmFindings, imageGate, imageFindings, lockPackages, sbomPackages, report } = require('../scripts/security-findings');
+const { npmGate, npmFindings, imageGate, imageFindings, lockPackages, sbomPackages, report, imageAssessment } = require('../scripts/security-findings');
+const { buildBaseline } = require('../scripts/security-image-baseline');
 const { baselineLock } = require('../scripts/security-audit');
 const { parseReleaseValues, liveRelease } = require('../scripts/live-release');
 
@@ -158,7 +159,7 @@ test('what is live comes off the newest stable chart, and an unreadable chart is
   assert.equal(liveRelease('usernode-labs', { run: () => ({ status: 1 }) }), null);
 });
 
-test('the workflow gives each gate its baseline, and a gate with none stays strict', () => {
+test('the workflow compares PRs to their base and releases to immutable release images', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
   const step = (job, name) => workflow.jobs[job].steps.find((s) => s.name === name);
   // Lockfiles: a pull request's base, or the live release.
@@ -173,24 +174,26 @@ test('the workflow gives each gate its baseline, and a gate with none stays stri
     SECURITY_BASELINE_REVISION: '${{ steps.baseline.outputs.revision }}',
     SECURITY_BASELINE_NAME: '${{ steps.baseline.outputs.name }}',
   });
-  // Images: the live image of the same component, by digest.
+  // PR images use the exact PR base, including standalone and starter.
   const prScan = step('security-images', 'Build and scan the finished image');
-  assert.equal(prScan.env.LIVE_DIGEST, '${{ steps.live.outputs[matrix.component] }}');
-  assert.match(prScan.run, /export BASELINE_IMAGE="ghcr\.io\/\$\{GITHUB_REPOSITORY_OWNER,,\}\/social-vibecoding-\$COMPONENT@\$LIVE_DIGEST"/);
+  assert.equal(prScan.env.SECURITY_BASELINE_REVISION, '${{ github.event.pull_request.base.sha }}');
+  assert.equal(prScan.env.SECURITY_SCAN_PLATFORM, 'linux/amd64');
+  assert.equal(workflow.jobs['security-images'].steps.some((s) => s.uses?.startsWith('actions/cache')), false,
+    'PR-written inventories cannot be persisted then reused by a later revision');
   const releaseScan = step('build', 'Verify runtime and scan the exact image SBOM');
   assert.equal(releaseScan.env.LIVE_DIGEST, '${{ steps.live.outputs[matrix.component] }}');
   assert.match(releaseScan.run, /export BASELINE_IMAGE="ghcr\.io\/\$REGISTRY_OWNER\/social-vibecoding-\$\{\{ matrix\.component \}\}@\$LIVE_DIGEST"/);
   assert.match(releaseScan.run, /sh scripts\/check-published-image\.sh "\$IMAGE" "\$REPORT" "\$\{\{ matrix\.component \}\}"/);
-  // The live release is read before the scan in both jobs.
-  for (const job of ['security-images', 'build']) {
+  // Releases retain the immutable released-image comparison.
+  for (const job of ['build']) {
     const names = workflow.jobs[job].steps.map((s) => s.name || s.uses);
     assert.ok(names.indexOf('Read the live release') > names.indexOf('azure/setup-helm@v4'), `${job}: helm is set up first`);
   }
   // The image check passes the baseline SBOM to the findings, and only when read.
   const check = fs.readFileSync(path.join(ROOT, 'scripts/check-image-security.sh'), 'utf8');
   assert.match(check, /docker buildx imagetools inspect "\$BASELINE_IMAGE" --format '\{\{json \.SBOM\}\}'/);
-  assert.match(check, /node scripts\/security-findings\.js "\$out\/vulnerabilities\.json" "\$component" \$baseline \|\| status=1/);
-  assert.match(check, /node scripts\/security-findings\.js "\$out\/image-vulnerabilities\.json" "\$component" \$baseline \|\| status=1/);
+  assert.match(check, /node scripts\/security-findings\.js --assess "\$out" "\$component" "\$baseline"/);
+  assert.match(check, /elif \[ -n "\$\{SECURITY_BASELINE_REVISION:-\}" \]/);
 });
 
 // A fake `docker` that records each call and writes what the scan steps read:
@@ -202,13 +205,16 @@ function fakeDocker(dir) {
 printf '%s\\n' "$*" >> "${path.join(dir, 'calls.log')}"
 out=; prev=; report=
 for a in "$@"; do
-  case "$prev" in -v) case "$a" in *:/output) out="\${a%:/output}" ;; esac ;; --output) report="\${a#/output/}" ;; -o) touch "$a" ;; esac
+  case "$prev" in -v) case "$a" in *:/output) out="\${a%:/output}" ;; esac ;; --output) report="\${a#/output/}" ;; -o) [ "$a" = spdx-json ] || touch "$a" ;; esac
   prev="$a"
 done
 case "$*" in
+  *"image inspect"*) echo "sha256:${'e'.repeat(64)}" ;;
+  *"anchore/syft"*) cat "${path.join(dir, 'baseline.json')}" ;;
   *"imagetools inspect"*) cat "${path.join(dir, 'attestation.json')}" ;;
   *"--entrypoint node"*) cat > /dev/null; echo '{}' ;;
-  *" sbom "*|*" image --skip-db-update"*) cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
+  *" image --skip-db-update"*) [ "\${FAKE_IMAGE_SCAN_FAILURE:-}" != 1 ] || exit 9; cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
+  *" sbom "*) cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
 esac
 `, { mode: 0o755 });
   return bin;
@@ -259,7 +265,123 @@ test('an image with the same digest as the live image is not pulled, saved or re
 
   // A different image with no readable live SBOM blocks on the finding.
   const strict = run(other, live, {});
-  assert.equal(strict.res.status, 1);
-  assert.match(strict.res.stdout, /::warning title=worker image::The live image's SBOM could not be read; every finding blocks\./);
-  assert.match(strict.res.stdout, /::error title=Security gate: worker image::worker: libssl3/);
+  assert.equal(strict.res.status, 2);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(strict.out, 'assessment.json'))).status, 'unavailable');
+  assert.match(strict.res.stderr, /Security assessment unavailable/);
+  assert.doesNotMatch(strict.res.stdout, /Security gate: worker image/, 'failed comparison does not invent a regression');
+});
+
+test('unchanged vulnerable Buildx warns; an introduced version blocks; audits retain unfixable and accepted findings', () => {
+  const scan = { SchemaVersion: 2, Results: [{ Target: 'buildx', Vulnerabilities: [
+    { Severity: 'HIGH', PkgName: 'golang.org/x/net', InstalledVersion: 'v0.59.0', VulnerabilityID: 'CVE-2026-78661', FixedVersion: '0.62.0' },
+    { Severity: 'CRITICAL', PkgName: 'unfixable', InstalledVersion: '1', VulnerabilityID: 'CVE-2026-12345' },
+    { Severity: 'HIGH', PkgName: 'decode-uri-component', InstalledVersion: '0.2.2', VulnerabilityID: 'CVE-2026-118664', FixedVersion: '0.5.1' },
+  ] }] };
+  const unchanged = imageAssessment([scan], { component: 'standalone', baseline: new Set(['golang.org/x/net@v0.59.0']), now: NOW });
+  assert.equal(unchanged.status, 'existing_findings');
+  assert.equal(unchanged.blocking.length, 0);
+  assert.equal(unchanged.preexisting.length, 1);
+  const changed = imageAssessment([scan], { component: 'standalone', baseline: new Set(['golang.org/x/net@v0.58.0']), now: NOW });
+  assert.equal(changed.status, 'regression');
+  assert.equal(changed.blocking.length, 1);
+  const full = imageAssessment([scan, scan], { component: 'standalone', audit: true, now: NOW });
+  assert.equal(full.findings.length, 3, 'deduplicate SBOM/full-image matches but retain all risk categories');
+  assert.equal(full.blocking.length, 0);
+  assert.equal(full.findings.find((f) => f.id === 'CVE-2026-118664').acceptedUntil, '2026-11-28');
+  const lower = JSON.parse(JSON.stringify(scan));
+  lower.Results[0].Vulnerabilities[0].Severity = 'LOW';
+  const merged = imageAssessment([scan, lower], { component: 'standalone', audit: true, now: NOW });
+  assert.equal(merged.findings.find((f) => f.id === 'CVE-2026-78661').severity, 'HIGH', 'a second report cannot downgrade the alert');
+  assert.throws(() => imageAssessment([{ SchemaVersion: 2, Results: [] }], { component: 'standalone' }), /invalid image scan/);
+});
+
+test('a failed full-image scan invalidates an earlier clean assessment and cannot resolve an alert', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-partial-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const out = path.join(dir, 'out');
+  fs.mkdirSync(out);
+  fs.writeFileSync(path.join(out, 'assessment.json'), JSON.stringify({ complete: true, status: 'clean' }));
+  fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify({ SchemaVersion: 2, Results: [{ Target: 'image' }] }));
+  const sbom = path.join(dir, 'sbom.json');
+  fs.writeFileSync(sbom, '{}');
+  const result = spawnSync('sh', ['scripts/check-image-security.sh', 'fixture', out, sbom, 'standalone'], {
+    cwd: ROOT, encoding: 'utf8', env: { ...process.env, PATH: `${fakeDocker(dir)}:${process.env.PATH}`, FAKE_IMAGE_SCAN_FAILURE: '1', SECURITY_AUDIT_ONLY: '1' },
+  });
+  assert.equal(result.status, 9);
+  const data = JSON.parse(fs.readFileSync(path.join(out, 'assessment.json')));
+  assert.equal(data.complete, false);
+  assert.equal(data.status, 'unavailable');
+  assert.match(data.reason, /full-image scan/);
+});
+
+test('a clean candidate skips baseline builds; a potential finding generates a fresh exact-base inventory', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-lazy-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const reportFile = path.join(dir, 'report.json');
+  fs.writeFileSync(reportFile, JSON.stringify({ SchemaVersion: 2, Results: [{ Target: 'buildx' }] }));
+  const sbom = path.join(dir, 'sbom.json');
+  fs.writeFileSync(sbom, '{}');
+  const bin = fakeDocker(dir);
+  const source = path.join(dir, 'base-source');
+  fs.mkdirSync(source);
+  fs.writeFileSync(path.join(source, 'Dockerfile'), 'FROM scratch\n');
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh
+printf '%s\\n' "$*" >> "${path.join(dir, 'git-calls.log')}"
+if [ "$1" = archive ]; then tar -cf "$4" -C "${source}" .; fi
+`, { mode: 0o755 });
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, SECURITY_BASELINE_REVISION: 'a'.repeat(40),
+    SECURITY_SCAN_PLATFORM: 'linux/amd64', SECURITY_AUDIT_ONLY: '', GITHUB_STEP_SUMMARY: path.join(dir, 'summary.md') };
+  const run = (folder) => spawnSync('sh', ['scripts/check-image-security.sh', 'fixture', path.join(dir, folder), sbom, 'standalone'], { cwd: ROOT, encoding: 'utf8', env });
+  assert.equal(run('clean').status, 0);
+  assert.equal(fs.existsSync(path.join(dir, 'git-calls.log')), false, 'no baseline is needed for a clean candidate');
+  fs.writeFileSync(path.join(dir, 'baseline.json'), JSON.stringify({ spdxVersion: 'SPDX-2.3', packages: [{ name: 'golang.org/x/net', versionInfo: 'v0.59.0' }] }));
+  fs.writeFileSync(reportFile, JSON.stringify({ SchemaVersion: 2, Results: [{ Target: 'buildx', Vulnerabilities: [
+    { Severity: 'HIGH', PkgName: 'golang.org/x/net', InstalledVersion: 'v0.59.0', VulnerabilityID: 'CVE-2026-78661', FixedVersion: '0.62.0' },
+  ] }] }));
+  const result = run('finding');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /baseline.*built/);
+  assert.match(fs.readFileSync(path.join(dir, 'git-calls.log'), 'utf8'), /archive.*aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'finding', 'assessment.json'))).status, 'existing_findings');
+});
+
+test('baseline generation pins the exact commit and architecture, validates output and reports timing', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-base-build-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const previousSummary = process.env.GITHUB_STEP_SUMMARY;
+  process.env.GITHUB_STEP_SUMMARY = path.join(dir, 'summary.md');
+  t.after(() => { if (previousSummary === undefined) delete process.env.GITHUB_STEP_SUMMARY; else process.env.GITHUB_STEP_SUMMARY = previousSummary; });
+  const calls = [];
+  const revision = 'b'.repeat(40);
+  const inventory = { spdxVersion: 'SPDX-2.3', packages: [{ name: 'x', versionInfo: '1' }] };
+  const run = (file, args) => {
+    calls.push([file, args]);
+    if (file === 'sh') fs.writeFileSync(args[2], JSON.stringify(inventory));
+  };
+  const opts = { component: 'standalone', revision, output: path.join(dir, 'out.json'), platform: 'linux/amd64', run };
+  assert.ok(buildBaseline(opts).ms >= 0);
+  assert.ok(calls.some(([file, args]) => file === 'git' && args[0] === 'archive' && args.at(-1) === revision));
+  assert.ok(calls.some(([file, args]) => file === 'docker' && args.includes('--platform') && args.includes('linux/amd64')));
+  assert.deepEqual(JSON.parse(fs.readFileSync(opts.output)), inventory);
+  assert.throws(() => buildBaseline({ ...opts, revision: 'main' }), /Invalid baseline/);
+  assert.throws(() => buildBaseline({ ...opts, platform: 'linux/386' }), /Invalid baseline/);
+});
+
+test('an unavailable lockfile baseline is an assessment failure rather than an invented dependency regression', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-lock-unavailable-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(dir, 'audit.json'), JSON.stringify(audit('minio', 'node_modules/minio', 'high', 'GHSA-new')));
+  fs.writeFileSync(path.join(bin, 'npm'), `#!/bin/sh\ncat "${path.join(dir, 'audit.json')}"\n`, { mode: 0o755 });
+  const out = path.join(dir, 'reports');
+  const result = spawnSync(process.execPath, ['scripts/security-audit.js'], {
+    cwd: ROOT, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`,
+      SECURITY_BASELINE_REVISION: 'f'.repeat(40), SECURITY_REPORT_DIR: out },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Security assessment unavailable/);
+  assert.doesNotMatch(result.stdout, /Security gate: root lockfile/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'root-gate.json'))).blocking, []);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'root-gate.json'))).status, 'unavailable');
 });

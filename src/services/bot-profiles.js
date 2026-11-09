@@ -122,7 +122,7 @@ const PROFILES = Object.freeze({
     // abandoned) may ask the bot to make its own version of a change made
     // outside Homeroom.
     tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'offer_withdraw', 'make_own_version', 'make_pictures', 'attach_files', 'show_change', 'list_change_files']),
-    speaks: Object.freeze([...THREAD_CHECKS, 'not_queued_as_ask', 'own_change', 'addressed']),
+    speaks: Object.freeze([...THREAD_CHECKS, 'not_queued_as_ask', 'own_change', 'followed_change_post', 'addressed']),
   }),
   channel: profile('channel', {
     surface: 'thread', scope: 'thread', prompt: 'channel', places: ['chat', 'category'], limits: THREAD_LIMITS,
