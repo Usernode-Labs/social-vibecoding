@@ -451,12 +451,17 @@ function fallbackState(row) {
       status: row.change_status, check_state: row.check_state, promoted_at: row.promoted_at,
       merged_at: row.merged_at, live_at: row.live_at, last_activity_at: row.last_activity_at,
     });
-    // #6282: an update on its way holds the vote (work-state.js derive says the same).
+    // #6282: an update on its way holds the vote (work-state.js derive says
+    // the same). #6545: a queued one holds only a vote, never a change still
+    // checking (a fix waiting its turn).
     if (row.update_coming && row.change_status === 'promoted') {
       const since = iso(row.last_activity_at || row.promoted_at);
-      return row.update_coming === 'running'
-        ? { stage: 'building', why: null, reason: null, line: { code: 'revising' }, since }
-        : { stage: 'up_for_vote', why: null, reason: null, line: { code: 'update_queued' }, since };
+      if (row.update_coming === 'running') {
+        return { stage: 'building', why: null, reason: null, line: { code: 'revising' }, since };
+      }
+      if (change.stage === 'up_for_vote') {
+        return { stage: 'up_for_vote', why: null, reason: null, line: { code: 'update_queued' }, since };
+      }
     }
     return change;
   }
