@@ -5080,6 +5080,19 @@
         "frontend/src/features/ai/lists.tsx",
         "frontend/locales/en/messages.json"
       ]
+    },
+    {
+      "name": "#6371: This week lists each project's week the weekly digest opens",
+      "path": "/?demo=1#week",
+      "expectSelector": "#weekly-digest-screen:not(.hidden) [data-weekly-digest-pane]",
+      "expectText": "Staging demo app",
+      "id": "weekly-digest-page",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/weekly-digest/index.tsx",
+        "frontend/locales/en/weekly-digest.json",
+        "src/routes/weekly-digest.js"
+      ]
     }
   ],
   "governance": {

@@ -302,10 +302,10 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
     return d ? `${d.moment}/${d.said}:${d.appName}` : r.detail;
   });
   assert.deepEqual(moments(rang), [
-    'needs_you/question:Plant Pal', 'ready/ready_first:Plant Pal', 'live/live_first:Plant Pal',
-  ], 'needs your answer, ready, live: nothing else');
+    'needs_you/question:Plant Pal', 'ready/ready_first:Plant Pal',
+  ], 'needs your answer and ready: #6371 leaves live to the week digest');
   // WP-E: each as its build moment's own kind, in the "Your builds" category.
-  assert.deepEqual(rang.map((r) => r.kind), ['build_needs_you', 'build_ready', 'build_live']);
+  assert.deepEqual(rang.map((r) => r.kind), ['build_needs_you', 'build_ready']);
   const { rows: [{ unread }] } = await pool.query(
     `SELECT COUNT(*)::int AS unread FROM conversation_messages m
        JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $1

@@ -242,6 +242,28 @@ test('#20 (WP3): beside the proposal\'s card the news points at the card; the ad
   assert.match(dm.dmText('followup_revise', KINDS.followup_revise, context), /Take another look: https:/);
 });
 
+test('#6371: a change going live says so without ringing a bell or a phone; the other moments still ring', async (t) => {
+  const conversations = require('../src/services/conversations');
+  const saved = { ensureAdmittedDirect: conversations.ensureAdmittedDirect, sendMessage: conversations.sendMessage };
+  t.after(() => Object.assign(conversations, saved));
+  conversations.ensureAdmittedDirect = async () => ({ conversationId: 5, created: false });
+  const sends = [];
+  conversations.sendMessage = async (_pool, _user, _id, input, options) => {
+    sends.push(options || {});
+    return { messageId: 70 + sends.length, duplicate: true };
+  };
+  const pool = { query: async () => ({ rows: [] }) };
+  const news = (key, moment) => ({
+    bot: { id: 1 }, userId: 2, content: 'Live now.', idempotencyKey: key, moment,
+    metadata: { kind: 'ack', issueNumber: 7, appSlug: 'x', appName: 'X', sessionId: 9 },
+  });
+  await dm.sendDm(pool, news('live', 'live'));
+  await dm.sendDm(pool, news('ready', 'ready'));
+  await dm.sendDm(pool, news('needs-you', 'needs_you'));
+  assert.deepEqual(sends.map((s) => s.notify), [false, true, true],
+    'the live message stays in the chat, and its notification is the week digest');
+});
+
 test('#20 (WP3): a message whose card cannot go says what it says without it', async (t) => {
   const conversations = require('../src/services/conversations');
   const saved = { ensureAdmittedDirect: conversations.ensureAdmittedDirect, sendMessage: conversations.sendMessage };

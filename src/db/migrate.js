@@ -254,6 +254,9 @@ async function migrate(config) {
   // #5877: the bot's "Ready to try" row about a project, for the bell's
   // leading tile. Needs the capture member (seedCaptureAdminUser).
   await seedStagingBotProjectNotification(pool);
+  // #6371: the one weekly digest row in the bell, which opens This week.
+  // Needs the capture member (seedCaptureUser).
+  await seedStagingWeeklyDigestRow(pool);
   // #6133's shots: the quiet "close to this week's building time" line in a
   // request's thread. Needs the capture member (seedCaptureUser).
   await seedStagingBotAllowanceWarning(pool);
@@ -9419,6 +9422,35 @@ async function seedStagingBotProjectNotification(pool) {
     log.info('db', 'Staging bot-project notification fixture seeded');
   } catch (err) {
     log.warn('db', 'Staging bot-project notification seeding failed', { message: err.message });
+  }
+}
+
+// #6371's before/after shots: the one weekly digest row in the bell, whose
+// tap opens This week. A staging copy has no such row for the shots' member
+// fixture, and the page's own read is the demo week (`#week?demo=1`).
+async function seedStagingWeeklyDigestRow(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const viewer = await pool.query(
+      `SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1`
+    );
+    const member = viewer.rows[0];
+    if (!member) {
+      log.warn('db', 'Staging weekly digest row skipped: fixture member missing');
+      return;
+    }
+    await pool.query(
+      `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+       SELECT $1, NULL, NULL, 'weekly_digest', 'w:3:12:3'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM notifications n
+           WHERE n.user_id = $1 AND n.kind = 'weekly_digest' AND n.detail = 'w:3:12:3'
+        )`,
+      [member.id]
+    );
+    log.info('db', 'Staging weekly digest row fixture seeded');
+  } catch (err) {
+    log.warn('db', 'Staging weekly digest row seeding failed', { message: err.message });
   }
 }
 
