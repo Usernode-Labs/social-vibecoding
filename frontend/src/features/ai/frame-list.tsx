@@ -12,8 +12,13 @@
  * built by ./model.ts, and draws this in its place while the device's look
  * is one of the frame's. Nothing is read or decided here.
  */
+import { type RefObject } from 'react';
+
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { Btn, Card, Frame, Head, Lead, Meta, Pill, Row, Search, Sec, Tabs, Tile, Track, k } from '@/components/ui/kit';
+import { getDateLocale } from '../../lib/i18n/runtime';
+import { Btn, Card, Frame, GroupLink, Head, Lead, Meta, Pill, Row, Search, Sec, Tabs, Tile, Track, k } from '@/components/ui/kit';
+import { HISTORY_KINDS, type HistoryKind } from './filter-address';
+import { byMonth, historyGlyph, historyTooltip, historyWords, monthName, type HistoryRow, type HistoryState } from './history';
 import { BOT_AVATAR } from '../messages/format';
 import { rowKey } from './column';
 import {
@@ -37,8 +42,12 @@ function needIcon(row: WorkRow): string {
   return 'vote';
 }
 
+/** The glyph of a finished item: what became of it. */
+const HISTORY_ICON: Record<ReturnType<typeof historyGlyph>, string> = { live: 'check', closed: 'x', request: 'chat', vote: 'vote', private: 'lock' };
+
 export function AiFrameList({
   heroLine, main, lit = null, ready, rows, progress, waiting, live, openRow, openThread, picked = [], onPick, appFor, onNew, query, onQuery,
+  history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
 }: {
   /** The one sentence under the title: the counts, as the page's own heading says them (./model.ts heroWords). */
   heroLine: Phrase | null;
@@ -57,9 +66,17 @@ export function AiFrameList({
   onNew: () => void;
   query: string;
   onQuery: (next: string) => void;
+  /** HISTORY (./history.ts): what finished, by month; the You tab's three lists (your changes, requests, votes) are its kinds. */
+  history?: HistoryState | null;
+  historyKind?: HistoryKind | null;
+  onHistoryKind?: (kind: HistoryKind | null) => void;
+  openHistory?: (row: HistoryRow) => void;
+  /** The group itself, which #homeroom-bot/history scrolls to. */
+  historyRef?: RefObject<HTMLDivElement | null>;
 }) {
   const t = useMessages('messages');
   const tc = useMessages('changes');
+  const tco = useMessages('core');
   const say = (p: Phrase | null): string => {
     if (!p) return '';
     const nested = p.nested ? Object.fromEntries(Object.entries(p.nested).map(([key, q]) => [key, say(q)])) : null;
@@ -83,6 +100,13 @@ export function AiFrameList({
   };
   const needs = rows.filter((row) => matches(row.title, row.app));
   const busy = picked.length ? progress.filter((th) => matches(th.title, th.app, th.number)) : [];
+  const locale = getDateLocale();
+  const done = (history?.rows || []).filter((row) => matches(row.title, row.app, row.number));
+  const months = byMonth(done);
+  const kindWord = (kind: HistoryKind | null) => (kind === 'change' ? t('messages:ai.history.kind.change')
+    : kind === 'request' ? t('messages:ai.history.kind.request')
+      : kind === 'vote' ? t('messages:ai.history.kind.vote')
+        : kind === 'solo' ? t('messages:ai.history.kind.solo') : t('messages:ai.history.kind.all'));
 
   return (
     <Frame className="fr-pane" data-ai-frame-list="">
@@ -157,6 +181,46 @@ export function AiFrameList({
           ))}
 
           {ready && needs.length === 0 && busy.length === 0 ? <Card pad>{t('messages:frame.bot.quiet')}</Card> : null}
+
+          {history && (!q || done.length) ? (
+            <div ref={historyRef} data-ai-frame-history="">
+              <Sec
+                label={t('messages:ai.history.title')}
+                action={(
+                  <span className={k('btnrow')} role="group" aria-label={t('messages:ai.history.kind.label')}>
+                    {[null, ...HISTORY_KINDS].map((kind) => (
+                      <Btn key={kind || 'all'} kind={historyKind === kind ? '' : 'quiet'} small aria-pressed={historyKind === kind} onClick={() => onHistoryKind?.(kind)}>{kindWord(kind)}</Btn>
+                    ))}
+                  </span>
+                )}
+              >
+                {!history.ready ? <Card pad>{t('messages:ai.history.loading')}</Card>
+                  : history.failed && !done.length ? (
+                    <Card pad>{t('messages:ai.history.failed')} <Btn kind="quiet" small onClick={history.retry}>{tco('core:common.tryAgain')}</Btn></Card>
+                  ) : !done.length && !history.next ? <Card pad>{t('messages:ai.history.empty')}</Card> : null}
+              </Sec>
+              {months.map((month) => (
+                <Sec key={month.key} label={monthName(month.at, locale)}>
+                  <Card>
+                    {month.rows.map((row) => (
+                      <Row
+                        key={row.key}
+                        lead={<Lead icon={HISTORY_ICON[historyGlyph(row)]} tone={historyGlyph(row) === 'live' ? 'ok' : undefined} />}
+                        title={row.title || (row.number != null ? `#${row.number}` : '')}
+                        line={say(historyTooltip(row)) || undefined}
+                        right={<Meta>{say(historyWords(row, locale))}</Meta>}
+                        on={!!lit && rowKey({ rootId: row.rootId ?? null, href: row.href }) === lit}
+                        onClick={() => openHistory?.(row)}
+                      />
+                    ))}
+                  </Card>
+                </Sec>
+              ))}
+              {history.ready && history.next ? (
+                <GroupLink onClick={history.more}>{history.loading ? t('messages:ai.history.loading') : t('messages:ai.history.earlier')}</GroupLink>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
     </Frame>

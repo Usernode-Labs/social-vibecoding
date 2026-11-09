@@ -923,6 +923,11 @@ export function AiScreen(): ReactNode {
           onNew={() => { openBlank(); if (botId) startNewThread(botId); }}
           query={query}
           onQuery={setQuery}
+          history={history}
+          historyKind={historyKind}
+          onHistoryKind={pickKind}
+          openHistory={openHistory}
+          historyRef={historyRef}
         />
       ) : (
       <div className="ai-screen-body max-w-2xl mx-auto pb-8">

@@ -129,3 +129,29 @@ test('the list\'s New thread starts the blank thread, as the standard "+" does',
   assert.match(src, /onNew=\{\(\) => \{ openBlank\(\); if \(botId\) startNewThread\(botId\); \}\}/);
   assert.match(read('frontend', 'src', 'features', 'messages', 'new-thread.tsx'), /onClick=\{\(\) => \{ onOpen\?\.\(\); startNewThread\(conversationId\); \}\}/, 'the same two halves, in the same order');
 });
+
+test('History: what finished, by month, as the You tab\'s three lists (your changes, requests, votes)', () => {
+  // The tour's s46 to s48 are the bot tab's history, filtered by kind. The
+  // kinds are small buttons on the group's label; each month is a group of
+  // rows ending in what became of the item.
+  const history = {
+    ready: true, loading: false, failed: false, next: 'c1', more() {}, retry() {},
+    rows: [
+      { key: 'h1', number: 6369, title: 'Email templates, part 7', app: homeroom, href: '#app/homeroom/dev/changes/6369', at: '2026-11-08T10:00:00Z', kind: 'change', outcome: 'live', by: 'you' },
+      { key: 'h2', number: 6204, title: 'Mobile app safe area', app: homeroom, href: '#app/homeroom/dev/issues/6204', at: '2026-10-21T10:00:00Z', kind: 'request', outcome: 'closed' },
+      { key: 'h3', number: 6198, title: 'The bot tab as the one place', app: homeroom, href: '#app/homeroom/dev/changes/6198', at: '2026-10-20T10:00:00Z', kind: 'vote', outcome: 'live', myVote: 'yes' },
+    ],
+  };
+  const html = render({ history, historyKind: 'change', onHistoryKind() {}, openHistory() {} });
+  const block = html.slice(html.indexOf('data-ai-frame-history'));
+  assert.match(block, /<h2 class="fr-cap">History<\/h2><span class="fr-btnrow" role="group" aria-label="[^"]+"><button type="button" class="fr-btn fr-quiet fr-sm" aria-pressed="false">All<\/button><button type="button" class="fr-btn fr-sm" aria-pressed="true">Changes<\/button><button type="button" class="fr-btn fr-quiet fr-sm" aria-pressed="false">Requests<\/button><button type="button" class="fr-btn fr-quiet fr-sm" aria-pressed="false">Votes<\/button><button type="button" class="fr-btn fr-quiet fr-sm" aria-pressed="false">Only you<\/button><\/span>/);
+  assert.deepEqual([...block.matchAll(/<h2 class="fr-cap">([^<]+)<\/h2>/g)].map((m) => m[1]).slice(1), ['November', 'October'], 'a group per month');
+  assert.deepEqual([...block.matchAll(/<span class="fr-t">([^<]+)<\/span>/g)].map((m) => m[1]), ['Email templates, part 7', 'Mobile app safe area', 'The bot tab as the one place']);
+  assert.match(block, /<span class="fr-lead fr-ok"[^>]*>.*?<\/span><span class="fr-tx"><span class="fr-t">Email templates, part 7<\/span><span class="fr-s">Homeroom · #6369<\/span><\/span><span class="fr-meta">Live [^<]+<\/span>/s, 'a live change in green, where it is, and when it went live');
+  assert.match(block, /<button type="button" class="fr-link">Earlier months<\/button>/);
+  assert.match(render({ history: { ...history, rows: [], next: null } }), /<div class="fr-card fr-pad">Nothing finished yet\.<\/div>/);
+  assert.match(render({ history: { ...history, ready: false } }), /<div class="fr-card fr-pad">Loading your history<\/div>/);
+  assert.doesNotMatch(render({ history, query: 'zzz' }), /data-ai-frame-history/, 'a search with nothing finished in it folds the group away');
+  const page = read('frontend', 'src', 'features', 'ai', 'index.tsx');
+  assert.match(page, /history=\{history\}\s+historyKind=\{historyKind\}\s+onHistoryKind=\{pickKind\}\s+openHistory=\{openHistory\}\s+historyRef=\{historyRef\}\s+\/>/, 'the same history, kind and presses as the standard list');
+});
