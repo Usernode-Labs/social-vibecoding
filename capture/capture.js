@@ -2677,7 +2677,107 @@ async function runTests(browser, tests, opts) {
   return { ran, expected: own.length, deadline: hitDeadline };
 }
 
+// ── #6354: one page copied for a design ─────────────────────────────────
+//
+// PAGE_CAPTURE ({ url, viewport }) is a second, much smaller mode: open one
+// URL at one size, wait for the shell's design serializer
+// (window.UsernodeReact.designCapture, frontend/src/features/design/
+// capture.ts) and emit the one document it answers with. It runs no shots
+// and no checks.
+//
+//   __USERNODE_PAGE__ bytes=<n>
+//   <base64 HTML, one line>
+//   __USERNODE_PAGE_END__
+//
+// or __USERNODE_PAGE_FAIL__ reason=<encoded> when there is no page to give.
+function parsePageCapture(env) {
+  const raw = String((env || {}).PAGE_CAPTURE || '').trim();
+  if (!raw) return null;
+  try {
+    const spec = JSON.parse(raw);
+    if (!spec || typeof spec.url !== 'string' || !/^https?:\/\//i.test(spec.url)) return null;
+    const viewport = spec.viewport || {};
+    const width = Number(viewport.width);
+    const height = Number(viewport.height);
+    return {
+      url: spec.url,
+      viewport: {
+        width: Number.isFinite(width) && width > 0 ? Math.round(width) : 1280,
+        height: Number.isFinite(height) && height > 0 ? Math.round(height) : 800,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function emitPage(html) {
+  const b64 = Buffer.from(String(html), 'utf8').toString('base64');
+  _sink(`__USERNODE_PAGE__ bytes=${Buffer.byteLength(String(html), 'utf8')}\n`);
+  _sink(`${b64}\n`);
+  _sink('__USERNODE_PAGE_END__\n');
+}
+
+function emitPageFail(reason) {
+  _sink(`__USERNODE_PAGE_FAIL__ reason=${encodeURIComponent(String(reason || 'failed').slice(0, 200))}\n`);
+}
+
+/**
+ * Open one page at one size and emit the design serializer's answer.
+ * `deps` is a test seam: launch (a browser factory) and delayMs.
+ */
+async function runPageCapture(spec, deps = {}) {
+  if (!spec) { emitPageFail('no_page_capture'); return null; }
+  const launch = deps.launch || (async () => {
+    const puppeteer = require('puppeteer-core');
+    return puppeteer.launch({
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+      headless: true,
+      args: CHROMIUM_LAUNCH_ARGS,
+    });
+  });
+  const delayMs = Number.isFinite(deps.delayMs) ? deps.delayMs : 1000;
+  let browser = null;
+  try {
+    browser = await launch();
+    const page = await browser.newPage();
+    // What the page is still fetching: the copy is taken once it has been
+    // quiet for a moment, so its rows are drawn, not still loading.
+    const activity = makeActivityClock();
+    if (typeof page.on === 'function') {
+      for (const event of ['request', 'requestfinished', 'requestfailed']) page.on(event, () => activity.bump());
+    }
+    await page.setViewport({ ...spec.viewport, deviceScaleFactor: 1 });
+    await page.goto(spec.url, { waitUntil: 'load', timeout: 30000 });
+    await page.waitForFunction(
+      () => !!(window.UsernodeReact && window.UsernodeReact.designCapture
+        && typeof window.UsernodeReact.designCapture.capturePlatformPage === 'function'),
+      { timeout: 15000 },
+    );
+    // At least a second after the bridge is there, and until the page stops.
+    if (delayMs > 0) await waitForQuiet(activity, { minMs: delayMs, quietMs: 500, maxMs: 8000 });
+    const result = await page.evaluate(() => window.UsernodeReact.designCapture.capturePlatformPage());
+    if (!result || typeof result.html !== 'string' || !result.html.trim()) {
+      emitPageFail('no_page');
+      return null;
+    }
+    emitPage(result.html);
+    return result;
+  } catch (err) {
+    emitPageFail(err?.message || 'capture_failed');
+    return null;
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
 async function main() {
+  // #6354: one page for a design. It runs no media pass and no checks.
+  const pageCapture = parsePageCapture(process.env);
+  if (pageCapture) {
+    await runPageCapture(pageCapture);
+    return;
+  }
   const targets = resolveTargets(process.env);
   const tests = resolveTests(process.env);
   if (!targets.length && !tests.length) {
@@ -2776,4 +2876,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, tentativeInterfaces, waitForNetworkSettled, launchWhenSettled, NETWORK_SETTLE_MAX_MS, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS, MAX_SELECTOR_LEN };
+module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, tentativeInterfaces, waitForNetworkSettled, launchWhenSettled, NETWORK_SETTLE_MAX_MS, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS, MAX_SELECTOR_LEN, parsePageCapture, runPageCapture };

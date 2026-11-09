@@ -935,6 +935,18 @@
     "text": "You're in every community of this kind.",
     "description": "Line in Communities to join when the chosen kind has no community the viewer is not already in."
   },
+  "join.empty": {
+    "text": "No communities yet.",
+    "description": "Line in Communities to join when there are no public communities at all to list, signed in or out."
+  },
+  "join.failed": {
+    "text": "Couldn't load communities.",
+    "description": "Line in Communities to join when the public directory could not be read."
+  },
+  "join.retry": {
+    "text": "Try again",
+    "description": "Button under the line that says the communities could not be loaded. Reads the directory once more."
+  },
   "join.loadingMore": {
     "text": "Loading more communities",
     "description": "Accessible name of the placeholder cards shown while the next communities load at the end of the list."

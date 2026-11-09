@@ -1721,6 +1721,12 @@ async function cleanup() {
   }
   await pushStop;
 
+  // #6354: the design bot's one demo copy of Homeroom is disposable and is
+  // not serving anybody: stop it (and its database) now, before the drain
+  // spends its time. Bounded, and never a reason to hold the process.
+  await boundedStep(require('./src/services/design-capture').stopCopy(), BUILD_SHUTDOWN_MARK_TIMEOUT_MS)
+    .catch((err) => log.warn('server', 'Could not stop the design demo copy', { err: err.message }));
+
   // The checks runs this process launched go on without it: their Jobs
   // belong to the cluster. Their rows still carry this process's heartbeat,
   // though, and the next process adopts a main check's run only once its

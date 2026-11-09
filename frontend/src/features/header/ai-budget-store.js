@@ -24,6 +24,24 @@
  * `low` and `byok` map to the same literal today on purpose: one is a spend
  * threshold, the other is the BYOK figure, and they are free to diverge.
  *
+ * ── One allowance, one copy ────────────────────────────────────────────
+ *
+ * `AiCredit.Budget` (./ai-credit.js) is the ONE holder of the viewer's AI
+ * allowance: every fetch and every `budget_updated` push goes through its
+ * `adopt()`, and `current()` returns that state. This store only carries
+ * the WORDED view model of it for the row below. The readers that must not
+ * drift from it are:
+ *
+ *   - this row (AiBudgetRow in ./ai-budget.tsx), via `view`/`hidden`;
+ *   - the agent-session composer's "$ left" ring, via `figures`;
+ *   - the dev chat's meter and banners (../dev-chat/dev-chat.js), via
+ *     `adopt()`/`current()`;
+ *   - Settings' "This week's spend" platform line (../settings/settings.js),
+ *     via `current()`.
+ *
+ * The shape is unchanged (#6493): one `view`, its `hidden` flag and the raw
+ * `figures` the component draws from.
+ *
  * ── `hidden` is a third state, not `!view` ─────────────────────────────
  *
  * The row ships VISIBLE and empty and is hidden only once a me-scoped fetch

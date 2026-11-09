@@ -4,7 +4,11 @@
  *
  * 1 Nov 2026: nothing opens a capture just now. The screen picker that did
  * (pick.tsx, start.ts) retired when the bot began drawing screens from
- * words; this stays, with the server's capture route, for a later door.
+ * words. The door that opens it now (#6354) is Homeroom's own capture job:
+ * asked to design one of Homeroom's pages, the bot has a short-lived job
+ * open the page's demo route at the asked size and run this serializer in
+ * the page (window.UsernodeReact.designCapture, published at the bottom of
+ * this file; capture/capture.js PAGE_CAPTURE).
  *
  * ── Two kinds of screen ───────────────────────────────────────────────
  *
@@ -143,6 +147,13 @@ export function capturePlatformPage(doc: Document = document): DesignCapture | n
 }
 
 let seq = 0;
+
+// #6354: the capture job reaches the serializer here, in the page's own
+// context (capture/capture.js). Published at module scope so it exists as
+// soon as the shell has loaded, before any job's one-second wait ends.
+type DesignCaptureBridge = { designCapture?: { capturePlatformPage: typeof capturePlatformPage } };
+const bridgeWindow = window as unknown as { UsernodeReact?: DesignCaptureBridge };
+(bridgeWindow.UsernodeReact ||= {}).designCapture = { capturePlatformPage };
 
 /**
  * An app's page, asked of its bridge (the frame's own origin), or null when
