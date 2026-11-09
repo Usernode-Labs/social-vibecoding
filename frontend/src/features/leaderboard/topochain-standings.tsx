@@ -28,7 +28,7 @@
  * initial value is what makes it do so.
  */
 
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, useEffect, type ReactNode } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
@@ -36,6 +36,10 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { ActivityRow } from './activity-row';
 import { topochainStandingsStore } from './topochain-standings-store.js';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
+import { StandingsFrameHead } from './frame/challenges-frame';
+import { useLeaderboardSection } from './section-store';
+import { MyStanding, myStandingStore, standingView } from './my-standing.js';
 
 type ColumnKey = 'rank' | 'user' | 'points';
 
@@ -585,7 +589,32 @@ function Drill({ view, inline }: { view: DrillView | null; inline: boolean }): R
   );
 }
 
+/** Standings' head under one of the frame's looks: the kit's, with the viewer's place as its sentence. */
+function StandingsInFrameHead(): ReactNode {
+  const t = useMessages('leaderboard');
+  const standing = standingView(useStoreState(myStandingStore)) as { rank: number | null; people: number } | null;
+  useEffect(() => { void MyStanding.load(); }, []);
+  // The pane stays mounted behind the other sections.
+  const { section } = useLeaderboardSection();
+  const ranked = standing && standing.rank != null
+    ? (standing.people > 0
+      ? t('leaderboard:standing.rankOf', { rank: standing.rank, count: standing.people, number: standing.people.toLocaleString('en-US') })
+      : t('leaderboard:standing.rank', { rank: standing.rank })).replace(/<\/?\d+>/g, '')
+    : null;
+  return (
+    <StandingsFrameHead
+      up={section === 'topochain'}
+      tabs={[{ key: 'challenges', label: t('leaderboard:tabs.challenges') }, { key: 'topochain', label: t('leaderboard:tabs.standings') }]}
+      onTab={(key) => { if (key !== 'topochain') (window as any).Leaderboard?._setSection?.(key); }}
+      purpose={ranked}
+    />
+  );
+}
+
 export function TopochainStandingsPane(): ReactNode {
+  // Under one of the frame's looks the pane wears the kit's head and tabs
+  // (./frame/challenges-frame.tsx), as Challenges does; its table is its own.
+  const frame = isFrameSkin(useLiveSkin());
   const state = useStoreState(topochainStandingsStore) as {
     mounted: boolean;
     body: BodyView | null;
@@ -600,6 +629,7 @@ export function TopochainStandingsPane(): ReactNode {
     && state.drill.index < state.body.rows.length);
   return (
     <>
+      {frame ? <StandingsInFrameHead /> : null}
       <div id="tc-lb-body"><Body view={state.body} drill={inline ? state.drill : null} /></div>
       <Drill view={state.drill} inline={inline} />
     </>

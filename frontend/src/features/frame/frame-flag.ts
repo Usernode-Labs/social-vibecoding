@@ -8,8 +8,11 @@ import { useEffect } from 'react';
 
 const up = new Map<string, number>();
 
-export function useFrameFlag(name: string): void {
+export function useFrameFlag(name: string, on = true): void {
   useEffect(() => {
+    // `on` false: mounted but not the page on show (a tab that is hidden
+    // behind another), so the screen's own layout must not be given away.
+    if (!on) return undefined;
     up.set(name, (up.get(name) || 0) + 1);
     document.documentElement.setAttribute(`data-${name}`, '');
     return () => {
@@ -17,5 +20,5 @@ export function useFrameFlag(name: string): void {
       up.set(name, left);
       if (left <= 0) document.documentElement.removeAttribute(`data-${name}`);
     };
-  }, [name]);
+  }, [name, on]);
 }

@@ -72,11 +72,24 @@ test('your season is two figures and one note in the context column; the token a
 test('the pane draws the kit\'s page under a look, ahead of its own parts, and the screen gives it the page area', () => {
   const src = read('frontend/src/features/leaderboard/challenges-pane.tsx');
   assert.match(src, /const frame = isFrameSkin\(useLiveSkin\(\)\);/);
-  assert.match(src, /\{frame && state\.grid && state\.grid\.kind === 'cards' \? \(\s*<ChallengesInFrame grid=\{state\.grid\} \/>/);
+  assert.match(src, /\{frame && state\.grid && state\.grid\.kind === 'cards' \? \(\s*<ChallengesInFrame grid=\{state\.grid\} up=\{!state\.detail\} \/>/);
+  assert.match(src, /up=\{up && section === 'challenges'\}/, 'the page on show only while its own section is, and no challenge\'s page is over it');
+  assert.match(read('frontend/src/features/frame/frame-flag.ts'), /if \(!on\) return undefined;/);
   assert.match(src, /<YourStanding \/>\s*<Grid view=\{state\.grid\} \/>/, 'its own parts stay as written');
   const css = read('public/css/app.css');
   const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
   assert.match(hand, /html\[data-skin\]\[data-challenges-frame\] #tc-se-grid > :not\(\.fr\) \{ display: none; \}/);
   assert.match(hand, /html\[data-skin\]\[data-challenges-frame\] #leaderboard-screen \{ padding-inline-start: var\(--platform-rail-w, 0px\) !important; padding-inline-end: 0 !important; \}/);
   assert.match(hand, /html\[data-skin\]\[data-challenges-frame\] #standings-tabs \{ display: none; \}/, 'the tabs are the kit\'s');
+});
+
+test('Standings wears the same head and tabs over its own table', () => {
+  const html = renderComponent(FRAME, 'StandingsFrameHead', { tabs: base.tabs, onTab() {}, purpose: '#16 of 151 ranked' }, { cache: false });
+  assert.match(html, /^<div class="fr" data-standings-frame=""><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">Challenges<\/h1><p class="fr-purpose">#16 of 151 ranked<\/p><\/div><\/div><nav class="fr-tabs"><button type="button" class="fr-tab" aria-pressed="false">Challenges<\/button><button type="button" class="fr-tab fr-on" aria-pressed="true">Standings<\/button><\/nav><\/div><\/div>$/);
+  const src = read('frontend/src/features/leaderboard/topochain-standings.tsx');
+  assert.match(src, /\{frame \? <StandingsInFrameHead \/> : null\}\s*<div id="tc-lb-body">/);
+  const css = read('public/css/app.css');
+  assert.match(css, /html\[data-skin\]\[data-standings-frame\] #standings-tabs \{ display: none; \}/);
+  assert.match(css, /html\[data-skin\]\[data-standings-frame\] #topochain-leaderboard-root \{ display: contents; \}/, 'the head comes before the season picker, which is written ahead of the panes');
+  assert.match(src, /up=\{section === 'topochain'\}/);
 });

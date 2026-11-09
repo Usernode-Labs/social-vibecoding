@@ -56,6 +56,7 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 import { YourStanding } from './your-standing';
 import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { ChallengesFrame } from './frame/challenges-frame';
+import { useLeaderboardSection } from './section-store';
 import { MyStanding, myStandingStore, standingView } from './my-standing.js';
 
 // The controller, by name. It is published on `window` for its legacy callers
@@ -675,8 +676,11 @@ function scrollTarget(el: HTMLElement): HTMLElement | Window {
  * viewer's standing (./my-standing.js), which the standard look draws as a
  * card of its own over the grid.
  */
-function ChallengesInFrame({ grid }: { grid: Extract<GridView, { kind: 'cards' }> }): ReactNode {
+function ChallengesInFrame({ grid, up }: { grid: Extract<GridView, { kind: 'cards' }>; up: boolean }): ReactNode {
   const t = useMessages('leaderboard');
+  // The pane stays mounted behind Standings and Kudos: it is the page on
+  // show only while its own section is.
+  const { section } = useLeaderboardSection();
   const standing = standingView(useStoreState(myStandingStore)) as {
     rank: number | null; people: number; pending: string | null;
     token: { gated: true } | { gated: false; empty: boolean; amount: string; revealed: boolean };
@@ -701,6 +705,7 @@ function ChallengesInFrame({ grid }: { grid: Extract<GridView, { kind: 'cards' }
         : { gated: false as const, amount: standing.token.amount, revealed: standing.token.revealed, onReveal: () => MyStanding.revealTokens() };
   return (
     <ChallengesFrame
+      up={up && section === 'challenges'}
       tabs={[{ key: 'challenges', label: t('leaderboard:tabs.challenges') }, { key: 'topochain', label: t('leaderboard:tabs.standings') }]}
       onTab={(key) => { if (key !== 'challenges') (window as any).Leaderboard?._setSection?.(key); }}
       purpose={said.length ? said.reduce((first, second) => t('leaderboard:frame.pair', { first, second })) : null}
@@ -783,7 +788,7 @@ export function ChallengesPane(): ReactNode {
             It is inside the grid so a challenge's page hides it too.
         */}
         {frame && state.grid && state.grid.kind === 'cards' ? (
-          <ChallengesInFrame grid={state.grid} />
+          <ChallengesInFrame grid={state.grid} up={!state.detail} />
         ) : null}
         <YourStanding />
         <Grid view={state.grid} />

@@ -7,7 +7,7 @@
  * Presentational: the pane's own view (../challenges-pane.tsx) with another
  * face. A challenge's own page and Standings are still the pane's.
  */
-import { Btn, Card, Facts, Lead, Meta, Note, PageBody, Row, Sec, Tabs } from '@/components/ui/kit';
+import { Btn, Card, Facts, Frame, Head, Lead, Meta, Note, PageBody, Row, Sec, Tabs, k } from '@/components/ui/kit';
 import { useMessages } from '../../../lib/i18n/react';
 import { useFrameFlag } from '../../frame/frame-flag';
 
@@ -21,7 +21,9 @@ export type FrameToken =
   | { gated: true; onReview: () => void }
   | { gated: false; amount: string; revealed: boolean; onReveal: () => void };
 
-export function ChallengesFrame({ tabs, onTab, purpose, groups, notice, onOpen, season, note, token }: {
+export function ChallengesFrame({ up = true, tabs, onTab, purpose, groups, notice, onOpen, season, note, token }: {
+  /** This is the tab on show: not while Standings, or a challenge's own page, is up over it. */
+  up?: boolean;
   tabs: Array<{ key: string; label: string }>;
   onTab: (key: string) => void;
   /** Your standing in one line; undefined before it is known. */
@@ -33,7 +35,7 @@ export function ChallengesFrame({ tabs, onTab, purpose, groups, notice, onOpen, 
   note?: string | null;
   token: FrameToken | null;
 }) {
-  useFrameFlag('challenges-frame');
+  useFrameFlag('challenges-frame', up);
   const t = useMessages('leaderboard');
   return (
     <PageBody
@@ -88,5 +90,28 @@ export function ChallengesFrame({ tabs, onTab, purpose, groups, notice, onOpen, 
       ))}
       {notice ? <Note>{notice}</Note> : null}
     </PageBody>
+  );
+}
+
+/**
+ * Standings under a look: the same head and tabs as Challenges, over the
+ * pane's own table (the tour's s55 draws it as rows; the table, its paging
+ * and a person's details are the pane's until that is built).
+ */
+export function StandingsFrameHead({ up = true, tabs, onTab, purpose }: {
+  up?: boolean;
+  tabs: Array<{ key: string; label: string }>;
+  onTab: (key: string) => void;
+  purpose?: string | null;
+}) {
+  useFrameFlag('standings-frame', up);
+  const t = useMessages('leaderboard');
+  return (
+    <Frame data-standings-frame="">
+      <div className={k('inner')}>
+        <Head title={t('leaderboard:tabs.challenges')} purpose={purpose || undefined} />
+        <Tabs tabs={tabs} current="topochain" onPick={(key) => onTab(key)} />
+      </div>
+    </Frame>
   );
 }

@@ -27077,6 +27077,27 @@ html[data-skin][data-challenges-frame] #leaderboard-screen > div { max-width: no
 html[data-skin][data-challenges-frame] #standings-tabs { display: none; }
 html[data-skin][data-challenges-frame] #leaderboard-event-bar { box-sizing: border-box; max-width: 1136px; margin: 0 auto; padding: 0 32px; }
 html[data-skin][data-challenges-frame] #tc-se-grid > :not(.fr) { display: none; }
+/* Standings wears the same head and tabs over its own table, which sits in
+   the kit's column under them. */
+html[data-skin][data-standings-frame] #leaderboard-screen { padding-inline-start: var(--platform-rail-w, 0px) !important; padding-inline-end: 0 !important; }
+html[data-skin][data-standings-frame] #leaderboard-screen > div { max-width: none; padding: 0; }
+html[data-skin][data-standings-frame] #standings-tabs { display: none; }
+html[data-skin][data-standings-frame] #leaderboard-event-bar,
+html[data-skin][data-standings-frame] #topochain-leaderboard-root > :not(.fr) { box-sizing: border-box; max-width: 1136px; margin-inline: auto; padding-inline: 32px; }
+html[data-skin][data-standings-frame] [data-standings-frame] > .fr-inner { padding-bottom: 16px; }
+/* The season picker is written before the panes, and the kit's head inside
+   the Standings pane: the head comes first on the page, so the pane's
+   children join the screen's column and take their order from here. */
+html[data-skin][data-standings-frame] #leaderboard-screen > div { display: flex; flex-direction: column; }
+html[data-skin][data-standings-frame] #topochain-leaderboard-root { display: contents; }
+html[data-skin][data-standings-frame] #topochain-leaderboard-root > .fr { order: 0; }
+html[data-skin][data-standings-frame] #leaderboard-screen > div > div:first-child { order: 1; }
+html[data-skin][data-standings-frame] #topochain-leaderboard-root > :not(.fr) { order: 2; width: 100%; }
+@media (max-width: 767.98px) {
+  html[data-skin][data-challenges-frame] #leaderboard-event-bar,
+  html[data-skin][data-standings-frame] #leaderboard-event-bar,
+  html[data-skin][data-standings-frame] #topochain-leaderboard-root > :not(.fr) { padding-inline: 16px; }
+}
 
 /* THE YOU TAB (features/profile/frame/you-frame.tsx). The kit's page is
    drawn inside the profile's own hosts, which the standard look holds in a
