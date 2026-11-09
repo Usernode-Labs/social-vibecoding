@@ -210,12 +210,23 @@ export function WeeklyDigestScreen() {
         {state.open ? (
           <div data-weekly-digest-pane="">
             {state.loading && !state.data ? (
-              <SkeletonGroup label={t('loading')} className="px-4 pt-3">
-                {[0, 1, 2].map((i) => (
-                  <div key={i} className="mb-6">
-                    <Skeleton shape="muted" className="mb-2 w-24" />
-                    <Skeleton shape="line" className="mb-2 w-3/4" />
-                    <Skeleton shape="muted" className="w-1/3" />
+              <SkeletonGroup label={t('loading')} className="pt-3">
+                {[0, 1].map((i) => (
+                  <div key={i} className="mb-5">
+                    <Skeleton shape="muted" className="mx-4 mb-2 w-24" />
+                    <GroupedList>
+                      {[0, 1, 2].map((r) => (
+                        <div
+                          key={r}
+                          className={r < 2
+                            ? 'border-b border-[color:var(--app-sheet-line)] px-4 py-3'
+                            : 'px-4 py-3'}
+                        >
+                          <Skeleton shape="line" className="mb-2 w-3/4" />
+                          <Skeleton shape="muted" className="w-1/3" />
+                        </div>
+                      ))}
+                    </GroupedList>
                   </div>
                 ))}
               </SkeletonGroup>

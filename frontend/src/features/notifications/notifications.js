@@ -3568,7 +3568,10 @@ function rowWords(n) {
         : '';
       return {
         ...base,
-        icon: '\u{1F4F0}',
+        // The shell's own newspaper glyph (components/ui/icons), drawn by
+        // the sheet's tile: an icon is a line icon, never an emoji.
+        icon: null,
+        lineIcon: 'newspaper',
         ...headline(
           t('notifications:row.weekly.ready'),
           waiting ? t('notifications:row.factPair', { first: shipped, second: waiting }) : shipped,
