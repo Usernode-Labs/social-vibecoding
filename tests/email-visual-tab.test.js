@@ -111,7 +111,7 @@ test('a block edit reaches onChange with only that range changed', () => {
   const source = englishTemplate('waitlist_released').html;
   let model = visual.openModel(source);
   const headline = model.blocks.findIndex((b) => b.html === 'Make and share apps with groups and friends.');
-  const chip = model.blocks.findIndex((b) => b.html === 'Use and improve apps together');
+  const chip = model.blocks.findIndex((b) => b.html === 'Build an app for your community');
   assert.ok(headline >= 0 && chip > headline);
   const before = model.blocks[headline];
   model = visual.applyBlockEdit(model, headline, 'Make apps <b>together</b>.', []);

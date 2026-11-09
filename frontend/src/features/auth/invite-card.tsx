@@ -99,6 +99,8 @@ const DEAD: Record<string, { title: string; next: string }> = {
   expired: { title: 'auth:invite.dead.expired', next: 'auth:invite.dead.askForNew' },
   revoked: { title: 'auth:invite.dead.revoked', next: 'auth:invite.dead.askForNew' },
   used_up: { title: 'auth:invite.dead.usedUp', next: 'auth:invite.dead.askForNew' },
+  // The leaked-link guard paused it (services/community-invites.js GUARD).
+  paused: { title: 'auth:invite.dead.paused', next: 'auth:invite.dead.pausedNext' },
   unknown: { title: 'auth:invite.dead.unknown', next: 'auth:invite.dead.checkLink' },
 };
 

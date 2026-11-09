@@ -429,6 +429,24 @@ function buildCopy(kind, context, now, t) {
         title: app ? t('push:firstMessage.title.app', { actor, app }) : t('push:firstMessage.title.plain', { actor }),
         body: message,
       };
+    // The leaked-link guard (services/community-invites.js GUARD): one link
+    // brought in a lot of people today, or paused itself. `detail` is
+    // "<inviteId>:<joins>" (invite-activity.js noteGuard).
+    case 'invite_link_busy':
+    case 'invite_link_paused': {
+      const joins = /^\d{1,9}:(\d{1,9})$/.exec(detail);
+      const count = joins ? Number(joins[1]) : 0;
+      if (kind === 'invite_link_busy') {
+        return {
+          title: app ? t('push:inviteLinkBusy.title.app', { app, count }) : t('push:inviteLinkBusy.title.plain', { count }),
+          body: t('push:inviteLinkBusy.body'),
+        };
+      }
+      return {
+        title: app ? t('push:inviteLinkPaused.title.app', { app }) : t('push:inviteLinkPaused.title.plain'),
+        body: t('push:inviteLinkPaused.body', { count }),
+      };
+    }
     // An invite into a private project is to join it (detail 'join',
     // services/collab-invites.js); the rest are to build one.
     case 'collab_invite':

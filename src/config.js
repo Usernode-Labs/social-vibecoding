@@ -1057,6 +1057,10 @@ function load() {
     // submitReport). Optional, like every mail key: the platform's own
     // compliance inbox is the default.
     complianceEmail: (process.env.PLATFORM_COMPLIANCE_EMAIL || '').trim() || 'compliance@usernodelabs.org',
+    // Where a reply to the last waitlist reminder goes
+    // (services/waitlist-reminders.js): it asks the reader to reply and say
+    // what put them off, so a person must read it. Optional, like the above.
+    mailReplyTo: (process.env.PLATFORM_MAIL_REPLY_TO || '').trim() || 'support@usernodelabs.org',
   };
 
   for (const [name, value] of [

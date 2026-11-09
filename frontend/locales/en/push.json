@@ -203,6 +203,42 @@
     "text": "They came in through your invite. Say hello",
     "description": "Phone notification text under the title: somebody joined through the reader's invite link."
   },
+  "inviteLinkBusy.title.app_one": {
+    "text": "Your {{app}} invite link brought in {{count}} person today",
+    "description": "Phone notification title: a lot of people joined through one of the reader's invite links within a day, which can mean it was shared further than they meant. {{app}} is a project's name; {{count}} is how many joined through it in the last day."
+  },
+  "inviteLinkBusy.title.app_other": {
+    "text": "Your {{app}} invite link brought in {{count}} people today",
+    "description": "Phone notification title: a lot of people joined through one of the reader's invite links within a day, which can mean it was shared further than they meant. {{app}} is a project's name; {{count}} is how many joined through it in the last day."
+  },
+  "inviteLinkBusy.title.plain_one": {
+    "text": "Your invite link brought in {{count}} person today",
+    "description": "Phone notification title: a lot of people joined through one of the reader's invite links within a day. {{count}} is how many joined through it in the last day."
+  },
+  "inviteLinkBusy.title.plain_other": {
+    "text": "Your invite link brought in {{count}} people today",
+    "description": "Phone notification title: a lot of people joined through one of the reader's invite links within a day. {{count}} is how many joined through it in the last day."
+  },
+  "inviteLinkBusy.body": {
+    "text": "If you didn't expect that, you can turn it off",
+    "description": "Phone notification text under the title: a lot of people joined through one of the reader's invite links within a day. \"it\" is the invite link; the notification in the app has the button that turns it off."
+  },
+  "inviteLinkPaused.title.app": {
+    "text": "Your {{app}} invite link is paused",
+    "description": "Phone notification title: so many people joined through one of the reader's invite links within a day that it stopped letting more in. {{app}} is a project's name."
+  },
+  "inviteLinkPaused.title.plain": {
+    "text": "Your invite link is paused",
+    "description": "Phone notification title: so many people joined through one of the reader's invite links within a day that it stopped letting more in."
+  },
+  "inviteLinkPaused.body_one": {
+    "text": "{{count}} person joined through it today. Open it again if that's expected.",
+    "description": "Phone notification text under the title: one of the reader's invite links paused itself. {{count}} is how many people joined through it in the last day. \"it\" is the invite link."
+  },
+  "inviteLinkPaused.body_other": {
+    "text": "{{count}} people joined through it today. Open it again if that's expected.",
+    "description": "Phone notification text under the title: one of the reader's invite links paused itself. {{count}} is how many people joined through it in the last day. \"it\" is the invite link."
+  },
   "firstMessage.title.app": {
     "text": "@{{actor}} said hi in {{app}}",
     "description": "Phone notification title: somebody the reader invited wrote their first message in a project. {{actor}} is a username: keep the @ in front of it. {{app}} is a project's name."

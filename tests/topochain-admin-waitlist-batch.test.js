@@ -419,6 +419,85 @@ test('the Release email panel sits beside Landing, and Admit says when nobody is
   assert.match(screenSource, /Nobody is emailed: the release email is switched off\./);
 });
 
+// The waitlist reminders' switch (services/release-mail-setting.js) and an
+// admitted row's "Send a reminder now" (services/waitlist-reminders.js; its
+// rules against the real schema: tests/waitlist-reminders-postgres.test.js).
+test('the Reminders switch reads on by default, is saved by a write admin only, and is not the release email\'s', async () => {
+  const read = await call('GET', '/api/v4/admin/reminder-email', undefined, 'readonly');
+  assert.equal(read.status, 200);
+  assert.equal(read.body.data.enabled, true);
+  assert.equal((await call('PUT', '/api/v4/admin/reminder-email', { enabled: false }, 'readonly')).status, 403);
+  assert.equal(settings.waitlist_reminder_email, undefined);
+  assert.equal((await call('PUT', '/api/v4/admin/reminder-email', { enabled: 'off' })).status, 422);
+  const saved = await call('PUT', '/api/v4/admin/reminder-email', { enabled: false });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.data.enabled, false);
+  assert.equal(saved.body.data.updated_by, 'full');
+  assert.equal(settings.waitlist_reminder_email, 'false');
+  // Independent: the release email is still on, and switching it touches only its own key.
+  assert.equal((await call('GET', '/api/v4/admin/release-email')).body.data.enabled, true);
+  await call('PUT', '/api/v4/admin/release-email', { enabled: false });
+  await call('PUT', '/api/v4/admin/reminder-email', { enabled: true });
+  assert.deepEqual(settings, { waitlist_release_email: 'false', waitlist_reminder_email: 'true' });
+});
+
+test('Send a reminder now: a write admin only, and a refusal is the sentence the screen shows', async (t) => {
+  const reminders = require('../src/services/waitlist-reminders');
+  const asked = [];
+  t.mock.method(reminders, 'remindNow', async (_config, _pool, id) => {
+    asked.push(id);
+    if (id === 7) throw new reminders.ReminderRefused('signed_in', 'They have signed in since they were admitted, so they need no reminder.');
+    if (id === 8) throw new reminders.ReminderRefused('had_both', 'They have had both reminders already. There is no third.');
+    return { reminder: 1, kind: 'waitlist_reminder', status: 'sent', error: null };
+  });
+  assert.equal((await call('POST', '/api/v4/admin/waitlist/3/remind', {}, 'readonly')).status, 403);
+  assert.deepEqual(asked, [], 'a read-only admin sends nothing');
+  const ok = await call('POST', '/api/v4/admin/waitlist/3/remind', {});
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body.data, { id: 3, reminder: 1, kind: 'waitlist_reminder', status: 'sent', error: null });
+  const refused = await call('POST', '/api/v4/admin/waitlist/7/remind', {});
+  assert.equal(refused.status, 409);
+  assert.deepEqual(refused.body, { success: false, error: 'They have signed in since they were admitted, so they need no reminder.', code: 'signed_in' });
+  assert.equal((await call('POST', '/api/v4/admin/waitlist/8/remind', {})).body.code, 'had_both');
+  assert.equal((await call('POST', '/api/v4/admin/waitlist/abc/remind', {})).status, 404);
+  assert.deepEqual(asked, [3, 7, 8]);
+});
+
+test('the Reminders panel sits beside Release email, and a row\'s details show the admit email, both reminders and the stop', () => {
+  assert.match(screenSource, /<ReleaseEmailPanel \/>\s+<ReminderEmailPanel \/>/);
+  assert.match(screenSource, /id="admin-topo-wl-reminder-email-enabled"/);
+  assert.match(screenSource, /fetchJson\('\/api\/v4\/admin\/reminder-email'\)/);
+  assert.match(screenSource, /send\('POST', `\/api\/v4\/admin\/waitlist\/\$\{row\.id\}\/remind`\)/);
+  const at = (iso) => new Date(iso).toISOString();
+  const row = {
+    id: 3, email: 'in@example.invalid', released_at: at('2026-11-01T09:00:00Z'), confirmed_at: at('2026-10-01T09:00:00Z'),
+    invite_email: { status: 'sent', created_at: at('2026-11-01T09:00:01Z') },
+    reminders: { first: { sent_at: at('2026-11-03T09:00:00Z'), status: 'sent' }, last: null, stopped_at: null },
+  };
+  const window = globalThis.window;
+  globalThis.window = { ...(window || {}), AdminTopochain: { canWrite: () => true } };
+  try {
+    const html = renderComponent(SCREEN, 'WaitlistDetails', { row, reload() {} });
+    assert.match(html, /Admit email: <\/span>Sent/);
+    assert.match(html, /Reminder 1: <\/span>Sent /);
+    assert.match(html, /Reminder 2: <\/span>Not sent\./);
+    assert.match(html, /Reminders stopped: <\/span>No/);
+    assert.match(html, /data-remind-wl="3"[^>]*>Send a reminder now<\/button>/);
+    const done = renderComponent(SCREEN, 'WaitlistDetails', {
+      row: { ...row, reminders: { ...row.reminders, last: { sent_at: at('2026-11-07T09:00:00Z'), status: 'suppressed_bounce' } } }, reload() {},
+    });
+    assert.match(done, /Reminder 2: <\/span>[^<]*\(suppressed_bounce\)/);
+    assert.doesNotMatch(done, /Send a reminder now/, 'none after both');
+    const stopped = renderComponent(SCREEN, 'WaitlistDetails', { row: { ...row, reminders: { ...row.reminders, stopped_at: at('2026-11-04T09:00:00Z') } }, reload() {} });
+    assert.match(stopped, /Reminders stopped: <\/span>Yes, from the link in one/);
+    assert.doesNotMatch(stopped, /Send a reminder now/);
+    const waiting = renderComponent(SCREEN, 'WaitlistDetails', { row: { ...row, released_at: null, reminders: null }, reload() {} });
+    assert.doesNotMatch(waiting, /Reminder 1|Send a reminder now/, 'only an admitted row');
+  } finally {
+    globalThis.window = window;
+  }
+});
+
 test('bulk-release refuses no ids and more than one batch', async () => {
   const calls = fakeRelease();
   assert.equal((await call('POST', '/api/v4/admin/waitlist/bulk-release', { ids: [] })).status, 422);

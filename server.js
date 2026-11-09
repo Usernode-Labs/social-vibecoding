@@ -662,6 +662,9 @@ app.use(reportShareRoutes(config));
 // Before authMiddleware: a mail client's one-click POST carries no session,
 // and the HMAC token in the link is the whole of the access check.
 app.use(require('./src/routes/activity-mail').activityMailRoutes(config));
+// The waitlist reminders' stop link (src/routes/waitlist-reminders.js), before
+// authMiddleware for the same reason: most of these people have no account.
+app.use(require('./src/routes/waitlist-reminders').waitlistReminderRoutes(config));
 app.use(require('./src/routes/mail-tracking').mailTrackingRoutes(config));
 // The configuration every process that runs the workflow machines sets up
 // (src/workflow/setup.ts): activity mail, the account-deletion guard on workers.

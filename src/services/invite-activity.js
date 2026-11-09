@@ -12,6 +12,20 @@
 //   first_message   Somebody who joined through it wrote in the project's
 //                   chat for the first time ("said hi").
 //
+// And the leaked-link guard's two (community-invites.js GUARD, noteGuard
+// below), each its own row, never folded into another:
+//
+//   invite_link_busy    one link brought in GUARD.noticeAt people within a
+//                       day; once per link per window. Its row turns the
+//                       link off in one tap.
+//   invite_link_paused  one link reached GUARD.pauseAt and paused: new joins
+//                       are refused until its maker opens it again, from the
+//                       row or the invite pane.
+//
+// Their `detail` is "<inviteId>:<joins>"; the bell reads the link's state
+// with the row (notifications.js INVITE_LINK_STATE_SQL), so a button is only
+// offered while it still does something.
+//
 // Only the link's maker hears, and only about people who came by THEIR
 // link; the invite page tells a visitor that the maker sees when they join
 // (features/auth/invite-card.tsx). Time spent is never said.
@@ -360,7 +374,7 @@ async function noteOpened(pool, { token, viewerId = null, browser = null, seenBe
                 SELECT 1 FROM community_members m WHERE m.community_id = ci.community_id AND m.user_id = $2
               )) AS viewer_is_member
          FROM community_invites ci
-        WHERE ci.token = $1 AND ci.revoked_at IS NULL
+        WHERE ci.token = $1 AND ci.revoked_at IS NULL AND ci.paused_at IS NULL
           AND (ci.expires_at IS NULL OR ci.expires_at > NOW())
           AND (ci.max_uses IS NULL OR ci.uses < ci.max_uses)`,
       [token, viewerId],
@@ -445,6 +459,36 @@ async function noteOpened(pool, { token, viewerId = null, browser = null, seenBe
   }
 }
 
+const GUARD_KINDS = Object.freeze(['invite_link_busy', 'invite_link_paused']);
+
+/**
+ * The leaked-link guard noticed invite `inviteId` (`kind`, one of
+ * GUARD_KINDS) after the join that made `joins`: its maker hears it, as a
+ * row of its own that rings. Nobody else does here; the full admins see it
+ * among the platform's unexpected events (community-invites.js tellGuard).
+ * No email: what it asks for is a tap. Never throws; resolves the row, or
+ * null.
+ */
+async function noteGuard(pool, { inviteId, kind, joins }) {
+  if (!GUARD_KINDS.includes(kind)) return null;
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO notifications (user_id, app_id, kind, detail, mailed_at)
+       SELECT ci.created_by, ci.app_id, $2, $3, NOW()
+         FROM community_invites ci
+        WHERE ci.id = $1 AND ci.created_by IS NOT NULL
+       RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, detail, created_at`,
+      [inviteId, kind, `${Number(inviteId)}:${Math.max(0, Math.floor(Number(joins) || 0))}`],
+    );
+    const row = rows[0] || null;
+    if (row) await notifications().hydrateAndPush(pool, row);
+    return row;
+  } catch (err) {
+    log.warn('invite-activity', 'Could not tell a link\'s maker about the guard', { inviteId, kind, err: err.message });
+    return null;
+  }
+}
+
 /**
  * `userId` just wrote `chatMessageId` in `appId`'s chat. When it is their
  * first message there, within HELLO_WITHIN_DAYS of joining through
@@ -483,6 +527,8 @@ async function noteFirstMessage(pool, { appId, userId, chatMessageId }) {
 
 module.exports = {
   KINDS,
+  GUARD_KINDS,
+  noteGuard,
   HELLO_WITHIN_DAYS,
   OPEN_PUSH_DELAY_MINUTES,
   BROWSER_COOKIE,

@@ -26,7 +26,10 @@ const AUTH_SCREENS = fs.readFileSync(path.join(ROOT, 'public/js/auth-screens.js'
 const MAIL = fs.readFileSync(path.join(ROOT, 'src/services/mail/index.js'), 'utf8');
 
 test('the release mail carries no fragment for a rewriter to drop', () => {
-  const fn = MAIL.slice(MAIL.indexOf('async function sendWaitlistReleaseMail'));
+  // The button's address is built by releaseUrl, which the admit mail and
+  // the waitlist reminders share.
+  assert.match(MAIL.slice(MAIL.indexOf('async function sendWaitlistReleaseMail')), /^\s+url: releaseUrl\(\{ hasAccount, moreToken, signInToken \}\),$/m);
+  const fn = MAIL.slice(MAIL.indexOf('function releaseUrl('));
   const body = fn.slice(0, fn.indexOf('\n}'));
   // #1548 split the one ternary into two arms so the no-account link can
   // carry an invite token. Both are still QUERIES, which is what this test
@@ -119,7 +122,7 @@ test('the whole thing stays inside a try/catch', () => {
 });
 
 test('the release mail\'s one-time sign-in link is its own credential, kept off the GET (#4594)', () => {
-  const fn = MAIL.slice(MAIL.indexOf('async function sendWaitlistReleaseMail'));
+  const fn = MAIL.slice(MAIL.indexOf('function releaseUrl('));
   const body = fn.slice(0, fn.indexOf('\n}'));
   assert.match(body, /signInToken \? `&\$\{CREDENTIAL_PARAM\}=/, 'a separate parameter, not more_token');
   // Arrival keeps it for the sheet, which spends it with a POST.

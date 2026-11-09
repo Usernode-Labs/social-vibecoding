@@ -225,6 +225,26 @@
       "id": "app-storage-warn-level",
       "sha256": "2b3e8146a3b9dc61802ae1fdc1c2386aacf5ccf1c78f2fa0c94071feeaca0ee1",
       "schemaSha256": "74f8d724750d6631dbb38828cb3be6e872ef61e9c9ff754f300a7fd9cc3f7dfe"
+    },
+    {
+      "id": "invite-nudges",
+      "sha256": "c61edfeef0bf9d5d8e54ffaf1b40458b067f02ea6a663aaa437bca565600ca96",
+      "schemaSha256": "4a43363244b7885bee531ec145e55f3cb36844863e94ba5ea4f183c745d956f5"
+    },
+    {
+      "id": "waitlist-admit-reminders",
+      "sha256": "0246051ea8d93526a43360e6a573f389df256c2fff8c58f403c30991d3e8464e",
+      "schemaSha256": "ce74ee14874ec0f575ea596ed5c11ca68acc7a9655f68a8dcf6fb18535dd5aa8"
+    },
+    {
+      "id": "invite-link-guard",
+      "sha256": "f2a3e5eae6210555d7a6f36fa4b97f1e6318209b73fb98e42fa0372d01057d7a",
+      "schemaSha256": "d9cfd1924bc6126587a9e58ddef6bcc368d73711d9c5a6dc68481e7fa8ba0ba4"
+    },
+    {
+      "id": "invite-link-guard-push-kinds",
+      "sha256": "91839debfd3e1a054920997a85b227f68571b8cf5ab6acd50a88f70f4136e591",
+      "schemaSha256": "76a76c9c71522be249ea0fc8d4f6547dee38e25d63082f0e5d1d113fb794381e"
     }
   ]
 }

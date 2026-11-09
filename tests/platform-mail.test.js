@@ -568,9 +568,15 @@ test('the release mail with a one-time sign-in link explains nothing, and tracki
     assert.doesNotMatch(part, /6-digit code/);
     assert.doesNotMatch(part, /joined the waitlist with/);
   }
-  assert.match(linked.html, />Create my account<\/a>/);
+  assert.match(linked.html, />Get started<\/a>/);
   // The text part has no button, so it names the action over the link.
-  assert.ok(linked.text.includes('Create my account:\nhttps://x.invalid/?signup=1&t=tok&key=k'));
+  assert.ok(linked.text.includes('Get started:\nhttps://x.invalid/?signup=1&t=tok&key=k'));
+  // Told when the link stops working, the mail says so above the button.
+  const dated = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/?signup=1&t=tok&key=k', hasAccount: false, signInLink: true, signInExpiresAt: '2026-11-13T09:00:00Z',
+  });
+  assert.match(dated.html, />Jump in with the button below\. It works until 13 Nov\.<\/p>/);
+  assert.ok(dated.text.includes('Jump in with the link below. It works until 13 Nov.\n\nGet started:\n'));
 
   // Click tracking stores each destination URL; one carrying a sign-in
   // credential is never rewritten, so its token is never stored.
@@ -597,11 +603,12 @@ test('the release mail is the "you\'re in" welcome, with its list and sign-off',
   const m = templates.buildMessage('waitlist_released', {
     url: 'https://x.invalid/?signup=1&t=tok', hasAccount: false,
   });
-  assert.equal(m.subject, "You're in. Welcome to Homeroom");
+  assert.equal(m.subject, "You're in. Make your first app on Homeroom");
   for (const part of [m.text, m.html]) {
     assert.match(part, /Make and share apps with groups and friends\./);
-    assert.match(part, /Make an app for your group/);
-    assert.match(part, /Suggest, preview and vote on changes/);
+    assert.match(part, /Make an app with your friends/);
+    assert.match(part, /Build an app for your community/);
+    assert.match(part, /Join and help shape other community-owned apps/);
     assert.match(part, /Evan from Homeroom/);
     // Three points, not four (Evan, 10 Oct 2026): no challenges line.
     assert.doesNotMatch(part, /challenges/i);
@@ -615,7 +622,7 @@ test('the release mail is the "you\'re in" welcome, with its list and sign-off',
   // #4570: the landing page's hero. The illustration sits between the
   // frame's logo and the button, and is an <img>, not a link, so the pill
   // stays the mail's first anchor.
-  assert.match(m.html, /\/brand\/people\.png" width="272" height="204" alt=""/);
+  assert.match(m.html, /\/brand\/people\.png" width="200" height="150" alt=""/);
   const logo = m.html.indexOf('<img ');
   const illustration = m.html.indexOf('/brand/people.png');
   const pill = m.html.indexOf('border-radius:999px');

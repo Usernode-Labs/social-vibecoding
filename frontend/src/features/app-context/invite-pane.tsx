@@ -12,6 +12,9 @@
  *      D03): only then do the Communities row and the hub say a link is out.
  *   2. YOUR LINKS. The live ones, with Turn off, and the ones that ended in
  *      the last 30 days, greyed, with how each ended instead of a Turn off.
+ *      A link the leaked-link guard paused (100 people in a day,
+ *      services/community-invites.js GUARD) is listed with the live ones,
+ *      said to be paused, with Open it again beside its Turn off.
  *      Every row says who came in through its link: how many joined and how
  *      many are waiting, or that nobody has used it yet. Someone who manages
  *      the project sees everyone's, with who made each. How long each lasts
@@ -19,9 +22,11 @@
  *      else (#4599: the sentence under the link, the line about newcomers
  *      and the joining rule are gone).
  *   3. CHANGE, a small link beside that heading: how long and for how many,
- *      within the server's limits; a new link is made with them. The old one
- *      keeps working until turned off. The heading row shows even with no
- *      live links, so Change is always there.
+ *      within the server's limits; a new link is made with them. Never and
+ *      No limit come first and are the defaults: a link has no end and no
+ *      cap unless its maker picks one (9 Nov 2026). The old one keeps
+ *      working until turned off. The heading row shows even with no live
+ *      links, so Change is always there.
  *
  * ── It is a PANE, for About's reason ──────────────────────────────────
  *
@@ -83,10 +88,11 @@ const SECONDARY = 'inline-flex flex-1 basis-0 min-w-0 items-center justify-cente
   + 'rounded-full text-sm font-semibold bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 '
   + 'dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 transition-colors';
 
-// 0 asks for no limit (WP-D): no end date, or any number of people.
+// 0 asks for no limit (WP-D): no end date, or any number of people. It is
+// every new link's default, so it is each list's first choice.
 const NO_LIMIT = 0;
-const DAY_CHOICES = [1, 7, 30, NO_LIMIT];
-const USE_CHOICES = [1, 5, 10, 25, 50, 100, NO_LIMIT];
+const DAY_CHOICES = [NO_LIMIT, 1, 7, 30];
+const USE_CHOICES = [NO_LIMIT, 1, 5, 10, 25, 50, 100];
 
 /** "3 of 25 used · 5 days left", for a row of Your links. */
 export function linkDetail(
@@ -101,7 +107,11 @@ export function linkDetail(
   // Two facts about the link, side by side. For a link that has ended, the
   // second is why, in place of how long it had left.
   let expiry: string;
-  if (link.status && link.status !== 'live') {
+  if (link.status === 'paused') {
+    // The guard paused it; it is not over, so this says so rather than why
+    // it ended.
+    expiry = t('agent:appContext.invite.detail.paused');
+  } else if (link.status && link.status !== 'live') {
     expiry = link.status === 'expired'
       ? t('agent:appContext.invite.detail.expired')
       : link.status === 'used_up'
@@ -210,8 +220,8 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
   // The link went out from here (copied or shared): the notification ask.
   const [sentOut, setSentOut] = useState(false);
   const [changing, setChanging] = useState(false);
-  const [days, setDays] = useState(prepared?.state?.defaults.days ?? 7);
-  const [uses, setUses] = useState(prepared?.state?.defaults.maxUses ?? 25);
+  const [days, setDays] = useState(prepared?.state?.defaults.days ?? NO_LIMIT);
+  const [uses, setUses] = useState(prepared?.state?.defaults.maxUses ?? NO_LIMIT);
 
   const base = slug ? inviteLinksUrl(slug) : null;
 
@@ -308,6 +318,21 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
     setError(null);
     try {
       await inviteApi(`/api/invite-links/${link.id}`, { method: 'DELETE' });
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // The leaked-link guard paused it: opening it again clears the pause and
+  // starts its count afresh.
+  const reopen = async (link: InviteLink) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await inviteApi(`/api/invite-links/${link.id}/reopen`, { method: 'POST' });
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -414,7 +439,8 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
           </div>
         ) : null}
         {state.links.length ? state.links.map((link) => {
-          const ended = link.status !== 'live';
+          const paused = link.status === 'paused';
+          const ended = link.status !== 'live' && !paused;
           return (
             <div
               key={link.id}
@@ -429,6 +455,17 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
                   <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.invite.madeBy', { username: link.createdBy })}</span>
                 ) : null}
               </span>
+              {paused ? (
+                <button
+                  type="button"
+                  className="shrink-0 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-50"
+                  disabled={busy}
+                  data-invite-reopen={link.id}
+                  onClick={() => reopen(link)}
+                >
+                  {t('agent:appContext.invite.reopen')}
+                </button>
+              ) : null}
               {ended ? null : (
                 <button
                   type="button"

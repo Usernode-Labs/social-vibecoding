@@ -5066,6 +5066,7 @@ const App = {
         expired: 'shell:invite.dead.expired',
         revoked: 'shell:invite.dead.revoked',
         used_up: 'shell:invite.dead.usedUp',
+        paused: 'shell:invite.dead.paused',
         unknown: 'shell:invite.dead.unknown',
       };
       const openHub = (slug) => {

@@ -96,7 +96,9 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
         WHERE category IN ('builds', 'invite_activity') ORDER BY kind`);
     assert.deepEqual(rows.map((r) => `${r.kind}:${r.category}:${r.default_enabled}`), [
       'build_live:builds:true', 'build_needs_you:builds:true', 'build_ready:builds:true', 'build_stopped:builds:true',
-      'first_message:invite_activity:true', 'invite_opened:invite_activity:true', 'member_joined:invite_activity:true',
+      'first_message:invite_activity:true', 'invite_link_busy:invite_activity:true',
+      'invite_link_paused:invite_activity:true', 'invite_opened:invite_activity:true',
+      'member_joined:invite_activity:true',
     ]);
     // A person may switch either off.
     await pool.query(`INSERT INTO mobile_push_preferences (user_id, category, enabled) VALUES ($1, 'builds', FALSE), ($1, 'invite_activity', FALSE)`, [alex.id]);

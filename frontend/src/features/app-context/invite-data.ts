@@ -41,8 +41,12 @@ export type InviteLink = {
   /** Audit D03: it went out, copied or shared from the pane (absent on an older server's answer). */
   shared?: boolean;
   mine: boolean;
-  /** 'live', or how the link ended (the same names as deadReason). */
-  status: 'live' | 'expired' | 'used_up' | 'revoked';
+  /**
+   * 'live', or how the link ended (the same names as deadReason). 'paused':
+   * the leaked-link guard stopped it at 100 joins in a day; its maker can
+   * open it again (POST /api/invite-links/:id/reopen).
+   */
+  status: 'live' | 'paused' | 'expired' | 'used_up' | 'revoked';
   /** People this link actually let in. */
   joined: number;
   /** People who followed it and are still waiting to get in. */
@@ -93,8 +97,11 @@ export async function readInviteState(slug: string, makeIfNone: boolean): Promis
   const base = inviteLinksUrl(slug);
   const state: InviteState = await inviteApi(base);
   // An ended link of their own (it stays on the list for 30 days) does not
-  // stand for a working one: the first link is still made.
-  if (!makeIfNone || !state.canCreate || state.links.some((l) => l.mine && l.status === 'live')) return state;
+  // stand for a working one: the first link is still made. A paused one
+  // does: the pane offers to open it again, and opening the pane is not a
+  // reason to mint a second link beside it.
+  if (!makeIfNone || !state.canCreate
+    || state.links.some((l) => l.mine && (l.status === 'live' || l.status === 'paused'))) return state;
   const made = await inviteApi(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   if (made?.link) return { ...state, links: [made.link as InviteLink, ...state.links] };
   return inviteApi(base);

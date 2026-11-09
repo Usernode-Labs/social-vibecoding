@@ -22,7 +22,9 @@
 // apostrophes have always gone out bare. So what came from a sender keeps the
 // template language's escaping and the catalog's words keep their bytes.
 //
-// `headers()`, where present, gives the extra mail headers a send carries.
+// `headers()`, where present, gives the extra mail headers a send carries, and
+// `replyTo()` the address a reply goes to (a transport passes it on as its
+// provider takes one: transports/).
 //
 // `codeWords` marks the actions whose `values()` build words from the email
 // catalog. A send asks for the reader's translator only for these, and only when
@@ -123,6 +125,87 @@ function inviteLine(payload, t, sender = asIs) {
   return String((noticeId ? t(noticeId, noticeValues) : '') || sender(payload.line) || fallback).slice(0, 200);
 }
 
+// ── Dates in words ─────────────────────────────────────────────────────
+//
+// A date a mail says is worded here, from the moment the sender passes, in
+// UTC and in English: a short day and month ("13 Nov"), or a weekday
+// ("Friday"). Most people these go to have no account, and so no language.
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Within this long, a day is named by its weekday; before it, by its date.
+const WEEKDAY_WITHIN_MS = 6 * DAY_MS;
+
+function dateOf(value) {
+  if (value == null || value === '') return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+/** "13 Nov": a moment's day and month, in UTC. '' for no moment. */
+function dayMonth(value) {
+  const date = dateOf(value);
+  return date ? `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}` : '';
+}
+
+/**
+ * The day somebody was let in, as a reminder says it: its weekday ("Friday")
+ * when that was within the last six days of `now`, else its date ("6 Nov").
+ */
+function admittedDay(value, now = Date.now()) {
+  const date = dateOf(value);
+  if (!date) return '';
+  const at = dateOf(now) || new Date();
+  return at.getTime() - date.getTime() < WEEKDAY_WITHIN_MS ? WEEKDAYS[date.getUTCDay()] : dayMonth(date);
+}
+
+// When the mail's one-time sign-in link stops working, for a mail that
+// carries one: the line above the button says it ("It works until 13 Nov").
+function linkUntilOf(payload) {
+  return payload.signInLink && !payload.hasAccount ? dayMonth(payload.signInExpiresAt) : '';
+}
+
+// An address a reply may go to: one plain address, nothing a header could be
+// split with.
+function replyAddress(value) {
+  const address = typeof value === 'string' ? value.trim() : '';
+  return /^[^\s<>@,;"]+@[^\s<>@,;"]+\.[^\s<>@,;"]+$/.test(address) && address.length <= 254 ? address : null;
+}
+
+// ── The waitlist reminders (services/waitlist-reminders.js) ────────────
+//
+// Two, then stop: `waitlist_reminder` a couple of days after the admit, and
+// `waitlist_reminder_last` after that. The button is the admit mail's, with a
+// one-time sign-in link of its own for a new account. Each carries the row's
+// "Stop these reminders" link as its List-Unsubscribe header too.
+const REMINDER_PLACEHOLDERS = {
+  url: link('The button: signs the person in or starts their account'),
+  hasAccount: flag('True when the person already has an account'),
+  admittedDay: text('The day they were let in: its weekday within the last six days ("Friday"), else its date ("6 Nov")', { fromCode: true }),
+  linkUntil: text('When the one-time sign-in link stops working, as a day and month ("13 Nov"); empty without one', { fromCode: true }),
+  hasLinkUntil: flag('True when the mail carries a one-time sign-in link', 'linkUntil'),
+  unsubscribeUrl: link('One-click link that stops these reminders'),
+  hasUnsubscribeUrl: flag('True when the stop link is present', 'unsubscribeUrl'),
+};
+const REMINDER_SAMPLE = {
+  url: 'https://app.onhomeroom.com/?signup=1', hasAccount: false, signInLink: true,
+  signInExpiresAt: '2026-11-13T10:00:00.000Z', releasedAt: '2026-11-06T09:00:00.000Z', now: '2026-11-09T09:00:00.000Z',
+  unsubscribeUrl: 'https://app.onhomeroom.com/mail/reminders/stop?w=1&t=sample',
+};
+function reminderValues(payload) {
+  const unsubscribeUrl = url(payload.unsubscribeUrl);
+  const linkUntil = linkUntilOf(payload);
+  return {
+    url: url(payload.url),
+    hasAccount: !!payload.hasAccount,
+    admittedDay: admittedDay(payload.releasedAt, payload.now == null ? Date.now() : payload.now),
+    linkUntil,
+    hasLinkUntil: !!linkUntil,
+    unsubscribeUrl,
+    hasUnsubscribeUrl: !!unsubscribeUrl,
+  };
+}
+
 const codeAction = (label, expiry) => ({
   label,
   placeholders: { code: text(`The six-digit code, valid ${expiry}`, SECRET) },
@@ -189,6 +272,8 @@ const ACTIONS = {
       url: link('The button: signs the person in or starts their account'),
       hasAccount: flag('True when the person already has an account'),
       hasSignInLink: flag('True when the link signs them in at once'),
+      linkUntil: text('When the one-time sign-in link stops working, as a day and month ("13 Nov"); empty without one', { fromCode: true }),
+      hasLinkUntil: flag('True when the mail carries a one-time sign-in link and says until when it works', 'linkUntil'),
       needsCodeNote: flag('True when opening the link sends a sign-in code, so the mail says to expect it'),
       hasIos: flag('True when the iOS app has a published listing', 'iosLink'),
       iosLink: link('The iOS app listing'),
@@ -204,10 +289,13 @@ const ACTIONS = {
       const iosLink = url(mobile.ios);
       const androidLink = url(mobile.android);
       const hasAccount = !!payload.hasAccount;
+      const linkUntil = linkUntilOf(payload);
       return {
         url: url(payload.url),
         hasAccount,
         hasSignInLink: !!payload.signInLink,
+        linkUntil,
+        hasLinkUntil: !!linkUntil,
         needsCodeNote: !hasAccount && !payload.signInLink,
         hasIos: !!iosLink,
         iosLink,
@@ -216,6 +304,28 @@ const ACTIONS = {
         hasMobile: !!(iosLink || androidLink),
       };
     },
+  },
+
+  waitlist_reminder: {
+    label: 'Waitlist reminder',
+    placeholders: REMINDER_PLACEHOLDERS,
+    required: BOTH('url', 'unsubscribeUrl'),
+    englishOnly: false,
+    sample: REMINDER_SAMPLE,
+    values: reminderValues,
+    headers: activityHeaders,
+  },
+
+  waitlist_reminder_last: {
+    label: 'Waitlist last reminder',
+    placeholders: REMINDER_PLACEHOLDERS,
+    required: BOTH('url'),
+    englishOnly: false,
+    sample: { ...REMINDER_SAMPLE, releasedAt: '2026-11-01T09:00:00.000Z', replyTo: 'support@usernodelabs.org' },
+    values: reminderValues,
+    headers: activityHeaders,
+    // A reply to the last one reaches a person (config.js mailReplyTo).
+    replyTo: (payload) => replyAddress(payload.replyTo),
   },
 
   password_reset: {
@@ -368,4 +478,4 @@ function actionFor(kind) {
   return Object.hasOwn(ACTIONS, kind) ? ACTIONS[kind] : null;
 }
 
-module.exports = { ACTIONS, actionFor };
+module.exports = { ACTIONS, actionFor, dayMonth, admittedDay, replyAddress };
