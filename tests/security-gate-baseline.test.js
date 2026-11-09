@@ -81,6 +81,74 @@ test('an image finding on a package the live image already ships is reported, no
   assert.throws(() => sbomPackages({ spdxVersion: 'SPDX-2.3', packages: [] }), /Missing or empty baseline SPDX SBOM/);
 });
 
+// The identity shapes in the failed worker scan of esbuild@0.25.12.
+const goInventory = (version = 'go1.23.12', purl = `pkg:golang/stdlib@${version.replace(/^(go|v)/, '')}`) => sbomPackages({
+  spdxVersion: 'SPDX-2.3', packages: [{ name: 'stdlib', versionInfo: version,
+    externalRefs: purl ? [{ referenceType: 'purl', referenceLocator: purl }] : [] }],
+});
+const goScan = (version = 'v1.23.12', type = 'gobinary', purl = `pkg:golang/stdlib@${version}`) => ({ SchemaVersion: 2, Results: [{
+  Type: type, Target: 'esbuild/bin/esbuild', Vulnerabilities: [{
+    PkgName: 'stdlib', InstalledVersion: version, PkgIdentifier: { PURL: purl },
+    Severity: 'HIGH', VulnerabilityID: 'CVE-2025-68121', FixedVersion: '1.25.7',
+  }],
+}] });
+
+test('confirmed Go stdlib versions compare across scanner prefixes without changing the reported facts', () => {
+  for (const baselineVersion of ['go1.23.12', '1.23.12', 'v1.23.12']) {
+    const baseline = goInventory(baselineVersion);
+    assert.deepEqual([...baseline], ['pkg:golang/stdlib@1.23.12']);
+    for (const version of ['go1.23.12', '1.23.12', 'v1.23.12']) for (const type of ['gobinary', 'gomod']) {
+      const scan = goScan(version, type);
+      const result = imageGate(scan, { component: 'worker', baseline, now: NOW });
+      assert.equal(result.blocking.length, 0, `${baselineVersion} -> ${type} ${version}`);
+      assert.deepEqual(result.preexisting, [`esbuild/bin/esbuild: stdlib@${version}: CVE-2025-68121 (fix 1.25.7)`]);
+      const assessment = imageAssessment([scan], { component: 'worker', baseline, now: NOW });
+      assert.equal(assessment.status, 'existing_findings');
+      assert.equal(assessment.findings[0].version, version, 'retain the raw scanner version');
+      assert.deepEqual(imageAssessment([scan], { component: 'worker', baseline, audit: true, now: NOW }).findings, assessment.findings);
+    }
+    assert.equal(imageGate(goScan('v1.23.13'), { baseline, now: NOW }).blocking.length, 1, 'a different patch version blocks');
+  }
+  assert.equal(imageGate(goScan(), { now: NOW }).blocking.length, 1, 'no baseline remains strict');
+  assert.equal(imageFindings(goScan(), NOW, 'worker').length, 1, 'the strict wrapper still blocks');
+});
+
+test('Go stdlib prefix comparison requires matching Go metadata on both sides', () => {
+  for (const purl of [null, 'pkg:npm/stdlib@1.23.12', 'pkg:golang/stdlib@1.23.13']) {
+    assert.equal(imageGate(goScan(), { baseline: goInventory('v1.23.12', purl), now: NOW }).blocking.length, 1,
+      'a confirmed Go candidate cannot fall back to an unqualified baseline');
+  }
+  for (const [type, purl] of [['gobinary', null], ['gobinary', 'pkg:golang/stdlib@1.23.13'],
+    ['gobinary', 'pkg:npm/stdlib@v1.23.12'], ['node-pkg', 'pkg:golang/stdlib@v1.23.12'], [null, 'pkg:golang/stdlib@v1.23.12']]) {
+    assert.equal(imageGate(goScan('v1.23.12', type, purl), { baseline: goInventory('v1.23.12'), now: NOW }).blocking.length, 1,
+      'a candidate without confirmed Go identity cannot match the qualified baseline');
+  }
+});
+
+test('Go stdlib baselines cannot waive an npm namesake in either comparison direction', () => {
+  for (const version of ['go1.23.12', '1.23.12', 'v1.23.12']) {
+    const goBaseline = goInventory(version);
+    const npmBaseline = goInventory(version, `pkg:npm/stdlib@${version}`);
+    for (const type of ['node-pkg', 'npm']) {
+      assert.equal(imageGate(goScan(version, type, `pkg:npm/stdlib@${version}`), { baseline: goBaseline, now: NOW }).blocking.length, 1);
+    }
+    assert.equal(imageGate(goScan(version), { baseline: npmBaseline, now: NOW }).blocking.length, 1,
+      'a Go candidate cannot match an npm-only baseline at the same raw version');
+    for (const type of ['gobinary', 'gomod']) for (const purl of [null, `pkg:npm/stdlib@${version}`, 'pkg:golang/stdlib@1.23.13']) {
+      assert.equal(imageGate(goScan(version, type, purl), { baseline: npmBaseline, now: NOW }).blocking.length, 1,
+        'an unconfirmed Go candidate cannot fall back to an npm baseline');
+    }
+    const lock = { packages: { 'node_modules/stdlib': { version } } };
+    const findings = audit('stdlib', 'node_modules/stdlib');
+    assert.equal(npmGate(findings, lock, { baseline: goBaseline, now: NOW }).blocking.length, 1);
+    assert.equal(npmGate(findings, lock, { baseline: lockPackages(lock), now: NOW }).preexisting.length, 1, 'exact npm lock comparison is unchanged');
+  }
+  const lock = { packages: { 'node_modules/stdlib': { version: 'v1.23.12' } } };
+  const oldLock = { packages: { 'node_modules/stdlib': { version: 'go1.23.12' } } };
+  assert.equal(npmGate(audit('stdlib', 'node_modules/stdlib'), lock, { baseline: lockPackages(oldLock), now: NOW }).blocking.length, 1,
+    'npm lock versions do not gain Go prefix normalization');
+});
+
 test('the gate writes the annotations the platform reads to say why a release is blocked', () => {
   const lines = [];
   const summary = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'gate-summary-')), 'summary.md');
@@ -159,13 +227,15 @@ test('what is live comes off the newest stable chart, and an unreadable chart is
   assert.equal(liveRelease('usernode-labs', { run: () => ({ status: 1 }) }), null);
 });
 
-test('the workflow compares PRs to their base and releases to immutable release images', () => {
+test('PR findings block against the exact base; post-merge findings are advisory', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
   const step = (job, name) => workflow.jobs[job].steps.find((s) => s.name === name);
-  // Lockfiles: a pull request's base, or the live release.
+  // PRs and other release branches retain a lockfile baseline. Only protected
+  // main can use advisory findings after its required pre-merge scans.
   const lockfiles = workflow.jobs['security-lockfiles'];
-  assert.equal(step('security-lockfiles', 'Read the live release').if, "github.event_name != 'pull_request'");
   const baseline = step('security-lockfiles', 'Fetch the baseline commit');
+  assert.equal(baseline.if, "github.event_name == 'pull_request' || github.ref != 'refs/heads/main'");
+  assert.equal(step('security-lockfiles', 'Read the live release').if, "github.event_name != 'pull_request' && github.ref != 'refs/heads/main'");
   assert.equal(baseline.env.BASE_SHA, '${{ github.event.pull_request.base.sha }}');
   assert.equal(baseline.env.LIVE_SHA, '${{ steps.live.outputs.revision }}');
   assert.match(baseline.run, /git fetch --no-tags --depth=1 origin "\$revision"/);
@@ -173,14 +243,17 @@ test('the workflow compares PRs to their base and releases to immutable release 
   assert.deepEqual(auditStep.env, {
     SECURITY_BASELINE_REVISION: '${{ steps.baseline.outputs.revision }}',
     SECURITY_BASELINE_NAME: '${{ steps.baseline.outputs.name }}',
+    SECURITY_AUDIT_ONLY: "${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && '1' || '0' }}",
   });
   // PR images use the exact PR base, including standalone and starter.
   const prScan = step('security-images', 'Build and scan the finished image');
   assert.equal(prScan.env.SECURITY_BASELINE_REVISION, '${{ github.event.pull_request.base.sha }}');
   assert.equal(prScan.env.SECURITY_SCAN_PLATFORM, 'linux/amd64');
+  assert.equal(prScan.env.SECURITY_AUDIT_ONLY, undefined, 'PRs retain the blocking scanner default');
   assert.equal(workflow.jobs['security-images'].steps.some((s) => s.uses?.startsWith('actions/cache')), false,
     'PR-written inventories cannot be persisted then reused by a later revision');
   const releaseScan = step('build', 'Verify runtime and scan the exact image SBOM');
+  assert.equal(releaseScan.env.SECURITY_AUDIT_ONLY, "${{ github.ref == 'refs/heads/main' && '1' || '0' }}");
   assert.equal(releaseScan.env.LIVE_DIGEST, '${{ steps.live.outputs[matrix.component] }}');
   assert.match(releaseScan.run, /export BASELINE_IMAGE="ghcr\.io\/\$REGISTRY_OWNER\/social-vibecoding-\$\{\{ matrix\.component \}\}@\$LIVE_DIGEST"/);
   assert.match(releaseScan.run, /sh scripts\/check-published-image\.sh "\$IMAGE" "\$REPORT" "\$\{\{ matrix\.component \}\}"/);
@@ -212,7 +285,7 @@ case "$*" in
   *"image inspect"*) echo "sha256:${'e'.repeat(64)}" ;;
   *"anchore/syft"*) cat "${path.join(dir, 'baseline.json')}" ;;
   *"imagetools inspect"*) cat "${path.join(dir, 'attestation.json')}" ;;
-  *"--entrypoint node"*) cat > /dev/null; echo '{}' ;;
+  *"--entrypoint node"*) cat > /dev/null; [ "\${FAKE_RUNTIME_FAILURE:-}" != 1 ] || exit 8; echo '{}' ;;
   *" image --skip-db-update"*) [ "\${FAKE_IMAGE_SCAN_FAILURE:-}" != 1 ] || exit 9; cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
   *" sbom "*) cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
 esac
@@ -384,4 +457,73 @@ test('an unavailable lockfile baseline is an assessment failure rather than an i
   assert.doesNotMatch(result.stdout, /Security gate: root lockfile/);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'root-gate.json'))).blocking, []);
   assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'root-gate.json'))).status, 'unavailable');
+});
+
+test('post-merge lockfile findings warn without a baseline, but failed or malformed audits still fail', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-lock-advisory-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  const auditFile = path.join(dir, 'audit.json');
+  fs.writeFileSync(auditFile, JSON.stringify(audit('minio', 'node_modules/minio', 'high', 'GHSA-new')));
+  fs.writeFileSync(path.join(bin, 'npm'), `#!/bin/sh\ncat "${auditFile}"\nexit "\${FAKE_AUDIT_EXIT:-1}"\n`, { mode: 0o755 });
+  const out = path.join(dir, 'reports');
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, SECURITY_AUDIT_ONLY: '1',
+    SECURITY_BASELINE_REVISION: 'f'.repeat(40), SECURITY_REPORT_DIR: out, GITHUB_STEP_SUMMARY: path.join(dir, 'summary.md') };
+  const run = (extra = {}) => spawnSync(process.execPath, ['scripts/security-audit.js'], { cwd: ROOT, encoding: 'utf8', env: { ...env, ...extra } });
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /::warning title=Security finding: root lockfile::minio@.*: GHSA-new/);
+  assert.doesNotMatch(result.stdout, /::error|Already shipped/);
+  const assessment = JSON.parse(fs.readFileSync(path.join(out, 'root-gate.json')));
+  assert.equal(assessment.mode, 'audit');
+  assert.equal(assessment.status, 'findings');
+  assert.deepEqual(assessment.blocking, []);
+  assert.equal(assessment.advisory.length, 1);
+  assert.match(fs.readFileSync(env.GITHUB_STEP_SUMMARY, 'utf8'), /Security findings: advisory after merge/);
+  assert.equal(run({ FAKE_AUDIT_EXIT: '2' }).status, 1, 'audit execution errors still fail');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'root-gate.json'))).status, 'unavailable');
+  fs.writeFileSync(auditFile, '{}');
+  assert.equal(run().status, 1, 'an invalid audit is not a clean or advisory verdict');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'root-gate.json'))).status, 'unavailable');
+});
+
+test('the same image finding blocks a PR and warns after merge while runtime and scanner failures still fail', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-image-advisory-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const out = path.join(dir, 'out');
+  fs.mkdirSync(out);
+  const scan = { SchemaVersion: 2, Results: [{ Target: 'worker', Vulnerabilities: [
+    { Severity: 'HIGH', PkgName: 'stdlib', InstalledVersion: 'v1.23.12', VulnerabilityID: 'CVE-fixture', FixedVersion: '1.27.3' },
+  ] }] };
+  fs.writeFileSync(path.join(out, 'vulnerabilities.json'), JSON.stringify(scan));
+  const env = { ...process.env, SECURITY_AUDIT_ONLY: '0', GITHUB_STEP_SUMMARY: path.join(dir, 'summary.md') };
+  const strict = spawnSync(process.execPath, ['scripts/security-findings.js', '--assess', out, 'worker'], { cwd: ROOT, encoding: 'utf8', env });
+  assert.equal(strict.status, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'assessment.json'))).status, 'regression');
+  fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(scan));
+  const sbom = path.join(dir, 'sbom.json');
+  fs.writeFileSync(sbom, '{}');
+  const bin = fakeDocker(dir);
+  const run = (extra = {}) => spawnSync('sh', ['scripts/check-image-security.sh', 'fixture', out, sbom, 'worker'], {
+    cwd: ROOT, encoding: 'utf8', env: { ...env, PATH: `${bin}:${process.env.PATH}`, SECURITY_AUDIT_ONLY: '1', ...extra },
+  });
+  const advisory = run();
+  assert.equal(advisory.status, 0, advisory.stderr);
+  assert.match(advisory.stdout, /::warning title=Security finding: worker image::stdlib@v1\.23\.12: CVE-fixture/);
+  const assessment = JSON.parse(fs.readFileSync(path.join(out, 'assessment.json')));
+  assert.equal(assessment.status, 'findings');
+  assert.equal(assessment.complete, true);
+  assert.deepEqual(assessment.blocking, []);
+  assert.equal(assessment.findings[0].id, 'CVE-fixture');
+  const calls = fs.readFileSync(path.join(dir, 'calls.log'), 'utf8');
+  assert.match(calls, /--entrypoint node/);
+  assert.match(calls, / image --skip-db-update/);
+  assert.doesNotMatch(calls, /imagetools inspect|anchore\/syft/, 'post-merge audits do not need a baseline');
+  assert.equal(run({ FAKE_RUNTIME_FAILURE: '1' }).status, 8);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'assessment.json'))).status, 'unavailable');
+  assert.equal(run({ FAKE_IMAGE_SCAN_FAILURE: '1' }).status, 9);
+  fs.writeFileSync(path.join(dir, 'report.json'), '{}');
+  assert.equal(run().status, 1, 'invalid scan reports still fail');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'assessment.json'))).status, 'unavailable');
 });

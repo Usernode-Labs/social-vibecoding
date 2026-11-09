@@ -128,7 +128,7 @@ import type { HomeroomBotPlanQuestion } from '../messages/types';
 
 import { BUILD_LINE_WORDS, type BuildLineState, buildLineAsks, buildLineDone, buildLineOf, buildLineStopped, phaseLine, useNow } from './build-line';
 import { noteBuildStarted } from './build-line-words.js';
-import { copyText, inviteText } from './copy-invite';
+import { copyText, inviteText, withVia } from './copy-invite';
 import { DrawnLook, isDrawnLook, ownSrc, useLookSwap } from './drawn-look';
 import { FIRST_LOOK_POLL_MS, firstLookSrc } from './first-look';
 import { syncBuildActivity } from '../app-frame/build-activity';
@@ -724,7 +724,7 @@ export function InviteSheet({ made, me, onClose, onSent }: {
       if (typeof nav.share === 'function') {
         sharing.current = true;
         try {
-          await nav.share({ title, text: note.trim() || undefined, url });
+          await nav.share({ title, text: note.trim() || undefined, url: withVia(url, 'shared') });
           await sent('shared');
           return;
         } catch (err) {
@@ -735,7 +735,7 @@ export function InviteSheet({ made, me, onClose, onSent }: {
           shareGoneAt.current = Date.now();
         }
       }
-      const outcome = await copyText(inviteText(note, url));
+      const outcome = await copyText(inviteText(note, withVia(url, 'copied')));
       if (outcome === 'copied') {
         setCopied(Date.now());
         await sent('copied');
@@ -758,8 +758,8 @@ export function InviteSheet({ made, me, onClose, onSent }: {
     setBusy(true); setError(null);
     try {
       const ready = linkRef.current;
-      const outcome = await copyText(ready ? inviteText(note, ready)
-        : link().then((url) => (url ? inviteText(note, url) : null)));
+      const outcome = await copyText(ready ? inviteText(note, withVia(ready, 'copied'))
+        : link().then((url) => (url ? inviteText(note, withVia(url, 'copied')) : null)));
       if (outcome === 'no-link') { setError((was) => was || translate('onboarding:firstSession.invite.error.noLink')); return; }
       if (outcome === 'refused') { setError(translate('onboarding:firstSession.invite.error.notCopied')); return; }
       setCopied(Date.now());

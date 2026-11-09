@@ -8006,6 +8006,13 @@ const AppView = {
     // #6531: a conflicting promoted change says what its conflict means for
     // the vote, in the same words as the Homeroom bot tab's row. A conflict
     // only its author can move keeps the integration line's own wording.
+    // #6546: approved, and GitHub's required checks are what hold its merge.
+    {
+      const held = item.status === 'promoted' && item.integration && Array.isArray(item.integration.blockReasons)
+        ? item.integration.blockReasons : [];
+      if (held.indexOf('github_checks') !== -1) note.push(PlatformI18n.t('changes:page.votes.note.githubChecks'));
+      else if (held.indexOf('github_checks_failing') !== -1) note.push(PlatformI18n.t('changes:page.votes.note.githubChecksFailing'));
+    }
     if (!updateComing && item.status === 'promoted' && item.integration_merges_clean === false) {
       const blocked = item.integration && Array.isArray(item.integration.blockReasons) ? item.integration.blockReasons : [];
       const authors = ['unresolvable', 'fork_head', 'checks_failing', 'checks_error'];
@@ -25457,6 +25464,26 @@ const AppView = {
         waiting: true,
       });
     }
+    // #6546: GitHub's required checks held it back: still running, or failed
+    // and being run again on today's main (amber, Homeroom acts), or failed
+    // again after that (its author's to fix).
+    if (served.includes('github_checks')) {
+      out.push({
+        key: 'github_checks',
+        label: PlatformI18n.t('changes:badge.reason.githubChecks.label'),
+        detail: heldSoon
+          ? PlatformI18n.t('changes:badge.reason.githubChecks.detailSoon')
+          : PlatformI18n.t('changes:badge.reason.githubChecks.detail', { time: heldTime }),
+        waiting: true,
+      });
+    }
+    if (served.includes('github_checks_failing')) {
+      out.push({
+        key: 'github_checks_failing',
+        label: PlatformI18n.t('changes:badge.reason.githubChecksFailing.label'),
+        detail: PlatformI18n.t('changes:badge.reason.githubChecksFailing.detail'),
+      });
+    }
     // The APP's merges are paused by a red main (services/main-watch.js).
     // Not the proposal's fault and not in any column of its own: the row's
     // requirements ledger carries the main-health step live (services/
@@ -28309,10 +28336,13 @@ const AppView = {
   // started after the server answered has landed.
   _pendingVotes: new Map(),
   // The optimistic change to one cached row: the viewer's side and the raw
-  // counts. `qualified_yes_count` is left to the server — whether this voter
-  // qualifies is the invited-approver roster's call, not the client's. A
-  // null vote is a vote taken back (retractVote): the side it was on loses
-  // one and nothing gains.
+  // counts. A vote taken back also lowers the qualified count of its own side
+  // when that vote counted (#6477: every screen draws `qualified_yes_count`,
+  // so leaving it to the server kept the figure where it was until a reload);
+  // casting still leaves the qualified counts to the server, because whether
+  // this voter qualifies is the invited-approver roster's call. A null vote is
+  // a vote taken back (retractVote): the side it was on loses one and nothing
+  // gains.
   _applyVoteToRow(row, vote) {
     if (!row || row.my_vote === vote) return;
     if (vote == null && row.my_vote == null) return;
@@ -28320,9 +28350,16 @@ const AppView = {
       if (row[key] == null) return;
       row[key] = Math.max(0, (parseInt(row[key], 10) || 0) + by);
     };
+    const counted = row.my_vote_uncounted !== true && row.my_vote_advisory !== true;
     if (row.my_vote === 'yes') bump('yes_count', -1);
     if (row.my_vote === 'no') bump('no_count', -1);
     if (vote === 'yes' || vote === 'no') bump(vote === 'yes' ? 'yes_count' : 'no_count', 1);
+    // #6477: a counted vote taken back lowers the figure every screen draws,
+    // on the spot. An uncounted or advisory one never raised it.
+    if (vote == null && counted) {
+      if (row.my_vote === 'yes') bump('qualified_yes_count', -1);
+      if (row.my_vote === 'no') bump('qualified_no_count', -1);
+    }
     row.my_vote = vote == null ? null : vote;
   },
   _overlayPendingVote(row) {
@@ -28753,10 +28790,10 @@ const AppView = {
       ? AppView.voteState.bySession[String(sessionId)] : null;
     const targets = [];
     if (pr && pr.my_vote) {
-      targets.push({ row: pr, prev: { my_vote: pr.my_vote, yes_count: pr.yes_count, no_count: pr.no_count } });
+      targets.push({ row: pr, prev: { my_vote: pr.my_vote, yes_count: pr.yes_count, no_count: pr.no_count, qualified_yes_count: pr.qualified_yes_count, qualified_no_count: pr.qualified_no_count } });
     }
     if (live && live !== pr && live.my_vote) {
-      targets.push({ row: live, prev: { my_vote: live.my_vote, yes_count: live.yes_count, no_count: live.no_count } });
+      targets.push({ row: live, prev: { my_vote: live.my_vote, yes_count: live.yes_count, no_count: live.no_count, qualified_yes_count: live.qualified_yes_count, qualified_no_count: live.qualified_no_count } });
     }
     // The side being taken back, for the "Sending…" mark every Vote button
     // for this change reads (#3984), whichever surface it is on.

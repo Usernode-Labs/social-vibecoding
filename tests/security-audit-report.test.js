@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const contract = require('../src/services/security-audit-report');
 const observer = require('../src/services/signal-observers/security-audit');
 const signals = require('../src/services/platform-signals');
@@ -61,6 +61,7 @@ test('CLI aggregation emits the contract without needing any token or issue API'
     }
     const output = path.join(dir, 'report.json');
     execFileSync(process.execPath, [path.join(__dirname, '../scripts/security-audit-report.js'), dir, output], {
+      timeout: 10000, killSignal: 'SIGKILL',
       env: { PATH: process.env.PATH, GITHUB_REPOSITORY: context.repository, GITHUB_SHA: context.revision,
         GITHUB_RUN_ID: context.runId, GITHUB_RUN_ATTEMPT: context.runAttempt },
     });
@@ -179,6 +180,42 @@ test('ZIP reader reads only the bounded expected report and cleans up on invalid
   assert.ok(large.length < contract.MAX_BYTES, 'tests the expanded-size limit, not the compressed-size limit');
   assert.throws(() => observer.unzipReport(large), { code: 'ENOBUFS' });
   assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('homeroom-security-')), before);
+});
+
+test('ZIP reader stops an oversized extractor that handles SIGTERM and still cleans up', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-extractor-bound-'));
+  // A separate process keeps a regression in execFileSync's synchronous wait
+  // from hanging this test file. Kill its process group on timeout as well.
+  const extractor = "process.on('SIGTERM', () => {}); process.stdout.on('error', () => {}); process.stdout.write(Buffer.alloc(2 * 1024 * 1024)); setInterval(() => {}, 1000);";
+  const probe = `
+    const assert = require('node:assert/strict');
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const cp = require('node:child_process');
+    const realExec = cp.execFileSync;
+    cp.execFileSync = (command, args, options) => {
+      assert.equal(command, '/usr/bin/unzip');
+      return realExec(process.execPath, ['-e', ${JSON.stringify(extractor)}], options);
+    };
+    const observer = require(${JSON.stringify(path.join(__dirname, '../src/services/signal-observers/security-audit'))});
+    const before = fs.readdirSync(os.tmpdir());
+    assert.throws(() => observer.unzipReport(Buffer.from('fixture')), { code: 'ENOBUFS' });
+    assert.deepEqual(fs.readdirSync(os.tmpdir()), before);
+  `;
+  let child;
+  try {
+    child = spawnSync(process.execPath, ['-e', probe], {
+      env: { PATH: process.env.PATH, TMPDIR: dir, TMP: dir, TEMP: dir },
+      timeout: 5000, killSignal: 'SIGKILL', detached: true, encoding: 'utf8', maxBuffer: 64 * 1024,
+    });
+    assert.ifError(child.error);
+    assert.equal(child.status, 0, child.stderr);
+  } finally {
+    if (child?.error && Number.isSafeInteger(child.pid) && child.pid > 0) {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (err) { if (err.code !== 'ESRCH') throw err; }
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('one advisory aggregates all components, retains its target and updates only for semantic changes', () => {
