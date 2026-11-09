@@ -1426,12 +1426,13 @@ async function sourceRepo(pool, { user, project, deps = {} }) {
   return { app, repo };
 }
 
-async function listSource(pool, { user, project, dir, match, deps = {} }) {
+async function listSource(pool, { user, project, dir, match, ref, at, deps = {} }) {
   const found = await sourceRepo(pool, { user, project, deps });
   if (found.error) return found;
   const github = deps.github || require('./github');
-  const tree = await github.listRepoFiles(found.repo.owner, found.repo.repo, SOURCE_REF);
-  if (!tree) return { error: 'Could not read that project\'s code on main.' };
+  const sha = typeof ref === 'string' && /^[0-9a-f]{40}$/i.test(ref) ? ref.toLowerCase() : null;
+  const tree = await github.listRepoFiles(found.repo.owner, found.repo.repo, sha || SOURCE_REF);
+  if (!tree) return { error: sha ? 'Could not read that change\'s code.' : 'Could not read that project\'s code on main.' };
   const prefix = dir ? sourcePath(dir) : null;
   if (dir && !prefix) return { error: 'That folder is not a path in the project.' };
   const words = String(match || '').toLowerCase().split(/\s+/).filter(Boolean);
@@ -1440,22 +1441,24 @@ async function listSource(pool, { user, project, dir, match, deps = {} }) {
     && words.every((w) => f.path.toLowerCase().includes(w)));
   return {
     project: found.app.slug,
-    branch: SOURCE_REF,
+    at: sha ? (at || 'with_change') : 'main',
+    ...(sha ? {} : { branch: SOURCE_REF }),
     files: hits.slice(0, SOURCE_MAX_PATHS).map((f) => ({ path: f.path, size: f.size })),
     more: Math.max(0, hits.length - SOURCE_MAX_PATHS),
     ...(tree.truncated ? { note: 'The project is very large, so some files may be missing from this list.' } : {}),
   };
 }
 
-async function readSource(pool, { user, project, path: rawPath, fromLine, deps = {} }) {
+async function readSource(pool, { user, project, path: rawPath, fromLine, ref, at, deps = {} }) {
   const found = await sourceRepo(pool, { user, project, deps });
   if (found.error) return found;
   const filePath = sourcePath(rawPath);
   if (!filePath) return { error: 'That is not a file path in the project.' };
   if (SECRET_PATH_RE.test(filePath)) return { error: 'That file holds secrets, so it is never read.' };
   const github = deps.github || require('./github');
-  const text = await github.getFileContent(found.repo.owner, found.repo.repo, filePath, SOURCE_REF);
-  if (text == null) return { error: 'No such file on main. Use list_source to find it.' };
+  const sha = typeof ref === 'string' && /^[0-9a-f]{40}$/i.test(ref) ? ref.toLowerCase() : null;
+  const text = await github.getFileContent(found.repo.owner, found.repo.repo, filePath, sha || SOURCE_REF);
+  if (text == null) return { error: sha ? 'No such file at that change\'s version.' : 'No such file on main. Use list_source to find it.' };
   if (text.includes('\u0000')) return { error: 'That file is not text.' };
   const lines = text.split('\n');
   const from = Math.min(Math.max(1, Number.isInteger(Number(fromLine)) ? Number(fromLine) : 1), lines.length);
@@ -1470,11 +1473,72 @@ async function readSource(pool, { user, project, path: rawPath, fromLine, deps =
   }
   return {
     project: found.app.slug,
-    branch: SOURCE_REF,
+    at: sha ? (at || 'with_change') : 'main',
+    ...(sha ? {} : { branch: SOURCE_REF }),
     path: filePath,
     totalLines: lines.length,
     text: out.join('\n'),
     ...(line <= lines.length ? { nextLine: line } : {}),
+  };
+}
+
+/**
+ * #6533: the two versions of a change's code. Its saved starting point
+ * (`base_sha`) and its newest version, the same expression routes/shots.js
+ * uses. Resolves `{ base, head, number }` or `{ error }`.
+ */
+async function changeRefs(pool, sessionId, appId, { deps = {} } = {}) {
+  const id = Number(sessionId);
+  const app = Number(appId);
+  if (!Number.isSafeInteger(id) || id <= 0) return { error: 'That change\'s code cannot be read yet.' };
+  const { rows: [row] } = await pool.query(
+    `SELECT id, app_id, pr_number, source, handoff_base_sha,
+            imported_pr_head_sha, reviewed_head_sha, checks_commit_sha, handoff_head_sha,
+            COALESCE(CASE WHEN source = 'imported' THEN imported_pr_head_sha ELSE reviewed_head_sha END,
+                     checks_commit_sha, handoff_head_sha) AS head_sha
+       FROM chat_sessions WHERE id = $1`,
+    [id],
+  );
+  if (!row || (Number.isSafeInteger(app) && Number(row.app_id) !== app)) {
+    return { error: 'That change\'s code cannot be read yet.' };
+  }
+  const exact = (value) => (/^[0-9a-f]{40}$/i.test(String(value || '')) ? String(value).toLowerCase() : null);
+  const head = exact(row.head_sha);
+  if (!head) return { error: 'That change\'s code cannot be read yet.' };
+  // The starting point is the handoff base when the change has one, else the
+  // merge base with main, exactly as the before/after shots resolve theirs.
+  let base = exact(row.handoff_base_sha);
+  if (!base) {
+    try {
+      const { rows: [project] } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [row.app_id]);
+      const repo = require('./homeroom-bot').parseRepo(project?.repo_url);
+      if (repo) {
+        const github = deps.github || require('./github');
+        const comparison = await github.compareRefs(repo.owner, repo.repo, `main...${head}`);
+        base = exact(comparison?.mergeBaseSha);
+      }
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'A change\'s starting point could not be read', { sessionId: id, err: err.message });
+    }
+  }
+  return { base, head, number: row.pr_number || null };
+}
+
+/** The paths a change alters, between its base and its head, secrets left out. */
+async function listChangeFiles(pool, { user, project, change, deps = {} }) {
+  const found = await sourceRepo(pool, { user, project, deps });
+  if (found.error) return found;
+  const refs = await changeRefs(pool, change?.id ?? change?.sessionId, found.app.id, { deps });
+  if (refs.error) return refs;
+  if (!refs.base) return { error: 'That change has no starting point to compare with, so its files cannot be listed yet.' };
+  const github = deps.github || require('./github');
+  const files = await github.listChangedFiles(found.repo.owner, found.repo.repo, `${refs.base}...${refs.head}`);
+  if (!files) return { error: 'That change\'s files could not be read just now.' };
+  return {
+    project: found.app.slug,
+    at: 'with_change',
+    files: files.filter((path) => !SECRET_PATH_RE.test(path)).slice(0, SOURCE_MAX_PATHS),
+    more: Math.max(0, files.length - SOURCE_MAX_PATHS),
   };
 }
 
@@ -7111,6 +7175,9 @@ module.exports = {
   sourceRepo,
   listSource,
   readSource,
+  // #6533: a change's two versions, and the files it alters.
+  changeRefs,
+  listChangeFiles,
   historyMessages,
   picturesMessage,
   withoutPictures,

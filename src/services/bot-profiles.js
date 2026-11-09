@@ -109,8 +109,7 @@ const PROFILES = Object.freeze({
   }),
   request: profile('request', {
     surface: 'thread', scope: 'thread', prompt: 'request', places: ['issue'], limits: THREAD_LIMITS,
-    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'start_request', 'offer_close_request', 'offer_copy_request', 'offer_withdraw', 'change_plan',
-      'make_pictures', 'attach_files']),
+    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'start_request', 'offer_close_request', 'offer_copy_request', 'offer_withdraw', 'change_plan', 'make_pictures', 'attach_files', 'show_change', 'list_change_files']),
     // Words passed on as a change are the follow-up's; the bot's own change
     // up for a vote answers anyone; the requester or an admin straight after
     // a post of the bot's is answering it; else only a mention or a reply,
@@ -122,7 +121,7 @@ const PROFILES = Object.freeze({
     // #6389: the change's author (or its request's requester, once it is
     // abandoned) may ask the bot to make its own version of a change made
     // outside Homeroom.
-    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'offer_withdraw', 'make_own_version', 'make_pictures', 'attach_files']),
+    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'offer_withdraw', 'make_own_version', 'make_pictures', 'attach_files', 'show_change', 'list_change_files']),
     speaks: Object.freeze([...THREAD_CHECKS, 'not_queued_as_ask', 'own_change', 'addressed']),
   }),
   channel: profile('channel', {
