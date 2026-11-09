@@ -247,9 +247,14 @@
       "schemaSha256": "deda4df491c0d5238f3695158a7357f4b8d45e85a1df3f88577f34ab0c788a89"
     },
     {
+      "id": "record-arrival-sources",
+      "sha256": "dcb5e3ba999a2d76370dc6c521fb90b6ca1d0ac79ea471ee8ef213da6e583b07",
+      "schemaSha256": "5129de75d5a378e58fe9d6f5ca666b9dfba9952c9e7416e170eb540334909543"
+    },
+    {
       "id": "change-close-reason",
       "sha256": "eb3c93d285e4d76faa45b681de0b5851db785aba364c7df3d848bd6e49f8aaef",
-      "schemaSha256": "5189a0b1a61505260a43103e9faa926546c58e91cd330e5b837f2ebb61533d4a"
+      "schemaSha256": "6da469d7544c8d2fbeda44dc7a3598b5b740a24f9544ce9e47c5bf75950d0f55"
     }
   ]
 }
