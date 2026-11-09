@@ -2234,17 +2234,54 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
  * gates this function skips.
  */
 const BOT_MESSAGE_TYPES = new Set(['message', 'spec_share']);
-async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null, msgType = 'message' } = {}) {
+async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null, msgType = 'message', attachmentIds = null } = {}) {
   if (!thread || !user || !Number.isInteger(Number(user.id))) return null;
   const text = String(content || '').trim().slice(0, MAX_CHAT_LEN);
   if (!text) return null;
   const kind = BOT_MESSAGE_TYPES.has(msgType) ? msgType : 'message';
+  // #6534: files the bot made this turn, stored unlinked against its own
+  // account. Only ids it owns and that nothing has linked are taken, so a
+  // stale or borrowed id attaches nothing.
+  const attIds = attachmentsSvc.sanitizeAttachmentIds(attachmentIds) || [];
+  let attRows = [];
+  if (attIds.length) {
+    const { rows: found } = await pool.query(
+      `SELECT id, kind, filename, size_bytes, meta
+         FROM chat_message_attachments
+        WHERE id = ANY($1) AND app_id = $2 AND user_id = $3 AND message_id IS NULL`,
+      [attIds, appId, Number(user.id)]
+    );
+    if (found.length !== attIds.length) {
+      log.warn('ws', 'bot message dropped: attachment ownership check failed', {
+        appId, userId: user.id, requested: attIds.length, found: found.length,
+      });
+      return null;
+    }
+    attRows = attIds.map((id) => found.find((r) => r.id === id));
+  }
+  let allMetadata = metadata || {};
+  if (attRows.length) {
+    allMetadata = {
+      ...allMetadata,
+      attachments: attRows.map((r) => ({
+        id: r.id, kind: r.kind, filename: r.filename, sizeBytes: r.size_bytes,
+        ...(r.meta ? { meta: r.meta } : {}),
+      })),
+    };
+  }
   const { rows } = await pool.query(
     `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
      VALUES ($1, $2, $3, $7, $4, $5, $6)
      RETURNING id, created_at`,
-    [appId, Number(user.id), text, JSON.stringify(metadata || {}), thread.type, thread.ref, kind]
+    [appId, Number(user.id), text, JSON.stringify(allMetadata), thread.type, thread.ref, kind]
   );
+  if (attRows.length) {
+    await pool.query(
+      `UPDATE chat_message_attachments SET message_id = $1
+        WHERE id = ANY($2) AND user_id = $3 AND message_id IS NULL`,
+      [rows[0].id, attIds, Number(user.id)]
+    );
+  }
   // A reply in a reply thread names its root, as a person's does, so the
   // stream the root is in can draw it (the bot's voice answers there).
   let threadRoot = null;
@@ -2266,7 +2303,7 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
     username: user.username,
     content: text,
     msgType: kind,
-    ...(metadata ? { metadata } : {}),
+    ...(attRows.length || metadata ? { metadata: allMetadata } : {}),
     thread,
     ...(threadRoot ? { threadRoot } : {}),
     createdAt: rows[0].created_at,

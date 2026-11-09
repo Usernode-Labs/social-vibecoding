@@ -307,15 +307,19 @@ const names = (tools) => tools.map((t) => t.function.name);
 
 test('each place gets the tools that fit it, and nothing that acts without a tap', () => {
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: true })),
-    ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'let_try_again', 'offer_withdraw', 'tell_me_when', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'attach_files', 'update_change', 'update_change_description', 'let_try_again', 'offer_withdraw', 'tell_me_when', 'request_detail', 'read_message', 'list_source', 'read_source']);
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false })),
-    ['reply', 'stay_quiet', 'request_detail', 'read_message', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
+    ['reply', 'stay_quiet', 'attach_files', 'request_detail', 'read_message', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
-    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'attach_files', 'tell_me_when', 'start_request', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
+  // #6534: pictures it makes itself are offered where the asker may pay for them.
+  assert.ok(names(voice.toolsFor({ type: 'issue', ref: 1 }, { picturesAllowed: true })).includes('make_pictures'));
+  assert.ok(!names(voice.toolsFor({ type: 'chat', ref: null }, { picturesAllowed: true })).includes('make_pictures'),
+    'a channel is not a place for pictures it made');
   // Papote #3: under its plan waiting for Build it, a change to the plan is asked for here.
   const planned = voice.toolsFor({ type: 'issue', ref: 1 }, { planWaiting: true });
   assert.deepEqual(names(planned),
-    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'change_plan', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'attach_files', 'tell_me_when', 'start_request', 'change_plan', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
   // #6264: a request's change may not exist yet, and the promise is about
   // the request then, so it is offered on the request too.
   assert.ok(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })).includes('tell_me_when'));
@@ -899,4 +903,72 @@ test("a request's report names it by its number, linked where a chat can tap it"
     '[#15](https://app.test/#app/ear-trainer/dev/issues/15)');
   assert.equal(voice.requestMd('app.test', 'a b/c', '7'),
     '[#7](https://app.test/#app/a%20b%2Fc/dev/issues/7)', 'the slug is encoded and the number is a number');
+});
+
+// ── #6534: pictures and files under a reply in a thread ────────────────
+
+const PNG = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.alloc(40, 1),
+]);
+
+function pictureCtx(queries = []) {
+  const fakePictures = {
+    normalizeAsk: () => ({ prompt: 'an empty inbox', purpose: 'app', variants: [null] }),
+    guard: () => null,
+    generate: async () => ({ ok: true, images: [{ id: 'a'.repeat(32), letter: 'A', variant: null }], left: 3 }),
+    galleryCard: ({ images }) => ({
+      type: 'gallery',
+      images: images.map((im) => ({ ...im, label: `Option ${im.letter}`, letter: im.letter, width: 512, height: 512 })),
+    }),
+    imageBytes: async () => PNG,
+  };
+  const pool = {
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      if (sql.includes('FROM homeroom_bot_picture_images')) {
+        return { rows: [{ id: 'a'.repeat(32), content_type: 'image/png', object_key: 'k', bytes: PNG.length }] };
+      }
+      if (sql.includes('COALESCE(SUM(size_bytes)')) return { rows: [{ total: '0' }] };
+      if (sql.includes('INSERT INTO chat_message_attachments')) return { rows: [] };
+      throw new Error(`unstubbed query: ${sql.slice(0, 60)}`);
+    },
+  };
+  return {
+    pool,
+    ctx: {
+      app: { id: 5 }, place: { type: 'issue', ref: 12 }, user: { id: 7, username: 'ada' },
+      bot: { id: 9 }, settings: {}, config: {}, attached: [], change: null, requestChange: null,
+      deps: { pictures: { botPictures: fakePictures } },
+    },
+  };
+}
+
+test('#6534: make_pictures in a thread stores its pictures under the reply, with no gallery card', async () => {
+  const { pool, ctx } = pictureCtx();
+  const out = await voice.runTool(pool, ctx, 'make_pictures', { prompt: 'an empty inbox', count: 1 });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(out.attached, 1);
+  assert.equal(out.shown, undefined, 'the gallery card stays in the bot\'s own chat');
+  assert.equal(ctx.card, null, 'no card is drawn here');
+  assert.deepEqual(ctx.attached.map((a) => a.filename), ['Option A.png']);
+  assert.equal(ctx.attached[0].kind, 'image');
+});
+
+test('#6534: an HTML comparison is self-contained, and a stored one is an html attachment', async () => {
+  const { pool, ctx } = pictureCtx();
+  const refused = await voice.runTool(pool, ctx, 'attach_files', {
+    comparison: { title: 'Before and after', html: '<img src="https://example.com/x.png">' },
+  });
+  assert.match(refused.error, /may not load anything from another address/);
+
+  const stored = await voice.runTool(pool, ctx, 'attach_files', {
+    comparison: { title: 'Before and after', html: '<html><body><p>Before</p><p>After</p></body></html>' },
+  });
+  assert.equal(stored.ok, true, JSON.stringify(stored));
+  assert.equal(ctx.attached[0].kind, 'html');
+  assert.match(ctx.attached[0].filename, /^Before-and-after.*\.html$/);
+
+  const both = await voice.runTool(pool, ctx, 'attach_files', { shots: true, design: 'mine' });
+  assert.match(both.error, /one thing per call/);
 });
