@@ -8863,6 +8863,10 @@
     "text": "It goes live when the countdown ends, unless someone objects.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while a timer is running after which the change is applied to the running app."
   },
+  "page.votes.note.mergeCountdownDecided": {
+    "text": "It goes live when the countdown ends.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page: the yes votes it needs are in, it is counting down to go live, and there is no vote left to cast."
+  },
   "page.votes.note.rejectCountdown": {
     "text": "It will be set aside when the countdown ends, unless someone speaks up.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while a timer is running after which the change is turned down for lack of votes."

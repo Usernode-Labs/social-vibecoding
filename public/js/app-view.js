@@ -6511,14 +6511,19 @@ const AppView = {
       lead = who === 'you' ? PlatformI18n.t('changes:request.status.lead.reviewYours')
         : who ? PlatformI18n.t('changes:request.status.lead.reviewNamed', { username: who }) : PlatformI18n.t('changes:request.status.lead.review');
     } else if (st.key === 'bot') {
+      // #6532: `issue.bot` says `building` while the stored track can still say
+      // the build waits its turn (`busy` false). Say what the progress card
+      // under this sentence says, never both.
+      const waitingBuild = AppView._botWaitingBuildLead(issue.track);
       // #6156: held for its turn among the project's builds (`turn`), not for a vote.
       lead = bot && bot.held ? (bot.turn ? PlatformI18n.t('changes:request.status.lead.botHeldTurn') : PlatformI18n.t('changes:request.status.lead.botHeld'))
         : bot && bot.plan
           // B06 (audit 2 Nov 2026): the person it waits for reads "you", not their own @name.
           ? (bot.mine ? PlatformI18n.t('changes:request.status.lead.botPlanYours')
             : bot.askedBy ? PlatformI18n.t('changes:request.status.lead.botPlanWaiting', { username: bot.askedBy }) : PlatformI18n.t('changes:request.status.lead.botPlanWaitingUnnamed'))
-          : bot && bot.what === 'queued' ? PlatformI18n.t('changes:request.status.lead.botQueued')
-            : AppView._botWorkReading(bot) ? PlatformI18n.t('changes:request.status.lead.botReading') : PlatformI18n.t('changes:request.status.lead.botBuilding');
+          : waitingBuild ? waitingBuild
+            : bot && bot.what === 'queued' ? PlatformI18n.t('changes:request.status.lead.botQueued')
+              : AppView._botWorkReading(bot) ? PlatformI18n.t('changes:request.status.lead.botReading') : PlatformI18n.t('changes:request.status.lead.botBuilding');
     } else if (st.key === 'auto_solving') lead = PlatformI18n.t('changes:request.status.lead.autoSolving');
     else if (st.key === 'answer_needed') lead = PlatformI18n.t('changes:request.status.lead.answerNeeded');
     else if (st.key === 'draft_ready') lead = PlatformI18n.t('changes:request.status.lead.draftReady');
@@ -6683,6 +6688,24 @@ const AppView = {
     if (id) return PlatformI18n.t(id);
     const date = track.held && track.held.until ? AppView._workDateText(Date.parse(track.held.until)) : '';
     return date ? PlatformI18n.t('changes:request.status.lead.botOnHoldUntil', { date }) : null;
+  },
+
+  // #6532: Homeroom bot's build for a request can wait its turn while
+  // `issue.bot` already says `building` (homeroom-bot-progress.js
+  // botWorkByIssue sets it for a ready live run with live_build_waiting_at).
+  // The stored track says how it really stands — `busy` false with a queued
+  // or held line — so the status card says what the progress card under it
+  // says. Null when the track is not a build waiting its turn.
+  _botWaitingBuildLead(track) {
+    const work = track && track.work;
+    const code = work && work.line && work.line.code;
+    if (!work || track.busy !== false) return null;
+    if (work.stage !== 'building' && work.stage !== 'reading') return null;
+    if (code === 'queued') return PlatformI18n.t('changes:request.status.lead.botQueued');
+    if (code === 'held_builds') return PlatformI18n.t('changes:request.status.lead.botHeldTurn');
+    if (code === 'held_waiting') return PlatformI18n.t('changes:request.status.lead.botHeld');
+    if (code === 'on_hold') return AppView._requestHoldLead(track);
+    return null;
   },
 
   // #6399: the sentence for a request Homeroom bot handed back to the viewer
@@ -8044,8 +8067,11 @@ const AppView = {
       if (approvers) note.push(PlatformI18n.t('changes:page.votes.note.anyApprover', { count: approvers }));
       else if (members > 1) note.push(PlatformI18n.t('changes:page.votes.note.anyMember', { count: members }));
     }
-    // A countdown or a contest says what happens next, in a few words.
-    if (pill.key === 'merge_countdown') note.push(PlatformI18n.t('changes:page.votes.note.mergeCountdown'));
+    // A countdown or a contest says what happens next, in a few words. Once
+    // the vote is decided nobody can object from this card, so it promises
+    // nothing of the sort (#6505).
+    if (pill.key === 'merge_countdown') note.push(PlatformI18n.t(AppView._votesDecided(item)
+      ? 'changes:page.votes.note.mergeCountdownDecided' : 'changes:page.votes.note.mergeCountdown'));
     else if (pill.key === 'reject_countdown') note.push(PlatformI18n.t('changes:page.votes.note.rejectCountdown'));
     else if (pill.key === 'contested') note.push(PlatformI18n.t('changes:page.votes.note.contested'));
     const earlierYes = ready && Array.isArray(ready.earlierYes) ? ready.earlierYes : [];
@@ -18475,6 +18501,9 @@ const AppView = {
     if (!pr || pr.status !== 'promoted') return [];
     // A project's first version is not put to a vote (D1): no Yes or No.
     if (pr.first_version === true) return [];
+    // #6505: the yes votes its rule asks for are in, so the vote is decided
+    // and the button takes no further part in it.
+    if (AppView._votesDecided(pr)) return [];
     // #2038: the vote carries the approval EPOCH the card was rendered with,
     // not the commit. A commit changes whenever the platform brings the
     // proposal up to date with main, and comparing commits made every one of
@@ -18521,6 +18550,23 @@ const AppView = {
         act: { fn: 'castVote', args: [pr.id, 'no', ...rev] },
       },
     ];
+  },
+
+  // #6505: the vote is DECIDED, so there is nothing left to press. True once
+  // the yes votes its rule asks for are in (the pill's own tally, which is
+  // already the approvals-mode n) and the change is not waiting on another
+  // member's Yes. A change counting down to go live is decided while the
+  // clock runs; one being set aside or contested is not, because a vote
+  // there can still change how it ends. A leading change below its majority
+  // (lazyLead) keeps its buttons too.
+  //
+  // Only the controls this reads go: the server's vote rules are unchanged.
+  _votesDecided(pr) {
+    if (!pr || pr.status !== 'promoted' || pr.first_version === true) return false;
+    const st = AppView.statusPillState(pr);
+    if (!st || st.key === 'reject_countdown' || st.key === 'contested') return false;
+    if (!(Number(st.yes) >= Math.max(1, Number(st.majority) || 1))) return false;
+    return !AppView._awaitingOtherMember(pr);
   },
 
   // The Needs-you card's "your yes puts it live" (and the end card's "Your
