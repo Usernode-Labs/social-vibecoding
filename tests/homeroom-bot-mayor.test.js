@@ -1169,7 +1169,13 @@ test('#6534: a reply saying pictures are posted is caught unless files were stor
   assert.deepEqual(await kinds('Here are the pictures.',
     { attached: [{ id: 'a'.repeat(32), kind: 'image' }] }), [], 'stored under the reply');
   assert.deepEqual(await kinds('I made two options for you.',
-    { pictures: { made: 2 } }), [], 'made this turn');
+    { pictures: { made: 2 } }), [], 'made this turn in the chat');
+  assert.deepEqual(await kinds('Here are the pictures.',
+    { place: { type: 'issue', ref: 1 }, pictures: { made: 2 } }), ['posted_pictures'],
+  'made but not stored in a project thread');
+  assert.deepEqual(await kinds('Here are the pictures.',
+    { place: { type: 'issue', ref: 1 }, attached: [{ id: 'b'.repeat(32), kind: 'image' }] }), [],
+  'stored under a reply in a project thread');
   assert.deepEqual(await kinds('The pictures are in the thread above.'), [],
     'not a claim that they were posted now');
 });

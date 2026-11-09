@@ -1711,10 +1711,11 @@ const CLAIMS = Object.freeze([
   },
   {
     // #6534: a reply that says pictures, shots or a design are posted, when
-    // nothing was stored under it.
+    // nothing was stored under it. In a project's thread only what was stored
+    // as an attachment counts; in the bot's own chat the gallery card does.
     kind: 'posted_pictures',
     re: /\bhere (?:are|is) the (?:pictures|shots|stills|designs?)\b|\bI(?:'ve| have)(?: just| now)? (?:attached|posted|added|put up) (?:the |your |two |three |four )?(?:pictures?|shots?|stills|designs?|before and after)\b|\battached below\b/i,
-    backed: (ctx) => !!(ctx.attached?.length || ctx.pictures?.made),
+    backed: (ctx) => !!(ctx.attached?.length || (!ctx.place && ctx.pictures?.made)),
     said: 'says pictures or a design were posted',
     instead: 'I haven\'t attached any pictures.',
   },
