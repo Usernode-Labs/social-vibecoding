@@ -1063,10 +1063,6 @@ const Home = {
       // button beside the heading, not this tile, so the trailing tile keeps
       // exactly the presence it has at rest.
       if (App.user?.privateMember) create = null;
-      // ONE HOME (#6361): making something new is Pinned communities'
-      // "New community" tile now (./pinned-communities.tsx), so the apps
-      // grid draws no trailing tile of its own.
-      create = null;
     }
 
     // The search view is a flat, transient list — it must not inherit the

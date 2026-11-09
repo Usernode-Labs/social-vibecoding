@@ -145,7 +145,10 @@ test('#1766: the re-run reuses the existing guards rather than restating them', 
   // moved out of this function, the card would silently start offering a
   // re-run to someone who cannot ask for one.
   assert.match(body, /if \(AppView\.readOnly\) return null;/);
-  assert.match(body, /if \(pr\.check_state === 'passing'\) return null;/);
+  // #6521 narrowed this guard without moving it: a pass earns no re-run
+  // unless it was earned on an older version of the change, where it says
+  // nothing about the code up now and the request asks for the re-run.
+  assert.match(body, /if \(pr\.check_state === 'passing' && pr\.checks_on_head !== false\) return null;/);
   assert.match(body, /if \(!owner && !App\.user\?\.canAdminWrite && !pr\.recheckable\) return null;/);
   assert.match(body, /_recheckInFlight\.has\(pr\.id\)/);
 });

@@ -951,11 +951,13 @@ type ScreenRowProps = {
  */
 function ScreenRow({ view, touch, removes, held = false, onRelease, card = null }: ScreenRowProps): ReactNode {
   const t = useMessages('notifications');
-  // #6498: a row the sheet was showing unread when it opened stays exactly as
-  // it was, dimmed, until the sheet closes — clearing the bell on open must
-  // not take the row's own controls out from under the pointer. A held row is
-  // already read, so its clear is the no-op the code already handles for "a
-  // refresh got there first" (clearNotification re-renders and answers true).
+  // #6498: a row the sheet was showing unread when it opened, and that the
+  // server now answers as read (cleared in another tab or on another device),
+  // stays listed as it was, dimmed, until the sheet closes — a background
+  // clear must not take the row's own controls out from under the pointer. A
+  // held row is already read, so its clear is the no-op the code already
+  // handles for "a refresh got there first" (clearNotification re-renders and
+  // answers true).
   const clearable = view.unread || held;
   // #6441: several requests that went live together: one row, each listed
   // under its words. It takes the row shape a card with its own buttons

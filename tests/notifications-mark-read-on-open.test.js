@@ -1,19 +1,22 @@
-// #6498: OPENING THE BELL IS READING IT.
+// #6498 wrote the server's narrow clear; #6527 stopped the bell from using it
+// automatically.
 //
-// The report: "the little dot on the bell stays no matter how many times i
-// open the list. read should mean read, the badge should drop." Nothing on
-// open wrote `read_at`, so the badge (`unread - messageUnread` plus invites)
-// stayed lit forever. These tests pin the four pieces of the fix:
+// #6498 made opening the bell clear what it counted, through the server's
+// `keep_plain_messages` option (markRead({ all, keepPlainMessages })). #6527
+// reported the other side of that: a "live, ready to try" notice left Unread
+// just because the drawer was opened, on every device. So opening the bell
+// now only refreshes, and nothing sends the narrow clear any more. The
+// server option stays, and these tests pin it:
 //
 //   1. services markRead({ all, keepPlainMessages }) clears exactly what the
 //      bell counts — the server's PLAIN_MESSAGE_SQL is kept out — and refuses
 //      to combine with older_than_days.
 //   2. The route passes `keep_plain_messages` through the mark-all branch and
 //      refuses it alongside older_than_days.
-//   3. The sheet controller marks read only after a refresh that landed.
-//   4. The frontend markReadOnOpen() sends the exact body, adopts the
-//      server's counts, leaves plain messages unread, and stays quiet on
-//      failure.
+//   3. The sheet controller only refreshes on open: no markReadOnOpen, no
+//      markAllRead, no read request.
+//   4. The frontend no longer defines markReadOnOpen and sends no
+//      keep_plain_messages request.
 //
 // Frontend logic is extracted from the shipped source (so tests cannot drift
 // from what runs) and exercised against stubs, the notifications-mark-all
@@ -102,15 +105,7 @@ test('route refuses keep_plain_messages alongside older_than_days', () => {
     'the window and the narrow clear are different scopes and do not combine');
 });
 
-// ── 3. the controller marks read only after a refresh that landed ───────
-
-test('controller refreshes, then marks read only when the refresh resolved true', () => {
-  const m = CONTROLLER_SRC.match(/onOpen: \(\) => Promise\.resolve\(([\s\S]*?)\),\n\}\);/);
-  assert.ok(m, 'onOpen definition found');
-  assert.match(m[0], /window\.Notifications\?\.refresh\?\.\(\)/, 'refreshes on open');
-  assert.match(m[0], /if \(ok && !window\.Notifications\?\._shotOpened\) window\.Notifications\?\.markReadOnOpen\?\.\(\);/,
-    'clears only after a landed refresh, and not when the sheet was opened by the shot link');
-});
+// ── 3. the controller only refreshes on open ────────────────────────────
 
 // The shipped onOpen, extracted so the behaviour is exercised rather than
 // only its text. `window` is the building function's parameter, so the arrow
@@ -121,168 +116,50 @@ function controllerOnOpen(windowStub) {
   return new Function('window', `return (${m[1]});`)(windowStub);
 }
 
-function notificationsStub({ refreshResult, shotOpened }) {
-  const calls = { refresh: 0, markReadOnOpen: 0 };
+function notificationsStub(refreshResult) {
+  const calls = { refresh: 0, markReadOnOpen: 0, markAllRead: 0, clearNotification: 0 };
   return {
     calls,
     window: {
       Notifications: {
-        _shotOpened: shotOpened,
         refresh() { calls.refresh++; return Promise.resolve(refreshResult); },
         markReadOnOpen() { calls.markReadOnOpen++; },
+        markAllRead() { calls.markAllRead++; },
+        clearNotification() { calls.clearNotification++; },
       },
     },
   };
 }
 
-test('controller skips marking read when the sheet was opened by the shot link', async () => {
-  const { calls, window } = notificationsStub({ refreshResult: true, shotOpened: true });
+test('controller refreshes once on open and marks nothing read when the refresh landed', async () => {
+  const { calls, window } = notificationsStub(true);
   await controllerOnOpen(window)();
-  assert.equal(calls.refresh, 1, 'still refreshes on open');
-  assert.equal(calls.markReadOnOpen, 0, 'a capture is not reading');
+  assert.equal(calls.refresh, 1, 'refreshes on open');
+  assert.equal(calls.markReadOnOpen, 0, 'opening does not read');
+  assert.equal(calls.markAllRead, 0, 'opening does not clear everything');
+  assert.equal(calls.clearNotification, 0, 'opening does not clear rows');
 });
 
-test('controller marks read once on an ordinary open after a landed refresh', async () => {
-  const { calls, window } = notificationsStub({ refreshResult: true, shotOpened: false });
+test('controller refreshes once on open and marks nothing read when the refresh failed', async () => {
+  const { calls, window } = notificationsStub(false);
   await controllerOnOpen(window)();
-  assert.equal(calls.refresh, 1);
-  assert.equal(calls.markReadOnOpen, 1);
+  assert.equal(calls.refresh, 1, 'refreshes on open');
+  assert.equal(calls.markReadOnOpen, 0);
+  assert.equal(calls.markAllRead, 0);
+  assert.equal(calls.clearNotification, 0);
 });
 
-test('controller marks nothing when the refresh did not land', async () => {
-  const { calls, window } = notificationsStub({ refreshResult: false, shotOpened: false });
-  await controllerOnOpen(window)();
-  assert.equal(calls.refresh, 1);
-  assert.equal(calls.markReadOnOpen, 0, 'a failed or superseded refresh clears nothing');
+test('the controller source sends no read request and names no clearing method', () => {
+  assert.doesNotMatch(CONTROLLER_SRC, /markReadOnOpen|markAllRead|\/api\/notifications\/read/,
+    'opening the bell only refreshes it (#6527)');
 });
 
-// ── 4. markReadOnOpen, taken from the shipped source ────────────────────
+// ── 4. the frontend's automatic clear is gone ───────────────────────────
 
-function methodBody(name) {
-  const re = new RegExp(name + '\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n  \\},');
-  const m = FE_SRC.match(re);
-  assert.ok(m, name + '() definition found in notifications.js');
-  return m[1];
-}
-
-function buildMarkReadOnOpen(body) {
-  const run = new Function('Notifications', 'fetch', 'window', 'console', `return (async () => {${body}})();`);
-  return (...args) => run(...args);
-}
-
-function fixture(overrides = {}) {
-  const rendered = { badge: 0, list: 0, title: 0 };
-  const N = {
-    open: true,
-    unread: 3,
-    messageUnread: 0,
-    items: [
-      { id: 1, kind: 'session_done', readAt: null },
-      { id: 2, kind: 'channel_message', readAt: null },
-      { id: 3, kind: 'conversation_message', appId: null, readAt: null },
-      // An app's own conversation counts on the bell, so it is cleared.
-      { id: 4, kind: 'conversation_message', appId: 7, readAt: null },
-      { id: 5, kind: 'kudos', readAt: '2026-01-01T00:00:00Z' },
-    ],
-    invites: [],
-    _reconcileCompletionTitle() { rendered.title++; },
-    _renderBadge() { rendered.badge++; },
-    _renderList() { rendered.list++; },
-    ...overrides,
-  };
-  const fetched = [];
-  const toasts = [];
-  let dots = 0;
-  const windowStub = {
-    PlatformUI: { toast(msg) { toasts.push(msg); } },
-    GroupChat: { reconcileDotsFromNotifications() { dots++; } },
-  };
-  const warnings = [];
-  const consoleStub = { warn(...a) { warnings.push(a); }, error() { throw new Error('console.error on an expected failure'); } };
-  return { N, rendered, fetched, toasts, windowStub, consoleStub, warnings, dots: () => dots };
-}
-
-const okFetch = (data) => (url, opts) => {
-  okFetch.calls.push({ url, opts });
-  return Promise.resolve({ ok: true, json: () => Promise.resolve(data) });
-};
-okFetch.calls = [];
-
-test('markReadOnOpen sends the exact narrow-clear body and adopts the answer', async () => {
-  const f = fixture();
-  okFetch.calls.length = 0;
-  const data = { unread: 2, messageUnread: 2, cleared: 2 };
-  const markReadOnOpen = buildMarkReadOnOpen(methodBody('async markReadOnOpen'));
-  const ok = await markReadOnOpen(f.N, okFetch(data), f.windowStub, f.consoleStub);
-
-  assert.equal(ok, true);
-  assert.equal(okFetch.calls.length, 1);
-  assert.equal(okFetch.calls[0].url, '/api/notifications/read');
-  assert.deepEqual(JSON.parse(okFetch.calls[0].opts.body), { all: true, keep_plain_messages: true });
-
-  assert.equal(f.N.unread, 2, 'server-reported unread adopted');
-  assert.equal(f.N.messageUnread, 2, 'server-reported message count adopted');
-  assert.ok(f.N.items[0].readAt, 'a session notification is cleared');
-  assert.equal(f.N.items[1].readAt, null, 'a channel message stays the Messages tab\'s');
-  assert.equal(f.N.items[2].readAt, null, 'an app-less conversation message stays unread');
-  assert.ok(f.N.items[3].readAt, 'an app conversation notification counts on the bell, so it clears');
-  assert.equal(f.N.items[4].readAt, '2026-01-01T00:00:00Z', 'already-read timestamps preserved');
-  assert.ok(f.rendered.title >= 1 && f.rendered.badge >= 1 && f.rendered.list >= 1,
-    'title, badge and list repainted');
-  assert.equal(f.dots(), 1, 'in-chat unread dots reconciled');
-  assert.deepEqual(f.toasts, [], 'no toast: the person pressed nothing');
-});
-
-test('markReadOnOpen sends nothing when the sheet is not open', async () => {
-  const f = fixture({ open: false });
-  okFetch.calls.length = 0;
-  const markReadOnOpen = buildMarkReadOnOpen(methodBody('async markReadOnOpen'));
-  assert.equal(await markReadOnOpen(f.N, okFetch({ unread: 0 }), f.windowStub, f.consoleStub), false);
-  assert.equal(okFetch.calls.length, 0);
-});
-
-test('markReadOnOpen sends nothing when only plain messages are unread', async () => {
-  const f = fixture({ unread: 2, messageUnread: 2 });
-  okFetch.calls.length = 0;
-  const markReadOnOpen = buildMarkReadOnOpen(methodBody('async markReadOnOpen'));
-  assert.equal(await markReadOnOpen(f.N, okFetch({ unread: 0 }), f.windowStub, f.consoleStub), false);
-  assert.equal(okFetch.calls.length, 0);
-});
-
-test('markReadOnOpen sends nothing when only a pending invite is waiting', async () => {
-  const f = fixture({ unread: 0, messageUnread: 0, invites: [{ appId: 3 }] });
-  okFetch.calls.length = 0;
-  const markReadOnOpen = buildMarkReadOnOpen(methodBody('async markReadOnOpen'));
-  assert.equal(await markReadOnOpen(f.N, okFetch({ unread: 0 }), f.windowStub, f.consoleStub), false);
-  assert.equal(okFetch.calls.length, 0, 'an invite is an action, not something to read');
-});
-
-test('markReadOnOpen stays quiet and changes nothing when the clear fails', async () => {
-  const f = fixture();
-  const markReadOnOpen = buildMarkReadOnOpen(methodBody('async markReadOnOpen'));
-  assert.equal(
-    await markReadOnOpen(f.N, () => Promise.reject(new TypeError('Failed to fetch')), f.windowStub, f.consoleStub),
-    false
-  );
-  assert.equal(f.N.unread, 3, 'badge count kept');
-  assert.equal(f.N.items[0].readAt, null, 'unread marks kept');
-  assert.deepEqual(f.toasts, [], 'no toast on a quiet failure');
-  assert.equal(f.rendered.badge + f.rendered.list + f.rendered.title, 0, 'nothing repainted');
-  assert.ok(f.warnings.length >= 1, 'warned for diagnostics, not console.error');
-});
-
-test('markReadOnOpen stays quiet on a non-ok answer', async () => {
-  const f = fixture();
-  const markReadOnOpen = buildMarkReadOnOpen(methodBody('async markReadOnOpen'));
-  const res = await markReadOnOpen(
-    f.N,
-    () => Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({}) }),
-    f.windowStub, f.consoleStub
-  );
-  assert.equal(res, false);
-  assert.equal(f.N.unread, 3);
-  assert.equal(f.N.items[0].readAt, null);
-  assert.deepEqual(f.toasts, []);
+test('the frontend no longer defines markReadOnOpen or sends keep_plain_messages', () => {
+  assert.doesNotMatch(FE_SRC, /markReadOnOpen/, 'the automatic clear on open is gone (#6527)');
+  assert.doesNotMatch(FE_SRC, /keep_plain_messages/,
+    'nothing in the app sends the narrow clear; the server option remains');
 });
 
 // ── 5. the capture page marks nothing read ──────────────────────────────

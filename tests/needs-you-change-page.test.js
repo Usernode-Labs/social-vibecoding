@@ -1412,3 +1412,42 @@ test('#6389: the Votes card names who fixes a failing change that has its votes'
   // Passing checks still say testing passes, not a fix.
   assert.match(note({ check_state: 'pending' }), /once testing passes/);
 });
+
+// #6521: a pass earned before the change's latest version does not count as
+// tested. The thread list, the merge gate and the change page read one rule
+// (services/homeroom-bot-progress.js checksOnHead), so the page's Testing
+// card agrees with the list row instead of reading "Tested".
+test('#6521 list row and Testing card agree on a pass from an older version', () => {
+  const progress = require('../src/services/homeroom-bot-progress');
+  const old = {
+    status: 'promoted', source: 'native', check_state: 'passing',
+    checks_commit_sha: 'a'.repeat(40), reviewed_head_sha: 'b'.repeat(40),
+  };
+  // The list row reads its own shape: still checking.
+  assert.equal(progress.stageOf({
+    ...old, proposal_status: 'promoted', proposal_source: 'native', checks_sha: old.checks_commit_sha,
+  }).stage, 'checks');
+  // The page, read by the change's author (the re-run is theirs to press).
+  const own = context({ id: 7, username: 'maya' });
+  const card = plain(own._changeTestingView({ ...PR, checks_on_head: progress.sessionChecksOnHead(old) }));
+  assert.deepEqual([card.name, card.figure, card.done], ['Testing', 'Waiting', false]);
+  assert.deepEqual(card.segments, [{ weight: 1, pct: 0, state: 'moving' }]);
+  assert.deepEqual(card.note, []);
+  assert.deepEqual(card.actions.map((a) => a.label), [message('changes:recheck.label')]);
+  // Enough yes votes no longer reads as ready: the page says what it waits on.
+  const votes = plain(own._changeVotesView(
+    { ...PR, yes_count: 2, votes_required: 2, checks_on_head: progress.sessionChecksOnHead(old) },
+    { pill: { state: { yes: 2, majority: 2 } } },
+  ));
+  assert.ok(votes.note.includes(message('changes:page.votes.note.liveOnceTested')));
+  // The same verdict on the head up now is tested, as before.
+  const current = { ...old, reviewed_head_sha: old.checks_commit_sha };
+  const currentCard = plain(own._changeTestingView({ ...PR, checks_on_head: progress.sessionChecksOnHead(current) }));
+  assert.deepEqual([currentCard.name, currentCard.figure, currentCard.done], ['Tested', 'All checks passed', true]);
+  assert.equal(currentCard.actions.length, 0);
+  // Both routes hand the page the rule's answer through the one adapter.
+  const src = read('src/routes/votes.js');
+  assert.match(src, /row\.checks_on_head = sessionChecksOnHead\(row\)/);
+  assert.match(src, /proposal\.checks_on_head = sessionChecksOnHead\(proposal\)/);
+  assert.match(src, /cs\.reviewed_head_sha,\n\s+-- #6521[\s\S]{0,400}cs\.checks_commit_sha,/);
+});
