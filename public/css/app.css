@@ -27064,6 +27064,20 @@ html[data-skin] #dev-workshop.dev-ws-on-needs > .dev-ws[data-ws-tab="needs"] > [
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content.settings-sheet { margin-top: 0; padding: 0; background: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; border-radius: 0; }
 html[data-skin]:where(:not([data-skin="brand"])) .settings-page-title { margin: 0 0 24px; color: var(--fr-ink); font-family: var(--fr-f); }
 
+/* CHALLENGES (features/leaderboard/frame/challenges-frame.tsx). The kit's
+   page is drawn first in the pane's grid; the standing card and the cards
+   after it stay mounted, put away, and the screen's own tab strip gives way
+   to the kit's tabs. The season picker over them, shown to someone with
+   an earlier season to go back to, keeps its place in the kit's column.
+   While the page is up (data-challenges-frame on <html>) the screen has
+   the frame's page area. Standings and a challenge's own page
+   are not the kit's yet: the flag is off there and they keep their layout. */
+html[data-skin][data-challenges-frame] #leaderboard-screen { padding-inline-start: var(--platform-rail-w, 0px) !important; padding-inline-end: 0 !important; }
+html[data-skin][data-challenges-frame] #leaderboard-screen > div { max-width: none; padding: 0; }
+html[data-skin][data-challenges-frame] #standings-tabs { display: none; }
+html[data-skin][data-challenges-frame] #leaderboard-event-bar { box-sizing: border-box; max-width: 1136px; margin: 0 auto; padding: 0 32px; }
+html[data-skin][data-challenges-frame] #tc-se-grid > :not(.fr) { display: none; }
+
 /* THE YOU TAB (features/profile/frame/you-frame.tsx). The kit's page is
    drawn inside the profile's own hosts, which the standard look holds in a
    padded, centred column. While it is up it says so on <html>
