@@ -12,9 +12,10 @@ import { BuildingTime } from '../building-time';
  * where the figure most builders open Settings to find sat under the name of
  * a key most of them never add. The ids are unchanged (#drawer-row-ai-budget
  * inside AiBudgetRow, #settings-spend and its rows), and so is everything
- * that fills them: features/header/ai-credit.js for the allowance,
- * Settings._refreshSpend() for the spend card, which stays hidden unless a
- * key is saved.
+ * that fills them: features/header/ai-credit.js owns the one shared
+ * allowance and both figures read it (#6493) — the row through its view
+ * model, the spend card's platform line through `AiCredit.Budget.current()`
+ * — so the two cannot disagree. The card stays hidden unless a key is saved.
  */
 export function UsageSection() {
   // Subscribed: settings.js fills the two figures and rewrites
