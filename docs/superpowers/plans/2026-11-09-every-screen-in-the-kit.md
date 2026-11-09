@@ -99,3 +99,57 @@ Things learned that the next milestones need:
 - A fixed layer with a negative z-index sinks under `<body>`'s background unless `<body>` is a
   stacking context (`isolation: isolate` while the chrome is up).
 
+
+### M2 to M4, as built (9 Nov)
+
+Done since M1 (commits `dd59f4774` to `05a13bf7b`):
+
+- **Home's side column, All apps, All communities (s01–s04)** and the two sheets on Home
+  (**Notifications, the account menu**, s05–s07). `GET /api/workshop/live-feed` is the read the
+  side column needed; it applies the same visibility filter as the app list.
+- **Homeroom bot (s08, s09, s14):** the kit's list beside Main Chat, the tour's split.
+- **Messages (s15–s18, s20):** the kit's list with People and Agents as the page's tabs, New
+  message as the standard sheet, and the open conversation in the open-item pane.
+- **How a conversation is drawn.** The product's renderer still draws it (message rows, the
+  head, the composer): it has hundreds of behaviours the kit's markup has no word for. Instead,
+  `looks.json` "wear" maps the kit's `post`, `day`, `dhead`, `composer` and `ib` onto the
+  product's classes and the compiler repeats each of their rules for those, so every look's own
+  rules for a conversation apply. app.css ("A CONVERSATION WEARS THE KIT") sets aside only what
+  the standard look sets and the kit does not. The same mechanism serves any other surface the
+  product must keep drawing itself (a request's thread in M6, a channel in M5).
+- **`useLiveSkin()`** (lib/skin.ts) is the look for anything drawn many times over or mounted
+  after the first paint: one listener for all readers, no standard-markup flash.
+
+Rulings made on the way (each costs a redo of that piece if wrong):
+
+- A person's consecutive messages stay separate rows, drawn as one post (the tour merges them
+  into one text; the product keeps each message's own actions).
+- New message has one field, as the tour draws it. A group made there is named after the people
+  in it; the standard dialog's name and note fields are not asked. Blocked people is a link at
+  the sheet's foot, which the tour does not draw: the dialog was the only place that listed them.
+- With nothing open, Messages keeps the split (list left, "Choose a conversation" beside it);
+  the tour never draws that state.
+- The conversation head keeps the product's Full width disc beside the ⋯; the tour draws only ⋯.
+- A bold word a person wrote is not coloured as an accent (the kit's `.post .txt b` is left out
+  of the wear map).
+
+Left in M3 and M4:
+
+- **s10–s13** (a request and a private thread in the bot's pane, the bot's New thread sheet).
+- **s19, the reply thread.** It is the product's side panel wearing the kit's posts and composer,
+  not yet the kit's side sheet; on a phone it is a full page, not a sheet from the bottom, and
+  the bar's arrow there should go back to the chat.
+- **A message's reply link** is the product's thread card, not the kit's one-line "3 replies".
+- **An agent chat (s20's open pane).** A handed-off chat opens its request's page (M6).
+- The head's line says "Direct message"; the tour adds the communities two people share, which
+  no endpoint gives. New message's rows have no second line for the same reason.
+
+Things learned:
+
+- A hook behind `&&` is a crash when the left side flips (`drawerOn && !isFrameSkin(use…())`).
+  `tests/messages-frame-stream.test.js` refuses the pattern anywhere under `frontend/src`.
+- A catalog entry may not start or end with a space: join data (usernames) in code instead.
+- A worn kit rule would also reach the New look ("brand" carries `data-skin` too); the compiler
+  leaves it out with `:where(:not([data-skin="brand"]))`, at no weight.
+- The whole-suite runner can stall on one file when hundreds run together; each passes alone.
+  Run suites in bounded chunks (scratchpad `tour/run-suites.sh`).
