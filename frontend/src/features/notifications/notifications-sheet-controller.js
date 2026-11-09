@@ -19,14 +19,11 @@
  * one cannot also mean "reload"; fetching on open is the same promise the
  * gesture made, minus the conflict.
  *
- * OPENING IS ALSO READING (#6498). Once the refresh that fills the sheet has
- * landed, `Notifications.markReadOnOpen()` clears what the bell counts, so
- * the badge drops; the rows the sheet was showing stay listed, dimmed, until
- * it closes (the sheet's useHeldUnread). A refresh that failed or was
- * superseded clears nothing, so nothing the person was not shown is marked.
- * A sheet opened by the `?shot=notifications` deep link is a capture, not
- * reading, so it marks nothing: `_shotOpened` is set before the sheet
- * presents.
+ * OPENING ONLY REFRESHES (#6527). Opening the sheet loads the latest rows and
+ * marks nothing read: the badge and the Unread (N) count stay as they were
+ * until the person clears something themselves (Mark all read, a row's clear,
+ * opening a row). Opening used to clear what the bell counted (#6498), which
+ * made a notification nobody had looked at leave Unread on every device.
  */
 
 import { createSheetController } from '../../lib/sheet-controller.js';
@@ -35,15 +32,10 @@ import { notificationsSheetStore } from './notifications-sheet-store.js';
 export const NotificationsSheet = createSheetController({
   elementId: 'notifications-sheet',
   store: notificationsSheetStore,
-  // Opening the sheet is also READING it (#6498): refresh first, so the
-  // rows that arrived while it was closed are on screen, then clear what
-  // the bell counts. Only a landed refresh clears — a failed or superseded
-  // one returns false, and rows the person was never shown must not be
-  // marked read.
-  onOpen: () => Promise.resolve(window.Notifications?.refresh?.())
-    .then((ok) => {
-      if (ok && !window.Notifications?._shotOpened) window.Notifications?.markReadOnOpen?.();
-    }),
+  // Opening the sheet only refreshes it (#6527): the rows that arrived while
+  // it was closed land on screen, and nothing is marked read. Reading is
+  // explicit — Mark all read, a row's clear, or opening a row.
+  onOpen: () => Promise.resolve(window.Notifications?.refresh?.()),
 });
 
 if (typeof window !== 'undefined') {

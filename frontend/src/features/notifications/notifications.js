@@ -672,56 +672,11 @@ const Notifications = {
     }
   },
 
-  // #6498: OPENING THE BELL IS READING IT. Nothing used to write `read_at`
-  // on open, so the badge stayed lit however often the list was opened —
-  // read meant nothing. This clears exactly what the bell counts, after the
-  // refresh that loaded the latest rows: `keep_plain_messages` reuses the
-  // server's PLAIN_MESSAGE_SQL, so the Messages tab's grey count is left
-  // alone. Pending invites are not notifications rows, so `invites` keeps
-  // its count (an invite asks you to do something).
-  //
-  // The sheet holds the rows it was showing unread (useHeldUnread), so they
-  // stay in Unread, dimmed, until it closes; they never vanish under the
-  // eye. The route's `notifications_changed` fan-out drops the badge on the
-  // viewer's other tabs and devices.
-  //
-  // Quiet on failure: the person pressed nothing, so no toast pops up and
-  // the badge stays as it was; opening again retries. The body uses no
-  // module-scope bindings, because the harnesses rebuild methods with
-  // `new Function` (hence the spelled-out plain-message test).
-  async markReadOnOpen() {
-    if (!Notifications.open) return false;
-    if (Math.max(0, Notifications.unread - (Notifications.messageUnread || 0)) <= 0) return false;
-    try {
-      const res = await fetch('/api/notifications/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ all: true, keep_plain_messages: true }),
-      });
-      if (!res.ok) return false;
-      const data = await res.json();
-      Notifications.unread = data.unread || 0;
-      Notifications.messageUnread = Number(data.messageUnread) || 0;
-      const now = new Date().toISOString();
-      for (const n of Notifications.items) {
-        if (!n || n.readAt) continue;
-        // The plain messages countUnreadSplit leaves out of the bell's
-        // number: a channel message, or a conversation message with no app
-        // (an app's own conversation counts on the bell).
-        if (n.kind === 'channel_message'
-          || (n.kind === 'conversation_message' && !n.appId)) continue;
-        n.readAt = now;
-      }
-      Notifications._reconcileCompletionTitle();
-      Notifications._renderBadge();
-      Notifications._renderList();
-      window.GroupChat?.reconcileDotsFromNotifications?.();
-      return true;
-    } catch (err) {
-      console.warn('[notifications] markReadOnOpen failed', err);
-      return false;
-    }
-  },
+  // #6527: opening the bell no longer marks anything read. The sheet only
+  // refreshes on open; reading is explicit (markAllRead, clearNotification,
+  // markOlderRead, opening a row). The server's narrow-clear option that
+  // opening used to send (#6498) remains on the route, though nothing in the
+  // app sends it now.
 
   // #5929 (item 13): mark every unread notification older than `days` whole
   // days read — the Unread tab's "Mark everything older than a week as

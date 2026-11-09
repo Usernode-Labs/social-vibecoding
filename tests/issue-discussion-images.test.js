@@ -92,3 +92,41 @@ test('raw image HTML stays escaped without opt-in and unsafe sources never rende
   assert.match(renderer.render(unsafeTag, { images: true }), /&lt;img/);
   assert.doesNotMatch(renderer.render(unsafeTag, { images: true }), /<img class="dc-inline-img"/);
 });
+
+// #6518: Homeroom's GitHub close/reopen comments end with an invisible
+// governance marker written as an HTML comment. GitHub hides it; the shared
+// renderer must hide it too instead of printing the tag as text.
+test('a close comment hides its governance marker in every render mode', () => {
+  const renderer = loadRenderer();
+  const body = 'Closed by group vote (1/1) on Homeroom.\n\n'
+    + "evan's reason: Evan says this is fixed with another change.\n"
+    + '<!-- homeroom-governance:issue:2496:close -->';
+
+  for (const options of [undefined, { breaks: false }, { images: true }]) {
+    const html = renderer.render(body, options);
+    assert.match(html, /Closed by group vote/, `words show for ${JSON.stringify(options)}`);
+    assert.match(html, /fixed with another change/, `reason shows for ${JSON.stringify(options)}`);
+    assert.doesNotMatch(html, /homeroom-governance|&lt;!--|<!--/, `marker hidden for ${JSON.stringify(options)}`);
+  }
+});
+
+test('a marker alone on its own block line leaves no text', () => {
+  const renderer = loadRenderer();
+  const html = renderer.render('<!-- homeroom-governance:issue:2496:close -->');
+  assert.doesNotMatch(html, /homeroom-governance|&lt;!--|<!--/);
+  assert.equal(html.trim(), '');
+});
+
+test('other raw HTML still shows as escaped text beside a hidden comment', () => {
+  const renderer = loadRenderer();
+  const script = renderer.render('<script>alert(1)</script>');
+  assert.match(script, /&lt;script&gt;/);
+  assert.doesNotMatch(script, /<script>/);
+
+  const mixed = renderer.render('<!-- a --><b>x</b>');
+  assert.ok(mixed.includes('&lt;'), 'a comment with other markup stays escaped');
+  assert.doesNotMatch(mixed, /<b>x<\/b>/);
+
+  const unclosed = renderer.render('<!-- x');
+  assert.match(unclosed, /&lt;!--/);
+});

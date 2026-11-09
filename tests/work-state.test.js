@@ -173,6 +173,24 @@ test('the new wait words are the catalog\'s, keyed by the same entries', () => {
   assert.equal(ws.WORDS['work.line.syncWait'], core['work.line.syncWait'].text);
 });
 
+test('#6528: a passing change reads Checking until its before & after shots settle, then rings ready', () => {
+  const head = 'a'.repeat(40);
+  const change = {
+    proposal_session_id: 50, proposal_at: ago(60), checks_sha: head, reviewed_head_sha: head,
+    verdict: 'ready', build_ok: true, proposal_status: 'promoted', check_state: 'passing',
+  };
+  const shooting = {
+    shots_state: 'exploring', shots_run_id: 'r'.repeat(32),
+    shots_detail: { headSha: head, required: true }, shots_updated_at: ago(5), checks_at: ago(5),
+  };
+  const held = derive({ ...change, ...shooting });
+  assert.deepEqual([held.stage, held.line, held.whoseMove], ['checking', null, 'bot']);
+  assert.equal(ws.bellOf(held, held), null, 'staying in checking rings nothing');
+  const vote = derive({ ...change, ...shooting, shots_state: 'verified' });
+  assert.deepEqual([vote.stage, vote.whoseMove], ['up_for_vote', 'group']);
+  assert.equal(ws.bellOf(held, vote), 'ready');
+});
+
 test('a change of stage rings: needs you, ready to vote, stopped, live; a moved line rings nothing', () => {
   assert.equal(ws.bellOf({ stage: 'reading' }, { stage: 'waiting_for_you', why: 'question' }), 'needs_you');
   assert.equal(ws.bellOf({ stage: 'waiting_for_you', why: 'question' }, { stage: 'waiting_for_you', why: 'question' }), null);
