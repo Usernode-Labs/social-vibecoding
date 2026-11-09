@@ -3610,11 +3610,11 @@ function codeOf(err) {
  *   - the key's own failures, and a request this module built wrong (no
  *     HTTP status: it was never sent), are not asked again.
  */
-function retryPlan(err, { forced = false, elapsedMs = 0, attempt = 1 } = {}) {
+function retryPlan(err, { forced = false, elapsedMs = 0, attempt = 1, retryOutputTokens = RETRY_OUTPUT_TOKENS } = {}) {
   if (attempt >= MAX_ATTEMPTS) return null;
   const code = err?.code;
   let plan = null;
-  if (code === 'output_limit') plan = { maxOutputTokens: RETRY_OUTPUT_TOKENS };
+  if (code === 'output_limit') plan = { maxOutputTokens: retryOutputTokens };
   else if (code === 'invalid_request' && err?.status) plan = forced ? { toolChoice: 'auto' } : {};
   else if (code === 'rate_limited') {
     // #3772: a provider that says when to come back is believed, up to a point.
@@ -3654,7 +3654,7 @@ function avoidProviders(before, err) {
  * is a failure too ('empty_answer'). Resolves the response; throws the last
  * failure.
  */
-async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_ATTEMPTS, ...rest }) {
+async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_ATTEMPTS, retryOutputTokens, ...rest }) {
   let overrides = {};
   for (let attempt = 1; ; attempt += 1) {
     try {
@@ -3718,7 +3718,7 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
         // #6270: 'required' is a tool choice the provider may refuse too; a
         // retry then lets the model choose, with the same tools offered.
         const forced = typeof (overrides.toolChoice ?? toolChoice) === 'object' || (overrides.toolChoice ?? toolChoice) === 'required';
-        plan = retryPlan(err, { forced, elapsedMs: Date.now() - t.startedMs, attempt });
+        plan = retryPlan(err, { forced, elapsedMs: Date.now() - t.startedMs, attempt, retryOutputTokens });
       }
       if (!plan) throw err;
       const { waitMs = 0, ...change } = plan;

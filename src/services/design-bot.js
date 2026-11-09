@@ -60,6 +60,10 @@ const MAX_REPLACE_CHARS = 40_000;
 // An edit's pairs and its words fit in this: room for a reasoning model's
 // thinking and the edit after it (the transport's own ceiling).
 const DESIGN_OUTPUT_TOKENS = DESIGN_LIMITS.outputTokens;
+// #6358: a draw still cut off at its allowance is asked again with twice it,
+// and a step may take three minutes, so a long page is not stopped by the clock.
+const DESIGN_RETRY_OUTPUT_TOKENS = DESIGN_LIMITS.retryOutputTokens;
+const DESIGN_REQUEST_TIMEOUT_MS = DESIGN_LIMITS.requestTimeoutMs;
 const MAX_REPLY_CHARS = DESIGN_LIMITS.replyChars;
 const MAX_SCREEN_TITLE = 120;
 
@@ -1335,7 +1339,12 @@ async function answer(pool, config, {
     const designTurn = {
       messages, ids: seenIds, normalize: mayor.normalizeCalls, parseArgs: mayor.parseArgs,
       resultChars: mayor.MAX_TOOL_RESULT_CHARS, cut: clip,
-      ask: (options) => mayor.askModel(t, { ...options, maxOutputTokens: DESIGN_OUTPUT_TOKENS }),
+      ask: (options) => mayor.askModel(t, {
+        ...options,
+        maxOutputTokens: DESIGN_OUTPUT_TOKENS,
+        retryOutputTokens: DESIGN_RETRY_OUTPUT_TOKENS,
+        timeoutMs: DESIGN_REQUEST_TIMEOUT_MS,
+      }),
       where: (n) => `d${n}`,
       done: () => !!replyText,
       beforeRound: ({ rounds }) => {
@@ -1628,6 +1637,8 @@ async function draw(pool, config, { bot, user, settings, conversationId, message
 module.exports = {
   MAX_DESIGN_CHARS,
   DESIGN_OUTPUT_TOKENS,
+  DESIGN_RETRY_OUTPUT_TOKENS,
+  DESIGN_REQUEST_TIMEOUT_MS,
   MAX_ROUNDS,
   DRAW_BY_ROUND,
   READ_UNTIL,

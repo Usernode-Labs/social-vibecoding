@@ -116,6 +116,12 @@ test('#3733: a failed model request is asked again while that can help, and neve
   assert.deepEqual(mayor.retryPlan(err('output_limit')), { maxOutputTokens: mayor.RETRY_OUTPUT_TOKENS },
     'cut off at its limit: more room');
   assert.ok(mayor.RETRY_OUTPUT_TOKENS > mayor.MAX_OUTPUT_TOKENS);
+  // #6358: a caller (the design turn) may bring its own retried allowance; it
+  // is not sent to the model, only used when a draw is cut off.
+  assert.deepEqual(mayor.retryPlan(err('output_limit'), { retryOutputTokens: 32000 }), { maxOutputTokens: 32000 });
+  const askSrc = read('src/services/homeroom-bot-mayor.js');
+  assert.match(askSrc, /async function askModel\(t, \{[^}]*retryOutputTokens[^}]*\.\.\.rest \}\)/);
+  assert.match(askSrc, /retryPlan\(err, \{ forced, elapsedMs: Date\.now\(\) - t\.startedMs, attempt, retryOutputTokens \}\)/);
   for (const code of ['timeout', 'network', 'provider_unavailable', 'provider_error', 'invalid_response', 'stream_error',
     'response_too_large', 'empty_answer']) {
     assert.deepEqual(mayor.retryPlan(err(code)), { waitMs: 0 }, `${code}: at once, on a fresh route`);
