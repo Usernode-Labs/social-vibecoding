@@ -814,7 +814,7 @@ const typingSends = new Map();
 // the bus between servers (ws-bus.js: 8000 bytes, or it becomes a nudge to
 // reload) and the card stays a card. The message sent takes its place.
 // 'looking': a helper sent to look into a project's code (P3, look_into).
-const DOING_KINDS = Object.freeze(['progress', 'request', 'code', 'drawing', 'designing', 'drafting', 'writing', 'looking']);
+const DOING_KINDS = Object.freeze(['progress', 'request', 'code', 'drawing', 'capturing', 'designing', 'drafting', 'writing', 'looking']);
 const MAX_DOING_PROJECT = 60;
 const MAX_DRAFT_CHARS = 1800;
 const MAX_DRAFT_BYTES = 5600;
@@ -854,6 +854,11 @@ function typingDoing(what) {
   if (what.kind === 'code' || what.kind === 'looking') {
     const project = typeof what.project === 'string' ? clip(what.project.replace(/\s+/g, ' ').trim(), MAX_DOING_PROJECT) : '';
     return project ? { kind: what.kind, project } : { kind: what.kind };
+  }
+  // #6354: the page Homeroom is opening to copy for a design.
+  if (what.kind === 'capturing') {
+    const page = typeof what.page === 'string' ? clip(what.page.replace(/\s+/g, ' ').trim(), MAX_DOING_PROJECT) : '';
+    return page ? { kind: 'capturing', page } : { kind: 'capturing' };
   }
   if (what.kind === 'writing') {
     const tail = typeof what.text === 'string' ? draftTail(what.text) : { text: '', from: 0 };
