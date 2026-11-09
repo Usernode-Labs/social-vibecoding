@@ -822,13 +822,21 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
           <>
             {line.notification && line.notification.unread ? (
               <span
-                className="absolute -start-3 top-3 w-1.5 h-1.5 rounded-full bg-zinc-900 dark:bg-zinc-100"
+                className="absolute -start-3 top-3 w-1.5 h-1.5 rounded-full bg-violet-600 dark:bg-violet-400"
                 aria-label={t('notifications:row.unreadDot')}
               >
               </span>
             ) : null}
             <span className="flex items-baseline gap-2">
-              <span className="flex-1 min-w-0 truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">{line.what}</span>
+              {/* #6506: a story's unread notification is bold in the strong
+                  ink, a read one regular and softer, as the rows above are. */}
+              <span className={'flex-1 min-w-0 truncate text-xs '
+                + (line.notification?.unread
+                  ? 'font-semibold text-zinc-900 dark:text-zinc-100'
+                  : 'font-normal text-zinc-700 dark:text-zinc-300')}
+              >
+                {line.what}
+              </span>
               {stamp && stamp.text ? (
                 <time className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400" title={stamp.title}>{stamp.text}</time>
               ) : null}

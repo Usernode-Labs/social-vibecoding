@@ -387,9 +387,8 @@ const AppView = {
   // `_repaintDevBody` gives #dev-body to one at a time; what changed is that
   // the other one is no longer reachable.
   //
-  // localStorage, like VIEW_MODE_KEY and unlike the filter bar's
-  // sessionStorage: which way you read the board is a lasting preference,
-  // not a scratch narrowing that should quietly expire.
+  // localStorage, like VIEW_MODE_KEY: which way you read the board is a
+  // lasting preference, not a scratch narrowing that should quietly expire.
   WORKSHOP_GROUP_KEY: 'devWorkshopGroup',
   WORKSHOP_GROUPS: ['category', 'stage'],
   // #2332 spelled this pane 'theme' for one release, on the argument that it
@@ -479,12 +478,13 @@ const AppView = {
     AppView._repaintBoardSurface();
   },
   // #482: kanban filter-bar state. The active object always reflects the
-  // CURRENT app; it is (re)loaded per slug from sessionStorage whenever the
+  // CURRENT app; it is (re)loaded per slug from localStorage whenever the
   // board mounts (_repaintDevBody) and written back on every change
-  // (_repaintKanbanBoard). sessionStorage — not localStorage — is deliberate:
-  // filters survive in-app navigation and a page reload within the tab
-  // session, but auto-clear when the tab closes, so a filter can't land a
-  // user on a mysteriously empty board days later.
+  // (_repaintKanbanBoard). localStorage, per project (#6509): filters are
+  // remembered across tabs and browser restarts until the viewer changes or
+  // clears them, and the active chips are what explain a narrowed board. The
+  // old per-tab sessionStorage key is read once and moved here (see
+  // _loadKanbanFilters), so a filter set before this change is not lost.
   KANBAN_FILTERS_KEY: 'devKanbanFilters',
   // #633: sentinel value for the assignee dropdown's "Unassigned" option.
   // The leading space makes it collision-free against real assignees:
@@ -560,8 +560,24 @@ const AppView = {
     if (!slug) return def;
     const key = `${AppView.KANBAN_FILTERS_KEY}:${slug}`;
     let stored = def;
+    let raw = null;
+    try { raw = window.localStorage.getItem(key); } catch { raw = null; }
+    // #6509: one-time carry-over from the per-tab sessionStorage key this
+    // used before. Only when localStorage holds nothing for the project: a
+    // filter set in the tab already open is kept the first time the board
+    // loads after the change, then the old key is dropped.
+    if (!raw) {
+      let legacyRaw = null;
+      try { legacyRaw = window.sessionStorage.getItem(key); } catch { legacyRaw = null; }
+      let legacy = null;
+      try { legacy = legacyRaw ? JSON.parse(legacyRaw) : null; } catch { legacy = null; }
+      if (legacy && typeof legacy === 'object') {
+        try { window.localStorage.setItem(key, legacyRaw); } catch {}
+        try { window.sessionStorage.removeItem(key); } catch {}
+        raw = legacyRaw;
+      }
+    }
     try {
-      const raw = window.sessionStorage.getItem(key);
       const parsed = raw ? JSON.parse(raw) : null;
       if (parsed && typeof parsed === 'object') stored = { ...def, ...parsed };
     } catch { stored = def; }
@@ -574,29 +590,30 @@ const AppView = {
     const seed = AppView._takeKanbanSearchSeed();
     if (!seed && !yoursSeed) return stored;
     const seeded = seed ? { ...stored, q: seed } : stored;
-    try { window.sessionStorage.setItem(key, JSON.stringify(seeded)); } catch {}
+    try { window.localStorage.setItem(key, JSON.stringify(seeded)); } catch {}
     return seeded;
   },
   // Persist the current filters under the app slug. Clears the key when the
   // filters are at their defaults so a cleared board leaves no residue.
   _saveKanbanFilters(slug) {
     if (!slug) return;
+    const key = `${AppView.KANBAN_FILTERS_KEY}:${slug}`;
     try {
-      const key = `${AppView.KANBAN_FILTERS_KEY}:${slug}`;
       if (AppView._kanbanFiltersActive()) {
-        window.sessionStorage.setItem(key, JSON.stringify(AppView._kanbanFilters));
+        window.localStorage.setItem(key, JSON.stringify(AppView._kanbanFilters));
       } else {
-        window.sessionStorage.removeItem(key);
+        try { window.localStorage.removeItem(key); } catch {}
+        try { window.sessionStorage.removeItem(key); } catch {}
       }
     } catch {}
   },
   // #814: mobile kanban tabs. Below 640px the board shows ONE column at a
   // time behind a tab strip instead of scrolling sideways; which column is
-  // showing is this key. Same storage shape and lifetime as the filters
-  // above — per-app sessionStorage, so the tab survives in-app navigation
-  // and a reload but resets when the browser tab closes. Purely a display
-  // preference: the markup always carries all four columns and CSS decides
-  // what's visible, so desktop never reads this beyond marking the column.
+  // showing is this key. Per-app sessionStorage, unlike the filters above:
+  // the tab survives in-app navigation and a reload but resets when the
+  // browser tab closes. Purely a display preference: the markup always
+  // carries all four columns and CSS decides what's visible, so desktop
+  // never reads this beyond marking the column.
   KANBAN_TAB_KEY: 'devKanbanTab',
   // Column identities, in board order. Shared by the render, the tab strip,
   // the stored value and the ?col= override. NOTE: distinct from the
@@ -4966,7 +4983,7 @@ const AppView = {
 
     // The card list.
     // #482: kanban filters are NOT reset here — they persist per app across
-    // in-app navigation and are (re)loaded per slug from sessionStorage when
+    // in-app navigation and are (re)loaded per slug from localStorage when
     // the board mounts in _repaintDevBody. Resetting on every card-list mount
     // was the cause of filters vanishing on Back / tab switches.
 

@@ -32,7 +32,6 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const net = require('node:net');
 const { spawn } = require('node:child_process');
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
@@ -148,13 +147,9 @@ async function listen(app, tok) {
   return s;
 }
 
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.once('error', reject);
-    srv.listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
-  });
-}
+/** Every server a boot() started and has not stopped yet, so a test that
+ * fails halfway still stops them all before it drops their databases. */
+const running = new Set();
 
 function writeRepo(template) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `starter-${template}-`));
@@ -189,11 +184,16 @@ async function platform() {
 
 /** `node server.js` in `dir`, resolved once it is listening. */
 async function boot(dir, dbUrl, env, extra = {}) {
-  const port = await freePort();
-  // This is an isolated generated fixture, never a deployment listener.
+  // This is an isolated generated fixture, never a deployment listener: it
+  // binds loopback, and PORT=0 lets the OS pick a free port for it. Choosing
+  // a port here first (listen, read, close, then spawn) leaves a gap in
+  // which another test file running at the same time can take it, and the
+  // server then dies with EADDRINUSE. So the fixture prints the port it
+  // really bound, and the check reads that.
   const entry = path.join(dir, 'server.js');
-  fs.writeFileSync(entry, fs.readFileSync(entry, 'utf8').replaceAll(
-    'app.listen(port, ()', "app.listen(port, '127.0.0.1', ()"));
+  fs.writeFileSync(entry, fs.readFileSync(entry, 'utf8')
+    .replaceAll('app.listen(port, ()', "app.listen(port, '127.0.0.1', ()")
+    .replaceAll('Listening on :${port}', 'Listening on :${server.address().port}'));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: dir,
     env: {
@@ -203,7 +203,7 @@ async function boot(dir, dbUrl, env, extra = {}) {
       USERNODE_JWT_PUBLIC_KEY: publicKey,
       USERNODE_APP_ID: APP_ID,
       USERNODE_ENV: env,
-      PORT: String(port),
+      PORT: '0',
       ...extra,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -211,22 +211,34 @@ async function boot(dir, dbUrl, env, extra = {}) {
   let out = '';
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { out += d; });
+  // 'close', not 'exit': it fires once both pipes have been read dry, so
+  // `out` holds everything the server printed — including why it died. The
+  // 'exit' event can arrive before the pipes are drained, which is how this
+  // once reported "server exited 1:" with no reason after it.
+  let closed = null;
+  const drained = new Promise((resolve) => child.once('close', (code) => { closed = { code }; resolve(closed); }));
   async function stop() {
-    if (child.exitCode !== null || child.signalCode !== null) return child.exitCode;
-    const exited = new Promise((resolve) => child.once('exit', resolve));
+    if (!closed) child.kill('SIGTERM');
     let timer;
-    child.kill('SIGTERM');
-    const code = await Promise.race([exited, new Promise((r) => { timer = setTimeout(() => r('timeout'), 2000); })]);
+    const result = await Promise.race([drained, new Promise((r) => { timer = setTimeout(() => r(null), 2000); })]);
     clearTimeout(timer);
-    if (code === 'timeout') { child.kill('SIGKILL'); return await exited; }
-    return code;
+    if (result) return result.code;
+    child.kill('SIGKILL');
+    return (await drained).code;
   }
+  const self = { child, stop };
+  running.add(self);
+  drained.then(() => running.delete(self));
+  let port;
   try {
-    await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`server did not start:\n${out}`)), 20000);
-    child.stdout.on('data', () => { if (out.includes('Listening on :')) { clearTimeout(timer); resolve(); } });
-    child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`server exited ${code}:\n${out}`)); });
-  });
+    port = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`server did not start:\n${out}`)), 20000);
+      child.stdout.on('data', () => {
+        const listening = out.match(/Listening on :(\d+)/);
+        if (listening) { clearTimeout(timer); resolve(Number(listening[1])); }
+      });
+      child.once('close', (code) => { clearTimeout(timer); reject(new Error(`server exited ${code}:\n${out}`)); });
+    });
   } catch (err) {
     await stop();
     throw err;
@@ -262,6 +274,9 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     return String(url);
   }
   t.after(async () => {
+    // Anything a failed assertion left running is stopped before its
+    // database goes away, so no boot outlives the test that started it.
+    for (const app of [...running]) await app.stop().catch(() => {});
     for (const name of made) await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`).catch(() => {});
     await admin.end();
     await members.close();
