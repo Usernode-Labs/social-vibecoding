@@ -250,6 +250,11 @@
       "id": "record-arrival-sources",
       "sha256": "dcb5e3ba999a2d76370dc6c521fb90b6ca1d0ac79ea471ee8ef213da6e583b07",
       "schemaSha256": "5129de75d5a378e58fe9d6f5ca666b9dfba9952c9e7416e170eb540334909543"
+    },
+    {
+      "id": "bot-update-asked-change",
+      "sha256": "11d42413b6efc30939cb53718082aa0a1b85c654b0249af9b0dee22201dd48c9",
+      "schemaSha256": "3d2f7c57d4fc0a90b90339ea007d756c7d341b436df38d2eb79441eec93707e2"
     }
   ]
 }
