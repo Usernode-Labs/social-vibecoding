@@ -823,12 +823,11 @@ function load() {
     // it: services/preview-sleep.js), vote-backed ones included. Default 1h;
     // set to 0 to switch sleep off.
     previewSleepAfterMs: parseInt(process.env.PREVIEW_SLEEP_AFTER_MS || String(60 * 60 * 1000), 10),
-    // Opt-in, reviewed request-driven production apps only. Zero wakes the
-    // assignments and prevents new sleeps. Review durable state and any
-    // commitments; optional polling or recoverable work may pause while idle.
-    appSleepAppIds: process.env.APP_SLEEP_APP_IDS || '',
-    appSleepReviewedRevisions: process.env.APP_SLEEP_REVIEWED_REVISIONS || '{}',
-    appSleepAfterMs: Number(process.env.APP_SLEEP_AFTER_MS || '3600000'),
+    // Ordinary production apps sleep after fourteen idle days by default.
+    // Exceptions require a concrete reason; optional background work may pause.
+    // Zero wakes sleepers and prevents further sleeps.
+    appSleepExcludedApps: process.env.APP_SLEEP_EXCLUDED_APPS || '{}',
+    appSleepAfterMs: Number(process.env.APP_SLEEP_AFTER_MS || '1209600000'),
     // How often the session sweeper scans for idle sessions.
     sessionSweepIntervalMs: parseInt(process.env.SESSION_SWEEP_INTERVAL_MS || '60000', 10),
     // Production app-container watchdog (services/app-heal.js, #426):

@@ -335,12 +335,11 @@ config:
   # Keep previews and their data, but stop unused app processes after one hour.
   # Active work/checks/visuals remain excluded. Zero disables sleeping.
   previewSleepAfterMs: 3600000
-  # Reviewed request-driven production app IDs, empty until a pilot is chosen.
-  # Zero afterMs wakes sleeping apps and disables further sleeps.
-  appSleepAppIds: []
-  # Every selected app needs reviewed source SHAs; changed or unreviewed apps stay awake.
-  appSleepReviewedRevisions: {}
-  appSleepAfterMs: 3600000
+  # Ordinary production apps sleep by default, including newly created apps.
+  # Keep-awake exceptions map an app ID to a concrete reason.
+  appSleepExcludedApps: {}
+  # Fourteen days. Zero wakes sleepers and disables further sleeps.
+  appSleepAfterMs: 1209600000
 
 secrets:
   create: false

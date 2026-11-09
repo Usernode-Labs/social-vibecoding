@@ -292,8 +292,7 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: CHECK_POOL_METRICS_URL, value: {{ .Values.config.checkPoolMetricsUrl | quote }}}
             - {name: KUBERNETES_APP_RESOURCE_PROFILES, value: {{ .Values.config.appResourceProfiles | toJson | quote }}}
             - {name: PREVIEW_SLEEP_AFTER_MS, value: {{ .Values.config.previewSleepAfterMs | int64 | toString | quote }}}
-            - {name: APP_SLEEP_APP_IDS, value: {{ join "," .Values.config.appSleepAppIds | quote }}}
-            - {name: APP_SLEEP_REVIEWED_REVISIONS, value: {{ .Values.config.appSleepReviewedRevisions | toJson | quote }}}
+            - {name: APP_SLEEP_EXCLUDED_APPS, value: {{ .Values.config.appSleepExcludedApps | toJson | quote }}}
             - {name: APP_SLEEP_AFTER_MS, value: {{ .Values.config.appSleepAfterMs | int64 | toString | quote }}}
             {{- if and (eq .processRole "conductor") .Values.platform.conductor.dbPoolMax }}
             - {name: DB_POOL_MAX, value: {{ .Values.platform.conductor.dbPoolMax | int64 | quote }}}

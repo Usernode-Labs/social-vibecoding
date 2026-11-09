@@ -1,41 +1,31 @@
 'use strict';
 
-// Request-driven production apps only, explicitly selected after reviewing
-// background work. Missing activity data always keeps an app running. The web
+// Ordinary production apps sleep by default after fourteen idle days.
+// Only documented exceptions stay awake. Missing activity keeps an app running. The web
 // process records access and asks app delivery to wake; only conductor work
 // changes Kubernetes. Two app.wake work slots bound wakes across replicas.
 const log = require('./logger');
 const { isHealth } = require('./gateway-activity');
 const { APP_SLEEP_LOCK } = require('./advisory-locks');
 const ANNOTATION = 'social.usernode.io/production-asleep-at';
-const REVISION_LABEL = 'social.usernode.io/source-revision';
 
 function policy(config = null) {
-  const raw = config?.appSleepAppIds ?? process.env.APP_SLEEP_APP_IDS ?? '';
-  const parts = Array.isArray(raw) ? raw : String(raw).split(',').filter((s) => s.trim());
-  const ids = parts.map((v) => Number(v));
-  if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw new Error('APP_SLEEP_APP_IDS must contain positive app IDs');
-  let reviewed = config?.appSleepReviewedRevisions ?? process.env.APP_SLEEP_REVIEWED_REVISIONS ?? {};
-  if (typeof reviewed === 'string') {
-    try { reviewed = JSON.parse(reviewed); }
-    catch { throw new Error('APP_SLEEP_REVIEWED_REVISIONS must be a JSON object'); }
+  let excluded = config?.appSleepExcludedApps ?? process.env.APP_SLEEP_EXCLUDED_APPS ?? {};
+  if (typeof excluded === 'string') {
+    try { excluded = JSON.parse(excluded); }
+    catch { throw new Error('APP_SLEEP_EXCLUDED_APPS must be a JSON object'); }
   }
-  if (!reviewed || Array.isArray(reviewed) || typeof reviewed !== 'object'
-    || Object.entries(reviewed).some(([id, revisions]) => !/^[1-9]\d*$/.test(id)
-      || !Number.isSafeInteger(Number(id)) || !Array.isArray(revisions) || !revisions.length
-      || revisions.some((sha) => typeof sha !== 'string' || !/^[a-f0-9]{40}$/.test(sha)))) {
-    throw new Error('APP_SLEEP_REVIEWED_REVISIONS must map positive app IDs to nonempty SHA arrays');
+  if (!excluded || Array.isArray(excluded) || typeof excluded !== 'object'
+    || Object.entries(excluded).some(([id, reason]) => !/^[1-9]\d*$/.test(id)
+      || !Number.isSafeInteger(Number(id)) || typeof reason !== 'string' || !reason.trim())) {
+    throw new Error('APP_SLEEP_EXCLUDED_APPS must map positive app IDs to nonempty reasons');
   }
-  const afterMs = Number(config?.appSleepAfterMs ?? process.env.APP_SLEEP_AFTER_MS ?? 3600000);
+  const afterMs = Number(config?.appSleepAfterMs ?? process.env.APP_SLEEP_AFTER_MS ?? 1209600000);
   if (!Number.isSafeInteger(afterMs) || afterMs < 0) throw new Error('APP_SLEEP_AFTER_MS must be a non-negative integer');
   const supported = (config?.appRuntime ?? process.env.APP_RUNTIME) === 'kubernetes'
     && process.env.USERNODE_ENV !== 'staging' && !process.env.STAGING_SESSION_ID;
   const gate = (config?.kubernetes?.appGate ?? process.env.APP_GATE) === 'on';
-  return { ids: [...new Set(ids)], reviewed, afterMs: gate ? afterMs : 0, supported };
-}
-
-function revisionReviewed(policy, appId, sha) {
-  return policy.reviewed[String(appId)]?.includes(sha) === true;
+  return { excluded, afterMs: gate ? afterMs : 0, supported };
 }
 
 function isAsleep(deployment) {
@@ -53,7 +43,7 @@ async function requestWake(appId, asleepAt, { deps = {}, now = Date.now() } = {}
 // the completed sleep and waits for a wake. Health probes never wake an app.
 async function access(pool, appId, uri, { config = null, deps = {}, request = {} } = {}) {
   const p = policy(config);
-  if (!p.supported || !p.ids.includes(Number(appId))) return { eligible: false, ready: true };
+  if (!p.supported) return { eligible: false, ready: true };
   const health = isHealth(uri, request);
   const locks = deps.locks || require('../db/session-locks');
   let row;
@@ -89,47 +79,45 @@ async function sweep(config, pool, { deps = {}, shouldStop = () => false } = {})
   if (!p.supported) return { off: true };
   const kubernetes = deps.kubernetes || require('./kubernetes');
   const locks = deps.locks || require('../db/session-locks');
-  // New assignments get a full observation window, even when their previous
+  // Newly discovered apps get a full observation window, even when their previous
   // runtime was idle. A missing row is never evidence of inactivity.
-  if (p.ids.length) await pool.query(
+  if (p.afterMs) await pool.query(
     `INSERT INTO app_runtime_sleep (app_id)
-     SELECT id FROM apps WHERE id = ANY($1::int[]) AND status = 'running'
+     SELECT id FROM apps WHERE NOT (id = ANY($1::int[])) AND status = 'running'
        AND self_hosted IS NOT TRUE AND runtime_kind = 'kubernetes'
-     ON CONFLICT (app_id) DO NOTHING`, [p.ids]);
+     ON CONFLICT (app_id) DO NOTHING`, [Object.keys(p.excluded).map(Number)]);
   const { rows } = await pool.query(
     `SELECT a.id, a.slug, a.runtime_name, a.main_sha, a.deploy_state, s.last_request_at, s.asleep_at, s.deployment_uid
        FROM apps a JOIN app_runtime_sleep s ON s.app_id = a.id
       WHERE a.status = 'running' AND a.self_hosted IS NOT TRUE AND a.runtime_kind = 'kubernetes'
-        AND (a.id = ANY($1::int[]) OR s.asleep_at IS NOT NULL) ORDER BY a.id`, [p.ids]);
+      ORDER BY a.id`);
   const summary = { examined: rows.length, asleep: 0, waking: 0, skipped: 0 };
-  // Removing an assignment or its reviewed revision schedules bounded wakes too.
-  for (const app of rows.filter((a) => a.asleep_at && (!p.ids.includes(a.id) || p.afterMs === 0
-    || !revisionReviewed(p, a.id, a.main_sha))).slice(0, 10)) {
+  // Adding an exception or disabling sleep wakes existing sleepers too.
+  for (const app of rows.filter((a) => a.asleep_at && (p.excluded[a.id] || p.afterMs === 0)).slice(0, 10)) {
     if (shouldStop()) return summary;
     await requestWake(app.id, app.asleep_at, { deps }); summary.waking += 1;
   }
-  if (!p.afterMs || !p.ids.length) return summary;
+  if (!p.afterMs) return summary;
   let snapshots;
   try { snapshots = await kubernetes.appGateActivity(config); }
   catch (err) { log.warn('production-sleep', 'Gateway activity unavailable; apps stay awake', { err: err.message }); return { ...summary, telemetryUnavailable: true }; }
-  // Check every assignment: active lower IDs must not starve idle higher IDs.
+  // Check every app: active lower IDs must not starve idle higher IDs.
   // The successful sleep limit below still bounds scale-downs per pass.
   for (const app of rows.filter((a) => !a.asleep_at)) {
     if (shouldStop()) break;
-    if (!app.runtime_name || app.deploy_state === 'deploying' || !revisionReviewed(p, app.id, app.main_sha)
+    if (p.excluded[app.id] || !app.runtime_name || app.deploy_state === 'deploying'
+      || !app.last_request_at || !(new Date(app.last_request_at).getTime() < Date.now() - p.afterMs)
       || !idleAt(snapshots, app.runtime_name, Date.now(), p.afterMs)) { summary.skipped += 1; continue; }
     const result = await locks.ifSessionLockFree(pool, [APP_SLEEP_LOCK, app.id], async () => {
       const deployment = await kubernetes.readProductionForSleep(config, app);
-      const deployedRevision = deployment?.spec?.template?.metadata?.labels?.[REVISION_LABEL];
-      if (!deployment || !revisionReviewed(p, app.id, deployedRevision)
-        || deployment.metadata?.labels?.[REVISION_LABEL] !== deployedRevision) return false;
+      if (!deployment) return false;
       const { rows: [claimed] } = await pool.query(
         `UPDATE app_runtime_sleep s SET asleep_at = now(), runtime_name = $2, deployment_uid = $3
           FROM apps a WHERE s.app_id = $1 AND a.id = s.app_id AND s.asleep_at IS NULL
            AND s.last_request_at < now() - make_interval(secs => $4::double precision)
            AND a.runtime_name = $2 AND a.status = 'running' AND a.self_hosted IS NOT TRUE
            AND a.deploy_state IS DISTINCT FROM 'deploying'
-           AND a.main_sha = $5
+           AND a.main_sha IS NOT DISTINCT FROM $5::text
          RETURNING s.asleep_at::text AS asleep_at`, [app.id, app.runtime_name, deployment.metadata.uid, p.afterMs / 1000, app.main_sha]);
       if (!claimed) return false;
       try {

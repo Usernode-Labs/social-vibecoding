@@ -10,19 +10,24 @@ const { Pool } = require('pg');
 const sleep = require('../src/services/production-sleep');
 const { createActivity } = require('../src/services/gateway-activity');
 const kubernetes = require('../src/services/kubernetes');
-const REVIEWED_SHA = '1'.repeat(40);
+const INITIAL_SHA = '1'.repeat(40);
 const OTHER_SHA = '2'.repeat(40);
 const REVISION_LABEL = 'social.usernode.io/source-revision';
 
-test('production sleep requires explicit arrays of reviewed full source revisions', () => {
-  const config = { appSleepAppIds: [1], appSleepReviewedRevisions: { 1: [REVIEWED_SHA, OTHER_SHA] } };
-  assert.deepEqual(sleep.policy(config).reviewed, config.appSleepReviewedRevisions);
-  assert.deepEqual(sleep.policy({ ...config, appSleepReviewedRevisions: JSON.stringify(config.appSleepReviewedRevisions) }).reviewed,
-    config.appSleepReviewedRevisions);
-  assert.deepEqual(sleep.policy({ ...config, appSleepReviewedRevisions: {} }).reviewed, {});
-  for (const reviewed of ['invalid', [], { 0: [REVIEWED_SHA] }, { 1: [] }, { 1: REVIEWED_SHA }, { 1: ['short'] }, { 1: [4] }]) {
-    assert.throws(() => sleep.policy({ ...config, appSleepReviewedRevisions: reviewed }), /APP_SLEEP_REVIEWED_REVISIONS/);
+test('production sleep defaults to fourteen days and validates reasoned exceptions', (t) => {
+  const previous = process.env.APP_SLEEP_AFTER_MS;
+  delete process.env.APP_SLEEP_AFTER_MS;
+  t.after(() => { if (previous === undefined) delete process.env.APP_SLEEP_AFTER_MS; else process.env.APP_SLEEP_AFTER_MS = previous; });
+  const config = { kubernetes: { appGate: 'on' }, appSleepExcludedApps: { 1: 'Accepted jobs need durable restart recovery' } };
+  assert.equal(sleep.policy(config).afterMs, 14 * 24 * 60 * 60 * 1000);
+  assert.deepEqual(sleep.policy(config).excluded, config.appSleepExcludedApps);
+  assert.deepEqual(sleep.policy({ ...config, appSleepExcludedApps: JSON.stringify(config.appSleepExcludedApps) }).excluded,
+    config.appSleepExcludedApps);
+  for (const excluded of ['invalid', 'null', [], { 0: 'reason' }, { invalid: 'reason' }, { 1: '' }, { 1: '  ' }, { 1: [] }, { 1: true }]) {
+    assert.throws(() => sleep.policy({ ...config, appSleepExcludedApps: excluded }), /APP_SLEEP_EXCLUDED_APPS/);
   }
+  assert.equal(sleep.policy({ ...config, appSleepAfterMs: 0 }).afterMs, 0);
+  assert.equal(sleep.policy({ ...config, kubernetes: { appGate: 'off' } }).afterMs, 0);
 });
 
 test('activity retains long requests and sockets until they end, without counting health checks', () => {
@@ -87,13 +92,12 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
     const slug = `sleep-app-${++seq}`;
     const { rows: [app] } = await pool.query(
       `INSERT INTO apps (name, slug, created_by, status, runtime_kind, runtime_name, main_sha)
-       VALUES ($1, $1, $2, 'running', 'kubernetes', $1, $3) RETURNING *`, [slug, owner.id, REVIEWED_SHA]);
-    const config = { appRuntime: 'kubernetes', appSleepAppIds: [app.id], appSleepAfterMs: 3600000,
-      appSleepReviewedRevisions: { [app.id]: [REVIEWED_SHA] },
+       VALUES ($1, $1, $2, 'running', 'kubernetes', $1, $3) RETURNING *`, [slug, owner.id, INITIAL_SHA]);
+    const config = { appRuntime: 'kubernetes', appSleepAfterMs: 3600000,
       kubernetes: { appGate: 'on', appNamespace: 'apps' } };
     let deployment = { metadata: { uid: 'uid', name: slug, resourceVersion: '1', annotations: {},
-      labels: { 'social.usernode.io/environment': 'production', [REVISION_LABEL]: REVIEWED_SHA } },
-    spec: { replicas: 1, template: { image: 'immutable', env: 'unchanged', metadata: { labels: { [REVISION_LABEL]: REVIEWED_SHA } } } } };
+      labels: { 'social.usernode.io/environment': 'production', [REVISION_LABEL]: INITIAL_SHA } },
+    spec: { replicas: 1, template: { image: 'immutable', env: 'unchanged', metadata: { labels: { [REVISION_LABEL]: INITIAL_SHA } } } } };
     const fx = { config, app, active: 0, lastRequestAt: Date.now() - 7200000, telemetryError: false,
       conflict: false, sleepError: null, wakeError: false, scales: [], wakes: [], wait: async () => {},
       get deployment() { return deployment; },
@@ -138,16 +142,16 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
     assert.equal(fx.scales.length, 0);
   });
 
-  await t.test('seven-day inactivity requires both durable access and gateway activity to age', async () => {
+  await t.test('fourteen-day inactivity requires both durable access and gateway activity to age', async () => {
     const fx = await fixture();
-    const week = 7 * 24 * 60 * 60 * 1000;
-    fx.config.appSleepAfterMs = week;
-    fx.lastRequestAt = Date.now() - week - 60000;
-    const aged = await pool.query(`UPDATE app_runtime_sleep SET last_request_at = now() - interval '6 days 23 hours'
+    const idleWindow = 14 * 24 * 60 * 60 * 1000;
+    fx.config.appSleepAfterMs = idleWindow;
+    fx.lastRequestAt = Date.now() - idleWindow - 60000;
+    const aged = await pool.query(`UPDATE app_runtime_sleep SET last_request_at = now() - interval '13 days 23 hours'
       WHERE app_id = $1`, [fx.app.id]);
     assert.equal(aged.rowCount, 1);
     assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
-    await pool.query(`UPDATE app_runtime_sleep SET last_request_at = now() - interval '8 days'
+    await pool.query(`UPDATE app_runtime_sleep SET last_request_at = now() - interval '15 days'
       WHERE app_id = $1`, [fx.app.id]);
     const before = (await fx.row()).last_request_at.getTime();
     for (const method of ['HEAD', 'GET']) {
@@ -155,9 +159,9 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
         request: { method, userAgent: 'usernode-dapp-homepage-healthcheck/1' } });
     }
     assert.equal((await fx.row()).last_request_at.getTime(), before, 'directory probes do not reset durable idle time');
-    fx.lastRequestAt = Date.now() - week + 60000;
+    fx.lastRequestAt = Date.now() - idleWindow + 60000;
     assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
-    fx.lastRequestAt = Date.now() - week - 60000;
+    fx.lastRequestAt = Date.now() - idleWindow - 60000;
     assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 1);
     for (const method of ['HEAD', 'GET']) {
       const probe = await sleep.access(pool, fx.app.id, '/', { config: fx.config, deps: fx.deps,
@@ -178,18 +182,16 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
     const { rows: busy } = await pool.query(
       `INSERT INTO apps (name, slug, created_by, status, runtime_kind, runtime_name, main_sha)
        SELECT $1 || n, $1 || n, $2, 'running', 'kubernetes', $1 || n, $3
-         FROM generate_series(1, 20) n RETURNING id, runtime_name`, [prefix, owner.id, REVIEWED_SHA]);
+         FROM generate_series(1, 20) n RETURNING id, runtime_name`, [prefix, owner.id, INITIAL_SHA]);
     const fx = await fixture();
     assert.ok(busy.every((app) => app.id < fx.app.id));
-    fx.config.appSleepAppIds = [...busy.map((app) => app.id), fx.app.id];
-    fx.config.appSleepReviewedRevisions = Object.fromEntries(fx.config.appSleepAppIds.map((id) => [id, [REVIEWED_SHA]]));
     fx.deps.kubernetes.appGateActivity = async () => [{ version: 1, now: Date.now(), upstreams: {
       ...Object.fromEntries(busy.map((app) => [app.runtime_name, { active: 1, lastRequestAt: Date.now() - 7200000 }])),
       [fx.app.runtime_name]: { active: 0, lastRequestAt: Date.now() - 7200000 },
     } }];
     await sleep.sweep(fx.config, pool, { deps: fx.deps });
     await pool.query(`UPDATE app_runtime_sleep SET last_request_at = now() - interval '2 hours'
-      WHERE app_id = ANY($1::int[])`, [fx.config.appSleepAppIds]);
+      WHERE app_id = ANY($1::int[])`, [[...busy.map((app) => app.id), fx.app.id]]);
     assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 1);
     assert.ok((await fx.row()).asleep_at);
     assert.deepEqual(fx.scales, [0]);
@@ -206,45 +208,37 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
     assert.equal(fx.scales.length, 0);
   });
 
-  await t.test('missing pins and a changed recorded revision keep an app awake', async () => {
-    for (const missing of [true, false]) {
+  await t.test('new apps and new or absent source revisions qualify without any approval list', async () => {
+    for (const revision of [OTHER_SHA, null]) {
       const fx = await fixture(); await fx.age();
-      if (missing) fx.config.appSleepReviewedRevisions = {};
-      else await pool.query('UPDATE apps SET main_sha = $2 WHERE id = $1', [fx.app.id, OTHER_SHA]);
-      assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
-      assert.equal((await fx.row()).asleep_at, null);
-      assert.deepEqual(fx.scales, []);
+      await pool.query('UPDATE apps SET main_sha = $2 WHERE id = $1', [fx.app.id, revision]);
+      fx.deployment.spec.template.metadata.labels[REVISION_LABEL] = OTHER_SHA;
+      assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 1);
+      assert.ok((await fx.row()).asleep_at);
+      assert.deepEqual(fx.scales, [0]);
     }
   });
 
-  await t.test('the actual Deployment source label must be reviewed too', async () => {
-    for (const deployed of [OTHER_SHA, undefined]) {
-      const fx = await fixture(); await fx.age();
-      fx.deployment.spec.template.metadata.labels[REVISION_LABEL] = deployed;
-      assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
-      assert.equal((await fx.row()).asleep_at, null);
-      assert.deepEqual(fx.scales, []);
-    }
+  await t.test('only explicit exceptions stay awake; the exception reason is not an approval list', async () => {
     const fx = await fixture(); await fx.age();
-    fx.config.appSleepReviewedRevisions[fx.app.id].push(OTHER_SHA);
-    fx.deployment.spec.template.metadata.labels[REVISION_LABEL] = OTHER_SHA;
-    assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0,
-      'inconsistent metadata and template source labels stay awake');
-    assert.equal((await fx.row()).asleep_at, null);
-  });
-
-  await t.test('different recorded and deployed revisions may sleep when both were reviewed', async () => {
-    const fx = await fixture(); await fx.age();
-    fx.config.appSleepReviewedRevisions[fx.app.id].push(OTHER_SHA);
-    fx.deployment.spec.template.metadata.labels[REVISION_LABEL] = OTHER_SHA;
-    fx.deployment.metadata.labels[REVISION_LABEL] = OTHER_SHA;
+    fx.config.appSleepExcludedApps = { [fx.app.id]: 'Temporary restart bug: accepted results are volatile' };
+    assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
+    assert.deepEqual(fx.scales, []);
+    delete fx.config.appSleepExcludedApps[fx.app.id];
     assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 1);
-    assert.deepEqual(fx.scales, [0]);
+  });
+
+  await t.test('self-hosted, non-Kubernetes and deploying apps stay outside automatic sleep', async () => {
+    for (const sql of ["UPDATE apps SET self_hosted = TRUE WHERE id = $1", "UPDATE apps SET runtime_kind = 'docker' WHERE id = $1", "UPDATE apps SET deploy_state = 'deploying' WHERE id = $1"]) {
+      const fx = await fixture(); await fx.age();
+      await pool.query(sql, [fx.app.id]);
+      assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
+      assert.deepEqual(fx.scales, []);
+    }
   });
 
   await t.test('a recorded revision change racing the claim prevents sleeping', async () => {
     const fx = await fixture(); await fx.age();
-    fx.config.appSleepReviewedRevisions[fx.app.id].push(OTHER_SHA);
     const read = fx.deps.kubernetes.readProductionForSleep;
     fx.deps.kubernetes.readProductionForSleep = async () => {
       await pool.query('UPDATE apps SET main_sha = $2 WHERE id = $1', [fx.app.id, OTHER_SHA]);
@@ -255,13 +249,13 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
     assert.deepEqual(fx.scales, []);
   });
 
-  await t.test('unreviewed sleeping apps wake through access and rollback even without telemetry', async () => {
-    for (const missing of [true, false]) {
+  await t.test('new exceptions and global pause wake sleepers even without telemetry', async () => {
+    for (const excepted of [true, false]) {
       const fx = await fixture(); await fx.age();
       await sleep.sweep(fx.config, pool, { deps: fx.deps });
       assert.ok((await fx.row()).asleep_at);
-      if (missing) fx.config.appSleepReviewedRevisions = {};
-      else await pool.query('UPDATE apps SET main_sha = $2 WHERE id = $1', [fx.app.id, OTHER_SHA]);
+      if (excepted) fx.config.appSleepExcludedApps = { [fx.app.id]: 'Temporary restart recovery exception' };
+      else fx.config.appSleepAfterMs = 0;
       fx.telemetryError = true;
       assert.equal((await sleep.access(pool, fx.app.id, '/', { config: fx.config, deps: fx.deps })).ready, false);
       assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).waking, 1);
@@ -327,7 +321,7 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
     assert.ok((await fx.row()).asleep_at);
     assert.equal(fx.wakes.length, 0);
     fx.wakeError = false;
-    const disabled = { ...fx.config, appSleepAppIds: [], appSleepAfterMs: 0 };
+    const disabled = { ...fx.config, appSleepAfterMs: 0 };
     assert.equal((await sleep.sweep(disabled, pool, { deps: fx.deps })).waking, 1);
     await sleep.wake(disabled, pool, fx.app.id, { deps: fx.deps });
     assert.equal(fx.deployment.spec.replicas, 1);
