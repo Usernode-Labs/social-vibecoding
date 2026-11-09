@@ -220,6 +220,11 @@
       "id": "homeroom-bot-overlap-offers",
       "sha256": "2426b42ac74e1b2cf8b3a04ab1f84f53f7e59898fe6e131411e5951b26a04f2f",
       "schemaSha256": "79aa7fdde06ea699fd1eda4a58de8ab7b5ed4bedd3ac065a953e885d1215e2ca"
+    },
+    {
+      "id": "app-storage-warn-level",
+      "sha256": "2b3e8146a3b9dc61802ae1fdc1c2386aacf5ccf1c78f2fa0c94071feeaca0ee1",
+      "schemaSha256": "74f8d724750d6631dbb38828cb3be6e872ef61e9c9ff754f300a7fd9cc3f7dfe"
     }
   ]
 }
