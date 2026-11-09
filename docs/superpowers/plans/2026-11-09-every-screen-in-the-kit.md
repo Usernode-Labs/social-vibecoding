@@ -154,40 +154,65 @@ Things learned:
 - The whole-suite runner can stall on one file when hundreds run together; each passes alone.
   Run suites in bounded chunks (scratchpad `tour/run-suites.sh`).
 
-### M5, under way (9 Nov)
+### M5, as built (9 and 10 Nov)
 
-Done (`d4287f667`): a project's page in the kit. Its places are the page's tabs; the **Hub**
-(s23, s24, s36) and **Topics** (s25) are drawn in the kit from what the page's own Hub reads;
-Join is the primary button for someone signed in who is not a member. `features/dev-board/
-workshop/frame/project-frame.tsx` is presentational; `workshop.tsx` computes its props just
-before its return and draws it ahead of `{band}{tray}`, which stay as written.
+Rebased onto main `10a33681e` on 10 Nov (38 commits, none behind).
+
+Done: a project's page in the kit (`features/dev-board/workshop/frame/project-frame.tsx`,
+presentational; `workshop.tsx` computes its props just before its return and draws it ahead of
+`{band}{tray}`, which stay as written).
+
+- **The Hub (s23, s24, s36), Topics (s25), the Workshop (s27, s28, s37)** are drawn in the kit
+  from what the page's own Hub and Workshop read. Join is the primary button for someone signed
+  in who is not a member.
+- **#general and the topics' channels (s31)** use the one message style: the app chat's shared
+  row and day label (`@/components/ui/chat.tsx`) emit the kit's post under a look.
+- **The bar on a project's page** leads with the project's tile and name, then the place; its
+  arrow goes up to the Hub, then Home.
+- **All communities (s21, s22)** was built with Home in M1: tabs by audience, a search, Needs
+  you, the rest, votes waiting beside them.
+- **A look picker beside the bell**, for admins (`features/frame/look-picker.tsx`).
 
 Left in M5:
 
-- **The Workshop (s27, s28, s37), Needs you (s26), All items (s29), votes waiting (s30)** still
-  draw their standard body under the kit's head and tabs. The Workshop's blueprint: Where things
-  are (facts), Needs your vote (the ballot card with Yes / No), Your work (rows with the progress
-  line), Live this week; beside it Homeroom bot's slots, Who decides, Nobody is on these.
-- **#general (s31)** is the product's channel under the kit's head; it should wear the kit the way
-  a conversation does (the wear map), with its composer.
-- **All communities (s21, s22)** is still Home's kit page of M1, without the audience tabs.
-- **The bar on a project's page** says the project's name but not its tile, and a phone has no
-  back arrow there; the tour's bar has both.
+- **Needs you (s26)** keeps the product's review stage (the change's before and after, Yes / No
+  with a reason, Skip) under the kit's head. The tour draws a ballot and "Replies you owe" rows;
+  the stage is how a vote is actually reviewed and cast, so this is a ruling until told otherwise.
+- **All items (s29) and votes waiting (s30)** keep their standard body under the kit's head: the
+  tour's stage tabs, one row per item with the five-stop line, and Show / Sort beside them.
+- **A week's page** (from Week by week) and **Homeroom bot's slots page** are the standard bodies.
+- **A channel's context column** (members, Notify me, pinned) is not drawn; the channel keeps its
+  own line and Mute over the transcript, and its card around the posts.
+- **All communities** has no "New since you last looked" / "Quiet" split: nothing says per
+  community what is new since the last look.
 - What the standard Hub also carries and the kit's does not yet: the first-version card, the
-  update card, Share it, the start-here prompt and the notification ask. They stay mounted
-  behind the kit's Hub, unseen; each needs a kit form (a note or a row) or a ruling to drop it.
+  update card, Share it, the start-here prompt and the notification ask. They stay mounted behind
+  the kit's Hub, unseen; each needs a kit form (a note or a row) or a ruling to drop it.
 
 Rulings:
 
-- The approval rule is said in its short words on the Hub's row, with the wait as its line.
-- The Hub shows three topics and "All N"; the tour shows three of six.
-- Topics is a page of the kit only: it has no address of its own, and a topic's channel is lit
-  as Topics.
+- The approval rule is said in a few words on the kit's rows ("11 of 41 members say yes"), with
+  the wait, or "After the checks pass", as its line.
+- The Workshop's figures are the product's four (open, nobody on them, waiting on votes, live
+  this week); the tour's five stages (Plan, Build, Checks, Vote, Live) are not counted anywhere.
+- The Workshop's ballot has one button, Review and vote, which opens Needs you: a No says why,
+  which two inline buttons leave no room for.
+- Your work is one row (the bot tab's summary for this project), not the tour's row per item.
+- The Hub shows three topics and "All N". Topics is a page of the kit only: it has no address of
+  its own, and a topic's channel is lit as Topics.
 
 Learned:
 
 - `workshop.tsx` is pinned line by line by a dozen suites (`{band}\n{tray}`, the hub-cards
   import, `{tab === 'status' ? (pending ? null : (`). Add, never rewrite; hide with CSS.
-- app.css may not look inside the board's hosts with `:has()`; say the state on `<html>` instead.
+- app.css may not look inside the board's hosts with `:has()`; say the state on `<html>` instead
+  (`data-project-frame`, set by the kit page while it is mounted).
 - The tour's CSS is left-to-right only. The compiler writes logical sides
   (`mapDeclarations`); hand rules in app.css must too (`tests/rtl-logical-css.test.js`).
+- A flex column shrinks a child with `margin: auto` to its content: give it `width: 100%`.
+- Rebasing: the durations baseline keeps main's side through a throwaway merge driver, and the
+  frame's suites are re-added once at the end.
+
+Next: M6 (a request and a change, s32 to s35). Their pages are `features/dev-board/topic/*`
+(6,600 lines) inside a host app-view.js creates; their threads should wear the kit the way a
+conversation does.
