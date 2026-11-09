@@ -714,6 +714,11 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    bar keeps that exactly as it was. */
 .messages-list-scroll {
   padding-bottom: var(--platform-tabs-h, 0px);
+  /* #6508: the list holds its own place (features/messages/list-place.ts).
+     The browser picked a row the live re-sort had just moved as its anchor
+     and carried scrollTop with it, which read as the list jerking back
+     several rows under a trackpad scroll. */
+  overflow-anchor: none;
 }
 /* THE HISTORY ABOVE A COMPOSER reserves no band at its foot, only the
    transcript's own 12px end: `.chat-transcript`, under "A chat's foot"
