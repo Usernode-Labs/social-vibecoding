@@ -109,6 +109,16 @@ function clientHarness({ search = '' } = {}) {
   sandbox.addEventListener = () => {};
   sandbox.Settings = { state: {} };
   sandbox.PlatformI18n = englishPlatformI18n();
+  // #6493: the dev chat no longer keeps its own copy of the allowance — it
+  // composes this holder's state, so a sandbox must provide one.
+  const shared = { state: null };
+  sandbox.AiCredit = {
+    Budget: {
+      current: () => shared.state,
+      adopt: (snap) => { shared.state = snap; return true; },
+      _takeTicket: () => 1,
+    },
+  };
   vm.createContext(sandbox);
   const file = path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js');
   vm.runInContext(fs.readFileSync(file, 'utf8') + '\n;this.chat = DevChat;', sandbox);

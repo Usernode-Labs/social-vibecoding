@@ -3571,6 +3571,14 @@
     "text": "Drawing the screen",
     "description": "On the card at the end of the chat while Homeroom bot draws a design of a screen. Three animated dots follow it, as an ellipsis."
   },
+  "thread.botWorking.capturing": {
+    "text": "Opening {{page}} as it is now",
+    "description": "On the card at the end of the chat while Homeroom opens one of its own pages in a browser of its own, to copy it as the first version of a design. {{page}} is the page's name, such as Homeroom bot page. Three animated dots follow it, as an ellipsis."
+  },
+  "thread.botWorking.capturingUnnamed": {
+    "text": "Opening the page as it is now",
+    "description": "On the card at the end of the chat while Homeroom opens one of its own pages to copy it as the first version of a design, when the page's name is not known. Three animated dots follow it, as an ellipsis."
+  },
   "thread.botWorking.designing": {
     "text": "Changing the design",
     "description": "On the card at the end of the chat while Homeroom bot changes a design it drew. Three animated dots follow it, as an ellipsis."

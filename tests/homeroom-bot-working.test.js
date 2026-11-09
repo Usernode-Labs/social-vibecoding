@@ -940,6 +940,12 @@ test('the bot\'s typing is a card with its face, its name and what it is doing; 
   assert.equal(card.botDoingLine(t, { kind: 'code', project: 'Ear Trainer' }), 'Reading Ear Trainer\'s code');
   assert.equal(card.botDoingLine(t, { kind: 'code' }), 'Reading the code');
   assert.equal(card.botDoingLine(t, { kind: 'drawing' }), 'Drawing the screen');
+  // #6354: Homeroom opening one of its own pages to copy for a design.
+  assert.equal(card.botDoingLine(t, { kind: 'capturing', page: 'Homeroom bot page' }), 'Opening Homeroom bot page as it is now');
+  assert.equal(card.botDoingLine(t, { kind: 'capturing' }), 'Opening the page as it is now');
+  const capturing = renderToHtml(createElement(card.BotWorkingCard, { typist: { ...bot, doing: { kind: 'capturing', page: 'Homeroom bot page' } } }));
+  assert.match(capturing, /data-bot-working="capturing"/);
+  assert.match(capturing, />Opening Homeroom bot page as it is now</);
   assert.equal(card.botDoingLine(t, { kind: 'designing' }), 'Changing the design');
   assert.equal(card.botDoingLine(t, { kind: 'drafting' }), 'Drafting the request');
   assert.equal(card.botDoingLine(t, { kind: 'something_new' }), 'Thinking', 'a kind this screen does not know yet');
