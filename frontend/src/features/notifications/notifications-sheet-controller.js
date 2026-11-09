@@ -24,6 +24,9 @@
  * the badge drops; the rows the sheet was showing stay listed, dimmed, until
  * it closes (the sheet's useHeldUnread). A refresh that failed or was
  * superseded clears nothing, so nothing the person was not shown is marked.
+ * A sheet opened by the `?shot=notifications` deep link is a capture, not
+ * reading, so it marks nothing: `_shotOpened` is set before the sheet
+ * presents.
  */
 
 import { createSheetController } from '../../lib/sheet-controller.js';
@@ -38,7 +41,9 @@ export const NotificationsSheet = createSheetController({
   // one returns false, and rows the person was never shown must not be
   // marked read.
   onOpen: () => Promise.resolve(window.Notifications?.refresh?.())
-    .then((ok) => { if (ok) window.Notifications?.markReadOnOpen?.(); }),
+    .then((ok) => {
+      if (ok && !window.Notifications?._shotOpened) window.Notifications?.markReadOnOpen?.();
+    }),
 });
 
 if (typeof window !== 'undefined') {
