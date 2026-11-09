@@ -287,9 +287,9 @@ test('test and native-local entrypoints materialize ignored shell artifacts', ()
   assert.equal(packageJson.scripts.pretest,
     'node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --html-only');
   assert.equal(packageJson.scripts.prestart,
-    'node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --runtime');
+    'node scripts/ensure-dependencies.js && node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --runtime');
   assert.equal(packageJson.scripts.predev,
-    'node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --runtime');
+    'node scripts/ensure-dependencies.js && node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --runtime');
   assert.match(ensureScript, /readHtmlStamp/,
     'the local ensure step must rebuild stale HTML, not only missing HTML');
   assert.match(ensureScript, /npm(?:\.cmd)?['"]?\s*:\s*['"]npm['"]|const npm =/,
