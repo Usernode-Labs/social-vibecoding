@@ -598,6 +598,10 @@ async function releaseRowsForGrant(pool, userId) {
   return {
     id: listed ? listed.id : null,
     email: accountEmail || (listed && listed.email) || null,
+    // The same rule as releaseWaitlistSignup (#6480): a direct grant always
+    // has an account, so its mail follows that account's confirmed address
+    // and never falls back to an address the row used to hold.
+    recipient_email: accountEmail,
     ...(users[0] && users[0].locale ? { recipient_locale: users[0].locale } : {}),
     linked_user_id: userId,
     more_token: null,
@@ -691,7 +695,24 @@ async function releaseWaitlistSignup(pool, signupId) {
     }
   }
   if (userId) await grantPlatformAccess(pool, userId, { manualRelease: true });
-  return { ...row, linked_user_id: userId };
+
+  // The "you're in" mail goes to the RECIPIENT at send time (#6480). A linked
+  // account may have changed its address since it joined, while the row keeps
+  // the address it was created with: only the account's current, confirmed
+  // address counts. An unconfirmed address is not mailed (nor is one cleared),
+  // and the row's old address is never a fallback once there is an account.
+  // With no account, the row's own address is the only one there is.
+  let recipientEmail = row.email;
+  if (userId) {
+    const { rows: accounts } = await pool.query(
+      'SELECT email, email_confirmed FROM users WHERE id = $1',
+      [userId]
+    );
+    const account = accounts[0];
+    recipientEmail = account && account.email_confirmed === true
+      ? normalizeEmail(account.email) : null;
+  }
+  return { ...row, linked_user_id: userId, recipient_email: recipientEmail };
 }
 
 module.exports = {

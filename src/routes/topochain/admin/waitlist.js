@@ -301,9 +301,15 @@ function waitlistAdminRoutes(config) {
   // release. `mobile` is the store-listing lookup, done once by the caller
   // so a batch does not repeat it per row.
   async function sendReleaseMail(released, mobile) {
+    // #6480: the address is the account's current one when the release came
+    // from an account (releaseWaitlistSignup / releaseRowsForGrant both answer
+    // `recipient_email`), never the one the row was created with. A null means
+    // the account has no confirmed address, which takes the phone branch: the
+    // row's old address is not mailed.
+    const to = 'recipient_email' in released ? released.recipient_email : released.email;
     // A phone row has no address: its "you're in" goes by text, the SMS hook
     // (#4096, services/waitlist.js sendReleaseText).
-    if (!released.email) {
+    if (!to) {
       await waitlist.sendReleaseText(pool, released);
       return;
     }
@@ -319,12 +325,12 @@ function waitlistAdminRoutes(config) {
     let signInToken = null;
     if (!hasAccount) {
       try {
-        signInToken = await releaseLinks.mint(pool, { signupId: released.id, email: released.email });
+        signInToken = await releaseLinks.mint(pool, { signupId: released.id, email: to });
       } catch (err) {
         log.error('topochain-admin', 'release sign-in link not minted', { signupId: released.id, message: err.message });
       }
     }
-    await sendWaitlistReleaseMail(config, released.email, {
+    await sendWaitlistReleaseMail(config, to, {
       mobile,
       hasAccount,
       signInToken,
@@ -409,7 +415,9 @@ function waitlistAdminRoutes(config) {
            LEFT JOIN LATERAL (
              SELECT d.status, d.created_at, d.error
                FROM mail_deliveries d
-              WHERE d.recipient = w.email AND d.kind = 'waitlist_released'
+              WHERE (d.recipient = w.email
+                     OR (u.email IS NOT NULL AND d.recipient = LOWER(TRIM(u.email))))
+                AND d.kind = 'waitlist_released'
               ORDER BY d.created_at DESC, d.id DESC
               LIMIT 1
            ) m ON TRUE

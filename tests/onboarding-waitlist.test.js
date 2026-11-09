@@ -154,6 +154,13 @@ function makePool(state) {
       return { rows: u ? [{ id: u.id }] : [] };
     }
 
+    // #6480: the release reads the linked account's address at send time.
+    if (sql.includes('SELECT email, email_confirmed FROM users WHERE id = $1')) {
+      const [id] = params;
+      const u = state.users.get(id);
+      return { rows: u ? [{ email: u.email, email_confirmed: u.email_confirmed }] : [] };
+    }
+
     if (sql.includes('SET linked_user_id = $1 WHERE id = $2')) {
       const [userId, id] = params;
       const s = [...state.signups.values()].find((r) => r.id === id);
@@ -166,10 +173,11 @@ function makePool(state) {
   return { query };
 }
 
-function addUser(state, { id, email = null, hasAccess = false }) {
+function addUser(state, { id, email = null, hasAccess = false, confirmed = email != null }) {
   state.users.set(id, {
     id,
     email,
+    email_confirmed: confirmed,
     has_platform_access: hasAccess,
     platform_access_granted_at: hasAccess ? new Date(0) : null,
     invite_generation: null,
@@ -479,7 +487,10 @@ test('releaseRowsForGrant releases the account\'s rows and tells its own address
     { rows: [{ id: 9, email: 'listed@example.com', was_released: false }] },
   ]);
   const release = await releaseRowsForGrant(pool, 60);
-  assert.deepEqual(release, { id: 9, email: 'mine@example.com', linked_user_id: 60, more_token: null });
+  assert.deepEqual(release, {
+    id: 9, email: 'mine@example.com', recipient_email: 'mine@example.com',
+    linked_user_id: 60, more_token: null,
+  });
   const update = pool.seen[1];
   assert.match(update.sql, /SET released_at = COALESCE\(w\.released_at, NOW\(\)\)/);
   assert.match(update.sql, /WHERE linked_user_id = \$1 OR \(\$2::varchar IS NOT NULL AND email = \$2 AND linked_user_id IS NULL\)/);
@@ -493,7 +504,9 @@ test('releaseRowsForGrant never claims a row by an address the account has not c
   ]);
   const release = await releaseRowsForGrant(pool, 64);
   assert.deepEqual(pool.seen[1].params, [64, null], 'only its own linked rows');
-  assert.deepEqual(release, { id: null, email: null, linked_user_id: 64, more_token: null });
+  assert.deepEqual(release, {
+    id: null, email: null, recipient_email: null, linked_user_id: 64, more_token: null,
+  });
 });
 
 test('releaseRowsForGrant says nothing to tell when a row was already released', async () => {
@@ -509,9 +522,13 @@ test('releaseRowsForGrant falls back to the row\'s address, then to none', async
     { rows: [{ email: null }] },
     { rows: [{ id: 3, email: 'row@example.com', was_released: false }] },
   ]);
-  assert.equal((await releaseRowsForGrant(listed, 62)).email, 'row@example.com');
+  const released = await releaseRowsForGrant(listed, 62);
+  assert.equal(released.email, 'row@example.com');
+  assert.equal(released.recipient_email, null, 'no account address, so nobody is mailed');
   const bare = recordingPool([{ rows: [{ email: null }] }, { rows: [] }]);
-  assert.deepEqual(await releaseRowsForGrant(bare, 63), { id: null, email: null, linked_user_id: 63, more_token: null });
+  assert.deepEqual(await releaseRowsForGrant(bare, 63), {
+    id: null, email: null, recipient_email: null, linked_user_id: 63, more_token: null,
+  });
 });
 
 // ─── 6. Who a release makes generation 0 of the invite tree ──────────

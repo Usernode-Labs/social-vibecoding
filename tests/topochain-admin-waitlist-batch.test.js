@@ -305,6 +305,47 @@ test('one row failing does not strand the rows already admitted unmailed', async
   assert.deepEqual(mailed.map((m) => m.to), ['waiting@example.invalid']);
 });
 
+// #6480: an account that changed its address after joining the waitlist is
+// mailed at the address it has now. The release answers both `email` (the
+// row's, kept for the response and logs) and `recipient_email` (the
+// account's confirmed one), and the mail follows the latter.
+test('the "you\'re in" mail follows the account\'s current address, not the row\'s', async () => {
+  const texts = [];
+  waitlistService.sendReleaseText = async (_pool, signup) => { texts.push(signup); return false; };
+  waitlistService.releaseWaitlistSignup = async () => ({
+    id: 1,
+    email: 'old@example.invalid',
+    recipient_email: 'new@example.invalid',
+    released_at: new Date(),
+    linked_user_id: 77,
+    more_token: null,
+    newly_released: true,
+  });
+  const res = await call('POST', '/api/v4/admin/waitlist/bulk-release', { ids: [1] });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.data.admitted, [1]);
+  assert.deepEqual(mailed.map((m) => [m.kind, m.to]), [['waitlist_released', 'new@example.invalid']]);
+
+  // No confirmed address on the account: no mail at the old row address
+  // either, and the phone/SMS hook is told as it is for a phone row.
+  mailed = [];
+  waitlistService.releaseWaitlistSignup = async () => ({
+    id: 2,
+    email: 'old@example.invalid',
+    recipient_email: null,
+    released_at: new Date(),
+    linked_user_id: 77,
+    more_token: null,
+    newly_released: true,
+  });
+  const noMail = await call('POST', '/api/v4/admin/waitlist/bulk-release', { ids: [2] });
+  assert.equal(noMail.status, 200);
+  assert.deepEqual(noMail.body.data.admitted, [2]);
+  assert.equal(mailed.length, 0, 'nothing went to the address the row still holds');
+  assert.equal(texts.length, 1);
+  assert.equal(texts[0].id, 2);
+});
+
 // #4223: a phone row (no email) waits on outbound SMS (#4096). A batch
 // skips it and says so rather than failing it or the rows around it, and
 // the one-row Admit answers with the reason.
