@@ -521,6 +521,13 @@
       "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
     },
     {
+      "source": "src/routes/profile.js",
+      "kind": "structural-template",
+      "fingerprint": "6939406444a09fac0090",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS done FROM challenges c JOIN season_events se ON se.id = c.season_event_id LEFT JOIN challenge_templates ct ON ct.id = c.challenge_templ"
+    },
+    {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
       "fingerprint": "14e100b27085ad0a7fe8",
