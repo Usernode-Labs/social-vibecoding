@@ -22,8 +22,10 @@ function unzipReport(bytes) {
   try {
     const file = path.join(dir, 'report.zip');
     fs.writeFileSync(file, bytes);
+    // execFileSync waits for exit even after a limit is exceeded. unzip handles
+    // SIGTERM, so force this disposable child to stop; finally owns cleanup.
     return execFileSync('/usr/bin/unzip', ['-p', file, REPORT_FILE], {
-      encoding: 'utf8', maxBuffer: MAX_BYTES, timeout: 10000, stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8', maxBuffer: MAX_BYTES, timeout: 10000, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'ignore'],
     });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
