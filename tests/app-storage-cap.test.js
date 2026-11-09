@@ -79,10 +79,11 @@ function fakePool(apps) {
         const a = byId(params[0]);
         return { rows: a ? [{ db_storage_frozen_at: a.db_storage_frozen_at, db_storage_grace_until: a.db_storage_grace_until, db_storage_cap_bytes: a.db_storage_cap_bytes }] : [] };
       }
-      if (/^UPDATE apps SET db_storage_frozen_at = \$1, db_storage_warned_at = COALESCE\(db_storage_warned_at, \$1\) WHERE id = \$2$/.test(q)) {
+      if (/^UPDATE apps SET db_storage_frozen_at = \$1, db_storage_warned_at = COALESCE\(db_storage_warned_at, \$1\), db_storage_warn_level = 2 WHERE id = \$2$/.test(q)) {
         const a = byId(params[1]);
         a.db_storage_frozen_at = params[0];
         if (!a.db_storage_warned_at) a.db_storage_warned_at = params[0];
+        a.db_storage_warn_level = 2;
         return { rows: [], rowCount: 1 };
       }
       // The sweep's transitions are compare-and-sets on the row it read, and
@@ -116,15 +117,25 @@ function fakePool(apps) {
         byId(params[0]).db_storage_frozen_at = null;
         return { rows: [], rowCount: 1 };
       }
-      if (/^UPDATE apps SET db_storage_warned_at = \$1 WHERE id = \$2 AND db_storage_warned_at IS NULL$/.test(q)) {
-        const a = byId(params[1]);
-        if (a.db_storage_warned_at) return { rows: [], rowCount: 0 };
-        a.db_storage_warned_at = params[0];
+      if (/^UPDATE apps SET db_storage_warn_level = 1 WHERE id = \$1 AND COALESCE\(db_storage_warn_level, 0\) < 1$/.test(q)) {
+        const a = byId(params[0]);
+        if ((a.db_storage_warn_level || 0) >= 1) return { rows: [], rowCount: 0 };
+        a.db_storage_warn_level = 1;
         return { rows: [], rowCount: 1 };
       }
-      if (/^UPDATE apps SET db_storage_warned_at = NULL WHERE id = \$1 AND db_storage_warned_at IS NOT NULL$/.test(q)) {
-        const a = byId(params[0]);
-        if (!a.db_storage_warned_at) return { rows: [], rowCount: 0 };
+      if (/^UPDATE apps SET db_storage_warn_level = 2, db_storage_warned_at = COALESCE\(db_storage_warned_at, \$1\) WHERE id = \$2 AND COALESCE\(db_storage_warn_level, 0\) < 2$/.test(q)) {
+        const a = byId(params[1]);
+        if ((a.db_storage_warn_level || 0) >= 2) return { rows: [], rowCount: 0 };
+        a.db_storage_warn_level = 2;
+        if (!a.db_storage_warned_at) a.db_storage_warned_at = params[0];
+        return { rows: [], rowCount: 1 };
+      }
+      if (/^UPDATE apps SET db_storage_warn_level = \$1, db_storage_warned_at = NULL WHERE id = \$2 AND \(db_storage_warn_level IS DISTINCT FROM \$1 OR db_storage_warned_at IS NOT NULL\)$/.test(q)) {
+        const a = byId(params[1]);
+        const next = params[0] == null ? null : Number(params[0]);
+        const cur = a.db_storage_warn_level == null ? null : Number(a.db_storage_warn_level);
+        if (cur === next && !a.db_storage_warned_at) return { rows: [], rowCount: 0 };
+        a.db_storage_warn_level = next;
         a.db_storage_warned_at = null;
         return { rows: [], rowCount: 1 };
       }
@@ -138,6 +149,7 @@ function app(id, slug, extra = {}) {
     id, slug, name: slug.replace(/-/g, ' '), self_hosted: false,
     db_size_bytes: null, db_size_measured_at: null, db_storage_cap_bytes: null,
     db_storage_frozen_at: null, db_storage_grace_until: null, db_storage_warned_at: null,
+    db_storage_warn_level: null,
     ...extra,
   };
 }
@@ -194,9 +206,57 @@ const base = { capBytes: 1000, warnPercent: 80, frozenAt: null, graceUntil: null
 const later = new Date(NOW.getTime() + 60 * 60 * 1000);
 const earlier = new Date(NOW.getTime() - 60 * 60 * 1000);
 
-test('decide: nothing happens under the warning line', () => {
-  assert.deepEqual(cap.decide({ ...base, bytes: 0 }), { transition: 'none', frozen: false, warned: false, graceOpen: false });
-  assert.deepEqual(cap.decide({ ...base, bytes: 799 }).transition, 'none');
+test('decide: nothing happens under the early line', () => {
+  assert.deepEqual(cap.decide({ ...base, bytes: 0 }),
+    { transition: 'none', frozen: false, warned: false, graceOpen: false, warnLevel: 0 });
+  assert.equal(cap.decide({ ...base, bytes: 499 }).transition, 'none');
+});
+
+test('decide: half full is an early heads-up, once until it drops back under', () => {
+  assert.equal(cap.decide({ ...base, bytes: 500 }).transition, 'warn_early');
+  assert.deepEqual(cap.decide({ ...base, bytes: 500 }), {
+    transition: 'warn_early', frozen: false, warned: false, graceOpen: false, warnLevel: 1,
+  });
+  assert.equal(cap.decide({ ...base, bytes: 500, warnLevel: 1 }).transition, 'none', 'already told: no repeat');
+  assert.equal(cap.decide({ ...base, bytes: 700, warnLevel: 1 }).transition, 'none', 'still early, still one notice');
+  assert.equal(cap.decide({ ...base, bytes: 400, warnLevel: 1 }).transition, 'clear_warning');
+  assert.equal(cap.decide({ ...base, bytes: 500, warnLevel: null }).transition, 'warn_early',
+    'the next crossing tells again');
+});
+
+test('decide: a jump past both lines sends only the highest', () => {
+  assert.equal(cap.decide({ ...base, bytes: 850 }).transition, 'warn');
+  assert.deepEqual(cap.decide({ ...base, bytes: 850 }), {
+    transition: 'warn', frozen: false, warned: true, graceOpen: false, warnLevel: 2,
+  });
+  assert.equal(cap.decide({ ...base, bytes: 850, warnLevel: 1 }).transition, 'warn');
+});
+
+test('decide: dropping from the warning line clears to the early level, then to none', () => {
+  assert.deepEqual(cap.decide({ ...base, bytes: 600, warnLevel: 2 }), {
+    transition: 'clear_warning', frozen: false, warned: false, graceOpen: false, warnLevel: 1,
+  });
+  assert.deepEqual(cap.decide({ ...base, bytes: 400, warnLevel: 2 }), {
+    transition: 'clear_warning', frozen: false, warned: false, graceOpen: false, warnLevel: null,
+  });
+  assert.equal(cap.decide({ ...base, bytes: 850, warnLevel: 1 }).transition, 'warn', 'each re-crossing tells once');
+});
+
+test('decide: a warning line at or below 50% never sends a separate early notice', () => {
+  assert.equal(cap.decide({ ...base, warnPercent: 50, bytes: 500 }).transition, 'warn');
+  assert.equal(cap.decide({ ...base, warnPercent: 40, bytes: 450 }).transition, 'warn');
+  assert.equal(cap.decide({ ...base, warnPercent: 50, bytes: 499 }).transition, 'none');
+});
+
+test('decide: an app warned before the level column existed counts as warned', () => {
+  // Legacy row: warned_at set, no level. It is not told again, and no early
+  // notice follows it.
+  assert.equal(cap.decide({ ...base, bytes: 850, warnedAt: earlier }).transition, 'none');
+  assert.equal(cap.decide({ ...base, bytes: 600, warnedAt: earlier }).transition, 'clear_warning');
+  assert.equal(cap.decide({ ...base, bytes: 500, warnedAt: earlier }).transition, 'clear_warning');
+  assert.deepEqual(cap.decide({ ...base, bytes: 850, warnedAt: earlier, warnLevel: null }), {
+    transition: 'none', frozen: false, warned: true, graceOpen: false, warnLevel: 2,
+  });
 });
 
 test('decide: crossing the warning line warns once, and re-arms only under it', () => {
@@ -209,7 +269,7 @@ test('decide: crossing the warning line warns once, and re-arms only under it', 
 
 test('decide: at the cap it freezes, and the freeze counts as the warning', () => {
   const d = cap.decide({ ...base, bytes: 1000 });
-  assert.deepEqual(d, { transition: 'freeze', frozen: true, warned: true, graceOpen: false });
+  assert.deepEqual(d, { transition: 'freeze', frozen: true, warned: true, graceOpen: false, warnLevel: 2 });
   assert.equal(cap.decide({ ...base, bytes: 1000, warnedAt: earlier }).transition, 'freeze', 'warned first, then frozen');
   assert.equal(cap.decide({ ...base, bytes: 5000 }).transition, 'freeze');
 });
@@ -220,7 +280,7 @@ test('decide: a frozen app thaws only under 95% of the cap (hysteresis)', () => 
   assert.equal(cap.decide({ ...frozen, bytes: 990 }).transition, 'none', 'just under the cap is not enough');
   assert.equal(cap.decide({ ...frozen, bytes: 950 }).transition, 'none', 'exactly 95% is still frozen');
   const thaw = cap.decide({ ...frozen, bytes: 949 });
-  assert.deepEqual(thaw, { transition: 'unfreeze', frozen: false, warned: true, graceOpen: false },
+  assert.deepEqual(thaw, { transition: 'unfreeze', frozen: false, warned: true, graceOpen: false, warnLevel: 2 },
     'thaws and stays warned: it is still over the warning line');
   // One transition per sweep: a big drop thaws now and re-arms next time.
   assert.equal(cap.decide({ ...frozen, bytes: 10 }).transition, 'unfreeze');
@@ -239,8 +299,9 @@ test('decide: an open grace window keeps the app writable whatever its size', ()
   assert.equal(cap.decide({ ...base, bytes: 5000, graceUntil: earlier, frozenAt: earlier }).transition, 'none');
 });
 
-test('decide: a per-app cap moves both lines', () => {
-  assert.equal(cap.decide({ ...base, capBytes: 10000, bytes: 5000 }).transition, 'none');
+test('decide: a per-app cap moves every line', () => {
+  assert.equal(cap.decide({ ...base, capBytes: 10000, bytes: 4000 }).transition, 'none');
+  assert.equal(cap.decide({ ...base, capBytes: 10000, bytes: 5000 }).transition, 'warn_early');
   assert.equal(cap.decide({ ...base, capBytes: 10000, bytes: 8000 }).transition, 'warn');
   assert.equal(cap.decide({ ...base, capBytes: 10000, bytes: 10000 }).transition, 'freeze');
 });
@@ -308,8 +369,39 @@ test('sweep measures every app database, freezes and warns, and skips what is no
 
   assert.deepEqual(notify.calls, [
     { appId: 2, detail: 'storage_full' },
-    { appId: 3, detail: 'storage_warn' },
+    { appId: 3, detail: 'storage_warn:2560:3072' },
   ]);
+});
+
+test('sweep sends the early heads-up once, then the sized warning', async () => {
+  const pool = fakePool([app(6, 'half')]);
+  const notify = fakeNotify();
+  const at = (m) => new Date(NOW.getTime() + m * 60 * 1000);
+  const run = (bytes, now) => cap.sweep(pool, {
+    execute: fakeExecute([['app_half', bytes]]), now, staging: false, notify,
+  });
+
+  let out = await run(1.6 * GIB, at(0));
+  assert.equal(out.earlyWarned, 1);
+  assert.equal(out.warned, 0);
+  assert.equal(pool.apps[0].db_storage_warn_level, 1);
+  assert.deepEqual(notify.calls, [{ appId: 6, detail: 'storage_early:1638:3072' }]);
+
+  out = await run(1.7 * GIB, at(15));
+  assert.deepEqual([out.earlyWarned, out.warned], [0, 0], 'already told at this line');
+
+  out = await run(2.5 * GIB, at(30));
+  assert.deepEqual([out.earlyWarned, out.warned], [0, 1]);
+  assert.equal(pool.apps[0].db_storage_warn_level, 2);
+  assert.deepEqual(notify.calls[1], { appId: 6, detail: 'storage_warn:2560:3072' });
+});
+
+test('storageDetail fits the 32-character detail column at the largest figures', () => {
+  const biggest = cap.storageDetail('early', Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
+  assert.ok(biggest.length <= 32, biggest);
+  assert.match(biggest, /^storage_early:\d{1,9}:\d{1,9}$/);
+  assert.equal(cap.storageDetail('warn', 1638 * 1024 * 1024, 3 * GIB), 'storage_warn:1638:3072');
+  assert.equal(cap.storageDetail('early', 0.6 * GIB, 3 * GIB), 'storage_early:614:3072');
 });
 
 test('sweep in a staging preview measures and records but touches no role and tells nobody', async () => {
@@ -365,7 +457,7 @@ test('successive sweeps: frozen stays frozen until 95%, thaws without a second w
   out = await run(2.5 * GIB, at(60));
   assert.equal(out.warned, 1, '83% again: warned again');
 
-  assert.deepEqual(notify.calls.map((c) => c.detail), ['storage_full', 'storage_warn'],
+  assert.deepEqual(notify.calls.map((c) => c.detail), ['storage_full', 'storage_warn:2560:3072'],
     'two notifications across five sweeps: the freeze and the fresh crossing');
 });
 
@@ -425,7 +517,7 @@ test('a sweep acts on the row as it stands under its lock: a stale read freezes 
   assert.equal(out.frozen, 0);
   assert.equal(later.apps[1].db_storage_frozen_at, null);
   assert.ok(!execute2.roleCalls().some((c) => /app_big_one_owner/.test(c)), 'big-one\'s role untouched');
-  assert.deepEqual(tell.calls.map((c) => c.detail), ['storage_warn'], 'only warm, which nobody touched');
+  assert.deepEqual(tell.calls.map((c) => c.detail), ['storage_warn:2560:3072'], 'only warm, which nobody touched');
 });
 
 test('holding a freeze leaves a role that is already read-only alone (setting it again ends the app\'s connections)', async () => {
@@ -497,7 +589,7 @@ test('one app\'s failed role change is recorded and leaves the others alone', as
   assert.equal(out.errors.length, 1);
   assert.match(out.errors[0], /^big-one: /);
   assert.equal(pool.apps[1].db_storage_frozen_at, null, 'nothing recorded for a freeze that did not happen');
-  assert.deepEqual(notify.calls, [{ appId: 3, detail: 'storage_warn' }], 'nobody is told about a freeze that did not happen');
+  assert.deepEqual(notify.calls, [{ appId: 3, detail: 'storage_warn:2560:3072' }], 'nobody is told about a freeze that did not happen');
   assert.equal(pool.apps[1].db_size_bytes, 3.5 * GIB, 'the measurement itself still landed');
 });
 

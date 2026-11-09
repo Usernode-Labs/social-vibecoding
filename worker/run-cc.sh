@@ -313,6 +313,19 @@ if [ "$MODE" = "sync" ]; then
     CC_EXIT=0
     COMMIT_MESSAGE=""
 
+    # The timing baseline is rewritten by every bot build, so two changes
+    # almost always collide on it. It is not worth a resolution: take main's
+    # copy (#6531). During a merge, "theirs" is main.
+    TIMING_BASELINE="tests/baselines/test-durations.json"
+    if git diff --name-only --diff-filter=U 2>/dev/null | grep -qxF "$TIMING_BASELINE"; then
+      if git checkout --theirs -- "$TIMING_BASELINE" 2>&1; then
+        git add "$TIMING_BASELINE"
+        COMMIT_MESSAGE="Merge origin/main via Homeroom sync (mechanical files)"
+      else
+        echo "__USERNODE_WARN__ could not take main's timing baseline"
+      fi
+    fi
+
     # A schema migration history is regenerated, never merged by hand
     # (docs/database/schema-migrations.md): main's history exactly as main
     # recorded it, then this branch's migrations recorded again on top. On

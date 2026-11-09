@@ -66,6 +66,8 @@ export function typingBesides(typing: readonly Typist[], working: Typist | null)
 const DOING_WORDS: Record<string, string> = {
   progress: 'messages:thread.botWorking.progress',
   drawing: 'messages:thread.botWorking.drawing',
+  // #6354: Homeroom is opening one of its own pages to copy it for a design.
+  capturing: 'messages:thread.botWorking.capturing',
   designing: 'messages:thread.botWorking.designing',
   drafting: 'messages:thread.botWorking.drafting',
   writing: 'messages:thread.botWorking.writing',
@@ -79,6 +81,12 @@ export function botDraftText(doing: BotDoing | null | undefined): string {
 /** What the card says the bot is doing: "Reading request #12", or "Thinking" for nothing (or a kind it does not know). */
 export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): string {
   if (doing?.kind === 'request' && doing.number) return t('messages:thread.botWorking.request', { number: doing.number });
+  // #6354: "Opening the Homeroom bot page as it is now".
+  if (doing?.kind === 'capturing') {
+    return doing.page
+      ? t('messages:thread.botWorking.capturing', { page: doing.page })
+      : t('messages:thread.botWorking.capturingUnnamed');
+  }
   if (doing?.kind === 'code') {
     return doing.project ? t('messages:thread.botWorking.code', { project: doing.project }) : t('messages:thread.botWorking.codeUnnamed');
   }

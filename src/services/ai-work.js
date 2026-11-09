@@ -165,7 +165,10 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
            -- not finish: that is nobody's to fix.
            (cs.check_state = 'failing'
             OR (cs.staging_url IS NULL AND cs.check_state = 'error' AND cs.check_error_detail IS NOT NULL)
-            OR cs.merge_conflict_state = 'failed') AS needs_fix,
+            OR cs.merge_conflict_state = 'failed'
+            -- #6531: a conflict only its author (or the bot) can now move,
+            -- after the conflict lane's free resolution was spent.
+            OR cs.integration_block_reasons ?| array['unresolvable','fork_head','checks_failing','checks_error']) AS needs_fix,
            -- #6282: 'running' while a turn updates it, 'queued' while an
            -- ask waits its turn, and what was asked, for the row's words.
            ${updateComingSql('cs')} AS update_coming,

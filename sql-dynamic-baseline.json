@@ -1734,6 +1734,13 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
+      "fingerprint": "f4f0d5e27ae9dc187fa1",
+      "count": 1,
+      "preview": "`INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail) SELECT u, $2, NULL, 'app_health', $3 FROM UNNEST($1::int[]) AS u WHERE NOT EXISTS ( S"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
       "fingerprint": "f5070aa3a2bc604cdc21",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL} AND ${CONVERSATION_ACCESS_SQL} "

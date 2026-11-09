@@ -92,11 +92,16 @@ test('the module still decides the stamp and which sanitizer runs, and drops a s
   assert.doesNotMatch(fn[1], /slice\(0, 10\)/);
   assert.doesNotMatch(code, /_issueCommentsView|_issueCommentsHtml|mountIssueComments/, 'the old thread is gone, not spare');
 
-  // The staleness check that drops a result for an issue the reader has left.
-  const load = code.match(/_loadIssueComments\(item\) \{([\s\S]*?)\n {2}\},/);
-  assert.ok(load, '_loadIssueComments() found');
-  assert.match(load[1], /if \(!t \|\| t\.kind !== 'issue' \|\| t\.id !== number\) return;/);
-  assert.match(load[1], /GroupChat\.renderThread\(\{ keepScroll: true \}\)/);
+  // #6497: the comments ride the request's first page (`request_comments`),
+  // so the topic head no longer fetches them after paint. The thread takes
+  // that answer into the same cache before its one render, keyed by app and
+  // issue so another app's number can never paint it (#4178).
+  assert.doesNotMatch(code, /_loadIssueComments/, 'the after-paint comments fetch is gone');
+  const take = code.match(/_takeIssueComments\(slug, ref, payload\) \{([\s\S]*?)\n {2}\},/);
+  assert.ok(take, '_takeIssueComments() found');
+  assert.match(take[1], /_ghComments\.set\(AppView\._ghCommentsKey\(slug, Number\(ref\)\)/);
+  assert.match(take[1], /comments: Array\.isArray\(payload\.comments\) \? payload\.comments : \[\]/);
+  assert.match(take[1], /truncated: !!payload\.truncated/);
 });
 
 test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec', () => {
