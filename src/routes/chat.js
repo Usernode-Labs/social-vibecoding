@@ -488,15 +488,6 @@ function chatRoutes(config) {
       return res.status(400).json({ error: 'Invalid before/after/around' });
     }
 
-    // #6497: a request's first page is its whole discussion, up to the
-    // ceiling; an older page (before), a catch-up (after) and a permalink
-    // window (around) keep the page limit, as every other stream does.
-    const requestFirstPage = threadType === 'issue'
-      && before == null && after == null && around == null;
-    const limit = requestFirstPage
-      ? Math.min(parseInt(req.query.limit, 10) || REQUEST_THREAD_CEILING, REQUEST_THREAD_CEILING)
-      : pageLimit(req.query.limit);
-
     try {
       // Reading chat history only needs view access (#621): anyone who
       // can see the app gets a read-only look at the dev surface.
@@ -509,6 +500,15 @@ function chatRoutes(config) {
       if (!app) {
         return res.status(404).json({ error: 'App not found' });
       }
+
+      // #6497: a request's first page is its whole discussion, up to the
+      // ceiling; an older page (before), a catch-up (after) and a permalink
+      // window (around) keep the page limit, as every other stream does.
+      const requestFirstPage = threadType === 'issue'
+        && before == null && after == null && around == null;
+      const limit = requestFirstPage
+        ? Math.min(parseInt(req.query.limit, 10) || REQUEST_THREAD_CEILING, REQUEST_THREAD_CEILING)
+        : pageLimit(req.query.limit);
 
       const appId = app.id;
       const viewerId = req.user.id;
