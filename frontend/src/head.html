@@ -395,12 +395,15 @@
     }());
   </script>
   <script>
-    // Skin module — the looks, two experiments (Settings › Experimental,
-    // both off by default). The same head-blocking pattern as window.Display:
+    // Skin module — the looks, experiments all (Settings › Experimental,
+    // off by default). The same head-blocking pattern as window.Display:
     // the stored choice lands on <html> before app.css, whose rules read
     // it, is applied, so a look never flashes in after first paint.
     //   'homeroom:skin'  → 'brand'  the new look (light mode only)
-    //                    → 'glass'  the glass look (light and dark)
+    //                    → 'glass', 'brandkit', 'workbench', 'paper',
+    //                      'pastel', 'mosaic', 'sunrise', 'today',
+    //                      'playground'  the nine looks of the one frame
+    //                      (light and dark; an admin's preview)
     //                    → key removed for the standard look (the default)
     // Kept on the DEVICE: there is nothing to save or fail. app.css scopes
     // every rule of a look to html[data-skin="<look>"]. Every storage access

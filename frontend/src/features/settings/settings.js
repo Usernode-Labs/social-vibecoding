@@ -3569,8 +3569,17 @@
       // app.js wins over the fallback.
       const realAdmin = (typeof App !== 'undefined' ? App._realIsAdmin : undefined)
         ?? (typeof App !== 'undefined' && !!App.user?.isAdmin);
+      // A device left in one of the menu's looks keeps the menu whoever is
+      // signed in (an admin's device in other hands, an admin who lost the
+      // role): the look is stored on the device and the menu is what
+      // clears it. New look has its own switch and does not count.
       const lookSection = document.getElementById('settings-look-section');
-      if (lookSection) lookSection.classList.toggle('hidden', !realAdmin);
+      if (lookSection) {
+        const lookMenu = document.getElementById('settings-look');
+        const stored = window.Skin?.get?.();
+        const inLook = !!lookMenu && Array.from(lookMenu.options).some((o) => o.value && o.value === stored);
+        lookSection.classList.toggle('hidden', !realAdmin && !inLook);
+      }
       if (!section || !toggle) return;
       if (!realAdmin) {
         section.classList.add('hidden');

@@ -154,14 +154,42 @@ test('Settings › Experimental offers the nine looks in one menu, shipped hidde
   assert.doesNotMatch(html, /glass-look-enabled/, 'the one-look switch is gone');
 });
 
-test('settings.js shows the Look menu only to a real admin', () => {
+// The gate, run: settings.js's own method against stub nodes.
+function runAdminGate({ realAdmin, skin = 'standard' }) {
   const src = settingsJs();
   const start = src.indexOf('_renderAdminSection() {');
   assert.ok(start > 0);
-  const body = src.slice(start, src.indexOf('\n    },', start));
-  assert.match(body, /getElementById\('settings-look-section'\)/);
-  assert.match(body, /App\._realIsAdmin/, 'the un-masked value, as the admin preview reads it');
-  assert.match(body, /classList\.toggle\('hidden', !realAdmin\)/, 'hidden unless the viewer is really an admin');
+  const method = src.slice(start, src.indexOf('\n    },', start) + '\n    }'.length);
+  assert.match(method, /App\._realIsAdmin/, 'the un-masked value, as the admin preview reads it');
+  const node = (extra) => {
+    const cls = new Set(['hidden']);
+    return { classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), toggle: (c, on) => (on ? cls.add(c) : cls.delete(c)), contains: (c) => cls.has(c) }, ...extra };
+  };
+  const nodes = {
+    'settings-admin-section': node(), 'view-as-non-admin': node({ checked: false }), 'settings-look-section': node(),
+    'settings-look': node({ options: [{ value: '' }, ...FRAME_LOOKS.map((value) => ({ value }))] }),
+  };
+  vm.runInNewContext(`({ ${method} })._renderAdminSection()`, {
+    document: { getElementById: (id) => nodes[id] || null },
+    App: { _realIsAdmin: realAdmin, user: { isAdmin: realAdmin } },
+    localStorage: { getItem: () => null },
+    window: { Skin: { get: () => skin } },
+  });
+  return { menuShown: !nodes['settings-look-section'].classList.contains('hidden'), adminShown: !nodes['settings-admin-section'].classList.contains('hidden') };
+}
+
+test('settings.js shows the Look menu only to a real admin', () => {
+  assert.deepEqual(runAdminGate({ realAdmin: true }), { menuShown: true, adminShown: true });
+  assert.deepEqual(runAdminGate({ realAdmin: false }), { menuShown: false, adminShown: false });
+  assert.equal(runAdminGate({ realAdmin: false, skin: 'brand' }).menuShown, false, 'New look has its own switch');
+});
+
+test('a device left in one of the looks keeps the menu, so the way back to Standard is never hidden', () => {
+  // An admin's device used by someone else, or an admin who lost the role:
+  // the look is stored on the device, and the menu is the control that
+  // clears it.
+  assert.equal(runAdminGate({ realAdmin: false, skin: 'mosaic' }).menuShown, true);
+  assert.equal(runAdminGate({ realAdmin: false, skin: 'mosaic' }).adminShown, false, 'only the menu, never the admin preview');
 });
 
 // The wiring, run: settings.js's own block for the two controls, against

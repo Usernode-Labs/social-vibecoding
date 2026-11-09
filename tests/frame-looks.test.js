@@ -77,7 +77,10 @@ const appCss = () => read('public', 'css', 'app.css');
 const DEFAULTS_MARK = '/* ── SKIN TOKEN DEFAULTS';
 const SHARED_MARK = '/* ── THE FRAME\'S LOOKS';
 const BRAND_MARK = '/* ── THE NEW LOOK, AN EXPERIMENT';
-const ANY_LOOK = 'html[data-skin]:not([data-skin="brand"])';
+// :where() keeps the shared rule at a look's own weight (one attribute on
+// html): a plain :not([…]) would add one, and the rule would then outrank
+// the More contrast tokens, which sit earlier in the sheet at that weight.
+const ANY_LOOK = 'html[data-skin]:where(:not([data-skin="brand"]))';
 
 const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
 
@@ -159,6 +162,27 @@ test('what the looks share is said once, for every look but New look', () => {
   assert.match(bodyOf(block, `${ANY_LOOK} .fr-row-t`), /color: var\(--fr-ink\)/, 'a row\'s name is the look\'s ink');
   assert.match(bodyOf(block, `${ANY_LOOK} .fr-row-s`), /color: var\(--fr-mut\)/, 'and its line the muted ink');
   assert.match(bodyOf(block, `${ANY_LOOK} .fr-card .fr-row::after`), /background: var\(--fr-line\)/, 'the hairline between rows is the look\'s line');
+});
+
+test('More contrast still wins under a look', () => {
+  // Settings › Appearance › More contrast redeclares four of the tokens a
+  // look retargets, from html…[data-contrast="more"]: two attribute-or-class
+  // conditions on html. The shared rule and every look's block carry one, so
+  // whatever the order in the sheet the contrast values hold.
+  const css = stripComments(appCss());
+  for (const sel of ['html:not(.dark)[data-contrast="more"]', 'html.dark[data-contrast="more"]']) {
+    const body = bodyOf(css, sel);
+    assert.ok(body, `${sel} sets the contrast tokens`);
+    for (const token of ['--text-muted:', '--border:', '--border-light:', '--app-sheet-line:']) assert.ok(body.includes(token), `${sel} sets ${token}`);
+  }
+  const section = css.slice(css.indexOf('html[data-skin]:where'), css.indexOf('html[data-skin="brand"]'));
+  const roots = [...section.matchAll(/(?:^|\n)(html[^\s{,]*) \{/g)].map((m) => m[1]);
+  assert.ok(roots.length >= 19, 'the shared rule and each look\'s light and dark roots are read');
+  for (const sel of roots) {
+    const weight = (sel.replace(/:where\([^)]*\)\)?/g, '').match(/\[[^\]]*\]|\.[a-z-]+/g) || []).length;
+    assert.ok(weight <= 2, `${sel} must not outweigh More contrast`);
+    if (weight === 2) assert.match(sel, /\.dark$/, `${sel}: only a look's own dark root carries two, and it sets none of the four contrast tokens it should not`);
+  }
 });
 
 for (const id of IDS) {
@@ -256,7 +280,12 @@ test('glass: sentence-case labels, 24px panes, a glow under the main button', ()
 test('brandkit: a cream page, a serif title, labels in mono, a yellow button with a thin black edge', () => {
   const block = stripComments(lookBlock('brandkit'));
   assert.match(block, /html\[data-skin="brandkit"\]:not\(\.dark\):not\(\[data-app-tone="dark"\]\) body:has\(#platform-tabs\) \{[^}]*--home-ground: #fffeea;[^}]*background: #fffeea;/);
-  assert.match(block, /html\[data-skin="brandkit"\]\.dark body:has\(#platform-tabs\) \{[^}]*background: #000000;/);
+  // Dark: the route rule that paints the dark wallpaper carries three
+  // conditions and one id; :not([data-app-tone="light"]) gives this one as
+  // many, and keeps black from surrounding a light app in a dark shell.
+  assert.match(block, /html\[data-skin="brandkit"\]\.dark:not\(\[data-app-tone="light"\]\) body:has\(#platform-tabs\) \{[^}]*--home-ground: #000000;[^}]*background: #000000;/);
+  assert.match(block, /html\[data-skin="brandkit"\]\.dark:not\(\[data-app-tone="light"\]\) body::before \{[^}]*background: #000000;/);
+  assert.doesNotMatch(block, /html\[data-skin="brandkit"\]\.dark body/, 'no dark ground rule without the app-tone guard');
   assert.match(rule('brandkit', '.fr-title'), /font-family: 'Source Serif 4',/);
   assert.match(rule('brandkit', '.fr-label'), /font-family: 'Geist Mono',[^}]*text-transform: none;/);
   assert.match(rule('brandkit', '.fr-btn'), /background: #ffee6f;[^}]*color: #000000;[^}]*box-shadow: inset 0 0 0 1px rgba\(0, 0, 0, 0\.82\);/);
@@ -268,6 +297,14 @@ test('workbench: one line per row from 768px, mono labels, small square controls
   assert.match(wide('workbench'), /html\[data-skin="workbench"\] \.fr-row \{ min-height: 42px; \}/);
   assert.doesNotMatch(wide('workbench'), /\.fr-side \.fr-row-tx/, 'the side column keeps two lines');
   assert.match(rule('workbench', '.fr-label'), /font-family: 'IBM Plex Mono',/);
+  // One weight of the mono ships (500): its face says so, and no rule asks
+  // it for another, which the browser would draw from the same file.
+  const mono = [...lookBlock('workbench').matchAll(/@font-face\s*\{[^}]*font-family:\s*'IBM Plex Mono';[^}]*\}/g)].map((m) => m[0]);
+  assert.equal(mono.length, 2);
+  for (const f of mono) assert.match(f, /font-weight: 500;/);
+  for (const m of stripComments(lookBlock('workbench')).matchAll(/\{([^{}]*'IBM Plex Mono'[^{}]*)\}/g)) {
+    if (!/src:/.test(m[1])) assert.match(m[1], /font-weight: 500;/, 'a rule set in the mono asks for the weight that ships');
+  }
   assert.match(rule('workbench', '.fr-card'), /border-radius: 10px;/);
   assert.match(rule('workbench', '.fr-btn'), /height: 32px;[^}]*border-radius: 8px;/);
   assert.match(wide('workbench'), /html\[data-skin="workbench"\] \.fr-cols \{[^}]*grid-template-columns: minmax\(0, 1fr\) 300px;/, 'a wider content column');
@@ -287,6 +324,10 @@ test('pastel: the groups take lavender, pink and peach in turn', () => {
   }
   assert.match(rule('pastel', '.fr-card'), /border-radius: 26px;/);
   assert.match(rule('pastel', '.fr-lead:not(.fr-lead-pic)'), /background: var\(--fr-in\);[^}]*border-radius: 50%;/);
+  // The soft shadow under what floats on the page has a value per mode.
+  assert.match(bodyOf(lookBlock('pastel'), 'html[data-skin="pastel"]'), /--fr-soft: 0 10px 30px -18px rgba\(35, 29, 69, 0\.45\);/);
+  assert.match(bodyOf(lookBlock('pastel'), 'html[data-skin="pastel"].dark'), /--fr-soft: 0 10px 30px -18px rgba\(0, 0, 0, 0\.8\);/);
+  assert.match(rule('pastel', '.fr-btn-quiet'), /box-shadow: var\(--fr-soft\);/);
 });
 
 test('mosaic: in the main column a list is a grid of tiles, two across from 768px', () => {
@@ -309,6 +350,8 @@ test('today: 22px group names, 72px rows, 48px pictures', () => {
   assert.match(rule('today', '.fr-label'), /font-size: 22px;[^}]*font-weight: 800;[^}]*text-transform: none;[^}]*color: var\(--fr-ink\);/);
   assert.match(rule('today', '.fr-row'), /min-height: 72px;/);
   assert.match(rule('today', '.fr-lead'), /width: 48px;[^}]*height: 48px;/);
+  assert.match(rule('today', '.fr-row-sm .fr-lead'), /width: 36px;[^}]*height: 36px;/, 'a single-line row has a 36px picture, or it could never be 54px');
+  assert.match(rule('today', '.fr-card .fr-row-sm::after'), /inset-inline-start: 72px;/);
   assert.match(rule('today', '.fr-card'), /border-radius: 24px;/);
 });
 
@@ -317,6 +360,21 @@ test('playground: everything is a block with a solid bottom edge, and nothing is
   assert.match(bodyOf(lookBlock('playground'), 'html[data-skin="playground"]'), /--fr-glow: 0 0 0 2px rgba\(31, 42, 68, 0\.08\), 0 3px 0 rgba\(31, 42, 68, 0\.14\);/);
   assert.match(rule('playground', '.fr-btn'), /font-weight: 900;[^}]*box-shadow: var\(--fr-edge\);/);
   assert.match(rule('playground', '.fr-card .fr-row::after'), /height: 2px;/, 'dividers are 2px, never hairlines');
+});
+
+test('the words Home\'s frame shows are described for every look, not for glass alone', () => {
+  const en = JSON.parse(read('frontend', 'locales', 'en', 'home.json'));
+  const keys = Object.keys(en).filter((k) => k.startsWith('frame.'));
+  assert.ok(keys.length >= 19);
+  for (const k of keys) assert.doesNotMatch(en[k].description, /glass/i, `${k}: a translator is told where it appears under any look`);
+});
+
+test('Source Serif 4 travels with its own copyright notice', () => {
+  // The package's licence file opens with a placeholder; the OFL asks for
+  // the font's own notice, which is Adobe's.
+  const licence = read('public', 'fonts', 'source-serif-4', 'LICENSE.txt');
+  assert.match(licence, /^Copyright 2014 - 2023 Adobe \(http:\/\/www\.adobe\.com\/\), with Reserved Font Name/);
+  assert.match(read('public', 'fonts', 'source-serif-4', 'README.md'), /copyright line/i, 'the README says the line was corrected and from where');
 });
 
 // ── The section as a whole ───────────────────────────────────────────────

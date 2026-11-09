@@ -26998,13 +26998,16 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 
    What they share is said here once, for any data-skin but the New look's
    ("brand", the last block of this sheet, which is not a look of the
-   frame). The product's own tokens follow the look's, so the screens not
+   frame). The exception sits inside :where(), so the rule weighs what a
+   look's own flag weighs (one attribute on html) and no more: More
+   contrast (html…[data-contrast="more"], two) still sets its muted ink,
+   borders and sheet line over any look. The product's own tokens follow the look's, so the screens not
    yet drawn in the frame take its ink, accent and surfaces wherever they
    read a token; those drawn with literal zinc/violet utilities stay as
    they are until their own plan. The wallpaper tokens are not touched:
    the room stays the room (the Brand kit's cream page is the one
    exception, in its block). */
-html[data-skin]:not([data-skin="brand"]) {
+html[data-skin]:where(:not([data-skin="brand"])) {
   --text-primary: var(--fr-ink);
   --text-secondary: var(--fr-mut);
   --text-muted: var(--fr-faint);
@@ -27023,9 +27026,9 @@ html[data-skin]:not([data-skin="brand"]) {
 }
 /* A row's name and line are the look's inks, and the hairline between two
    rows its line, over ListRow's own zinc (which no token reaches). */
-html[data-skin]:not([data-skin="brand"]) .fr-row-t { color: var(--fr-ink); }
-html[data-skin]:not([data-skin="brand"]) .fr-row-s { color: var(--fr-mut); }
-html[data-skin]:not([data-skin="brand"]) .fr-card .fr-row::after { background: var(--fr-line); }
+html[data-skin]:where(:not([data-skin="brand"])) .fr-row-t { color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) .fr-row-s { color: var(--fr-mut); }
+html[data-skin]:where(:not([data-skin="brand"])) .fr-card .fr-row::after { background: var(--fr-line); }
 
 /* ── THE GLASS LOOK (data-skin="glass") ─────────────────────────────────
    Every rule here is scoped to html[data-skin="glass"], which the head's
@@ -27219,12 +27222,15 @@ html[data-skin="brandkit"]:not(.dark):not([data-app-tone="dark"]) body:has(#plat
 html[data-skin="brandkit"]:not(.dark):not([data-app-tone="dark"]) body::before {
   background: #fffeea;
 }
-html[data-skin="brandkit"].dark body:has(#platform-tabs) {
+/* Dark: the route rule that paints the dark wallpaper carries three
+   conditions and an id, so this one carries as many (it comes later). The
+   :not() also keeps black from surrounding a light app in a dark shell. */
+html[data-skin="brandkit"].dark:not([data-app-tone="light"]) body:has(#platform-tabs) {
   --home-ground: #000000;
   --un-zoom-bg: #000000;
   background: #000000;
 }
-html[data-skin="brandkit"].dark body::before {
+html[data-skin="brandkit"].dark:not([data-app-tone="light"]) body::before {
   background: #000000;
 }
 html[data-skin="brandkit"] .fr-page { padding-top: 40px; padding-bottom: 56px; }
@@ -27246,7 +27252,8 @@ html[data-skin="brandkit"] .fr-btn-quiet { background: var(--fr-surface); color:
    line from 768px, labels and numbers in a fixed-width face, small
    square-ish controls, a wider content column, and panels frosted lightly
    enough that the wallpaper stays present without costing contrast.
-   IBM Plex Sans, and IBM Plex Mono at its one shipped weight (500).
+   IBM Plex Sans, and IBM Plex Mono at its one shipped weight (500): every
+   rule set in the mono asks for 500.
 */
 @font-face {
   font-family: 'IBM Plex Sans';
@@ -27267,7 +27274,7 @@ html[data-skin="brandkit"] .fr-btn-quiet { background: var(--fr-surface); color:
 @font-face {
   font-family: 'IBM Plex Mono';
   src: url('/fonts/ibm-plex-mono/IBMPlexMono-500.woff2') format('woff2');
-  font-weight: 400 600;
+  font-weight: 500;
   font-style: normal;
   font-display: swap;
   unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
@@ -27275,7 +27282,7 @@ html[data-skin="brandkit"] .fr-btn-quiet { background: var(--fr-surface); color:
 @font-face {
   font-family: 'IBM Plex Mono';
   src: url('/fonts/ibm-plex-mono/IBMPlexMono-500-latin-ext.woff2') format('woff2');
-  font-weight: 400 600;
+  font-weight: 500;
   font-style: normal;
   font-display: swap;
   unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
@@ -27319,7 +27326,7 @@ html[data-skin="workbench"] .fr-row-sm { min-height: 40px; }
 html[data-skin="workbench"] .fr-card .fr-row::after { inset-inline-start: 48px; }
 html[data-skin="workbench"] .fr-row-t { font-size: 14px; font-weight: 600; }
 html[data-skin="workbench"] .fr-row-s { font-size: 13px; }
-html[data-skin="workbench"] .fr-lead { width: 26px; height: 26px; border-radius: 7px; font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 600; }
+html[data-skin="workbench"] .fr-lead { width: 26px; height: 26px; border-radius: 7px; font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 500; }
 html[data-skin="workbench"] .fr-pill { height: 20px; border-radius: 5px; font-size: 11.5px; font-weight: 600; }
 html[data-skin="workbench"] .fr-btn { height: 32px; padding-inline: 14px; border-radius: 8px; font-size: 13.5px; font-weight: 600; }
 @media (min-width: 768px) {
@@ -27448,6 +27455,7 @@ html[data-skin="pastel"] {
   --fr-t2: #fbe2ec;
   --fr-t3: #fde6de;
   --fr-in: rgba(255, 255, 255, 0.72);
+  --fr-soft: 0 10px 30px -18px rgba(35, 29, 69, 0.45);
   --accent-tint: rgba(79, 70, 229, 0.14);
 }
 html[data-skin="pastel"].dark {
@@ -27467,6 +27475,7 @@ html[data-skin="pastel"].dark {
   --fr-t2: #3a1f33;
   --fr-t3: #3b241d;
   --fr-in: rgba(255, 255, 255, 0.1);
+  --fr-soft: 0 10px 30px -18px rgba(0, 0, 0, 0.8);
   --accent-tint: rgba(154, 147, 255, 0.2);
 }
 html[data-skin="pastel"] .fr-title { font-size: 30px; letter-spacing: -0.035em; line-height: 1.05; }
@@ -27480,7 +27489,7 @@ html[data-skin="pastel"] .fr-group:nth-child(3n+2 of .fr-group) > .fr-card { bac
 html[data-skin="pastel"] .fr-group:nth-child(3n of .fr-group) > .fr-card { background: var(--fr-t3); }
 html[data-skin="pastel"] .fr-lead:not(.fr-lead-pic) { background: var(--fr-in); border-radius: 50%; box-shadow: none; }
 html[data-skin="pastel"] .fr-btn { font-weight: 700; }
-html[data-skin="pastel"] .fr-btn-quiet { background: var(--fr-surface); box-shadow: 0 10px 30px -18px rgba(35, 29, 69, 0.45); }
+html[data-skin="pastel"] .fr-btn-quiet { background: var(--fr-surface); box-shadow: var(--fr-soft); }
 @media (min-width: 768px) {
   html[data-skin="pastel"] .fr-title { font-size: 42px; }
 }
@@ -27704,6 +27713,8 @@ html[data-skin="today"] .fr-card .fr-row::after { inset-inline-start: 84px; }
 html[data-skin="today"] .fr-row-t { font-size: 16px; font-weight: 700; }
 html[data-skin="today"] .fr-row-s { font-size: 14px; }
 html[data-skin="today"] .fr-lead { width: 48px; height: 48px; border-radius: 14px; }
+html[data-skin="today"] .fr-row-sm .fr-lead { width: 36px; height: 36px; }
+html[data-skin="today"] .fr-card .fr-row-sm::after { inset-inline-start: 72px; }
 html[data-skin="today"] .fr-pill { height: 28px; font-size: 13px; }
 html[data-skin="today"] .fr-btn { height: 44px; font-size: 16px; font-weight: 700; }
 @media (min-width: 768px) {

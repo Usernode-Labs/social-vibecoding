@@ -22,5 +22,8 @@ package's own `unicode-range` lines, so a page in English downloads one
 | `SourceSerif4-Variable.woff2` | `@fontsource-variable/source-serif-4` | 5.3.0 | `files/source-serif-4-latin-wght-normal.woff2` | `/ILBFWoA8R8g72w1BqOrd5bgTucLXr2cEQuJRJYYBis65lbx1lxDDguUyyvvd3d+` | 50824 B |
 | `SourceSerif4-Variable-latin-ext.woff2` | `@fontsource-variable/source-serif-4` | 5.3.0 | `files/source-serif-4-latin-ext-wght-normal.woff2` | `e66E1PoXgdpwO0WEtxyK3ndcjoosCWmAp/fpUndnX/NSDIOYUwTvD+CZNDSXfxef` | 42040 B |
 
-Licence: SIL Open Font License 1.1 (`LICENSE.txt`, the package's own copy).
+Licence: SIL Open Font License 1.1 (`LICENSE.txt`, the package's own copy with
+its copyright line corrected: the package's file opens with a placeholder,
+"Google Inc.", and the OFL asks for the font's own notice, so the first line
+is the one from the upstream `LICENSE.md`, Adobe's).
 Upstream: https://github.com/adobe-fonts/source-serif
