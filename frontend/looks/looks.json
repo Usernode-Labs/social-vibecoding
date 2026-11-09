@@ -333,7 +333,7 @@
         "to": ":is(.dev-request-ask,.dev-request-status)"
       },
       "title": {
-        "to": ".settings-page-title"
+        "to": ":is(.settings-page-title,#first-session-make-title)"
       }
     }
   }
