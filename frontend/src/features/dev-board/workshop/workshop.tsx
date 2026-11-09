@@ -97,8 +97,8 @@ import { communityScopeStore, describe as describeCommunity, openSwitcher } from
 import { registerLevel } from '../../workshop/tab-ladder';
 import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
-  ApprovalLine, CommunityCard, HubCardClose, ShareItCard, canLeave,
-  communityPending, leaveCommunity, useCommunity,
+  ApprovalLine, CommunityCard, HubCardClose, ShareItCard, approvalLine, approvalStep, canLeave,
+  communityPending, leaveCommunity, openInviteLinks, reloadCommunity, ruleHasWait, ruleSentence, useCommunity,
 } from './community-card';
 import {
   FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, TopicsCard, UpdateCard, hubAlone, owesVote,
@@ -107,12 +107,19 @@ import { CommunityAsk } from '../../notify-ask/community-ask';
 import { useHubDismissed } from './hub-dismissed';
 import { ProjectDiscussion } from './project-discussion';
 import {
-  channelPlace, findChannel, isChannelPlace, isPlaceKey, placeHandle, placeHref, unreadTotal, type PlaceKey,
+  channelPlace, findChannel, isChannelPlace, isPlaceKey, liveTopics, placeHandle, placeHref, unreadTotal, type PlaceKey,
 } from './places';
 import { PlaceBar } from './place-bar';
 import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
+import { ProjectFrameHead, ProjectHubFrame, ProjectTopicsFrame, type ProjectTab } from './frame/project-frame';
+import { liveSinceLine } from './hub-cards';
+import { offerJoin } from '../../../lib/join-required';
+import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
+import { deskLine, deskWords, useDesk } from '../../ai/desk';
+import { projectTabAddress } from '../../ai/filter-address';
+import { changeHref } from '../../../lib/change-href';
 import { ProjectReviewFlow } from '../../review-flow/review-flow';
 import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
@@ -3079,6 +3086,12 @@ export function DevWorkshop(): ReactNode {
   // about which app this is, and no second fetch: the controller publishes
   // both `app_icon_*` columns here already.
   const app = useStoreState(improveStore);
+  // Under one of the frame's looks the page is the kit's (./frame/project-
+  // frame.tsx): the places are its tabs and the Hub is groups of one row.
+  // Your work is read only then; Topics is a page the kit adds, held here.
+  const frame = isFrameSkin(useLiveSkin());
+  const desk = useDesk(frame ? v.slug : null);
+  const [frameTopics, setFrameTopics] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
   const [sortKey, setSortKey] = useState<SortKey>('people');
   // Which themes are unfolded, keyed by id. The FIRST theme opens by
@@ -3753,6 +3766,131 @@ export function DevWorkshop(): ReactNode {
     return null;
   };
 
+  /* ── The page in the one frame (./frame/project-frame.tsx) ──
+     Under one of the frame's looks the places are the page's tabs and the
+     Hub is the kit's, from what this Hub reads: the same votes owed, the
+     same work with Homeroom bot, the channel's last line, the last changes
+     live, the topics, who is around and the approval rule. A place not yet
+     drawn in the kit keeps its own body under the kit's head. Topics is a
+     page the kit adds (the tour's s25); it lists the channels this page's
+     places already name, and opening one is that place. */
+  const frameTopicList = frame ? liveTopics(community?.places) : [];
+  const frameTabs: ProjectTab[] = frame ? [
+    { key: 'status', label: t('project:places.list.hub') },
+    { key: 'needs', label: t('project:places.list.needsYou'), count: owed },
+    { key: 'workshop', label: t('project:places.list.workshop') },
+    ...(community?.channel ? [{
+      key: 'discussion',
+      label: t('project:frame.hub.channel', { handle: community.channel.handle || 'general' }),
+      count: Number(community.channel.unread_count) || 0,
+    }] : []),
+    ...(frameTopicList.length ? [{ key: 'topics', label: t('project:places.list.topics') }] : []),
+  ] : [];
+  const frameTab = frameTopics || tab.startsWith('c:') ? 'topics'
+    : tab === 'all' || tab === 'bot' || tab === 'plan' ? 'workshop' : tab;
+  const pickFrameTab = (key: string) => {
+    if (key === 'topics') { setFrameTopics(true); scrollToHead(hostRef.current); return; }
+    setFrameTopics(false);
+    if (key === tabRef.current) scrollToHead(hostRef.current);
+    else openTab(key as TabKey);
+  };
+  const askChange = canPost ? () => { (window as any).App?.openFeedbackModal?.({ fromDev: true, intent: 'issue' }); } : null;
+  const inviteHere = community?.is_member ? () => { openInviteLinks(); } : null;
+  // Join, for someone signed in who is not in yet: the hero's own Join
+  // (lib/join-required.ts offerJoin asks, joins and re-reads the hub).
+  const joinHere = community && !community.is_member && (window as any).App?.user
+    ? () => { void offerJoin({ code: 'join_required', app: { slug, name: projectName } }).finally(() => { void reloadCommunity(slug); }); }
+    : null;
+  const frameHead = { tabs: frameTabs, tab: frameTab, onTab: pickFrameTab, onAsk: askChange, onInvite: inviteHere, onJoin: joinHere };
+  const frameHub = (): ReactNode => {
+    const channel = community?.channel || null;
+    const recent = channel ? (channel.recent || []).map((m) => ({ content: m.content as string | null, by: m.by, at: m.created_at as string | null })) : [];
+    if (channel && !recent.length && channel.last_at) recent.push({ content: channel.last_message || '', by: channel.last_by, at: channel.last_at });
+    const said = (m: { content: string | null }) => String(m.content || '').replace(/\s+/g, ' ').trim();
+    const last = [...recent].reverse().find((m) => said(m)) || recent[recent.length - 1] || null;
+    const first = owedRows.find((row) => row.t === 'card') || null;
+    const firstTitle = first && first.t === 'card' ? first.card.title.text || first.card.title.title || '' : '';
+    const claims = Math.max(0, Number(v.dashboard?.unclaimed) || 0);
+    const line = deskLine(desk);
+    const words = deskWords(desk);
+    const activeCount = Number(community?.activity?.active_week) || 0;
+    const active = (community?.activity?.active_people || []).filter((person) => person && person.username).slice(0, 5);
+    const names = listText(active.map((person) => person.username));
+    const rest = Math.max(0, activeCount - active.length);
+    const approval = community?.approval || null;
+    const approvers = approval && Array.isArray(approval.approvers) ? approval.approvers : null;
+    return (
+      <ProjectHubFrame
+        {...frameHead}
+        name={projectName}
+        purpose={community?.description || null}
+        needs={owed > 0 ? {
+          count: owed,
+          title: owed > 1 && firstTitle ? t('project:hub.forYou.needs.firstAndMore', { title: firstTitle, count: owed - 1 }) : firstTitle,
+        } : null}
+        quiet={owed > 0 ? null
+          : owedRows.length ? t('project:hub.needs.skipped', { count: owedRows.length })
+            : alone && !claims ? null : t('project:hub.needs.none')}
+        onNeeds={() => openTab('needs')}
+        work={v.mine?.viewer ? {
+          line: line ? t(line.id, line.values) : null,
+          words: words ? translate(words.id, words.values).replace(/<\/?\d+>/g, '') : null,
+          href: projectTabAddress(slug),
+        } : null}
+        onWorkshop={() => openTab('workshop')}
+        general={channel ? {
+          handle: channel.handle || 'general',
+          line: last && said(last) ? (last.by ? t('project:frame.hub.saidBy', { username: last.by, message: said(last) }) : said(last)) : null,
+          ago: last && last.at ? agoStamp(last.at).text : null,
+          unread: Number(channel.unread_count) || 0,
+        } : null}
+        onGeneral={() => openTab('discussion')}
+        live={(v.recentLive || []).slice(0, 3).map((row) => ({
+          key: row.key,
+          title: row.title,
+          who: row.who,
+          ago: row.going ? t('project:hub.recent.going') : row.at ? agoStamp(row.at).text : null,
+          href: changeHref(slug, row.sessionId, row.prNumber),
+        }))}
+        onAllLive={() => openTab('workshop')}
+        topics={frameTopicList.slice(0, 3).map((topic) => ({
+          key: channelPlace(topic.handle), name: topic.name || topic.handle, about: topic.about || '', unread: Math.max(0, Number(topic.unread) || 0),
+        }))}
+        topicsTotal={frameTopicList.length}
+        onTopic={(key) => openTab(key as TabKey)}
+        onAllTopics={() => pickFrameTab('topics')}
+        people={activeCount ? {
+          title: t('project:hub.people.active', { count: activeCount }),
+          line: active.length ? (rest ? t('project:hub.people.namesAndMore', { names, count: rest }) : names) : null,
+        } : null}
+        audience={{
+          kind: community?.audience || 'invited',
+          title: community?.audience_label || '',
+          line: community && community.audience !== 'solo' ? t('project:frame.hub.members', { count: Number(community.member_count) || 0 }) : null,
+        }}
+        rule={approval && community ? {
+          // The rule in its short words ("11 of 41 approve"), as the page's own
+          // rule line says it on a narrow screen; the long sentence is its title there.
+          title: ((line) => translate(line.short, line.values).replace(/<\/?\d+>/g, '').trim())(ruleSentence(approval, community, approvers)) || approvalLine(approval, community),
+          line: ruleHasWait(approval) ? approvalStep(approval, community, approvers).wait || null : null,
+          onOpen: community.can_manage ? () => { window.UsernodeReact?.dialogs?.whoDecides?.open({ slug }); } : null,
+        } : null}
+        app={!actions.selfHosted ? {
+          name: projectName,
+          src: own ? app.iconUrl || null : null,
+          emoji: own ? app.iconEmoji || null : null,
+          color: null,
+          line: community?.live_since ? liveSinceLine(community.live_since) : null,
+          onOpen: () => { (window as any).App?.openAppTab?.(slug, 'app'); },
+        } : null}
+      />
+    );
+  };
+  const framePurpose = tab === 'workshop' || tab === 'all' || tab === 'bot' || tab === 'plan'
+    ? t('project:frame.place.workshop', { project: projectName })
+    : tab === 'needs' ? t('project:frame.place.needs', { project: projectName })
+      : t('project:frame.place.channel', { project: projectName });
+
   return (
     <div
       ref={hostRef}
@@ -3767,6 +3905,27 @@ export function DevWorkshop(): ReactNode {
       // host's classes are written by useWorkshopHostState.
       data-ws-side-open={sideOpen ? '' : undefined}
     >
+      {/* Under one of the frame's looks the kit's page comes first, and
+          app.css puts the bar away and, where the kit draws the whole place
+          (the Hub, Topics), the body below as well: they stay mounted, as
+          written, behind the kit's page. */}
+      {frame && frameTopics ? (
+        <ProjectTopicsFrame
+          {...frameHead}
+          general={community?.channel ? { handle: community.channel.handle || 'general', unread: Number(community.channel.unread_count) || 0 } : null}
+          topics={frameTopicList.map((topic) => ({
+            key: channelPlace(topic.handle),
+            name: topic.name || topic.handle,
+            about: topic.about || '',
+            requests: topic.requests,
+            unread: Math.max(0, Number(topic.unread) || 0),
+          }))}
+          onOpen={(key) => { setFrameTopics(false); openTab(key as TabKey); }}
+          onPropose={community?.can_manage ? () => { window.UsernodeReact?.dialogs?.topics?.open({ slug }); } : null}
+        />
+      ) : null}
+      {frame && !frameTopics && tab === 'status' && !pending ? frameHub() : null}
+      {frame && !frameTopics && tab !== 'status' ? <ProjectFrameHead {...frameHead} title={pageTitle(tab)} purpose={framePurpose} /> : null}
       {band}
       {tray}
       {/* Everything but the bar lives in here. It is what carries the

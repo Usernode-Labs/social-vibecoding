@@ -6402,5 +6402,105 @@
   "topic.decision.outcome.superseded": {
     "text": "No longer needed. Voting has ended.",
     "description": "Line under the Votes card on a governance vote's page once something else settled what it was about, so the vote no longer applies."
+  },
+  "frame.ask": {
+    "text": "Ask for a change",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's one primary button: opens the form that sends a request to the project."
+  },
+  "frame.invite": {
+    "text": "Invite",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's second button: opens the invite link for this community."
+  },
+  "frame.hub.people": {
+    "text": "People",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who is active and who the community is for."
+  },
+  "frame.hub.rule": {
+    "text": "How a change goes live",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who must approve a change."
+  },
+  "frame.hub.app": {
+    "text": "The app",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that opens the project's own app."
+  },
+  "frame.hub.openApp": {
+    "text": "Open {{app}}",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of the row that opens the project's app; {{app}} is the app's name."
+  },
+  "frame.hub.open": {
+    "text": "Open",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small button at the end of the app's row: opens the app."
+  },
+  "frame.hub.builtBy": {
+    "text": "Built by {{username}}",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under a change that recently went live: who built it."
+  },
+  "frame.hub.allTopics_one": {
+    "text": "All {{count}}",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of the Topics group's label: opens the page that lists every topic; {{count}} is how many there are."
+  },
+  "frame.hub.allTopics_other": {
+    "text": "All {{count}}",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of the Topics group's label: opens the page that lists every topic; {{count}} is how many there are."
+  },
+  "frame.hub.channel": {
+    "text": "#{{handle}}",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of a channel's row and tab: the channel's handle after a hash sign, such as #general."
+  },
+  "frame.hub.saidBy": {
+    "text": "{{username}}: {{message}}",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under a channel's row: who wrote its last message, then the message."
+  },
+  "frame.hub.members_one": {
+    "text": "{{count}} member",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under the audience row in the context column: how many members the community has."
+  },
+  "frame.hub.members_other": {
+    "text": "{{count}} members",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under the audience row in the context column: how many members the community has."
+  },
+  "frame.place.workshop": {
+    "text": "Everything asked for, being built and voted on in {{project}}.",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the Workshop's title."
+  },
+  "frame.place.needs": {
+    "text": "What waits for your vote in {{project}}.",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the Needs you page's title."
+  },
+  "frame.place.channel": {
+    "text": "Where {{project}} talks.",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under a channel's title."
+  },
+  "frame.topics.purpose": {
+    "text": "Each topic is a channel and a category of work. A new topic is voted on like any change.",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title."
+  },
+  "frame.topics.propose": {
+    "text": "Propose a topic",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's one primary button: opens the form that proposes a new topic, which goes to a vote."
+  },
+  "frame.topics.about": {
+    "text": "About topics",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column."
+  },
+  "frame.topics.byVote": {
+    "text": "Changed by a vote",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of the one row in the context column: topics change only when the group votes."
+  },
+  "frame.topics.byVoteLine": {
+    "text": "New, renamed, merged or archived",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under 'Changed by a vote': the four ways a topic can change."
+  },
+  "frame.topics.requests_one": {
+    "text": "{{count}} open request",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a topic's row: how many open requests are filed under it."
+  },
+  "frame.topics.requests_other": {
+    "text": "{{count}} open requests",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a topic's row: how many open requests are filed under it."
+  },
+  "frame.topics.requestsAbout": {
+    "text": "{{requests}} · {{about}}",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). A topic's line when it has both: its count of open requests ({{requests}} is already a phrase such as '7 open requests'), then what the topic is about."
   }
 }

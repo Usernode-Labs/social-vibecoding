@@ -99,6 +99,43 @@ test('the kit\'s root rule keeps colour and type for the frame root and drops th
   assert.match(css, /html\[data-skin\]\.dark\{--fr-ground:[^;]*;--fr-surface:#151823;/, 'dark tokens on any look');
 });
 
+// ── Sides that mirror ────────────────────────────────────────────────────
+
+test('a side the tour wrote as left or right is written as the start or the end, so a look mirrors in Arabic', () => {
+  // The tour is drawn left to right only. app.css mirrors (tests/rtl-logical-css.test.js),
+  // so the compiler turns each physical side into its logical twin.
+  const map = (prop, value) => looks.mapDeclarations(prop, value).map(([p, v]) => `${p}:${v}`).join(';');
+  assert.equal(map('margin-left', '8px'), 'margin-inline-start:8px');
+  assert.equal(map('padding-right', '40px'), 'padding-inline-end:40px');
+  assert.equal(map('border-left', '1px solid var(--line)'), 'border-inline-start:1px solid var(--fr-line)');
+  assert.equal(map('border-right', '2px solid var(--line2)!important'), 'border-inline-end:2px solid var(--fr-line2)!important');
+  assert.equal(map('left', '3px'), 'inset-inline-start:3px');
+  assert.equal(map('right', '16px'), 'inset-inline-end:16px');
+  assert.equal(map('left', '50%'), 'left:50%', 'a centre is not a side: it stays with its translate');
+  assert.equal(map('text-align', 'left'), 'text-align:start');
+  assert.equal(map('text-align', 'center'), 'text-align:center');
+  assert.equal(map('border-top-left-radius', '8px'), 'border-start-start-radius:8px');
+  assert.equal(map('border-bottom-right-radius', '8px'), 'border-end-end-radius:8px');
+});
+
+test('a four-sided shorthand whose left and right differ is split so its sides mirror too', () => {
+  const map = (prop, value) => looks.mapDeclarations(prop, value).map(([p, v]) => `${p}:${v}`).join(';');
+  assert.equal(map('padding', '4px 4px 4px 8px'), 'padding-block:4px 4px;padding-inline:8px 4px');
+  assert.equal(map('margin', '0 9px'), 'margin:0 9px', 'the same on both sides: left as written');
+  assert.equal(map('padding', '60px 24px 0 0'), 'padding-block:60px 0;padding-inline:0 24px');
+  assert.equal(map('border-radius', '0 4px 4px 0'), 'border-start-start-radius:0;border-start-end-radius:4px;border-end-end-radius:4px;border-end-start-radius:0');
+  assert.equal(map('border-radius', '2px 2px 0 0'), 'border-radius:2px 2px 0 0', 'top and bottom differ, the sides do not');
+  assert.equal(map('border-radius', '24px 24px 0 0!important'), 'border-radius:24px 24px 0 0!important');
+  assert.equal(map('padding', '0 16px'), 'padding:0 16px');
+});
+
+test('the generated section holds no physical side', () => {
+  const body = section().replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(body, /[;{](margin|padding|border)-(left|right)\b[^;}]*/);
+  assert.doesNotMatch(body, /[;{](left|right):(?!50%)/);
+  assert.doesNotMatch(body, /text-align:(left|right)/);
+});
+
 // ── What the product's own markup wears ──────────────────────────────────
 
 test('a kit rule for a worn component also names the product\'s own markup for it', () => {

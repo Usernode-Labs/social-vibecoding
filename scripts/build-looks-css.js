@@ -114,6 +114,56 @@ function mapDeclaration(prop, value) {
   return [p, value.replace(/var\(--([a-zA-Z0-9-]+)/g, 'var(--fr-$1')];
 }
 
+// The tour is drawn left to right only; app.css mirrors. A physical side
+// becomes its logical twin, and a four-sided shorthand whose two sides
+// differ is split, so every look reads the right way round in Arabic.
+const SIDE = {
+  'margin-left': 'margin-inline-start', 'margin-right': 'margin-inline-end',
+  'padding-left': 'padding-inline-start', 'padding-right': 'padding-inline-end',
+  'border-left': 'border-inline-start', 'border-right': 'border-inline-end',
+  'border-left-color': 'border-inline-start-color', 'border-right-color': 'border-inline-end-color',
+  'border-left-width': 'border-inline-start-width', 'border-right-width': 'border-inline-end-width',
+  'border-top-left-radius': 'border-start-start-radius', 'border-top-right-radius': 'border-start-end-radius',
+  'border-bottom-left-radius': 'border-end-start-radius', 'border-bottom-right-radius': 'border-end-end-radius',
+  left: 'inset-inline-start', right: 'inset-inline-end',
+};
+// Top-level words of a value: spaces inside calc(…) or var(…) do not split it.
+function words(value) {
+  const out = [];
+  let depth = 0;
+  let word = '';
+  for (const ch of value.trim()) {
+    if (ch === '(') depth += 1;
+    if (ch === ')') depth -= 1;
+    if (ch === ' ' && depth === 0) { if (word) out.push(word); word = ''; } else word += ch;
+  }
+  if (word) out.push(word);
+  return out;
+}
+
+/** One declaration of the tour → the shell's, as one or more [prop, value]. */
+function mapDeclarations(prop, value) {
+  const [p, v] = mapDeclaration(prop, value);
+  const important = /!important$/.test(v) ? '!important' : '';
+  const bare = important ? v.slice(0, -'!important'.length).trim() : v;
+  if ((p === 'left' || p === 'right') && bare === '50%') return [[p, v]];
+  if (SIDE[p]) return [[SIDE[p], v]];
+  if (p === 'text-align' && (bare === 'left' || bare === 'right')) return [[p, (bare === 'left' ? 'start' : 'end') + important]];
+  const four = words(bare);
+  if ((p === 'padding' || p === 'margin') && four.length === 4 && four[1] !== four[3]) {
+    const [top, right, bottom, left] = four;
+    return [[`${p}-block`, `${top} ${bottom}${important}`], [`${p}-inline`, `${left} ${right}${important}`]];
+  }
+  if (p === 'border-radius' && four.length === 4 && !bare.includes('/') && (four[0] !== four[1] || four[2] !== four[3])) {
+    const [tl, tr, br, bl] = four;
+    return [
+      ['border-start-start-radius', tl + important], ['border-start-end-radius', tr + important],
+      ['border-end-end-radius', br + important], ['border-end-start-radius', bl + important],
+    ];
+  }
+  return [[p, v]];
+}
+
 const declsOf = (rule) => {
   const out = [];
   rule.walkDecls((d) => out.push([d.prop, d.value + (d.important ? '!important' : '')]));
@@ -141,11 +191,11 @@ function compile(source, id, rootExtra = { light: [], dark: [] }) {
         const mode = sel === '.hr' ? 'light' : 'dark';
         for (const [p, v] of decls) {
           if (p.startsWith('--')) roots[mode].push(mapDeclaration(p, v));
-          else if (!MOCK_ROOT_PROPS.has(p)) roots.frame.push([mode, mapDeclaration(p, v)]);
+          else if (!MOCK_ROOT_PROPS.has(p)) for (const d of mapDeclarations(p, v)) roots.frame.push([mode, d]);
         }
       } else rest.push(sel);
     }
-    const mapped = decls.map(([p, v]) => mapDeclaration(p, v));
+    const mapped = decls.flatMap(([p, v]) => mapDeclarations(p, v));
     const byPlace = new Map();
     for (const sel of rest) {
       const to = mapSelector(sel, id);
@@ -283,4 +333,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { mapSelector, mapDeclaration, wornSelector, compile, build, config };
+module.exports = { mapSelector, mapDeclaration, mapDeclarations, wornSelector, compile, build, config };
