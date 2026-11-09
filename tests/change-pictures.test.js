@@ -5,6 +5,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
+const { readFileSync } = require('node:fs');
 
 const { emailPictures, screenPictures, showChange } = require('../src/services/change-pictures');
 const { memoryMediaStore } = require('./lib/media-store');
@@ -248,4 +249,44 @@ test('a request: the offer posts those very pictures as a plan there', async () 
   assert.equal(ctx.offer.kind, 'post_pictures_plan');
   assert.equal(ctx.offer.args.issueNumber, 6490);
   assert.equal(ctx.offer.args.pictures.length, ctx.gallery.images.length);
+});
+
+// #6548: an opened email scrolls to its end, at a phone or desktop width.
+
+test('#6548: show_change says an opened email scrolls to its end and has a Phone / Desktop switch', () => {
+  const pictures = require('../src/services/homeroom-bot-thread-tools/change-pictures');
+  const description = pictures.TOOL.function.description;
+  const words = pictures.promptLines().join(' ');
+  for (const text of [description, words]) {
+    assert.match(text, /scrolls to its end/);
+    assert.match(text, /Phone \/ Desktop/);
+    assert.match(text, /mobile or desktop previews/);
+    assert.match(text, /never say a cut-off is in the picture/i);
+    assert.match(text, /sizes cannot be shown/i);
+  }
+});
+
+test('#6548: the opened email is drawn at its full height in a scrolling box, at Phone or Desktop width', () => {
+  const src = readFileSync('frontend/src/features/messages/bot-cards/gallery.tsx', 'utf8');
+  // The opened email's box scrolls; the old fixed 70vh cut is gone.
+  assert.match(src, /max-h-\[70vh\] overflow-auto rounded-xl/);
+  assert.doesNotMatch(src, /h-\[70vh\] overflow-hidden/);
+  // The measured frame may read its own document, but scripts never run and
+  // no form, popup or top navigation is allowed.
+  assert.match(src, /sandbox=\{measured \? 'allow-same-origin' : ''\}/, 'the thumbnail frame stays sandbox=""');
+  assert.doesNotMatch(src, /allow-scripts/);
+  assert.doesNotMatch(src, /allow-forms|allow-popups|allow-top-navigation/);
+  assert.match(src, /pointerEvents: 'none'/);
+  assert.match(src, /inert=\{measured \? true : undefined\}/);
+  assert.match(src, /contentDocument/);
+  assert.match(src, /documentElement\.scrollHeight/);
+  // Phone is a phone's width, Desktop the desktop email's own.
+  assert.match(src, /phone: 'min\(375px, 100%\)'/);
+  assert.match(src, /desktop: '680px'/);
+  // The switch is the comparison card's, with the same ids and words.
+  assert.match(src, /messages:botCards\.compare\.sizeGroup/);
+  assert.match(src, /messages:botCards\.compare\.phone/);
+  assert.match(src, /messages:botCards\.compare\.desktop/);
+  assert.match(src, /aria-pressed=\{size === s\}/);
+  assert.match(src, /data-bot-email-size=\{s\}/);
 });

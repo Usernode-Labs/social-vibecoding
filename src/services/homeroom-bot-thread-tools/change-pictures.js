@@ -12,7 +12,10 @@ const TOOL = Object.freeze({
   function: {
     name: 'show_change',
     description: 'Show what a change looks like: each email it adds or rewords, Today and With this change, and its '
-      + 'verified before/after screens, as pictures under your reply. Showing edits nothing, whoever built it.',
+      + 'verified before/after screens, as pictures under your reply. An opened email scrolls to its end and has a '
+      + 'Phone / Desktop switch, so it can be read at a phone or a desktop width. Asked for mobile or desktop '
+      + 'previews, point them to that switch; never say a cut-off is in the picture or that sizes cannot be shown. '
+      + 'Showing edits nothing, whoever built it.',
     parameters: {
       type: 'object',
       properties: {
@@ -33,6 +36,9 @@ function promptLines() {
     '- Show what a change looks like when somebody asks (show_change): its emails, Today and With this change, and its',
     '  verified before/after screens, as pictures under your reply. Showing or reading a change edits nothing: never give',
     '  who built a change as a reason not to show it. A plan can only be posted from the change\'s own thread, so say so.',
+    '- An opened email scrolls to its end and has a Phone / Desktop switch, so it can be read at either width. Asked for',
+    '  mobile or desktop previews, point them to that switch. Never say a cut-off is in the picture, and never say the',
+    '  sizes cannot be shown.',
   ];
 }
 
