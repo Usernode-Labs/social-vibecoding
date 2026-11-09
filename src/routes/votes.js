@@ -38,7 +38,7 @@ const summaryFreshness = require('../services/summary-freshness');
 const homeroomCommits = require('../services/homeroom-commits');
 const proposalDelivery = require('../services/proposal-delivery');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
-const { updateComingSql } = require('../services/homeroom-bot-progress');
+const { updateComingSql, sessionChecksOnHead } = require('../services/homeroom-bot-progress');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql, isFirstVersion } = require('../services/first-version-rule');
@@ -2633,6 +2633,10 @@ function mergedRowSelect() {
            -- GitHub-maintained note (kept visible on merged rows too).
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            cs.reviewed_head_sha,
+           -- #6521: which commit the last verdict describes, so the page can
+           -- tell a pass on an older version from a pass on this one
+           -- (services/homeroom-bot-progress.js sessionChecksOnHead).
+           cs.checks_commit_sha,
            -- Where it merges, and the change it waits for (src/workflow/
            -- rules/pr-base.ts): the change page reads its row from here, so
            -- its "Waits for #N" follows a retarget without the board's list.
@@ -4593,6 +4597,9 @@ function voteRoutes(config) {
         const requirementsSvc = require('../services/merge-requirements');
         for (const row of rows) {
           row.freshness = freshnessSvc.readFreshness(row);
+          // #6521: whether the last verdict describes this version, the same
+          // rule the thread list and the merge gate use.
+          row.checks_on_head = sessionChecksOnHead(row);
           // #2038: the one answer the card actually renders, carrying its own
           // measuredAt so it can say how old it is instead of implying it is
           // live. `blockReason` rides along so the card stops re-deriving a
@@ -5267,6 +5274,9 @@ function voteRoutes(config) {
         // which a vote does not supersede — withLiveApprovals reconciles
         // its waiting approvals step against the columns just attached.
         const mainCheck = await require('../services/main-watch').mergePause(pool, gatedApp.id);
+        // #6521: always written: the board merges this response into its
+        // held row key by key, and the page reads it on its Tested card.
+        proposal.checks_on_head = sessionChecksOnHead(proposal);
         proposal.freshness = require('../services/proposal-freshness').readFreshness(proposal);
         proposal.integration = require('../services/integration').readIntegration(proposal);
         proposal.shotsEnforced = !!config.shots?.enforce

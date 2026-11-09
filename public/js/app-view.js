@@ -8054,7 +8054,10 @@ const AppView = {
     }
     // Not for a change whose code is missing: testing is not what it waits
     // on, and the page's notice says what is (_changeThreadView codeMissing).
-    if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped' && !AppView._codeMissing(item)) {
+    // #6521: nor does a verdict about an older version count as tested, the
+    // same rule the Testing card and the thread list read.
+    const tested = (item.check_state === 'passing' || item.check_state === 'skipped') && item.checks_on_head !== false;
+    if (reached && !tested && !AppView._codeMissing(item)) {
       if (item.check_state !== 'failing') {
         note.push(PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
       } else if (AppView._botBuilt(item)) {
@@ -8459,6 +8462,19 @@ const AppView = {
         name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.previewFailed'), tone: 'bad', done: false, segments: full('bad'),
         label: PlatformI18n.t('changes:page.testing.label.previewFailed'),
         note: [String(item.staging_error).slice(0, 280)], actions, details: true,
+      };
+    }
+    // #6521: the last verdict is about an older version of this change, so a
+    // pass there says nothing about the code up now. The thread list and the
+    // merge gate read the same rule (services/homeroom-bot-progress.js
+    // checksOnHead), so the card waits for this version's own checks instead
+    // of reading "Tested".
+    if (item.checks_on_head === false && (cs === 'passing' || cs === 'skipped')) {
+      const rerun = recheck();
+      if (rerun) actions.push(rerun);
+      return {
+        name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.deferred'), tone: 'muted', done: false,
+        segments: [{ weight: 1, pct: 0, state: 'moving' }], label: PlatformI18n.t('changes:page.testing.label.waiting'), note: [], actions,
       };
     }
     const broken = (cs === 'passing' || cs === 'skipped') ? AppView._shotsBrokenCount(item.shots) : 0;
@@ -19861,7 +19877,9 @@ const AppView = {
     if (AppView.readOnly) return null;
     if (pr.status && !['active', 'paused', 'promoted'].includes(pr.status)) return null;
     if (['active', 'paused'].includes(pr.status) && !pr.check_state) return null;
-    if (pr.check_state === 'passing') return null;
+    // #6521: a pass on an older version is not a pass, so it still offers the
+    // re-run (the Testing card's "Waiting" state).
+    if (pr.check_state === 'passing' && pr.checks_on_head !== false) return null;
     const owner = !!(App.user && pr.user_id === App.user.id);
     // `recheckable` is a staging ?demo=1 hint (set only on mock rows) so the
     // button is reviewable regardless of the demo viewer's owner/admin
