@@ -56,6 +56,7 @@ test('each place has its own switch, on unless an admin turns it off, and nothin
 test('a mention of the bot is its handle or its name', () => {
   assert.equal(voice.mentionsBot('@Homeroom bot can you sort it?'), true);
   assert.equal(voice.mentionsBot('hey @homeroom_bot'), true);
+  assert.equal(voice.mentionsBot('@homeroombot can you sort it?'), true);
   assert.equal(voice.mentionsBot('the homeroom bot did it'), false);
 });
 
