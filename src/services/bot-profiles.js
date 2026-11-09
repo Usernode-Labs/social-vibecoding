@@ -58,7 +58,13 @@ const DESIGN_LIMITS = Object.freeze({
   rounds: 12,
   drawByRound: 8,
   readUntilRound: 7,
-  outputTokens: 4096,
+  // #6358: a long screen (a recipe home) is drawn to the end. A step gets
+  // four times the room it had (4096), a draw cut off at its limit is asked
+  // again with twice that, and a step may take three minutes instead of a
+  // minute and a half. Room that is not written is not paid for.
+  outputTokens: 16000,
+  retryOutputTokens: 32000,
+  requestTimeoutMs: 180_000,
   history: 16,
   replyChars: 1500,
   editsPerCall: 16,
