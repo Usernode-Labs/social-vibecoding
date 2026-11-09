@@ -2935,12 +2935,14 @@ function rowView(n) {
 }
 
 function rowWords(n) {
-  // #103: keep the violet left line on every row, read or unread, so a
-  // notification never "loses its line" when read. Only the background
-  // tint stays unread-conditional (the unread dot below is the other cue).
+  // #6506: the subject line's weight and ink. An unread notice is bold in the
+  // strong ink; a read one is regular and softer, so a list holding both
+  // tells them apart at a glance. The unread dot in ./notifications-sheet.tsx
+  // is the other cue; the sheet chooses by `unread` so a story card, whose
+  // view is rebuilt, reads its own state.
   const unreadCls = n.readAt
-    ? 'border-s-2 border-violet-500'
-    : 'bg-violet-500/5 border-s-2 border-violet-500';
+    ? 'font-normal text-zinc-700 dark:text-zinc-300'
+    : 'font-semibold text-zinc-900 dark:text-zinc-100';
   // WHERE this came from, for the meta line — and EMPTY when there is no
   // app, not the literal string 'app'. Plenty of kinds have no app at all (a
   // conversation, an account-level key, an agent question the platform cannot
