@@ -538,7 +538,12 @@ async function revisionCounts(pool, sessionId) {
   } catch {
     // The migration has not run here (a test's own schema, an old copy).
   }
-  return { own: Number(rows[0]?.own || 0), asked: Number(rows[0]?.asked || 0), grants, openGrant };
+  // #6537: an update of a change its author made in Claude Code or Codex,
+  // which they asked the bot for, is an update people asked for too. It is a
+  // look of its own kind, not a run (homeroom-bot-takeover.js), and reads 0
+  // where its column is not there yet.
+  const handedOver = await require('./homeroom-bot-takeover').revisedCount(pool, id);
+  return { own: Number(rows[0]?.own || 0), asked: Number(rows[0]?.asked || 0) + handedOver, grants, openGrant };
 }
 
 /**

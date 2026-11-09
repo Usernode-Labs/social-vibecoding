@@ -230,6 +230,11 @@
       "id": "change-request-claims",
       "sha256": "5428abcf77d1cb9a60cd937148ba9a65411317e777477481e181957d6f3db341",
       "schemaSha256": "7275deb128c1b488ba92f361192b55b8609a9922fed5f1854ed31cc638416ce6"
+    },
+    {
+      "id": "bot-update-asked-change",
+      "sha256": "11d42413b6efc30939cb53718082aa0a1b85c654b0249af9b0dee22201dd48c9",
+      "schemaSha256": "d21ec708df62b1b9bdef00d2d9822dca97d748a48f08977a0c8ea7979f021b85"
     }
   ]
 }
