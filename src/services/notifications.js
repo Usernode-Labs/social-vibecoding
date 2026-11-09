@@ -2271,7 +2271,7 @@ async function markReadForConversation(pool, userId, conversationId) {
 // Single-id and mark-all clears. Returns rows actually cleared (like the
 // scoped helpers above) so the route can decide whether to fan out a
 // cross-tab `notifications_changed` refresh.
-async function markRead(pool, userId, { id, ids = null, all = false, kinds = null, excludeKinds = null, olderThanDays = null } = {}) {
+async function markRead(pool, userId, { id, ids = null, all = false, kinds = null, excludeKinds = null, olderThanDays = null, keepPlainMessages = false } = {}) {
   // One clear that is several notifications (a story card, a folded row, a
   // conversation run): one statement, so the count the route reads back
   // after it is the count after all of them. One request per member raced:
@@ -2299,6 +2299,9 @@ async function markRead(pool, userId, { id, ids = null, all = false, kinds = nul
       if ((Array.isArray(kinds) && kinds.length) || (Array.isArray(excludeKinds) && excludeKinds.length)) {
         throw new TypeError('olderThanDays does not combine with kind scoping');
       }
+      if (keepPlainMessages) {
+        throw new TypeError('olderThanDays does not combine with keepPlainMessages');
+      }
       const { rowCount } = await pool.query(
         `UPDATE notifications SET read_at = NOW()
           WHERE user_id = $1 AND read_at IS NULL
@@ -2324,6 +2327,21 @@ async function markRead(pool, userId, { id, ids = null, all = false, kinds = nul
         `UPDATE notifications SET read_at = NOW()
           WHERE user_id = $1 AND read_at IS NULL AND NOT (kind = ANY($2))`,
         [userId, excludeKinds]
+      );
+      return rowCount || 0;
+    }
+    // Opening the bell is reading it (#6498). The bell's badge leaves out the
+    // plain messages the Messages tab counts (#18), so a clear-on-open must
+    // leave them out too — otherwise the Messages tab's own count would go
+    // stale or a badge the bell never showed would be cleared. `all` alone
+    // still clears everything ("Mark all read"); this flag is the narrower
+    // clear that reuses countUnreadSplit's own predicate, so what stays
+    // unread is exactly what the bell's number did not include.
+    if (keepPlainMessages) {
+      const { rowCount } = await pool.query(
+        `UPDATE notifications AS n SET read_at = NOW()
+          WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${PLAIN_MESSAGE_SQL}`,
+        [userId]
       );
       return rowCount || 0;
     }
