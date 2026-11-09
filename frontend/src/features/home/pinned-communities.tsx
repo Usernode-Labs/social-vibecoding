@@ -11,11 +11,12 @@
  *   All communities  the communities you are in but have not pinned (an
  *                    automatic membership, or one you unpinned), shown faded
  *                    in the grid with a + to pin each; pressed again, hidden.
- *   New community    the create flow, which Pinned apps' grid used to end on:
- *                    present for every signed-in account but a private
- *                    member, locked (muted, and its name says how to see the
- *                    quota) without the quota to make one, as that tile was.
- *                    It keeps the tile's `data-panel-slot="create"` hook.
+ *   New community    the create flow, which Pinned apps' grid also ends on a
+ *                    tile for again (#6522): present for every signed-in
+ *                    account but a private member, locked (muted, and its
+ *                    name says how to see the quota) without the quota to
+ *                    make one, as that tile is. It keeps the tile's
+ *                    `data-panel-slot="create"` hook.
  *
  *   Needs you        while any vote waits on you, the way to Needs you
  *                    (#needs), every decision owed across your projects,

@@ -89,6 +89,11 @@ const App = {
   _inMessages: false,
   // Agent sessions (#2779): one conversation with the Mayor at #agent/<id>.
   _inAgentSession: false,
+  // The Homeroom bot tab (#6019): set by navigateToAi(), cleared by any other
+  // screen's reveal in _showOnlyScreen. Without it Back from the tab to "/"
+  // took the "already on home" branch and drew Home beside the bot page
+  // (#6530).
+  _inAi: false,
 
   // Chromeless full-screen mode (/app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -3549,15 +3554,18 @@ const App = {
           case 'budget_updated':
             // #2598: a model call's cost just landed against this user's
             // weekly pool (services/budget-live.js). Both meters repaint from
-            // the figures the event carries — the composer's and the header
-            // drawer's AI-credit row — so "$x left this week" ticks while the
-            // agent works instead of only once the turn ends. No refetch:
-            // the payload IS the snapshot both surfaces read, which is why
-            // this can fire every few seconds during a build.
+            // the figures the event carries — the composer's and the Settings
+            // AI-credit row — so "$x left this week" ticks while the agent
+            // works instead of only once the turn ends. No refetch: the
+            // payload IS the snapshot both surfaces read, which is why this
+            // can fire every few seconds during a build.
+            //
+            // #6493: the shared allowance is adopted FIRST, then the dev chat
+            // repaints from the state that just moved.
+            window.AiCredit?.Budget?.applyPush?.(data.budget);
             if (typeof DevChat !== 'undefined' && DevChat.applyBudgetUpdate) {
               DevChat.applyBudgetUpdate(data.budget);
             }
-            window.AiCredit?.Budget?.applyPush?.(data.budget);
             break;
           case 'bot_request_card':
             // B9: the card under a message of this person's that asked
@@ -3947,6 +3955,14 @@ const App = {
           if (!DevChat.currentSession) DevChat.renderSessionList();
         });
       }
+    }
+    // #6490: a merge that arrives as a plain session update patches the same
+    // caches the vote_update path does, so the card's pill flips whichever
+    // event carried the news. No server sends one today; the guard keeps
+    // every merge path patching the same way.
+    if ((data.merged === true || data.status === 'merged')
+        && typeof AppView !== 'undefined' && AppView.noteSessionMerged) {
+      AppView.noteSessionMerged(data.sessionId, data.appSlug, { live: data.live === true });
     }
     // Refresh proposals / inline chat vote state on the other dev sub-tabs,
     // and the drawer and Home, once for the whole burst (see _liveRefresh).
@@ -4618,7 +4634,7 @@ const App = {
     // belong to, so it is called whatever is showing here; the burst below
     // covers the board showing live.
     if (data.merged && typeof AppView !== 'undefined' && AppView.noteSessionMerged) {
-      AppView.noteSessionMerged(data.sessionId, data.appSlug);
+      AppView.noteSessionMerged(data.sessionId, data.appSlug, { live: !!data.live });
     }
     // Refresh the proposals tab / inline chat vote state if we're in this
     // app's Dev view, and the work drawer and Home, which track tallies:
@@ -4687,10 +4703,14 @@ const App = {
     if (home) {
       // The Challenges block keeps its read for a minute (HomePanels.TTL_MS),
       // which a pull must not be answered from (#3985): it reads again,
-      // fresh, and Home.load() joins that read.
+      // fresh. The tiles' vote counts are re-read too (request 6500), by the
+      // same forced path the pull is for; it goes before Home.load() so the
+      // forced read is the one that starts, rather than Home's own unforced
+      // read already being under way.
       PlatformUI.pullToRefresh(home,
         () => App._refreshOrReload(() => Promise.all([
           window.HomePanels?.ensureLoaded?.({ force: true, fresh: true }),
+          window.UsernodeReact?.homePins?.refresh?.({ force: true }),
           Home.load(),
         ])));
     }
@@ -5526,7 +5546,9 @@ const App = {
         // home without hiding the screen it was on. Messages and the Workshop
         // were left out (QA 2026-09-24 Q1), so Back from either to "/" drew
         // Home over the list or the panel, with that tab still lit and the
-        // phone's bar floating mid-page.
+        // phone's bar floating mid-page; the Homeroom bot tab was left out too
+        // (#6530), and Back from it left Home, its list and the open request's
+        // panel sharing the window.
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
         else if (App._inProfile) App.navigateHome();
@@ -5535,6 +5557,7 @@ const App = {
         else if (App._inAgentSession) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
         else if (App._inWorkshop) App.navigateHome();
+        else if (App._inAi) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -5563,7 +5586,7 @@ const App = {
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings
           || App._inAgentSession
-          || App._inMessages || App._inWorkshop) {
+          || App._inMessages || App._inWorkshop || App._inAi) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -5656,6 +5679,15 @@ const App = {
       if (parts[0] === 'profile') {
         App.setChromeless(false);
         App.navigateToProfile(parts[1] ? decodeURIComponent(parts[1]) : null);
+        return;
+      }
+      if (parts[0] === 'week') {
+        // This week (#6371): the page the Friday "Your weekly digest is
+        // ready" row opens, listing what happened in your projects over the
+        // last seven days (features/weekly-digest/index.tsx). The read is
+        // me-scoped server-side and answers 401 to a caller with no session.
+        App.setChromeless(false);
+        App.navigateToWeeklyDigest();
         return;
       }
       if (parts[0] === 'needs') {
@@ -6438,7 +6470,7 @@ const App = {
   // two visible roots split the viewport 50/50 — see the #764 note on
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen',
-    'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
+    'workshop-screen', 'weekly-digest-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
     'settings-screen', 'messages-screen',
     'agent-session-screen', 'ai-screen'],
 
@@ -6510,6 +6542,11 @@ const App = {
     // Here rather than in those six: a flag that says "this screen is the one
     // showing" belongs to the function that decides which screen is showing.
     if (revealId !== 'messages-screen' && App._inMessages) App._exitMessages();
+    // …and the bot tab's visit ends the same way (#6530). The page keeps no
+    // state to leave, so there is no _exitAi: the flag only says "the bot tab
+    // is the one showing", and the reveal that shows something else is what
+    // makes that untrue.
+    if (revealId !== 'ai-screen') App._inAi = false;
     // Publish the final root state directly. Showing a house and then hiding
     // it in a per-screen callback shifts the shared title slot unnecessarily.
     //
@@ -7042,6 +7079,8 @@ const App = {
     'messages-screen': 'messages',
     'agent-session-screen': 'agent_session',
     'ai-screen': 'ai',
+    // This week (#6371): the page the weekly digest's bell row opens.
+    'weekly-digest-screen': 'weekly_digest',
   }),
 
   _navPending: null,
@@ -7517,6 +7556,9 @@ const App = {
     // features/workshop/index.tsx takes useVisibilityHiddenClass, so it has to
     // be listed here or the class gets the two owners the note above describes.
     'workshop-screen',
+    // This week (#6371): features/weekly-digest/index.tsx takes
+    // useVisibilityHiddenClass from its first commit, same seam.
+    'weekly-digest-screen',
     // The AI tab's main view (#6019 follow-up): features/ai/index.tsx takes
     // useVisibilityHiddenClass from its first commit, same seam.
     'ai-screen',
@@ -7967,6 +8009,31 @@ const App = {
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
+  // This week (#6371): the page the Friday "Your weekly digest is ready"
+  // bell row opens. Read-only, a page under Home like Needs you, so it takes
+  // the same slot and leaves the app the same way. The island owns the whole
+  // root; it loads from the controller's open() while still hidden.
+  navigateToWeeklyDigest() {
+    if (App._revealedScreen === 'weekly-digest-screen' && !App.currentApp) return;
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inMessages) App._exitMessages();
+    if (App._inWorkshop) App._exitWorkshop();
+    const screen = document.getElementById('weekly-digest-screen');
+    window.UsernodeReact?.weeklyDigest?.open?.();
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('weekly-digest-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle(PlatformI18n.t('weekly-digest:title'));
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
   // #6019 follow-up: the Homeroom bot tab's own page (features/ai/), a tab
   // root like the Workshop. Main, the chat with the bot, is in its column
   // (1 Nov 2026: no longer a level under it on the Messages screen). The
@@ -7983,6 +8050,10 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
     if (App._inWorkshop) App._exitWorkshop();
+    // Before the transition, like _inWorkshop above: popstate and hashchange
+    // land in the same tick, and the reveal is not recorded until the
+    // callback runs, so a later-set flag would let the second run through.
+    App._inAi = true;
     const screen = document.getElementById('ai-screen');
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
@@ -9346,6 +9417,9 @@ const App = {
     // One Home (#6361): Needs you is a page under Home (its tile opens it),
     // so it has an arrow up to Home, as Challenges has one up to Me.
     'workshop-screen': ['arrow', '/'],
+    // This week (#6371) is a page under Home too: the weekly digest row
+    // opens it, and its arrow goes back up.
+    'weekly-digest-screen': ['arrow', '/'],
     // #6019 follow-up: the AI tab's page is a tab root; Main is a level
     // under it (the Messages store's syncChrome points its arrow here).
     'ai-screen': ['none'],
@@ -10109,6 +10183,7 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'apps': return frag.split('/')[1] ? 'app-view' : null;
     case 'discover': return frag.split('/')[1] ? 'app-view' : null;
     case 'needs': return 'workshop-screen';  // Needs you (One Home, #6361)
+    case 'week': return 'weekly-digest-screen'; // This week (#6371)
     case 'profile': return 'profile-screen';
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';

@@ -172,7 +172,7 @@ test('the row ends in its bookmark alone, 16px in, and its unread dot sits in th
   // The dot is the first thing in the row, beside the tile, before the words.
   // #5580: on Unread the row is a card in its project's stack; the dot keeps
   // its place in the card's left margin.
-  assert.match(row(10), /^data-notif-id="10" class="notifications-row col-start-1 row-start-1 w-full text-start ps-5 pe-4 [^"]*"><span class="relative flex shrink-0 self-start mt-0\.5"><span class="absolute -start-3 top-1\/2 -translate-y-1\/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label="Unread"><\/span>/);
+  assert.match(row(10), /^data-notif-id="10" class="notifications-row col-start-1 row-start-1 w-full text-start ps-5 pe-4 [^"]*"><span class="relative flex shrink-0 self-start mt-0\.5"><span class="absolute -start-3 top-1\/2 -translate-y-1\/2 w-2 h-2 rounded-full bg-violet-600 dark:bg-violet-400" aria-label="Unread"><\/span>/);
   assert.doesNotMatch(row(11), /aria-label="Unread"/, 'a read row has no dot');
   // No chevron left in a notification row (the Messages footer keeps its own).
   const rowBody = SHEET_SRC.slice(SHEET_SRC.indexOf('function ScreenRow('), SHEET_SRC.indexOf('export function NotificationsSheetView('));
@@ -185,6 +185,27 @@ test('the row ends in its bookmark alone, 16px in, and its unread dot sits in th
   assert.match(rowBody, /: 'absolute end-4 top-1\/2 -translate-y-1\/2 flex h-9 w-9 items-center justify-center '/);
   assert.match(SHEET_SRC, /id="notifications-sheet-close"[\s\S]{0,40}className=\{'flex h-9 w-9 /,
     'the close disc is the same 36px, in the title row\'s 16px padding');
+});
+
+// #6506: the list tells an unread notice from a read one at a glance.
+test('an unread notice is bold in the strong ink; a read one is regular and softer', () => {
+  const html = renderSheet({ list: [view(10)] });
+  // The dot is the app's blue accent now, not a near-black speck.
+  assert.match(html, /rounded-full bg-violet-600 dark:bg-violet-400" aria-label="Unread"/);
+  // The unread subject carries the strong ink and weight, and its segments
+  // keep their own emphasis.
+  assert.match(html, /class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words"/);
+  assert.match(html, /<span class="font-semibold">40 of 50 apps in use\.<\/span>/);
+
+  // The read state is the same class choice made one line over: regular
+  // weight in the softer ink, and every segment plain (no `font-bold`).
+  const { subjectClass } = loadTsx(SHEET_PATH);
+  assert.equal(subjectClass({ unread: true }),
+    'block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words');
+  assert.equal(subjectClass({ unread: false }),
+    'block text-sm font-normal text-zinc-700 dark:text-zinc-300 line-clamp-2 break-words');
+  assert.match(SHEET_SRC, /className=\{!view\.unread\s*\n\s*\? 'font-normal'/,
+    'a read row\'s segments drop every bold');
 });
 
 test('one app group says Mark all read once; two groups each keep their Mark read', () => {

@@ -1263,6 +1263,11 @@ async function updateLinkedIssues({
   pool, gh, session, owner, repo, addIssues, removeIssues,
 }) {
   const stored = await storeLinkedIssues({ pool, session, addIssues, removeIssues });
+  if (stored.changed) {
+    // #6420: a newly named request hears the claim once. Best effort, and
+    // after the row is stored: announcing must never fail the update.
+    await require('./change-claims').announce(pool, { sessionId: Number(session.id) });
+  }
   const projected = await projectLinkedIssues({ pool, gh, session, owner, repo, addIssues, removeIssues });
   return { ...stored, ...projected };
 }

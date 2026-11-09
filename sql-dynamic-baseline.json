@@ -1538,9 +1538,9 @@
     {
       "source": "src/services/issue-proposal-ref.js",
       "kind": "structural-template",
-      "fingerprint": "0b14fc3a04841591f8ea",
+      "fingerprint": "09db12702bf6d7fe74b1",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.status, cs.user_id, cs.shared_at, cs.pr_number, cs.pr_url, cs.linked_issues, cs.created_from_issue_number, cs.last_activity_at, cs.created_at,"
+      "preview": "`SELECT cs.id, cs.status, cs.user_id, cs.shared_at, cs.promoted_at, cs.pr_number, cs.pr_url, cs.linked_issues, cs.created_from_issue_number, cs.last_activity_at"
     },
     {
       "source": "src/services/leaderboard-users.js",
@@ -1723,6 +1723,13 @@
       "fingerprint": "e92a1adcfc139d96e01e",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "f4f0d5e27ae9dc187fa1",
+      "count": 1,
+      "preview": "`INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail) SELECT u, $2, NULL, 'app_health', $3 FROM UNNEST($1::int[]) AS u WHERE NOT EXISTS ( S"
     },
     {
       "source": "src/services/notifications.js",

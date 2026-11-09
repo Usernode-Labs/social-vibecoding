@@ -1390,7 +1390,17 @@ const GroupChat = {
       // 3 Nov 2026: the suggested replies under the bot's message in a
       // request's or a change's discussion, for the people it names.
       botSuggest: GroupChat._botSuggestView(kind === 'message' && !deleted ? meta : null),
+      // #6533: what a change looks like, under Homeroom bot's reply in its thread.
+      botGallery: GroupChat._botGalleryView(kind === 'message' && !deleted ? meta : null),
     };
+  },
+
+  /** #6533: the pictures under a reply (homeroom-bot-voice.js say), or null. */
+  _botGalleryView(meta) {
+    const bot = meta && meta.homeroomBot;
+    const gallery = bot && bot.gallery;
+    return gallery && gallery.purpose === 'change' && Array.isArray(gallery.images) && gallery.images.length
+      ? gallery : null;
   },
 
   // Task 2020 follow-up: the laid-out copy of a reply of Homeroom bot's in a
@@ -1977,6 +1987,13 @@ const GroupChat = {
       if (!isFirstPage) GroupChat._takeOlder(st, thread, messages, data, events);
       else {
         if (GroupChat._fromSavedCopy(res)) GroupChat._owe(st, true);
+        // #6497: a request's first page carries its GitHub comments, so the
+        // one render below draws the whole discussion in time order. A
+        // payload only ever rides an issue thread's first page.
+        if (type === 'issue' && data.request_comments
+            && typeof AppView !== 'undefined' && AppView._takeIssueComments) {
+          AppView._takeIssueComments(slug, ref, data.request_comments);
+        }
         GroupChat._takeNewest(st, thread, messages, data, events, true);
       }
       st.loaded = true;
@@ -2081,12 +2098,21 @@ const GroupChat = {
   },
   // #4417 follow-up: no thread is the general pane's stream, which is a
   // topic's channel while one is open there (`_channel`).
+  //
+  // #6497: a request's discussion opens whole. Its first page asks for the
+  // server's request ceiling (500 rows), so a thread of a few dozen replies
+  // arrives in one read instead of 50 at a time; "Load earlier" still asks
+  // `&limit=50&before=`. Every other stream keeps 50. The URL stays
+  // byte-identical between the first load and `_refreshLatest`, as the
+  // comment above `_threadQuery` requires for the service worker.
   _firstPageUrl(slug, thread) {
     const scope = thread || GroupChat._channel;
+    const limit = scope && scope.type === 'issue' ? GroupChat.REQUEST_THREAD_LIMIT : 50;
     return scope
-      ? `${GroupChat._threadQuery(slug, scope)}&limit=50${GroupChat._demoParam()}`
+      ? `${GroupChat._threadQuery(slug, scope)}&limit=${limit}${GroupChat._demoParam()}`
       : `/api/apps/${slug}/messages?limit=50${GroupChat._demoParam()}`;
   },
+  REQUEST_THREAD_LIMIT: 500,
 
   // A catch-up waits for the network (the worker's `no-cache` rule, sw.js),
   // but not forever: a half-dead link would otherwise hold it, and "Load
@@ -2313,6 +2339,12 @@ const GroupChat = {
       if (!res.ok || GroupChat._fromSavedCopy(res)) return;
       const data = await res.json();
       if (GroupChat.appSlug !== slug || !current()) return;
+      // #6497: a catch-up refreshes the request's comments the same way its
+      // first page brought them.
+      if (thread && thread.type === 'issue' && data.request_comments
+          && typeof AppView !== 'undefined' && AppView._takeIssueComments) {
+        AppView._takeIssueComments(slug, thread.ref, data.request_comments);
+      }
       GroupChat._takeNewest(s, thread, Array.isArray(data.messages) ? data.messages : [], data, events);
       if (thread) {
         if (GroupChat._isOpenThread(thread.type, thread.ref)) GroupChat.renderThread({ keepScroll: true });
