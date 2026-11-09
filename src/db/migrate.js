@@ -3681,6 +3681,10 @@ async function seedStagingGeneralChannel(pool) {
       [902783, 'staging-general-1', 'Staging demo: welcome to #general, the room everybody is in.', '3 hours'],
       [902783, 'staging-general-2', 'Staging demo: consecutive lines from one person group under one name.', '2 hours 59 minutes'],
       [902784, 'staging-general-3', 'Staging demo: and a reference to issue #1 still reads as an issue.', '2 hours'],
+      // #6525: one line in another language, so a fresh preview of #general
+      // has the row auto-translate puts its line under. Its English is seeded
+      // with the other translation fixtures, below.
+      [902784, 'staging-general-translate-1', 'Pagi semua ☕ hari ini mau aku push update kecil di tryconnect, semoga lancar. Ada yang lagi main game seru di sini rekomendasi dong', '1 hour'],
     ];
     for (const [sender, key, content, ago] of lines) {
       await pool.query(
@@ -3849,6 +3853,18 @@ async function seedStagingUserContentTranslations(pool) {
        VALUES ($1, 'en', $2, 'es', FALSE, 'staging-fixture', NOW())
        ON CONFLICT (source_digest, language) DO NOTHING`,
       [digest(spanishMessage), englishMessage]
+    );
+
+    // #6525: the line in another language that `seedStagingGeneralChannel`
+    // puts in #general, with the English auto-translate shows under it.
+    const indonesianMessage = 'Pagi semua ☕ hari ini mau aku push update kecil di tryconnect, semoga lancar. Ada yang lagi main game seru di sini rekomendasi dong';
+    const englishIndonesian = "Morning everyone ☕ today I'm pushing a small update to tryconnect, hope it goes smoothly. Is anyone playing a fun game here? Recommendations please";
+    await pool.query(
+      `INSERT INTO user_content_translations
+         (source_digest, language, text, source_language, same_language, model, attempted_at)
+       VALUES ($1, 'en', $2, 'id', FALSE, 'staging-fixture', NOW())
+       ON CONFLICT (source_digest, language) DO NOTHING`,
+      [digest(indonesianMessage), englishIndonesian]
     );
 
     // A request on a demo app, written by one of the fake people, with its
