@@ -521,6 +521,13 @@
       "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
     },
     {
+      "source": "src/routes/profile.js",
+      "kind": "structural-template",
+      "fingerprint": "6939406444a09fac0090",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS done FROM challenges c JOIN season_events se ON se.id = c.season_event_id LEFT JOIN challenge_templates ct ON ct.id = c.challenge_templ"
+    },
+    {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
       "fingerprint": "14e100b27085ad0a7fe8",
@@ -1438,6 +1445,20 @@
       "preview": "REQUEST_ROWS_SQL"
     },
     {
+      "source": "src/services/homeroom-bot-reply-status.js",
+      "kind": "runtime-expression",
+      "fingerprint": "9f8cd532c33acde0b9cc",
+      "count": 1,
+      "preview": "place.type === 'chat' ? `SELECT 1 FROM chat_messages m JOIN users u ON u.id = m.user_id WHERE m.app_id = $1 AND m.thread_type = 'message' AND m.thread_ref = $2 "
+    },
+    {
+      "source": "src/services/homeroom-bot-reply-status.js",
+      "kind": "structural-template",
+      "fingerprint": "9a2d59403af9f4f9adaf",
+      "count": 1,
+      "preview": "`SELECT m.id, m.user_id, m.created_at FROM chat_messages m JOIN users u ON u.id = m.user_id WHERE m.app_id = $1 AND ${where} AND m.msg_type = 'message' AND m.de"
+    },
+    {
       "source": "src/services/homeroom-bot-thread-tools/look-into.js",
       "kind": "structural-template",
       "fingerprint": "a45efc3039b9f36e409a",
@@ -1531,9 +1552,9 @@
     {
       "source": "src/services/issue-proposal-ref.js",
       "kind": "structural-template",
-      "fingerprint": "0b14fc3a04841591f8ea",
+      "fingerprint": "09db12702bf6d7fe74b1",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.status, cs.user_id, cs.shared_at, cs.pr_number, cs.pr_url, cs.linked_issues, cs.created_from_issue_number, cs.last_activity_at, cs.created_at,"
+      "preview": "`SELECT cs.id, cs.status, cs.user_id, cs.shared_at, cs.promoted_at, cs.pr_number, cs.pr_url, cs.linked_issues, cs.created_from_issue_number, cs.last_activity_at"
     },
     {
       "source": "src/services/leaderboard-users.js",

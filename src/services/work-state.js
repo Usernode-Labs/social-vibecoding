@@ -195,7 +195,12 @@ function fromStage(s, row, now = new Date()) {
       return state('building', { since, line: { code: 'fixing' } });
     case 'revising':
       return state('building', { since, line: { code: 'revising' } });
-    case 'fix_queued':
+    case 'fix_queued': {
+      // #6545: a fix waiting its turn is its checks still failing, not a
+      // change ready to vote on.
+      const failing = Number(row.failed_checks ?? progress.failedCount(row.test_results)) || 0;
+      return state('checking', { since, line: { code: 'checks_failing', ...(failing ? { failing } : {}) } });
+    }
     case 'followup_queued':
       return state('up_for_vote', { since, line: { code: 'update_queued' } });
     case 'checks':
@@ -256,10 +261,14 @@ function deriveFacts(row, { now = new Date() } = {}) {
   const step = progress.stageOf(row, { now });
   let out = step ? fromStage(step, row, now) : null;
   // An update on its way holds the vote it would otherwise ask for (#6282).
+  // #6545: a queued one holds only a vote; a change still checking (a fix
+  // waiting its turn) stays Checking until the update starts.
   if (status === 'promoted' && row.update_coming && out && (out.stage === 'up_for_vote' || out.stage === 'checking')) {
-    out = row.update_coming === 'running'
-      ? state('building', { since: out.since, line: { code: 'revising' } })
-      : state('up_for_vote', { since: out.since, line: { code: 'update_queued' } });
+    if (row.update_coming === 'running') {
+      out = state('building', { since: out.since, line: { code: 'revising' } });
+    } else if (out.stage === 'up_for_vote') {
+      out = state('up_for_vote', { since: out.since, line: { code: 'update_queued' } });
+    }
   }
   // A private thread of the requester's holds it for their plan: nothing
   // queued overtakes that until a change is up (1 Nov 2026).
@@ -297,11 +306,15 @@ function deriveFacts(row, { now = new Date() } = {}) {
     if (change.stage === 'building' && row.lc_by) {
       return state('building', { since: change.since, line: { code: 'claimed', by: row.lc_by }, whoseMove: 'builder' });
     }
-    // #6282: an update on its way holds its vote too.
+    // #6282: an update on its way holds its vote too. #6545: a queued one
+    // holds only a vote; a change still checking stays Checking.
     if (row.lc_update_coming && (change.stage === 'up_for_vote' || change.stage === 'checking')) {
-      return row.lc_update_coming === 'running'
-        ? state('building', { since: change.since, line: { code: 'revising' } })
-        : state('up_for_vote', { since: change.since, line: { code: 'update_queued' } });
+      if (row.lc_update_coming === 'running') {
+        return state('building', { since: change.since, line: { code: 'revising' } });
+      }
+      if (change.stage === 'up_for_vote') {
+        return state('up_for_vote', { since: change.since, line: { code: 'update_queued' } });
+      }
     }
     return change;
   }
