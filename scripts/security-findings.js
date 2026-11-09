@@ -120,13 +120,15 @@ function writeAssessment(dir, assessment) {
 function escape(value) {
   return String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
 }
-function report(label, { blocking, preexisting }, { log = console.log, baselineName = 'the baseline' } = {}) {
+function report(label, { blocking, preexisting, advisory = [] }, { log = console.log, baselineName = 'the baseline' } = {}) {
   for (const text of blocking) log(`::error title=${escape(`Security gate: ${label}`)}::${escape(text)}`);
   for (const text of preexisting) log(`::warning title=${escape(`Already shipped: ${label}`)}::${escape(`${text} (already in ${baselineName}; not introduced by this change)`)}`);
-  if (process.env.GITHUB_STEP_SUMMARY && (blocking.length || preexisting.length)) {
+  for (const text of advisory) log(`::warning title=${escape(`Security finding: ${label}`)}::${escape(text)}`);
+  if (process.env.GITHUB_STEP_SUMMARY && (blocking.length || preexisting.length || advisory.length)) {
     const lines = [`### ${label}`, ''];
     if (blocking.length) lines.push('**Blocking: introduced by this change**', '', ...blocking.map((t) => `- ${t}`), '');
     if (preexisting.length) lines.push(`**Already shipped in ${baselineName}: reported, not blocking**`, '', ...preexisting.map((t) => `- ${t}`), '');
+    if (advisory.length) lines.push('**Security findings: advisory after merge**', '', ...advisory.map((t) => `- ${t}`), '');
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
   }
 }
@@ -155,7 +157,9 @@ if (require.main === module) {
       const reference = require('node:path').join(dir, 'image-reference.txt');
       assessment.image = fs.existsSync(reference) ? fs.readFileSync(reference, 'utf8').trim() : null;
       writeAssessment(dir, assessment);
-      report(`${component} image`, assessment, { baselineName: baselineName || 'the baseline' });
+      const advisory = audit ? assessment.findings.filter((f) => /^(HIGH|CRITICAL)$/.test(f.severity))
+        .map((f) => `${f.package}@${f.version}: ${f.id} (${f.fixedVersion ? `fix ${f.fixedVersion}` : 'no fix available'})`) : [];
+      report(`${component} image`, { ...assessment, advisory }, { baselineName: baselineName || 'the baseline' });
       if (assessment.blocking.length) process.exitCode = 1;
     } else {
       const [file, component, baselineFile] = process.argv.slice(2);

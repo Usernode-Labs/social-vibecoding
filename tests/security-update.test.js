@@ -158,6 +158,44 @@ function workflowExpression(value, context) {
   return vm.runInNewContext(value.trim().replace(/^\$\{\{\s*|\s*\}\}$/g, ''), context, { timeout: 500 });
 }
 
+test('the required security merge gate rejects every incomplete or unsuccessful dependency result', () => {
+  const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/build-kubernetes-images.yml'), 'utf8'));
+  const required = require('../security/required-merge-checks.json');
+  const lockfiles = workflow.jobs['security-lockfiles'];
+  const images = workflow.jobs['security-images'];
+  const gate = workflow.jobs['security-merge-gate'];
+  assert.deepEqual(required, [gate.name, lockfiles.name,
+    ...images.strategy.matrix.include.map(({ component }) => images.name.replace('${{ matrix.component }}', component))]);
+  assert.deepEqual(gate.needs, ['security-lockfiles', 'security-images']);
+  assert.deepEqual(gate.permissions, {});
+  assert.equal(workflowExpression(gate.if, { github: { event_name: 'pull_request' }, always: () => true }), true);
+  for (const event of ['push', 'schedule', 'workflow_dispatch']) {
+    assert.equal(workflowExpression(gate.if, { github: { event_name: event }, always: () => true }), false);
+  }
+  assert.equal(images.if, "github.event_name == 'pull_request'");
+  for (const job of [lockfiles, images, gate]) {
+    assert.equal(job['continue-on-error'], undefined);
+    for (const step of job.steps) assert.equal(step['continue-on-error'], undefined);
+  }
+  const check = gate.steps[0];
+  assert.deepEqual(check.env, { LOCKFILES_RESULT: '${{ needs.security-lockfiles.result }}', IMAGES_RESULT: '${{ needs.security-images.result }}' });
+  const run = (lockfiles, images) => spawnSync('sh', ['-c', check.run], {
+    encoding: 'utf8', env: { ...process.env, LOCKFILES_RESULT: lockfiles, IMAGES_RESULT: images },
+  });
+  assert.equal(run('success', 'success').status, 0);
+  for (const status of ['', 'pending', 'failure', 'cancelled', 'skipped', 'neutral', 'timed_out']) {
+    for (const [lockfiles, images] of [[status, 'success'], ['success', status]]) {
+      const result = run(lockfiles, images);
+      assert.equal(result.status, 1, `${lockfiles}/${images}`);
+      assert.match(result.stdout, /All security checks must succeed before merging/);
+    }
+  }
+  const audit = lockfiles.steps.find((s) => s.run === 'node scripts/security-audit.js');
+  for (const event of ['pull_request', 'push', 'schedule', 'workflow_dispatch']) {
+    assert.equal(workflowExpression(audit.env.SECURITY_AUDIT_ONLY, { github: { event_name: event } }), event === 'pull_request' ? '0' : '1');
+  }
+});
+
 test('independent daily audits cover every image and publish data without issue-write permission', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/security-audit.yml'), 'utf8'));
   assert.equal(workflow.on.pull_request, undefined);

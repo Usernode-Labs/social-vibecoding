@@ -29,10 +29,8 @@ concurrency:
 jobs:
   security-lockfiles:
     name: Audit all three lockfiles
-    # A gate on publishing, not on building (28 Oct 2026: the image builds
-    # waited ~1.7 min for these): the images build beside them and the release
-    # job waits for every one to pass. A run that will not release (a merge
-    # behind main's tip) skips them; a pull request still runs them.
+    # Findings block PR merges. After merge they are advisory; a broken audit
+    # still fails. Runs that will not release skip this job.
     needs: plan
     if: ${{ !cancelled() && (github.event_name == 'pull_request' || needs.plan.outputs.should_release == 'true') }}
     runs-on: ubuntu-latest
@@ -48,31 +46,18 @@ jobs:
           image_npm_root="$(npm root --global)"
           rm -rf "$image_npm_root/npm/node_modules/undici"
           mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
-      # A finding blocks only when this change introduces it: compared with a
-      # pull request's base, or, for a release, with what is live (the newest
-      # stable chart's source revision). One production already ships is
-      # reported as a warning (scripts/security-findings.js). With no
-      # readable baseline every finding blocks, as before.
-      - uses: azure/setup-helm@v4
-        if: github.event_name != 'pull_request'
-        with:
-          version: v3.19.0
-      - name: Read the live release
-        id: live
-        if: github.event_name != 'pull_request'
-        run: node scripts/live-release.js
+      # Only PRs need a baseline comparison. Releases record all findings.
       - name: Fetch the baseline commit
         id: baseline
+        if: github.event_name == 'pull_request'
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          LIVE_SHA: ${{ steps.live.outputs.revision }}
         run: |
-          revision="${BASE_SHA:-$LIVE_SHA}"
-          if [ -n "$BASE_SHA" ]; then name="the pull request's base"; else name="the live release"; fi
+          revision="$BASE_SHA"
           if [[ "$revision" =~ ^[a-f0-9]{40}$ ]] && git fetch --no-tags --depth=1 origin "$revision"; then
             echo "revision=$revision" >> "$GITHUB_OUTPUT"
-            echo "name=$name (${revision:0:9})" >> "$GITHUB_OUTPUT"
+            echo "name=the pull request's base (${revision:0:9})" >> "$GITHUB_OUTPUT"
           else
             echo "::warning title=Security baseline::No baseline commit could be read; findings require retry or review of the unavailable comparison."
           fi
@@ -80,6 +65,7 @@ jobs:
         env:
           SECURITY_BASELINE_REVISION: ${{ steps.baseline.outputs.revision }}
           SECURITY_BASELINE_NAME: ${{ steps.baseline.outputs.name }}
+          SECURITY_AUDIT_ONLY: ${{ github.event_name != 'pull_request' && '1' || '0' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -87,6 +73,25 @@ jobs:
           path: security-reports/
           if-no-files-found: error
           retention-days: 30
+
+  security-merge-gate:
+    name: Security merge gate
+    needs: [security-lockfiles, security-images]
+    # A skipped dependency is not a successful scan. Run even after failure
+    # or cancellation so GitHub cannot treat a skipped gate as a pass.
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require successful lockfile and image checks
+        env:
+          LOCKFILES_RESULT: ${{ needs.security-lockfiles.result }}
+          IMAGES_RESULT: ${{ needs.security-images.result }}
+        run: |
+          if [ "$LOCKFILES_RESULT" != success ] || [ "$IMAGES_RESULT" != success ]; then
+            echo "::error title=Security merge gate::Lockfiles: $LOCKFILES_RESULT; images: $IMAGES_RESULT. All security checks must succeed before merging."
+            exit 1
+          fi
 
   security-regressions:
     name: Security regressions (${{ matrix.os }})
@@ -552,9 +557,8 @@ jobs:
           provenance: mode=max
           sbom: true
 
-      # The live image of this component is the baseline: a finding on a
-      # package it already ships, at the same version, is reported rather than
-      # blocking the release (scripts/check-image-security.sh).
+      # After merge, findings warn instead of holding delivery. Runtime,
+      # inventory and scanner failures still fail this job.
       - uses: azure/setup-helm@v4
         with:
           version: v3.19.0
@@ -567,6 +571,7 @@ jobs:
           REPORT: ${{ runner.temp }}/security-${{ matrix.component }}
           LIVE_DIGEST: ${{ steps.live.outputs[matrix.component] }}
           REGISTRY_OWNER: ${{ steps.registry.outputs.owner }}
+          SECURITY_AUDIT_ONLY: '1'
         run: |
           if [ -n "$LIVE_DIGEST" ]; then
             export BASELINE_IMAGE="ghcr.io/$REGISTRY_OWNER/social-vibecoding-${{ matrix.component }}@$LIVE_DIGEST"
