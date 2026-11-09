@@ -4405,7 +4405,7 @@
     {
       "name": "Unread notification rows read source, bold subject, muted preview",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open]:has(.notifications-row-slot > [data-notif-id=\"990211\"] + button[data-notification-clear=\"990211\"][aria-label=\"Clear notification\"]) .notifications-row .text-xs + .text-sm.font-semibold"
+      "expectSelector": "#notifications-sheet[data-open]:has(.notifications-row-slot > [data-notif-id=\"990211\"] + button[data-notification-clear=\"990211\"][aria-label=\"Clear notification\"]) [data-notif-id=\"990211\"] .text-xs + .text-sm.font-semibold"
     },
     {
       "name": "The sign-in screen stands on the wallpaper as a card form with a filled Log in pill",
