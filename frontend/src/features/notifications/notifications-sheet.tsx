@@ -1630,10 +1630,10 @@ export function NotificationsSheetView() {
   // a query wiped on close was lost on every round trip to a proposal.
   const [query, setQuery] = useState('');
   // #5460: every write to the query goes through this one helper. A
-  // non-empty query is remembered for the browser tab's session — the scope
-  // AppView.KANBAN_FILTERS_KEY uses for the board's filters: it survives
-  // leaving the screen and a reload, and goes away when the tab closes —
-  // and an empty one forgets it, so a cleared field stays cleared. Storage
+  // non-empty query is remembered for the browser tab's session: it
+  // survives leaving the screen and a reload, and goes away when the tab
+  // closes; an empty one forgets it, so a cleared field stays cleared.
+  // Storage
   // that is unavailable (private mode, blocked) changes nothing: the search
   // then just behaves as it did before, within the page.
   const rememberQuery = useCallback((next: string) => {
