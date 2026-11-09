@@ -5409,6 +5409,32 @@ async function actOnTap(pool, config, { userId, actionId, choice, answers = [], 
 }
 
 /**
+ * #6248: the saved request draft an offer waits on, for the preview beside
+ * the chat. Checked as `decideOfferTap` is: this person's own action, of the
+ * `file_request` kind, still open. Resolves { ok, title, details, status,
+ * app: { slug, name }, footer }, or { ok: false } (the route answers 404).
+ */
+async function readDraft(pool, { user, actionId }) {
+  const id = Number(actionId);
+  if (!user?.id || !Number.isInteger(id) || id <= 0) return { ok: false };
+  const { rows: [row] } = await pool.query(
+    `SELECT a.title, a.details, a.status, ap.slug, ap.name
+       FROM homeroom_bot_dm_actions a
+       JOIN apps ap ON ap.id = a.app_id
+      WHERE a.id = $1 AND a.user_id = $2 AND a.kind = 'file_request'`,
+    [id, user.id]);
+  if (!row || row.status !== 'open') return { ok: false };
+  return {
+    ok: true,
+    title: row.title,
+    details: row.details || '',
+    status: row.status,
+    app: { slug: row.slug, name: row.name },
+    footer: defaultFooter(user),
+  };
+}
+
+/**
  * #4097: what a second File it on an offer already filed says, as the
  * ack's (content, extra): the request's line, which Messages draws as the
  * card it carries, then that it was filed. Without the project (it is gone)
@@ -5589,6 +5615,14 @@ function askedFor(action) {
 }
 
 /**
+ * The line a filed request's body ends with, as the person who asked sees it
+ * (#6248: shared with `readDraft`, so the preview never drifts from the body).
+ */
+function defaultFooter(user) {
+  return `Filed from ${user.username}'s chat with Homeroom bot.`;
+}
+
+/**
  * Pure (#6251): the body a request is filed with. Without extras, or with an
  * explicit `footer` (the B9 callers), it is exactly what it always was. With
  * them: the person's words, their pictures, Done when, Related (each a link
@@ -5601,7 +5635,7 @@ function requestBody({ details, username, extras = null, screenshotIds = [], dom
     details || '',
     '',
     '---',
-    footer || `Filed from ${username}'s chat with Homeroom bot.`,
+    footer || defaultFooter({ username }),
   ].join('\n').trim();
   if (!extras || footer) return plain;
   const base = domain ? `https://${domain}` : '';
@@ -7156,6 +7190,7 @@ module.exports = {
   decideTyped,
   typedDecision,
   fileRequest,
+  readDraft,
   findApp,
   canFile,
   offerMoveRequest,

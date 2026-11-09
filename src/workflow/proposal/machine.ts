@@ -436,7 +436,8 @@ const EVENTS = {
     const keys = p?.keys == null ? null : (Array.isArray(p.keys) ? p.keys : [])
       .map((k: unknown) => text(k, 300)).filter(Boolean) as string[];
     return { ...session(p), reason, head: optSha(p?.head, 'head'), keys, queueN: optInt(p?.queueN, 'queueN'),
-      approved: !!p?.approved, userId: optInt(p?.userId, 'userId'), githubConflict: !!p?.githubConflict };
+      approved: !!p?.approved, userId: optInt(p?.userId, 'userId'), githubConflict: !!p?.githubConflict,
+      mechanical: !!p?.mechanical };
   },
   // A person's Stop of the turn the proposal's sync runs (the session's
   // Stop routes, through platform.stopWorkflowTurn).
@@ -1209,7 +1210,7 @@ function syncRefusal(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): 
     const g = s.data.gaveUp;
     if (g && g.head === row.integrationHead && (g.main == null || row.integrationMain == null || g.main === row.integrationMain)) return 'unresolvable';
     if (s.data.backoff && Date.parse(s.data.backoff.until) > ctx.now.getTime()) return 'sync_backoff';
-    if (!p.approved && row.integrationResolvedEpoch === row.epoch) return 'awaiting_approval';
+    if (!p.approved && !p.mechanical && row.integrationResolvedEpoch === row.epoch) return 'awaiting_approval';
   }
   return null;
 }
@@ -1242,7 +1243,7 @@ function beginSync(s: Live, p: any, f: Facts, ctx: TransitionContext): Outcome<P
     writes.push({ type: 'fixedCheckClaim', sessionId: s.data.sessionId, head: p.head, keys });
   }
   if (p.reason === 'conflict') {
-    if (!p.approved) writes.push({ type: 'resolutionSpent', sessionId: s.data.sessionId });
+    if (!p.approved && !p.mechanical) writes.push({ type: 'resolutionSpent', sessionId: s.data.sessionId });
     writes.push({ type: 'blockReasons', sessionId: s.data.sessionId, reasons: ['integrating'] });
   }
   // Any sync with main is the one a move onto main owed.
