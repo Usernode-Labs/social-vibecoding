@@ -32,7 +32,7 @@
  * ── What stays in app-view.js ─────────────────────────────────────────
  *
  * The filters themselves (`_kanbanFilters`, persisted per app in
- * sessionStorage), the 150ms debounce on typing, which cards each filter
+ * localStorage), the 150ms debounce on typing, which cards each filter
  * keeps, the chip-row data and the `Filters (n)` count, the dialog's open()
  * payload (vocabularies included), and the repaint every control triggers.
  */
