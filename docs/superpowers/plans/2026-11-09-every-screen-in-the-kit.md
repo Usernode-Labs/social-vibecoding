@@ -216,3 +216,51 @@ Learned:
 Next: M6 (a request and a change, s32 to s35). Their pages are `features/dev-board/topic/*`
 (6,600 lines) inside a host app-view.js creates; their threads should wear the kit the way a
 conversation does.
+
+### M6, M8 and M10, as built (10 Nov)
+
+Done (`2794197c3` to `0fe7f6f2d`):
+
+- **A request's page and a change's page (s32 to s35).** The page is still the product's
+  (`features/dev-board/topic/request-head.tsx`, `change-head.tsx`). Under a look it says its
+  trail to the bar (project, Workshop, the item), its head is the kit's
+  (`topic/frame/topic-frame.tsx`), the request's words and status wear the look's card
+  (`looks.json` "wear": card), and status, progress and About stand in a 320px context column.
+  Those are separate children the page writes in its own order and fifteen suites hold its lines,
+  so the column is laid from measured heights (`topic/frame/side-stack.ts`).
+- **The You tab (s44, s45).** `features/profile/frame/you-frame.tsx`: the profile's own view
+  with another face. A kit page says it is up on `<html>` through one shared hook now
+  (`features/frame/frame-flag.ts`).
+- **Settings (s57 to s73).** Laid out as the kit's page by app.css alone, every section at once:
+  the section first at 720px with the kit's title, the list of sections 320px beside it.
+- **The look picker** beside the bell gained a light and dark toggle.
+
+Not verified live: a change with a page of its own. On this copy every change address lands on
+its request's page (one page per thread), so the change page's kit head and column are held by
+tests only.
+
+Left in these milestones:
+
+- **A request's page:** the tour's primary button in the head (the product keeps its action in
+  the Status card, where its reason is), the "Follow this request" row, the status card in the
+  kit's own form (pill, five-stop line, one sentence). The plan card, spec cards and a change's
+  section keep the standard look's surfaces inside the kit's column. A change built for a
+  request keeps its votes and checks in its section, not in the context column.
+- **You:** the tabs (Changes, Requests, Votes, Friends) are rows, not tabs; Public page and
+  Copy link; the public profile (s51, s52), Edit profile as the kit's sheet (s50), friends
+  (s49) and the three "your …" lists (s46 to s48), which are the bot tab's history.
+- **Settings:** the index page of five groups (s56) exists only on a phone (the product's
+  level 1); a section's own groups keep the standard look's rows and controls; no sentence
+  under a section's title; "Worth a look" is not drawn.
+
+Not started: M7 (a running app, Discover, an app's page, Make), M9 (Challenges and standings),
+M11 (signed out, 27 screens), M12 (waitlist, 12 screens).
+
+Learned:
+
+- An item's address on this local copy: `/app/usernode-2d5619/dev/issues/5998` (Homeroom's slug
+  is `usernode-2d5619`). Game Corner's items answer 404 here under every look.
+- `position: absolute` parts stacked by a measuring hook is the way to make a column out of
+  siblings that may not be wrapped; what follows their host is drawn up by `--fr-side-pull`.
+- A hand rule that must beat one of the kit's phone rules says the attribute twice
+  (`html[data-skin][data-skin]`), as the compiler does.
