@@ -72,7 +72,7 @@ test('a vote is asked only once the checks pass and it merges cleanly', { timeou
                                 promoted_at)
      VALUES ($1, $2, 'promoted', $3::int[], $4, $5, $6, $7, $8, $9, $10::jsonb, NOW()) RETURNING id`,
     [app.id, by.id, linked, pr, `Change ${pr}`, extra.checkState ?? 'passing', extra.checkPhase ?? null,
-      extra.conflict ?? null, extra.clean ?? null, extra.reasons ? JSON.stringify(extra.reasons) : null])).rows[0];
+      extra.conflict ?? null, extra.clean ?? null, JSON.stringify(extra.reasons ?? [])])).rows[0];
 
   // What the four readers say about the change for ada, who would owe it.
   const feed = async () => (await pool.query(

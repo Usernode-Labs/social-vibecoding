@@ -122,8 +122,12 @@ export function admission(c: Candidate, now: number): { admit: boolean; reason: 
   // it is written as the author's lane reason only once the free resolution
   // has been spent (below).
   const stale = c.unmergeable === 'checks_failing' || c.unmergeable === 'checks_error';
-  if ((c.approved || c.forced) && (!c.unmergeable || stale)) return { admit: true, reason: 'approved' };
+  if ((c.approved || c.forced) && !c.unmergeable) return { admit: true, reason: 'approved' };
+  // A stale verdict does not block the free resolution before the vote.
   if (!c.resolutionSpent) return { admit: true, reason: 'first_conflict' };
+  // The group said yes and the free resolution is spent: the lane still
+  // resolves the conflict, and the new head gets its own full checks run.
+  if (c.approved && stale) return { admit: true, reason: 'approved' };
   if (stale) return { admit: false, reason: c.unmergeable! };
   return { admit: false, reason: c.approved ? (c.unmergeable || 'lock') : 'awaiting_approval' };
 }

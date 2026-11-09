@@ -78,7 +78,7 @@ test('the change card and the bot tab word a yes-only conflict the same way', ()
   const changes = JSON.parse(read('frontend/locales/en/changes.json'));
   assert.equal(changes['page.votes.note.conflictOnYes'].text,
     'Conflicts with main: Homeroom resolves it once you approve.');
-  assert.match(changes['page.votes.note.syncing'].text, /^Syncing with main: Homeroom asks for votes once it is caught up/);
+  assert.match(changes['page.votes.note.syncing'].text, /^Syncing with main: Homeroom asks for votes when it is caught up/);
   const view = read('public/js/app-view.js');
   assert.match(view, /blocked\.indexOf\('awaiting_approval'\) !== -1\) note\.push\(PlatformI18n\.t\('changes:page\.votes\.note\.conflictOnYes'\)\)/);
   assert.match(view, /blocked\.indexOf\('integrating'\) !== -1 \|\| !blocked\.some/);

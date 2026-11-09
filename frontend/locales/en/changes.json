@@ -8776,7 +8776,7 @@
     "description": "A change page's Votes card: the change conflicts with main and only the group's approval can move it; once approved Homeroom resolves the conflict and merges it without asking again."
   },
   "page.votes.note.syncing": {
-    "text": "Syncing with main: Homeroom asks for votes once it is caught up and its checks pass.",
+    "text": "Syncing with main: Homeroom asks for votes when it is caught up and its checks pass.",
     "description": "A change page's Votes card: the change conflicts with main and Homeroom is resolving that now, so nobody is asked to vote yet."
   },
   "page.votes.note.goingLive": {
