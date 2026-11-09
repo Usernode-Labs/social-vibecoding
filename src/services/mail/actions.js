@@ -283,7 +283,11 @@ const ACTIONS = {
     },
     required: BOTH('url'),
     englishOnly: false,
-    sample: { url: 'https://app.onhomeroom.com/#release', hasAccount: false, signInLink: false, mobile: { ios: 'https://apps.apple.com/app/sample', android: 'https://play.google.com/store/apps/sample' } },
+    // The usual admit mail: a new account's one-time sign-in link, so every
+    // preview (Admin > Email templates, the bot's show_change) draws what
+    // nearly everyone gets, not the code-note fallback for a link that could
+    // not be made. The url stays harmless for "Send a test".
+    sample: { url: 'https://app.onhomeroom.com/#release', hasAccount: false, signInLink: true, signInExpiresAt: '2026-11-13T09:00:00Z', mobile: { ios: 'https://apps.apple.com/app/sample', android: 'https://play.google.com/store/apps/sample' } },
     values: (payload) => {
       const mobile = payload.mobile || {};
       const iosLink = url(mobile.ios);
