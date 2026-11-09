@@ -29,7 +29,7 @@
  * for a visitor who is not signed in: the signed-out frame is its own
  * milestone.
  */
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Av, Count, Frame, Icon, Tile, k } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
@@ -265,11 +265,13 @@ export function FrameChrome() {
               <span className={k('p')}><Tile size={28} src={MARK} color="#0f1116" name={t('core:frame.brand')} /></span>
             )}
             <div className={k('crumb')}>
+              {/* Flat children: on a phone the kit keeps only the last one
+                  (.crumb > *:not(.keep)), so nothing may wrap them. */}
               {crumbs.map((word, i) => (
-                <span key={`${i}:${word}`} style={{ display: 'contents' }}>
+                <Fragment key={`${i}:${word}`}>
                   {i > 0 ? <Icon name="cr" size={14} /> : null}
                   <span className={k('ci', i === crumbs.length - 1 && 'here keep')}>{word}</span>
-                </span>
+                </Fragment>
               ))}
             </div>
             <span className={k('sp')} />

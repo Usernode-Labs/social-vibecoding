@@ -165,7 +165,12 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
   const [view, setView] = useState<'home' | 'apps' | 'communities'>(initialView);
   const show = useCallback((next: 'home' | 'apps' | 'communities') => {
     setView(next);
-    try { document.getElementById('home-screen')?.scrollTo?.({ top: 0 }); } catch { /* nothing to scroll */ }
+    // A page opens at its top: Home's own scroller on a desktop, the
+    // document on a phone, where the browser scrolls it.
+    try {
+      document.getElementById('home-screen')?.scrollTo?.({ top: 0 });
+      window.scrollTo?.({ top: 0 });
+    } catch { /* nothing to scroll */ }
   }, []);
   const backHome = useCallback(() => show('home'), [show]);
   useEffect(() => {
