@@ -3,15 +3,18 @@
 // Aggregate operational activity, without identities, paths or request bodies.
 // A separate cluster-only listener exposes it to the sleep controller.
 const HEALTH_PATHS = new Set(['/health', '/healthz', '/readyz', '/livez', '/__gate_health']);
-function isHealth(uri) {
-  return HEALTH_PATHS.has(String(uri || '').split('?')[0]);
+function isHealth(uri, { method, userAgent, upgrade = false } = {}) {
+  if (upgrade) return false;
+  return HEALTH_PATHS.has(String(uri || '').split('?')[0])
+    // The app directory checks homepages, rather than a dedicated health path.
+    || ((method === 'GET' || method === 'HEAD') && userAgent === 'usernode-dapp-homepage-healthcheck/1');
 }
 function createActivity({ now = Date.now, maxEntries = 4096 } = {}) {
   const entries = new Map();
   const startedAt = now();
   let overflow = false;
-  function begin(name, uri) {
-    if (isHealth(uri)) return () => {};
+  function begin(name, uri, request) {
+    if (isHealth(uri, request)) return () => {};
     let row = entries.get(name);
     if (!row) {
       if (entries.size >= maxEntries) { overflow = true; return () => {}; }

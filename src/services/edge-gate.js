@@ -476,7 +476,9 @@ async function handleAccess(pool, req, res) {
     }
     if (viaKubernetesGate) {
       if (isProduction) {
-        const runtime = await require('./production-sleep').access(pool, vis.appId, uri);
+        const runtime = await require('./production-sleep').access(pool, vis.appId, uri, {
+          request: { method, userAgent: req.headers['user-agent'], upgrade: ws },
+        });
         if (runtime.eligible) res.set('X-Usernode-Runtime-Sleep', runtime.ready ? 'eligible' : runtime.waking ? 'waking' : 'asleep');
         if (!runtime.ready) {
           res.set('Retry-After', '5');
