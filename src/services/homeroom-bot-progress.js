@@ -533,6 +533,22 @@ function checksOnHead(row) {
   return head.toLowerCase() === checked.toLowerCase();
 }
 
+/**
+ * #6521: checksOnHead for a change as the change page's own rows carry it
+ * (routes/votes.js /promoted and /proposals/:id, whose columns are `source`
+ * and `checks_commit_sha`), so the page, the thread list (stageOf) and the
+ * merge gate read one rule instead of the page believing a stale pass.
+ */
+function sessionChecksOnHead(session) {
+  if (!session) return true;
+  return checksOnHead({
+    proposal_source: session.source,
+    imported_pr_head_sha: session.imported_pr_head_sha,
+    reviewed_head_sha: session.reviewed_head_sha,
+    checks_sha: session.checks_commit_sha,
+  });
+}
+
 // N5: a proposal's stages on the vote step that are not ready to try: a
 // follow-up waiting its turn or running changes the change.
 const FOLLOW_UP_STAGES = new Set(['followup_queued', 'revising']);
@@ -1927,6 +1943,8 @@ module.exports = {
   // #6234: the bot's own fix of a change's failing checks, for its page.
   changeBotFix,
   checksOnHead,
+  // #6521: the same rule for a change page's own row shape.
+  sessionChecksOnHead,
   firstVersionStage,
   firstVersionStopped,
   handedBack,
