@@ -2081,8 +2081,12 @@ test('"Open on Board" narrows the board to the theme and goes there by hash', ()
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
   AppView.openBoardForTheme('t');
   assert.equal(AppView._kanbanFilters.theme, 't');
-  assert.equal(AppView._loadKanbanFilters('demo-app').theme, null,
-    'sessionStorage is stubbed empty here; the write is the module\'s _saveKanbanFilters');
+  // #6509: the theme is saved with the project's filters, so the board that
+  // opens reads it back from localStorage; another project's is untouched.
+  assert.equal(AppView._loadKanbanFilters('demo-app').theme, 't',
+    'the theme is remembered with the project’s filters');
+  assert.equal(AppView._loadKanbanFilters('another-app').theme, null,
+    'and a project keeps its own filters');
 });
 
 // ── the component ────────────────────────────────────────────────────

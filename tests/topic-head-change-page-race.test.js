@@ -63,7 +63,6 @@ function harness() {
   AppView._ensureAiAvailability = () => Promise.resolve(true);
   AppView._refreshAiAvailability = () => {};
   AppView._fillKudosHosts = () => {};
-  AppView._loadIssueComments = () => {};
   AppView._loadGovVoteRoster = () => {};
   AppView._topicViewFor = () => ({ card: {}, body: {} });
   return { AppView, els, calls };

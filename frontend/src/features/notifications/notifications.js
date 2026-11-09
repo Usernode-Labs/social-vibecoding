@@ -2892,6 +2892,15 @@ function botMomentLine(detail, message) {
   return { label, subject, meta, needsYou, ...(noteId ? { note: t(noteId) } : {}) };
 }
 
+// #6494: a storage token carries MiB used and MiB of cap. MB below 1 GiB,
+// else GB with at most one decimal ("1.6 GB", "3 GB").
+function storageSizeText(mib) {
+  const n = Number(mib);
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n < 1024) return `${Math.round(n)} MB`;
+  return `${(n / 1024).toFixed(1).replace(/\.0$/, '')} GB`;
+}
+
 // A whole message with one emphasised part, as a row's segments: the catalog
 // text is "<0>12 of 50 apps in use.</0> New apps are refused…", and what is
 // inside the tag is the strong segment. A parameter is filled in after the
@@ -3594,6 +3603,23 @@ function rowWords(n) {
     // the app. The app name leads the line on purpose: this row is only
     // ever about one app, and "has used most of its storage" with nothing
     // in front of it reads as the platform talking about itself.
+    // #6494: the early and warning tokens carry the figures, so the row says
+    // how full the database is ("1.6 GB of 3 GB") instead of only "most of".
+    // A bare token from a row written before this change keeps its old words.
+    const storage = /^storage_(early|warn):(\d{1,9}):(\d{1,9})$/.exec(String(n.detail || ''));
+    if (storage) {
+      const key = storage[1] === 'early' ? 'early' : 'warnSized';
+      const values = { used: storageSizeText(Number(storage[2])), limit: storageSizeText(Number(storage[3])) };
+      return {
+        ...base,
+        wrap: true,
+        icon: '\u{1F4BE}',
+        label: t('notifications:row.health.storage.label'),
+        segments: n.appName
+          ? messageSegments(`notifications:row.health.storage.${key}`, { ...values, app: n.appName })
+          : messageSegments(`notifications:row.health.storage.${key}Unnamed`, values),
+      };
+    }
     if (n.detail === 'storage_warn') {
       return {
         ...base,
