@@ -19,10 +19,14 @@ const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 test('the design bot offers a plan and a project as cards, its tools last, and never posts itself', () => {
   const designBot = require('../src/services/design-bot');
   const names = designBot.TOOLS.map((t) => t.function.name);
-  assert.deepEqual(names.slice(-4, -2), ['offer_plan', 'offer_project'], 'a separate block, before #6260\'s board readers');
-  for (const tool of designBot.TOOLS.slice(-4, -2)) {
-    assert.equal(tool.function.parameters.additionalProperties, false);
-    assert.doesNotMatch(tool.function.description, /—/);
+  // #6354: the offer tools stay one block, before #6260's board readers and
+  // the capture tool after them.
+  assert.deepEqual(names.slice(names.indexOf('offer_plan'), names.indexOf('offer_project') + 1), ['offer_plan', 'offer_project']);
+  assert.ok(names.indexOf('offer_project') < names.indexOf('list_requests'), 'a separate block, before #6260\'s board readers');
+  for (const name of ['offer_plan', 'offer_project']) {
+    const tool = designBot.TOOLS.find((t) => t.function.name === name).function;
+    assert.equal(tool.parameters.additionalProperties, false);
+    assert.doesNotMatch(tool.description, /—/);
   }
   const plan = designBot.TOOLS.find((t) => t.function.name === 'offer_plan').function;
   assert.deepEqual(plan.parameters.properties.target.enum, ['request', 'new']);

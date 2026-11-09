@@ -32,7 +32,7 @@ const { planRecordSql } = require('./request-specs');
 // hold reasons and detail.
 
 const progress = require('./homeroom-bot-progress');
-const { syncWaits } = require('./vote-ready');
+const { syncWaits, syncStand } = require('./vote-ready');
 const checksEstimate = require('./checks-estimate');
 
 const STAGES = Object.freeze([
@@ -137,7 +137,14 @@ function checksLine(row, now) {
 
 /** The stage word plus the two lines a checking change can carry (#6402). */
 function checkingState(row, since, now) {
-  if (syncWaits(row)) return state('checking', { since, line: { code: 'sync_wait' } });
+  // #6531: what a conflicting change waits on decides where it shows and
+  // what it says. A yes-only conflict is up for a vote; one the lane is
+  // resolving says "Syncing with main"; one only its author can move keeps
+  // the old wording.
+  const stand = syncStand(row);
+  if (stand === 'vote') return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
+  if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
+  if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
   const line = checksLine(row, now);
   return state('checking', { since, ...(line ? { line } : {}) });
 }
@@ -194,6 +201,11 @@ function fromStage(s, row, now = new Date()) {
     case 'checks':
       return checkingState(row, since, now);
     case 'checks_failed': {
+      // #6531: a conflicting head the lane is catching up (or that only a yes
+      // can move) is not yet its author's failing verdict.
+      const stand = syncStand(row);
+      if (stand === 'vote') return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
+      if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
       const failing = Number(row.failed_checks ?? progress.failedCount(row.test_results)) || 0;
       return state('checking', { since, line: { code: 'checks_failing', ...(failing ? { failing } : {}) } });
     }
@@ -203,7 +215,13 @@ function fromStage(s, row, now = new Date()) {
       if (row.first_version === true) return state('going_live', { since, line: { code: 'first_version' } });
       // #6402: a passing change that has since stopped merging cleanly waits
       // to sync with main, rather than asking for a vote it would throw away.
-      if (syncWaits(row)) return state('checking', { since, line: { code: 'sync_wait' } });
+      // #6531: unless it conflicts and only a yes can move it.
+      {
+        const stand = syncStand(row);
+        if (stand === 'vote') return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
+        if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
+        if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
+      }
       return state('up_for_vote', { since });
     case 'merging':
       return state('going_live', { since: row.merged_at || since });
@@ -270,6 +288,7 @@ function deriveFacts(row, { now = new Date() } = {}) {
       status: row.lc_status, check_state: row.lc_check_state, checks_at: row.lc_checks_at,
       check_phase: row.lc_check_phase, merge_conflict_state: row.lc_merge_conflict_state,
       integration_merges_clean: row.lc_integration_merges_clean,
+      integration_block_reasons: row.lc_integration_block_reasons,
       checks_estimate: row.checks_estimate,
       promoted_at: row.lc_promoted_at, merged_at: row.lc_merged_at, live_at: row.lc_live_at,
       last_activity_at: row.lc_last_activity_at, created_at: row.lc_created_at,
@@ -319,6 +338,16 @@ function deriveChange(row, { now = new Date() } = {}) {
   if (status === 'merging') return state('going_live', { since: row.promoted_at });
   if (status === 'closed' || status === 'archived') return state('closed', { since: row.last_activity_at || row.promoted_at });
   if (status === 'promoted') {
+    // #6531: a conflicting change is where its conflict stand puts it, before
+    // its stale verdict is read as final: only a yes can move it (vote), the
+    // lane is catching it up (syncing), or it is its author's (author).
+    const stand = syncStand(row);
+    if (stand === 'vote') return state('up_for_vote', { since: row.checks_at || row.promoted_at, line: { code: 'conflict_on_yes' } });
+    if (stand === 'syncing') return state('checking', { since: row.checks_at || row.promoted_at, line: { code: 'syncing' } });
+    if (stand === 'author') {
+      const failed = row.check_state === 'failing' || row.check_state === 'error';
+      return state('checking', { since: row.checks_at || row.promoted_at, line: { code: failed ? 'checks_failing' : 'sync_wait' } });
+    }
     if (row.check_state !== 'passing' && row.check_state !== 'skipped') {
       const failing = row.check_state === 'failing' || row.check_state === 'error';
       if (failing) return state('checking', { since: row.checks_at || row.promoted_at, line: { code: 'checks_failing' } });
@@ -403,6 +432,7 @@ const WORDS = Object.freeze({
   'work.stage.waitingForYou': 'Waiting for you',
   'work.stage.building': 'Building',
   'work.stage.checking': 'Checking',
+  'work.stage.syncing': 'Syncing with main',
   'work.stage.upForVote': 'Up for a vote',
   'work.stage.goingLive': 'Going live',
   'work.stage.live': 'Live',
@@ -444,6 +474,7 @@ const WORDS = Object.freeze({
   'work.line.checksRunning_one': 'About {{count}} min left',
   'work.line.checksRunning_other': 'About {{count}} min left',
   'work.line.syncWait': 'Waiting to sync with main',
+  'work.line.conflictOnYes': 'Conflicts with main: Homeroom resolves it once you approve',
   'work.line.firstVersion': 'First version: it goes live without a vote',
   'work.line.claimed': '{{username}} is building it',
   'work.line.planningWithYou': 'Planning it with you in a private thread',
@@ -467,6 +498,9 @@ function stageSays(item, { yours = true } = {}) {
   }
   if (item.stage === 'stopped' && item.reason && WORDS[`work.reason.${camel(item.reason)}`]) return fill(`work.reason.${camel(item.reason)}`);
   const code = item.line && item.line.code;
+  // #6531: a conflicting change the lane is catching up says so in the stage
+  // word itself ("Syncing with main", not "Checking"), and carries no line.
+  if (item.stage === 'checking' && code === 'syncing') return fill('work.stage.syncing');
   if (item.stage === 'reading' && NOT_STARTED.has(code)) return fill('work.stage.notStarted');
   if (item.stage === 'building' && READY.has(code)) return fill('work.stage.readyToBuild');
   return fill(`work.stage.${camel(item.stage)}`) || '';
@@ -528,7 +562,7 @@ const REQUEST_FACTS_SQL = `
          CASE WHEN cs.id IS NULL THEN NULL ELSE ${progress.updateComingSql('cs')} END AS update_coming,
          lc.id AS lc_id, lc.status AS lc_status, lc.check_state AS lc_check_state, lc.checks_checked_at AS lc_checks_at,
          lc.check_phase AS lc_check_phase, lc.merge_conflict_state AS lc_merge_conflict_state,
-         lc.integration_merges_clean AS lc_integration_merges_clean,
+         lc.integration_merges_clean AS lc_integration_merges_clean, lc.integration_block_reasons AS lc_integration_block_reasons,
          lc.promoted_at AS lc_promoted_at, lc.merged_at AS lc_merged_at, lc.live_at AS lc_live_at,
          lc.last_activity_at AS lc_last_activity_at, lc.created_at AS lc_created_at, lc.update_coming AS lc_update_coming,
          lc.username AS lc_by,
@@ -568,7 +602,7 @@ const REQUEST_FACTS_SQL = `
     -- (homeroom-bot.js issueHolders). A posted plan is no change.
     LEFT JOIN LATERAL (
       SELECT c.id, c.status, c.check_state, c.checks_checked_at, c.check_phase,
-             c.merge_conflict_state, c.integration_merges_clean, c.promoted_at, c.merged_at, c.live_at,
+             c.merge_conflict_state, c.integration_merges_clean, c.integration_block_reasons, c.promoted_at, c.merged_at, c.live_at,
              c.last_activity_at, c.created_at,
              (SELECT u.username FROM users u WHERE u.id = c.user_id AND u.is_synthetic IS NOT TRUE) AS username,
              CASE WHEN c.status = 'promoted' THEN ${progress.updateComingSql('c')} END AS update_coming
@@ -584,7 +618,7 @@ const REQUEST_FACTS_SQL = `
 /** One row per change named by $1 (session ids) that has no request of its own. */
 const CHANGE_FACTS_SQL = `
   SELECT cs.id, cs.app_id, (SELECT a.slug FROM apps a WHERE a.id = cs.app_id) AS app_slug, cs.user_id, cs.status, cs.check_state, cs.checks_checked_at AS checks_at,
-         cs.check_phase, cs.merge_conflict_state, cs.integration_merges_clean,
+         cs.check_phase, cs.merge_conflict_state, cs.integration_merges_clean, cs.integration_block_reasons,
          cs.promoted_at, cs.merged_at, cs.live_at, cs.created_at, cs.last_activity_at
     FROM chat_sessions cs
    WHERE cs.id = ANY($1::int[])`;

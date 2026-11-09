@@ -65,10 +65,11 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, stale: false, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
-  // #396: per-issue cache of the GitHub comment thread fetched lazily when
-  // an issue topic opens, so _renderTopicHead's live-refreshes (WS-driven)
-  // reuse it instead of refetching. Each entry is `{ comments, truncated }`;
-  // absent means "not loaded yet".
+  // #396: per-issue cache of the GitHub comment thread. #6497: a request's
+  // first page now brings it (`_takeIssueComments`), and the feed's lazy
+  // previews fill the same cache, so _renderTopicHead's live-refreshes
+  // (WS-driven) reuse it instead of refetching. Each entry is
+  // `{ comments, truncated }`; absent means "not loaded yet".
   //
   // #4178: keyed by `_ghCommentsKey(slug, number)`, never by the number
   // alone. Every app has its own repository, so issue numbers repeat across
@@ -78,6 +79,20 @@ const AppView = {
 
   _ghCommentsKey(slug, number) {
     return `${slug}/${number}`;
+  },
+
+  // #6497: a request's first page carries its GitHub comments
+  // (`request_comments`, routes/chat.js), so the page paints the whole
+  // discussion once instead of fetching the comments after paint. This is
+  // that answer's one writer; `GroupChat` calls it before the render that
+  // merges the comments into the thread (`_requestThreadRows`). The feed's
+  // own lazy preview (`_wireFeedComments`) still fills the same cache.
+  _takeIssueComments(slug, ref, payload) {
+    if (!slug || ref == null || !payload) return;
+    AppView._ghComments.set(AppView._ghCommentsKey(slug, Number(ref)), {
+      comments: Array.isArray(payload.comments) ? payload.comments : [],
+      truncated: !!payload.truncated,
+    });
   },
 
   // Scroll-position memory for the Dev card list, keyed by app slug
@@ -6135,7 +6150,6 @@ const AppView = {
     // to dim them per paint is gone; this refreshes the one fact they read.
     AppView._refreshAiAvailability();
     AppView._fillKudosHosts(head);
-    if (t.kind === 'issue') AppView._loadIssueComments(item);
     if (t.kind === 'proposal' && ['promoted', 'merging'].includes(item.status)) AppView._loadVoteRoster(item.id);
     // #2603: the governance twin — loaded for settled rows too, because a
     // close proposal's page is read after the fact as much as before it.
@@ -6176,8 +6190,9 @@ const AppView = {
     if (t.kind === 'issue') {
       card = AppView._issueCardModel(item, { noNav: true });
       const closedBand = AppView._issueClosedBandView(item);
-      // #396: the issue body. Its GitHub comments are fetched lazily (after
-      // paint, `_loadIssueComments`) into the thread's stream (#4453).
+      // #396: the issue body. Its GitHub comments ride the thread's own
+      // first page since #6497 (`request_comments`), so they are in hand
+      // before the stream paints (#4453).
       body = {
         actions: AppView._detailActionsView('issue', item),
         // (#2431) The mirror of a proposal's issue chips: which change is
@@ -6496,14 +6511,19 @@ const AppView = {
       lead = who === 'you' ? PlatformI18n.t('changes:request.status.lead.reviewYours')
         : who ? PlatformI18n.t('changes:request.status.lead.reviewNamed', { username: who }) : PlatformI18n.t('changes:request.status.lead.review');
     } else if (st.key === 'bot') {
+      // #6532: `issue.bot` says `building` while the stored track can still say
+      // the build waits its turn (`busy` false). Say what the progress card
+      // under this sentence says, never both.
+      const waitingBuild = AppView._botWaitingBuildLead(issue.track);
       // #6156: held for its turn among the project's builds (`turn`), not for a vote.
       lead = bot && bot.held ? (bot.turn ? PlatformI18n.t('changes:request.status.lead.botHeldTurn') : PlatformI18n.t('changes:request.status.lead.botHeld'))
         : bot && bot.plan
           // B06 (audit 2 Nov 2026): the person it waits for reads "you", not their own @name.
           ? (bot.mine ? PlatformI18n.t('changes:request.status.lead.botPlanYours')
             : bot.askedBy ? PlatformI18n.t('changes:request.status.lead.botPlanWaiting', { username: bot.askedBy }) : PlatformI18n.t('changes:request.status.lead.botPlanWaitingUnnamed'))
-          : bot && bot.what === 'queued' ? PlatformI18n.t('changes:request.status.lead.botQueued')
-            : AppView._botWorkReading(bot) ? PlatformI18n.t('changes:request.status.lead.botReading') : PlatformI18n.t('changes:request.status.lead.botBuilding');
+          : waitingBuild ? waitingBuild
+            : bot && bot.what === 'queued' ? PlatformI18n.t('changes:request.status.lead.botQueued')
+              : AppView._botWorkReading(bot) ? PlatformI18n.t('changes:request.status.lead.botReading') : PlatformI18n.t('changes:request.status.lead.botBuilding');
     } else if (st.key === 'auto_solving') lead = PlatformI18n.t('changes:request.status.lead.autoSolving');
     else if (st.key === 'answer_needed') lead = PlatformI18n.t('changes:request.status.lead.answerNeeded');
     else if (st.key === 'draft_ready') lead = PlatformI18n.t('changes:request.status.lead.draftReady');
@@ -6668,6 +6688,24 @@ const AppView = {
     if (id) return PlatformI18n.t(id);
     const date = track.held && track.held.until ? AppView._workDateText(Date.parse(track.held.until)) : '';
     return date ? PlatformI18n.t('changes:request.status.lead.botOnHoldUntil', { date }) : null;
+  },
+
+  // #6532: Homeroom bot's build for a request can wait its turn while
+  // `issue.bot` already says `building` (homeroom-bot-progress.js
+  // botWorkByIssue sets it for a ready live run with live_build_waiting_at).
+  // The stored track says how it really stands — `busy` false with a queued
+  // or held line — so the status card says what the progress card under it
+  // says. Null when the track is not a build waiting its turn.
+  _botWaitingBuildLead(track) {
+    const work = track && track.work;
+    const code = work && work.line && work.line.code;
+    if (!work || track.busy !== false) return null;
+    if (work.stage !== 'building' && work.stage !== 'reading') return null;
+    if (code === 'queued') return PlatformI18n.t('changes:request.status.lead.botQueued');
+    if (code === 'held_builds') return PlatformI18n.t('changes:request.status.lead.botHeldTurn');
+    if (code === 'held_waiting') return PlatformI18n.t('changes:request.status.lead.botHeld');
+    if (code === 'on_hold') return AppView._requestHoldLead(track);
+    return null;
   },
 
   // #6399: the sentence for a request Homeroom bot handed back to the viewer
@@ -7957,6 +7995,17 @@ const AppView = {
     if (force && item.status !== 'merged') return AppView._forceVotesView(item, force, yes, maj);
     const note = [];
     if (updateComing) note.push(PlatformI18n.t('changes:page.votes.note.updateComing'));
+    // #6531: a conflicting promoted change says what its conflict means for
+    // the vote, in the same words as the Homeroom bot tab's row. A conflict
+    // only its author can move keeps the integration line's own wording.
+    if (!updateComing && item.status === 'promoted' && item.integration_merges_clean === false) {
+      const blocked = item.integration && Array.isArray(item.integration.blockReasons) ? item.integration.blockReasons : [];
+      const authors = ['unresolvable', 'fork_head', 'checks_failing', 'checks_error'];
+      if (blocked.indexOf('awaiting_approval') !== -1) note.push(PlatformI18n.t('changes:page.votes.note.conflictOnYes'));
+      else if (blocked.indexOf('integrating') !== -1 || !blocked.some((r) => authors.indexOf(r) !== -1)) {
+        note.push(PlatformI18n.t('changes:page.votes.note.syncing'));
+      }
+    }
     if (forceDropped) {
       const by = forceDropped.by || PlatformI18n.t('changes:page.votes.note.adminMergeNoName');
       const head = forceDropped.head ? String(forceDropped.head).slice(0, 7) : null;
@@ -8018,8 +8067,11 @@ const AppView = {
       if (approvers) note.push(PlatformI18n.t('changes:page.votes.note.anyApprover', { count: approvers }));
       else if (members > 1) note.push(PlatformI18n.t('changes:page.votes.note.anyMember', { count: members }));
     }
-    // A countdown or a contest says what happens next, in a few words.
-    if (pill.key === 'merge_countdown') note.push(PlatformI18n.t('changes:page.votes.note.mergeCountdown'));
+    // A countdown or a contest says what happens next, in a few words. Once
+    // the vote is decided nobody can object from this card, so it promises
+    // nothing of the sort (#6505).
+    if (pill.key === 'merge_countdown') note.push(PlatformI18n.t(AppView._votesDecided(item)
+      ? 'changes:page.votes.note.mergeCountdownDecided' : 'changes:page.votes.note.mergeCountdown'));
     else if (pill.key === 'reject_countdown') note.push(PlatformI18n.t('changes:page.votes.note.rejectCountdown'));
     else if (pill.key === 'contested') note.push(PlatformI18n.t('changes:page.votes.note.contested'));
     const earlierYes = ready && Array.isArray(ready.earlierYes) ? ready.earlierYes : [];
@@ -8039,7 +8091,10 @@ const AppView = {
     }
     // Not for a change whose code is missing: testing is not what it waits
     // on, and the page's notice says what is (_changeThreadView codeMissing).
-    if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped' && !AppView._codeMissing(item)) {
+    // #6521: nor does a verdict about an older version count as tested, the
+    // same rule the Testing card and the thread list read.
+    const tested = (item.check_state === 'passing' || item.check_state === 'skipped') && item.checks_on_head !== false;
+    if (reached && !tested && !AppView._codeMissing(item)) {
       if (item.check_state !== 'failing') {
         note.push(PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
       } else if (AppView._botBuilt(item)) {
@@ -8444,6 +8499,19 @@ const AppView = {
         name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.previewFailed'), tone: 'bad', done: false, segments: full('bad'),
         label: PlatformI18n.t('changes:page.testing.label.previewFailed'),
         note: [String(item.staging_error).slice(0, 280)], actions, details: true,
+      };
+    }
+    // #6521: the last verdict is about an older version of this change, so a
+    // pass there says nothing about the code up now. The thread list and the
+    // merge gate read the same rule (services/homeroom-bot-progress.js
+    // checksOnHead), so the card waits for this version's own checks instead
+    // of reading "Tested".
+    if (item.checks_on_head === false && (cs === 'passing' || cs === 'skipped')) {
+      const rerun = recheck();
+      if (rerun) actions.push(rerun);
+      return {
+        name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.deferred'), tone: 'muted', done: false,
+        segments: [{ weight: 1, pct: 0, state: 'moving' }], label: PlatformI18n.t('changes:page.testing.label.waiting'), note: [], actions,
       };
     }
     const broken = (cs === 'passing' || cs === 'skipped') ? AppView._shotsBrokenCount(item.shots) : 0;
@@ -17366,7 +17434,8 @@ const AppView = {
   // GitHub is drawn as the same named row as one written here, in the order
   // they were written: `GroupChat.renderThread` merges these into the
   // thread's own rows by time (features/group-chat/transcript.tsx
-  // `RequestRows`). Null until `_loadIssueComments` has the comments.
+  // `RequestRows`). Null until the request's first page (or a feed preview)
+  // has put the comments in hand.
   //
   // What #396 and #1808 decided stays here: which authors are bots, and the
   // SANITIZER — a comment body is arbitrary GitHub markdown, run through
@@ -17561,9 +17630,9 @@ const AppView = {
   },
 
   // Fetch (or repaint from cache) one session's sanitised transcript.
-  // Best-effort in the same style as _loadIssueComments: a failure leaves a
-  // short note rather than breaking the page, and we re-resolve the slot
-  // after the await in case a repaint replaced it.
+  // Best-effort: a failure leaves a short note rather than breaking the
+  // page, and we re-resolve the slot after the await in case a repaint
+  // replaced it.
   async _loadSessionTranscript(sessionId) {
     if (!sessionId) return;
     const paint = (data) => {
@@ -17627,41 +17696,6 @@ const AppView = {
       const after = document.querySelector(`[data-transcript-body="${sessionId}"]`);
       if (after) after.innerHTML = `<div class="st-error">${PlatformI18n.htmlText('changes:transcript.loadFailedWith', { error: err.message })}</div>`;
     }
-  },
-
-  // #396: lazily fetch an issue's GitHub comments for its page's stream
-  // (`_requestThreadRows`). Cached per app and issue in _ghComments, so the
-  // WS-driven `_renderTopicHead` refreshes cost no refetch. Best-effort: a
-  // failed fetch leaves the stream with the thread's own rows. Re-checks the
-  // topic after the await, and bails if the reader has left this issue.
-  async _loadIssueComments(item) {
-    if (!item || item.number == null) return;
-    const number = item.number;
-
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    const key = AppView._ghCommentsKey(slug, number);
-    // In hand already: the stream drew it when the thread rendered.
-    if (AppView._ghComments.get(key)) return;
-
-    try {
-      const res = await fetch(
-        `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
-      );
-      if (!res.ok) return;
-      const data = await res.json();
-      AppView._ghComments.set(key, {
-        comments: Array.isArray(data.comments) ? data.comments : [],
-        truncated: !!data.truncated,
-      });
-      const t = AppView._devTopic;
-      if (!t || t.kind !== 'issue' || t.id !== number) return;
-      // Issue numbers repeat across apps: the same number open in another
-      // app is not this issue (#4178).
-      if ((AppView.appData && AppView.appData.slug) !== slug) return;
-      const a = typeof GroupChat !== 'undefined' ? GroupChat.activeThread : null;
-      if (a && a.type === 'issue' && Number(a.ref) === number) GroupChat.renderThread({ keepScroll: true });
-    } catch (_) { /* best-effort: the thread's own rows stand */ }
   },
 
   // The proposal's plain-language summary (pr_summary_md), rendered at the
@@ -18467,6 +18501,9 @@ const AppView = {
     if (!pr || pr.status !== 'promoted') return [];
     // A project's first version is not put to a vote (D1): no Yes or No.
     if (pr.first_version === true) return [];
+    // #6505: the yes votes its rule asks for are in, so the vote is decided
+    // and the button takes no further part in it.
+    if (AppView._votesDecided(pr)) return [];
     // #2038: the vote carries the approval EPOCH the card was rendered with,
     // not the commit. A commit changes whenever the platform brings the
     // proposal up to date with main, and comparing commits made every one of
@@ -18513,6 +18550,23 @@ const AppView = {
         act: { fn: 'castVote', args: [pr.id, 'no', ...rev] },
       },
     ];
+  },
+
+  // #6505: the vote is DECIDED, so there is nothing left to press. True once
+  // the yes votes its rule asks for are in (the pill's own tally, which is
+  // already the approvals-mode n) and the change is not waiting on another
+  // member's Yes. A change counting down to go live is decided while the
+  // clock runs; one being set aside or contested is not, because a vote
+  // there can still change how it ends. A leading change below its majority
+  // (lazyLead) keeps its buttons too.
+  //
+  // Only the controls this reads go: the server's vote rules are unchanged.
+  _votesDecided(pr) {
+    if (!pr || pr.status !== 'promoted' || pr.first_version === true) return false;
+    const st = AppView.statusPillState(pr);
+    if (!st || st.key === 'reject_countdown' || st.key === 'contested') return false;
+    if (!(Number(st.yes) >= Math.max(1, Number(st.majority) || 1))) return false;
+    return !AppView._awaitingOtherMember(pr);
   },
 
   // The Needs-you card's "your yes puts it live" (and the end card's "Your
@@ -19880,7 +19934,9 @@ const AppView = {
     if (AppView.readOnly) return null;
     if (pr.status && !['active', 'paused', 'promoted'].includes(pr.status)) return null;
     if (['active', 'paused'].includes(pr.status) && !pr.check_state) return null;
-    if (pr.check_state === 'passing') return null;
+    // #6521: a pass on an older version is not a pass, so it still offers the
+    // re-run (the Testing card's "Waiting" state).
+    if (pr.check_state === 'passing' && pr.checks_on_head !== false) return null;
     const owner = !!(App.user && pr.user_id === App.user.id);
     // `recheckable` is a staging ?demo=1 hint (set only on mock rows) so the
     // button is reviewable regardless of the demo viewer's owner/admin
@@ -28489,6 +28545,15 @@ const AppView = {
       // at a newer epoch asks again.
       AppView._noteOwnVote(sessionId, vote);
       AppView._publishVoteSaved(sessionId, vote, epoch);
+      // #6496: the pill above the change's chat is drawn from
+      // `DevChat.currentSession`, which only the best-effort `vote_update`
+      // frame used to refresh — a dropped frame left the pill a vote behind
+      // the card on the same screen until a reload. The vote is saved now, so
+      // ask the open session for its new tally directly. Same guard as
+      // `App.handleVoteUpdate`; a no-op unless this session is the open one.
+      if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
+        DevChat.refreshCurrentSessionStatus(sessionId);
+      }
       // The overlay stays until the post-vote read has landed: a load queued
       // ahead of it still publishes the pre-vote row first. The read joins
       // the burst the vote's own broadcast (vote_update) opens, so a vote
@@ -28707,6 +28772,11 @@ const AppView = {
       window.UsernodeReact?.actionOutbox?.drop?.(`vote:${sessionId}`);
       AppView._noteOwnVote(sessionId, null);
       AppView._publishVoteSaved(sessionId, null, epoch);
+      // #6496: an undo is saved too, so the pill above the change's chat
+      // re-reads the open session at once, exactly as a cast vote does.
+      if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
+        DevChat.refreshCurrentSessionStatus(sessionId);
+      }
       // #6109: the burst reads the chat's snapshot for this vote wherever it
       // is mounted (chatSlug), so the undo does not read it a second time.
       const refresh = typeof App !== 'undefined' && App._liveRefresh
