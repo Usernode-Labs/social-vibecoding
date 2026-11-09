@@ -2203,7 +2203,8 @@
     {
       "name": "A project's Workshop tab opens on its Overview: All items' four number tiles, under the Overview label",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"overview\"] + [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] + [data-ws-dash-cell=\"votes\"] + [data-ws-dash-cell=\"shipped\"] > b"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"overview\"] + [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] + [data-ws-dash-cell=\"votes\"] + [data-ws-dash-cell=\"shipped\"] > b",
+      "expectText": "by this time last week"
     },
     {
       "name": "Workshop: Your work is one row under Overview, opening Homeroom bot narrowed to this project",

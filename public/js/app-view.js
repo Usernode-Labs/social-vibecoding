@@ -11795,7 +11795,11 @@ const AppView = {
       const shipped = mergedData.shipped;
       AppView._mergedShipped = shipped
         && Number.isFinite(shipped.week) && Number.isFinite(shipped.prevWeek)
-        ? { week: shipped.week, prevWeek: shipped.prevWeek }
+        ? {
+          week: shipped.week,
+          prevWeek: shipped.prevWeek,
+          prevWeekToDate: Number.isFinite(shipped.prevWeekToDate) ? shipped.prevWeekToDate : null,
+        }
         : null;
       }
       // Every cache this function fills is now populated, so the surfaces may
@@ -14353,6 +14357,17 @@ const AppView = {
         const t = mergedAtOf(m);
         return t < weekStartMs && t >= weekStartMs - WEEK;
       }).length;
+    // #6547: the same point last week — last Monday 00:00 UTC to seven days
+    // ago — so a Monday morning compares like with like instead of reading as
+    // a fall against the whole of last week. An older server sends no
+    // to-date count, and the full prior week is then the comparison, as it
+    // was before.
+    const shippedPrevToDate = serverShipped
+      ? (serverShipped.prevWeekToDate != null ? serverShipped.prevWeekToDate : serverShipped.prevWeek)
+      : allMerged.filter((m) => {
+        const t = mergedAtOf(m);
+        return t >= weekStartMs - WEEK && t < nowMs - WEEK;
+      }).length;
     // Page-counted numbers are floors; server counts never are. The walk
     // marks its own figures with this for the same reason the tiles do.
     const weekCountsPartial = !serverShipped && !!AppView._mergedHasMore;
@@ -14368,6 +14383,7 @@ const AppView = {
         .filter((r) => r.id > 0),
       shippedWeek: shippedThisWeek,
       shippedPrevWeek: shippedPrev,
+      shippedPrevWeekToDate: shippedPrevToDate,
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
       busiest: AppView._busiestTheme(named),
@@ -14384,9 +14400,11 @@ const AppView = {
       openLine: (tData && tData.digestCards && tData.digestCards.open) || '',
       // The weeks, newest first, each with what the server can stand behind
       // for it. `shippedWeek`/`shippedPrevWeek` are the SAME two numbers the
-      // tiles use (#1922: counted over the whole merged history server-side,
-      // so exact whatever the page holds) — the walk states them per window
-      // rather than recomputing anything. There is no `opened` counterpart:
+      // walk states per window (#1922: counted over the whole merged history
+      // server-side, so exact whatever the page holds) — while the tiles'
+      // rate compares the week against `shippedPrevWeekToDate`, because a
+      // complete "Last week" row and a rate measured to the same point are
+      // two different questions. There is no `opened` counterpart:
       // nothing counts issues created per window, and deriving one from the
       // capped board snapshot would put a floor next to an exact number and
       // read as if both were counts.
