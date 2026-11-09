@@ -88,10 +88,24 @@ test('every class is the kit\'s', () => {
 
 test('the landing draws it ahead of its own page under a look, and app.css puts that page away', () => {
   const src = read('frontend/src/features/auth/landing.tsx');
-  assert.match(src, /\{frame && guestPages && !guestProject && !linkPending && !waitingGuest && !gate \? \(\s*<LandingFrame/, 'not under a members\' page, which has its own (tests/gated-frame.test.js)');
+  assert.match(src, /\{frame && guestPages && !guestProject && !linkPending && !gate \? \(\s*<LandingFrame/, 'not under a members\' page, which has its own (tests/gated-frame.test.js)');
+  assert.match(src, /waiting=\{waitingGuest \? \{ email: sessionEmail\(\) \} : null\}/);
   assert.ok(src.indexOf('<LandingFrame') < src.indexOf('<GuestDiscover'), 'ahead of the standard page, which stays mounted');
   assert.match(src, /const frame = isFrameSkin\(useSkin\(\)\);/, 'standard until mount: the landing is prerendered');
   const css = read('public/css/app.css');
   const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
   assert.match(hand, /html\[data-skin\] \[data-landing-frame\] ~ \[data-guest-discover\] \{ display: none; \}/);
+});
+
+test('an account still in line looks around on the same page, which says where it stands', () => {
+  // The tour's w03: signed in, not let in yet. No pitch (it has an account),
+  // one button back to the waiting room, and every app opens for it.
+  const html = render({ waiting: { email: 'mina@example.com' } });
+  assert.match(html, /<h1 class="fr-title">You&#x27;re on the waitlist<\/h1><p class="fr-purpose">[^<]*mina@example\.com[^<]*<\/p>/);
+  assert.match(html, /<div class="fr-acts"><a class="fr-btn" href="#waiting" data-guest-waitlist-room="">[^<]+<\/a><\/div>/);
+  assert.doesNotMatch(html, /With an account|Join the waitlist|Try an app first/);
+  const tiles = html.slice(html.indexOf('fr-tiles'), html.indexOf('Communities</h2>'));
+  assert.deepEqual([...tiles.matchAll(/<span class="fr-nm">([^<]+)<\/span>/g)].map((m) => m[1]), ['Game Corner', 'The Best Color', 'Community Tier Lists', 'Todo List'], 'every app, signed in');
+  assert.match(html, /<h2 class="fr-cap">Your spot<\/h2><\/div><div class="fr-card"><a class="fr-row fr-sm" href="#waiting">/);
+  assert.match(render({ waiting: { email: null } }), /<p class="fr-purpose">[^<]+<\/p>/);
 });

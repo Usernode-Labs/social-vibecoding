@@ -69,7 +69,7 @@ test('under a look the landing draws the page and the sheet waits for its button
   assert.match(src, /onSignIn=\{\(\) => setGateSheet\(true\)\}/);
   assert.match(src, /open=\{!frame \|\| gateSheet\}/, 'the standard look opens the sheet as the screen shows, as it did');
   assert.match(src, /if \(gateSheetUp\.current\) \{ setGateSheet\(false\); return; \}/, 'closing the sheet over the page closes the sheet, not the page');
-  assert.match(src, /\{frame && guestPages && !guestProject && !linkPending && !waitingGuest && !gate \? \(\s*<LandingFrame/, 'one kit page at a time');
+  assert.match(src, /\{frame && guestPages && !guestProject && !linkPending && !gate \? \(\s*<LandingFrame/, 'one kit page at a time');
   const css = read('public/css/app.css');
   const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
   assert.match(hand, /html\[data-skin\] \[data-gated-frame\] ~ \[data-guest-discover\] \{ display: none; \}/);

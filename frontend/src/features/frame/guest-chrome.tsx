@@ -15,27 +15,36 @@
  * those nodes as they change, so a button the landing adds or takes away
  * (pinning an open app to this device) is added or taken away here too.
  *
- * Up while one of the five anonymous screens is: the landing (with the app
- * or the public project a visitor opened inside it), sign-in, register, the
- * waitlist form and "more ways". The waiting room is a signed-in screen and
- * keeps its own milestone.
+ * Up while one of the anonymous shell's screens is: the landing (with the
+ * app or the public project a visitor opened inside it), sign-in, register,
+ * the waitlist form, "more ways", and the waiting room. An account still in
+ * line is signed in and not let in yet: the member's chrome has nothing to
+ * show it, so it keeps this bar, with its name on it and, in the waiting
+ * room, Sign out.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { Btn, Frame, Icon, Tile, k } from '@/components/ui/kit';
+import { Av, Btn, Frame, Icon, Tile, k } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
 import { isFrameSkin, useSkin } from '../../lib/skin';
 import { useVisibility } from '../../lib/visibility-store';
+import { swatchFor } from '../messages/format';
 
 const MARK = '/brand/homeroom-mark.png';
 
 /** One of the landing bar's own buttons, as the kit's bar repeats it. */
 export type GuestAction = { key: string; label: string; primary: boolean; pressed: boolean | null };
 
-/** What the bar says, read off the screen that is up. */
-export type GuestBar = { back: boolean; crumb: string; actions: GuestAction[] };
+/** What the bar says, read off the screen that is up. `who` is an account still in line: signed in, not let in yet. */
+export type GuestBar = { back: boolean; crumb: string; actions: GuestAction[]; who?: string };
 
 const EMPTY: GuestBar = { back: false, crumb: '', actions: [] };
+
+/** The account a waiting-room session belongs to; '' for a visitor. */
+function sessionName(): string {
+  const user = (window as any).App?.user as { username?: unknown } | null | undefined;
+  return typeof user?.username === 'string' ? user.username : '';
+}
 const shown = (el: Element | null) => !!el && !el.classList.contains('hidden') && !el.hasAttribute('hidden');
 
 /** The landing's bar: its back, its title when that is a name, its buttons. */
@@ -57,6 +66,18 @@ function readLanding(root: HTMLElement): GuestBar {
     // The wordmark is a picture: the bar draws the brand itself then.
     crumb: title && !title.querySelector('svg') ? (title.textContent || '').trim() : '',
     actions,
+    who: sessionName(),
+  };
+}
+
+/** The waiting room: whose it is, and Sign out, which the room keeps at its foot. */
+function readWaiting(root: HTMLElement): GuestBar {
+  const out = root.querySelector('#waiting-logout');
+  return {
+    back: false,
+    crumb: '',
+    actions: out ? [{ key: 'logout', label: (out.textContent || '').trim(), primary: false, pressed: null }] : [],
+    who: sessionName(),
   };
 }
 
@@ -68,7 +89,7 @@ function readSolo(root: HTMLElement): GuestBar {
   return { back: !!root.querySelector(SOLO_BACK), crumb: '', actions: [] };
 }
 
-const same = (a: GuestBar, b: GuestBar) => a.back === b.back && a.crumb === b.crumb && a.actions.length === b.actions.length
+const same = (a: GuestBar, b: GuestBar) => a.back === b.back && a.crumb === b.crumb && (a.who || '') === (b.who || '') && a.actions.length === b.actions.length
   && a.actions.every((x, i) => x.label === b.actions[i].label && x.primary === b.actions[i].primary && x.pressed === b.actions[i].pressed);
 
 /** The bar of the screen with that id, followed as the screen changes it. */
@@ -78,7 +99,7 @@ function useGuestBar(id: string): GuestBar {
     const root = document.getElementById(id);
     if (!root) return undefined;
     const read = () => {
-      const next = id === 'auth-landing-screen' ? readLanding(root) : readSolo(root);
+      const next = id === 'auth-landing-screen' ? readLanding(root) : id === 'auth-waiting-screen' ? readWaiting(root) : readSolo(root);
       setBar((prev) => (same(prev, next) ? prev : next));
     };
     read();
@@ -106,7 +127,7 @@ function pressIn(id: string, selector: string, nth = 0) {
   nodes?.[nth]?.click();
 }
 
-const SCREENS = ['auth-landing-screen', 'auth-login-screen', 'auth-register-screen', 'auth-waitlist-screen', 'auth-more-screen'] as const;
+const SCREENS = ['auth-landing-screen', 'auth-login-screen', 'auth-register-screen', 'auth-waitlist-screen', 'auth-more-screen', 'auth-waiting-screen'] as const;
 
 /** Mounted by the shell beside FrameApp: nothing on the first render, nothing under the standard look. */
 export function GuestFrame() {
@@ -114,7 +135,7 @@ export function GuestFrame() {
   // One hook per screen, every render (never behind a condition).
   const up = [
     useVisibility(SCREENS[0], false), useVisibility(SCREENS[1], false), useVisibility(SCREENS[2], false),
-    useVisibility(SCREENS[3], false), useVisibility(SCREENS[4], false),
+    useVisibility(SCREENS[3], false), useVisibility(SCREENS[4], false), useVisibility(SCREENS[5], false),
   ];
   const at = up.indexOf(true);
   return isFrameSkin(skin) && at > -1 ? <GuestChrome screen={SCREENS[at]} /> : null;
@@ -151,7 +172,7 @@ function GuestChrome({ screen }: { screen: (typeof SCREENS)[number] }) {
       bar={bar}
       areaRef={areaRef}
       onBack={() => pressIn(screen, screen === 'auth-landing-screen' ? '#landing-back-btn' : SOLO_BACK)}
-      onAction={(action) => pressIn(screen, '[data-landing-actions] button', Number(action.key))}
+      onAction={(action) => (action.key === 'logout' ? pressIn(screen, '#waiting-logout') : pressIn(screen, '[data-landing-actions] button', Number(action.key)))}
     />
   );
 }
@@ -187,6 +208,14 @@ export function GuestChromeView({ bar, onBack, onAction, areaRef }: {
               </span>
             )}
             <span className={k('sp')} />
+            {bar.who ? (
+              <div className={k('crumb')}>
+                <span className={k('ci here keep')}>
+                  <Av size={24} name={bar.who} color={swatchFor(bar.who)} />
+                  <span className={k('d')}>@{bar.who}</span>
+                </span>
+              </div>
+            ) : null}
             {bar.actions.map((action) => {
               const button = (
                 <Btn key={action.key} kind={action.primary ? '' : 'line'} small aria-pressed={action.pressed == null ? undefined : action.pressed} onClick={() => onAction(action)}>

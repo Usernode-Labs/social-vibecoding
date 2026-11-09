@@ -2273,8 +2273,8 @@ export function LandingScreen() {
             />
           ) : null}
           {/* The same page in the one frame, ahead of the standard one, which
-              app.css puts away while this is up. Not in the waiting room,
-              whose page is its own milestone. */}
+              app.css puts away while this is up. An account still in line
+              looks around on it too. */}
           {frame && gate ? (
             <GatedFrame
               target={gate.target}
@@ -2285,11 +2285,12 @@ export function LandingScreen() {
               onBrowse={closeGate}
             />
           ) : null}
-          {frame && guestPages && !guestProject && !linkPending && !waitingGuest && !gate ? (
+          {frame && guestPages && !guestProject && !linkPending && !gate ? (
             <LandingFrame
               apps={apps}
               failed={appsFailed && !apps}
               waitlist={NEW_ACCOUNTS_WAIT}
+              waiting={waitingGuest ? { email: sessionEmail() } : null}
               onStart={() => setSheet('start')}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}

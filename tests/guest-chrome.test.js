@@ -46,8 +46,8 @@ test('a screen with a way back says so first; an open app or project is named in
 test('it is up for a visitor only: under a look, while an anonymous screen is, and never on the first render', () => {
   const src = read(CHROME);
   assert.equal(renderComponent(CHROME, 'GuestFrame', {}, { cache: false, stubs: { '../../lib/visibility-store': { useVisibility: (id, initial) => initial } } }), '');
-  assert.match(src, /const SCREENS = \['auth-landing-screen', 'auth-login-screen', 'auth-register-screen', 'auth-waitlist-screen', 'auth-more-screen'\] as const;/,
-    'the waiting room is a signed-in screen and is not one of them');
+  assert.match(src, /const SCREENS = \['auth-landing-screen', 'auth-login-screen', 'auth-register-screen', 'auth-waitlist-screen', 'auth-more-screen', 'auth-waiting-screen'\] as const;/,
+    'the anonymous shell\'s six screens: an account still in line has no member\'s chrome to be shown');
   assert.match(src, /return isFrameSkin\(skin\) && at > -1 \? <GuestChrome screen=\{SCREENS\[at\]\} \/> : null;/);
   assert.match(read('frontend/src/features/frame/frame-app.tsx'), /return on \? <FrameChrome \/> : <GuestFrame \/>;/, 'one or the other, never both');
   assert.match(src, /root\.setAttribute\('data-frame-chrome', 'guest'\);/, 'app.css knows which chrome is up');
@@ -58,7 +58,7 @@ test('a press is handed to the screen\'s own control, and the bar follows the sc
   assert.match(src, /onBack=\{\(\) => pressIn\(screen, screen === 'auth-landing-screen' \? '#landing-back-btn' : SOLO_BACK\)\}/);
   assert.match(src, /const SOLO_BACK = '\[data-auth-back\], :scope > a\[href="#landing"\]';/, 'the shared disc, or the plain link "more ways" has');
   assert.match(read('frontend/src/features/auth/more.tsx'), /<a\s+href="#landing"\s+className="fixed start-4 z-10 /);
-  assert.match(src, /onAction=\{\(action\) => pressIn\(screen, '\[data-landing-actions\] button', Number\(action\.key\)\)\}/);
+  assert.match(src, /pressIn\(screen, '\[data-landing-actions\] button', Number\(action\.key\)\)/, 'the landing\'s own button, by its place in the bar');
   assert.match(src, /crumb: title && !title\.querySelector\('svg'\) \? \(title\.textContent \|\| ''\)\.trim\(\) : '',/, 'the wordmark is a picture, a name is words');
   // The landing's own hooks, which this reads: they must still be there.
   const landing = read('frontend/src/features/auth/landing.tsx');
@@ -73,7 +73,7 @@ test('under the guest\'s chrome the anonymous screens sit in its page area, thei
   const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
   const block = hand.slice(hand.indexOf('THE GUEST\'S FRAME'));
   assert.ok(hand.includes('THE GUEST\'S FRAME'));
-  for (const id of ['auth-landing-screen', 'auth-login-screen', 'auth-register-screen', 'auth-waitlist-screen', 'auth-more-screen']) {
+  for (const id of ['auth-landing-screen', 'auth-login-screen', 'auth-register-screen', 'auth-waitlist-screen', 'auth-more-screen', 'auth-waiting-screen']) {
     assert.ok(block.includes(`html[data-frame-chrome="guest"] #${id}`), id);
   }
   assert.match(block, /top: var\(--fr-shell-top, 0px\);[^}]*inset-inline-start: var\(--fr-shell-left, 0px\);[^}]*background: none;/);
@@ -87,7 +87,7 @@ test('a stand-alone page is the kit\'s one column: the product\'s own form, wear
   // through the wear map, and app.css gives them the column and the field.
   const looks = JSON.parse(read('frontend/looks/looks.json'));
   const AUTH = ':is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen)';
-  assert.ok(looks.wear.roots.title.to.includes(`${AUTH} h1`));
+  assert.ok(looks.wear.roots.title.to.includes(' h1'));
   assert.ok(looks.wear.roots.card.to.includes(`:is(${AUTH},[data-sign-in-sheet]) .rounded-2xl.overflow-hidden`));
   assert.ok(looks.wear.roots.btn.to.includes(`${AUTH} :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back])`),
     'the one accent-filled control is the primary button; a white or grey pill is a quiet one');
@@ -124,4 +124,23 @@ test('the sign-in sheet is the kit\'s sheet: the look\'s surface, title, field a
   assert.match(hand, /\[data-sign-in-sheet-method\] \{ background: var\(--fr-sunk\); \}/, 'the two ways are the look\'s own switch');
   const sheet = read('frontend/src/features/auth/sign-in-sheet.tsx');
   for (const hook of ['data-sign-in-sheet={step}', 'role="dialog"', 'id="sign-in-sheet-title"', 'data-sign-in-sheet-method=""', 'role="radio"']) assert.ok(sheet.includes(hook), hook);
+});
+
+test('the waiting room is a stand-alone page whose bar says whose it is and holds Sign out', () => {
+  // The tour's w01 and w02. The room keeps everything it does (the two
+  // questions, the invite box, the check that lets the account in).
+  const html = view({ who: 'tourwaitlist1106', actions: [{ key: 'logout', label: 'Sign out', primary: false, pressed: null }] });
+  assert.match(html, /<span class="fr-sp"><\/span><div class="fr-crumb"><span class="fr-ci fr-here fr-keep"><span class="fr-av"[^>]*>t<\/span><span class="fr-d">@tourwaitlist1106<\/span><\/span><\/div><button type="button" class="fr-btn fr-line fr-sm">Sign out<\/button><\/header>/);
+  const src = read(CHROME);
+  assert.match(src, /action\.key === 'logout' \? pressIn\(screen, '#waiting-logout'\)/, 'the room\'s own Sign out does it');
+  assert.match(read('frontend/src/features/auth/waiting.tsx'), /id="waiting-logout"/);
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('THE WAITING ROOM'), css.indexOf('/* looks:begin'));
+  assert.ok(css.includes('THE WAITING ROOM'));
+  assert.match(hand, /#auth-waiting-screen > \.max-w-sm \{ max-width: 504px; padding: 64px 32px 48px; text-align: start; \}/);
+  assert.match(hand, /html\[data-frame-chrome="guest"\] #waiting-logout \{ display: none; \}/, 'said once, in the bar');
+  assert.match(hand, /\[data-waiting-look-around\] \{\s*width: 100%;[^}]*background: var\(--fr-acc\); color: var\(--fr-acc-ink\);/, 'Look around is the one primary button');
+  const looks = JSON.parse(read('frontend/looks/looks.json'));
+  assert.ok(looks.wear.roots.card.to.includes('#auth-waiting-screen :is([data-waiting-queued],[data-waiting-invite])'));
+  assert.ok(looks.wear.roots.title.to.includes('#auth-waiting-screen'));
 });

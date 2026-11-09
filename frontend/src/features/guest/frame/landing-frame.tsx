@@ -20,6 +20,11 @@
  * a tile opens the app in the landing's viewer, a row opens the community's
  * public page.
  *
+ * AN ACCOUNT STILL IN LINE looks around on the same page (`waiting`, the
+ * tour's w03): signed in and not let in yet, it has no member's Home to be
+ * shown, so the page says where it stands, leads back to the waiting room,
+ * and opens every app.
+ *
  * NOT DRAWN: the tour's "Happening now" (one real vote, open now). The
  * public directory says how many votes a community has open, not which, so
  * there is no vote to show without asking each community in turn.
@@ -46,13 +51,19 @@ function openProject(event: React.MouseEvent<HTMLElement>, slug: string) {
 }
 
 /** `initial*` seed the state a render test cannot reach through a press. */
-export function LandingFrame({ apps, failed, onRetry, waitlist, onStart, onOpenInside, initialKind = null, initialQuery = '' }: {
+export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, onStart, onOpenInside, initialKind = null, initialQuery = '' }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   failed: boolean;
   onRetry?: () => void;
   /** New accounts wait in line: the primary button says so. */
   waitlist: boolean;
+  /**
+   * An account still in line, looking around (the tour's w03): signed in,
+   * not let in yet. The page says where it stands in place of the pitch,
+   * its one button goes back to the waiting room, and every app opens.
+   */
+  waiting?: { email: string | null } | null;
   /** The landing's own way in (its start sheet). */
   onStart: () => void;
   /** Open an app in the landing's viewer. */
@@ -70,18 +81,18 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, onStart, onOpenI
   const all = apps || [];
   const kinds = useMemo(() => presentCategories(all), [all]);
   const inApp = inHomeroomApp();
-  const tryable = (app: GuestApp) => canTryHere(app, inApp);
+  const tryable = (app: GuestApp) => !!waiting || canTryHere(app, inApp);
   const q = query.trim();
   const rows = useMemo(() => filterApps(joinOrder(all), q, kind), [all, q, kind]);
   const toTry = rows.filter(tryable);
   const bySlug = useMemo(() => new Map(all.map((a) => [a.slug, a])), [all]);
   const pinned = !kind && !q ? device.apps.map((s) => bySlug.get(s)).filter((a): a is GuestApp => !!a) : [];
-  const front = !kind && !q;
+  const front = !kind && !q && !waiting;
 
   const tryApp = (event: React.MouseEvent<HTMLElement>, app: GuestApp) => {
     // An app that asks for no account opens here, in the landing's viewer;
     // any other keeps its own address (../guest-discover.tsx TryLink).
-    if (app.requires_login !== false) return;
+    if (!waiting && app.requires_login !== false) return;
     event.preventDefault();
     onOpenInside(app);
   };
@@ -96,6 +107,14 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, onStart, onOpenI
   );
 
   const side = (
+    <>
+    {waiting ? (
+      <Sec label={t('auth:frame.landing.spot')}>
+        <Card>
+          <Row lead={<Lead icon="clock" tone="wait" />} title={t('auth:landing.backToWaiting')} href="#waiting" go sm />
+        </Card>
+      </Sec>
+    ) : null}
     <Sec label={t('auth:frame.landing.today')}>
       <Facts
         items={[
@@ -104,14 +123,17 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, onStart, onOpenI
         ]}
       />
     </Sec>
+    </>
   );
 
   return (
     <PageBody
       data-landing-frame=""
-      title={t('auth:story.headline')}
-      purpose={t('auth:guest.hero.line')}
-      acts={(
+      title={waiting ? t('auth:waiting.title') : t('auth:story.headline')}
+      purpose={waiting ? (waiting.email ? t('auth:guest.waitlist.leadEmail', { email: waiting.email }) : t('auth:guest.waitlist.lead')) : t('auth:guest.hero.line')}
+      acts={waiting ? (
+        <a className={k('btn')} href="#waiting" data-guest-waitlist-room="">{t('auth:landing.backToWaiting')}</a>
+      ) : (
         <>
           <Btn kind="line" icon="play" onClick={() => { document.getElementById('landing-frame-try')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
             {t('auth:frame.landing.tryFirst')}
