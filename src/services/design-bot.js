@@ -503,6 +503,28 @@ const TOOLS = Object.freeze([
       },
     },
   },
+  // #6354: a design of one of Homeroom's own pages starts from the real
+  // page, copied by Homeroom itself from its demo route. Appended last so the
+  // drawing tools keep the order the model reads them in.
+  {
+    type: 'function',
+    function: {
+      name: 'capture_page',
+      description: 'Copy one of Homeroom\'s own pages as it is now, at the asked size, and make it version 1 of this '
+        + 'design. Use it before edit_design when they ask to show or change an existing Homeroom page: the copy holds '
+        + 'demo data, never their own. Pages: Homeroom bot page, Main Chat, Messages, Communities, Workshop, project '
+        + 'page, request page. Only while this thread has no version yet.',
+      parameters: {
+        type: 'object',
+        properties: {
+          page: { type: 'string', description: 'The page\'s name or route, from the list above.' },
+          size: { type: 'string', enum: ['phone', 'desktop'], description: 'phone: 390 pixels wide; desktop: 1280. Desktop when they do not say.' },
+        },
+        required: ['page'],
+        additionalProperties: false,
+      },
+    },
+  },
 ]);
 
 // #6144: the tools once reading is over (READ_UNTIL): all but the readers.
@@ -781,7 +803,7 @@ function sheetWords(surface) {
  */
 function designPrompt({
   username, design = null, surface = null, app = null, version = 0, html = '', brief = null, pictures = [], entry = null, now = new Date(),
-  filed = null, askFirst = false,
+  filed = null, askFirst = false, homeroom = false,
 }) {
   // B22 (overnight audit, 1 Nov 2026): a drawn first screen dated its week
   // "Mon 9 to Sun 15 June · week 24" in November. Told nothing of today, the
@@ -867,6 +889,25 @@ function designPrompt({
       + ' draw it now.');
   }
   if (brief) lines.push('', `WHAT MAIN CHAT ASKED YOU TO DRAW\n${clip(brief, 600)}`);
+  // #6354: a design of one of Homeroom's own pages starts from the real
+  // page. The copy is Homeroom's own, from a demo route, never their rows.
+  if (homeroom) {
+    const capture = require('./design-capture');
+    const names = capture.PAGES.map((page) => page.name).join(', ');
+    lines.push('',
+      'A PAGE OF HOMEROOM\'S OWN',
+      `- The pages you can start from as they are now: ${names}.`,
+      '- When they ask to show or change one of those pages and this thread has no version yet, call capture_page first',
+      '  (desktop unless they say phone), then make their change with edit_design, keeping the page\'s own markup and',
+      '  classes. Version 1 is the real page; version 2 is your change.',
+      '- The copy always holds made-up demo rows, never their own account. Never copy from their account.',
+      '- For any other page, or when capture_page fails, say in one sentence that there is no live version of that page to',
+      '  copy, then draw it from the code at the real sizes below.',
+      '- If this thread already has a version, do not capture again: change what is there with edit_design.');
+    // Part 2: the widths a redrawn Homeroom page must keep.
+    lines.push('', ...require('./design-layout').layoutLines(),
+      'When you draw an existing Homeroom page, use these widths. Never make a column wider than the real one.');
+  }
   // P8: the pictures they added to the design (a gallery's Add to the design).
   const added = (Array.isArray(pictures) ? pictures : []).filter((p) => p && /^[0-9a-f]{32}$/.test(String(p.id || '')));
   if (added.length) {
@@ -1213,6 +1254,9 @@ async function answer(pool, config, {
   // it came out empty (either way, a later write_screen is refused).
   let wrote = null;
   let sheets = null;
+  // #6354: the page Homeroom copied for this turn (its html, title, route),
+  // or null. The copy is saved as version 1 before any edit of it.
+  let captured = null;
   // #6142: a first drawing, handed a screen or with no version yet, draws by
   // DRAW_BY_ROUND, and an app's starts from its entry page (`entry`:
   // undefined while unread, null when there is none they may read).
@@ -1289,6 +1333,7 @@ async function answer(pool, config, {
           username: user.username, design, surface, app: project, brief,
           version: current?.version || 0, html: current ? collapseSheets(current.html) : '', pictures: added,
           entry: front ? { path: entry.path, body: front } : null, filed, askFirst: mayAsk,
+          homeroom: !project || (!!config.selfAppSlug && project.slug === config.selfAppSlug),
         }),
       },
       ...(about ? [{ role: 'system', content: about }] : []),
@@ -1407,6 +1452,33 @@ async function answer(pool, config, {
               html = next;
               if (args.note) notes.push(threads.bareNote(clip(args.note, 120)));
               result = { ok: true, chars: collapseSheets(html).length };
+            }
+          }
+        } else if (name === 'capture_page') {
+          // #6354: version 1 is one of Homeroom's pages, copied by Homeroom
+          // itself from its demo route. Only a thread with no version yet.
+          if (current) {
+            result = { ok: false, error: 'This design already has a version: change it with edit_design.' };
+          } else if (captured || wrote) {
+            result = { ok: false, error: 'You copied or drew this turn\'s screen already: make their change with edit_design.' };
+          } else {
+            const capture = deps.designCapture || require('./design-capture');
+            const page = capture.findPage(args?.page);
+            if (!page) {
+              result = { ok: false, error: 'No live version of that page to capture: draw it from the code at its real sizes, and say so.' };
+            } else {
+              const size = args?.size === 'phone' ? 'phone' : 'desktop';
+              const copy = await capture.capturePage(config, pool, { page, size, deps });
+              if (!copy.ok) {
+                result = { ok: false, error: 'No live version of that page to capture: draw it from the code at its real sizes, and say so.' };
+              } else {
+                html = copy.html;
+                captured = copy;
+                drawn = { title: copy.title, size };
+                sheets = null;
+                notes.length = 0;
+                result = { ok: true, chars: copy.html.length, next: 'Make their change with edit_design.' };
+              }
             }
           }
         } else if (lateRead) {
@@ -1557,18 +1629,38 @@ async function answer(pool, config, {
     html = fillSheets(html, withSheets('', sheets));
   }
   // The thread's design, made by its first screen (its rows, its size).
+  // #6354: a captured page is Homeroom's own, whatever project the thread
+  // was in: its app row, surface 'platform' and the route it copied.
+  const capturedApp = captured ? await mayor.findApp(pool, config.selfAppSlug).catch(() => null) : null;
   const held = drawn || !design
     ? await threads.ensureDesign(pool, config, {
-      user, thread: room, app: project?.id ? project : null, title: drawn?.title || design?.title, size: drawn?.size,
+      user, thread: room, app: captured ? capturedApp : (project?.id ? project : null),
+      title: drawn?.title || design?.title, size: drawn?.size,
+      ...(captured ? { surface: 'platform', route: captured.route } : {}),
     })
     : design;
-  // Every change of the turn is one version, said by its answer.
-  const made = held ? await threads.addVersion(pool, { threadId: held.threadId, html, author: 'bot', note: notes.join('; ') || null }) : null;
+  // Every change of the turn is one version, said by its answer. A capture
+  // is version 1 ("As it is now"), and an edit of it is version 2 in the
+  // same answer; a capture with no edits is version 1 alone.
+  let made = null;
+  let captioned = null;
+  if (captured) {
+    if (!held) return say(FULL_TEXT);
+    captioned = await threads.addVersion(pool, {
+      threadId: held.threadId, html: captured.html, author: 'capture', note: 'As it is now',
+    });
+    if (!captioned) return say(FULL_TEXT);
+    made = html !== captured.html
+      ? await threads.addVersion(pool, { threadId: held.threadId, html, author: 'bot', note: notes.join('; ') || null })
+      : captioned;
+  } else {
+    made = held ? await threads.addVersion(pool, { threadId: held.threadId, html, author: 'bot', note: notes.join('; ') || null }) : null;
+  }
   if (!made) return say(FULL_TEXT);
-  const words = [
-    threads.versionLine(made.version, notes.join('; ') || null),
-    clip(said, MAX_REPLY_CHARS),
-  ].filter(Boolean).join('\n\n');
+  const lines = [];
+  if (captured) lines.push(threads.versionLine(captioned.version, 'As it is now'));
+  if (made !== captioned) lines.push(threads.versionLine(made.version, notes.join('; ') || null));
+  const words = [...lines, clip(said, MAX_REPLY_CHARS)].filter(Boolean).join('\n\n');
   const sent = await say(words, {
     metadata: {
       kind: 'design_version', appSlug: held.app?.slug || null, appName: held.app?.name || null, designVersion: made.version,
