@@ -52,7 +52,7 @@ import { openReport } from '../dialogs/report';
  * it the next time anything else about the message changed.
  */
 
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { ChatMessageRow, NewMessagesDivider, groupsWithPrevious } from '@/components/ui/chat';
@@ -511,6 +511,14 @@ export function newestComment(rows: TranscriptMessage[], withGithub: boolean): T
 }
 
 /**
+ * #6519: the stream's newest comment, published to the rows beneath it.
+ * RequestRows' row props are pinned by a check that reads its source, so
+ * the newest row is handed down here rather than as one more prop on the
+ * call; a row under no publisher reads null and is never the newest.
+ */
+const NewestCommentContext = createContext<TranscriptMessage | null>(null);
+
+/**
  * Consecutive system lines that say the same thing fold into one, with a
  * count: a merge gate that re-runs on every check posts "PR #N reached the
  * vote threshold but has 1 test failing…" each time, and eight copies of
@@ -825,9 +833,11 @@ export function messageMenuItems(
  * memo()'d, as Messages' row is (#3104): an appended message, a reaction or
  * an edit changes one row's object and leaves every other row's alone
  * (./mount.ts keeps them), so only that row renders. Everything the row
- * draws must therefore arrive as a prop. `threadOpen` is one: it was read
- * from the controller here, and a memo()'d row would have kept the answer
- * from its last render.
+ * draws must therefore arrive as a prop (or, for a whole stream's answer
+ * like `NewestCommentContext`'s, as a context it reads, which reaches a
+ * memo()'d row too), never from module state. `threadOpen` is one: it was
+ * read from the controller here, and a memo()'d row would have kept the
+ * answer from its last render.
  */
 export const MessageRow = memo(function MessageRow({ msg, grouped = false, surface = 'main', threadOpen = false, tag = null, seeVote = null, latest = false }: {
   msg: TranscriptMessage;
@@ -844,6 +854,10 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   latest?: boolean;
 }) {
   const t = useMessages('chat');
+  // #6519: the row is the newest comment in its stream if its caller said
+  // so, or if the stream published it through the context above.
+  const publishedNewest = useContext(NewestCommentContext);
+  const isNewest = latest || (publishedNewest != null && publishedNewest === msg);
   const [sheet, setSheet] = useState(false);
   const recents = useRecentReactions();
   const chat = controller();
@@ -966,7 +980,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           ) : null}
           {/* 3 Nov 2026: suggested replies under Homeroom bot's message in a
               thread — only while it is the newest comment (#6519). */}
-          {latest && msg.botSuggest && msg.botSuggest.forMe && msg.botSuggest.status === 'open' && msg.botSuggest.actions.length ? (
+          {isNewest && msg.botSuggest && msg.botSuggest.forMe && msg.botSuggest.status === 'open' && msg.botSuggest.actions.length ? (
             <BotSuggestButtons id={msg.id} suggest={msg.botSuggest} />
           ) : null}
           {grouped && msg.editedTitle ? (
@@ -1294,7 +1308,7 @@ export function RequestRows({ view }: { view: TranscriptView }) {
           { author: previous.username, at: previous.at },
           { author: msg.username, at: msg.at, reply: !!msg.quote },
         );
-      drawn.push(<MessageRow key={key} msg={msg} grouped={grouped} surface="thread" tag={tagOf(msg)} seeVote={seeVoteOf(msg)} latest={msg === newest} />);
+      drawn.push(<MessageRow key={key} msg={msg} grouped={grouped} surface="thread" tag={tagOf(msg)} seeVote={seeVoteOf(msg)} />);
     } else if (msg.kind === 'github' && !msg.githubSpec) {
       drawn.push(<GitHubRow key={key} msg={msg} />);
     } else if (msg.kind === 'vote') {
@@ -1313,7 +1327,7 @@ export function RequestRows({ view }: { view: TranscriptView }) {
     previous = msg;
   });
   return (
-    <>
+    <NewestCommentContext.Provider value={newest}>
       <div className="messages-reply-count" data-request-replies={count}>
         <span>{count ? t('project:topic.request.stream.replies', { count }) : loaded ? t('project:topic.request.stream.noReplies') : t('project:topic.request.stream.loading')}</span>
       </div>
@@ -1347,7 +1361,7 @@ export function RequestRows({ view }: { view: TranscriptView }) {
       ) : null}
       {images.viewer}
       <div className="dev-request-stream" {...images.scope}>{drawn}</div>
-    </>
+    </NewestCommentContext.Provider>
   );
 }
 

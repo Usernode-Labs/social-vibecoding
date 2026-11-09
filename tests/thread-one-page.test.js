@@ -66,8 +66,7 @@ test('D3: the stream tags a change\'s rows with it, and keeps a reply on it apar
   assert.match(rows, /<ChangeEvent key=\{key\} msg=\{msg\} changeId=\{msg\.changeOf\.sessionId\} tag=\{tagOf\(msg\)\} \/>/);
   // #6236: a post about one of the request's changes also gets the See the
   // vote line (seeVote) instead of the vote card.
-  // #6519: the row is also told whether it is the stream's newest comment.
-  assert.match(rows, /<MessageRow key=\{key\} msg=\{msg\} grouped=\{grouped\} surface="thread" tag=\{tagOf\(msg\)\} seeVote=\{seeVoteOf\(msg\)\} latest=\{msg === newest\} \/>/);
+  assert.match(rows, /<MessageRow key=\{key\} msg=\{msg\} grouped=\{grouped\} surface="thread" tag=\{tagOf\(msg\)\} seeVote=\{seeVoteOf\(msg\)\} \/>/);
   assert.match(rows, /\(previous\.changeOf\?\.sessionId \?\? null\) === \(msg\.changeOf\?\.sessionId \?\? null\)/);
   assert.equal(message('project:topic.request.stream.onChange', { number: 6063 }), 'on Change #6063');
   assert.equal(message('project:topic.request.stream.onChangeUnnumbered'), 'on a change');
