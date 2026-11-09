@@ -370,6 +370,11 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
       build_ready: [{ appName: 'Run Club', url: 'https://x.test/a', unsubscribeUrl: UNSUB }, { notWorking: true, unsubscribeUrl: UNSUB }],
       invite_activity: [{ appName: 'Run Club', notice: { id: 'member_joined', values: { name: 'sam' } }, unsubscribeUrl: UNSUB }],
       project_opened: [{ appName: 'Run Club', url: 'https://x.test/a', unsubscribeUrl: UNSUB }],
+      waitlist_reminder: [
+        { url: 'https://x.test/s', signInLink: true, signInExpiresAt: '2026-11-13T10:00:00Z', releasedAt: '2026-11-06T09:00:00Z', now: '2026-11-09T09:00:00Z', unsubscribeUrl: UNSUB },
+        { url: 'https://x.test/l', hasAccount: true, releasedAt: '2026-10-01T09:00:00Z', unsubscribeUrl: UNSUB },
+      ],
+      waitlist_reminder_last: [{ url: 'https://x.test/s', releasedAt: '2026-10-01T09:00:00Z', unsubscribeUrl: UNSUB, replyTo: 'support@usernodelabs.org' }],
     };
     assert.deepEqual(Object.keys(payloads).sort(), [...KINDS].sort());
     let compared = 0;

@@ -74,6 +74,12 @@ const RULES = {
   invite_activity: { minGapMs: 60 * 1000, perWindow: 4, windowMs: DAY_MS },
   // #4396: a project opens once; a few a day across projects is plenty.
   project_opened: { minGapMs: 60 * 1000, perWindow: 4, windowMs: DAY_MS },
+  // Reminders to an admitted person who has not signed in
+  // (services/waitlist-reminders.js): each goes to an address once, ever, by
+  // a stamp on its waitlist row. These are the backstop behind that stamp,
+  // and behind an admin's "Send a reminder now": one of each a day.
+  waitlist_reminder: { minGapMs: DAY_MS, perWindow: 1, windowMs: DAY_MS },
+  waitlist_reminder_last: { minGapMs: DAY_MS, perWindow: 1, windowMs: DAY_MS },
 };
 
 const DEFAULT_MAX_PER_HOUR = 300;
@@ -83,6 +89,25 @@ const DEFAULT_MAX_PER_HOUR = 300;
 // hour of "it's ready" mail must never be what stops somebody signing in.
 const ACTIVITY_KINDS = new Set(['build_ready', 'invite_activity', 'project_opened']);
 const ACTIVITY_MAX_PER_HOUR = 100;
+
+// The waitlist reminders spend a budget of their own too, for the same
+// reason: a clock sends them to everybody owed one, old admits included, and
+// that must never be what stops a sign-in code. Their clock sends fewer an
+// hour than this (services/waitlist-reminders.js PER_RUN), and a reminder the
+// cap refuses is owed again, not lost.
+const REMINDER_KINDS = new Set(['waitlist_reminder', 'waitlist_reminder_last']);
+const REMINDER_MAX_PER_HOUR = 60;
+
+// Every kind with a budget of its own; the rest share the global cap.
+const OWN_BUDGET_KINDS = Object.freeze([...ACTIVITY_KINDS, ...REMINDER_KINDS]);
+
+// The budget `kind` spends: `{ kinds, maxPerHour }` for one of its own (the
+// kinds counted with it), or null for the global one every other kind shares.
+function budgetOf(kind) {
+  if (ACTIVITY_KINDS.has(kind)) return { kinds: [...ACTIVITY_KINDS], maxPerHour: ACTIVITY_MAX_PER_HOUR };
+  if (REMINDER_KINDS.has(kind)) return { kinds: [...REMINDER_KINDS], maxPerHour: REMINDER_MAX_PER_HOUR };
+  return null;
+}
 
 // Only these statuses count toward a window. A `failed`,
 // `suppressed_rate_limit` or `no_transport` row consumed no provider quota
@@ -161,5 +186,5 @@ function decide({
 
 module.exports = {
   decide, RULES, DEFAULT_MAX_PER_HOUR, COUNTED_STATUSES, HOUR_MS, DAY_MS,
-  ACTIVITY_KINDS, ACTIVITY_MAX_PER_HOUR,
+  ACTIVITY_KINDS, ACTIVITY_MAX_PER_HOUR, REMINDER_KINDS, REMINDER_MAX_PER_HOUR, OWN_BUDGET_KINDS, budgetOf,
 };

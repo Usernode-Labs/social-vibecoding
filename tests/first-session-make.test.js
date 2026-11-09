@@ -692,13 +692,14 @@ test('after Make it: the build line, then one invite, and the second button says
   assert.match(src, /\{continueLabel\(entry, false, made\.name\)\}/);
   // The note is said to be the first message.
   assert.match(src, /body: JSON\.stringify\(\{ days: LINK_DAYS, maxUses: LINK_USES, note: note\.trim\(\) \|\| null \}\)/);
-  // Every link's default, the first one's too: a link lets somebody new
-  // straight in as a private member now, so a forwarded one stops on its own.
+  // Every link's default, the first one's too: no end date and no limit
+  // (9 Nov 2026); a link that leaks pauses itself instead (the guard,
+  // services/community-invites.js GUARD).
   const invitesService = require('../src/services/community-invites');
-  assert.match(src, /const LINK_DAYS = 7;\s+const LINK_USES = 25;/);
-  assert.deepEqual([invitesService.DEFAULT_DAYS, invitesService.DEFAULT_USES], [7, 25]);
+  assert.match(src, /const LINK_DAYS = 0;\s+const LINK_USES = 0;/);
+  assert.deepEqual([invitesService.DEFAULT_DAYS, invitesService.DEFAULT_USES], [invitesService.NO_LIMIT, invitesService.NO_LIMIT]);
   assert.match(src, /\{t\('onboarding:firstSession\.invite\.limits'\)\}/);
-  assert.equal(message('onboarding:firstSession.invite.limits'), 'Anyone with the link can join for the next 7 days, up to 25 people.');
+  assert.equal(message('onboarding:firstSession.invite.limits'), 'Anyone with the link can join until you turn it off.');
   // Evan, 5 October 2026: the first invite is a link and nothing else. No
   // invite by username (somebody brand new knows nobody on Homeroom yet), and
   // no joining-rule line ("With one other person using it, a change goes

@@ -123,7 +123,7 @@ test('the buttons sit where Share link sat: after the note, before the status an
   };
   assert.ok(at('When you share, your note also goes in the group chat as your first message.') < at('data-first-session-invite-action="copy"'));
   assert.ok(at('data-first-session-invite-action="copy"') < at('data-first-session-invite-action="share"'));
-  assert.ok(at('data-first-session-invite-action="share"') < at('Anyone with the link can join for the next 7 days, up to 25 people.'));
+  assert.ok(at('data-first-session-invite-action="share"') < at('Anyone with the link can join until you turn it off.'));
 });
 
 test('Copy link copies the note and the link, then does what a share does', () => {

@@ -119,6 +119,16 @@ type WaitlistRow = {
   invited_by_email?: string | null;
   /** The one "you're in" mail admitting sends, if a delivery was recorded. */
   invite_email?: { status?: string | null; created_at?: string | null; error?: string | null } | null;
+  /**
+   * The two reminders to an admitted person who has not signed in
+   * (services/waitlist-reminders.js): when each went, what its newest
+   * delivery says, and whether they stopped them from the link in one.
+   */
+  reminders?: {
+    first?: ReminderMail | null;
+    last?: ReminderMail | null;
+    stopped_at?: string | null;
+  } | null;
   /** Facts about what this signup did. Deliberately carries no score. */
   signals?: {
     confirmed: boolean;
@@ -134,6 +144,8 @@ type WaitlistRow = {
     invited: number;
   };
 };
+
+type ReminderMail = { sent_at?: string | null; status?: string | null };
 
 type BpRow = {
   id: number;
@@ -343,13 +355,70 @@ function inviteMailLine(row: WaitlistRow): string | null {
   return `${m.status}${when}${m.error ? `: ${m.error}` : ''}`;
 }
 
+// One reminder's line: when it went, and what its delivery says when that is
+// not plain "sent". Null before it went.
+function reminderLine(m?: ReminderMail | null): string | null {
+  if (!m || !m.sent_at) return null;
+  const when = fmt(m.sent_at);
+  if (!m.status || m.status === 'sent') return `Sent ${when}`;
+  return `${when} (${m.status})`;
+}
+
+// "Send a reminder now" (POST /api/v4/admin/waitlist/:id/remind): the row's
+// next reminder, now. The server refuses one that signed in, stopped them,
+// or had both, and says which; the line under the button shows that or what
+// the send did.
+function RemindNow({ row, onSent }: { row: WaitlistRow; onSent: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const r = row.reminders || {};
+  const next = r.first?.sent_at ? 'the last reminder' : 'the first reminder';
+  const remind = useCallback(async () => {
+    if (!canWrite() || busy) return;
+    const okd = await topo()._confirm({
+      title: `Send ${next} to ${signupLabel(row)} now?`,
+      message: 'It goes now, whatever the usual spacing, even when reminders are off or in dry run. '
+        + 'Nobody gets more than two.',
+      confirmLabel: 'Send now',
+    });
+    if (!okd) return;
+    setBusy(true);
+    const { ok, data } = await send('POST', `/api/v4/admin/waitlist/${row.id}/remind`);
+    setBusy(false);
+    if (!ok || !data?.success) { setSaid(data?.error || 'Could not send the reminder.'); return; }
+    const status = data.data?.status;
+    const which = data.data?.reminder === 2 ? 'the last reminder' : 'the first reminder';
+    if (!status || status === 'sent' || status === 'skipped_staging') setSaid(`Sent ${which}.`);
+    else if (data.data?.owed_again) setSaid(`Not sent (${status}). It is owed again, and the clock will try later.`);
+    else setSaid(`${which.charAt(0).toUpperCase()}${which.slice(1)} did not go out (${status}). It counts as sent.`);
+    onSent();
+  }, [busy, next, row, onSent]);
+  return (
+    <div className="pt-1">
+      <button
+        data-remind-wl={row.id}
+        type="button"
+        className={BTN.row}
+        disabled={busy}
+        onClick={remind}
+      >
+        Send a reminder now
+      </button>
+      {said ? <p data-remind-wl-said={row.id} className="mt-1 text-zinc-500 dark:text-zinc-400">{said}</p> : null}
+    </div>
+  );
+}
+
 // The expandable block under a waitlist row: the dates the columns compress,
-// what happened to the invite mail, and the survey answers. It is a component
-// rather than a fragment the column builder returns because it reads the
-// shared options fetch, and a hook needs a component to live in.
-function WaitlistDetails({ row }: { row: WaitlistRow }) {
+// what happened to the admit mail and its reminders, and the survey answers.
+// It is a component rather than a fragment the column builder returns
+// because it reads the shared options fetch, and a hook needs a component to
+// live in.
+function WaitlistDetails({ row, reload }: { row: WaitlistRow; reload?: () => void }) {
   const options = useWaitlistOptions();
   const mail = inviteMailLine(row);
+  const reminders = row.reminders || {};
+  const admitted = !!row.released_at && !row.phone_only;
   const detail = (label: string, value: ReactNode) => (value ? (
     <div key={label}>
       <span className="text-zinc-500 dark:text-zinc-400">{`${label}: `}</span>
@@ -369,7 +438,15 @@ function WaitlistDetails({ row }: { row: WaitlistRow }) {
             ? fmt(row.confirmed_at)
             : 'Never. The link in the join email was not followed.')}
         {detail('Admitted', row.released_at ? fmt(row.released_at) : 'Not yet.')}
-        {detail('Invite email', mail)}
+        {detail('Admit email', mail)}
+        {admitted ? detail('Reminder 1', reminderLine(reminders.first) || 'Not sent.') : null}
+        {admitted ? detail('Reminder 2', reminderLine(reminders.last) || 'Not sent.') : null}
+        {admitted ? detail('Reminders stopped', reminders.stopped_at
+          ? `Yes, from the link in one (${fmt(reminders.stopped_at)})`
+          : 'No') : null}
+        {admitted && reload && canWrite() && !reminders.stopped_at && !(reminders.first?.sent_at && reminders.last?.sent_at)
+          ? <RemindNow row={row} onSent={reload} />
+          : null}
         {detail('Invite link used by', row.signals?.invited
           ? `${row.signals.invited} signup${row.signals.invited === 1 ? '' : 's'}`
           : null)}
@@ -407,7 +484,7 @@ function Queue<T>({
   empty: (state: { status: Status; only: Only; q: string }) => { title: string; body: string };
   errorTitle: string;
   actions?: (item: T, reload: () => void) => ReactNode;
-  extra?: (item: T) => ReactNode;
+  extra?: (item: T, reload: () => void) => ReactNode;
   /** Set to render the second `?only=` narrowing. Omitted: no second select. */
   onlyFilterId?: string;
   /** Set to render the order select. Omitted: the server's FIFO order only. */
@@ -652,7 +729,7 @@ function Queue<T>({
               rowKey={rowKey}
               columns={columns}
               actions={actions ? (it) => actions(it, load) : undefined}
-              extra={extra}
+              extra={extra ? (it) => extra(it, load) : undefined}
               selection={deleteAction ? {
                 isSelected: (it) => selected.has(rowKey(it)),
                 onToggle: (it, checked) => {
@@ -1009,6 +1086,136 @@ function ReleaseEmailPanel() {
           <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
             {`Last switched ${fmt(setting.updated_at)}${setting.updated_by ? ` by ${setting.updated_by}` : ''}.`}
           </p>
+        ) : null}
+      </Panel>
+    </div>
+  );
+}
+
+// ── The reminders: two emails to admitted people who have not signed in ──
+//
+// The waitlist-reminders clock emails each admitted person who has not signed
+// in twice: two days after the admit, then once more
+// (services/waitlist-reminders.js). Its mode is On, Dry run or Off, and it
+// starts at Dry run: nothing is sent, and the list under it shows who would
+// get which reminder now, exactly what On would send. Off sends none either.
+// "Send a reminder now" on a row sends in every mode. Independent of the
+// release email above.
+
+type ReminderMode = 'on' | 'dry_run' | 'off';
+type ReminderDue = { id: number; email?: string | null; released_at?: string | null; reminder: number };
+type ReminderSetting = {
+  mode: ReminderMode;
+  enabled: boolean;
+  updated_at?: string | null;
+  updated_by?: string | null;
+  due?: { first: number; last: number; rows: ReminderDue[] } | null;
+};
+
+const REMINDER_MODE_LABELS: Record<ReminderMode, string> = {
+  on: 'On: send them',
+  dry_run: 'Dry run: send nothing, list who would get one',
+  off: 'Off: send nothing',
+};
+
+// What the list's heading says in each mode.
+function dueHeading(mode: ReminderMode, total: number): string {
+  if (!total) return 'Nobody is owed a reminder right now.';
+  const people = `${total} ${total === 1 ? 'person' : 'people'}`;
+  if (mode === 'on') return `${people} owed a reminder now. The clock sends 8 every 10 minutes.`;
+  if (mode === 'dry_run') return `Dry run: ${people} would get a reminder now. Nothing is sent.`;
+  return `Off: ${people} would be owed a reminder. Nothing is sent.`;
+}
+
+function ReminderEmailPanel() {
+  const [setting, setSetting] = useState<ReminderSetting | null>(null);
+  const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
+  const saving = useRef(false);
+
+  const load = useCallback(async () => {
+    setError(null);
+    const { status, ok, data } = await fetchJson('/api/v4/admin/reminder-email');
+    if (!ok || !data?.success) { setError({ status, message: data?.error || null }); return; }
+    setSetting(data.data);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const choose = useCallback(async (mode: ReminderMode) => {
+    if (!canWrite() || saving.current) return;
+    if (mode === 'on') {
+      const total = (setting?.due?.first || 0) + (setting?.due?.last || 0);
+      const okd = await topo()._confirm({
+        title: 'Turn reminders on?',
+        message: total
+          ? `${total} ${total === 1 ? 'person is' : 'people are'} owed a reminder now, and the clock starts sending them in the next 10 minutes, 8 at a time.`
+          : 'The clock sends each reminder as it falls due.',
+        confirmLabel: 'Turn on',
+      });
+      if (!okd) return;
+    }
+    saving.current = true;
+    const { ok, data } = await send('PUT', '/api/v4/admin/reminder-email', { mode });
+    saving.current = false;
+    if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not save the reminders setting.'); return; }
+    setSetting(data.data);
+  }, [setting]);
+
+  const help = 'Admitted people who have not signed in get two reminder emails: the first two days '
+    + 'after they were let in, the last four days after that. Each has a link to stop them. '
+    + '"Send a reminder now" on a row sends one in every mode.';
+  const due = setting?.due || null;
+  const total = due ? due.first + due.last : 0;
+  return (
+    <div id="admin-topo-wl-reminder-email">
+      <Panel title="Reminders">
+        {error ? (
+          <ErrorState title="Couldn't load the reminders setting" status={error.status} message={error.message} onRetry={load} />
+        ) : null}
+        {!error && !setting ? <Skeleton rows={1} /> : null}
+        {!error && setting ? (
+          canWrite() ? (
+            <Field label="Reminder emails" htmlFor="admin-topo-wl-reminder-email-mode" help={help}>
+              <Select
+                id="admin-topo-wl-reminder-email-mode"
+                value={setting.mode}
+                onChange={(e) => choose(e.target.value as ReminderMode)}
+              >
+                {(['on', 'dry_run', 'off'] as ReminderMode[]).map((m) => (
+                  <option key={m} value={m}>{REMINDER_MODE_LABELS[m]}</option>
+                ))}
+              </Select>
+            </Field>
+          ) : (
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              <span className="font-medium">{REMINDER_MODE_LABELS[setting.mode] || setting.mode}.</span>
+              {` ${help}`}
+            </p>
+          )
+        ) : null}
+        {setting?.updated_at ? (
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            {`Last set ${fmt(setting.updated_at)}${setting.updated_by ? ` by ${setting.updated_by}` : ''}.`}
+          </p>
+        ) : null}
+        {!error && setting && due ? (
+          <div id="admin-topo-wl-reminder-due" className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">
+            <p className="font-medium">{dueHeading(setting.mode, total)}</p>
+            {total ? (
+              <>
+                <p className="mt-0.5">{`First reminder: ${due.first}. Last reminder: ${due.last}.`}</p>
+                <ul className="mt-2 space-y-0.5">
+                  {due.rows.map((r) => (
+                    <li key={`${r.id}:${r.reminder}`} data-reminder-due={r.id}>
+                      {`${r.email || `signup #${r.id}`}: ${r.reminder === 2 ? 'last reminder' : 'first reminder'}, let in ${fmt(r.released_at)}`}
+                    </li>
+                  ))}
+                </ul>
+                {total > due.rows.length ? (
+                  <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{`The ${due.rows.length} let in longest ago are shown.`}</p>
+                ) : null}
+              </>
+            ) : null}
+          </div>
         ) : null}
       </Panel>
     </div>
@@ -1616,6 +1823,7 @@ function WaitlistScreen() {
             {showAnalytics ? <WaitlistAnalyticsPanel onClose={() => setShowAnalytics(false)} /> : null}
             <StoryLandingPanel />
             <ReleaseEmailPanel />
+            <ReminderEmailPanel />
           </>
         )}
         exportCsv={write
@@ -1655,7 +1863,7 @@ function WaitlistScreen() {
             </button>
           </>
         ) : undefined}
-        extra={(w) => <WaitlistDetails row={w} />}
+        extra={(w, reload) => <WaitlistDetails row={w} reload={reload} />}
         deleteAction={write ? {
           bulkPath: '/api/v4/admin/waitlist/bulk-delete',
           itemLabel: (w) => signupLabel(w),
@@ -1711,6 +1919,6 @@ function WaitlistScreen() {
 // after a POST, so no static render or declared check reaches the sentences
 // an admin reads about each pasted address.
 export {
-  SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS,
+  SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS, WaitlistDetails, reminderLine,
   BatchAdmitPanel, admitOutcomeLine, resolutionSummary, resolvedDetail, waitlistEmpty,
 };
