@@ -232,9 +232,14 @@
       "schemaSha256": "7275deb128c1b488ba92f361192b55b8609a9922fed5f1854ed31cc638416ce6"
     },
     {
+      "id": "connector-uploads-design-kind",
+      "sha256": "b6d1fb2e5f8b9c98d1a856b4897696806269d9d547ee6fe78b74245410143379",
+      "schemaSha256": "2d86f8c9984d20be06c03c01675f1d740f5444346b6d9c3becea44ddadb71f1d"
+    },
+    {
       "id": "change-pictures",
       "sha256": "c4f1e64b18ce3d64e931d1f7416f77c9616854d07f4de17938488f82e71096a8",
-      "schemaSha256": "d904aa425984763acc5a437cc98adaa2eae550170d9726fe656535a1f437a8f7"
+      "schemaSha256": "5291751cc4cff86d4b8a549c189baa255ae220b747bb79a81bf0b0610ce8e7cb"
     }
   ]
 }
