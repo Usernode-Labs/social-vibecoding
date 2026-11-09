@@ -331,6 +331,9 @@
       },
       "card": {
         "to": ":is(.dev-request-ask,.dev-request-status)"
+      },
+      "title": {
+        "to": ".settings-page-title"
       }
     }
   }
