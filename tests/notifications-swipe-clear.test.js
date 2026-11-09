@@ -326,11 +326,11 @@ test('on touch there is no × at all: the swipe is the way to clear', () => {
 });
 
 test('an unread row, or one held from the open, offers a clear', () => {
-  // #6498: opening the sheet marks the bell's rows read, and a row that was
-  // unread then stays listed (held, dim) until the sheet closes. Its clear
-  // must stay with it: the open happening must not take the control out from
-  // under the pointer. The clear on a held row is the no-op the code already
-  // handles for "a refresh got there first".
+  // #6498: a row the sheet was showing unread that the server answers as read
+  // (cleared in another tab or device) stays listed (held, dim) until the
+  // sheet closes. Its clear must stay with it: a background clear must not
+  // take the control out from under the pointer. The clear on a held row is
+  // the no-op the code already handles for "a refresh got there first".
   assert.match(SHEET_SRC, /const clearable = view\.unread \|\| held;/);
   assert.match(SHEET_SRC, /\{clearable && !touch \? \(\s*<button\s+type="button"\s+data-notification-clear=\{view\.id\}/);
   // The swipe is attached for a read card too, but only to save (above).
