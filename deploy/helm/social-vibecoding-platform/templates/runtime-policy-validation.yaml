@@ -18,6 +18,19 @@
 {{- fail "config.appSleepAppIds must contain positive app IDs" }}
 {{- end }}
 {{- end }}
+{{- if not (kindIs "map" .Values.config.appSleepReviewedRevisions) }}
+{{- fail "config.appSleepReviewedRevisions must map positive app IDs to nonempty SHA arrays" }}
+{{- end }}
+{{- range $id, $revisions := .Values.config.appSleepReviewedRevisions }}
+{{- if or (not (regexMatch "^[1-9][0-9]*$" (toString $id))) (not (kindIs "slice" $revisions)) (empty $revisions) }}
+{{- fail "config.appSleepReviewedRevisions must map positive app IDs to nonempty SHA arrays" }}
+{{- end }}
+{{- range $sha := $revisions }}
+{{- if or (not (kindIs "string" $sha)) (not (regexMatch "^[a-f0-9]{40}$" (toString $sha))) }}
+{{- fail "config.appSleepReviewedRevisions must contain full lowercase source SHAs" }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- range $window := list .Values.config.previewSleepAfterMs .Values.config.appSleepAfterMs }}
 {{- if kindIs "string" $window }}
 {{- if not (regexMatch "^[0-9]+$" $window) }}

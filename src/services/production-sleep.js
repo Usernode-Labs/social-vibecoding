@@ -8,18 +8,34 @@ const log = require('./logger');
 const { isHealth } = require('./gateway-activity');
 const { APP_SLEEP_LOCK } = require('./advisory-locks');
 const ANNOTATION = 'social.usernode.io/production-asleep-at';
+const REVISION_LABEL = 'social.usernode.io/source-revision';
 
 function policy(config = null) {
   const raw = config?.appSleepAppIds ?? process.env.APP_SLEEP_APP_IDS ?? '';
   const parts = Array.isArray(raw) ? raw : String(raw).split(',').filter((s) => s.trim());
   const ids = parts.map((v) => Number(v));
   if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw new Error('APP_SLEEP_APP_IDS must contain positive app IDs');
+  let reviewed = config?.appSleepReviewedRevisions ?? process.env.APP_SLEEP_REVIEWED_REVISIONS ?? {};
+  if (typeof reviewed === 'string') {
+    try { reviewed = JSON.parse(reviewed); }
+    catch { throw new Error('APP_SLEEP_REVIEWED_REVISIONS must be a JSON object'); }
+  }
+  if (!reviewed || Array.isArray(reviewed) || typeof reviewed !== 'object'
+    || Object.entries(reviewed).some(([id, revisions]) => !/^[1-9]\d*$/.test(id)
+      || !Number.isSafeInteger(Number(id)) || !Array.isArray(revisions) || !revisions.length
+      || revisions.some((sha) => typeof sha !== 'string' || !/^[a-f0-9]{40}$/.test(sha)))) {
+    throw new Error('APP_SLEEP_REVIEWED_REVISIONS must map positive app IDs to nonempty SHA arrays');
+  }
   const afterMs = Number(config?.appSleepAfterMs ?? process.env.APP_SLEEP_AFTER_MS ?? 3600000);
   if (!Number.isSafeInteger(afterMs) || afterMs < 0) throw new Error('APP_SLEEP_AFTER_MS must be a non-negative integer');
   const supported = (config?.appRuntime ?? process.env.APP_RUNTIME) === 'kubernetes'
     && process.env.USERNODE_ENV !== 'staging' && !process.env.STAGING_SESSION_ID;
   const gate = (config?.kubernetes?.appGate ?? process.env.APP_GATE) === 'on';
-  return { ids: [...new Set(ids)], afterMs: gate ? afterMs : 0, supported };
+  return { ids: [...new Set(ids)], reviewed, afterMs: gate ? afterMs : 0, supported };
+}
+
+function revisionReviewed(policy, appId, sha) {
+  return policy.reviewed[String(appId)]?.includes(sha) === true;
 }
 
 function isAsleep(deployment) {
@@ -80,13 +96,14 @@ async function sweep(config, pool, { deps = {}, shouldStop = () => false } = {})
        AND self_hosted IS NOT TRUE AND runtime_kind = 'kubernetes'
      ON CONFLICT (app_id) DO NOTHING`, [p.ids]);
   const { rows } = await pool.query(
-    `SELECT a.id, a.slug, a.runtime_name, a.deploy_state, s.last_request_at, s.asleep_at, s.deployment_uid
+    `SELECT a.id, a.slug, a.runtime_name, a.main_sha, a.deploy_state, s.last_request_at, s.asleep_at, s.deployment_uid
        FROM apps a JOIN app_runtime_sleep s ON s.app_id = a.id
       WHERE a.status = 'running' AND a.self_hosted IS NOT TRUE AND a.runtime_kind = 'kubernetes'
         AND (a.id = ANY($1::int[]) OR s.asleep_at IS NOT NULL) ORDER BY a.id`, [p.ids]);
   const summary = { examined: rows.length, asleep: 0, waking: 0, skipped: 0 };
-  // Disabling sleep or removing an assignment schedules bounded wakes too.
-  for (const app of rows.filter((a) => a.asleep_at && (!p.ids.includes(a.id) || p.afterMs === 0)).slice(0, 10)) {
+  // Removing an assignment or its reviewed revision schedules bounded wakes too.
+  for (const app of rows.filter((a) => a.asleep_at && (!p.ids.includes(a.id) || p.afterMs === 0
+    || !revisionReviewed(p, a.id, a.main_sha))).slice(0, 10)) {
     if (shouldStop()) return summary;
     await requestWake(app.id, app.asleep_at, { deps }); summary.waking += 1;
   }
@@ -98,18 +115,21 @@ async function sweep(config, pool, { deps = {}, shouldStop = () => false } = {})
   // The successful sleep limit below still bounds scale-downs per pass.
   for (const app of rows.filter((a) => !a.asleep_at)) {
     if (shouldStop()) break;
-    if (!app.runtime_name || app.deploy_state === 'deploying'
+    if (!app.runtime_name || app.deploy_state === 'deploying' || !revisionReviewed(p, app.id, app.main_sha)
       || !idleAt(snapshots, app.runtime_name, Date.now(), p.afterMs)) { summary.skipped += 1; continue; }
     const result = await locks.ifSessionLockFree(pool, [APP_SLEEP_LOCK, app.id], async () => {
       const deployment = await kubernetes.readProductionForSleep(config, app);
-      if (!deployment) return false;
+      const deployedRevision = deployment?.spec?.template?.metadata?.labels?.[REVISION_LABEL];
+      if (!deployment || !revisionReviewed(p, app.id, deployedRevision)
+        || deployment.metadata?.labels?.[REVISION_LABEL] !== deployedRevision) return false;
       const { rows: [claimed] } = await pool.query(
         `UPDATE app_runtime_sleep s SET asleep_at = now(), runtime_name = $2, deployment_uid = $3
           FROM apps a WHERE s.app_id = $1 AND a.id = s.app_id AND s.asleep_at IS NULL
            AND s.last_request_at < now() - make_interval(secs => $4::double precision)
            AND a.runtime_name = $2 AND a.status = 'running' AND a.self_hosted IS NOT TRUE
            AND a.deploy_state IS DISTINCT FROM 'deploying'
-         RETURNING s.asleep_at::text AS asleep_at`, [app.id, app.runtime_name, deployment.metadata.uid, p.afterMs / 1000]);
+           AND a.main_sha = $5
+         RETURNING s.asleep_at::text AS asleep_at`, [app.id, app.runtime_name, deployment.metadata.uid, p.afterMs / 1000, app.main_sha]);
       if (!claimed) return false;
       try {
         const outcome = await kubernetes.scaleProductionForSleep(config, deployment, 0, claimed.asleep_at);

@@ -336,6 +336,8 @@ config:
   # Reviewed request-driven production app IDs, empty until a pilot is chosen.
   # Zero afterMs wakes sleeping apps and disables further sleeps.
   appSleepAppIds: []
+  # Every selected app needs reviewed source SHAs; changed or unreviewed apps stay awake.
+  appSleepReviewedRevisions: {}
   appSleepAfterMs: 3600000
 
 secrets:

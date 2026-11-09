@@ -409,7 +409,15 @@ standard. A request change rolls that app's Pod using its existing rollout
 strategy; it does not change quotas or authorize additional app slots.
 
 Production sleeping is a separate, opt-in policy. `config.appSleepAppIds`
-defaults to `[]`; `config.appSleepAfterMs` defaults to one hour. Select only
+defaults to `[]`; `config.appSleepAfterMs` defaults to one hour.
+`config.appSleepReviewedRevisions` maps each selected app ID to a nonempty
+array of reviewed full source SHAs. Both the recorded live version and the
+Deployment's source label must be reviewed before sleeping. Missing pins or
+new unreviewed versions keep an app awake; an already-sleeping app whose
+recorded version becomes unreviewed is woken even without gateway telemetry.
+Wake requests remain available regardless of revision eligibility. Deploy
+this support before the infrastructure pins: legacy ID-only assignments wake
+and stay awake until their reviewed SHAs are configured. Select only
 request-driven apps with durable external state and no timers, scheduled
 work, subscriptions or background queues. Homeroom, previews and deployments
 in progress are excluded. All live gateway Pods must supply fresh activity

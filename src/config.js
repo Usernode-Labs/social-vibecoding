@@ -826,6 +826,7 @@ function load() {
     // Opt-in, reviewed request-driven production apps only. Zero wakes the
     // pilot and prevents new sleeps; all background/scheduled apps stay on.
     appSleepAppIds: process.env.APP_SLEEP_APP_IDS || '',
+    appSleepReviewedRevisions: process.env.APP_SLEEP_REVIEWED_REVISIONS || '{}',
     appSleepAfterMs: Number(process.env.APP_SLEEP_AFTER_MS || '3600000'),
     // How often the session sweeper scans for idle sessions.
     sessionSweepIntervalMs: parseInt(process.env.SESSION_SWEEP_INTERVAL_MS || '60000', 10),

@@ -52,3 +52,31 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
     '--set-string', 'config.checkNodePool=pool=checks'], { encoding: 'utf8', stdio: 'pipe' }),
   /requires a positive config.checksMaxConcurrentRuns/);
 });
+
+test('reviewed sleep revisions reach web and conductor and reject malformed pins', {
+  skip: !helmAvailable && 'helm is not installed',
+}, () => {
+  const args = ['template', 'sleep-reviewed-test', 'deploy/helm/social-vibecoding-platform',
+    '--show-only', 'templates/platform.yaml', '--set', 'enabled=true', '--set', 'secrets.create=false',
+    '--set-string', `release.sourceRevision=${'a'.repeat(40)}`];
+  for (const image of ['image', 'workerImage', 'captureImage']) {
+    args.push('--set-string', `platform.${image}.digest=sha256:${'a'.repeat(64)}`);
+  }
+  for (const pins of [{}, { 1404: ['1'.repeat(40), '2'.repeat(40)] }]) {
+    const rendered = execFileSync('helm', [...args, '--set-json',
+      `config.appSleepReviewedRevisions=${JSON.stringify(pins)}`], { encoding: 'utf8' });
+    const pods = rendered.split(/^---$/m).filter((doc) => /^kind: Deployment$/m.test(doc));
+    assert.equal(pods.length, 2);
+    assert.deepEqual(pods.map((doc) => doc.match(/social\.usernode\.io\/process-role: "([a-z]+)"/)[1]).sort(),
+      ['conductor', 'web']);
+    for (const pod of pods) {
+      const value = pod.match(/\{name: APP_SLEEP_REVIEWED_REVISIONS, value: ("(?:[^"\\]|\\.)*")\}/)[1];
+      assert.deepEqual(JSON.parse(JSON.parse(value)), pins);
+    }
+  }
+  for (const pins of [[], { invalid: ['1'.repeat(40)] }, { 1404: [] }, { 1404: '1'.repeat(40) }, { 1404: ['short'] }]) {
+    assert.throws(() => execFileSync('helm', [...args, '--set-json',
+      `config.appSleepReviewedRevisions=${JSON.stringify(pins)}`], { encoding: 'utf8', stdio: 'pipe' }),
+    /config.appSleepReviewedRevisions/);
+  }
+});

@@ -10,6 +10,20 @@ const { Pool } = require('pg');
 const sleep = require('../src/services/production-sleep');
 const { createActivity } = require('../src/services/gateway-activity');
 const kubernetes = require('../src/services/kubernetes');
+const REVIEWED_SHA = '1'.repeat(40);
+const OTHER_SHA = '2'.repeat(40);
+const REVISION_LABEL = 'social.usernode.io/source-revision';
+
+test('production sleep requires explicit arrays of reviewed full source revisions', () => {
+  const config = { appSleepAppIds: [1], appSleepReviewedRevisions: { 1: [REVIEWED_SHA, OTHER_SHA] } };
+  assert.deepEqual(sleep.policy(config).reviewed, config.appSleepReviewedRevisions);
+  assert.deepEqual(sleep.policy({ ...config, appSleepReviewedRevisions: JSON.stringify(config.appSleepReviewedRevisions) }).reviewed,
+    config.appSleepReviewedRevisions);
+  assert.deepEqual(sleep.policy({ ...config, appSleepReviewedRevisions: {} }).reviewed, {});
+  for (const reviewed of ['invalid', [], { 0: [REVIEWED_SHA] }, { 1: [] }, { 1: REVIEWED_SHA }, { 1: ['short'] }, { 1: [4] }]) {
+    assert.throws(() => sleep.policy({ ...config, appSleepReviewedRevisions: reviewed }), /APP_SLEEP_REVIEWED_REVISIONS/);
+  }
+});
 
 test('activity retains long requests and sockets until they end, without counting health checks', () => {
   let now = 100;
@@ -53,13 +67,14 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
     await pool.query('DELETE FROM app_runtime_sleep');
     const slug = `sleep-app-${++seq}`;
     const { rows: [app] } = await pool.query(
-      `INSERT INTO apps (name, slug, created_by, status, runtime_kind, runtime_name)
-       VALUES ($1, $1, $2, 'running', 'kubernetes', $1) RETURNING *`, [slug, owner.id]);
+      `INSERT INTO apps (name, slug, created_by, status, runtime_kind, runtime_name, main_sha)
+       VALUES ($1, $1, $2, 'running', 'kubernetes', $1, $3) RETURNING *`, [slug, owner.id, REVIEWED_SHA]);
     const config = { appRuntime: 'kubernetes', appSleepAppIds: [app.id], appSleepAfterMs: 3600000,
+      appSleepReviewedRevisions: { [app.id]: [REVIEWED_SHA] },
       kubernetes: { appGate: 'on', appNamespace: 'apps' } };
     let deployment = { metadata: { uid: 'uid', name: slug, resourceVersion: '1', annotations: {},
-      labels: { 'social.usernode.io/environment': 'production' } },
-    spec: { replicas: 1, template: { image: 'immutable', env: 'unchanged' } } };
+      labels: { 'social.usernode.io/environment': 'production', [REVISION_LABEL]: REVIEWED_SHA } },
+    spec: { replicas: 1, template: { image: 'immutable', env: 'unchanged', metadata: { labels: { [REVISION_LABEL]: REVIEWED_SHA } } } } };
     const fx = { config, app, active: 0, lastRequestAt: Date.now() - 7200000, telemetryError: false,
       conflict: false, sleepError: null, wakeError: false, scales: [], wakes: [], wait: async () => {},
       get deployment() { return deployment; },
@@ -107,12 +122,13 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
   await t.test('active lower IDs do not starve an idle app beyond the first twenty assignments', async () => {
     const prefix = `busy-before-${++seq}-`;
     const { rows: busy } = await pool.query(
-      `INSERT INTO apps (name, slug, created_by, status, runtime_kind, runtime_name)
-       SELECT $1 || n, $1 || n, $2, 'running', 'kubernetes', $1 || n
-         FROM generate_series(1, 20) n RETURNING id, runtime_name`, [prefix, owner.id]);
+      `INSERT INTO apps (name, slug, created_by, status, runtime_kind, runtime_name, main_sha)
+       SELECT $1 || n, $1 || n, $2, 'running', 'kubernetes', $1 || n, $3
+         FROM generate_series(1, 20) n RETURNING id, runtime_name`, [prefix, owner.id, REVIEWED_SHA]);
     const fx = await fixture();
     assert.ok(busy.every((app) => app.id < fx.app.id));
     fx.config.appSleepAppIds = [...busy.map((app) => app.id), fx.app.id];
+    fx.config.appSleepReviewedRevisions = Object.fromEntries(fx.config.appSleepAppIds.map((id) => [id, [REVIEWED_SHA]]));
     fx.deps.kubernetes.appGateActivity = async () => [{ version: 1, now: Date.now(), upstreams: {
       ...Object.fromEntries(busy.map((app) => [app.runtime_name, { active: 1, lastRequestAt: Date.now() - 7200000 }])),
       [fx.app.runtime_name]: { active: 0, lastRequestAt: Date.now() - 7200000 },
@@ -134,6 +150,71 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
     assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).telemetryUnavailable, true);
     assert.equal((await fx.row()).asleep_at, null);
     assert.equal(fx.scales.length, 0);
+  });
+
+  await t.test('missing pins and a changed recorded revision keep an app awake', async () => {
+    for (const missing of [true, false]) {
+      const fx = await fixture(); await fx.age();
+      if (missing) fx.config.appSleepReviewedRevisions = {};
+      else await pool.query('UPDATE apps SET main_sha = $2 WHERE id = $1', [fx.app.id, OTHER_SHA]);
+      assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
+      assert.equal((await fx.row()).asleep_at, null);
+      assert.deepEqual(fx.scales, []);
+    }
+  });
+
+  await t.test('the actual Deployment source label must be reviewed too', async () => {
+    for (const deployed of [OTHER_SHA, undefined]) {
+      const fx = await fixture(); await fx.age();
+      fx.deployment.spec.template.metadata.labels[REVISION_LABEL] = deployed;
+      assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
+      assert.equal((await fx.row()).asleep_at, null);
+      assert.deepEqual(fx.scales, []);
+    }
+    const fx = await fixture(); await fx.age();
+    fx.config.appSleepReviewedRevisions[fx.app.id].push(OTHER_SHA);
+    fx.deployment.spec.template.metadata.labels[REVISION_LABEL] = OTHER_SHA;
+    assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0,
+      'inconsistent metadata and template source labels stay awake');
+    assert.equal((await fx.row()).asleep_at, null);
+  });
+
+  await t.test('different recorded and deployed revisions may sleep when both were reviewed', async () => {
+    const fx = await fixture(); await fx.age();
+    fx.config.appSleepReviewedRevisions[fx.app.id].push(OTHER_SHA);
+    fx.deployment.spec.template.metadata.labels[REVISION_LABEL] = OTHER_SHA;
+    fx.deployment.metadata.labels[REVISION_LABEL] = OTHER_SHA;
+    assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 1);
+    assert.deepEqual(fx.scales, [0]);
+  });
+
+  await t.test('a recorded revision change racing the claim prevents sleeping', async () => {
+    const fx = await fixture(); await fx.age();
+    fx.config.appSleepReviewedRevisions[fx.app.id].push(OTHER_SHA);
+    const read = fx.deps.kubernetes.readProductionForSleep;
+    fx.deps.kubernetes.readProductionForSleep = async () => {
+      await pool.query('UPDATE apps SET main_sha = $2 WHERE id = $1', [fx.app.id, OTHER_SHA]);
+      return read();
+    };
+    assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
+    assert.equal((await fx.row()).asleep_at, null);
+    assert.deepEqual(fx.scales, []);
+  });
+
+  await t.test('unreviewed sleeping apps wake through access and rollback even without telemetry', async () => {
+    for (const missing of [true, false]) {
+      const fx = await fixture(); await fx.age();
+      await sleep.sweep(fx.config, pool, { deps: fx.deps });
+      assert.ok((await fx.row()).asleep_at);
+      if (missing) fx.config.appSleepReviewedRevisions = {};
+      else await pool.query('UPDATE apps SET main_sha = $2 WHERE id = $1', [fx.app.id, OTHER_SHA]);
+      fx.telemetryError = true;
+      assert.equal((await sleep.access(pool, fx.app.id, '/', { config: fx.config, deps: fx.deps })).ready, false);
+      assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).waking, 1);
+      assert.equal((await sleep.wake(fx.config, pool, fx.app.id, { deps: fx.deps })).status, 'started');
+      assert.equal((await fx.row()).asleep_at, null);
+      assert.equal(fx.deployment.spec.replicas, 1);
+    }
   });
 
   await t.test('sleep retains the runtime template; access requests a coalesced wake and probes do not', async () => {
