@@ -94,7 +94,9 @@ async function sweep(config, pool, { deps = {}, shouldStop = () => false } = {})
   let snapshots;
   try { snapshots = await kubernetes.appGateActivity(config); }
   catch (err) { log.warn('production-sleep', 'Gateway activity unavailable; apps stay awake', { err: err.message }); return { ...summary, telemetryUnavailable: true }; }
-  for (const app of rows.filter((a) => !a.asleep_at).slice(0, 20)) {
+  // Check every assignment: active lower IDs must not starve idle higher IDs.
+  // The successful sleep limit below still bounds scale-downs per pass.
+  for (const app of rows.filter((a) => !a.asleep_at)) {
     if (shouldStop()) break;
     if (!app.runtime_name || app.deploy_state === 'deploying'
       || !idleAt(snapshots, app.runtime_name, Date.now(), p.afterMs)) { summary.skipped += 1; continue; }

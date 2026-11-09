@@ -104,6 +104,31 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
     assert.equal(fx.scales.length, 0);
   });
 
+  await t.test('active lower IDs do not starve an idle app beyond the first twenty assignments', async () => {
+    const prefix = `busy-before-${++seq}-`;
+    const { rows: busy } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, status, runtime_kind, runtime_name)
+       SELECT $1 || n, $1 || n, $2, 'running', 'kubernetes', $1 || n
+         FROM generate_series(1, 20) n RETURNING id, runtime_name`, [prefix, owner.id]);
+    const fx = await fixture();
+    assert.ok(busy.every((app) => app.id < fx.app.id));
+    fx.config.appSleepAppIds = [...busy.map((app) => app.id), fx.app.id];
+    fx.deps.kubernetes.appGateActivity = async () => [{ version: 1, now: Date.now(), upstreams: {
+      ...Object.fromEntries(busy.map((app) => [app.runtime_name, { active: 1, lastRequestAt: Date.now() - 7200000 }])),
+      [fx.app.runtime_name]: { active: 0, lastRequestAt: Date.now() - 7200000 },
+    } }];
+    await sleep.sweep(fx.config, pool, { deps: fx.deps });
+    await pool.query(`UPDATE app_runtime_sleep SET last_request_at = now() - interval '2 hours'
+      WHERE app_id = ANY($1::int[])`, [fx.config.appSleepAppIds]);
+    assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 1);
+    assert.ok((await fx.row()).asleep_at);
+    assert.deepEqual(fx.scales, [0]);
+    const { rows } = await pool.query('SELECT asleep_at FROM app_runtime_sleep WHERE app_id = ANY($1::int[])',
+      [busy.map((app) => app.id)]);
+    assert.equal(rows.length, 20);
+    assert.ok(rows.every((row) => row.asleep_at === null));
+  });
+
   await t.test('telemetry failure leaves both SQL and runtime awake', async () => {
     const fx = await fixture(); await fx.age(); fx.telemetryError = true;
     assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).telemetryUnavailable, true);
