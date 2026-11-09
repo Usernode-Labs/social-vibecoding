@@ -1710,6 +1710,16 @@ const CLAIMS = Object.freeze([
     instead: 'I haven\'t posted that anywhere yet.',
   },
   {
+    // #6534: a reply that says pictures, shots or a design are posted, when
+    // nothing was stored under it. In a project's thread only what was stored
+    // as an attachment counts; in the bot's own chat the gallery card does.
+    kind: 'posted_pictures',
+    re: /\bhere (?:are|is) the (?:pictures|shots|stills|designs?)\b|\bI(?:'ve| have)(?: just| now)? (?:attached|posted|added|put up) (?:the |your |two |three |four )?(?:pictures?|shots?|stills|designs?|before and after)\b|\battached below\b/i,
+    backed: (ctx) => !!(ctx.attached?.length || (!ctx.place && ctx.pictures?.made)),
+    said: 'says pictures or a design were posted',
+    instead: 'I haven\'t attached any pictures.',
+  },
+  {
     kind: 'started',
     re: /\bI(?:'m| am)\s+(?:now\s+)?(?:starting|working on (?:it|that|this|#\d+)|building (?:it|that|this|#\d+)|on it)\b|\bI(?:'ve| have)\s+started\b|\bI(?:'ll| will) (?:start(?: on)?|look at|pick up) (?:it|that|this|#\d+) (?:now|right away|right now)\b/i,
     // Homeroom bot parity (P4): reads a batch queued this turn (work_through).
@@ -5345,6 +5355,32 @@ async function actOnTap(pool, config, { userId, actionId, choice, answers = [], 
 }
 
 /**
+ * #6248: the saved request draft an offer waits on, for the preview beside
+ * the chat. Checked as `decideOfferTap` is: this person's own action, of the
+ * `file_request` kind, still open. Resolves { ok, title, details, status,
+ * app: { slug, name }, footer }, or { ok: false } (the route answers 404).
+ */
+async function readDraft(pool, { user, actionId }) {
+  const id = Number(actionId);
+  if (!user?.id || !Number.isInteger(id) || id <= 0) return { ok: false };
+  const { rows: [row] } = await pool.query(
+    `SELECT a.title, a.details, a.status, ap.slug, ap.name
+       FROM homeroom_bot_dm_actions a
+       JOIN apps ap ON ap.id = a.app_id
+      WHERE a.id = $1 AND a.user_id = $2 AND a.kind = 'file_request'`,
+    [id, user.id]);
+  if (!row || row.status !== 'open') return { ok: false };
+  return {
+    ok: true,
+    title: row.title,
+    details: row.details || '',
+    status: row.status,
+    app: { slug: row.slug, name: row.name },
+    footer: defaultFooter(user),
+  };
+}
+
+/**
  * #4097: what a second File it on an offer already filed says, as the
  * ack's (content, extra): the request's line, which Messages draws as the
  * card it carries, then that it was filed. Without the project (it is gone)
@@ -5525,6 +5561,14 @@ function askedFor(action) {
 }
 
 /**
+ * The line a filed request's body ends with, as the person who asked sees it
+ * (#6248: shared with `readDraft`, so the preview never drifts from the body).
+ */
+function defaultFooter(user) {
+  return `Filed from ${user.username}'s chat with Homeroom bot.`;
+}
+
+/**
  * Pure (#6251): the body a request is filed with. Without extras, or with an
  * explicit `footer` (the B9 callers), it is exactly what it always was. With
  * them: the person's words, their pictures, Done when, Related (each a link
@@ -5537,7 +5581,7 @@ function requestBody({ details, username, extras = null, screenshotIds = [], dom
     details || '',
     '',
     '---',
-    footer || `Filed from ${username}'s chat with Homeroom bot.`,
+    footer || defaultFooter({ username }),
   ].join('\n').trim();
   if (!extras || footer) return plain;
   const base = domain ? `https://${domain}` : '';
@@ -7089,6 +7133,7 @@ module.exports = {
   decideTyped,
   typedDecision,
   fileRequest,
+  readDraft,
   findApp,
   canFile,
   offerMoveRequest,
