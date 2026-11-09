@@ -245,6 +245,11 @@
       "id": "author-yes-withdrawn",
       "sha256": "b0e7d4100f335f44ba319a86ee0e8dd36c7369f7db8c4c33e6d2de66f9fafec6",
       "schemaSha256": "deda4df491c0d5238f3695158a7357f4b8d45e85a1df3f88577f34ab0c788a89"
+    },
+    {
+      "id": "record-arrival-sources",
+      "sha256": "dcb5e3ba999a2d76370dc6c521fb90b6ca1d0ac79ea471ee8ef213da6e583b07",
+      "schemaSha256": "5129de75d5a378e58fe9d6f5ca666b9dfba9952c9e7416e170eb540334909543"
     }
   ]
 }
