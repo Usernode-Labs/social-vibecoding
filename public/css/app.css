@@ -27005,6 +27005,11 @@ html[data-skin] #messages-screen:has([data-messages-frame-list]) { padding-inlin
 html[data-skin] .messages-list-pane[data-frame-list] { overflow-y: auto; padding: 0; }
 @media (min-width: 768px) {
   html[data-skin] .messages-list-pane[data-frame-list] { flex: 0 0 520px; width: 520px; }
+  /* With nothing open the standard look makes the list the whole page, in a
+     centred column. The frame keeps its split: the list where it is, and
+     the pane beside it saying nothing is open. */
+  html[data-skin] .messages-layout.messages-list-page > .messages-list-pane[data-frame-list] { max-width: none; margin: 0; }
+  html[data-skin] .messages-layout.messages-list-page:has(> [data-frame-list]) > .messages-thread-pane { display: flex; }
   html[data-skin] .messages-layout:has(> [data-frame-list]) > .messages-thread-pane { margin: 0; border-radius: 0; background: none; box-shadow: none; border-inline-start: 1px solid var(--fr-line); }
 }
 

@@ -179,6 +179,8 @@ export interface RowProps {
   onClick?: (event: React.MouseEvent<HTMLElement>) => void;
   /** Said to a screen reader where the visible row would be ambiguous. */
   label?: string;
+  /** A row that is a choice: picked or not, said as a toggle. The lit row (`on`) shows it. */
+  pressed?: boolean;
 }
 
 /**
@@ -186,7 +188,7 @@ export interface RowProps {
  * in that order. A row with an `href` is a link (a door: cmd-click keeps
  * the address); with only `onClick` a button; else plain.
  */
-export function Row({ lead, title, line, right, go, on, sm, wrap, href, onClick, label }: RowProps) {
+export function Row({ lead, title, line, right, go, on, sm, wrap, href, onClick, label, pressed }: RowProps) {
   const cls = k('row', (sm ?? !line) && 'sm', on && 'on', wrap && 'wrap');
   const body = (
     <>
@@ -200,7 +202,7 @@ export function Row({ lead, title, line, right, go, on, sm, wrap, href, onClick,
     </>
   );
   if (href) return <a className={cls} href={href} onClick={onClick} aria-label={label} aria-current={on ? 'page' : undefined}>{body}</a>;
-  if (onClick) return <button type="button" className={cls} onClick={onClick} aria-label={label}>{body}</button>;
+  if (onClick) return <button type="button" className={cls} onClick={onClick} aria-label={label} aria-pressed={pressed}>{body}</button>;
   return <div className={cls}>{body}</div>;
 }
 
@@ -370,6 +372,38 @@ export function Search({ value, onChange, placeholder, label }: { value: string;
           onChange={(event) => onChange(event.target.value)}
         />
       </label>
+    </div>
+  );
+}
+
+/** Fields in a card, each a label over its box (the tour's fields()). */
+export function Fields({ children }: { children?: React.ReactNode }) {
+  return <div className={k('card')}><div className={k('fields')}>{children}</div></div>;
+}
+
+/**
+ * One field: its label, its box, at most one line under it. `before` is
+ * drawn inside the box ahead of what is typed (the people already picked).
+ * The box is lit while its input has the focus (app.css), red with `bad`.
+ */
+export function Field({ label, icon, before, hint, tone, bad, ...input }: {
+  label?: React.ReactNode;
+  icon?: string;
+  before?: React.ReactNode;
+  hint?: React.ReactNode;
+  tone?: 'bad' | 'ok';
+  bad?: boolean;
+} & React.InputHTMLAttributes<HTMLInputElement>) {
+  const id = React.useId();
+  return (
+    <div className={k('field')}>
+      {label ? <label htmlFor={id}>{label}</label> : null}
+      <div className={k('inp', (input.value || before) && 'val', bad && 'err')}>
+        {icon ? <Icon name={icon} size={18} /> : null}
+        {before}
+        <input id={id} className={k('v')} {...input} />
+      </div>
+      {hint ? <span className={k('hint', tone)}>{hint}</span> : null}
     </div>
   );
 }

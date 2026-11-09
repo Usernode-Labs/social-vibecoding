@@ -134,6 +134,7 @@ import { changeRowWords } from '../agent-session/transcript';
 import { isFrameSkin, useLiveSkin, useSkin } from '../../lib/skin';
 import { useFramePage } from '../frame/frame-page-store';
 import { Av as KitAv, Lead as KitLead } from '@/components/ui/kit';
+import { NewMessageSheet } from './frame-new';
 import { MessagesFrameList, type FrameInboxRow, type FrameInboxTab } from './frame-list';
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
@@ -761,6 +762,7 @@ function ConversationList({ drawer = false }: {
   // says why). The agent catalog is the words a change in flight is said in.
   const frame = isFrameSkin(useSkin());
   const [frameTab, setFrameTab] = useState<FrameInboxTab>('people');
+  const [frameNew, setFrameNew] = useState(false);
   useMessages('agent');
   // The search: REMEMBERED PER DEVICE SINCE #5459, AND STILL NOT IN THE STORE. A daily
   // voter narrows the list to the changes waiting on them, leaves to vote,
@@ -1100,6 +1102,13 @@ function ConversationList({ drawer = false }: {
         });
       }
     }
+    // New message's own list: the people there is already a direct message
+    // with, in the inbox's order, the bot left out.
+    const known: ConversationUser[] = [];
+    for (const c of snap.conversations) {
+      const person = c.kind === 'direct' && !c.homeroomBot ? directPerson(c) : null;
+      if (person?.id && !person.unnamed && !person.bot && !known.some((item) => item.id === person.id)) known.push(person);
+    }
     return (
       <section className={`messages-list-pane ${specBeside ? 'hidden' : drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label={t('core:tabs.messages')} data-frame-list="">
         <MessagesFrameList
@@ -1108,9 +1117,10 @@ function ConversationList({ drawer = false }: {
           onTab={setFrameTab}
           query={query}
           onQuery={changeQuery}
-          onNew={() => startNew('direct')}
+          onNew={() => setFrameNew(true)}
           loaded={!!snap.listLoaded}
         />
+        {frameNew ? <NewMessageSheet known={known} onClose={() => setFrameNew(false)} /> : null}
       </section>
     );
   }

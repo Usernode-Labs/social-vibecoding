@@ -5898,5 +5898,53 @@
   "frame.inbox.agentsCount_other": {
     "text": "{{count}} older chats",
     "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label over the list on the Agents tab: how many chats with coding agents there are."
+  },
+  "frame.new.title": {
+    "text": "New message",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. The sheet's title."
+  },
+  "frame.new.purpose": {
+    "text": "One person is a direct message. Add more to make a group.",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. The one sentence under the title."
+  },
+  "frame.new.to": {
+    "text": "To",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. Label of the one field: who the message is for."
+  },
+  "frame.new.placeholder": {
+    "text": "Search by username",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. Placeholder of the To field while nobody is picked."
+  },
+  "frame.new.talkTo": {
+    "text": "People you talk to",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. Label over the list of people the person already has a direct message with, shown while nothing is typed."
+  },
+  "frame.new.found": {
+    "text": "People",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. Label over the list of people found for what was typed."
+  },
+  "frame.new.start": {
+    "text": "Start chat",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. The sheet's one button: opens the direct message, or makes the group."
+  },
+  "frame.new.searching": {
+    "text": "Searching…",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. Said in place of the list while people are being looked up."
+  },
+  "frame.new.none": {
+    "text": "No matching people.",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. Said in place of the list when nobody matches what was typed."
+  },
+  "frame.new.blocked": {
+    "text": "Blocked people",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. Link at the foot of the sheet, and the label over the list it opens: the people this person has blocked."
+  },
+  "frame.new.nobodyBlocked": {
+    "text": "Nobody is blocked.",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. Said in place of the blocked list when it is empty."
+  },
+  "frame.new.unblock": {
+    "text": "Unblock",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. Small button at the end of a blocked person's row."
   }
 }

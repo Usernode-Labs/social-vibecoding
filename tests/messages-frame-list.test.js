@@ -83,12 +83,14 @@ test('a tab with nothing says so once the list has been read, and says nothing b
 test('the list pane hands its own conversations to the kit list under a look, and only then', () => {
   const src = read(PANE);
   assert.match(src, /const frame = isFrameSkin\(useSkin\(\)\);/);
-  assert.match(src, /if \(frame\) \{[\s\S]*?<MessagesFrameList[\s\S]*?onNew=\{\(\) => startNew\('direct'\)\}/, 'New message is the pane\'s own way to start one');
+  assert.match(src, /if \(frame\) \{[\s\S]*?<MessagesFrameList[\s\S]*?onNew=\{\(\) => setFrameNew\(true\)\}/, 'New message opens the kit\'s sheet (tests/messages-frame-new.test.js)');
   assert.match(src, /color=\{swatchFor\(face\?\.username \|\| name \|\| '\?'\)\}/, 'a person with no picture wears the colour they wear everywhere');
   assert.match(src, /const face = c\.kind === 'group' && !invited\s+\? c\.members\.find\(\(member\) => member\.status === 'member' && Number\(member\.id\) !== me\) \|\| null\s+: peer;/,
     'a group wears the face of someone in it who is not you');
   assert.match(src, /data-frame-list=""/);
   const css = read('public/css/app.css');
   assert.match(css, /html\[data-skin\] \.messages-list-pane\[data-frame-list\] \{ flex: 0 0 520px; width: 520px; \}/, 'the list is the split\'s 520px pane');
+  assert.match(css, /html\[data-skin\] \.messages-layout\.messages-list-page > \.messages-list-pane\[data-frame-list\] \{ max-width: none; margin: 0; \}/, 'with nothing open the list stays where it is');
+  assert.match(css, /html\[data-skin\] \.messages-layout\.messages-list-page:has\(> \[data-frame-list\]\) > \.messages-thread-pane \{ display: flex; \}/, 'and the pane beside it says nothing is open');
   assert.match(css, /html\[data-skin\] \.messages-layout:has\(> \[data-frame-list\]\) > \.messages-thread-pane \{[^}]*border-inline-start: 1px solid var\(--fr-line\);/, 'one line between the two panes');
 });
