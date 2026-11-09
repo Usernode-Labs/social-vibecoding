@@ -264,3 +264,68 @@ Learned:
   siblings that may not be wrapped; what follows their host is drawn up by `--fr-side-pull`.
 - A hand rule that must beat one of the kit's phone rules says the attribute twice
   (`html[data-skin][data-skin]`), as the compiler does.
+
+### M7, M9, M11 and M12, as built (10 Nov)
+
+Done (`007228394` to `392f6e39a`):
+
+- **Challenges and Standings (s53 to s55).** `features/leaderboard/frame/challenges-frame.tsx`:
+  your standing as the one line, what to earn and what is done as rows; Standings keeps its own
+  table under the same head and tabs.
+- **Make (s42, s43)** sits in the frame's page area by app.css alone. A sheet that must be solid
+  is solid under a see-through look (`--fr-solid`, from `looks.json` `opaque`).
+- **The project's ⋯ menu** stands at the end of the kit Hub's head: the one node the standard
+  hero draws, with the hero put away around it.
+- **The guest's frame (the chrome of o01 to o27).** `features/frame/guest-chrome.tsx`: one bar,
+  no sidebar, no tab bar, up while one of the anonymous shell's six screens is. It reads the
+  screen's own header (back, an open app's or project's name, the landing's buttons, Sign out
+  in the waiting room) and hands every press to it. In a phone browser, where the document
+  scrolls, the screen starts under the bar by a margin.
+- **The landing (o01 to o03).** `features/guest/frame/landing-frame.tsx`, ahead of the standard
+  guest Discover: the product's own headline and sentence, the kinds of community as tabs, what
+  an account adds, apps to try, every public community as a row ending in Look.
+- **The sign-in sheet (o04 to o06) and the stand-alone pages (o07 to o11).** The product's own
+  sheet and forms, every step, wearing the kit's title, card and button through the wear map and
+  laid out as the kit's sheet and 504px column by app.css.
+- **A members' page opened by a visitor (o12 to o14).** `features/guest/frame/gated-frame.tsx`:
+  a page of its own with Sign in as its primary button; the sheet opens from it and no longer by
+  itself under a look.
+- **A public community's page for a visitor (o22, o23).** `features/guest/frame/project-frame
+  .tsx`, a view the product's page hands its data and state to.
+- **The waiting room (w01, w02)** as a stand-alone page, and an account in line looking around
+  on the kit's landing (w03).
+
+Rulings:
+
+- **Words are the product's.** The landing says "On Homeroom, communities make apps together"
+  and the three points the product already makes, not the tour's "Apps your group makes
+  together" and three numbered steps: those words are translated and tested, and the points are
+  not a sequence. The bar's second button says "Sign up", as the product's does.
+- **A vote on a visitor's page is a row, not the ballot.** The public overview gives yeses and
+  noes, not how many may vote or how many it takes.
+- **The compiler leaves out a worn rule that hangs a kit state on the product's node** (`.btn.sm`
+  on a form's own button): it could match nothing, and nine looks repeated it.
+
+Not the product's to draw, so not drawn:
+
+- **Discover and an app's own page (s39 to s41, o16, o20, o21, w12).** One Home (#6361) retired
+  both: their addresses open Home and the project's hub. A running app (s38) is the app's own
+  frame.
+- **Looking around as a member while on the waitlist (w04 to w09, w13, w14).** The tour proposes
+  the member's frame for an account in line; today the member's APIs answer such an account
+  with nothing, so those pages would be empty. That is a product change with a server side, not
+  a look.
+- **"Happening now" on the landing** (one real vote, open now): the public directory says how
+  many votes a community has open, not which.
+- **Settings without an account (o15), Challenges without one (o17), a public profile (o26)
+  and a dead invite link as its own page (o27):** the product answers the first three with the
+  gated page and the last with the landing's own note.
+
+Not verified live: the waiting room with a real account in line (this copy has no way to make
+one without mail). Its layout was checked signed out, on a desktop width only; an account's
+name in the bar and the kit landing in `waiting` mode are held by render tests.
+
+Left, as before: Needs you as a kit page (kept as the review stage by ruling), All items and
+votes waiting (s29, s30), a reply thread as the kit's sheet (s19), the bot's panes (s10 to
+s13), Settings' index on a desktop (s56) and each section's own rows, You's sub-screens (s46 to
+s52), Standings as kit rows, and the request page's leftovers above.
