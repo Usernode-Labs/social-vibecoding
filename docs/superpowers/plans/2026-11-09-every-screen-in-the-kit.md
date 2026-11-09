@@ -53,3 +53,49 @@ eye; differences are data (real names and counts), never structure or style.
 | M12 | Waitlist (w01–w14) | 12 |
 
 ## Notes
+
+### M1, as built (9 Nov)
+
+Done, on `redesign/one-frame-glass` (`d8171aa56`, `49e27f359`):
+
+- **The kit's stylesheets.** `frontend/looks/` holds the tour's `kit.css` and nine look files
+  verbatim; `scripts/build-looks-css.js` compiles them into the `looks:begin … looks:end`
+  section of app.css (104 KB), with each look's fonts, tint, opaque fallback and (Brand kit)
+  page from `looks.json`. `tests/looks-css.test.js` holds the mapping and the section.
+- **The kit's components.** `frontend/@/components/ui/kit.tsx` and `kit-icons.ts` (the tour's 76
+  glyphs). The hand-made `frame.tsx` / `status.tsx` and the hand-ported look blocks are gone.
+- **The chrome.** `features/frame/frame-app.tsx` draws the kit's sidebar, bar and phone tab bar
+  from the stores the shell's own navigation reads, and hands each press to the shell's own
+  control (today's header and tab bar stay mounted, unseen). It publishes the page area it
+  measures; app.css ("THE FRAME IN THE SHELL") maps that onto `--platform-rail-full`,
+  `--platform-header-h` and `--platform-tabs-h`, so a screen not yet drawn in the kit sits in
+  the page area too. An inert copy behind the screens paints the page column (Paper's sheet).
+- **Home (s01).** The tour's page with the product's data. Compared with the tour's own render
+  for all nine looks, desktop and phone, light and dark: the same structure and positions.
+
+Left in M1:
+
+- **Home's side column.** The tour shows "Live this week" and the season rank. There is no
+  endpoint for changes that went live across a viewer's communities (`/api/leaderboard/prs` is
+  the kudos board, and returned nothing for the week), nor a one-call season rank; the page
+  reads the former and so draws no side column today. Needs one small read route.
+- **The bar's search.** It calls `Home.focusSearch()`, whose input belongs to the standard body
+  that is hidden under a look. The tour gives search no page of its own; decide where it opens.
+- **s02–s04** (Home scrolled, all apps, all communities): the groups' "All N" links go to the
+  standard destinations.
+- **A community's places.** Today's sidebar nests them under its row; the tour makes them the
+  page's tabs (M5). Until then a project's page has its row lit and no place list beside it.
+- **JetBrains Mono.** The kit's `--fm` names it and seven looks keep it; it is not vendored, so
+  `.fr-mono` text falls back to the system mono until a screen that shows ids is drawn (M6).
+
+Things learned that the next milestones need:
+
+- The local server reads `public/shell/release.json` once at boot. After `npm run
+  ensure:shell`, restart it, or a browser with the service worker keeps yesterday's shell.
+- A look's rule only beats a kit rule the way it did in the tour because the compiler keeps
+  weights (`[data-skin][data-skin]` for phone rules). Never hand-edit the generated section.
+- A row's name and line are spans (they sit inside links and buttons); app.css gives them the
+  block box, at a weight under any kit rule that says otherwise.
+- A fixed layer with a negative z-index sinks under `<body>`'s background unless `<body>` is a
+  stacking context (`isolation: isolate` while the chrome is up).
+
