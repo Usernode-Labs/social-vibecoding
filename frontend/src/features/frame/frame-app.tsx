@@ -29,7 +29,7 @@
  * for a visitor who is not signed in: the signed-out frame is its own
  * milestone.
  */
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Av, Count, Frame, Icon, Tile, k } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
@@ -39,6 +39,8 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { navStore } from '../nav/nav-store.js';
 import { useRailCommunities } from '../nav/rail-communities';
+import { openPlace, placeStore } from '../dev-board/workshop/place-store';
+import { placeName } from '../dev-board/workshop/places';
 import { communityScopeStore, goToCommunity } from '../workshop/community-scope';
 import { swatchFor } from '../messages/format';
 import { framePageStore } from './frame-page-store';
@@ -120,15 +122,34 @@ export function FrameChrome() {
   const shellBack = useNodeShown('back-btn');
   // A kit page with places of its own says its breadcrumb and its back.
   const page = useStoreState(framePageStore);
-  const crumbs = page.crumb || (title ? [title] : []);
-  const back = page.crumb ? !!page.onBack : shellBack;
-  const goBack = () => { if (page.crumb && page.onBack) page.onBack(); else press('back-btn'); };
+  // In a community's pages no tab is lit: its row is.
+  const inCommunity = screen === 'app-view' ? scope.slug : null;
+  // ON A PROJECT'S PAGE THE BAR IS THE PROJECT'S (the tour's s23 on): back,
+  // its tile and name, then the place you are in. The page says its place
+  // (../dev-board/workshop/place-store.ts); the arrow goes up to the Hub from
+  // a place and back to Home from the Hub, as the standard header's does.
+  const where = useStoreState(placeStore);
+  const here = inCommunity && where.slug === inCommunity ? where.place : null;
+  const project = inCommunity ? scope.info[inCommunity] : null;
+  const crumbs: Array<{ word: string; lead?: ReactNode }> = page.crumb
+    ? page.crumb.map((word) => ({ word }))
+    : inCommunity
+      ? [
+        { word: project?.name || title, lead: <Tile size={24} name={project?.name || title} src={project?.iconUrl} emoji={project?.iconEmoji} color={project?.iconColor} /> },
+        ...(here && here !== 'status' ? [{ word: placeName(here) }] : []),
+      ]
+      : (title ? [{ word: title }] : []);
+  const back = page.crumb ? !!page.onBack : inCommunity ? true : shellBack;
+  const goBack = () => {
+    if (page.crumb && page.onBack) page.onBack(); else press('back-btn');
+  };
+  const goUp = () => {
+    if (!inCommunity) return;
+    if (here && here !== 'status') openPlace(inCommunity, 'status'); else pressTab('home');
+  };
   const unread = useNodeShown('notifications-badge');
   const user = (typeof window === 'undefined' ? undefined : (window as any).App?.user) as { username?: string; avatar_url?: string | null } | undefined;
   const me = user?.username || '';
-  // In a community's pages no tab is lit: its row is.
-  const inCommunity = screen === 'app-view' ? scope.slug : null;
-
   // The page area, published for the screens to lay themselves out by.
   const areaRef = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
@@ -260,7 +281,7 @@ export function FrameChrome() {
         <div className={k('colm')}>
           <header className={k('bar')}>
             {back ? (
-              <button type="button" className={k('ib')} aria-label={t('core:header.back')} onClick={goBack}>
+              <button type="button" className={k('ib')} aria-label={t('core:header.back')} onClick={!page.crumb && inCommunity ? goUp : goBack}>
                 <Icon name="cl" />
               </button>
             ) : (
@@ -269,10 +290,10 @@ export function FrameChrome() {
             <div className={k('crumb')}>
               {/* Flat children: on a phone the kit keeps only the last one
                   (.crumb > *:not(.keep)), so nothing may wrap them. */}
-              {crumbs.map((word, i) => (
+              {crumbs.map(({ word, lead }, i) => (
                 <Fragment key={`${i}:${word}`}>
                   {i > 0 ? <Icon name="cr" size={14} /> : null}
-                  <span className={k('ci', i === crumbs.length - 1 && 'here keep')}>{word}</span>
+                  <span className={k('ci', i === crumbs.length - 1 && 'here keep')}>{lead}{word}</span>
                 </Fragment>
               ))}
             </div>

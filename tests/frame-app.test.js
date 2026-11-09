@@ -26,8 +26,10 @@ const INFO = {
   'game-corner': { slug: 'game-corner', name: 'Game Corner', iconUrl: null, iconEmoji: '🎮', iconColor: '#3b2d8f', needs: 0 },
   lobby: { slug: 'lobby', name: 'Lobby', iconUrl: null, iconEmoji: null, iconColor: null, needs: 9, unchosen: true },
 };
-function stubs({ tab = 'home', screen = 'home-screen', bot = false, messages = 2, ai = 18, slug = null, page = { crumb: null, onBack: null } } = {}) {
+function stubs({ tab = 'home', screen = 'home-screen', bot = false, messages = 2, ai = 18, slug = null, page = { crumb: null, onBack: null }, place = null } = {}) {
   return {
+    '../dev-board/workshop/place-store': { placeStore: fixedStore({ slug: place ? slug : null, place: place || 'status', owed: 0, unread: 0, tray: false }), openPlace() {} },
+    '../dev-board/workshop/places': { placeName: (key) => ({ status: 'Hub', needs: 'Needs you', workshop: 'Workshop', discussion: '#general' }[key] || key) },
     './frame-page-store': { framePageStore: fixedStore(page) },
     '../nav/nav-store.js': { navStore: fixedStore({ tab, screen, bot, messages, ai, viewer: 'snait' }) },
     '../nav/rail-communities': { useRailCommunities: () => ['homeroom', 'game-corner', 'lobby'] },
@@ -94,6 +96,22 @@ test('a kit page with places of its own gives the bar its breadcrumb and its bac
   const src = read('frontend', 'src', 'features', 'frame', 'frame-app.tsx');
   assert.match(src, /if \(page\.crumb && page\.onBack\) page\.onBack\(\); else press\('back-btn'\);/, 'its back, else the shell\'s');
   assert.match(src, /new CustomEvent\('frame:tab', \{ detail: key \}\)/, 'and a press on a tab is said, so such a page can come back to its first place');
+});
+
+test('on a project\'s page the bar leads with its tile and name, then the place, and its arrow goes up', () => {
+  // The tour's bar on every project page (s23 on): back, the community's
+  // tile and name, then where you are in it.
+  const hub = chrome({ tab: null, screen: 'app-view', slug: 'game-corner', place: 'status' });
+  assert.match(hub, /<button type="button" class="fr-ib" aria-label="Back">/);
+  assert.match(hub, /<div class="fr-crumb"><span class="fr-ci fr-here fr-keep"><span class="fr-tile" style="--fr-ts:24px;--fr-tc:#3b2d8f" aria-hidden="true">🎮<\/span>Game Corner<\/span><\/div>/,
+    'on the Hub the project is where you are');
+  const ws = chrome({ tab: null, screen: 'app-view', slug: 'game-corner', place: 'workshop' });
+  assert.match(ws, /<div class="fr-crumb"><span class="fr-ci"><span class="fr-tile"[^>]*>🎮<\/span>Game Corner<\/span><svg class="fr-ic"[^>]*>.*?<\/svg><span class="fr-ci fr-here fr-keep">Workshop<\/span><\/div>/s);
+  const src = read('frontend', 'src', 'features', 'frame', 'frame-app.tsx');
+  assert.match(src, /if \(here && here !== 'status'\) openPlace\(inCommunity, 'status'\); else pressTab\('home'\);/,
+    'from a place up to the Hub, from the Hub back to Home, as the standard header\'s arrow goes');
+  // A kit page that says its own breadcrumb still has the last word.
+  assert.match(chrome({ tab: null, screen: 'app-view', slug: 'game-corner', place: 'status', page: { crumb: ['Home', 'All apps'], onBack() {} } }), /<span class="fr-ci fr-here fr-keep">All apps<\/span>/);
 });
 
 test('a press is handed to the shell\'s own control, and a cmd-click keeps the address', () => {
