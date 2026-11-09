@@ -64,7 +64,11 @@ type DirectoryApp = {
   member_count?: number | null;
 };
 
-/** The 40px picture that leads every row (spec rule 2). */
+/**
+ * The 40px picture that leads every row (spec rule 2). fr-lead is the hook
+ * a look sizes and shapes it by; fr-lead-pic says it holds a community's
+ * own picture, which keeps its corners where a look rounds a plain lead.
+ */
 function Lead({ name, iconUrl, iconEmoji, iconColor }: {
   name: string;
   iconUrl?: string | null;
@@ -74,7 +78,7 @@ function Lead({ name, iconUrl, iconEmoji, iconColor }: {
   const style = iconColor ? { backgroundColor: iconColor } : undefined;
   return (
     <span
-      className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[12px] bg-[color:var(--fr-sunk)] text-[15px] font-bold text-[color:var(--fr-ink)] [box-shadow:inset_0_0_0_1px_var(--fr-line)]"
+      className={`fr-lead ${iconUrl ? 'fr-lead-pic ' : ''}flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[12px] bg-[color:var(--fr-sunk)] text-[15px] font-bold text-[color:var(--fr-ink)] [box-shadow:inset_0_0_0_1px_var(--fr-line)]`}
       style={style}
       aria-hidden="true"
     >
@@ -162,12 +166,12 @@ export function HomeFrame({ initialFeed = null, initialDirectory = null }: { ini
   const side = (decisions > 0 || communities > 0) ? (
     <Group label={t('home:frame.thisWeek')}>
       {decisions > 0 ? (
-        <div className="px-4 py-3 text-[15px] leading-5 text-[color:var(--fr-ink)]">
+        <div className="fr-fact px-4 py-3 text-[15px] leading-5 text-[color:var(--fr-ink)]">
           {t('home:frame.decisions', { count: decisions })}
         </div>
       ) : null}
       {communities > 0 ? (
-        <div className="px-4 py-3 text-[15px] leading-5 text-[color:var(--fr-ink)]">
+        <div className="fr-fact px-4 py-3 text-[15px] leading-5 text-[color:var(--fr-ink)]">
           {t('home:frame.communities', { count: communities })}
         </div>
       ) : null}
@@ -195,7 +199,7 @@ export function HomeFrame({ initialFeed = null, initialDirectory = null }: { ini
         )}
         side={side}
       >
-        <div className="flex flex-col gap-2">
+        <div className="fr-stack flex flex-col gap-2">
           {feed && feed.length > 0 ? (
             <Group label={t('home:frame.needs')} id="home-frame-needs">
               {feed.map((row) => {

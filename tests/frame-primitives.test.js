@@ -31,8 +31,11 @@ test('PageFrame draws title, purpose and one primary action in that order', () =
   const primary = html.indexOf('Make a project');
   const body = html.indexOf('body');
   assert.ok(h1 > -1 && h1 < purpose && purpose < primary && primary < body, html);
-  assert.match(html, /<h1[^>]*class="[^"]*text-\[28px\] md:text-\[36px\][^"]*font-bold[^"]*tracking-\[-0\.035em\]/);
-  assert.match(html, /<p[^>]*class="[^"]*text-\[17px\][^"]*text-\[color:var\(--fr-mut\)\]/);
+  // The kit's neutral geometry (28px title, 24 on a phone; a 15px sentence);
+  // a look changes it by a rule on the hook, never by another class here.
+  assert.match(html, /<h1[^>]*class="fr-title [^"]*text-\[24px\] md:text-\[28px\][^"]*font-bold[^"]*tracking-\[-0\.02em\]/);
+  assert.match(html, /<p[^>]*class="fr-purpose [^"]*text-\[15px\][^"]*text-\[color:var\(--fr-mut\)\]/);
+  assert.match(html, /^<div class="fr-page /);
 });
 
 test('PageFrame without a purpose or a primary action draws neither', () => {
@@ -43,7 +46,9 @@ test('PageFrame without a purpose or a primary action draws neither', () => {
 
 test('Columns are 720 and 320 from md, one column before, side after main', () => {
   const html = renderComponent(FRAME, 'Columns', { main: 'MAIN', side: 'SIDE' });
-  assert.match(html, /md:grid-cols-\[minmax\(0,720px\)_320px\]/);
+  assert.match(html, /class="fr-cols [^"]*md:grid-cols-\[minmax\(0,720px\)_320px\]/);
+  assert.match(html, /<div class="fr-main [^"]*">MAIN<\/div>/);
+  assert.match(html, /<aside class="fr-side [^"]*">SIDE<\/aside>/);
   assert.ok(html.indexOf('MAIN') < html.indexOf('SIDE'));
   const first = renderComponent(FRAME, 'Columns', { main: 'MAIN', side: 'SIDE', sideFirst: true });
   assert.match(first, /order-first md:order-none/, 'sideFirst puts the side column above on a phone only');
@@ -52,29 +57,31 @@ test('Columns are 720 and 320 from md, one column before, side after main', () =
 test('Columns without a side column is one 720px column', () => {
   const html = renderComponent(FRAME, 'Columns', { main: 'MAIN' });
   assert.doesNotMatch(html, /md:grid-cols-\[minmax\(0,720px\)_320px\]/);
-  assert.match(html, /max-w-\[720px\]/);
+  assert.match(html, /class="fr-main [^"]*max-w-\[720px\]/);
 });
 
-test('Group is a label over one glass surface', () => {
+test('Group is a label over one surface, drawn from the look\'s tokens', () => {
   const html = renderComponent(FRAME, 'Group', { label: 'Needs you', children: 'rows', id: 'g1' });
-  assert.match(html, /<h2[^>]*>Needs you<\/h2>/);
+  assert.match(html, /<h2 class="[^"]*\bfr-label\b[^"]*"[^>]*>Needs you<\/h2>/);
+  assert.match(html, /<section id="g1" class="fr-group /);
   assert.match(html, /id="g1"/);
-  assert.match(html, /rounded-\[24px\] bg-\[color:var\(--fr-surface\)\] \[backdrop-filter:var\(--fr-blur\)\] \[box-shadow:inset_0_0_0_1px_var\(--fr-ring\),var\(--fr-glow\)\]/);
+  assert.match(html, /class="fr-card [^"]*rounded-\[20px\] bg-\[color:var\(--fr-surface\)\] \[backdrop-filter:var\(--fr-blur\)\] \[box-shadow:inset_0_0_0_1px_var\(--fr-ring\),var\(--fr-glow\)\]/);
+  assert.match(html, /<h2 class="[^"]*dark:text-\[color:var\(--fr-mut\)\]/, 'the label keeps the look\'s ink in dark, over SectionHeader\'s own');
   assert.ok(html.indexOf('Needs you') < html.indexOf('rows'));
 });
 
-test('PrimaryButton is the accent, QuietButton the surface', () => {
+test('PrimaryButton is the accent, QuietButton the sunk fill', () => {
   assert.match(renderComponent(FRAME, 'PrimaryButton', { children: 'Vote' }),
-    /<button type="button" class="[^"]*rounded-full bg-\[color:var\(--fr-acc\)\] text-\[color:var\(--fr-acc-ink\)\]/);
+    /<button type="button" class="fr-btn [^"]*rounded-full[^"]* bg-\[color:var\(--fr-acc\)\] text-\[color:var\(--fr-acc-ink\)\]/);
   assert.match(renderComponent(FRAME, 'QuietButton', { children: 'Join' }),
-    /<button type="button" class="[^"]*bg-\[color:var\(--fr-surface\)\] text-\[color:var\(--fr-ink\)\] \[box-shadow:inset_0_0_0_1px_var\(--fr-ring\)\]/);
+    /<button type="button" class="fr-btn [^"]*fr-btn-quiet bg-\[color:var\(--fr-sunk\)\] text-\[color:var\(--fr-ink\)\]/);
 });
 
 // ── status.tsx ───────────────────────────────────────────────────────────
 
 test('StatusPill colours by tone', () => {
   assert.match(renderComponent(STATUS, 'StatusPill', { tone: 'you', children: 'Vote' }),
-    /data-tone="you"[^>]*class="[^"]*bg-\[color:var\(--fr-acc\)\] text-\[color:var\(--fr-acc-ink\)\]/);
+    /data-tone="you"[^>]*class="fr-pill [^"]*bg-\[color:var\(--fr-acc\)\] text-\[color:var\(--fr-acc-ink\)\]/);
   assert.match(renderComponent(STATUS, 'StatusPill', { tone: 'done', children: 'Live' }),
     /data-tone="done"[^>]*class="[^"]*bg-\[color:var\(--fr-ok-t\)\] text-\[color:var\(--fr-ok\)\]/);
   assert.match(renderComponent(STATUS, 'StatusPill', { tone: 'waiting', children: 'Checks' }),
@@ -111,12 +118,13 @@ test('Track shows waiting and a problem on the current stage, and mini hides the
 
 test('StatusRow is a ListRow with the status as its one pill', () => {
   const html = renderComponent(STATUS, 'StatusRow', { title: 'Pourover Coffee', subtitle: '2 in progress', status: '1 to vote', tone: 'you' });
-  assert.match(html, /min-h-\[64px\]/);
-  assert.match(html, /Pourover Coffee/);
+  assert.match(html, /^<div class="[^"]*\bfr-row min-h-\[64px\]/);
+  assert.match(html, /<div class="[^"]*\bfr-row-tx\b[^"]*"><div class="[^"]*\bfr-row-t\b[^"]*">Pourover Coffee<\/div><div class="[^"]*\bfr-row-s\b[^"]*">2 in progress<\/div>/,
+    'the text block, the name and the line each carry the hook a look selects on');
   assert.match(html, /data-tone="you"[^>]*>1 to vote</);
   assert.ok(html.indexOf('Pourover Coffee') < html.indexOf('1 to vote'));
   const single = renderComponent(STATUS, 'StatusRow', { title: 'Game Corner', status: 'Joined', tone: 'none' });
-  assert.match(single, /min-h-\[50px\]/);
+  assert.match(single, /\bfr-row fr-row-sm min-h-\[50px\]/);
 });
 
 test('the primitives use logical spacing only', () => {
@@ -143,7 +151,6 @@ test('the pane and button shadows compile to box-shadow rules, never to a shadow
   const css = (await postcss([tailwind({ ...config, content: [{ raw, extension: 'tsx' }] })])
     .process('@tailwind utilities;', { from: undefined })).css;
   assert.match(css, /box-shadow: inset 0 0 0 1px var\(--fr-ring\),var\(--fr-glow\)/);
-  assert.match(css, /box-shadow: inset 0 0 0 1px var\(--fr-ring\)(?!,)/, 'the quiet button: ring alone');
   assert.doesNotMatch(css, /--tw-shadow-color: inset/, 'a shadow class read as a colour');
   assert.match(css, /backdrop-filter: var\(--fr-blur\)/);
   assert.match(css, /\[data-state="done"\]::?before/, 'the track\'s state variants compile');

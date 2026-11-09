@@ -14,6 +14,16 @@
  *               TOKEN DEFAULTS").
  *   PrimaryButton / QuietButton  the two buttons a page may carry.
  *
+ * The frame has nine looks (lib/skin.ts FRAME_SKINS). The classes here are
+ * the kit's NEUTRAL geometry and read colours from the --fr-* tokens only;
+ * what a look draws differently it says in app.css ("THE FRAME'S LOOKS"),
+ * as tokens or as a rule on one of the hooks every element here carries:
+ * fr-page, fr-title, fr-purpose, fr-cols, fr-main, fr-side, fr-group,
+ * fr-label, fr-card, fr-btn, fr-btn-quiet (and status.tsx's fr-row,
+ * fr-row-sm, fr-row-tx, fr-row-t, fr-row-s, fr-pill). A look's rule is
+ * html[data-skin="…"] .fr-x, which outranks any utility here, so never
+ * add a look's value as a class.
+ *
  * Spacing is logical (ps-/pe-/ms-/me-, start/end), so the frame mirrors in
  * a right-to-left language without a second set of rules. Every class is a
  * complete literal (Tailwind's extractor).
@@ -23,13 +33,13 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { SectionHeader } from './grouped-list';
 
-const BUTTON = 'inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap px-4 text-[14px] font-semibold leading-none transition-[transform,opacity] active:scale-[0.98] disabled:opacity-50';
+const BUTTON = 'fr-btn inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full px-5 text-[15px] font-[650] leading-none transition-[transform,opacity] active:scale-[0.98] disabled:opacity-50';
 
 export function PrimaryButton({ className, type = 'button', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       type={type}
-      className={cn(BUTTON, 'rounded-full bg-[color:var(--fr-acc)] text-[color:var(--fr-acc-ink)] [box-shadow:0_12px_24px_-12px_var(--fr-acc)]', className)}
+      className={cn(BUTTON, 'bg-[color:var(--fr-acc)] text-[color:var(--fr-acc-ink)]', className)}
       {...props}
     />
   );
@@ -39,7 +49,7 @@ export function QuietButton({ className, type = 'button', ...props }: React.Butt
   return (
     <button
       type={type}
-      className={cn(BUTTON, 'rounded-full bg-[color:var(--fr-surface)] text-[color:var(--fr-ink)] [box-shadow:inset_0_0_0_1px_var(--fr-ring)]', className)}
+      className={cn(BUTTON, 'fr-btn-quiet bg-[color:var(--fr-sunk)] text-[color:var(--fr-ink)]', className)}
       {...props}
     />
   );
@@ -52,12 +62,12 @@ export function Columns({ main, side, sideFirst = false, className }: {
   className?: string;
 }) {
   if (!side) {
-    return <div className={cn('w-full min-w-0 max-w-[720px]', className)}>{main}</div>;
+    return <div className={cn('fr-main w-full min-w-0 max-w-[720px]', className)}>{main}</div>;
   }
   return (
-    <div className={cn('grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,720px)_320px]', className)}>
-      <div className="min-w-0">{main}</div>
-      <aside className={cn('min-w-0', sideFirst && 'order-first md:order-none')}>{side}</aside>
+    <div className={cn('fr-cols grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,720px)_320px]', className)}>
+      <div className="fr-main min-w-0">{main}</div>
+      <aside className={cn('fr-side min-w-0', sideFirst && 'order-first md:order-none')}>{side}</aside>
     </div>
   );
 }
@@ -70,16 +80,18 @@ export function Group({ label, action, children, id, className }: {
   className?: string;
 }) {
   return (
-    <section id={id} className={cn('flex flex-col', className)}>
+    <section id={id} className={cn('fr-group flex flex-col', className)}>
       <div className="flex items-baseline justify-between gap-4 pe-4">
-        {/* The group's label: 13px at 650 in the muted ink, sentence case
-            (spec rule 8), over the card-group label's own gutter. */}
-        <SectionHeader className="normal-case tracking-normal text-[13px] font-[650] text-[color:var(--fr-mut)]">
+        {/* The group's label, over the card-group label's own gutter: the
+            kit's small caps in the muted ink; most looks set it in sentence
+            case at their own size (spec rule 8). The dark: class outranks
+            SectionHeader's own dark ink. */}
+        <SectionHeader className="fr-label text-[color:var(--fr-mut)] dark:text-[color:var(--fr-mut)]">
           {label}
         </SectionHeader>
         {action ? <div className="shrink-0 pt-6 text-[13px] font-semibold text-[color:var(--fr-acc)]">{action}</div> : null}
       </div>
-      <div className="overflow-hidden rounded-[24px] bg-[color:var(--fr-surface)] [backdrop-filter:var(--fr-blur)] [box-shadow:inset_0_0_0_1px_var(--fr-ring),var(--fr-glow)]">
+      <div className="fr-card overflow-hidden rounded-[20px] bg-[color:var(--fr-surface)] [backdrop-filter:var(--fr-blur)] [box-shadow:inset_0_0_0_1px_var(--fr-ring),var(--fr-glow)]">
         {children}
       </div>
     </section>
@@ -98,11 +110,11 @@ export function PageFrame({ title, purpose, primary, tabs, children, side, sideF
   className?: string;
 }) {
   return (
-    <div className={cn('flex flex-col gap-6 px-3 pb-12 pt-5 md:px-8', className)}>
+    <div className={cn('fr-page flex flex-col gap-6 px-3 pb-12 pt-5 md:px-8', className)}>
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-[28px] md:text-[36px] font-bold tracking-[-0.035em] leading-[1.08] text-[color:var(--fr-ink)] [text-wrap:balance]">{title}</h1>
-          {purpose ? <p className="mt-2 max-w-[60ch] text-[17px] leading-snug text-[color:var(--fr-mut)]">{purpose}</p> : null}
+          <h1 className="fr-title text-[24px] md:text-[28px] font-bold tracking-[-0.02em] leading-[1.15] text-[color:var(--fr-ink)] [text-wrap:balance]">{title}</h1>
+          {purpose ? <p className="fr-purpose mt-2 max-w-[60ch] text-[15px] leading-snug text-[color:var(--fr-mut)]">{purpose}</p> : null}
         </div>
         {primary ? (
           <div className="shrink-0">

@@ -57,6 +57,17 @@ test('HomeFrame keeps the nodes home.js writes to, hidden, and marks itself', ()
   assert.match(html, /id="app-list"/, 'the launcher grid is reused');
 });
 
+test('HomeFrame carries the hooks a look\'s rules select on', () => {
+  const html = render({
+    initialFeed: [{ kind: 'proposal', id: 1, title: 'One', number: 3, app: { slug: 'a', name: 'A', icon_url: '/i.png', icon_emoji: null } }],
+    initialDirectory: [{ slug: 'b', name: 'B', member_count: 2 }],
+  }, homeStubs());
+  assert.match(html, /class="fr-stack /, 'the stack of groups in the main column');
+  assert.match(html, /<span class="fr-lead fr-lead-pic /, 'a picture lead says it holds a picture');
+  assert.match(html, /<span class="fr-lead (?!fr-lead-pic)/, 'a lead drawn from the name does not');
+  assert.match(html, /class="fr-fact /, 'a fact of the side column');
+});
+
 test('an empty Needs you group is not drawn and a zero says nothing', () => {
   const html = render({ initialFeed: [] }, homeStubs({
     pins: [{ slug: 'game-corner', name: 'Game Corner', iconUrl: null, iconEmoji: null, iconColor: null, member: true }],

@@ -16,7 +16,9 @@
  *
  * Colours come from the skin tokens (public/css/app.css "SKIN TOKEN
  * DEFAULTS"), so the same markup reads right under the standard look and
- * under glass. Every class is a complete literal (Tailwind's extractor).
+ * under each of the frame's nine looks, which change sizes and shapes by a
+ * rule on a hook class (frame.tsx says how). Every class is a complete
+ * literal (Tailwind's extractor).
  */
 import * as React from 'react';
 import { cva } from 'class-variance-authority';
@@ -28,7 +30,7 @@ import { ListRow, type ListRowProps } from './grouped-list';
 export type Tone = 'you' | 'here' | 'done' | 'waiting' | 'problem' | 'none';
 
 const pill = cva(
-  'inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded-full text-[12px] font-semibold leading-none',
+  'fr-pill inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded-full text-[12px] font-semibold leading-none',
   {
     variants: {
       tone: {
@@ -114,12 +116,17 @@ export interface StatusRowProps extends Omit<ListRowProps, 'trailing' | 'chevron
 }
 
 export const StatusRow = React.forwardRef<HTMLElement, StatusRowProps>(function StatusRow({
-  status, tone = 'none', chevron = false, className, subtitle, ...props
+  status, tone = 'none', chevron = false, className, subtitle, contentClassName, titleClassName, subtitleClassName, ...props
 }, ref) {
+  // fr-row, fr-row-sm (a single line), fr-row-tx (the text block), fr-row-t
+  // and fr-row-s are the hooks a look's rules select on (frame.tsx says how).
   return (
     <ListRow
       ref={ref}
-      className={cn(subtitle ? 'min-h-[64px]' : 'min-h-[50px]', className)}
+      className={cn(subtitle ? 'fr-row min-h-[64px]' : 'fr-row fr-row-sm min-h-[50px]', className)}
+      contentClassName={cn('fr-row-tx', contentClassName)}
+      titleClassName={cn('fr-row-t', titleClassName)}
+      subtitleClassName={cn('fr-row-s', subtitleClassName)}
       subtitle={subtitle}
       chevron={chevron}
       trailing={<StatusPill tone={tone}>{status}</StatusPill>}

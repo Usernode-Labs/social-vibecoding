@@ -259,6 +259,19 @@ test('the token defaults come first, then the glass block, then the brand block 
   assert.match(defaults, /--fr-glow: 0 0 #0000;/, 'a no-op shadow, not `none`: `none` inside a comma list voids the whole box-shadow');
 });
 
+test('glass says its own geometry as rules on the frame\'s hooks', () => {
+  // The primitives carry the kit's neutral sizes; what glass draws
+  // differently (a 36px title, sentence-case labels, 24px panes, the glow
+  // under its button) is said here, so the other looks can say theirs.
+  const block = glassBlock().replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(block, /html\[data-skin="glass"\] \.fr-title \{[^}]*font-size: 28px;[^}]*letter-spacing: -0\.035em;/);
+  assert.match(block, /@media \(min-width: 768px\) \{\s*html\[data-skin="glass"\] \.fr-title \{ font-size: 36px; \}/);
+  assert.match(block, /html\[data-skin="glass"\] \.fr-label \{[^}]*font-size: 13px;[^}]*font-weight: 650;[^}]*text-transform: none;/);
+  assert.match(block, /html\[data-skin="glass"\] \.fr-card \{ border-radius: 24px; \}/);
+  assert.match(block, /html\[data-skin="glass"\] \.fr-btn \{[^}]*box-shadow: 0 12px 24px -12px var\(--fr-acc\);/);
+  assert.match(block, /html\[data-skin="glass"\] \.fr-btn-quiet \{[^}]*box-shadow: inset 0 0 0 1px var\(--fr-ring\);/);
+});
+
 test('the glass look sets the typeface on the root, with a system fallback', () => {
   assert.match(glassBlock(), /html\[data-skin="glass"\]\s*\{[^}]*font-family:\s*'Albert Sans',\s*system-ui/);
 });
