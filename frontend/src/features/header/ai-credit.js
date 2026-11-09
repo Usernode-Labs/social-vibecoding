@@ -91,6 +91,13 @@ import { aiBudgetStore } from './ai-budget-store.js';
       state: null,
       _lastFetchAt: 0,
       _refreshTimer: null,
+      // #6493: every write — a fetch answer or a live push — takes one of
+      // these tickets, and `_lastApplied` is the ticket of the write on
+      // screen. A fetch takes its ticket BEFORE it starts, so an answer
+      // that comes back after a newer push (or a newer fetch) is stale and
+      // is dropped instead of jumping the figure backwards.
+      _ticket: 0,
+      _lastApplied: 0,
 
       init: function () {
         AiCredit.Budget.refresh({ force: true });
@@ -108,13 +115,15 @@ import { aiBudgetStore } from './ai-budget-store.js';
         var now = Date.now();
         if (!force && now - AiCredit.Budget._lastFetchAt < BUDGET_THROTTLE_MS) return;
         AiCredit.Budget._lastFetchAt = now;
+        // Taken BEFORE the request: by the time it answers, a newer push or
+        // fetch may already be on screen, and its ticket will be higher.
+        var seq = AiCredit.Budget._takeTicket();
         try {
           var res = await fetch('/api/me/ai-budget' + (location.search.indexOf('demo=1') > -1 ? '?demo=1' : ''));
           // 401 on an anonymous / waiting-room document is expected —
           // leave the row hidden and say nothing.
           if (!res.ok) return;
-          AiCredit.Budget.state = await res.json();
-          AiCredit.Budget._render();
+          AiCredit.Budget.adopt(await res.json(), { seq: seq });
         } catch (err) {
           console.warn('[ai-credit] budget refresh failed', err);
         }
@@ -136,8 +145,51 @@ import { aiBudgetStore } from './ai-budget-store.js';
         // ?demo=1 is showing a fixture on purpose — see the refresh above.
         if (typeof location !== 'undefined'
             && String(location.search || '').indexOf('demo=1') > -1) return;
-        AiCredit.Budget.state = budget;
+        AiCredit.Budget.adopt(budget, { seq: AiCredit.Budget._takeTicket() });
+      },
+
+      // #6493: the ONE writer of the allowance. Every fetch and every push
+      // lands here, so the Settings row, the composer's "$ left" pill and
+      // the dev chat's meter all read one object and cannot disagree.
+      //
+      // `byokCents` is the snapshot's spelling; /api/budget also carries the
+      // same number as `byokSpentCents`, which is normalised here so a
+      // reader of either name sees the same figure.
+      //
+      // A stale ticket (older than the last applied write) is dropped: a
+      // slow answer must never undo a newer live figure. Returns whether
+      // the snapshot was adopted.
+      adopt: function (snapshot, opts) {
+        if (!snapshot || typeof snapshot.limitCents !== 'number') return false;
+        var seq = (opts && typeof opts.seq === 'number')
+          ? opts.seq : AiCredit.Budget._takeTicket();
+        if (seq < AiCredit.Budget._lastApplied) return false;
+        var next = Object.assign({}, snapshot);
+        if (typeof next.byokCents !== 'number' && typeof next.byokSpentCents === 'number') {
+          next.byokCents = next.byokSpentCents;
+        }
+        AiCredit.Budget._lastApplied = seq;
+        AiCredit.Budget.state = next;
         AiCredit.Budget._render();
+        // Every other credit surface repaints from the one figure. Guarded
+        // because the shell is prerendered in Node, where there is no
+        // document to dispatch on.
+        if (typeof document !== 'undefined' && typeof document.dispatchEvent === 'function'
+            && typeof CustomEvent !== 'undefined') {
+          document.dispatchEvent(new CustomEvent('homeroom:ai-budget-changed'));
+        }
+        return true;
+      },
+
+      // The one figure, for a reader that draws its own copy of it
+      // (features/dev-chat/dev-chat.js, features/settings/settings.js).
+      current: function () {
+        return AiCredit.Budget.state;
+      },
+
+      _takeTicket: function () {
+        AiCredit.Budget._ticket += 1;
+        return AiCredit.Budget._ticket;
       },
 
       // Publishes the meter's view model; ./ai-budget.tsx draws it. Every

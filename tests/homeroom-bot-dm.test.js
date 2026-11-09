@@ -931,8 +931,10 @@ test('the typing moves to the thread the answer goes on in, with what it was doi
 test('a typing event carries only the kinds of work the screen words, and what they name', () => {
   // Homeroom bot parity: P1 'writing' (the answer as it is written), P3 'looking' (a helper sent into a
   // project's code, named by the project as 'code' is).
-  assert.deepEqual([...dm.DOING_KINDS], ['progress', 'request', 'code', 'drawing', 'designing', 'drafting', 'writing', 'looking']);
+  assert.deepEqual([...dm.DOING_KINDS], ['progress', 'request', 'code', 'drawing', 'capturing', 'designing', 'drafting', 'writing', 'looking']);
   assert.deepEqual(dm.typingDoing({ kind: 'looking', project: 'Gym Tracker', number: 3 }), { kind: 'looking', project: 'Gym Tracker' });
+  // #6354: Homeroom opening one of its own pages for a design.
+  assert.deepEqual(dm.typingDoing({ kind: 'capturing', page: 'Homeroom bot page' }), { kind: 'capturing', page: 'Homeroom bot page' });
   assert.deepEqual(dm.typingDoing({ kind: 'drawing', extra: 'x' }), { kind: 'drawing' });
   assert.deepEqual(dm.typingDoing({ kind: 'request', number: '7' }), { kind: 'request', number: 7 });
   assert.equal(dm.typingDoing({ kind: 'request' }), null, 'a request is named by its number');

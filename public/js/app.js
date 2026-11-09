@@ -3549,15 +3549,18 @@ const App = {
           case 'budget_updated':
             // #2598: a model call's cost just landed against this user's
             // weekly pool (services/budget-live.js). Both meters repaint from
-            // the figures the event carries — the composer's and the header
-            // drawer's AI-credit row — so "$x left this week" ticks while the
-            // agent works instead of only once the turn ends. No refetch:
-            // the payload IS the snapshot both surfaces read, which is why
-            // this can fire every few seconds during a build.
+            // the figures the event carries — the composer's and the Settings
+            // AI-credit row — so "$x left this week" ticks while the agent
+            // works instead of only once the turn ends. No refetch: the
+            // payload IS the snapshot both surfaces read, which is why this
+            // can fire every few seconds during a build.
+            //
+            // #6493: the shared allowance is adopted FIRST, then the dev chat
+            // repaints from the state that just moved.
+            window.AiCredit?.Budget?.applyPush?.(data.budget);
             if (typeof DevChat !== 'undefined' && DevChat.applyBudgetUpdate) {
               DevChat.applyBudgetUpdate(data.budget);
             }
-            window.AiCredit?.Budget?.applyPush?.(data.budget);
             break;
           case 'bot_request_card':
             // B9: the card under a message of this person's that asked
