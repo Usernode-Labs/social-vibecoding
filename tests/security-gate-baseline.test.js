@@ -330,7 +330,7 @@ printf '%s\\n' "$*" >> "${path.join(dir, 'git-calls.log')}"
 if [ "$1" = archive ]; then tar -cf "$4" -C "${source}" .; fi
 `, { mode: 0o755 });
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, SECURITY_BASELINE_REVISION: 'a'.repeat(40),
-    SECURITY_SCAN_PLATFORM: 'linux/amd64', SECURITY_AUDIT_ONLY: '' };
+    SECURITY_SCAN_PLATFORM: 'linux/amd64', SECURITY_AUDIT_ONLY: '', GITHUB_STEP_SUMMARY: path.join(dir, 'summary.md') };
   const run = (folder) => spawnSync('sh', ['scripts/check-image-security.sh', 'fixture', path.join(dir, folder), sbom, 'standalone'], { cwd: ROOT, encoding: 'utf8', env });
   assert.equal(run('clean').status, 0);
   assert.equal(fs.existsSync(path.join(dir, 'git-calls.log')), false, 'no baseline is needed for a clean candidate');
@@ -348,6 +348,9 @@ if [ "$1" = archive ]; then tar -cf "$4" -C "${source}" .; fi
 test('baseline generation pins the exact commit and architecture, validates output and reports timing', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-base-build-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const previousSummary = process.env.GITHUB_STEP_SUMMARY;
+  process.env.GITHUB_STEP_SUMMARY = path.join(dir, 'summary.md');
+  t.after(() => { if (previousSummary === undefined) delete process.env.GITHUB_STEP_SUMMARY; else process.env.GITHUB_STEP_SUMMARY = previousSummary; });
   const calls = [];
   const revision = 'b'.repeat(40);
   const inventory = { spdxVersion: 'SPDX-2.3', packages: [{ name: 'x', versionInfo: '1' }] };

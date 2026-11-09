@@ -184,6 +184,9 @@ test('independent daily audits cover every image and keep issue writes away from
 test('publishing requires candidate gates while full daily audits cannot block unrelated releases', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/build-kubernetes-images.yml'), 'utf8'));
   const release = workflow.jobs.release;
+  const regressions = workflow.jobs['security-regressions'].steps.find((s) => s.run?.includes('tests/build-stop-hook.test.js'));
+  assert.match(regressions.run, /tests\/security-gate-baseline\.test\.js/);
+  assert.match(regressions.run, /tests\/security-alerts\.test\.js/);
   assert.deepEqual(release.needs, ['build', ...GATES]);
   assert.equal(workflow.jobs['scheduled-image-audit'], undefined);
   assert.match(release.if, /!cancelled\(\)/);
