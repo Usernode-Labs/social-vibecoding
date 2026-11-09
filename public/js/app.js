@@ -89,6 +89,11 @@ const App = {
   _inMessages: false,
   // Agent sessions (#2779): one conversation with the Mayor at #agent/<id>.
   _inAgentSession: false,
+  // The Homeroom bot tab (#6019): set by navigateToAi(), cleared by any other
+  // screen's reveal in _showOnlyScreen. Without it Back from the tab to "/"
+  // took the "already on home" branch and drew Home beside the bot page
+  // (#6530).
+  _inAi: false,
 
   // Chromeless full-screen mode (/app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -5529,7 +5534,9 @@ const App = {
         // home without hiding the screen it was on. Messages and the Workshop
         // were left out (QA 2026-09-24 Q1), so Back from either to "/" drew
         // Home over the list or the panel, with that tab still lit and the
-        // phone's bar floating mid-page.
+        // phone's bar floating mid-page; the Homeroom bot tab was left out too
+        // (#6530), and Back from it left Home, its list and the open request's
+        // panel sharing the window.
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
         else if (App._inProfile) App.navigateHome();
@@ -5538,6 +5545,7 @@ const App = {
         else if (App._inAgentSession) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
         else if (App._inWorkshop) App.navigateHome();
+        else if (App._inAi) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -5566,7 +5574,7 @@ const App = {
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings
           || App._inAgentSession
-          || App._inMessages || App._inWorkshop) {
+          || App._inMessages || App._inWorkshop || App._inAi) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -6522,6 +6530,11 @@ const App = {
     // Here rather than in those six: a flag that says "this screen is the one
     // showing" belongs to the function that decides which screen is showing.
     if (revealId !== 'messages-screen' && App._inMessages) App._exitMessages();
+    // …and the bot tab's visit ends the same way (#6530). The page keeps no
+    // state to leave, so there is no _exitAi: the flag only says "the bot tab
+    // is the one showing", and the reveal that shows something else is what
+    // makes that untrue.
+    if (revealId !== 'ai-screen') App._inAi = false;
     // Publish the final root state directly. Showing a house and then hiding
     // it in a per-screen callback shifts the shared title slot unnecessarily.
     //
@@ -8025,6 +8038,10 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
     if (App._inWorkshop) App._exitWorkshop();
+    // Before the transition, like _inWorkshop above: popstate and hashchange
+    // land in the same tick, and the reveal is not recorded until the
+    // callback runs, so a later-set flag would let the second run through.
+    App._inAi = true;
     const screen = document.getElementById('ai-screen');
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
