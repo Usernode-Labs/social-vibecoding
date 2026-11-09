@@ -283,9 +283,11 @@ test('an automatic answer with nothing to show stays quiet', async (t) => {
 });
 
 test('an automatic translation shows, with the line naming its language', async (t) => {
-  const { mod: m, mount } = hookModule(t, async () => answer([
-    { state: 'translated', text: 'Morning everyone', from: 'id' },
-  ]));
+  let sent = null;
+  const { mod: m, mount } = hookModule(t, async (_url, init) => {
+    sent = JSON.parse(init.body);
+    return answer([{ state: 'translated', text: 'Morning everyone', from: 'id' }]);
+  });
   const component = mount(() => m.useTranslate(['Pagi semua'], { auto: true }));
   assert.equal(component.view().state, 'idle', 'the first render is the original words');
   component.view().askAuto();
@@ -294,19 +296,29 @@ test('an automatic translation shows, with the line naming its language', async 
   assert.equal(view.state, 'shown');
   assert.deepEqual(view.texts, ['Morning everyone']);
   assert.equal(view.origin, 'auto');
+  // #6525: the request says it is the page translating itself, so a bound
+  // that stops it answers quietly instead of with a console-visible error.
+  assert.equal(sent.auto, true);
+  assert.deepEqual(sent.texts, ['Pagi semua']);
   const note = noteOf(view);
   assert.match(note, /Translated from Indonesian/);
   assert.match(note, /Show original/);
 });
 
 test('a tapped daily limit still says so, and a tap is the tap origin', async (t) => {
-  const { mod: m, mount } = hookModule(t, async () => answer([], 429));
+  let sent = null;
+  const { mod: m, mount } = hookModule(t, async (_url, init) => {
+    sent = JSON.parse(init.body);
+    return answer([], 429);
+  });
   const component = mount(() => m.useTranslate(['Pagi semua'], { auto: true }));
   component.view().ask();
   await settle();
   assert.equal(component.view().origin, 'tap');
   assert.equal(component.view().state, 'limit');
   assert.match(noteOf(component.view()), /You&#x27;ve translated a lot today/);
+  // A tap keeps the status it had (#6081): only an automatic ask is quiet.
+  assert.equal(sent.auto, undefined);
 });
 
 test('the queue: two on their way at once, twenty a minute, none after a 429', async (t) => {

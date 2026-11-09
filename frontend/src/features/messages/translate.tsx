@@ -88,14 +88,24 @@ type TranslateAnswer =
   | { status: 'limit' }
   | { status: 'failed' };
 
-/** One request to POST /api/translations, shared by a tap and an automatic ask. */
-async function requestTranslation(texts: readonly string[], language: string): Promise<TranslateAnswer> {
+/**
+ * One request to POST /api/translations, shared by a tap and an automatic ask.
+ * An automatic ask says so (`auto: true`): where a tap gets an error status
+ * for a bound that stopped it, the page translating as you read gets a quiet
+ * per-text failure instead. A non-2xx answer is a line in the browser's
+ * console, and a chat that cannot translate must not appear to be broken.
+ */
+async function requestTranslation(
+  texts: readonly string[],
+  language: string,
+  { auto = false }: { auto?: boolean } = {},
+): Promise<TranslateAnswer> {
   try {
     const response = await fetch('/api/translations', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ texts, language }),
+      body: JSON.stringify(auto ? { texts, language, auto: true } : { texts, language }),
     });
     if (response.status === 429) return { status: 'limit' };
     if (!response.ok) return { status: 'failed' };
@@ -347,7 +357,7 @@ export function useTranslate(texts: readonly string[], { enabled = true, auto = 
     askedAuto.current = key;
     const taken = enqueueAuto({
       run: async () => {
-        const answer = await requestTranslation(texts, language);
+        const answer = await requestTranslation(texts, language, { auto: true });
         if (answer.status === 'limit') { pauseAutoQueue(); return; }
         if (answer.status === 'ok') show(answer.results);
       },
