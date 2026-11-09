@@ -16,7 +16,20 @@
  */
 import { useEffect, useState } from 'react';
 
-export type Skin = 'standard' | 'brand' | 'glass';
+/**
+ * The looks of the one frame, in the order the 2026-11-06 screen tour gives
+ * them: every one draws the same frame (title, one sentence, one action,
+ * labelled groups of one row) with its own tokens, typeface and a few rules
+ * in app.css ("THE FRAME'S LOOKS"). The head's SKINS is 'brand' and these.
+ */
+export const FRAME_SKINS = ['glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'] as const;
+export type FrameSkin = typeof FRAME_SKINS[number];
+export type Skin = 'standard' | 'brand' | FrameSkin;
+
+/** True for a look that draws a page in the frame; New look ('brand') keeps the standard pages. */
+export function isFrameSkin(skin: Skin): skin is FrameSkin {
+  return (FRAME_SKINS as readonly string[]).includes(skin);
+}
 
 declare global {
   interface Window {
@@ -29,7 +42,7 @@ declare global {
   }
 }
 
-const SKINS: readonly Skin[] = ['standard', 'brand', 'glass'];
+const SKINS: readonly Skin[] = ['standard', 'brand', ...FRAME_SKINS];
 
 /** The device's look right now; 'standard' when the head module is absent. */
 export function currentSkin(): Skin {

@@ -86,8 +86,8 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { whenPlatformViewer } from '../../lib/platform-viewer';
-import { useSkin } from '../../lib/skin';
-import { HomeGlass } from './glass/home-glass';
+import { isFrameSkin, useSkin } from '../../lib/skin';
+import { HomeFrame } from './frame/home-frame';
 
 import { SearchIcon } from '@/components/ui/icons';
 
@@ -126,7 +126,7 @@ export function HomeScreen() {
   // with no items and editing off, so the prerender and the first client
   // render draw no action at all.
   const grid = useStoreState(gridStore);
-  // The glass look draws this page in the one frame (./glass/home-glass.tsx).
+  // A look of the one frame draws this page in it (./frame/home-frame.tsx).
   // Read after mount only: the first render must match the prerendered
   // document, which knows no look (lib/skin.ts says why).
   const skin = useSkin();
@@ -231,8 +231,8 @@ export function HomeScreen() {
           in the grid now, so nothing below the grid is anchored any more.)
       */}
       <div id="home-body" className="home-column home-body-fill">
-        {skin === 'glass' && viewer ? (
-          <HomeGlass />
+        {isFrameSkin(skin) && viewer ? (
+          <HomeFrame />
         ) : (<>
         {/*
             #1561's once-per-account explainer stood here, above everything,

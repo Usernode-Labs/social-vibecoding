@@ -91,6 +91,39 @@ test('?skin= pins the look for this load and stores nothing', () => {
   assert.equal(runSkin({ search: '?skin=neon' }).Skin.get(), 'standard', 'an unknown pin is ignored');
 });
 
+// ── The nine looks of the frame ──────────────────────────────────────────
+//
+// Glass was the first of the tour's nine looks over the one frame; the
+// other eight are stored, applied and pinned the same way. `brand` (New
+// look) is a look too, but not one of the frame's.
+
+const FRAME_LOOKS = ['glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'];
+
+test('every frame look is stored, applied and pinned like glass', () => {
+  for (const look of FRAME_LOOKS) {
+    const { Skin, store, attrs } = runSkin();
+    Skin.set(look);
+    assert.equal(store.get('homeroom:skin'), look);
+    assert.equal(attrs.get('data-skin'), look);
+    assert.equal(runSkin({ stored: look }).attrs.get('data-skin'), look, `${look} is on <html> as the module runs`);
+    assert.equal(runSkin({ search: `?skin=${look}` }).Skin.get(), look, `?skin=${look} pins it`);
+  }
+});
+
+test('the head and the hook list the same looks, the frame\'s nine after brand', () => {
+  const head = skinModuleSrc().match(/const SKINS = \[([^\]]*)\]/);
+  assert.ok(head, 'the head module lists its looks');
+  const listed = head[1].split(',').map((s) => s.trim().replace(/'/g, '')).filter(Boolean);
+  assert.deepEqual(listed, ['brand', ...FRAME_LOOKS]);
+  const mod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
+  assert.deepEqual([...mod.FRAME_SKINS], FRAME_LOOKS);
+  for (const look of FRAME_LOOKS) assert.equal(mod.isFrameSkin(look), true, look);
+  assert.equal(mod.isFrameSkin('standard'), false);
+  assert.equal(mod.isFrameSkin('brand'), false, 'New look draws the standard Home');
+  globalThis.window = { Skin: { get: () => 'mosaic', onChange() {} } };
+  try { assert.equal(mod.currentSkin(), 'mosaic'); } finally { delete globalThis.window; }
+});
+
 // ── The settings switch ──────────────────────────────────────────────────
 
 test('Settings › Experimental carries the Glass look switch under New look', () => {
@@ -278,7 +311,7 @@ test('the frame tokens are namespaced, so no existing var(--x, fallback) changes
   const elsewhere = css.slice(0, d) + css.slice(b);
   assert.doesNotMatch(elsewhere, /^\s*--fr-[a-z-]+\s*:/m, 'no --fr- token is declared outside the frame\'s own sections');
   assert.doesNotMatch(css, /var\(--fr-[a-z-]+\s*,/, 'no reader relies on a fallback for a frame token');
-  for (const f of ['frontend/@/components/ui/frame.tsx', 'frontend/@/components/ui/status.tsx', 'frontend/src/features/home/glass/home-glass.tsx']) {
+  for (const f of ['frontend/@/components/ui/frame.tsx', 'frontend/@/components/ui/status.tsx', 'frontend/src/features/home/frame/home-frame.tsx']) {
     const src = read(...f.split('/'));
     const bare = src.match(/var\(--(surface|sunk|ink|mut|faint|line|acc|acc-ink|acc-t|lit|lit-t|ok|ok-t|wait|wait-t|bad|bad-t|ring|glow|glass-blur)\)/g);
     assert.equal(bare, null, `${f} reads an un-namespaced token: ${bare}`);

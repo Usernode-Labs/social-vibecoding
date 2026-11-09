@@ -987,79 +987,79 @@
     "text": "Pinned",
     "description": "The same button once the community is on this device's Home; pressing it again unpins it."
   },
-  "glass.title": {
+  "frame.title": {
     "text": "Home",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). The page title."
   },
-  "glass.purpose": {
+  "frame.purpose": {
     "text": "What needs you, then your places.",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). The one sentence under the title saying what the page is for."
   },
-  "glass.make": {
+  "frame.make": {
     "text": "Make a project",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). The page's one primary button; opens the Make screen."
   },
-  "glass.needs": {
+  "frame.needs": {
     "text": "Needs you",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Label of the first group: every decision waiting on the viewer."
   },
-  "glass.pinnedApps": {
+  "frame.pinnedApps": {
     "text": "Pinned apps",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Label of the group holding the launcher grid of pinned apps."
   },
-  "glass.yourCommunities": {
+  "frame.yourCommunities": {
     "text": "Your communities",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Label of the group listing the communities the viewer pinned or joined."
   },
-  "glass.toJoin": {
+  "frame.toJoin": {
     "text": "Communities to join",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Label of the group listing public communities the viewer is not in."
   },
-  "glass.join": {
+  "frame.join": {
     "text": "Join",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Button on a row of Communities to join."
   },
-  "glass.vote": {
+  "frame.vote": {
     "text": "Vote",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Status word on a Needs you row whose decision waits for the viewer's vote."
   },
-  "glass.toVote_one": {
+  "frame.toVote_one": {
     "text": "{{count}} to vote",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Status on a community row: how many of its votes wait for the viewer. Singular."
   },
-  "glass.toVote_other": {
+  "frame.toVote_other": {
     "text": "{{count}} to vote",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Status on a community row: how many of its votes wait for the viewer. Plural."
   },
-  "glass.thisWeek": {
+  "frame.thisWeek": {
     "text": "This week",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Label of the side column's group of two facts."
   },
-  "glass.decisions_one": {
+  "frame.decisions_one": {
     "text": "{{count}} decision waits for you",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Fact in the side column: the number of decisions in Needs you. Singular."
   },
-  "glass.decisions_other": {
+  "frame.decisions_other": {
     "text": "{{count}} decisions wait for you",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Fact in the side column: the number of decisions in Needs you. Plural."
   },
-  "glass.communities_one": {
+  "frame.communities_one": {
     "text": "{{count}} community",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Fact in the side column: how many communities the viewer is in. Singular."
   },
-  "glass.communities_other": {
+  "frame.communities_other": {
     "text": "{{count}} communities",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Fact in the side column: how many communities the viewer is in. Plural."
   },
-  "glass.approve": {
+  "frame.approve": {
     "text": "Approve",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Status word on a Needs you row for a change on the viewer's own just-you project, whose Yes is the one it needs."
   },
-  "glass.waiting.checks": {
+  "frame.waiting.checks": {
     "text": "Checks",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Status word on a Needs you row for a change still waiting on its checks before it can be voted on."
   },
-  "glass.waiting.conflict": {
+  "frame.waiting.conflict": {
     "text": "Conflict",
     "description": "Home drawn in the one frame under the glass look (Settings > Experimental). Status word on a Needs you row for a change that needs its conflict with the main branch resolved before it can be voted on."
   }

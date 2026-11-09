@@ -1,5 +1,5 @@
 /**
- * Home in the one frame, under the glass look.
+ * Home in the one frame, under any of its nine looks.
  *
  * The first screen drawn with the frame primitives (frontend/@/components/
  * ui/frame.tsx, status.tsx), as proposal C of the 2026-11-06 screen tour
@@ -11,7 +11,7 @@
  * ones they are not in — with two facts in the 320px column beside it.
  *
  * HomeScreen (../index.tsx) mounts this instead of the standard body only
- * after mount, when lib/skin.ts says the device's look is glass and the
+ * after mount, when lib/skin.ts says the device's look is one of the frame's and the
  * member APIs will answer (lib/platform-viewer.ts), so the prerendered
  * document is never contradicted and the signed-out landing keeps today's
  * body. The standard Home is not touched. Three nodes the legacy home.js
@@ -116,7 +116,7 @@ function openNeeds(event: React.MouseEvent<HTMLElement>, slug: string) {
 }
 
 /** `initialFeed` and `initialDirectory` seed the state a render test cannot reach through effects. */
-export function HomeGlass({ initialFeed = null, initialDirectory = null }: { initialFeed?: FeedRow[] | null; initialDirectory?: DirectoryApp[] | null }) {
+export function HomeFrame({ initialFeed = null, initialDirectory = null }: { initialFeed?: FeedRow[] | null; initialDirectory?: DirectoryApp[] | null }) {
   const t = useMessages('home');
   const pins = useStoreState(homePinsStore);
   const grid = useStoreState(gridStore);
@@ -153,29 +153,29 @@ export function HomeGlass({ initialFeed = null, initialDirectory = null }: { ini
   // waits for the viewer and is blue.
   const statusOf = (row: FeedRow): { word: string; tone: Tone } => {
     const waiting = Array.isArray(row.waitingOn) && row.waitingOn.length ? String(row.waitingOn[0]) : null;
-    if (waiting === 'checks') return { word: t('home:glass.waiting.checks'), tone: 'waiting' };
-    if (waiting === 'conflict') return { word: t('home:glass.waiting.conflict'), tone: 'waiting' };
-    if (row.approve) return { word: t('home:glass.approve'), tone: 'you' };
-    return { word: t('home:glass.vote'), tone: 'you' };
+    if (waiting === 'checks') return { word: t('home:frame.waiting.checks'), tone: 'waiting' };
+    if (waiting === 'conflict') return { word: t('home:frame.waiting.conflict'), tone: 'waiting' };
+    if (row.approve) return { word: t('home:frame.approve'), tone: 'you' };
+    return { word: t('home:frame.vote'), tone: 'you' };
   };
 
   const side = (decisions > 0 || communities > 0) ? (
-    <Group label={t('home:glass.thisWeek')}>
+    <Group label={t('home:frame.thisWeek')}>
       {decisions > 0 ? (
         <div className="px-4 py-3 text-[15px] leading-5 text-[color:var(--fr-ink)]">
-          {t('home:glass.decisions', { count: decisions })}
+          {t('home:frame.decisions', { count: decisions })}
         </div>
       ) : null}
       {communities > 0 ? (
         <div className="px-4 py-3 text-[15px] leading-5 text-[color:var(--fr-ink)]">
-          {t('home:glass.communities', { count: communities })}
+          {t('home:frame.communities', { count: communities })}
         </div>
       ) : null}
     </Group>
   ) : null;
 
   return (
-    <div data-home-glass="">
+    <div data-home-frame="">
       {/* The nodes features/home/home.js still writes into (its communities
           section, the featured list, the join card). Kept so its writes have
           a target; hidden, and inside a hidden parent, so what it writes
@@ -186,18 +186,18 @@ export function HomeGlass({ initialFeed = null, initialDirectory = null }: { ini
         <section id="home-join-section" hidden />
       </div>
       <PageFrame
-        title={t('home:glass.title')}
-        purpose={t('home:glass.purpose')}
+        title={t('home:frame.title')}
+        purpose={t('home:frame.purpose')}
         primary={(
           <PrimaryButton onClick={() => { (window as any).App?.showCreateModal?.(); }}>
-            {t('home:glass.make')}
+            {t('home:frame.make')}
           </PrimaryButton>
         )}
         side={side}
       >
         <div className="flex flex-col gap-2">
           {feed && feed.length > 0 ? (
-            <Group label={t('home:glass.needs')} id="home-glass-needs">
+            <Group label={t('home:frame.needs')} id="home-frame-needs">
               {feed.map((row) => {
                 const slug = row.app?.slug || '';
                 const name = row.app?.name || slug;
@@ -222,7 +222,7 @@ export function HomeGlass({ initialFeed = null, initialDirectory = null }: { ini
           {noApps ? (
             <section id="home-apps-section" hidden><AppGrid /></section>
           ) : (
-            <Group label={t('home:glass.pinnedApps')} id="home-apps-section">
+            <Group label={t('home:frame.pinnedApps')} id="home-apps-section">
               <div className="px-2 py-3">
                 <AppGrid />
               </div>
@@ -230,7 +230,7 @@ export function HomeGlass({ initialFeed = null, initialDirectory = null }: { ini
           )}
 
           {mine.length > 0 ? (
-            <Group label={t('home:glass.yourCommunities')} id="home-glass-communities">
+            <Group label={t('home:frame.yourCommunities')} id="home-frame-communities">
               {mine.map((c) => {
                 const owed = pins.owed[c.slug] || 0;
                 return (
@@ -241,7 +241,7 @@ export function HomeGlass({ initialFeed = null, initialDirectory = null }: { ini
                     onClick={(event) => openHub(event, c.slug)}
                     leading={<Lead name={c.name} iconUrl={c.iconUrl} iconEmoji={c.iconEmoji} iconColor={c.iconColor} />}
                     title={c.name}
-                    status={owed > 0 ? t('home:glass.toVote', { count: owed }) : null}
+                    status={owed > 0 ? t('home:frame.toVote', { count: owed }) : null}
                     tone="you"
                   />
                 );
@@ -250,7 +250,7 @@ export function HomeGlass({ initialFeed = null, initialDirectory = null }: { ini
           ) : null}
 
           {toJoin.length > 0 ? (
-            <Group label={t('home:glass.toJoin')} id="home-glass-to-join">
+            <Group label={t('home:frame.toJoin')} id="home-frame-to-join">
               {/* The row's word is Join and its door is the hub, where Join
                   lives with what the community is about: an act, not a
                   wait, so it is not blue, and not a button inside a link. */}
@@ -263,7 +263,7 @@ export function HomeGlass({ initialFeed = null, initialDirectory = null }: { ini
                   leading={<Lead name={a.name || a.slug} iconUrl={a.icon_url} iconEmoji={a.icon_emoji} iconColor={a.icon_color} />}
                   title={a.name || a.slug}
                   subtitle={a.member_count ? t('home:join.members', { count: a.member_count }) : undefined}
-                  status={t('home:glass.join')}
+                  status={t('home:frame.join')}
                   tone="none"
                 />
               ))}

@@ -405,12 +405,15 @@
     // Kept on the DEVICE: there is nothing to save or fail. app.css scopes
     // every rule of a look to html[data-skin="<look>"]. Every storage access
     // sits in try/catch: unreadable storage means the standard look.
-    // `?skin=brand|glass|standard` pins a look for THIS LOAD only, nothing
+    // `?skin=<look>|standard` pins a look for THIS LOAD only, nothing
     // stored: the capture runner reaches the page by URL with a fresh
     // profile, the same way `?theme=` pins the mode above.
     window.Skin = (function () {
       const SKIN_KEY = 'homeroom:skin';
-      const SKINS = ['brand', 'glass'];
+      // 'brand' is New look; the nine after it are the looks of the one
+      // frame (the 2026-11-06 screen tour), in the tour's order. The same
+      // list, less 'brand', is FRAME_SKINS in src/lib/skin.ts.
+      const SKINS = ['brand', 'glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'];
       const _listeners = [];
 
       let pinned = null;
