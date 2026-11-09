@@ -118,6 +118,9 @@ const PUBLIC_PATHS = [
   // body would arrive where a script was expected, leaving the whole app
   // unstyled. Static JS only, no data access.
   '/usernode-tailwind/',
+  // The Google Analytics frame (#6314): a static page the shell frames for
+  // signed-out visitors too. Whole file name, no data access.
+  '/analytics-frame.html',
   // PWA shell assets (#487). The service-worker script, manifest and
   // icons must be fetchable without a session: the browser requests them
   // from login.html (pre-auth) and during background SW update checks,
@@ -164,6 +167,11 @@ const PUBLIC_PATHS = [
   // entry is belt-and-braces like the report share entry below. Access control
   // is the unguessable 32-hex id, and the bytes are served under a sandbox CSP.
   '/challenge-illustrations/',
+  // Images in admin-edited email templates (routes/email-images.js). A mail
+  // client loads them with no session; the route mounts BEFORE this
+  // middleware, so this entry is belt-and-braces. Access control is the
+  // unguessable 32-hex id, and the bytes are served under a sandbox CSP.
+  '/email-images/',
   // Public report share links (routes/report-snapshots.js). The route is
   // mounted BEFORE this middleware in server.js, so requests normally
   // never get here — this entry is belt-and-braces so the public contract

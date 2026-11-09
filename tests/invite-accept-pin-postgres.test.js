@@ -1,16 +1,18 @@
 'use strict';
 
-// Accepting an invite pins the project to Home, whichever way the invite was
-// sent (src/services/collab-invites.js acceptInvite).
+// Accepting an invite pins the project's COMMUNITY to Home, whichever way the
+// invite was sent (src/services/collab-invites.js acceptInvite). One Home
+// (#6361) pins a community and an app separately; joining pins the community.
 //
-// An invite LINK always pinned it: apply_community_invite() in
-// src/db/schema.sql writes app_favorites, as the Join button does
+// An invite LINK always pinned it: apply_community_invite() writes
+// home_community_pins (one-home-pins.sql), as the Join button does
 // (communities.join). An invite by @username, or by an email address once
 // it is claimed (src/services/email-invites.js), is accepted through
-// acceptInvite instead, and that did not. The pin is not decoration: the
-// daily vote digest (src/services/vote-digest.js PENDING_SQL) finds people
-// only through app_favorites and the creator, so a member added by name was
-// never told a vote was waiting on them.
+// acceptInvite instead. The pin is not decoration: the daily vote digest
+// (src/services/vote-digest.js PENDING_SQL) finds people through the
+// app_stakes view (a member who keeps it on Home) and the creator, so a
+// member added by name who was not pinned would never be told a vote was
+// waiting on them.
 //
 // Against the REAL schema in a throwaway PostgreSQL database. Skipped when
 // no server is reachable, and required when TEST_DATABASE_URL is set, like
@@ -78,14 +80,20 @@ test('accepting an invite pins the project, against the full PostgreSQL schema',
   const club = (await pool.query('SELECT * FROM apps WHERE id = $1', [made[0].id])).rows[0];
   await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`,
     [club.id, owner.id]);
-  // A proposal waiting for a vote, written by the owner.
+  // A proposal waiting for a vote, written by the owner. #6402: the digest
+  // finds one only once its checks passed; this file is about the invite's
+  // pin, not the gate.
   await pool.query(
-    `INSERT INTO chat_sessions (app_id, user_id, status, pr_number) VALUES ($1, $2, 'promoted', 1)`,
+    `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, check_state)
+     VALUES ($1, $2, 'promoted', 1, 'passing')`,
     [club.id, owner.id]
   );
 
-  const pin = async (userId) => (await pool.query(
-    'SELECT hidden FROM app_favorites WHERE app_id = $1 AND user_id = $2', [club.id, userId])).rows[0] || null;
+  const pin = async (userId) => ((await pool.query(
+    'SELECT 1 FROM home_community_pins WHERE community_id = $1 AND user_id = $2',
+    [club.community_id, userId])).rowCount ? { pinned: true } : null);
+  const appHidden = async (userId) => (await pool.query(
+    'SELECT hidden FROM app_favorites WHERE app_id = $1 AND user_id = $2', [club.id, userId])).rows[0]?.hidden ?? null;
   const source = async (userId) => (await pool.query(
     'SELECT source FROM community_members WHERE community_id = $1 AND user_id = $2',
     [club.community_id, userId])).rows[0]?.source || null;
@@ -104,29 +112,30 @@ test('accepting an invite pins the project, against the full PostgreSQL schema',
 
     const accepted = await collabInvites.acceptInvite(pool, { appId: club.id, user: friend });
     assert.deepEqual(accepted, { ok: true, appSlug: club.slug });
-    assert.deepEqual(await pin(friend.id), { hidden: false }, 'on Home, as an invite link would put it');
+    assert.deepEqual(await pin(friend.id), { pinned: true }, 'its community on Home, as an invite link would put it');
     assert.equal(await source(friend.id), 'collaborator',
       'the membership still says how they came in: the pin does not relabel it');
     assert.equal(await owed(friend.id), 1, 'the daily digest counts the proposal waiting on them');
   });
 
-  await t.test('accepting clears an earlier opt-out, as the link path does', async () => {
+  await t.test('accepting pins the community and leaves an app opt-out alone', async () => {
     const quiet = await user();
     await collabInvites.sendInvite(pool, { app: club, target: quiet, inviterId: owner.id });
     await pool.query('INSERT INTO app_favorites (app_id, user_id, hidden) VALUES ($1, $2, TRUE)', [club.id, quiet.id]);
     await collabInvites.acceptInvite(pool, { appId: club.id, user: quiet });
-    assert.deepEqual(await pin(quiet.id), { hidden: false });
+    assert.deepEqual(await pin(quiet.id), { pinned: true });
+    assert.equal(await appHidden(quiet.id), true, 'the app stays off Home: that pin is its own');
   });
 
   await t.test('a second accept is the idempotent answer and writes nothing', async () => {
     const twoTabs = await user();
     await collabInvites.sendInvite(pool, { app: club, target: twoTabs, inviterId: owner.id });
     await collabInvites.acceptInvite(pool, { appId: club.id, user: twoTabs });
-    // Took it off Home afterwards, as a member: the hidden opt-out row.
-    await pool.query('UPDATE app_favorites SET hidden = TRUE WHERE app_id = $1 AND user_id = $2', [club.id, twoTabs.id]);
+    // Took the community off Home afterwards, as a member.
+    await pool.query('DELETE FROM home_community_pins WHERE community_id = $1 AND user_id = $2', [club.community_id, twoTabs.id]);
     const again = await collabInvites.acceptInvite(pool, { appId: club.id, user: twoTabs });
     assert.deepEqual(again, { ok: true, appSlug: club.slug, alreadyMember: true });
-    assert.deepEqual(await pin(twoTabs.id), { hidden: true }, 'a stale tab does not put it back on Home');
+    assert.equal(await pin(twoTabs.id), null, 'a stale tab does not put it back on Home');
   });
 
   await t.test('no invite, no pin', async () => {
@@ -144,7 +153,7 @@ test('accepting an invite pins the project, against the full PostgreSQL schema',
     });
     assert.deepEqual(out, { invited: 1, mailed: 0 }, 'a confirmed address invites its account directly');
     await collabInvites.acceptInvite(pool, { appId: club.id, user: reader });
-    assert.deepEqual(await pin(reader.id), { hidden: false });
+    assert.deepEqual(await pin(reader.id), { pinned: true });
     assert.equal(await owed(reader.id), 1);
   });
 });

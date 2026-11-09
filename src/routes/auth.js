@@ -79,7 +79,8 @@ const { requireAdultAttestation } = require('../services/adult-attestation');
 const SESSION_DAYS = 90;
 
 // Email password-reset magic link. The 30-minute figure is repeated in the
-// password_reset mail template copy (src/services/mail/templates.js).
+// password_reset email template's words (admin console, Email templates; its
+// first version is in src/db/email-template-seeds.js).
 const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 
 // Staging mock data (#555): llm_usage is staging:private, so in a
@@ -1016,6 +1017,12 @@ function authRoutes(config) {
         // analytics. The client waits for this server-owned decision.
         // People who objected to being recorded answer false too (#3369).
         uiTelemetryEligible: await uiTelemetry.isRecordable(pool, req.user),
+        // The shell's one Google Analytics sign_up (#6314). A browser-check
+        // account is not somebody signing up.
+        analyticsCounted: await uiTelemetry.countsInGoogleAnalytics(pool, req.user),
+        justSignedUp: uiTelemetry.isEligibleUser(req.user)
+          && !req.user.isSynthetic
+          && await require('../services/usage-analytics').justSignedUp(pool, req.user.id),
         isAdmin: req.user.isAdmin,
         // View-only admin role (issue #311). `isAdmin` still drives every
         // client read/visibility gate; `canAdminWrite` drives mutating

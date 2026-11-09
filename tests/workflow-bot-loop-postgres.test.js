@@ -23,6 +23,7 @@ const lane = require('../src/workflow/bot-lane/machine.ts');
 const { requestKey, lookCardKey, SLOTS_IN_USE_SQL, NEXT_ELIGIBLE_SQL } = require('../src/workflow/rules/bot-loop.ts');
 const { TURN_STOP } = require('../src/workflow/rules/turn-stop.ts');
 const { TURN_OWNER_SQL, syncWorkingSql } = require('../src/workflow/session-work.ts');
+const progress = require('../src/services/homeroom-bot-progress');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -506,9 +507,17 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     }
     const d = (await inst(request.MACHINE, requestKey(app2.id, 112))).data;
     assert.ok(Date.parse(d.owed.heldUntil) - Date.now() > 23 * 3600 * 1000, 'held a day');
+    // #6357: a cooldown, recorded and projected as one, with its own end:
+    // never read as the payer's week being used up.
+    assert.equal(d.owed.heldFor, 'cooldown');
+    const q = await row(app2.id, 112);
+    assert.equal(q.held_reason, 'cooldown');
+    assert.deepEqual(progress.holdOf(q), { kind: 'cooldown', until: new Date(d.owed.heldUntil).toISOString() });
+    assert.equal(progress.stageOf({ ...q, queue_id: q.id }).hold, 'cooldown');
     work.answer.set(request.WORK.look, { outcome: 'done' });
     await oweOnly(app2.id, 112, { reason: 'dm_answer', priority: 0 });
     assert.equal((await inst(request.MACHINE, requestKey(app2.id, 112))).data.owed.heldUntil, null, 'a person\'s ask lifts it');
+    assert.equal((await row(app2.id, 112)).held_reason, null, 'and its reason with it');
     work.answer.set(request.WORK.look, { outcome: 'done' });
   });
 
@@ -669,10 +678,44 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     await owe(app.id, 11);
     await send(lane.MACHINE, lane.KEY, 'Look', {});
     assert.ok((await row(app.id, 11)).held_until, 'held');
+    assert.equal((await row(app.id, 11)).held_reason, 'allowance', '#6357: recorded as the payer\'s week');
     work.answer.set(request.WORK.look, { outcome: 'done' });
     await sendOnly(request.MACHINE, requestKey(app.id, 11), 'FixAsked', { appId: app.id, issueNumber: 11, sessionId: 778, head: 'd'.repeat(40) }, { kind: 'system' });
     assert.equal((await row(app.id, 11)).held_until, null);
     assert.equal((await row(app.id, 11)).reason, 'checks_failing');
+    await settle();
+  });
+
+  // #6377: a request held for its payer's spent week is read again as soon
+  // as a limit raise gives that week room, with no new ask.
+  await t.test('allowance: a held look is released when its payer\'s week gets room', async () => {
+    reset();
+    const bot_ = require('../src/services/homeroom-bot');
+    const app4 = await mkApp('allowance');
+    const payer = await user('payer');
+    await requester(app4.id, 1, payer.id);
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, payer_user_id, cost_usd)
+       VALUES ($1, 1, 'live', 'ready', TRUE, $2, 1.01)`, [app4.id, payer.id]);
+    await setting('homeroom_bot_user_weekly_cents', '100');
+    work.answer.set(request.WORK.look, { outcome: 'held', until: new Date(Date.now() + 3 * 86400000).toISOString() });
+    await owe(app4.id, 1, { payer: payer.id });
+    await send(lane.MACHINE, lane.KEY, 'Look', {});
+    assert.ok((await row(app4.id, 1)).held_until, 'held for its week');
+    const owedBefore = (await events(request.MACHINE, requestKey(app4.id, 1), 'Owed')).length;
+    // The admin raises the limit. The machine releases the hold, and the
+    // lane's next pass reads it: no new ask.
+    work.answer.set(request.WORK.look, { outcome: 'done' });
+    assert.deepEqual(await bot_.writeSettings(pool, { userWeeklyCents: 200 }, ada.id), { ok: true });
+    await rt.drain();
+    const i = await inst(request.MACHINE, requestKey(app4.id, 1));
+    assert.equal(i.state, 'reading', 'the lane granted the read');
+    assert.equal(i.data.look.owed.heldUntil, null, 'the hold is gone');
+    assert.equal((await row(app4.id, 1)).held_until, null, 'its row says it moves');
+    assert.equal((await pool.query(
+      'SELECT 1 FROM work_state_dirty WHERE app_id = $1 AND issue_number = 1', [app4.id])).rowCount, 1,
+    'the screens rederive');
+    assert.equal((await events(request.MACHINE, requestKey(app4.id, 1), 'Owed')).length, owedBefore, 'no new ask');
     await settle();
   });
 
@@ -706,6 +749,48 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     const n = calls(request.WORK.build).length;
     await send(lane.MACHINE, lane.KEY, 'Look', {});
     assert.equal(calls(request.WORK.build).length, n, 'L9: a held build takes no slot');
+    // #6377: a limit raise that gives the payer's week room releases the held
+    // build: the lane looks again and this time takes it.
+    const bot_ = require('../src/services/homeroom-bot');
+    await requester(app2.id, 12, ada.id);
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, payer_user_id, cost_usd)
+       VALUES ($1, 12, 'live', 'ready', TRUE, $2, 1.01)`, [app2.id, ada.id]);
+    await setting('homeroom_bot_user_weekly_cents', '100');
+    work.answer.set(request.WORK.build, { outcome: 'requested', key: 'run:502@w1' });
+    assert.deepEqual(await bot_.writeSettings(pool, { userWeeklyCents: 200 }, ada.id), { ok: true });
+    await rt.drain();
+    const freed = await inst(request.MACHINE, requestKey(app2.id, 12));
+    assert.equal(freed.data.build.heldUntil, null, 'the hold is gone');
+    await settle();
+    assert.equal(calls(request.WORK.build).length, n + 1, 'the next lane pass takes the build');
+  });
+
+  // #6377: a raise that still leaves the payer at or over their cap releases
+  // nothing: the hold and its words stay.
+  await t.test('allowance: a raise still at or under the spend keeps the hold', async () => {
+    reset();
+    const bot_ = require('../src/services/homeroom-bot');
+    const app6 = await mkApp('allowance-small');
+    const payer = await user('payer2');
+    await requester(app6.id, 1, payer.id);
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, charged, payer_user_id, cost_usd)
+       VALUES ($1, 1, 'live', 'ready', TRUE, $2, 1.01)`, [app6.id, payer.id]);
+    await setting('homeroom_bot_user_weekly_cents', '100');
+    work.answer.set(request.WORK.look, { outcome: 'held', until: new Date(Date.now() + 3 * 86400000).toISOString() });
+    await owe(app6.id, 1, { payer: payer.id });
+    await send(lane.MACHINE, lane.KEY, 'Look', {});
+    const before = (await row(app6.id, 1)).held_until;
+    assert.ok(before, 'held');
+    const looks = calls(request.WORK.look).length;
+    // 101 cents is exactly what the week spent: still used up.
+    assert.deepEqual(await bot_.writeSettings(pool, { userWeeklyCents: 101 }, ada.id), { ok: true });
+    await settle();
+    const q = await row(app6.id, 1);
+    assert.equal(new Date(q.held_until).toISOString(), new Date(before).toISOString(), 'still held');
+    assert.equal((await events(request.MACHINE, requestKey(app6.id, 1), 'AllowanceFreed')).length, 0, 'nothing released');
+    assert.equal(calls(request.WORK.look).length, looks, 'not read');
   });
 
   // A live run waiting for its build that no instance holds (an older

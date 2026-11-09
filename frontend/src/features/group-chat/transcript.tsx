@@ -52,7 +52,7 @@ import { openReport } from '../dialogs/report';
  * it the next time anything else about the message changed.
  */
 
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { ChatMessageRow, NewMessagesDivider, groupsWithPrevious } from '@/components/ui/chat';
@@ -69,7 +69,7 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
-import { BotRequestCardView, BotStatusChip } from './bot-request';
+import { BotRequestCardView } from './bot-request';
 import { ImageViewer, openInViewer, useInlineImageViewer } from '../image-viewer/image-viewer';
 import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '../image-viewer/save-image';
 import { EventRow } from './proposal-event';
@@ -124,7 +124,8 @@ function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView
   if (id == null) return null;
   const many = offer.kind === 'file_many' && rows.length > 0;
   const picks = many ? picksOf(rows, ticked, chosen) : [];
-  const decide = async (choice: 'yes' | 'no') => {
+  // #6211: an overlap note's three choices include `first` (this one first).
+  const decide = async (choice: 'yes' | 'no' | 'first') => {
     if (busy) return;
     setBusy(true);
     try {
@@ -182,7 +183,7 @@ export function BotSuggestButtons({ id, suggest }: { id: number | null; suggest:
     controller()?.sendBotSuggestion?.(id, label);
   };
   return (
-    <div className="mt-2 flex flex-wrap gap-2" data-gc-bot-suggest="">
+    <div className="mt-2 flex flex-wrap gap-2" data-gc-bot-suggest={suggest.audience || ''}>
       {suggest.actions.map((action) => (
         <Button
           key={action.id}
@@ -418,20 +419,12 @@ export function Attachments({ items }: { items: Attachment[] }) {
  * the border width), so the affordance had quietly gone missing.
  */
 export function Reactions({ msg }: { msg: TranscriptMessage }) {
-  if (!msg.reactions.length && !msg.botRequest) return <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`} />;
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request asked of
+  // Homeroom bot here wears no status chip for the room any more; where it
+  // stands is on its own page.
+  if (!msg.reactions.length) return <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`} />;
   return (
     <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`}>
-      {/* B9: a request asked of Homeroom bot here, first and in its own colour (./bot-request.tsx). */}
-      {msg.botRequest ? (
-        <BotStatusChip
-          chip={msg.botRequest}
-          mine={msg.mine}
-          onTry={(sessionId) => controller()?.tryBotChange?.(sessionId)}
-          onProgress={() => (msg.botRequest?.status === 'fixing' && msg.botRequest.sessionId
-            ? controller()?.openBotChange?.(msg.botRequest.sessionId)
-            : controller()?.openBotChat?.(msg.botRequest?.issueNumber || null))}
-        />
-      ) : null}
       {msg.reactions.map((r) => (
         <ReactionPill
           key={r.emoji}
@@ -500,6 +493,30 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
     </>
   );
 }
+
+/**
+ * #6519: the newest COMMENT in a stream — a person's message, or (on a
+ * request's page, where GitHub's comments are merged in) a GitHub comment.
+ * Everything else a stream carries (a shared spec, a vote, a notice, a
+ * system line) is something that happened, not something said, so it leaves
+ * this alone. Suggested replies hang under the newest one only.
+ */
+export function newestComment(rows: TranscriptMessage[], withGithub: boolean): TranscriptMessage | null {
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const m = rows[i];
+    if (m.kind === 'message' && !m.deleted) return m;
+    if (withGithub && m.kind === 'github' && !m.githubSpec) return m;
+  }
+  return null;
+}
+
+/**
+ * #6519: the stream's newest comment, published to the rows beneath it.
+ * RequestRows' row props are pinned by a check that reads its source, so
+ * the newest row is handed down here rather than as one more prop on the
+ * call; a row under no publisher reads null and is never the newest.
+ */
+const NewestCommentContext = createContext<TranscriptMessage | null>(null);
 
 /**
  * Consecutive system lines that say the same thing fold into one, with a
@@ -816,11 +833,13 @@ export function messageMenuItems(
  * memo()'d, as Messages' row is (#3104): an appended message, a reaction or
  * an edit changes one row's object and leaves every other row's alone
  * (./mount.ts keeps them), so only that row renders. Everything the row
- * draws must therefore arrive as a prop. `threadOpen` is one: it was read
- * from the controller here, and a memo()'d row would have kept the answer
- * from its last render.
+ * draws must therefore arrive as a prop (or, for a whole stream's answer
+ * like `NewestCommentContext`'s, as a context it reads, which reaches a
+ * memo()'d row too), never from module state. `threadOpen` is one: it was
+ * read from the controller here, and a memo()'d row would have kept the
+ * answer from its last render.
  */
-export const MessageRow = memo(function MessageRow({ msg, grouped = false, surface = 'main', threadOpen = false, tag = null, seeVote = null }: {
+export const MessageRow = memo(function MessageRow({ msg, grouped = false, surface = 'main', threadOpen = false, tag = null, seeVote = null, latest = false }: {
   msg: TranscriptMessage;
   grouped?: boolean;
   /** #2387: `thread` inside a reply thread, where the row offers no thread of its own. */
@@ -831,6 +850,8 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   tag?: string | null;
   /** #6236: on a request's page, the change this post's vote is about, whose section is below: the line with See the vote, not the card. */
   seeVote?: SeeVote | null;
+  /** #6519: this row is the newest comment in its stream, so the bot's suggested replies are still worth showing. */
+  latest?: boolean;
 }) {
   const t = useMessages('chat');
   const [sheet, setSheet] = useState(false);
@@ -856,6 +877,10 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       grouped={grouped}
       gutter={grouped ? <span className="gc-msg-gutter-time" title={msg.timeTitle}>{timeOfDay(msg.at) || msg.time}</span> : undefined}
       data-msg-id={msg.id ?? ''}
+      // #6441: a dotted message on screen has been seen. The transcript's
+      // observer (TranscriptRows) reads these rows back by this attribute and
+      // clears the dot without waiting for a click.
+      data-gc-unread={msg.unread ? '' : undefined}
       data-username={msg.username}
       data-username-missing={msg.usernameMissing ? '' : undefined}
       // #2236: only when set, so an ordinary row's attribute set is exactly
@@ -887,7 +912,11 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       timestamp={(
         <>
           <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
-          {tag ? <span className="gc-msg-on-change" data-msg-on-change={msg.changeOf?.sessionId ?? ''}>{tag}</span> : null}
+          {tag ? <span
+            className="gc-msg-on-change"
+            data-msg-on-change={msg.changeOf ? (msg.changeOf.sessionId ?? '') : undefined}
+            data-msg-on-request={msg.requestOf ? (msg.requestOf.number ?? '') : undefined}
+          >{tag}</span> : null}
           {msg.editedTitle && !msg.deleted ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>{t('chat:group.row.edited')}</span>
           ) : null}
@@ -898,7 +927,8 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       {msg.deleted ? <p className="gc-msg-deleted-text">{t('chat:group.row.deleted')}</p> : (
         <>
           {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
-          <Body html={msg.bodyHtml} />
+          {/* Task 2020 follow-up: Homeroom bot's reply laid out, in place of its words (./long-body.tsx). */}
+          <Body html={msg.bodyHtml} rich={msg.botHtml} />
           {/*
               #6268: a message posted for somebody by their own coding agent
               that Homeroom bot will not answer says so under it, quietly, so
@@ -944,10 +974,9 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           {msg.botOffer && msg.botOffer.forMe && msg.botOffer.status === 'open' && msg.botOffer.actions.length ? (
             <BotOfferButtons id={msg.id} offer={msg.botOffer} />
           ) : null}
-          {/* 3 Nov 2026: suggested replies under Homeroom bot's message in a thread. */}
-          {msg.botSuggest && msg.botSuggest.forMe && msg.botSuggest.status === 'open' && msg.botSuggest.actions.length ? (
-            <BotSuggestButtons id={msg.id} suggest={msg.botSuggest} />
-          ) : null}
+          {/* 3 Nov 2026: suggested replies under Homeroom bot's message in a
+              thread — only while it is the newest comment (#6519). */}
+          <BotSuggestGate msg={msg} latest={latest} />
           {grouped && msg.editedTitle ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>{t('chat:group.row.edited')}</span>
           ) : null}
@@ -1000,6 +1029,22 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       ) : null}
     </ChatMessageRow>
   );
+});
+
+/**
+ * #6519: Homeroom bot's suggested replies, drawn under its message only
+ * while that message is the newest comment in its stream. A stream that can
+ * hand the answer down as a prop does (`latest`); a request's rows are pinned
+ * by a check that reads their call, so that stream publishes its newest
+ * through the context above instead, and a row under no publisher is never
+ * the newest.
+ */
+const BotSuggestGate = memo(function BotSuggestGate({ msg, latest }: { msg: TranscriptMessage; latest?: boolean }) {
+  const publishedNewest = useContext(NewestCommentContext);
+  const newest = latest || (publishedNewest != null && publishedNewest === msg);
+  return newest && msg.botSuggest && msg.botSuggest.forMe && msg.botSuggest.status === 'open' && msg.botSuggest.actions.length
+    ? <BotSuggestButtons id={msg.id} suggest={msg.botSuggest} />
+    : null;
 });
 
 /**
@@ -1073,12 +1118,14 @@ function threadHead(msg: TranscriptMessage): TranscriptMessage {
   return head;
 }
 
-function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, chat = false, previous: TranscriptMessage | null = null) {
+function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, chat = false, previous: TranscriptMessage | null = null, newest: TranscriptMessage | null = null) {
   const key = msg.id != null ? `m${msg.id}` : fallbackKey;
+  // #6519: the bot's suggested replies stay under the newest comment only.
+  const latest = msg === newest;
   // #2387: the message a reply thread hangs off, drawn at the thread's head —
   // a row of its own (never grouped with the first reply), with its thread
   // chip left off since the thread is what is open.
-  if (msg.threadRoot) return <MessageRow key={key} msg={threadHead(msg)} surface="thread" />;
+  if (msg.threadRoot) return <MessageRow key={key} msg={threadHead(msg)} surface="thread" latest={latest} />;
   if (msg.kind === 'spec_share') return <SpecShareRow key={key} msg={msg} />;
   // `chat` is a change page's own Discussion, drawn in the general chat's
   // language: every notice as a message (its rows arrive with an event from
@@ -1095,7 +1142,7 @@ function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, ch
     // Whether this row's reply thread is the open one: read here, on every
     // render of the rows, and handed down, because the row itself is memo()'d.
     const threadOpen = main && !!msg.thread && msg.id != null && !!controller()?.isReplyThreadOpen?.(msg.id);
-    return <MessageRow key={key} msg={msg} grouped={grouped} surface={main ? 'main' : 'thread'} threadOpen={threadOpen} />;
+    return <MessageRow key={key} msg={msg} grouped={grouped} surface={main ? 'main' : 'thread'} threadOpen={threadOpen} latest={latest} />;
   }
   if ((main || chat) && msg.event) return <EventRow key={key} msg={msg} />;
   return <SystemRow key={key} msg={msg} />;
@@ -1216,6 +1263,9 @@ export function RequestRows({ view }: { view: TranscriptView }) {
   // of what happened to a change only what keptOnRequest keeps.
   const changes = useStoreState(requestChangesStore);
   const stream = useMemo(() => requestStream(foldRepeats(view.messages).filter((m) => !m.changeOf || keptOnRequest(m))), [view.messages]);
+  // #6519: the newest comment, with its GitHub comments, under which the
+  // bot's suggested replies are still shown.
+  const newest = newestComment(stream.rows, true);
   const specs = stream.specs;
   const count = replyCount(stream.rows);
   const loaded = !!view.lead.request?.loaded;
@@ -1226,6 +1276,10 @@ export function RequestRows({ view }: { view: TranscriptView }) {
   const drawn: ReactNode[] = [];
   let previous: TranscriptMessage | null = null;
   const tagOf = (msg: TranscriptMessage): string | null => {
+    // #6421: a message written on another request of a merged thread says so.
+    if (msg.requestOf && Number(msg.requestOf.number)) {
+      return t('project:topic.request.stream.onRequest', { number: msg.requestOf.number });
+    }
     const id = msg.changeOf ? Number(msg.changeOf.sessionId) : 0;
     if (!id) return null;
     const n = changes.numbers[id];
@@ -1283,7 +1337,7 @@ export function RequestRows({ view }: { view: TranscriptView }) {
     previous = msg;
   });
   return (
-    <>
+    <NewestCommentContext.Provider value={newest}>
       <div className="messages-reply-count" data-request-replies={count}>
         <span>{count ? t('project:topic.request.stream.replies', { count }) : loaded ? t('project:topic.request.stream.noReplies') : t('project:topic.request.stream.loading')}</span>
       </div>
@@ -1317,7 +1371,7 @@ export function RequestRows({ view }: { view: TranscriptView }) {
       ) : null}
       {images.viewer}
       <div className="dev-request-stream" {...images.scope}>{drawn}</div>
-    </>
+    </NewestCommentContext.Provider>
   );
 }
 
@@ -1423,6 +1477,8 @@ export function ChangeRows({ view }: { view: TranscriptView }) {
   }
   const drawn: ReactNode[] = [];
   let previous: TranscriptMessage | null = null;
+  // #6519: a change's stream has no GitHub rows.
+  const newest = newestComment(rows, false);
   rows.forEach((msg, i) => {
     const key = msg.id != null ? `m${msg.id}` : `i${i}`;
     if (msg.kind === 'message') {
@@ -1432,7 +1488,7 @@ export function ChangeRows({ view }: { view: TranscriptView }) {
           { author: previous.username, at: previous.at },
           { author: msg.username, at: msg.at, reply: !!msg.quote },
         );
-      drawn.push(<MessageRow key={key} msg={msg} grouped={grouped} surface="thread" />);
+      drawn.push(<MessageRow key={key} msg={msg} grouped={grouped} surface="thread" latest={msg === newest} />);
     } else {
       drawn.push(<ChangeEvent key={key} msg={msg} />);
     }
@@ -1561,6 +1617,46 @@ export function TranscriptRows({ view, source }: {
   const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message' && !m.openApp)
     ? view.lead.quiet
     : null;
+  // #6441: SEEING IT READS IT. A message with an unread dot that is (mostly)
+  // on screen while the tab is in front has been seen, so its dot clears and
+  // the bell drops by one without a click. One observer per transcript,
+  // over the rows already drawn with `data-gc-unread`; it is re-armed when
+  // the message list changes, which is how a reply that arrives while the
+  // thread is open is read too. A row scrolled out of view, or a background
+  // tab, reads nothing: the visibility check is repeated when the tab comes
+  // back, in case the observer's own callback did not fire again.
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof IntersectionObserver !== 'function') return undefined;
+    const nodes = Array.from(document.querySelectorAll('[data-gc-unread]'));
+    if (!nodes.length) return undefined;
+    const seen = new Set<number>();
+    const showing = new Set<Element>();
+    const read = (el: Element) => {
+      showing.delete(el);
+      observer.unobserve(el);
+      const id = Number(el.getAttribute('data-msg-id'));
+      if (!Number.isSafeInteger(id) || id <= 0 || seen.has(id)) return;
+      seen.add(id);
+      controller()?._clearMessageDot?.(id);
+    };
+    const flush = () => {
+      if (document.visibilityState === 'hidden') return;
+      for (const el of [...showing]) read(el);
+    };
+    const observer = new IntersectionObserver((records) => {
+      for (const record of records) {
+        if (record.isIntersecting && record.intersectionRatio >= 0.6) showing.add(record.target);
+        else showing.delete(record.target);
+      }
+      flush();
+    }, { threshold: 0.6 });
+    for (const node of nodes) observer.observe(node);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', flush);
+      observer.disconnect();
+    };
+  }, [view.messages]);
   // The general chat's "New" line: above the first message after where
   // reading stood when the channel opened (`lead.unread`), or above the
   // first row drawn after it when that message is not drawn itself. The
@@ -1593,6 +1689,8 @@ export function TranscriptRows({ view, source }: {
   // The row the next one groups under; a thread-activity card resets it, so
   // the message after a card always carries its own name.
   let previous: TranscriptMessage | null = null;
+  // #6519: where the bot's suggested replies may still be shown.
+  const newest = newestComment(rows, false);
   for (let i = 0; i < rows.length; i += 1) {
     // #2387 follow-up: in the general chat a reply-thread reply is drawn
     // where it landed — one card for a run of replies to one thread with
@@ -1614,7 +1712,7 @@ export function TranscriptRows({ view, source }: {
       previous = null;
       continue;
     }
-    drawn.push(renderRow(rows[i], `i${i}`, main, chat, previous));
+    drawn.push(renderRow(rows[i], `i${i}`, main, chat, previous, newest));
     previous = rows[i];
     // #2387: under a reply thread's first message, how many replies follow —
     // the line Slack draws between a thread's head and its replies.

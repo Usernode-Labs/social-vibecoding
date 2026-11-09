@@ -44,9 +44,13 @@ const JOURNEY_SCREENS = Object.freeze(new Set([
 //
 // `assistant` was Global Chat's screen. Nothing reports it since Global Chat
 // was removed, but it stays a code so the visits already recorded still read
-// as steps (journey.js) and as landings in the page-load report.
+// as steps (journey.js) and as landings in the page-load report. So does
+// `my_proposals`, Me › Your work's screen, which the Homeroom bot tab's
+// History replaced on 5 Nov 2026, and so do `discover` and `communities`,
+// since One Home (#6361) retired Discover's screen and the Communities list;
+// `needs` is the page left of the latter.
 const NAV_SCREENS = Object.freeze(new Set([
-  'home', 'discover', 'communities', 'challenges', 'profile', 'my_proposals',
+  'home', 'discover', 'communities', 'needs', 'weekly_digest', 'challenges', 'profile', 'my_proposals',
   'settings', 'messages', 'assistant', 'agent_session', 'ai', 'app', 'project',
   'username_sheet', 'terms_sheet', 'join_sheet', 'tour',
 ]));
@@ -277,6 +281,20 @@ async function isRecordable(pool, user) {
   if (!isEligibleUser(user)) return false;
   if (!(await usageAnalytics.sharesUsageAnalytics(pool, user.id))) return false;
   return !(await leftOut.hasObjected(pool, user.id));
+}
+
+// Whether the live shell's Google Analytics tag counts this person's visits
+// (#6314). The Share usage analytics switch does not decide this one, but an
+// objection does, and a service account is nobody. An unreadable list answers
+// false, so a failed read never counts somebody who objected.
+async function countsInGoogleAnalytics(pool, user) {
+  if (!isEligibleUser(user) || user.isSynthetic) return false;
+  try {
+    const ids = await leftOut.idsByReason(pool);
+    return !!ids && !ids.objected.has(Number(user.id));
+  } catch {
+    return false;
+  }
 }
 
 function plainObject(value) {
@@ -1251,6 +1269,7 @@ module.exports = {
   browserLanguages,
   daysWindow,
   insertBatch,
+  countsInGoogleAnalytics,
   isEligibleUser,
   isRecordable,
   clientErrorCode,

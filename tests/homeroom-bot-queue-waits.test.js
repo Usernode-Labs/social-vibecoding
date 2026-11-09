@@ -34,7 +34,13 @@ test('queueWait: every reason the loop passes a row over for, in the order it me
   const w = (row, ctx = {}) => bot.queueWait({ app_id: 9, issue_number: 5, ...row }, { now: NOW, ...ctx });
   // The three it said before, first, unchanged.
   assert.deepEqual(w({ wait_reason: 'session_busy', wait_until: LATER, app_paused: true }), { reason: 'session_busy', until: LATER });
-  assert.deepEqual(w({ held_until: LATER, first_version_pending: true }), { reason: 'allowance', until: LATER });
+  assert.deepEqual(w({ held_until: LATER, held_reason: 'allowance', first_version_pending: true }), { reason: 'allowance', until: LATER });
+  // #6357: a day's pause after its look threw again and again is no money:
+  // said as a cooldown, recorded or (a hold stored before the reason was)
+  // inferred from an end that is not the week's reset.
+  assert.deepEqual(w({ held_until: LATER, held_reason: 'cooldown' }), { reason: 'cooldown', until: LATER });
+  assert.deepEqual(w({ held_until: LATER }), { reason: 'cooldown', until: LATER });
+  assert.deepEqual(w({ held_until: '2026-10-19T00:00:00.000Z' }), { reason: 'allowance', until: '2026-10-19T00:00:00.000Z' });
   assert.deepEqual(w({}, { fault: { until: Date.parse(LATER) }, off: true }), { reason: 'platform_fault', until: LATER });
   // The bot off, or paused on its spent budget until its next pass.
   assert.deepEqual(w({ app_paused: true }, { off: true }), { reason: 'bot_paused', until: null });
@@ -304,7 +310,7 @@ test('a move offer records what became of it on the run, and the week counts the
 
   const summaryPool = {
     async query(sql) {
-      if (/FROM homeroom_bot_dm_actions\s+WHERE kind = 'move_request'/.test(sql)) {
+      if (/FROM bot_cards\s+WHERE kind = 'move_request'/.test(sql)) {
         return { rows: [{ sent: 4, moved: 2, kept: 1, open: 1, failed: 0 }] };
       }
       return { rows: [

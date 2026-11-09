@@ -256,7 +256,7 @@ test('a message that names no project draws the card without a link and asks not
 test('a project’s card opens its App tab, and a first version gone live with its Open button draws none', () => {
   answer = { type: 'hub', available: true, title: 'Never asked' };
   const html = draw(botHead('**Todo List**, its first version\n\nBuilding the first version now.', FIRST));
-  // B21: with no icon from the tray or the message, the project's hub card
+  // B21: with no icon from the viewer's tracks or the message, the project's hub card
   // is read for its icon alone; the line is still the card.
   assert.deepEqual(asked, [['hub:todo-list-b91765:']], 'its hub, read for its icon');
   assert.match(html, /data-bot-head-card="project"><a href="#app\/todo-list-b91765\/app" class="messages-object-card" rel="noopener noreferrer"><span class="messages-object-icon">◆<\/span>/,
@@ -264,7 +264,7 @@ test('a project’s card opens its App tab, and a first version gone live with i
   answer = { type: 'hub', available: true, title: 'Never asked', iconUrl: '/app-icons/f00d' };
   assert.match(draw(botHead('**Todo List**, its first version\n\nBuilding the first version now.', FIRST)),
     /data-bot-head-card="project"><a href="#app\/todo-list-b91765\/app" class="messages-object-card" rel="noopener noreferrer"><span class="messages-object-icon overflow-hidden" data-object-icon="image"><img src="\/app-icons\/f00d"/,
-    'B21: a newcomer\'s first project, in none of the tray\'s lists, wears its own icon');
+    'B21: a newcomer\'s first project, with no track of the viewer\'s, wears its own icon');
   assert.match(html, />Todo List<\/div><div class="text-sm text-zinc-500 dark:text-zinc-400 truncate">First version</);
   assert.doesNotMatch(html, /data-bot-request-card|Never asked/);
 
@@ -275,7 +275,7 @@ test('a project’s card opens its App tab, and a first version gone live with i
 });
 
 // Run four (13 Oct 2026): the card for the maker's new app read "◆". It
-// wears the app's own icon, the tray's as the strip and the news lines draw
+// wears the app's own icon, its requests' tracks' as the news lines draw
 // it, else the emoji the message carries; with neither, the glyph.
 test('a project’s card wears the project’s own icon when it is known', () => {
   let work = null;
@@ -288,18 +288,19 @@ test('a project’s card wears the project’s own icon when it is known', () =>
   const drawn = (meta = FIRST) => renderToHtml(createElement(iconic.BotHeadWords, {
     head: iconic.botHead('**Todo List**, its first version\n\nBuilding the first version now.', meta), objects: [],
   }));
-  const job = (patch) => ({ appSlug: 'todo-list-b91765', appName: 'Todo List', iconUrl: null, iconEmoji: null, ...patch });
-  work = { needsYou: [], now: [job({ iconUrl: '/app-icons/a1b2c3' })], history: [] };
+  // The viewer's tracks (./bot-work.tsx), which carry each project's artwork.
+  const job = (patch) => ({ appSlug: 'todo-list-b91765', appName: 'Todo List', iconUrl: null, iconEmoji: null, work: { stage: 'building' }, ...patch });
+  work = { tracks: [job({ iconUrl: '/app-icons/a1b2c3' })] };
   assert.match(drawn(), /<span class="messages-object-icon overflow-hidden" data-object-icon="image"><img src="\/app-icons\/a1b2c3" alt="" class="h-full w-full object-cover" loading="lazy" draggable="false"\/><\/span>/);
   assert.doesNotMatch(drawn(), /◆/);
-  work = { needsYou: [], now: [], history: [job({ iconEmoji: '🗳️' })] };
+  work = { tracks: [job({ iconEmoji: '🗳️', work: { stage: 'live' } })] };
   assert.match(drawn(), /<span class="messages-object-icon text-\[22px\] leading-none" data-object-icon="emoji" aria-hidden="true">🗳️<\/span>/);
-  // Not in the tray: the emoji the message carries, else the glyph.
-  work = { needsYou: [], now: [job({ appSlug: 'elsewhere', iconUrl: '/app-icons/zz' })], history: [] };
+  // No track for the project: the emoji the message carries, else the glyph.
+  work = { tracks: [job({ appSlug: 'elsewhere', iconUrl: '/app-icons/zz' })] };
   assert.match(drawn({ ...FIRST, appEmoji: '📚' }), /data-object-icon="emoji" aria-hidden="true">📚</);
   assert.match(drawn(), /<span class="messages-object-icon">◆<\/span>/);
-  // A request's card keeps its number sign, whatever the tray says.
-  work = { needsYou: [], now: [job({ iconUrl: '/app-icons/a1b2c3' })], history: [] };
+  // A request's card keeps its number sign, whatever the tracks say.
+  work = { tracks: [job({ iconUrl: '/app-icons/a1b2c3' })] };
   const request = renderToHtml(createElement(iconic.BotHeadWords, { head: iconic.botHead(`${LINE}\n\n${WORDS}`, META), objects: [] }));
   assert.match(request, /<span class="messages-object-icon">#<\/span>/);
 });

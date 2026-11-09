@@ -41,6 +41,9 @@
 // follow-up waiting its turn showed as nothing while the bot said otherwise.
 
 const { changeHref } = require('./change-destination');
+// #6528: the ready rule the bot's own ready card uses (checks passed and the
+// before & after shots settled), one copy shared with the change machine.
+const { heldUntil } = require('../workflow/rules/bot-readiness.ts');
 
 // Lazy: the live module is large, and only the queue readers below need it.
 function live() { return require('./homeroom-bot-live'); }
@@ -95,8 +98,8 @@ function replyLateralSql({
  * (newest by id, any mode) waits: live, ready, nothing built from it, not
  * held by a limit, on a request still open. Null otherwise. The aliases are
  * the caller's, as replyLateralSql's are, so the bot page (ai-work.js
- * FACTS_SQL) and the Workshop (workshop-waiting.js PLANS_SQL) ask the same
- * question one way. planWaits below mirrors it field by field.
+ * FACTS_SQL) and anything else that asks the same question asks it one way.
+ * planWaits below mirrors it field by field.
  */
 function planWaitingSql({ appId = 'm.app_id', issueNumber = 'm.issue_number' } = {}) {
   return `(SELECT CASE WHEN run.mode = 'live' AND run.verdict = 'ready'
@@ -129,6 +132,34 @@ function planWaits(row) {
     && !row.run_proposal && !!row.plan_waiting_at && !row.build_waiting_at
     && !row.build_session_id && !row.cap_suppressed && row.request_closed !== true;
 }
+
+/**
+ * Pure (#6357): why a queue row is held and until when, or null when it is
+ * not held (no held_until, or one already past): { kind, until }. `kind` is
+ * `allowance` (its payer's building time for the week is used up, held
+ * until the week resets) or `cooldown` (its look threw THROWN_TRIES times
+ * in a row, held for a day: src/workflow/bot-request/machine.ts), as the
+ * workflow recorded it (held_reason). A hold stored before that has no
+ * reason, and is not guessed as the allowance: an allowance hold always ends
+ * at the week's reset (limits.weeklyResetAt, Monday 00:00 UTC), so only a
+ * hold ending exactly there is one, and any other is a cooldown.
+ * HOLD_IS_ALLOWANCE_SQL is the same rule in SQL.
+ */
+function holdOf(row, { now = new Date() } = {}) {
+  const until = row && row.held_until ? new Date(row.held_until) : null;
+  if (!until || Number.isNaN(until.getTime()) || until.getTime() <= new Date(now).getTime()) return null;
+  const said = row.held_reason === 'allowance' || row.held_reason === 'cooldown' ? row.held_reason : null;
+  const weekBoundary = until.getUTCDay() === 1 && until.getUTCHours() === 0 && until.getUTCMinutes() === 0
+    && until.getUTCSeconds() === 0 && until.getUTCMilliseconds() === 0;
+  return { kind: said || (weekBoundary ? 'allowance' : 'cooldown'), until: until.toISOString() };
+}
+
+/**
+ * holdOf's allowance, in SQL, for the queue row aliased `q`. Written out the
+ * same in homeroom-bot-dm.js noteOverAllowance, whose query stays static.
+ */
+const HOLD_IS_ALLOWANCE_SQL = `(q.held_reason = 'allowance' OR (q.held_reason IS NULL
+  AND q.held_until = date_trunc('week', q.held_until AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))`;
 
 /**
  * Pure (#6228): whether a person's reply on a request is newer than the
@@ -505,6 +536,22 @@ function checksOnHead(row) {
   return head.toLowerCase() === checked.toLowerCase();
 }
 
+/**
+ * #6521: checksOnHead for a change as the change page's own rows carry it
+ * (routes/votes.js /promoted and /proposals/:id, whose columns are `source`
+ * and `checks_commit_sha`), so the page, the thread list (stageOf) and the
+ * merge gate read one rule instead of the page believing a stale pass.
+ */
+function sessionChecksOnHead(session) {
+  if (!session) return true;
+  return checksOnHead({
+    proposal_source: session.source,
+    imported_pr_head_sha: session.imported_pr_head_sha,
+    reviewed_head_sha: session.reviewed_head_sha,
+    checks_sha: session.checks_commit_sha,
+  });
+}
+
 // N5: a proposal's stages on the vote step that are not ready to try: a
 // follow-up waiting its turn or running changes the change.
 const FOLLOW_UP_STAGES = new Set(['followup_queued', 'revising']);
@@ -517,12 +564,33 @@ const FOLLOW_UP_STAGES = new Set(['followup_queued', 'revising']);
 // vote too, and a queued ask past the sweep's week is not an update any more.
 const UPDATE_TAKEN_HOURS = 3; // = homeroom-bot-voice.js STALE_ASK_HOURS
 const UPDATE_QUEUED_DAYS = 7; // = homeroom-bot.js sweepStrandedAsks' window
+// #6348 (5 Nov 2026): the longest a turn may run (src/workflow/turn/machine.ts
+// MAX_TURN_MS). A turn marker older than this is one whose process died
+// without releasing it, and it is no update on its way.
+const UPDATE_TURN_HOURS = 6; // = src/workflow/turn/machine.ts MAX_TURN_MS
+
+/**
+ * #6348: an ask holds the vote only while its change is still on the version
+ * the ask was made against. `asked_head_sha` is recorded when the ask is
+ * queued (homeroom-bot-voice.js recordAsk); NULL for asks made before the
+ * column existed, which keep the time windows alone. A NULL current head
+ * keeps holding, as it did before the head was compared at all. `$`-free
+ * SQL; `uk` is a homeroom_bot_change_asks alias and `cs` a chat_sessions one.
+ */
+function askOnHeadSql(uk, cs) {
+  return `(${uk}.asked_head_sha IS NULL
+           OR lower(${uk}.asked_head_sha) = lower(COALESCE(CASE WHEN ${cs}.source = 'imported'
+                                                               THEN ${cs}.imported_pr_head_sha
+                                                               ELSE ${cs}.reviewed_head_sha END,
+                                                            ${uk}.asked_head_sha)))`;
+}
 
 /**
  * #6282: whether an update to a change (`cs`, a chat_sessions alias) is on
- * its way, as `$`-free SQL: 'running' while a turn is in flight on it, or the
- * bot holds a fresh taken ask; 'queued' while an ask waits its turn; NULL
- * when no update is coming. It reads the bot's own records
+ * its way, as `$`-free SQL: 'running' while a fresh turn is in flight on it,
+ * or the bot holds a fresh taken ask; 'queued' while an ask waits its turn,
+ * and the change is still on the version the ask was made against (#6348);
+ * NULL when no update is coming. It reads the bot's own records
  * (homeroom_bot_change_asks) and the durable turn marker
  * (chat_sessions.active_turn), so nothing new is stored.
  *
@@ -532,22 +600,27 @@ const UPDATE_QUEUED_DAYS = 7; // = homeroom-bot.js sweepStrandedAsks' window
  */
 function updateComingSql(cs) {
   return `(CASE
-    WHEN ${cs}.active_turn IS NOT NULL
+    WHEN (${cs}.active_turn IS NOT NULL
+          AND (${cs}.active_turn->>'startedAt' IS NULL
+               OR (${cs}.active_turn->>'startedAt')::timestamptz > NOW() - make_interval(hours => ${UPDATE_TURN_HOURS})))
       OR EXISTS (SELECT 1 FROM homeroom_bot_change_asks uk
                   WHERE uk.session_id = ${cs}.id AND uk.status = 'taken'
-                    AND uk.taken_at > NOW() - make_interval(hours => ${UPDATE_TAKEN_HOURS}))
+                    AND uk.taken_at > NOW() - make_interval(hours => ${UPDATE_TAKEN_HOURS})
+                    AND ${askOnHeadSql('uk', cs)})
       THEN 'running'
     WHEN EXISTS (SELECT 1 FROM homeroom_bot_change_asks uk
                   WHERE uk.session_id = ${cs}.id AND uk.status = 'queued'
-                    AND uk.created_at > NOW() - make_interval(days => ${UPDATE_QUEUED_DAYS}))
+                    AND uk.created_at > NOW() - make_interval(days => ${UPDATE_QUEUED_DAYS})
+                    AND ${askOnHeadSql('uk', cs)})
       THEN 'queued' END)`;
 }
 
 /**
  * #6282: what the update on its way changes, for "Updating: …": the newest
  * fresh taken ask's instruction, else the newest queued one's, or NULL when
- * the turn has nobody's ask behind it. `$`-free SQL; `cs` is a chat_sessions
- * alias, as updateComingSql's is.
+ * the turn has nobody's ask behind it. #6348: it names only an ask that
+ * holds, so "Updating: …" and the hold never disagree. `$`-free SQL; `cs` is
+ * a chat_sessions alias, as updateComingSql's is.
  */
 function updateAskSql(cs) {
   return `(SELECT uk.instruction
@@ -557,6 +630,7 @@ function updateAskSql(cs) {
                     AND uk.taken_at > NOW() - make_interval(hours => ${UPDATE_TAKEN_HOURS}))
                 OR (uk.status = 'queued'
                     AND uk.created_at > NOW() - make_interval(days => ${UPDATE_QUEUED_DAYS})))
+              AND ${askOnHeadSql('uk', cs)}
             ORDER BY CASE uk.status WHEN 'taken' THEN 0 ELSE 1 END, uk.id DESC
             LIMIT 1)`;
 }
@@ -624,9 +698,30 @@ function stageOf(input, { now = new Date() } = {}) {
     // waits on nobody's approval.
     const first = row.first_version === true;
     if (row.check_state === 'passing' || row.check_state === 'skipped') {
-      return first
-        ? { stage: 'vote', since: row.proposal_at, doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two' }
-        : { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
+      if (first) {
+        return { stage: 'vote', since: row.proposal_at, doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two' };
+      }
+      // #6528: its tests passed but its before & after shots are still being
+      // taken: it reads as checking, so the "Ready to try" bell (and the
+      // ready card) waits until the pictures are there. The rule is the
+      // bot's own readiness (bot-readiness.ts heldUntil), with its 45-minute
+      // lapse when no settle ever comes; a change with nothing visible to
+      // shoot is not held.
+      const head = (row.proposal_source === 'imported' ? row.imported_pr_head_sha : row.reviewed_head_sha) || row.checks_sha;
+      const held = heldUntil({
+        shots_state: row.shots_state,
+        shots_run_id: row.shots_run_id,
+        shots_detail: row.shots_detail,
+        shots_updated_at: row.shots_updated_at,
+        checks_checked_at: row.checks_at,
+      }, head, now.getTime());
+      if (held != null) {
+        return {
+          stage: 'checks', since: row.checks_at || row.proposal_at,
+          doing: 'it\'s waiting for approval, and its tests passed; its before and after shots are still being taken',
+        };
+      }
+      return { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
     }
     const waiting = first ? 'it goes live without a vote once its tests pass' : 'it\'s waiting for approval';
     // #6284: the bot stopped at its own limit on failing checks. Needs you
@@ -658,7 +753,7 @@ function stageOf(input, { now = new Date() } = {}) {
   if (row.started_at) {
     // #6228: a read under way after a person replied is reading that reply.
     if (replyWaits(row, { now })) {
-      return { stage: 'reading', reply: true, since: row.started_at, doing: 'reading the newest reply', limit: 'reading' };
+      return { stage: 'reading', reply: true, since: row.started_at, doing: 'reading the new reply', limit: 'reading' };
     }
     return { stage: 'reading', since: row.started_at, doing: `reading ${it} to decide whether to ask a question or build it`, limit: 'reading' };
   }
@@ -733,10 +828,18 @@ function stageOf(input, { now = new Date() } = {}) {
   if (row.queue_id) {
     // One story: held until the week resets, because its payer's building
     // time is used up (homeroom-bot.js runTriage): On hold until Monday.
-    const held = row.held_until ? new Date(row.held_until) : null;
-    if (held && !Number.isNaN(held.getTime()) && held > now) {
+    // #6357: or held for a day after its look threw again and again, which
+    // is no money at all: paused, and tried again then.
+    const hold = holdOf(row, { now });
+    if (hold && hold.kind === 'cooldown') {
       return {
-        stage: 'on_hold', since: row.enqueued_at, waitingOn: 'time',
+        stage: 'on_hold', hold: 'cooldown', until: hold.until, since: row.enqueued_at, waitingOn: 'time',
+        doing: `paused after repeated errors: trying again at ${hold.until.slice(0, 16).replace('T', ' ')} UTC`,
+      };
+    }
+    if (hold) {
+      return {
+        stage: 'on_hold', until: hold.until, since: row.enqueued_at, waitingOn: 'time',
         doing: 'on hold until Monday: this week\'s building time is used up',
       };
     }
@@ -745,7 +848,7 @@ function stageOf(input, { now = new Date() } = {}) {
     // #6228: a reply waiting for the read the bot has queued reads as that
     // read about to happen, not as a request waiting its turn.
     if (replyWaits(row, { now })) {
-      return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'about to read the newest reply' };
+      return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'reading the new reply in a moment' };
     }
     return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder',
       ...(planFailed(row) ? { retry: 'plan' } : {}) };
@@ -753,7 +856,7 @@ function stageOf(input, { now = new Date() } = {}) {
   // #6228: a reply nobody has queued a read for yet still reads as one
   // coming, for REPLY_WAIT_MS: the bot's refresh sees it and queues it.
   if (replyWaits(row, { now })) {
-    return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'about to read the newest reply' };
+    return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'reading the new reply in a moment' };
   }
   return null;
 }
@@ -893,6 +996,11 @@ function typicalMinutes(stage, limit = null) {
  *                                        time once, homeroom-bot.js
  *                                        checksRetried; else null)
  *   { state: 'queued', since }           that row waits its turn
+ *   { state: 'platform' }                #6388: the failing checks on this
+ *                                        head all look like the platform's
+ *                                        (a preview that did not answer), so
+ *                                        the bot leaves them to Homeroom's
+ *                                        preview and its re-run
  *   { state: 'handed_off' }              its newest run on this head gave it
  *                                        to a person (verdict person or
  *                                        failed)
@@ -909,7 +1017,8 @@ async function changeBotFix(pool, sessionId, { viewer = null } = {}) {
   if (!Number.isInteger(id) || id <= 0) return null;
   try {
     const { rows } = await pool.query(
-      `SELECT cs.app_id, cs.status, cs.check_state, cs.reviewed_head_sha, cs.linked_issues, u.username
+      `SELECT cs.app_id, cs.status, cs.check_state, cs.checks_commit_sha, cs.reviewed_head_sha,
+              cs.linked_issues, cs.test_results, u.username
          FROM chat_sessions cs
          JOIN users u ON u.id = cs.user_id
         WHERE cs.id = $1`,
@@ -935,6 +1044,16 @@ async function changeBotFix(pool, sessionId, { viewer = null } = {}) {
     }
     const head = String(cs.reviewed_head_sha || '').toLowerCase();
     if (!head) return null;
+    // #6388: the checks that failed on the head up for a vote look like the
+    // platform's own trouble (a preview that never answered), which the bot
+    // already chose not to revise for (homeroom-bot.js oweChecksFix). The
+    // card says so instead of falling through to "Its author needs to fix
+    // this", which its requester read as being about them.
+    if (String(cs.checks_commit_sha || '').toLowerCase() === head) {
+      const followup = require('./homeroom-bot-followup');
+      const { failing, total } = followup.failingChecks(cs.test_results);
+      if (followup.checksLookLikeInfra({ failing, total })) return { state: 'platform', since: null, reason: null };
+    }
     const runs = await pool.query(
       `SELECT id, limit_stop FROM homeroom_bot_runs
         WHERE proposal_session_id = $1 AND LOWER(checks_head_sha) = $2 AND verdict IN ('person', 'failed')
@@ -1027,7 +1146,7 @@ function requestRecordJoinsSql({ appId = 'm.app_id', issueNumber = 'm.issue_numb
 }
 
 /** The columns requestRecordJoinsSql provides, as both readers select them. */
-const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until,
+const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until, q.held_reason,
             run.id AS run_id, run.mode, run.verdict, run.created_at AS run_at, run.duration_ms AS run_duration_ms,
             run.cap_suppressed,
             run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
@@ -1041,6 +1160,10 @@ const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q
             -- Merged but not live yet (live_at) reads as merging: going live.
             CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
             cs.check_state, cs.check_phase,
+            -- #6528: the change's before & after shots, so a passing change
+            -- still being shot reads as checking rather than ready.
+            cs.shots_state, cs.shots_run_id, cs.shots_detail, cs.shots_updated_at,
+            cs.merge_conflict_state, cs.integration_merges_clean,
             cs.checks_progress, cs.checks_checked_at AS checks_at, cs.test_results,
             -- N5: which commit the verdict is about, and the head up for
             -- approval (checksOnHead).
@@ -1824,6 +1947,8 @@ module.exports = {
   // #6228: a reply on a request waiting to be read.
   REPLY_WAIT_MS,
   replyWaits,
+  holdOf,
+  HOLD_IS_ALLOWANCE_SQL,
   replyLateralSql,
   // #6280: one record read for the bot page's rows and a request's track.
   requestClosedSql,
@@ -1835,6 +1960,9 @@ module.exports = {
   // #6282: an update on its way holds the vote it would otherwise ask for.
   UPDATE_TAKEN_HOURS,
   UPDATE_QUEUED_DAYS,
+  // #6348: a turn marker older than a turn can run is not an update coming.
+  UPDATE_TURN_HOURS,
+  askOnHeadSql,
   updateComingSql,
   updateAskSql,
   inFlight,
@@ -1842,6 +1970,8 @@ module.exports = {
   // #6234: the bot's own fix of a change's failing checks, for its page.
   changeBotFix,
   checksOnHead,
+  // #6521: the same rule for a change page's own row shape.
+  sessionChecksOnHead,
   firstVersionStage,
   firstVersionStopped,
   handedBack,

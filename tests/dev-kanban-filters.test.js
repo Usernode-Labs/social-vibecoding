@@ -57,7 +57,7 @@ function makeCtx(over) {
     alert: () => {},
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener: () => {},
-    localStorage: o.localStorage || { getItem: () => null, setItem: () => {} },
+    localStorage: o.localStorage || makeMemoryStore(),
     sessionStorage: o.sessionStorage || makeMemoryStore(),
   };
   sandbox.window = sandbox;
@@ -87,7 +87,7 @@ function makeAppView() {
 
 // Default (empty) filters — the fast-path that must match everything.
 // #5369: `stage` (the Overview figures' filter) is part of the model too.
-const none = { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false, stage: null };
+const none = { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, yours: false, stage: null };
 
 const issue = (over) => ({
   number: 42, title: 'Dark mode toggle resets', created_by_username: 'evan',
@@ -639,7 +639,7 @@ test('_kanbanAssigneeOptions unions assignees and authors and keeps the current 
   assert.deepEqual(names(), ['casey', 'evan', 'kim', 'maya', 'sam', 'zoe']);
 });
 
-// ── Persistence helpers (sessionStorage-backed, per app slug) ──────────
+// ── Persistence helpers (localStorage-backed, per app slug) ────────────
 
 // Objects come back from the vm realm with a foreign Object.prototype, which
 // trips deepStrictEqual — copy into the host realm before comparing (same
@@ -659,12 +659,12 @@ test('_saveKanbanFilters round-trips through _loadKanbanFilters under the slug',
   AppView._kanbanFilters = { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true };
   AppView._saveKanbanFilters('my-app');
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true, theme: null, assignedToMe: false, createdByMe: false, stage: null });
+    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true, theme: null, assignedToMe: false, yours: false, stage: null });
 });
 
 test('_saveKanbanFilters clears the key when filters are at defaults', () => {
   const store = makeMemoryStore();
-  const AppView = makeCtx({ sessionStorage: store }).__AppView;
+  const AppView = makeCtx({ localStorage: store }).__AppView;
   const key = `${AppView.KANBAN_FILTERS_KEY}:my-app`;
   // First persist an active filter, then clear it — the key must be removed
   // rather than left holding an empty object (no residue for a cleared board).
@@ -686,31 +686,92 @@ test('persisted filters are isolated per app slug', () => {
   assert.equal(AppView._loadKanbanFilters('app-b').q, 'beta');
 });
 
+test('filters survive a second tab: localStorage is shared, a tab session is not (#6509)', () => {
+  const shared = makeMemoryStore();
+  const sandboxA = makeCtx({ localStorage: shared, sessionStorage: makeMemoryStore() });
+  const a = sandboxA.__AppView;
+  a._kanbanFilters = { q: 'dark', priority: 'high', assignee: null, category: null, needsVote: false };
+  a._saveKanbanFilters('my-app');
+  // A second tab has its own empty sessionStorage but the same localStorage.
+  const b = makeCtx({ localStorage: shared, sessionStorage: makeMemoryStore() }).__AppView;
+  assert.deepEqual(plain(b._loadKanbanFilters('my-app')),
+    { q: 'dark', priority: 'high', assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, yours: false, stage: null });
+  // The filters no longer live in the per-tab store at all.
+  assert.equal(sandboxA.sessionStorage.getItem(`${a.KANBAN_FILTERS_KEY}:my-app`), null);
+});
+
+test('a filter set before the change is carried over from sessionStorage once (#6509)', () => {
+  const shared = makeMemoryStore();
+  const legacy = makeMemoryStore();
+  const key = 'devKanbanFilters:my-app';
+  // The old build kept this per tab; this tab still holds it.
+  legacy.setItem(key, JSON.stringify({ q: 'old', priority: 'high' }));
+  const AppView = makeCtx({ localStorage: shared, sessionStorage: legacy }).__AppView;
+  const loaded = AppView._loadKanbanFilters('my-app');
+  assert.equal(loaded.q, 'old');
+  assert.equal(loaded.priority, 'high');
+  assert.equal(legacy.getItem(key), null, 'the old per-tab key is dropped');
+  assert.deepEqual(JSON.parse(shared.getItem(key)), { q: 'old', priority: 'high' },
+    'the legacy value now lives where every tab can see it');
+  // From then on localStorage answers on its own.
+  const other = makeCtx({ localStorage: shared, sessionStorage: makeMemoryStore() }).__AppView;
+  assert.equal(other._loadKanbanFilters('my-app').q, 'old');
+});
+
+test('clearing the filters removes the key from both stores (#6509)', () => {
+  const local = makeMemoryStore();
+  const session = makeMemoryStore();
+  const AppView = makeCtx({ localStorage: local, sessionStorage: session }).__AppView;
+  const key = `${AppView.KANBAN_FILTERS_KEY}:my-app`;
+  local.setItem(key, JSON.stringify({ q: 'dark' }));
+  session.setItem(key, JSON.stringify({ q: 'dark' }));
+  AppView._kanbanFilters = AppView._defaultKanbanFilters();
+  AppView._saveKanbanFilters('my-app');
+  assert.equal(local.getItem(key), null);
+  assert.equal(session.getItem(key), null);
+});
+
+test('the mobile column tab and the review sort stay per tab (#6509)', () => {
+  const local = makeMemoryStore();
+  const session = makeMemoryStore();
+  const AppView = makeCtx({ localStorage: local, sessionStorage: session }).__AppView;
+  // Only the board's filters moved; these two are still per-tab preferences.
+  AppView._kanbanTab = 'inreview';
+  AppView._saveKanbanTab('my-app');
+  assert.equal(session.getItem(`${AppView.KANBAN_TAB_KEY}:my-app`), 'inreview');
+  assert.equal(local.getItem(`${AppView.KANBAN_TAB_KEY}:my-app`), null);
+  AppView.appData = { slug: 'my-app' };
+  AppView._repaintBoardSurface = () => {};
+  AppView._setReviewSort('priority');
+  assert.equal(session.getItem(`${AppView.REVIEW_SORT_KEY}:my-app`), 'priority');
+  assert.equal(local.getItem(`${AppView.REVIEW_SORT_KEY}:my-app`), null);
+});
+
 test('_loadKanbanFilters merges over defaults for a partial stored object', () => {
   const store = makeMemoryStore();
-  const AppView = makeCtx({ sessionStorage: store }).__AppView;
+  const AppView = makeCtx({ localStorage: store }).__AppView;
   store.setItem(`${AppView.KANBAN_FILTERS_KEY}:my-app`, JSON.stringify({ q: 'hi' }));
   // Missing fields fall back to their defaults rather than becoming undefined.
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false, stage: null });
+    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, yours: false, stage: null });
 });
 
 test('_loadKanbanFilters yields defaults on corrupt stored JSON', () => {
   const store = makeMemoryStore();
-  const AppView = makeCtx({ sessionStorage: store }).__AppView;
+  const AppView = makeCtx({ localStorage: store }).__AppView;
   store.setItem(`${AppView.KANBAN_FILTERS_KEY}:my-app`, '{not valid json');
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')), none);
 });
 
 test('persistence helpers survive a storage-less environment', () => {
-  // Simulate sessionStorage throwing (private-window / disabled storage):
+  // Simulate localStorage throwing (private-window / disabled storage):
   // load falls back to defaults and save is a silent no-op, never throwing.
   const throwing = {
     getItem: () => { throw new Error('denied'); },
     setItem: () => { throw new Error('denied'); },
     removeItem: () => { throw new Error('denied'); },
   };
-  const AppView = makeCtx({ sessionStorage: throwing }).__AppView;
+  const AppView = makeCtx({ localStorage: throwing, sessionStorage: throwing }).__AppView;
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')), none);
   AppView._kanbanFilters = { q: 'dark', priority: null, assignee: null, needsVote: false };
   assert.doesNotThrow(() => AppView._saveKanbanFilters('my-app'));
@@ -718,7 +779,7 @@ test('persistence helpers survive a storage-less environment', () => {
 
 test('?q= seeds the search on the first load, and only the first (#2090)', () => {
   const store = makeMemoryStore();
-  const sandbox = makeCtx({ sessionStorage: store });
+  const sandbox = makeCtx({ localStorage: store });
   const AppView = sandbox.__AppView;
   const key = `${AppView.KANBAN_FILTERS_KEY}:my-app`;
   // The sandbox has no URL of its own; hand it the deep link.
@@ -738,11 +799,11 @@ test('?q= seeds the search on the first load, and only the first (#2090)', () =>
   assert.equal(AppView._loadKanbanFilters('my-app').q, '', 'a cleared search stays cleared');
   assert.equal(AppView._loadKanbanFilters('other-app').q, '', 'and no other app inherits it');
   // Blank is absent: nothing seeded, nothing written.
-  const blank = makeCtx({ sessionStorage: makeMemoryStore() });
+  const blank = makeCtx({ localStorage: makeMemoryStore() });
   blank.location = { search: '?q=%20%20' };
   blank.URLSearchParams = URLSearchParams;
   assert.deepEqual(plain(blank.__AppView._loadKanbanFilters('my-app')), none);
-  assert.equal(blank.sessionStorage.getItem(`${blank.__AppView.KANBAN_FILTERS_KEY}:my-app`), null);
+  assert.equal(blank.localStorage.getItem(`${blank.__AppView.KANBAN_FILTERS_KEY}:my-app`), null);
 });
 
 // ── Session cards have only the filters their data supports ─────────────────
@@ -1102,12 +1163,12 @@ test('_kanbanMatchFilters asks the server once per query and folds the answer in
 });
 
 
-// ─── #1935: "Assigned to you" / "Created by you" quick toggles ─────────────
+// ─── #1935: "Assigned to you" / "Yours" quick toggles ──────────────────────
 
-test('Created by you keeps what the viewer authored, on every kind (#1935)', () => {
+test('Yours keeps what the viewer authored, on every kind, at once (#1935)', () => {
   const AppView = makeAppView();
   AppView.__sandbox.App.user = { id: 1, username: 'evan' };
-  const f = { ...none, createdByMe: true };
+  const f = { ...none, yours: true };
   assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'evan' }), f), true);
   assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'sam' }), f), false);
   assert.equal(AppView._devCardMatches('proposal', prop({ username: 'evan' }), f), true);
@@ -1116,6 +1177,34 @@ test('Created by you keeps what the viewer authored, on every kind (#1935)', () 
   assert.equal(AppView._devCardMatches('merged', merged({ username: 'kim' }), f), false);
   assert.equal(AppView._devCardMatches('session', { username: 'evan' }, f), true);
   assert.equal(AppView._devCardMatches('session', { username: 'sam' }, f), false);
+});
+
+test('5 Nov 2026: Yours is the Homeroom bot tab\'s reading of your work: every thread you are in, not authorship alone', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  AppView.__sandbox.App.currentApp = 'my-app';
+  const f = { ...none, yours: true };
+  // A change Homeroom bot built from your request is yours, before anything is read.
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'homeroom_bot', requested_by_me: true }), f), true);
+  // The project's threads you are in (GET /api/apps/:slug/threads/yours):
+  // a request you only voted on or wrote in, a change in one of your
+  // threads, a decision you voted on.
+  AppView._yours = { slug: 'my-app', requests: new Set([12]), sessions: new Set([70]), decisions: new Set([5]) };
+  assert.equal(AppView._devCardMatches('issue', issue({ number: 12, created_by_username: 'sam' }), f), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ number: 13, created_by_username: 'sam' }), f), false);
+  assert.equal(AppView._devCardMatches('proposal', prop({ id: 70, username: 'sam' }), f), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ id: 71, username: 'sam', linked_issues: [12] }), f), true, 'a change for a request of yours');
+  assert.equal(AppView._devCardMatches('proposal', prop({ id: 72, username: 'sam', linked_issues: [13] }), f), false);
+  assert.equal(AppView._devCardMatches('gov', gov({ id: 5, created_by_username: 'sam' }), f), true);
+  // Another project's list says nothing here.
+  AppView.__sandbox.App.currentApp = 'other-app';
+  assert.equal(AppView._devCardMatches('issue', issue({ number: 12, created_by_username: 'sam' }), f), false);
+  // It is read when the toggle goes on, once a project.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
+  assert.match(src, /if \(key === 'yours' && AppView\._kanbanFilters\.yours\) AppView\._loadYours\(\);/);
+  assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/threads\/yours\$\{demo\}`/);
+  // ?yours=1 seeds it, once, as ?q= seeds the search.
+  assert.match(src, /AppView\._kanbanYoursUrlSeed = \/\[\?&\]yours=1\(&\|\$\)\/\.test\(String\(window\.location\.search \|\| ''\)\);/);
 });
 
 test('Assigned to you reads the voted assignee on issues, authorship where nothing is assignable (#1935)', () => {
@@ -1139,27 +1228,27 @@ test('signed out, a persisted quick toggle matches nothing and the strip hides b
   const AppView = makeAppView();
   AppView.__sandbox.App.user = null;
   assert.equal(AppView._devCardMatches('issue', issue({ assignee: { top: 'evan' } }), { ...none, assignedToMe: true }), false);
-  assert.equal(AppView._devCardMatches('issue', issue({}), { ...none, createdByMe: true }), false);
+  assert.equal(AppView._devCardMatches('issue', issue({}), { ...none, yours: true }), false);
   assert.equal(AppView._kanbanFilterView().quick, null);
   AppView.__sandbox.App.user = { id: 1, username: 'evan' };
-  assert.deepEqual(plain(AppView._kanbanFilterView().quick), { assignedToMe: false, createdByMe: false });
+  assert.deepEqual(plain(AppView._kanbanFilterView().quick), { assignedToMe: false, yours: false });
 });
 
 test('a quick toggle flips, counts as an active filter, and persists like the rest (#1935)', () => {
   const store = makeMemoryStore();
-  const sandbox = makeCtx({ sessionStorage: store });
+  const sandbox = makeCtx({ localStorage: store });
   const AppView = sandbox.__AppView;
   sandbox.App.user = { id: 1, username: 'evan' };
   sandbox.App.currentApp = 'my-app';
   AppView._kanbanFilters = AppView._defaultKanbanFilters();
   let repaints = 0;
   AppView._repaintBoardSurface = () => { repaints += 1; AppView._saveKanbanFilters('my-app'); };
-  AppView._toggleKanbanQuickFilter('createdByMe');
-  assert.equal(AppView._kanbanFilters.createdByMe, true);
+  AppView._toggleKanbanQuickFilter('yours');
+  assert.equal(AppView._kanbanFilters.yours, true);
   assert.equal(AppView._kanbanFiltersActive(), true);
   assert.equal(repaints, 1);
-  assert.equal(AppView._loadKanbanFilters('my-app').createdByMe, true, 'it survives a reload of the surface');
-  AppView._toggleKanbanQuickFilter('createdByMe');
+  assert.equal(AppView._loadKanbanFilters('my-app').yours, true, 'it survives a reload of the surface');
+  AppView._toggleKanbanQuickFilter('yours');
   assert.equal(AppView._kanbanFiltersActive(), false);
   AppView._toggleKanbanQuickFilter('priority');
   assert.equal(AppView._kanbanFilters.priority, null, 'only the two quick keys toggle');
@@ -1168,14 +1257,14 @@ test('a quick toggle flips, counts as an active filter, and persists like the re
 test('the strip draws the two quick toggles as pressed chips, only with a viewer (#1935)', () => {
   const base = { mounted: true, q: '', seq: 0, count: 0, chips: [] };
   const on = renderComponent('frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
-    { ...base, quick: { assignedToMe: true, createdByMe: false } });
+    { ...base, quick: { assignedToMe: true, yours: false } });
   assert.match(on, /data-quick-filter="assignedToMe"[^>]*aria-pressed="true"[^>]*bg-zinc-900 text-white/);
   // #5820: the word shows beside the glyph from 700px up, so it is a
   // `dev-chip-word` copy; `title` and `aria-label` still carry it on a phone.
   assert.match(on, /data-quick-filter="assignedToMe"[^>]*aria-label="Assigned to you"[^>]*title="Assigned to you"/);
   assert.match(on, /<span class="sr-only dev-chip-word">Assigned to you<\/span>/);
-  assert.match(on, /data-quick-filter="createdByMe"[^>]*aria-pressed="false"/);
-  assert.match(on, /<span class="sr-only dev-chip-word">Created by you<\/span>/);
+  assert.match(on, /data-quick-filter="yours"[^>]*aria-pressed="false"/);
+  assert.match(on, /<span class="sr-only dev-chip-word">Yours<\/span>/);
   const anon = renderComponent('frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
     { ...base, quick: null });
   assert.doesNotMatch(anon, /data-quick-filter/);
@@ -1195,12 +1284,12 @@ test('the strip draws the two quick toggles as pressed chips, only with a viewer
 test('the dialog owns the two quick filters only when the strip hands them over', () => {
   const AppView = makeAppView();
   AppView.__sandbox.App.user = { id: 1, username: 'evan' };
-  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), assignedToMe: true, createdByMe: true };
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), assignedToMe: true, yours: true };
 
   // Strip's, by default: the bar draws the toggles and the dialog offers none.
   assert.equal(AppView._quickFiltersInDialog, false);
   assert.deepEqual(plain(AppView._kanbanFilterView().quick),
-    { assignedToMe: true, createdByMe: true });
+    { assignedToMe: true, yours: true });
   assert.equal(AppView._kanbanFilterCount(), 0,
     'the count does not report a filter whose own toggle is on screen');
   assert.equal(AppView._kanbanActiveChips().map((c) => c.key).join(','), '',
@@ -1215,7 +1304,7 @@ test('the dialog owns the two quick filters only when the strip hands them over'
   assert.equal(AppView._kanbanFilterView().quick, null);
   assert.equal(AppView._kanbanFilterCount(), 2);
   assert.equal(AppView._kanbanActiveChips().map((c) => c.key).join(','),
-    'assignedToMe,createdByMe');
+    'assignedToMe,yours');
   // Idempotent: a re-measure that reaches the same answer publishes nothing,
   // which is what keeps the report out of a loop with the render that made it.
   AppView._setQuickFiltersInDialog(true);
@@ -1251,18 +1340,18 @@ test('the dialog payload offers the switches only when it owns them, and Done re
 
   // WHILE THE STRIP OWNS THEM, Done must not write its snapshot back: it was
   // taken at open, and the reader may have flipped a toggle since.
-  AppView.applyKanbanFilters({ priority: 'high', assignedToMe: false, createdByMe: true });
+  AppView.applyKanbanFilters({ priority: 'high', assignedToMe: false, yours: true });
   assert.equal(AppView._kanbanFilters.priority, 'high');
   assert.equal(AppView._kanbanFilters.assignedToMe, true, 'untouched');
-  assert.equal(AppView._kanbanFilters.createdByMe, false, 'untouched');
+  assert.equal(AppView._kanbanFilters.yours, false, 'untouched');
 
   // Once it owns them, the same call is authoritative.
   AppView._quickFiltersInDialog = true;
   AppView._openKanbanFiltersDialog();
   assert.equal(opened.quick, true);
-  AppView.applyKanbanFilters({ priority: null, assignedToMe: false, createdByMe: true });
+  AppView.applyKanbanFilters({ priority: null, assignedToMe: false, yours: true });
   assert.equal(AppView._kanbanFilters.assignedToMe, false);
-  assert.equal(AppView._kanbanFilters.createdByMe, true);
+  assert.equal(AppView._kanbanFilters.yours, true);
 
   // Signed out there is no "you", so neither surface offers them however the
   // measurement came out.

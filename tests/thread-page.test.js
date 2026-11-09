@@ -102,6 +102,28 @@ test('its first render is nothing; the thread is read in an effect', () => {
     'drawn from the shell\'s own list');
 });
 
+// #6387: "still loading" and "nothing to show" stop looking the same, so the
+// request's page can hold the change section's place instead of drawing a
+// status card it will swap out. A failed read settles too.
+test('#6387 the thread read says when it is loading, and settles on success or failure', () => {
+  const src = read(ITEMS);
+  assert.match(src, /const loading = !!path && !data && settledPath !== path;/);
+  assert.match(src, /\.then\(\(json\) => \{\s+if \(!live\) return;\s+setSettledPath\(path\);/);
+  assert.match(src, /\.catch\(\(\) => \{\s+if \(!live\) return;\s+setSettledPath\(path\);/);
+  assert.match(src, /return \{ data, setData, reread: \(\) => setRevision\(\(n\) => n \+ 1\), loading \};/);
+  assert.match(src, /const again = !!path && readPath\.current === path;/, 'a re-read of the same path keeps data, so it is never loading');
+});
+
+// #6387: the Votes and Testing cards keep their place while a change's own
+// read lands, so they fill in rather than pushing the page down.
+test('#6387 a change\'s cards keep their place until its own read lands', () => {
+  const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
+  assert.match(src, /\) : view \? \(\s+<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>\s+\) : \([\s\S]*?<ChangeGatesSkeleton \/>/);
+  assert.match(src, /export function ChangeSectionSkeleton\(\): ReactNode/);
+  assert.match(src, /data-thread-change-skeleton=""/);
+  assert.match(src, /label=\{t\('project:topic\.thread\.page\.changeLoading'\)\}/);
+});
+
 test('the request, change and decision pages draw it', () => {
   // A request's page reads its thread once, draws its changes and its vote
   // to close under the request (thread-changes.tsx), and lists the rest.
@@ -174,6 +196,14 @@ test('competing changes are one ballot; a pick is votes, cast only where they ch
   assert.equal(`${words(lines.what)}. ${words(lines.when)}`, 'Proposed: merge into #12. Happens in 24 hours unless someone objects');
   assert.equal(words(moveLines({ id: 2, kind: 'split', state: 'voting', input: { items: [{ type: 'request', number: 9 }] }, deadline: '', agreed: [], governanceId: 4 }).when),
     'Up for a vote, as someone objected');
+  // #6421: a change's question to a request's other askers, and who still
+  // has to answer.
+  const consent = moveLines({
+    id: 3, kind: 'merge', state: 'pending', input: { intoNumber: 6207 }, deadline: '', agreed: [], governanceId: null,
+    forChange: { id: 9, number: 6223 }, askOf: ['sam'], canAnswer: true,
+  });
+  assert.equal(words(consent.what), 'Move into #6207\'s thread? Change #6223 closes this request, and lives there.');
+  assert.equal(words(consent.when), 'Waiting for sam to answer');
   // A split may take anything but the lead.
   assert.deepEqual(splittable(payload([request, a])).map((i) => i.id), [51]);
 });
@@ -262,6 +292,14 @@ test('the bar\'s pill says where the request\'s work stands', () => {
   assert.equal(requestPill(layoutOf([{ ...close, target: 7 }]), null).key, 'close');
   assert.equal(requestPill(layoutOf([{ ...review, state: 'underway' }]), null).tone, 'progress');
   assert.equal(requestPill(layoutOf([]), 'building').key, 'building', 'the bot building it');
+  assert.equal(requestPill(layoutOf([]), 'ready_to_build').key, 'ready_to_build', 'ready, and waiting its turn');
+  assert.equal(requestPill(layoutOf([]), 'ready_to_build').spinner, undefined, 'a waiting build does not turn');
+  assert.equal(requestPill(layoutOf([]), 'ready_to_build').tone, 'neutral', 'the plain tone of Ready for a vote');
+  assert.equal(
+    requestPill(layoutOf([{ ...review, state: 'underway', ready: false }]), 'ready_to_build').key,
+    'building',
+    'a change underway still wins over a queued build',
+  );
   assert.equal(requestPill(layoutOf([{ ...review, state: 'merged', liveAt: '2026-11-03T10:00:00.000Z' }]), null).tone, 'ok');
   assert.equal(message('project:topic.thread.pill.choosing'), 'Pick one');
 });
@@ -325,7 +363,7 @@ test('the request\'s changes are drawn from their own pages\' reads, and the bal
   assert.match(src, /readChangeDetail\(\{ id: item\.id, status: item\.status \}, false, abort\.signal\)/, 'read as its own page reads it');
   assert.match(src, /const built = av\._topicViewFor\('proposal', row\);/);
   // 1 Nov 2026: folded under a ballot, without its own Vote (thread-one-page.test.js).
-  assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} \/>/, 'its own page\'s two cards');
+  assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>/, 'its own page\'s two cards');
   assert.match(src, /changeDetailAsk\(\(event as CustomEvent\)\.detail, item\.id\)/, 'and it moves when its page would');
   assert.match(src, /av\.castIssueVote\?\.\(v\.issueId, 'up', \{ reason: null \}\)/, 'a close is voted the platform\'s way');
   const head = read('frontend/src/features/dev-board/topic/change-head.tsx');

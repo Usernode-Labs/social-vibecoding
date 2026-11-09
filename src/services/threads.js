@@ -19,6 +19,7 @@
 // that throws is logged, the marker stays unset, and the next boot retries.
 
 const log = require('./logger');
+const { planRecordSql } = require('./request-specs');
 const issueRefs = require('./issue-proposal-ref');
 const { IN_PROGRESS_PAUSED_WINDOW_DAYS } = require('./issue-progress');
 const { workedOnSql } = require('../workflow/session-work.ts');
@@ -504,7 +505,10 @@ SELECT 'request' AS type, r.id::bigint AS id, r.number, r.title, r.state AS stat
        NULL::text AS reason, NULL::int AS target, NULL::int[] AS closes,
        NULL::int AS built_from_session_id, NULL::int AS built_from_version,
        FALSE AS ready,
-       NULL::timestamptz AS live_at
+       NULL::timestamptz AS live_at,
+       NULL::jsonb AS closes_requests, NULL::int AS built_for_user_id,
+       NULL::text AS applied_at, NULL::text AS applied_by,
+       NULL::text AS withdrawn_at, NULL::text AS superseded_by
   FROM requests r LEFT JOIN users ru ON ru.id = r.created_by
  WHERE r.thread_id = $1
 UNION ALL
@@ -522,14 +526,30 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
        COALESCE(cs.linked_issues, '{}'::int[]),
        cs.built_from_session_id, cs.built_from_version,
        ${CHANGE_READY_SQL},
-       cs.live_at
+       cs.live_at,
+       -- #6225: every request it closes, resolved for the Votes card, and
+       -- the person a yes would be for: its author, or, for a change
+       -- Homeroom bot built, the requester it was built for.
+       (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                 'number', c.n, 'title', r.title, 'by', COALESCE(ru.username, r.author_login),
+                 'filerId', r.created_by, 'builtFor', c.n = cs.created_from_issue_number) ORDER BY c.n), '[]'::jsonb)
+          FROM (SELECT DISTINCT unnest(COALESCE(cs.linked_issues, '{}'::int[])) AS n) c
+          LEFT JOIN requests r ON r.app_id = cs.app_id AND r.number = c.n
+          LEFT JOIN users ru ON ru.id = r.created_by
+         WHERE c.n > 0) AS closes_requests,
+       CASE WHEN COALESCE(cu.is_synthetic, FALSE)
+            THEN (SELECT r2.created_by FROM requests r2
+                   WHERE r2.app_id = cs.app_id AND r2.number = cs.created_from_issue_number)
+            ELSE cs.user_id END AS built_for_user_id,
+       NULL::text AS applied_at, NULL::text AS applied_by,
+       NULL::text AS withdrawn_at, NULL::text AS superseded_by
   FROM chat_sessions cs LEFT JOIN users cu ON cu.id = cs.user_id
  WHERE cs.thread_id = $1 AND cs.is_headless = FALSE
    AND (cs.status IN ('active', 'promoted', 'merging', 'merged')
         OR (cs.status = 'paused' AND cs.last_activity_at > NOW() - make_interval(days => $2)))
    -- 1 Nov 2026 (C2): a plan a person posted lives on a planning record with
    -- no branch (request-specs.js): it is the request's plan, never a change.
-   AND NOT (cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)
+   AND NOT ${planRecordSql('cs')}
 UNION ALL
 SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::bigint, NULL::int,
        i.title, i.status, i.created_by, NULL::timestamptz, i.created_at,
@@ -544,7 +564,15 @@ SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::
        CASE WHEN i.kind = 'close_issue' AND (i.payload->>'issueNumber') ~ '^[0-9]{1,9}$'
             THEN (i.payload->>'issueNumber')::int END,
        NULL::int[], NULL::int, NULL::int, FALSE,
-       NULL::timestamptz AS live_at
+       NULL::timestamptz AS live_at,
+       NULL::jsonb AS closes_requests, NULL::int AS built_for_user_id,
+       -- #6439: how an ended vote to close ended, off the governance
+       -- machine's audit in the payload (applied, refused, withdrawn or
+       -- superseded by the request closing another way).
+       i.payload->>'appliedAt' AS applied_at,
+       i.payload->>'appliedBy' AS applied_by,
+       i.payload->>'withdrawnAt' AS withdrawn_at,
+       i.payload->>'supersededBy' AS superseded_by
   FROM issues i LEFT JOIN users iu ON iu.id = i.created_by
  WHERE i.thread_id = $1 AND i.kind <> 'general'
  ORDER BY created_at, type, id`;
@@ -565,6 +593,35 @@ SELECT f.thread_type, f.thread_ref, f.id, f.content, f.created_at, u.username, u
   JOIN users u ON u.id = f.user_id
  WHERE f.k <= $3
  ORDER BY f.id`;
+
+/**
+ * #6225: the requests a change closes, as its Votes card lists them: each
+ * one's number, title and filer, and whether its requester has agreed to it.
+ * A request counts as confirmed when the change was built for it, whoever
+ * filed it, or when its filer is the change's author — and for a change
+ * Homeroom bot built, the person it was built for counts as its author
+ * (`builtForUserId`). `rows` is ITEMS_SQL's `closes_requests`: `filerId`
+ * never leaves the server. Ascending, without duplicates. Pure.
+ */
+function closesRequests(rows, builtForUserId) {
+  const seen = new Set();
+  const out = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row) continue;
+    const number = Number(row.number);
+    if (!Number.isInteger(number) || number <= 0 || seen.has(number)) continue;
+    seen.add(number);
+    const filerId = row.filerId == null ? null : Number(row.filerId);
+    const author = builtForUserId == null ? null : Number(builtForUserId);
+    out.push({
+      number,
+      title: row.title == null ? null : String(row.title),
+      by: row.by == null ? null : String(row.by),
+      confirmed: row.builtFor === true || (filerId != null && author != null && filerId === author),
+    });
+  }
+  return out.sort((a, b) => a.number - b.number);
+}
 
 /**
  * What a thread page draws: the thread (what leads it, by kind), every item
@@ -616,6 +673,9 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
       // The requests it closes when it merges (its linked_issues): changes
       // compete only where these overlap (closeRivals).
       item.closes = Array.isArray(row.closes) ? row.closes.map(Number).filter((n) => n > 0) : [];
+      // #6225: the same list with each request's title and filer, and whether
+      // its requester agreed to be closed by this change (votes card).
+      item.closesRequests = closesRequests(row.closes_requests, row.built_for_user_id);
       // 1 Nov 2026 (C2.3): the plan it was built from (a person's on the
       // request, or the bot's own its requester approved), which the
       // request's page draws with it (request-head.tsx plansByChange).
@@ -631,10 +691,76 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
       item.reason = row.reason || null;
       item.target = row.target == null ? null : Number(row.target);
       item.myVote = row.my_vote === 'yes' || row.my_vote === 'no' ? row.my_vote : null;
+      // #6439: an ended vote to close says how it ended, so the request's
+      // page keeps its card and reads "Closed by vote", "Kept open" or
+      // "Ended: the request closed another way". Null while it is open.
+      if (row.type === 'close' && row.status !== 'open') {
+        const appliedBy = String(row.applied_by || '');
+        item.outcome = row.applied_at && !appliedBy.startsWith('refused:')
+          ? 'closed'
+          : row.superseded_by
+            ? 'elsewhere'
+            : 'kept';
+      } else {
+        item.outcome = null;
+      }
     }
     items.push(item);
   }
+  // #6420: which of this thread's changes a requester has answered "This
+  // doesn't close it" to, so the change's "Also closes" line can say so.
+  // One read over the changes this page draws.
+  const changeIds = items.filter((i) => i.type === 'change').map((i) => i.id);
+  if (changeIds.length) {
+    const { rows: disputed } = await db.query(
+      `SELECT session_id, request_number FROM change_request_claims
+        WHERE session_id = ANY($1::int[]) AND disputed_at IS NOT NULL`,
+      [changeIds]
+    );
+    const byChange = new Map();
+    for (const row of disputed) {
+      const key = Number(row.session_id);
+      if (!byChange.has(key)) byChange.set(key, []);
+      byChange.get(key).push(Number(row.request_number));
+    }
+    for (const item of items) {
+      if (item.type === 'change') item.notConfirmed = (byChange.get(item.id) || []).sort((a, b) => a - b);
+    }
+  }
   const number = thread.number == null ? null : Number(thread.number);
+  // #6406: a change whose plan has a newer version on the request says so
+  // beside its plan line ("Built from v1 ... v2 is newer"). Read once.
+  const builtChanges = items.filter((i) => i.type === 'change' && i.builtFrom);
+  if (builtChanges.length && number != null) {
+    let newest = null;
+    try {
+      newest = await require('./request-specs').personPlanOf(db, { appId: thread.app_id, issueNumber: number });
+    } catch (err) {
+      log.warn('threads', 'Could not read a request\'s newest plan', { appId: thread.app_id, number, err: err.message });
+    }
+    if (newest) {
+      const authorOf = new Map();
+      for (const item of builtChanges) {
+        const built = item.builtFrom;
+        if (Number(newest.sessionId) === Number(built.sessionId) && Number(newest.version) === Number(built.version)) continue;
+        const sid = Number(built.sessionId);
+        if (!authorOf.has(sid)) {
+          try {
+            const { rows: [r] = [] } = await db.query('SELECT user_id FROM chat_sessions WHERE id = $1', [sid]);
+            authorOf.set(sid, r && r.user_id != null ? Number(r.user_id) : null);
+          } catch {
+            authorOf.set(sid, null);
+          }
+        }
+        const builtAuthorId = authorOf.get(sid);
+        built.newer = {
+          version: newest.version,
+          author: newest.author || null,
+          sameAuthor: builtAuthorId != null && newest.authorId != null && Number(builtAuthorId) === Number(newest.authorId),
+        };
+      }
+    }
+  }
   const leadsChange = number != null
     && items.some((i) => i.type === 'change' && i.number === number)
     && !items.some((i) => i.type === 'request' && i.number === number);
@@ -647,6 +773,17 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
     ? await followState(db, { threadId: thread.id, appId: thread.app_id, userId: viewerId, owner, repo })
     : null;
   const requests = items.filter((i) => i.type === 'request' && i.number != null).map((i) => i.number);
+  // #6421: a thread may hold several requests. A merged thread is named by
+  // its change's title while a change lives there, else by its first
+  // request's (the lead first), and says how many requests it holds. A
+  // thread of one request keeps the page's own title and shape, so the two
+  // are read only where several were merged.
+  let merged = {};
+  if (requests.length > 1) {
+    const live = items.find((i) => i.type === 'change' && i.state !== 'merged');
+    const first = items.find((i) => i.type === 'request' && i.number === number) || items.find((i) => i.type === 'request');
+    merged = { requests: requests.length, name: (live && live.title) || (first && first.title) || null };
+  }
   return {
     thread: {
       id: Number(thread.id),
@@ -655,6 +792,7 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
       lead,
       title: thread.title || null,
       state: thread.state,
+      ...merged,
     },
     items,
     follow,
@@ -669,17 +807,39 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
 // thread, each with the request whose page it is on.
 const ELSEWHERE_SQL = `
 SELECT cs.id, cs.pr_number, COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, '')) AS title,
+       cs.pr_summary_md, cs.user_id AS builder_id, rq.created_by AS requester_id,
+       (c.disputed_at IS NOT NULL) AS disputed,
        t.number AS home, n.number AS request
   FROM chat_sessions cs
   JOIN threads t ON t.id = cs.thread_id
   JOIN LATERAL unnest(COALESCE(cs.linked_issues, '{}'::int[])) AS n(number) ON n.number = ANY($3::int[])
+  JOIN requests rq ON rq.app_id = cs.app_id AND rq.number = n.number
+  LEFT JOIN change_request_claims c ON c.session_id = cs.id AND c.request_number = n.number
  WHERE cs.app_id = $1 AND cs.thread_id <> $2 AND cs.is_headless = FALSE
    AND cs.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
    AND ${visibleChangeSql('cs', '$4')}
    AND t.number IS NOT NULL
    AND EXISTS (SELECT 1 FROM requests r WHERE r.thread_id = t.id AND r.number = t.number)
- ORDER BY cs.id
+ ORDER BY cs.id, n.number
  LIMIT 20`;
+
+// #6420: the first sentence of the change's plain-language summary, with
+// markdown's marks stripped. The card shows it under the title; a blank
+// summary leaves the title alone.
+function firstSentence(md) {
+  const text = String(md || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')
+    .replace(/[*_~]{1,3}/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return null;
+  const sentence = text.match(/^.*?[.!?](?:\s|$)/);
+  return (sentence ? sentence[0] : text).trim().slice(0, 200);
+}
 
 async function changesElsewhere(db, { thread, numbers, viewerId = null }) {
   const wanted = (numbers || []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
@@ -690,12 +850,22 @@ async function changesElsewhere(db, { thread, numbers, viewerId = null }) {
   for (const row of rows) {
     if (seen.has(Number(row.id))) continue;
     seen.add(Number(row.id));
+    const requesterId = row.requester_id == null ? null : Number(row.requester_id);
+    const builderId = row.builder_id == null ? null : Number(row.builder_id);
+    const mine = viewerId != null && requesterId != null && requesterId === Number(viewerId);
+    const disputed = row.disputed === true;
     out.push({
       id: Number(row.id),
       number: row.pr_number == null ? null : Number(row.pr_number),
       title: row.title || null,
+      summary: firstSentence(row.pr_summary_md),
       on: Number(row.home),
       request: Number(row.request),
+      disputed,
+      mine,
+      // Only the requester is asked, and not when the change is their own:
+      // the notice still shows, but there is nothing to answer.
+      ask: mine && requesterId !== builderId && !disputed,
     });
   }
   return out;
@@ -748,7 +918,7 @@ async function requestHome(db, { appId, sessionId, viewerId = null }) {
 async function closeRivals(db, { appId, prNumber, deps = {} }) {
   try {
     const { rows: [won] } = await db.query(
-      `SELECT id, thread_id, linked_issues FROM chat_sessions
+      `SELECT id, thread_id, linked_issues, rebuilt_from_session_id FROM chat_sessions
         WHERE app_id = $1 AND pr_number = $2 AND status = 'merged' AND thread_id IS NOT NULL
         ORDER BY id DESC LIMIT 1`,
       [appId, prNumber]
@@ -775,6 +945,29 @@ async function closeRivals(db, { appId, prNumber, deps = {} }) {
       }
     }
     if (closed.length) log.info('threads', 'Closed the rivals of a change that went live', { appId, prNumber, closed });
+    // #6389: the change Homeroom bot rebuilt closes when its version goes
+    // live, and says why.
+    if (won.rebuilt_from_session_id) {
+      try {
+        const { rows: [original] } = await db.query(
+          `SELECT id, status FROM chat_sessions
+            WHERE id = $1 AND status IN ('promoted', 'active')`, [Number(won.rebuilt_from_session_id)]);
+        if (original) {
+          const out = await lifecycle.archiveSession({
+            pool: db, sessionId: Number(original.id), reason: 'superseded', from: original.status,
+          });
+          if (out.archived) {
+            closed.push(Number(original.id));
+            await ws.sendSystemMessage(db, appId, `Homeroom bot's version, change #${prNumber}, went live, so this one closes.`,
+              'system', null, { type: 'session', ref: Number(original.id) }).catch(() => {});
+          }
+        }
+      } catch (err) {
+        log.warn('threads', 'The change Homeroom bot rebuilt could not be closed', {
+          sessionId: Number(won.rebuilt_from_session_id), err: err.message,
+        });
+      }
+    }
     return closed;
   } catch (err) {
     log.warn('threads', 'Could not look for a merged change\'s rivals', { appId, prNumber, err: err.message });
@@ -821,6 +1014,7 @@ async function closeThreadChanges(db, { appId, threadId, closed: numbers = [], c
 module.exports = {
   closeRivals,
   closeThreadChanges,
+  closesRequests,
   threadForNumber,
   threadById,
   threadPage,

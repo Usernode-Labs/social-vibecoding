@@ -136,15 +136,17 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   await request(hidden, 1, ada, 'Secret');
 
   const work = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
-  const titles = (list) => list.map((r) => `${r.title}:${r.what}`);
+  // 5 Nov 2026: each row says its stored work state's stage (services/work-state.js).
+  const titles = (list) => list.map((r) => `${r.title}:${r.work.stage}`);
   assert.deepEqual(titles(work.next), ['Digest:going_live', 'Calendar:building'], 'hers only, being worked on, soonest first');
   assert.equal(work.next.find((r) => r.title === 'Calendar').by, 'bot', 'Homeroom bot is building it');
   assert.ok(!work.next.some((r) => r.title === 'Print view'), 'a posted plan is not a change being built');
   // Up next: hers waiting on other people's votes first, then the requests nobody has picked up.
-  assert.equal(titles(work.waiting)[0], 'Filters:vote');
+  assert.equal(titles(work.waiting)[0], 'Filters:up_for_vote');
   assert.equal(work.waiting[0].myVote, 'yes');
   assert.equal(titles(work.waiting)[1], 'Check pending:checking', 'its checks have not passed: it says checks, not votes');
-  assert.deepEqual(titles(work.waiting).slice(2).sort(), ['Print view:not_read', 'Tags:not_read'].sort());
+  assert.deepEqual(titles(work.waiting).slice(2).sort(), ['Print view:reading', 'Tags:reading'].sort());
+  assert.deepEqual(work.waiting.find((r) => r.title === 'Tags').work.line, { code: 'waiting' }, 'nobody has started on it');
   assert.deepEqual(work.needs, [], 'no plan of the bot\'s waits for her');
   assert.deepEqual(titles(work.live), ['Badges:live']);
   const all = [...work.needs, ...work.next, ...work.waiting, ...work.live];
@@ -182,10 +184,10 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
     [owed.thread_id, votedOn.thread_id, ada.id]);
   const decisions = (await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } })).waiting
     .filter((r) => r.kind === 'decision');
-  const decided = decisions.map((r) => [r.title, r.what, r.myVote, r.number]);
+  const decided = decisions.map((r) => [r.title, r.work.stage, r.myVote, r.number]);
   assert.deepEqual(decided.sort(), [
-    ['Rename to Seed Box', 'decision', null, null],
-    ['Rename to Seeds', 'decision', 'no', null],
+    ['Rename to Seed Box', 'up_for_vote', null, null],
+    ['Rename to Seeds', 'up_for_vote', 'no', null],
   ], 'they wait for votes, not for somebody to build them; the one she owes is Needs you\'s');
   // 1 Nov 2026: a decision's row opens the decision's own page, not the Workshop.
   assert.equal(decisions.find((r) => r.title === 'Rename to Seeds').href, `#app/aw-seeds/dev/governance/${votedOn.id}`);
@@ -220,15 +222,17 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
       `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref) SELECT $1, $2, '+1', 'issue', n FROM generate_series($3::int, $4::int) n`,
       [busy.id, cara.id, from, to]);
   }
-  const planned = {
-    liveSvc: { isStaging: () => false },
-    settings: { mode: 'live' },
-    progress: { requestStates: async () => [{ row: { slug: 'aw-busy', issue_number: 1 }, state: { stage: 'plan', since: null } }] },
-  };
+  // Homeroom bot's plan for it waits for her Build it.
+  await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 1, $2)', [busy.id, cara.id]);
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, awaiting_go_at, created_at)
+     VALUES ($1, 1, 'live', 'ready', NOW() - interval '2 days', NOW() - interval '2 days')`, [busy.id]);
+  const planned = {};
   const read = await pool.query(aiWork.THREADS_SQL, [cara.id, false, false, aiWork.THREADS_MAX, aiWork.LIVE_DAYS]);
   assert.ok(!read.rows.some((r) => r.state === 'closed' && r.change_status !== 'merged'), 'closed with nothing merged: not read');
   const busyWork = await aiWork.workFor(pool, { user: { id: cara.id }, deps: { bot, ...planned } });
-  assert.deepEqual(busyWork.needs.map((r) => `${r.title}:${r.what}`), ['Her old plan:plan'], 'the bot\'s plan waits for her Build it');
+  assert.deepEqual(busyWork.needs.map((r) => `${r.title}:${r.work.stage}:${r.work.why}`), ['Her old plan:waiting_for_you:plan'],
+    'the bot\'s plan waits for her Build it');
   assert.equal(busyWork.live.length, aiWork.THREADS_MAX, 'Live this week reads its own most rows');
 
   // 30 Oct 2026: claimed, with no change yet. Bob's claim on hers is In
@@ -243,9 +247,10 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
     [app.id, bob.id, ada.id]);
   const claimed = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
   const of = (title) => [...claimed.next, ...claimed.waiting].find((r) => r.title === title);
-  assert.deepEqual([of('Sound toggle').what, of('Sound toggle').by, of('Sound toggle').claimedBy], ['building', 'someone', 'aw_bob']);
-  assert.deepEqual([of('Pause button').what, of('Pause button').by], ['building', 'you']);
-  assert.equal(of('Old claim').what, 'not_read', 'a claim past its week, and no bot run: not read yet');
+  assert.deepEqual([of('Sound toggle').work.stage, of('Sound toggle').by, of('Sound toggle').work.line], ['building', 'someone', { code: 'claimed', by: 'aw_bob' }]);
+  assert.deepEqual([of('Pause button').work.stage, of('Pause button').by], ['building', 'you']);
+  assert.deepEqual([of('Old claim').work.stage, of('Old claim').work.line], ['reading', { code: 'waiting' }],
+    'a claim past its week, and no bot run: nobody has started on it');
 
   // #6158: the bot's own records say what a request waits on, whoever filed
   // it. Two requests held for a vote slot carry their place among the
@@ -270,9 +275,9 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
      VALUES ($1, $2, 'me too', 'issue', 32)`, [app.id, ada.id]);
   const withFacts = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot, settings: { mode: 'live' } } });
   const fact = (title) => withFacts.waiting.find((r) => r.title === title);
-  assert.deepEqual([fact('Held 30').what, fact('Held 30').heldBy, fact('Held 30').place], ['held', 'approvals', 1]);
-  assert.equal(fact('Held 31').place, 2, 'its place among the project\'s held builds, oldest first');
-  assert.deepEqual([fact('Queued for a read').what, fact('Queued for a read').place], ['queued', 1],
+  assert.deepEqual([fact('Held 30').work.stage, fact('Held 30').work.line], ['building', { code: 'held_waiting' }],
+    'ready to build, held for a vote slot');
+  assert.deepEqual([fact('Queued for a read').work.stage, fact('Queued for a read').work.line], ['reading', { code: 'queued', place: 1 }],
     'its place in the project\'s line, from the bot\'s queue');
 
   // Homeroom bot's answer: the page's lists. The votes she owes (Bob's change
@@ -284,8 +289,8 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const page = await aiWork.pageLists(pool, { user: { id: ada.id }, deps: { bot } });
   assert.ok(page.needsYou.some((r) => r.number === 2 && r.says === 'waits for their vote'), 'Bob\'s change, by her request\'s number');
   assert.ok(page.needsYou.some((r) => r.title === 'Rename to Seed Shop' && r.says === 'waits for their vote'), 'and the decision she owes');
-  assert.ok(page.inProgress.some((r) => r.title === 'Sound toggle' && r.says === 'aw_bob is building it'));
-  assert.ok(page.waiting.some((r) => r.title === 'Filters' && r.says === 'waiting for votes; they voted Yes'));
+  assert.ok(page.inProgress.some((r) => r.title === 'Sound toggle' && r.says === 'Building · aw_bob is building it'));
+  assert.ok(page.waiting.some((r) => r.title === 'Filters' && r.says === 'Up for a vote; they voted Yes'));
   assert.deepEqual(page.liveThisWeek.map((r) => r.title), ['Badges']);
   assert.equal(page.counts.inProgress, page.inProgress.length);
 
@@ -384,6 +389,62 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.equal(afterLists.liveThisWeek.some((r) => r.title === 'An older finished idea'), false);
   assert.equal(afterLists.counts.liveThisWeek, afterLists.liveThisWeek.length, 'the heading\'s count includes it');
 
+  // A request of Bob's she pressed Claim on is hers to build, though she
+  // never filed it, wrote in it or started a change: the Workshop listed it
+  // as her work (AppView._issueIsMine), and the tab does too.
+  await request(app, 50, bob, 'Seed labels');
+  await pool.query('INSERT INTO issue_claims (app_id, github_issue_number, user_id) VALUES ($1, 50, $2)', [app.id, ada.id]);
+  // Her own change whose checks failed waits on her fix: Needs you's, with
+  // Fix it, never "Waiting for checks". One whose preview did not build is
+  // too; Homeroom bot's change with failing checks is the bot's to fix.
+  await request(app, 51, ada, 'Frost alerts');
+  await change(app, 52, ada, 51, 'promoted', { promotedAt: new Date(), checkState: 'failing' });
+  await request(app, 53, ada, 'Rain gauge');
+  const broken = await change(app, 54, ada, 53, 'promoted', { promotedAt: new Date(), checkState: 'error' });
+  await pool.query(`UPDATE chat_sessions SET staging_url = NULL, check_error_detail = 'image did not boot' WHERE id = $1`, [broken.id]);
+  await request(app, 55, ada, 'Bot fixes its own');
+  await change(app, 56, bot, 55, 'promoted', { promotedAt: new Date(), checkState: 'failing' });
+  const fixes = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
+  const claimedBySelf = [...fixes.next, ...fixes.waiting].find((r) => r.title === 'Seed labels');
+  assert.deepEqual([claimedBySelf?.group, claimedBySelf?.work.stage, claimedBySelf?.work.line?.code, claimedBySelf?.by],
+    ['next', 'building', 'claimed', 'you'], 'her claim on Bob\'s request is her work');
+  assert.deepEqual(fixes.needs.filter((r) => r.fixYours === true).map((r) => r.title).sort(), ['Frost alerts', 'Rain gauge']);
+  const everything = [...fixes.needs, ...fixes.next, ...fixes.waiting];
+  assert.ok(!everything.some((r) => r.title === 'Bot fixes its own' && r.fixYours), 'the bot\'s change is the bot\'s to fix');
+  assert.ok(!fixes.waiting.some((r) => r.title === 'Frost alerts'), 'not Waiting under "Checks failing"');
+  const fixLists = await aiWork.pageLists(pool, { user: { id: ada.id }, deps: { bot } });
+  assert.match(fixLists.needsYou.find((r) => r.title === 'Frost alerts').says, /waits for their fix/,
+    'Homeroom bot\'s answer says the same');
+
+  // All items' Yours filter (5 Nov 2026): the same threads, on one project,
+  // as the board names its cards. Hers (asked for), one she claimed, one she
+  // only wrote in, a decision she voted on; never one she muted, nor
+  // another project's.
+  const yours = await aiWork.yoursOn(pool, { user: { id: ada.id }, appId: app.id });
+  for (const n of [1, 2, 10, 50]) assert.ok(yours.requests.includes(n), `#${n} is hers`);
+  assert.ok(!yours.requests.includes(11), 'not the one she muted');
+  assert.ok(yours.requests.includes(4), 'a thread she voted in counts too');
+  assert.ok(yours.decisions.includes(votedOn.id), 'a decision she voted on');
+  assert.ok(yours.sessions.length > 0, 'the changes in her threads, by id');
+  const elsewhere = await aiWork.yoursOn(pool, { user: { id: ada.id }, appId: hidden.id });
+  assert.deepEqual(elsewhere.requests, [1], 'one project at a time');
+
+  // #6421: a merged thread is one row, named by its change while one lives
+  // there, and says how many requests it holds.
+  const held = await request(app, 60, ada, 'Watering times');
+  await request(app, 61, ada, 'Water at dawn');
+  await pool.query('UPDATE requests SET thread_id = $1 WHERE app_id = $2 AND number = 61', [held.thread_id, app.id]);
+  const gathered = await one(
+    `INSERT INTO chat_sessions (app_id, user_id, pr_number, linked_issues, status, shared_at, promoted_at, check_state, pr_title)
+     VALUES ($1, $2, 62, '{60,61}', 'promoted', NOW(), NOW(), 'passing', 'Water at dawn') RETURNING id`,
+    [app.id, bob.id]);
+  await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [gathered.id, ada.id]);
+  const withGathered = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
+  const mergedRow = [...withGathered.next, ...withGathered.waiting].find((r) => r.threadId === Number(held.thread_id));
+  assert.equal(mergedRow.requests, 2, 'one row for the thread, with its count');
+  assert.equal(mergedRow.title, 'Water at dawn', 'called by its change');
+  assert.equal(withGathered.waiting.filter((r) => Number(r.threadId) === Number(held.thread_id)).length, 1, 'not one row per request');
+
   // The route: signed in only.
   const httpApp = express();
   httpApp.use((req, _res, next) => { req.user = req.get('x-test-user') ? { id: Number(req.get('x-test-user')) } : null; next(); });
@@ -395,6 +456,7 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.ok(Array.isArray(body.private) && Array.isArray(body.needs) && Array.isArray(body.next) && Array.isArray(body.waiting) && Array.isArray(body.live));
+  assert.equal((await fetch(`${base}/api/apps/aw-seeds/threads/yours`)).status, 401);
 });
 
 test('#6246: a waiting plan stays in Needs you past the 25-request window and a reply', { timeout: 120000 }, async (t) => {
@@ -438,8 +500,13 @@ test('#6246: a waiting plan stays in Needs you past the 25-request window and a 
      VALUES ($1, 1, 'live', 'ready', NOW() - INTERVAL '50 minutes', NOW() - INTERVAL '1 hour') RETURNING id`, [app.id]);
 
   const deps = { bot, liveSvc: { isStaging: () => false }, settings: { mode: 'live' } };
-  const needs = async () => (await aiWork.workFor(pool, { user: { id: ada.id }, deps }))
-    .needs.filter((r) => r.number === 1).map((r) => r.what);
+  // The writes below go straight to the bot's tables; on the platform the
+  // machine or route that makes them refreshes the stored work state, as this does.
+  const workState = require('../src/services/work-state');
+  const needs = async () => {
+    await workState.refresh(pool, [{ appId: app.id, issueNumber: 1 }]);
+    return (await aiWork.workFor(pool, { user: { id: ada.id }, deps })).needs.filter((r) => r.number === 1).map((r) => r.work.why);
+  };
   assert.deepEqual(await needs(), ['plan'], 'the plan waits for her Build it');
   // A person's reply newer than the plan does not hide it.
   await pool.query(
@@ -479,9 +546,44 @@ test('the demo rows are obviously fake, and staging-only', () => {
   assert.equal(new Set(rows.filter((r) => feedSlugs.has(r.app.slug)).map((r) => r.app.slug)).size, 2);
   assert.equal(new Set(rows.map((r) => r.app.slug)).size, 6, 'three chips and "3 more"');
   assert.ok(rows.every((r) => /^staging-demo-/.test(r.app.slug)), 'on demo projects only');
-  // #6284: the bot stopped at its own limit on a change's checks.
-  assert.deepEqual(demo.needs.map((r) => r.what), ['plan', 'decide', 'build_stopped', 'fix_stopped']);
-  assert.ok(demo.next.some((r) => r.claimedBy === 'staging-demo-partner'), 'a claim');
+  // #6284: the bot stopped at its own limit on a change's checks; and a
+  // change of the person's own whose checks failed, which waits on their fix.
+  assert.deepEqual(demo.needs.map((r) => (r.fixYours ? 'fix_yours' : r.work.why || r.work.reason)),
+    ['plan', 'decide', 'build_failed', 'fix_stopped', 'fix_yours']);
+  assert.ok(demo.next.some((r) => r.work.line?.by === 'staging-demo-partner'), 'a claim');
+  const { STAGES } = require('../src/services/work-state');
+  assert.ok(rows.every((r) => STAGES.includes(r.work.stage)), 'every demo row says a stage the screens know');
+  // #6515: the busy card splits each project's rows by the reader's day
+  // (#6401), and the declared check reads this project's first three as
+  // siblings (#6160). Its five moving rows share one day and keep their
+  // order, whatever the hour the page loads at.
+  const sameDay = (list) => {
+    assert.equal(new Set(list.map((r) => new Date(r.at).toISOString().slice(0, 10))).size, 1, 'one UTC day');
+    for (const shift of [-11, 11]) {
+      const days = new Set(list.map((r) => new Date(Date.parse(r.at) + shift * 3600000).toISOString().slice(0, 10)));
+      assert.equal(days.size, 1, `one day read at UTC${shift > 0 ? '+' : ''}${shift}`);
+    }
+  };
+  const busyOf = (demo) => {
+    const busy = [...demo.next, ...demo.waiting].filter((r) => r.app.slug === 'staging-demo-your-app' && r.work.line?.code !== 'waiting');
+    assert.deepEqual(busy.map((r) => r.work.stage),
+      ['going_live', 'building', 'up_for_vote', 'up_for_vote', 'building'], 'under way, then what waits');
+    assert.equal(busy[busy.length - 1].work.line.code, 'held_waiting', 'a held build comes last');
+    assert.ok(busy.every((r) => Date.parse(r.at) < Date.now()), 'no row from the future');
+    sameDay(busy);
+  };
+  busyOf(demo);
+  // The hours that used to split the rows: the anchor moves, the day does not.
+  const realNow = Date.now;
+  try {
+    const today = new Date();
+    for (const [h, m] of [[0, 30], [7, 30], [11, 59], [12, 30], [23, 30]]) {
+      Date.now = () => Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), h, m);
+      busyOf(demoWork());
+    }
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test('#6282: a change with an update on its way is Updating, then Update queued', { timeout: 120000 }, async (t) => {
@@ -529,11 +631,15 @@ test('#6282: a change with an update on its way is Updating, then Update queued'
      RETURNING id`, [app.id, bob.id]);
 
   const deps = { bot, liveSvc: { isStaging: () => false }, settings: { mode: 'live' } };
+  // The asks below are written straight to their table; on the platform the
+  // machine that takes them refreshes the stored work state, as this does.
+  const workState = require('../src/services/work-state');
   const all = async (viewer) => {
+    await workState.refresh(pool, [{ sessionId: change.id }]);
     const work = await aiWork.workFor(pool, { user: { id: viewer.id }, deps });
     return [...work.needs, ...work.next, ...work.waiting].filter((r) => Number(r.number) === 1);
   };
-  const what = async (viewer) => (await all(viewer)).map((r) => r.what);
+  const what = async (viewer) => (await all(viewer)).map((r) => (r.work.line ? `${r.work.stage}:${r.work.line.code}` : r.work.stage));
   const ask = async (status) => one(
     `INSERT INTO homeroom_bot_change_asks (app_id, session_id, issue_number, instruction, status, taken_at)
      VALUES ($1, $2, 1, 'drop the second credit line', $3, CASE WHEN $3 = 'taken' THEN NOW() ELSE NULL END)
@@ -544,13 +650,13 @@ test('#6282: a change with an update on its way is Updating, then Update queued'
   assert.deepEqual(await what(ada), []);
   // An ask waits its turn: Waiting, Update queued, with what was asked.
   const queued = await ask('queued');
-  assert.deepEqual(await what(ada), ['update_queued']);
+  assert.deepEqual(await what(ada), ['up_for_vote:update_queued']);
   const [queuedRow] = await all(ada);
   assert.equal(queuedRow.group, 'waiting');
   assert.equal(queuedRow.ask, 'drop the second credit line');
   // Taken: In progress, Updating, the same words.
   await pool.query(`UPDATE homeroom_bot_change_asks SET status = 'taken', taken_at = NOW() WHERE id = $1`, [queued.id]);
-  assert.deepEqual(await what(ada), ['updating']);
+  assert.deepEqual(await what(ada), ['building:revising']);
   assert.equal((await all(ada))[0].group, 'next');
   // Done: the update landed, and the change is the feed's to ask about.
   await pool.query(`UPDATE homeroom_bot_change_asks SET status = 'done', done_at = NOW() WHERE id = $1`, [queued.id]);
@@ -558,13 +664,13 @@ test('#6282: a change with an update on its way is Updating, then Update queued'
   // A turn in flight without an ask: Updating the change, with no ask.
   await pool.query(`UPDATE chat_sessions SET active_turn = '{}'::jsonb WHERE id = $1`, [change.id]);
   const [running] = await all(ada);
-  assert.equal(running.what, 'updating');
+  assert.deepEqual([running.work.stage, running.work.line], ['building', { code: 'revising' }]);
   assert.equal(running.ask, undefined);
   await pool.query(`UPDATE chat_sessions SET active_turn = NULL WHERE id = $1`, [change.id]);
   // Its author sees the update instead of waiting on the vote.
-  assert.deepEqual(await what(bob), ['vote']);
+  assert.deepEqual(await what(bob), ['up_for_vote']);
   const second = await ask('queued');
-  assert.deepEqual(await what(bob), ['update_queued']);
+  assert.deepEqual(await what(bob), ['up_for_vote:update_queued']);
   await pool.query(`UPDATE homeroom_bot_change_asks SET status = 'done', done_at = NOW() WHERE id = $1`, [second.id]);
-  assert.deepEqual(await what(bob), ['vote']);
+  assert.deepEqual(await what(bob), ['up_for_vote']);
 });

@@ -84,6 +84,8 @@ const machine = require('../src/workflow/bot-voice/machine.ts');
 const CONFIG = { openrouterApiBase: 'https://openrouter.test/api/v1', openrouterOrigin: 'https://test', openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash' };
 const REASON = 'Signed-out visitors can open the library and every recipe.';
 const NOTE = `Already works: ${REASON} Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.`;
+// #6413: its requester or a decider asked to close it: same offer, no Go ahead.
+const WITHDRAWN_NOTE = `Asked to close: ${REASON} Tap Propose to close below to start a vote. It stays open until the group votes for it, or reply here to keep it going.`;
 
 // ── The note, with its database stubbed ──────────────────────────────────
 
@@ -94,7 +96,7 @@ async function noteFor(parsed, { openVotes = [], last = null, posted = { message
     async query(sql, params) {
       const s = String(sql);
       queries.push({ sql: s, params });
-      if (/INSERT INTO homeroom_bot_voice_offers/.test(s)) return { rows: [{ id: 77 }] };
+      if (/INSERT INTO bot_cards/.test(s)) return { rows: [{ id: 77 }] };
       if (/kind = 'close_issue'/.test(s)) return { rows: openVotes };
       return { rows: [] };
     },
@@ -121,7 +123,7 @@ async function noteFor(parsed, { openVotes = [], last = null, posted = { message
     Object.assign(live, { post: real.post, advanceSeen: real.advanceSeen, mentionTargets: real.mentionTargets });
     Object.assign(addressed, { shouldSpeak: real.shouldSpeak, lastNoteText: real.lastNoteText });
   }
-  return { says, queries, offers: queries.filter((q) => /INSERT INTO homeroom_bot_voice_offers/.test(q.sql)) };
+  return { says, queries, offers: queries.filter((q) => /INSERT INTO bot_cards/.test(q.sql)) };
 }
 
 for (const verdict of ['person', 'empty']) {
@@ -144,7 +146,7 @@ for (const verdict of ['person', 'empty']) {
     assert.equal(offers[0].params[1], 'close_request');
     assert.deepEqual(JSON.parse(offers[0].params[2]), { issueNumber: 7, title: 'Open the library', why: REASON });
     assert.equal(offers[0].params[3], null);
-    assert.ok(queries.some((q) => /UPDATE homeroom_bot_voice_offers SET message_id/.test(q.sql) && q.params[1] === 500), 'tied to the note');
+    assert.ok(queries.some((q) => /UPDATE bot_cards SET chat_message_id/.test(q.sql) && q.params[1] === 500), 'tied to the note');
   });
 
   test(`a done ${verdict} note adds no buttons while a close vote is open, and keeps its words`, async () => {
@@ -164,9 +166,66 @@ for (const verdict of ['person', 'empty']) {
 
   test(`a done ${verdict} note that could not be posted drops its offer`, async () => {
     const { queries } = await noteFor({ verdict }, { posted: null });
-    assert.ok(queries.some((q) => /DELETE FROM homeroom_bot_voice_offers/.test(q.sql) && q.params[0] === 77));
+    assert.ok(queries.some((q) => /DELETE FROM bot_cards/.test(q.sql) && q.params[0] === 77));
   });
 }
+
+// #6413: a read that says its requester (or a decider) asked to close it gets
+// the same close offer, whichever of person or empty the read landed on.
+for (const verdict of ['person', 'empty']) {
+  test(`a withdrawn ${verdict} note offers the close vote and never Go ahead`, async () => {
+    const { says, offers } = await noteFor({ verdict, done: false, withdrawn: true });
+    assert.equal(says.length, 1);
+    assert.equal(says[0].kind, verdict);
+    assert.equal(says[0].homeroomText, WITHDRAWN_NOTE);
+    assert.doesNotMatch(says[0].homeroomText, /couldn't find anything to build/);
+    assert.doesNotMatch(says[0].homeroomText, /Go ahead/);
+    // GitHub's copy says the same, without naming the button.
+    assert.equal(says[0].text, `Homeroom bot was asked to close this: ${REASON}\n\nAnyone in the project can propose to close it, or reply here to keep it going.`);
+    assert.equal(says[0].dm.withdrawn, true);
+    assert.equal(says[0].dm.quiet, true);
+    assert.equal(says[0].dm.done, undefined, 'not marked done');
+    const meta = says[0].metadata.homeroomBot;
+    assert.equal(meta.kind, 'voice');
+    assert.deepEqual(meta.offer, { id: 77, kind: 'close_request', status: 'open', forUserId: null });
+    assert.deepEqual(meta.actions.map((a) => [a.id, a.label, a.style]), [
+      ['yes', 'Propose to close', 'primary'], ['no', 'Keep it open', 'secondary'],
+    ]);
+    assert.equal(offers.length, 1);
+    assert.equal(offers[0].params[1], 'close_request');
+    assert.deepEqual(JSON.parse(offers[0].params[2]), { issueNumber: 7, title: 'Open the library', why: REASON });
+    assert.equal(offers[0].params[3], null);
+  });
+
+  test(`a withdrawn ${verdict} note adds no buttons while a close vote is open`, async () => {
+    const { says, offers } = await noteFor({ verdict, done: false, withdrawn: true }, { openVotes: [{ id: 9 }] });
+    assert.equal(says[0].homeroomText, WITHDRAWN_NOTE);
+    assert.equal(says[0].metadata, undefined);
+    assert.equal(offers.length, 0);
+  });
+}
+
+test('done wins when the read says both done and withdrawn', async () => {
+  const { says } = await noteFor({ verdict: 'person', done: true, withdrawn: true });
+  assert.equal(says[0].homeroomText, NOTE);
+  assert.equal(says[0].dm.done, true);
+  assert.equal(says[0].dm.withdrawn, undefined);
+});
+
+test('#6413: parseVerdict reads withdrawn only on person or empty, and never with platform', () => {
+  assert.equal(homeroomBot.parseVerdict('{"verdict":"person","reason":"x","withdrawn":true}').withdrawn, true);
+  assert.equal(homeroomBot.parseVerdict('{"verdict":"empty","reason":"x","withdrawn":true}').withdrawn, true);
+  assert.equal(homeroomBot.parseVerdict('{"verdict":"ready","build_note":"x","withdrawn":true}').withdrawn, false);
+  assert.equal(homeroomBot.parseVerdict('{"verdict":"person","reason":"x","platform":true,"withdrawn":true}').withdrawn, false);
+  assert.equal(homeroomBot.parseVerdict('{"verdict":"person","reason":"x"}').withdrawn, false);
+});
+
+test('#6413: the triage knows a requester or decider can withdraw a request', () => {
+  const prompt = require('node:fs').readFileSync(require.resolve('../src/prompts/homeroom-bot-triage.md'), 'utf8');
+  assert.match(prompt, /`withdrawn`: true only with `person` or `empty`, when its requester, or a project decider, says in the discussion to close, drop or withdraw it/);
+  assert.match(prompt, /It omits `go_ahead` and `first_step`, offering no Go ahead\./);
+  assert.match(prompt, /"withdrawn": true \(person or empty, when its requester or a decider said to close it\),/);
+});
 
 test('an empty verdict that is not done keeps its own words, with no offer', async () => {
   const { says, offers } = await noteFor({ verdict: 'empty', done: false });
@@ -270,10 +329,12 @@ test('#6321: a tap under the note, by any member, once', { timeout: 180000 }, as
       `SELECT id, content, metadata FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2 AND user_id = $3 ORDER BY id LIMIT 1`,
       [app.id, number, bot.id],
     );
-    const { rows: [offer] } = await pool.query('SELECT * FROM homeroom_bot_voice_offers WHERE message_id = $1', [note.id]);
+    const { rows: [offer] } = await pool.query("SELECT *, user_id AS for_user_id FROM bot_cards WHERE place = 'thread' AND chat_message_id = $1", [note.id]);
     return { note, offer };
   };
-  const offerRow = async (id) => (await pool.query('SELECT status, result FROM homeroom_bot_voice_offers WHERE id = $1', [id])).rows[0];
+  // A thread's offers are Homeroom bot's cards (bot_cards); one made before is still in its old table.
+  const offerRow = async (id) => (await pool.query(
+    'SELECT status, result FROM bot_cards WHERE id = $1 UNION ALL SELECT status, result FROM homeroom_bot_voice_offers WHERE id = $1 LIMIT 1', [id])).rows[0];
   const closeVotes = async (number) => (await pool.query(
     `SELECT created_by FROM issues WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open' AND (payload->>'issueNumber')::int = $2`,
     [app.id, number],

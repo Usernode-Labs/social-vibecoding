@@ -95,16 +95,15 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.deepEqual((await members(a.id)).map((m) => m.user_id), [owner.id]);
   });
 
-  await t.test('a pin joins; taking it off Home does not leave', async () => {
+  await t.test('One Home (#6361): pinning an app joins nobody', async () => {
     const fan = await user();
     const a = await app();
     await pool.query('INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)', [a.id, fan.id]);
-    assert.deepEqual(await members(a.id), [{ user_id: fan.id, source: 'favorite' }]);
+    assert.deepEqual(await members(a.id), [], 'an app pin is only a pin');
+    await communities.join(pool, a, fan.id);
+    assert.equal((await members(a.id)).length, 1);
     await pool.query('DELETE FROM app_favorites WHERE app_id = $1 AND user_id = $2', [a.id, fan.id]);
     assert.equal((await members(a.id)).length, 1, 'unpinning is not leaving');
-    const hider = await user();
-    await pool.query('INSERT INTO app_favorites (app_id, user_id, hidden) VALUES ($1, $2, TRUE)', [a.id, hider.id]);
-    assert.ok(!(await members(a.id)).some((m) => m.user_id === hider.id), 'a hidden row is an opt-out, not a pin');
   });
 
   await t.test('the platform project takes in everyone with platform access', async () => {
@@ -135,14 +134,17 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     m = await communities.getMembership(pool, a, joiner.id);
     assert.equal(m.is_member, true);
     assert.equal(m.member_count, 2);
-    const pin = await pool.query('SELECT hidden FROM app_favorites WHERE app_id = $1 AND user_id = $2', [a.id, joiner.id]);
-    assert.equal(pin.rows[0]?.hidden, false, 'joining pins the app to Home, as Add did');
+    const pin = await pool.query('SELECT 1 FROM app_favorites WHERE app_id = $1 AND user_id = $2', [a.id, joiner.id]);
+    assert.equal(pin.rows.length, 0, 'joining does not pin the app (One Home, #6361)');
+    const homePin = await pool.query('SELECT 1 FROM home_community_pins WHERE community_id = $1 AND user_id = $2', [a.community_id, joiner.id]);
+    assert.equal(homePin.rows.length, 1, 'it pins the community');
     assert.deepEqual(await communities.leave(pool, a, owner.id), {
       ok: false, status: 409, error: 'You started this project, so you can’t leave it.',
     });
     assert.deepEqual(await communities.leave(pool, a, joiner.id), { ok: true });
     assert.equal(await communities.isMember(pool, a.id, joiner.id), false);
-    assert.equal((await pool.query('SELECT 1 FROM app_favorites WHERE app_id = $1 AND user_id = $2', [a.id, joiner.id])).rows.length, 0);
+    assert.equal((await pool.query('SELECT 1 FROM home_community_pins WHERE community_id = $1 AND user_id = $2', [a.community_id, joiner.id])).rows.length, 0,
+      'leaving unpins the community');
 
     const solo = await app({ createdBy: owner.id, view: 'private', collab: 'private' });
     await collaborate(solo.id, owner.id);
@@ -280,7 +282,7 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       assert.equal(listed.member_count, 2);
       assert.equal(listed.audience, 'open');
       assert.ok(listed.last_active_at, 'joining is activity, so the Workshop can order by it');
-      assert.equal(listed.is_favorited, true, 'and Join pinned it, as Add did');
+      assert.equal(listed.is_favorited, false, 'Join pins the community, not the app (One Home, #6361)');
 
       got = await call('POST', `/api/apps/${a.slug}/membership`, { joined: false });
       assert.equal(got.body.is_member, false);
@@ -578,9 +580,11 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await communities.join(pool, swap, me.id);
     // #6245: the feed is ordered by when the vote opened (promoted_at), never
     // by a change's last activity, so that is what these rows set.
+    // #6402: a change is owed only once its checks passed, so these fixtures
+    // are ready changes; this test is about the feed's order and contents.
     const promote = async (a, title, ago) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, pr_summary_md, pr_number, promoted_at)
-       VALUES ($1, $2, 'promoted', $3, '## Why\n- because', 7, NOW() - $4::interval) RETURNING id`,
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, pr_summary_md, pr_number, promoted_at, check_state)
+       VALUES ($1, $2, 'promoted', $3, '## Why\n- because', 7, NOW() - $4::interval, 'passing') RETURNING id`,
       [a.id, author.id, title, ago])).rows[0].id;
     const older = await promote(garden, 'Older change', '2 days');
     const newer = await promote(swap, 'Newer change', '1 hour');
@@ -628,9 +632,10 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     // A rule asking for two Yes votes keeps the vote, as on the card.
     await pool.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [strict.id]);
     // #6245: a vote's place is when it opened, not the change's last activity.
+    // #6402: ready changes only, so the feed still owes these votes.
     const promote = async (a, title, ago) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at)
-       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval) RETURNING id`,
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at, check_state)
+       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval, 'passing') RETURNING id`,
       [a.id, bot.id, title, ago])).rows[0].id;
     await promote(mine, 'Sunday reminder', '1 hour');
     await promote(strict, 'Two to say yes', '2 hours');
@@ -660,9 +665,10 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await pool.query('UPDATE apps SET approver_policy = \'invited\' WHERE id = $1', [approvers.id]);
     await pool.query('INSERT INTO app_approvers (app_id, user_id) VALUES ($1, $2)', [approvers.id, author.id]);
     // #6245: a vote's place is when it opened, not the change's last activity.
+    // #6402: ready changes only, so the feed still owes these votes.
     const promote = async (a, title, ago) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at)
-       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval) RETURNING id`,
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, promoted_at, check_state)
+       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval, 'passing') RETURNING id`,
       [a.id, author.id, title, ago])).rows[0].id;
     const older = await promote(plain, 'Older deciding change', '2 days');
     const newer = await promote(approvers, 'Newer advisory change', '1 hour');
@@ -688,7 +694,8 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     for (const a of [kept, suspended]) {
       await communities.join(pool, a, me.id);
       const { rows: [s] } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, status, pr_title) VALUES ($1, $2, 'promoted', 'Owed vote') RETURNING id`,
+        `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, check_state)
+         VALUES ($1, $2, 'promoted', 'Owed vote', 'passing') RETURNING id`,
         [a.id, author.id]);
       owedIds[a.slug] = s.id;
     }
@@ -729,8 +736,8 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
        VALUES ($1, $2, 'active', 'Add dark mdoe toggel', 'Add a dark mode toggle', 'feature/typo')`,
       [mine.id, me.id]);
     await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, session_title, proposed_pr_title, pr_title)
-       VALUES ($1, $2, 'promoted', 'Add dark mdoe toggel', 'Add a dark mode toggle', NULL)`,
+      `INSERT INTO chat_sessions (app_id, user_id, status, session_title, proposed_pr_title, pr_title, check_state)
+       VALUES ($1, $2, 'promoted', 'Add dark mdoe toggel', 'Add a dark mode toggle', NULL, 'passing')`,
       [theirs.id, author.id]);
 
     const items = (await pool.query(overview.ITEMS_SQL,

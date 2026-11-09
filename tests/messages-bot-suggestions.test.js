@@ -68,7 +68,7 @@ test('a stuck build, one it cannot build, one with nothing in it and one a perso
   assert.match(dm.dmText('blocked', { reason: 'x' }, context), /Reply to this message with more detail/);
   assert.match(dm.dmText('empty', {}, context), /Reply to this message with what you'd like/);
   assert.match(dm.dmText('person', { reason: 'x' }, context), /reply to this message and say so/);
-  assert.match(read('src/services/homeroom-bot-dm.js'), /\.\.\.\(STUCK_ACTIONS\[kind\] && !\(kind === 'person' && \(dm\.platform \|\| personDeciders\(dm\)\.length\)\) && !dm\.done\n\s+\? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/,
+  assert.match(read('src/services/homeroom-bot-dm.js'), /\.\.\.\(STUCK_ACTIONS\[kind\] && !dm\.done\n\s+&& !\(kind === 'person' && \(dm\.platform \|\| dm\.goAheadDecides === false \|\| personDeciders\(dm\)\.length\)\)\n\s+\? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/,
     '#4239: every stuck kind but a request about Homeroom itself, whose move offer follows, and one somebody else decides');
   assert.equal(dm.suggestsOnly({ actions: dm.STUCK_ACTIONS.build_failed }), true);
   assert.equal(dm.suggestsOnly({ actions: dm.promptActions(['a', 'b']) }), true);
@@ -96,7 +96,37 @@ const message = (meta) => ({
   sender: { id: 2, username: 'homeroom_bot', bot: true }, metadata: { homeroomBot: meta },
 });
 const draw = (meta) => renderToHtml(createElement(BotQuestion, { message: message(meta), conversationId: 3 }));
+const drawHidePrompts = (meta) => renderToHtml(createElement(BotQuestion, { message: message(meta), conversationId: 3, hidePrompts: true }));
 const NEWS = { appName: 'Todo List', appSlug: 'todo-list', issueNumber: 93, status: 'open' };
+
+// ── #6404: a Questions card is the one set of answers ───────────────────
+
+const { asksWithQuestionsCard } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
+const QUESTIONS_CARD = { type: 'questions', v: 1, questions: [{ question: 'Which project?', answers: ['Bread Bot', 'Sheep countrr'], guess: 0 }], answered: null };
+const withCard = (card) => message({ kind: 'chat', status: 'open', card, actions: dm.promptActions(['Bread Bot']) });
+
+test('#6404: a message asking with a Questions card hides its suggested replies, already answered or not', () => {
+  assert.equal(asksWithQuestionsCard(withCard(QUESTIONS_CARD)), true, 'open');
+  assert.equal(asksWithQuestionsCard(withCard({ ...QUESTIONS_CARD, answered: ['Bread Bot'] })), true, 'answered');
+  assert.equal(asksWithQuestionsCard(withCard({ ...QUESTIONS_CARD, skipped: true })), true, 'skipped');
+  assert.equal(asksWithQuestionsCard(withCard({ type: 'options', v: 1, options: [] })), false, 'another card type');
+  assert.equal(asksWithQuestionsCard(withCard({ type: 'plan', v: 1 })), false, 'a plan is not a questions card');
+  const deleted = withCard(QUESTIONS_CARD);
+  deleted.deleted = true;
+  assert.equal(asksWithQuestionsCard(deleted), false, 'deleted');
+  const theirs = withCard(QUESTIONS_CARD);
+  theirs.sender = { id: 5, username: 'ada' };
+  assert.equal(asksWithQuestionsCard(theirs), false, 'a person\'s message');
+
+  assert.doesNotMatch(drawHidePrompts({ kind: 'chat', status: 'open', card: QUESTIONS_CARD, actions: dm.promptActions(['Bread Bot']) }),
+    /messages-bot-answers/, 'the card is the only set of answers');
+  assert.match(drawHidePrompts({ kind: 'build_failed', status: 'open', card: QUESTIONS_CARD, actions: dm.STUCK_ACTIONS.build_failed }),
+    /<span>Try again<\/span>/, 'a quoted step still draws');
+
+  const index = read('frontend/src/features/messages/index.tsx');
+  assert.match(index, /hidePrompts=\{\(plans\.answersOpen \|\| asksWithQuestionsCard\(message\) \|\| \(welcomeShown && message\.id === newestMainBotId\)\) && !!message\.sender\.bot\}/,
+    'the row hides on the message carrying the card (or under #6426\'s welcome card), and on no other');
+});
 
 test('a step to take on the message is a filled button; a suggestion keeps the pill', () => {
   const tryAgain = draw({ ...NEWS, kind: 'build_failed', actions: dm.STUCK_ACTIONS.build_failed });

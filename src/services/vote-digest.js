@@ -39,6 +39,7 @@
 const log = require('./logger');
 const { VOTE_DIGEST_LOCK } = require('./advisory-locks');
 const { firstVersionSql } = require('./first-version-rule');
+const { voteReadySql } = require('./vote-ready');
 
 const INTERVAL_MS = 60 * 60 * 1000;      // swept hourly (the vote-digest clock)
 // 20 rather than 24: the sweep is hourly and a strict 24 would drift a
@@ -51,9 +52,9 @@ const MAX_COUNT = 99;
 /**
  * Users who owe at least one vote, with the count.
  *
- * A stakeholder is one of exactly two things: someone with an
- * app_favorites row for the app, or the app's creator. Nothing else is
- * read. In particular:
+ * A stakeholder is one of exactly two things: a member who keeps the app
+ * on Home, as the app or as its community (the app_stakes view,
+ * one-home-pins.sql), or the app's creator. Nothing else is read. In particular:
  *
  *   - Active users are NOT included. The per-proposal notification
  *     (services/notifications.js) also asks the members active on the app
@@ -71,8 +72,9 @@ const MAX_COUNT = 99;
  * they already voted on, a change Homeroom bot built for a request they
  * asked for, a change they were told is ready to try in the last 24 hours,
  * a project's first version (it goes live without a vote:
- * services/first-version-rule.js), and anyone who had a digest in the last
- * MIN_GAP_HOURS.
+ * services/first-version-rule.js), a change whose checks have not passed or
+ * which still waits to sync with main (#6402: services/vote-ready.js), and
+ * anyone who had a digest in the last MIN_GAP_HOURS.
  *
  * Deliberately ONE query rather than a loop: this runs over every user on
  * the platform, and per-user round trips would make an hourly sweep a
@@ -82,7 +84,7 @@ const PENDING_SQL = `
   WITH stakeholders AS (
     SELECT a.id AS app_id, f.user_id
       FROM apps a
-      JOIN app_favorites f ON f.app_id = a.id
+      JOIN app_stakes f ON f.app_id = a.id
     UNION
     SELECT a.id AS app_id, a.created_by AS user_id
       FROM apps a WHERE a.created_by IS NOT NULL
@@ -94,6 +96,9 @@ const PENDING_SQL = `
      WHERE cs.status = 'promoted'
        -- 13 Oct 2026, D1: a project's first version waits on nobody's vote.
        AND NOT ${firstVersionSql('cs')}
+       -- #6402: and only once its checks passed and it merges cleanly with
+       -- main. A change still being tested is nobody's vote yet.
+       AND ${voteReadySql('cs')}
   )
   SELECT s.user_id, COUNT(DISTINCT p.id) AS pending,
          -- The one change, when there is exactly one: the row names it, so a

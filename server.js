@@ -39,6 +39,7 @@ const { mobileAppLinkRoutes } = require('./src/routes/mobile-app-links');
 const { authRoutes } = require('./src/routes/auth');
 const { illustrationRoutes, illustrationImageRoutes } = require('./src/routes/app-illustrations');
 const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/challenge-illustrations');
+const { emailImageRoutes } = require('./src/routes/email-images');
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
 const { conversationRoutes } = require('./src/routes/conversations');
@@ -381,6 +382,13 @@ app.use((req, res, next) => {
       || (req.method === 'PATCH' && /^\/api\/apps\/[^/]+\/github-issues\/[^/]+\/body$/.test(req.path))) {
     return express.json({ limit: '1mb' })(req, res, next);
   }
+  // An email template or layout may be 100 KB of HTML (mail/html-safety.js
+  // MAX_EMAIL_HTML_BYTES) and as much text, which JSON escaping makes larger;
+  // the routes refuse an oversized one with the reason. A language's
+  // correction is a PUT of the same size.
+  if ((req.method === 'POST' || req.method === 'PUT') && /^\/api\/admin\/email-(?:templates|layouts)(?:\/|$)/.test(req.path)) {
+    return express.json({ limit: '1mb' })(req, res, next);
+  }
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -640,6 +648,10 @@ app.use(illustrationImageRoutes(config));
 // unguessable 32-hex id; the admin list/upload/archive routes live in
 // topochainAdminRoutes behind the admin gates.
 app.use(challengeIllustrationImageRoutes(config));
+// Images in admin-edited email templates (src/routes/email-images.js), public
+// because the reader's mail client loads them with no session. Access control
+// is the unguessable 32-hex id; the upload lives behind the admin gates.
+app.use(emailImageRoutes(getPool(config)));
 
 // Publicly shared locked report snapshots (report-lock-share). Mounted
 // before authMiddleware like visuals: access control is the unguessable
@@ -710,6 +722,8 @@ app.use(require('./src/middleware/moderation').moderationGuard(config));
 app.use(require('./src/routes/moderation').moderationRoutes(config));
 app.use(require('./src/routes/app-blocks').appBlockRoutes(config));
 app.use(require('./src/routes/community-pins').communityPinRoutes(config));
+app.use(require('./src/routes/home-pins').homePinRoutes(config));
+app.use(require('./src/routes/weekly-digest').weeklyDigestRoutes(config));
 app.use(require('./src/services/account-deletion-runtime').trackResponse);
 app.use(require('./src/routes/account-deletion').accountDeletionRoutes(config));
 app.use(cliBrowserRoutes(config));
@@ -1255,6 +1269,11 @@ async function start() {
   // the first phone-auth request. Never fatal: an unreadable setting falls
   // back to the deploy's default.
   await require('./src/services/sms/select').selection(getPool(config)).catch(() => {});
+  // Every mail is worded from the email templates this process keeps in memory
+  // (src/services/mail/template-store.js). Read them now, so a cold server has a
+  // copy before its first sign-in code and a database problem later does not
+  // cost mail its templates. Never fails a boot; waits at most a mail's patience.
+  await require('./src/services/mail/template-store').getSnapshot(getPool(config));
   // This process, and what it holds, for every other one to see
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.
@@ -1702,6 +1721,12 @@ async function cleanup() {
     log.info('server', 'In-flight requests and background work drained');
   }
   await pushStop;
+
+  // #6354: the design bot's one demo copy of Homeroom is disposable and is
+  // not serving anybody: stop it (and its database) now, before the drain
+  // spends its time. Bounded, and never a reason to hold the process.
+  await boundedStep(require('./src/services/design-capture').stopCopy(), BUILD_SHUTDOWN_MARK_TIMEOUT_MS)
+    .catch((err) => log.warn('server', 'Could not stop the design demo copy', { err: err.message }));
 
   // The checks runs this process launched go on without it: their Jobs
   // belong to the cluster. Their rows still carry this process's heartbeat,

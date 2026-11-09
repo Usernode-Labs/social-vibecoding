@@ -313,7 +313,9 @@ function topWindow({ width = 1280, app = 'notes-ab12', tab = 'app', chromeless =
       pushState: (s, t, url) => pushed.push(url),
       replaceState: (s, t, url) => { win.location = new URL(url, win.location.href); },
     },
-    matchMedia: (q) => ({ matches: q === '(min-width: 1024px)' ? width >= 1024 : q === '(min-width: 768px)' ? width >= 768 : false }),
+    matchMedia: (q) => ({ matches: q === '(min-width: 1024px)' ? width >= 1024
+      : q === '(min-width: 768px)' ? width >= 768
+        : q === '(min-width: 1180px)' ? width >= 1180 : false }),
     setTimeout: (fn) => { timers.push(fn); return timers.length; },
     App: {
       user, chromeless, currentApp: app, currentTab: tab,
@@ -1343,6 +1345,23 @@ test('the divider ships on the panel\'s left edge as a focusable vertical separa
   assert.doesNotMatch(divider.slice(divider.indexOf('\n  return (')), /readStoredWidth|localStorage/);
 });
 
+test('with a detail beside the page it holds, the panel\'s edge is that column\'s edge (#6394)', () => {
+  const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
+  // The AI page writes this store while the panel is the middle column of
+  // three; the panel's own island reads it and hands the divider the
+  // thread's width key, its probe and the preview to watch.
+  assert.match(SRC, /import \{ panelEdgeStore \} from '\.\/edge-store';/);
+  assert.match(SRC, /const edge = useStoreState\(panelEdgeStore\)\.slot;/);
+  assert.match(SRC, /<SidePanelDivider\s+panelRef=\{rootRef\}\s+shown=\{s\.open && !!s\.frameSrc\}\s+widthKey=\{edge\?\.widthKey\}\s+probe=\{edge\?\.probe\}\s+watch=\{edge\?\.watch\}\s+\/>/,
+    'passing undefined leaves the divider on its own defaults');
+  // The store starts empty, so the island\'s first render is the prerender.
+  const { panelEdgeStore } = loadTsx('frontend/src/features/side-panel/edge-store.ts');
+  assert.equal(panelEdgeStore.get().slot, null);
+  // Its edge is drawn where the panel begins, as the thread\'s is in three.
+  assert.match(CSS, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
+  assert.match(CSS, /body:has\(#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\):not\(\.hidden\)\) \.side-panel \{\n\s+width: var\(--ai-col-w\);\n\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
+});
+
 test('the probe: beside an app, the app\'s left edge; beside the AI tab\'s page, the docked rail\'s', () => {
   const { probeLayout } = api.resize;
   const el = (box, classes = []) => ({ getBoundingClientRect: () => box, classList: { contains: (c) => classes.includes(c) } });
@@ -1385,6 +1404,30 @@ test('beside the bot page on an iPhone Duo held sideways: the list\'s floor, and
   const hidden = { ...ai, classList: { contains: (c) => c === 'hidden' } };
   win.document.getElementById = (id) => (id === 'ai-screen' ? hidden : null);
   assert.equal(probeLayout(win).neighbourMin, 480);
+});
+
+test('a list floor written in rem is read in pixels, against the root font size (#6495)', () => {
+  // `--ai-list-min` now resolves from the shared `--list-pane-w` (22rem), and
+  // getComputedStyle hands a custom property back as the substituted token
+  // stream, not pixels: read as a bare number it was 22, so the drag's floor
+  // was 22px. At the normal 16px root, 22rem is the inbox's 352px.
+  const { probeLayout } = api.resize;
+  const vars = { '--ai-list-min': '22rem' };
+  const ai = { getBoundingClientRect: () => ({ left: 0, width: 868 }), classList: { contains: () => false } };
+  const win = {
+    innerWidth: 1280,
+    getComputedStyle: () => ({ getPropertyValue: (name) => vars[name] || '', fontSize: '16px' }),
+    document: {
+      body: {},
+      documentElement: { getAttribute: () => null },
+      getElementById: (id) => (id === 'ai-screen' ? ai : null),
+    },
+  };
+  assert.equal(probeLayout(win).neighbourMin, 352, '22rem at a 16px root is 352px');
+  // A root with larger text gives the rem more pixels, as it does on screen.
+  assert.equal(probeLayout({ ...win, getComputedStyle: () => ({ getPropertyValue: (name) => vars[name] || '', fontSize: '20px' }) }).neighbourMin, 440);
+  // A px floor still parses as it always has, root size and all.
+  assert.equal(probeLayout({ ...win, getComputedStyle: () => ({ getPropertyValue: () => '280px', fontSize: '20px' }) }).neighbourMin, 280);
 });
 
 test('the width\'s rules: 320px of panel and 480px of app at the least, whatever the window', () => {
@@ -1468,6 +1511,31 @@ test('a width is the layout\'s own knob on <html>, and none hands it back to the
   assert.equal(props.get('--side-panel-w'), '544px');
   applyWidth(null, root);
   assert.equal(props.has('--side-panel-w'), false);
+});
+
+test('with a preview open both edges are handles: their own keys, every column\'s floor, the thread measured to the preview (#6359)', () => {
+  const { applyWidth, bounds, shownWidth, clampWidth, AI_MAIN_WIDTH_KEY, AI_PREVIEW_COLUMN_WIDTH_KEY, AI_PREVIEW_WIDTH_KEY } = api.resize;
+  assert.equal(new Set([AI_MAIN_WIDTH_KEY, AI_PREVIEW_COLUMN_WIDTH_KEY, AI_PREVIEW_WIDTH_KEY]).size, 3, 'three widths, three keys');
+  const props = new Map();
+  const root = { style: { setProperty: (k, v) => props.set(k, v), removeProperty: (k) => props.delete(k) } };
+  applyWidth(400, root, AI_PREVIEW_COLUMN_WIDTH_KEY);
+  applyWidth(700, root, AI_PREVIEW_WIDTH_KEY);
+  assert.deepEqual([...props], [['--ai-col-chosen-w', '400px'], ['--ai-preview-chosen-w', '700px']],
+    'neither touches Main\'s width');
+  // A 1600px window with a 72px rail: the list keeps 480px.
+  // The preview's edge keeps the list's floor and the thread's (480 + 320).
+  const preview = { innerWidth: 1600, appLeft: 72, neighbourMin: 480 + 320, selfMin: 360 };
+  assert.deepEqual({ ...bounds(preview) }, { min: 360, max: 728 });
+  assert.equal(shownWidth(900, preview), 700, 'the preview runs to the window\'s edge');
+  // The thread's edge keeps the list's floor and the preview as it is drawn
+  // (480 + 468, ai/index.tsx threadProbe), the room app.css leaves the
+  // thread: 1600 - 212 (the rail) - 480 - 468 = 440px, where the column stops.
+  // Its width runs to where the preview begins, not to the window's edge.
+  const thread = { innerWidth: 1600, appLeft: 212, neighbourMin: 480 + 468, endAt: 1600 - 468 };
+  assert.deepEqual({ ...bounds(thread) }, { min: 320, max: 440 });
+  assert.equal(shownWidth(1132 - 400, thread), 400);
+  assert.equal(clampWidth(shownWidth(732, thread) + 100, bounds(thread)), 440, 'End and a drag stop where the column does');
+  assert.equal(clampWidth(0, bounds(preview)), 360, 'Home: the preview\'s own floor, not the panel\'s');
 });
 
 test('the bot page is what makes an edge Main Chat\'s, and a hidden page is not', () => {
@@ -1583,9 +1651,17 @@ test('the divider is drawn on the line between the two halves, not inside the pa
   assert.match(rule, /position: fixed;/);
   assert.match(rule, /inset-inline-end: calc\(var\(--divider-at, var\(--side-panel-w\)\) - var\(--divider-w\) \/ 2\);/,
     'centred on the line; beside an app the line is the panel\'s own edge');
-  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);/,
-    'beside the bot\'s list, the middle of the 16px gutter before Main');
+  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/,
+    'beside the bot\'s list, on the pane\'s own edge');
+  // #6447: below 1024px the list's 16px gutter is the gap you see between the
+  // two sheets, so the handle sits in the middle of it, 8px toward the list.
+  // A desktop alone keeps the pane's edge.
+  assert.match(CSS, /@media \(max-width: 1023\.98px\) \{\s*body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\s*\}\s*\}/,
+    'a narrow window centres the handle in the gap between the two cards');
   assert.match(CSS, /\.side-panel-divider::after \{[^}]*inset-inline-start: calc\(50% - 1\.5px\);/, 'the bar on the line too');
+  // #6397: below the pane's 28px rounded top corner, not beside the curve.
+  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\)::after \{\s*top: 1\.75rem;\s*\}/,
+    'the bar starts where the pane\'s corner ends');
 });
 
 test('beside the bot page the column\'s heading links the item to its own page, and ⋯ copies it', () => {
@@ -1611,10 +1687,20 @@ test('beside the bot page the column\'s heading links the item to its own page, 
   assert.equal(agent['sidePanel.moreLabel'].text, 'More actions');
   assert.equal(agent['sidePanel.menu.copyLink'].text, 'Copy link');
   assert.equal(agent['sidePanel.linkCopied'].text, 'Link copied');
+  // #6380: Open in workshop is the menu's second row, under Copy link, only
+  // for a project's own request, change or decision, and it asks the
+  // controller to open it there.
+  assert.equal(agent['sidePanel.menu.openInWorkshop'].text, 'Open in workshop');
+  const menu = SRC.slice(SRC.indexOf('data-side-panel-copy-link=""'), SRC.indexOf('</div>\n      ) : null}\n    </div>'));
+  assert.match(menu, /data-side-panel-open-workshop=""/);
+  assert.ok(menu.indexOf('data-side-panel-copy-link') < menu.indexOf('data-side-panel-open-workshop'),
+    'the new row comes after Copy link');
+  assert.match(menu, /\{route && workshopItemOf\(route\) \? \(/);
+  assert.match(menu, /controller\.openInWorkshop\(\)/);
   // The ⋯ is in the row only beside the bot page, and at its end.
-  assert.match(CSS, /\.side-panel-head > :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/);
-  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-main, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
-  assert.match(CSS, /\.side-panel-more \{ margin-inline-start: auto; align-self: center; \}/);
+  assert.match(CSS, /\.side-panel-head > :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/);
+  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
+  assert.match(CSS, /\.side-panel-more \{[^}]*margin-inline-start: auto;[^}]*align-self: center;/);
   // The item's page link is what the heading draws; a page with none is plain words.
   api._resetForTests();
   api.sidePanelStore.set({
@@ -1625,4 +1711,301 @@ test('beside the bot page the column\'s heading links the item to its own page, 
   assert.match(html, /href="\/app\/x\/dev\/issues\/6214">Request #6214<\/a>/);
   assert.match(html, /aria-haspopup="menu" aria-expanded="false"/, 'the ⋯ opens a menu, closed at first');
   api._resetForTests();
+});
+
+// ── #6431: one header beside the bot page — the page's pill and its rows ──
+
+const PILL_BUILDING = {
+  tier: 2, key: 'building', label: 'Being built', tone: 'progress',
+  yes: 0, no: 0, majority: 1, advisory: 0, lock: false,
+};
+
+/** A panel open on `route`, booted, publishing `head`. */
+function besideBot(route, head) {
+  api._resetForTests();
+  api.sidePanelStore.set({ open: true, frameSrc: `/?panel=1#${route}`, frameKey: 1, loading: false });
+  api.embeddedApi.ready(route, 'Notes');
+  if (head) api.embeddedApi.head(route, head);
+}
+
+test('the head store starts empty and takes, and clears, a page\'s head (#6431)', () => {
+  // The panel document's head store starts null, and the first thing that
+  // ever happens to it is the page publishing an object. createStore's
+  // change detection read the key off that null state and threw, so the
+  // pill and the page's rows never reached the column: running the app with
+  // a request in the panel logged "Cannot read properties of null (reading
+  // 'kind')" at the store's set, and the page's bar had already gone.
+  api.panelHeadStore.set(null);
+  assert.equal(api.panelHeadStore.get(), null);
+  api.panelHeadStore.set({ kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6431' });
+  assert.equal(api.panelHeadStore.get().kind, 'request');
+  assert.equal(api.panelHeadStore.get().pill.key, 'building');
+  assert.equal(api.panelHeadStore.get().menuKey, 'request:6431');
+  // And it is cleared the same way: null REPLACES the state rather than
+  // merging into a no-op copy of it, or the page's pill would outlive it.
+  api.panelHeadStore.set(null);
+  assert.equal(api.panelHeadStore.get(), null);
+  // A store with an object state keeps the merge contract every other
+  // plain-store user relies on.
+  api.panelHeadStore.set({ kind: 'change', pill: null, menuKey: 'detail:proposal:9' });
+  assert.equal(api.panelHeadStore.get().kind, 'change');
+  api.panelHeadStore.set(null);
+});
+
+test('beside the bot page the column\'s heading carries the page\'s own status pill (#6431)', () => {
+  const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
+  const HEAD = read('frontend/src/features/side-panel/head-store.ts');
+  // The page publishes it from its bar, and only inside a panel's own
+  // document: the full page and the Workshop's side panel are the top
+  // document, where the page keeps its own bar and publishes nothing.
+  assert.match(HEAD, /if \(!isEmbeddedPanel\(\)\) return undefined;/);
+  assert.match(HEAD, /panelHeadStore\.set\(\{ kind: head\.kind, pill, menuKey: head\.menuKey \}\);/);
+  assert.match(HEAD, /return \(\) => \{ panelHeadStore\.set\(null\); \};/, 'and takes it back when the page goes');
+  // The heading draws the page's own pill, only while it is THAT page's.
+  assert.match(SRC, /const pill = head && head\.pill && samePage\(head\.route, route\) \? head\.pill : null;/);
+  assert.match(SRC, /data-side-panel-status=\{pill\.key\}/);
+  assert.match(SRC, /<StatusPill s=\{pill\} inline \/>/, 'the page\'s own pill, at its own size');
+
+  // A request open beside it: its pill follows "Request #6431".
+  besideBot('app/x/dev/issues/6431', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6431' });
+  let html = renderToHtml(createElement(api.SidePanelIsland, {}));
+  assert.match(html, /data-side-panel-status="building"/);
+  assert.match(html, />Being built</);
+  assert.ok(html.indexOf('Request #6431') < html.indexOf('data-side-panel-status="building"'),
+    'after the number, on the heading\'s second line');
+
+  // The work moves on: the page publishes the new pill and the heading draws it.
+  api.embeddedApi.head('app/x/dev/issues/6431', {
+    kind: 'request', pill: { ...PILL_BUILDING, key: 'checks', label: 'Checking' }, menuKey: 'request:6431',
+  });
+  html = renderToHtml(createElement(api.SidePanelIsland, {}));
+  assert.match(html, /data-side-panel-status="checks"/);
+  assert.match(html, />Checking</);
+  assert.doesNotMatch(html, /data-side-panel-status="building"/, 'the old one is gone, not added to');
+
+  // A change's page the same way.
+  api.embeddedApi.head('app/x/dev/issues/6431', {
+    kind: 'change', pill: { ...PILL_BUILDING, key: 'voting', label: 'Vote · 1/2' }, menuKey: 'detail:proposal:9',
+  });
+  assert.match(renderToHtml(createElement(api.SidePanelIsland, {})), /data-side-panel-status="voting"/);
+
+  // A page with no status, and a head that is not this page's, draw no pill.
+  api.embeddedApi.head('app/x/dev/issues/6431', { kind: 'change', pill: null, menuKey: 'detail:proposal:9' });
+  assert.doesNotMatch(renderToHtml(createElement(api.SidePanelIsland, {})), /data-side-panel-status/);
+  api.embeddedApi.head('app/x/dev/changes/6430', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6430' });
+  assert.doesNotMatch(renderToHtml(createElement(api.SidePanelIsland, {})), /data-side-panel-status/,
+    'one page\'s pill never shows on the next');
+  api._resetForTests();
+});
+
+test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in the page (#6431)', () => {
+  const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
+  // Copy link, Open in workshop, a divider, then the page's rows — read when
+  // the menu opens, and run in the panel's document.
+  const menu = SRC.slice(SRC.indexOf('data-side-panel-copy-link=""'), SRC.indexOf('\n      ) : null}\n    </div>'));
+  assert.ok(menu.indexOf('data-side-panel-copy-link') < menu.indexOf('side-panel-menu-sep'),
+    'the divider comes after Copy link');
+  assert.ok(menu.indexOf('data-side-panel-open-workshop') < menu.indexOf('side-panel-menu-sep'),
+    'and after Open in workshop');
+  assert.match(menu, /data-side-panel-page-row=\{i\}/);
+  assert.match(menu, /controller\.runPanelMenuRow\(i, row\.label, e\.nativeEvent\)/);
+  assert.match(SRC, /setRows\(controller\.panelMenuRows\(\)\);/, 'read from the page as the menu opens');
+
+  // The page's own ⋯ list, read off its AppView: a row that changed since the
+  // menu opened (Notify me become Mute) says so the next time it opens.
+  let following = false;
+  const list = () => [
+    { label: 'Build it with your own Claude Code', icon: 'generate', act: () => {} },
+    { label: following ? 'Mute' : 'Notify me', title: 'Follow this thread', act: () => { following = true; } },
+    { label: 'Details', act: null },
+  ];
+  const av = {
+    _cardMenuItems: () => list(),
+    _cardMenuRowItem: (all, idx, label) => {
+      const at = all[idx];
+      if (label == null || (at && at.label === label)) return at;
+      return all.find((x) => x.label === label) || at;
+    },
+  };
+  besideBot('app/x/dev/issues/6431', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6431' });
+  api.sidePanelRefs.frame = { contentWindow: { AppView: av } };
+  assert.deepEqual(api.SidePanel.panelMenuRows().map((r) => r.label),
+    ['Build it with your own Claude Code', 'Notify me', 'Details'], 'the rows the page\'s ⋯ would show');
+  assert.equal(api.SidePanel.panelMenuRows()[2].disabled, true, 'a row with no action is unavailable here too');
+  assert.equal(api.SidePanel.panelMenuRows()[1].title, 'Follow this thread', 'its tooltip comes with it');
+  api.SidePanel.runPanelMenuRow(1, 'Notify me');
+  assert.equal(following, true, 'the row ran in the page');
+  assert.equal(api.SidePanel.panelMenuRows()[1].label, 'Mute', 'and the next opening says Mute');
+  // A page with no ⋯ key of its own, and one whose head is another page's,
+  // list nothing.
+  api.embeddedApi.head('app/x/dev/issues/6431', { kind: 'change', pill: null, menuKey: null });
+  assert.deepEqual(api.SidePanel.panelMenuRows(), []);
+  api.embeddedApi.head('app/x/dev/changes/6430', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6430' });
+  assert.deepEqual(api.SidePanel.panelMenuRows(), [], 'a head for another page lists nothing here');
+  api.sidePanelRefs.frame = null;
+  api._resetForTests();
+});
+
+test('the column\'s ⋯ menu is a solid sheet above the page, in both looks (#6431)', () => {
+  // The menu is drawn in the shell's own document, where Messages' surface
+  // tokens are not declared (they live on .messages-layout,
+  // .dev-ws-discussion, .dev-request and #ai-screen .ai-askbar). Its fill and
+  // hover resolved to nothing, so the page's rows showed straight through it
+  // under its shadow (Evan, 6 Nov 2026: "overlapping weirdly... fully
+  // transparent"). The wrapper declares the same pair, opaque in each look,
+  // and stacks above the panel's body.
+  const rule = (sel) => {
+    const at = CSS.indexOf(`${sel} {`);
+    assert.ok(at >= 0, `${sel} is drawn`);
+    return CSS.slice(at, CSS.indexOf('}', at) + 1);
+  };
+  const more = rule('.side-panel-more');
+  assert.match(more, /position: relative;/, 'the wrapper is the menu\'s anchor');
+  assert.match(more, /z-index: 2;/, 'and its layer, above the panel\'s body');
+  // The heading is in the lists that declare Messages' tokens, so the menu's
+  // fill (and the ⋯ button's hover step) is the opaque one Messages draws.
+  const tokens = (start) => CSS.slice(CSS.indexOf(start), CSS.indexOf('}', CSS.indexOf(start)));
+  const light = tokens('.messages-layout,');
+  assert.match(light, /\.side-panel-head,/);
+  assert.match(light, /--messages-surface: #ffffff;/, 'the menu\'s fill, light');
+  assert.match(light, /--messages-surface-2: var\(--bg-secondary\);/, 'and its hover step');
+  const dark = tokens('.dark .messages-layout,');
+  assert.match(dark, /\.dark \.side-panel-head,/);
+  assert.match(dark, /--messages-surface: var\(--dc-raised\);/, 'the menu\'s fill, dark');
+  assert.match(dark, /--messages-surface-2: #3a3a3c;/, 'and its hover step');
+  // A hairline on top of the base rule's lift, so it reads as a sheet over the
+  // page rather than a hole in it. The menu itself is still Messages' absolute
+  // layer, and its base rule still paints the surface declared above.
+  assert.match(rule('.side-panel-more .messages-thread-menu'),
+    /box-shadow: 0 12px 30px rgba\(0, 0, 0, \.18\), inset 0 0 0 1px var\(--messages-hair\);/);
+  const base = rule('.messages-thread-menu');
+  assert.match(base, /position: absolute;/);
+  assert.match(base, /z-index: 30;/);
+  assert.match(base, /background: var\(--messages-surface\);/);
+});
+
+test('a new page, a new frame and leaving drop the head with the title (#6431)', () => {
+  besideBot('app/x/dev/issues/6431', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6431' });
+  assert.equal(api.sidePanelStore.get().head.pill.key, 'building');
+
+  api.open('app/x/dev/issues/6432', null);
+  assert.equal(api.sidePanelStore.get().head, null, 'a new page is a new heading');
+
+  api.embeddedApi.head('app/x/dev/issues/6432', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6432' });
+  api.open('app/x/dev/issues/6432', null);
+  assert.equal(api.sidePanelStore.get().head.pill.key, 'building', "the same page settling keeps it");
+
+  api.drop();
+  assert.equal(api.sidePanelStore.get().head, null, 'and leaving drops it with the frame');
+  assert.equal(api.INITIAL.head, null, 'the prerender has none');
+  api._resetForTests();
+});
+
+// ── #6380: Open in workshop, from the column to the project's Workshop ──
+
+test('workshopItemOf names the project and the item a route opens there (#6380)', () => {
+  const cases = [
+    ['app/notes-ab12/dev/issues/6214', { slug: 'notes-ab12', ref: { kind: 'issue', id: 6214 } }],
+    ['app/notes-ab12/dev/proposals/12', { slug: 'notes-ab12', ref: { kind: 'proposal', id: 12 } }],
+    ['app/notes-ab12/dev/sessions/12', { slug: 'notes-ab12', ref: { kind: 'proposal', id: 12 } }],
+    ['app/notes-ab12/dev/shared/12', { slug: 'notes-ab12', ref: { kind: 'proposal', id: 12 } }],
+    ['app/notes-ab12/dev/governance/5', { slug: 'notes-ab12', ref: { kind: 'gov', id: 5 } }],
+    ['app/notes-ab12/dev/changes/6362', { slug: 'notes-ab12', pr: 6362 }],
+    // An app's discussion's old per-change address is a change (panelPage).
+    ['app/notes-ab12/individual-chat/12', { slug: 'notes-ab12', ref: { kind: 'proposal', id: 12 } }],
+  ];
+  for (const [route, want] of cases) assert.deepEqual(R.workshopItemOf(route), want, route);
+  // No item a project page shows: the Workshop itself, its list addresses,
+  // the unsent change, conversations, agent sessions, and nothing at all.
+  for (const route of [
+    'app/notes-ab12/workshop', 'app/notes-ab12', 'app/notes-ab12/board',
+    'app/notes-ab12/dev', 'app/notes-ab12/dev/sessions', 'app/notes-ab12/dev/sessions/new',
+    'app/notes-ab12/dev/chat', 'app/notes-ab12/dev/issues', 'app/notes-ab12/dev/issues/0',
+    'messages/4242', 'messages/app/notes-ab12', 'messages/agent/7', 'agent/7',
+    'individual-chat/12', '', null, undefined,
+  ]) assert.equal(R.workshopItemOf(route), null, String(route));
+});
+
+test('the stash for the Workshop is taken once, for its project, and only while it is fresh (#6380)', async () => {
+  const P = api.panelTarget;
+  const fired = [];
+  globalThis.window = { dispatchEvent: (e) => fired.push(e.type) };
+  P._resetWorkshopPanelTarget();
+  // Nothing waiting: nothing opened.
+  assert.equal(await P.takeWorkshopPanelItem('notes-ab12'), null);
+  // Another project's Workshop does not take it, and leaves it waiting.
+  P.stashWorkshopPanelItem('notes-ab12', { ref: { kind: 'issue', id: 6214 } });
+  assert.deepEqual(fired, ['usernode:workshop-panel-target'], 'a page already up is told');
+  assert.equal(await P.takeWorkshopPanelItem('other-app'), null);
+  assert.deepEqual(await P.takeWorkshopPanelItem('notes-ab12'), { kind: 'issue', id: 6214 });
+  assert.equal(await P.takeWorkshopPanelItem('notes-ab12'), null, 'taken once');
+  // A stash older than the TTL is ignored, so a later visit is not moved by it.
+  const now = Date.now;
+  try {
+    P.stashWorkshopPanelItem('notes-ab12', { ref: { kind: 'proposal', id: 12 } });
+    Date.now = () => now() + P.WORKSHOP_PANEL_TTL_MS + 1;
+    assert.equal(await P.takeWorkshopPanelItem('notes-ab12'), null);
+  } finally {
+    Date.now = now;
+  }
+  // A change by its pull request number is resolved to its session, and a
+  // failed read opens nothing.
+  const asked = [];
+  globalThis.fetch = async (url) => {
+    asked.push(String(url));
+    return String(url).includes('/changes/6362')
+      ? { ok: true, json: async () => ({ sessionId: 12 }) }
+      : { ok: false, json: async () => ({}) };
+  };
+  try {
+    P.stashWorkshopPanelItem('notes-ab12', { pr: 6362 });
+    assert.deepEqual(await P.takeWorkshopPanelItem('notes-ab12'), { kind: 'proposal', id: 12 });
+    assert.equal(asked[0], '/api/apps/notes-ab12/changes/6362');
+    P.stashWorkshopPanelItem('notes-ab12', { pr: 1 });
+    assert.equal(await P.takeWorkshopPanelItem('notes-ab12'), null);
+  } finally {
+    delete globalThis.fetch;
+    P._resetWorkshopPanelTarget();
+  }
+});
+
+test('Open in workshop leaves the item for the Workshop and opens it, and on a narrow window opens the page (#6380)', async () => {
+  // Wide: the item is stashed, the project's Workshop tab is chosen, its
+  // route is navigated to, and the column goes.
+  const wide = topWindow({ width: 1280 });
+  api.take('app/notes-ab12/dev/issues/6214');
+  fakeFrame();
+  api.embeddedApi.ready('app/notes-ab12/dev/issues/6214', 'A request');
+  let landed = null;
+  wide.win.AppView = { _landOnTab: (slug, tab) => { landed = [slug, tab]; } };
+  api.openInWorkshop();
+  assert.deepEqual(landed, ['notes-ab12', 'workshop'], 'the Workshop place, before the navigation');
+  assert.deepEqual(wide.pushed, ['/?demo=1#app/notes-ab12/workshop']);
+  assert.equal(wide.routed.length, 1);
+  assert.equal(api.sidePanelStore.get().frameSrc, null, 'the column is gone');
+  assert.deepEqual(await api.panelTarget.takeWorkshopPanelItem('notes-ab12'),
+    { kind: 'issue', id: 6214 }, 'waiting for the Workshop');
+  cleanup();
+
+  // Narrow: no panel beside the Workshop list, so it opens the item's page.
+  const narrow = topWindow({ width: 900, app: null, visible: false, screen: 'ai-screen' });
+  assert.equal(api.take('app/notes-ab12/dev/changes/6362'), true, 'the column beside the bot\'s list');
+  fakeFrame();
+  api.embeddedApi.ready('app/notes-ab12/dev/changes/6362', 'A change');
+  narrow.win.AppView = { _landOnTab: () => { throw new Error('not a Workshop navigation'); } };
+  api.openInWorkshop();
+  assert.deepEqual(narrow.pushed, ['/?demo=1#app/notes-ab12/dev/changes/6362'], 'the page, as Expand opens it');
+  assert.equal(await api.panelTarget.takeWorkshopPanelItem('notes-ab12'), null, 'nothing stashed');
+  cleanup();
+
+  // A page that is not a project's item (a private thread, no page at all)
+  // opens nothing at all.
+  const thread = topWindow();
+  api.take('messages/4242');
+  fakeFrame();
+  api.embeddedApi.ready('messages/4242', 'A thread');
+  api.openInWorkshop();
+  assert.deepEqual(thread.pushed, []);
+  assert.equal(api.sidePanelStore.get().route, 'messages/4242', 'the column stays where it was');
+  cleanup();
 });

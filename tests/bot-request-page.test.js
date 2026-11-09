@@ -11,9 +11,10 @@
 //
 //   1. Which page a bot message stands for (request-page.ts), and that the
 //      bot's own private threads (a draft, a design) are not one of them.
-//   2. Every way in goes there: a news line, a moment's "↳ in …" label, the
-//      activity drawer, a thread opened by id, a link to an old thread, and
-//      "See progress" opens Main Chat, never a thread.
+//   2. Every way in goes there: a news line, a moment's "↳ in …" label, a
+//      thread opened by id, a link to an old thread, and "See progress"
+//      opens Main Chat, never a thread. (The activity drawer, another way
+//      in, is gone: 5 Nov 2026.)
 //   3. A request's message offers no thread of its own.
 //   4. What still asks something in the chat is drawn whole in Main Chat,
 //      for as long as its request waits, so nothing is left in a thread.
@@ -74,8 +75,8 @@ test('every way into a request\'s story goes to its page', () => {
   assert.match(news, /else openThreadAt\(rootId, /, 'only news that names no page (sent before it named its project) opens where it is told');
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.match(row, /onClick=\{\(\) => \(story \? openRequestPage\(story, conversationId\) : openThread\(/, 'the "↳ in …" label');
-  const strip = read('frontend/src/features/messages/bot-strip.tsx');
-  assert.match(strip, /if \(page\) \{ openRequestPage\(page, /, 'the activity drawer');
+  // The activity drawer, which opened its rows the same way, is gone (5 Nov 2026).
+  assert.doesNotMatch(read('frontend/src/features/messages/bot-strip.tsx'), /openRequestPage|openThreadAt/, 'no door of its own');
   const store = read(STORE);
   const open = store.slice(store.indexOf('export function openThread(rootId: number)'));
   assert.match(open.slice(0, 600), /const page = requestPageFor\(findRow\(rootId\)\);\n {2}if \(page\) \{ openRequestPage\(page, conversationId\); return; \}/, 'a thread opened by id');

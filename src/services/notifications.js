@@ -105,6 +105,13 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
 ]);
 const CONVERSATION_KIND_SQL = [...CONVERSATION_NOTIFICATION_KINDS]
   .map((kind) => `'${kind}'`).join(', ');
+// 5 Nov 2026 (docs/plans/bot-one-model.md, decision 7): a request's stage
+// rings its requester with a build row that no message rang for
+// (services/work-state.js bellPushes). It is about the request (its project
+// and its change), not a chat, so whether they are in their chat with the
+// bot does not hide it; its project's access still does (APP_ACCESS_SQL).
+const STAGE_BELL_SQL = `(n.conversation_message_id IS NULL
+  AND n.kind IN ('build_ready', 'build_needs_you', 'build_stopped', 'build_live'))`;
 
 // A notification belongs to its recipient, but that does not grant enduring
 // access to the project it hydrates. Share this fresh predicate across exact
@@ -136,7 +143,7 @@ const APP_ACCESS_SQL = `EXISTS (
 // Removed/departed members match no row and therefore lose title/content as
 // well as navigation metadata on list, exact lookup, and live hydration.
 const CONVERSATION_ACCESS_SQL = `(
-  (n.conversation_id IS NULL AND n.kind NOT IN (${CONVERSATION_KIND_SQL}))
+  (n.conversation_id IS NULL AND (n.kind NOT IN (${CONVERSATION_KIND_SQL}) OR ${STAGE_BELL_SQL}))
   OR (
     n.conversation_id IS NOT NULL
     AND n.kind IN (${CONVERSATION_KIND_SQL})
@@ -679,7 +686,7 @@ async function createIssueOpenedNotifications(pool, { appId, issueNumber, author
   const { rows: extraRows } = await pool.query(
     `SELECT created_by AS id FROM apps WHERE id = $1 AND created_by IS NOT NULL
      UNION
-     SELECT user_id AS id FROM app_favorites WHERE app_id = $1`,
+     SELECT user_id AS id FROM app_stakes WHERE app_id = $1`,
     [appId]
   );
 
@@ -1003,6 +1010,24 @@ async function createAppHealthNotification(pool, { appId, detail }) {
   });
   if (!allowed.length) return [];
 
+  const token = (detail || '').slice(0, 32) || null;
+  // Storage notices supersede each other: a newer one replaces an unread
+  // older one for the same project, and is not blocked by some OTHER kind's
+  // unread row (a failed deploy used to swallow the storage warning and even
+  // the freeze notice). Any other token keeps the any-unread guard, so a
+  // deploy failure still does not repeat itself.
+  const storage = typeof token === 'string' && token.startsWith('storage_');
+  if (storage) {
+    await pool.query(
+      `UPDATE notifications
+          SET read_at = NOW()
+        WHERE app_id = $1 AND kind = 'app_health' AND read_at IS NULL
+          AND user_id = ANY($2::int[])
+          AND LEFT(detail, 8) = 'storage_'`,
+      [appId, allowed]
+    );
+  }
+
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
      SELECT u, $2, NULL, 'app_health', $3
@@ -1011,11 +1036,12 @@ async function createAppHealthNotification(pool, { appId, detail }) {
         SELECT 1 FROM notifications n
         WHERE n.user_id = u AND n.app_id = $2
           AND n.kind = 'app_health' AND n.read_at IS NULL
+          ${storage ? "AND LEFT(n.detail, 8) = 'storage_'" : ''}
       )
      RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
     // VARCHAR(32). See the note above the function: this is a short token,
     // not a reason line.
-    [allowed, appId, (detail || '').slice(0, 32) || null]
+    [allowed, appId, token]
   );
   return rows;
 }
@@ -2035,7 +2061,9 @@ const ACTION_COMPLETIONS = {
   // Only pr_proposed: revision_recheck asks for a re-vote and stale_pr is the
   // author's warning, and looking at a card resolves neither. Triggered by
   // POST /api/notifications/read { session_id } from the dev board.
-  proposal_opened: { kinds: ['pr_proposed'], scope: 'session_id' },
+  // #6441: and its "ready to try", which opening the change's page or its
+  // before-and-after answers the same way.
+  proposal_opened: { kinds: ['pr_proposed', 'build_ready'], scope: 'session_id' },
 };
 
 // The scope columns the registry is allowed to target. A defensive
@@ -2243,7 +2271,7 @@ async function markReadForConversation(pool, userId, conversationId) {
 // Single-id and mark-all clears. Returns rows actually cleared (like the
 // scoped helpers above) so the route can decide whether to fan out a
 // cross-tab `notifications_changed` refresh.
-async function markRead(pool, userId, { id, ids = null, all = false, kinds = null, excludeKinds = null, olderThanDays = null } = {}) {
+async function markRead(pool, userId, { id, ids = null, all = false, kinds = null, excludeKinds = null, olderThanDays = null, keepPlainMessages = false } = {}) {
   // One clear that is several notifications (a story card, a folded row, a
   // conversation run): one statement, so the count the route reads back
   // after it is the count after all of them. One request per member raced:
@@ -2271,6 +2299,9 @@ async function markRead(pool, userId, { id, ids = null, all = false, kinds = nul
       if ((Array.isArray(kinds) && kinds.length) || (Array.isArray(excludeKinds) && excludeKinds.length)) {
         throw new TypeError('olderThanDays does not combine with kind scoping');
       }
+      if (keepPlainMessages) {
+        throw new TypeError('olderThanDays does not combine with keepPlainMessages');
+      }
       const { rowCount } = await pool.query(
         `UPDATE notifications SET read_at = NOW()
           WHERE user_id = $1 AND read_at IS NULL
@@ -2296,6 +2327,21 @@ async function markRead(pool, userId, { id, ids = null, all = false, kinds = nul
         `UPDATE notifications SET read_at = NOW()
           WHERE user_id = $1 AND read_at IS NULL AND NOT (kind = ANY($2))`,
         [userId, excludeKinds]
+      );
+      return rowCount || 0;
+    }
+    // Opening the bell is reading it (#6498). The bell's badge leaves out the
+    // plain messages the Messages tab counts (#18), so a clear-on-open must
+    // leave them out too — otherwise the Messages tab's own count would go
+    // stale or a badge the bell never showed would be cleared. `all` alone
+    // still clears everything ("Mark all read"); this flag is the narrower
+    // clear that reuses countUnreadSplit's own predicate, so what stays
+    // unread is exactly what the bell's number did not include.
+    if (keepPlainMessages) {
+      const { rowCount } = await pool.query(
+        `UPDATE notifications AS n SET read_at = NOW()
+          WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${PLAIN_MESSAGE_SQL}`,
+        [userId]
       );
       return rowCount || 0;
     }

@@ -144,6 +144,31 @@ test('a proposal: its checks, then the group\'s vote', () => {
   assert.equal(progress.outcomeOf({ mode: 'shadow', verdict: 'person' }), null);
 });
 
+// #6528: a passing change is still Checking while its before & after shots
+// are taken, so the ready bell waits for the pictures too.
+test('#6528: a passing change holds at checking until its shots settle', () => {
+  const head = 'a'.repeat(40);
+  const open = {
+    proposal_status: 'promoted', proposal_at: ago(20), check_state: 'passing',
+    checks_sha: head, reviewed_head_sha: head,
+  };
+  const shooting = {
+    shots_state: 'exploring', shots_run_id: 'r'.repeat(32),
+    shots_detail: { headSha: head, required: true }, shots_updated_at: ago(5), checks_at: ago(5),
+  };
+  assert.deepEqual(stage({ ...open, ...shooting }), {
+    stage: 'checks', since: ago(5),
+    doing: 'it\'s waiting for approval, and its tests passed; its before and after shots are still being taken',
+  });
+  assert.equal(stage({ ...open, ...shooting, shots_state: 'verified' }).stage, 'vote');
+  assert.equal(stage({ ...open, ...shooting, shots_detail: { headSha: head, required: false } }).stage, 'vote',
+    'nothing visible to shoot is not held');
+  assert.equal(stage({ ...open, ...shooting, checks_at: ago(50), shots_updated_at: ago(50) }).stage, 'vote',
+    'the hold lapses after 45 minutes');
+  assert.equal(stage({ ...open, ...shooting, first_version: true }).stage, 'vote',
+    'a first version goes live without a vote and is not held');
+});
+
 // 13 Oct 2026 (D1): a project's first version goes live without a vote, so
 // once its tests pass it waits on nobody, and while they run the bot does
 // not say it is waiting for approval.
@@ -297,8 +322,10 @@ test('a ready request waiting for its build slot says so, and what it waits for'
   assert.equal(progress.buildWait(row, { busy: reading, now }).doing, 'ready to build; its build starts next',
     'a request being read on the project does not hold a build');
   assert.equal(progress.buildWait(row, { working: 2, perPerson: 2 }).waitingFor.reason, 'person_limit');
-  const tray = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-tray.js'), 'utf8');
-  assert.match(tray, /build_queued: 'queued',/, 'the tray draws it as waiting its turn');
+  // Every screen draws it as ready to build, waiting its turn (services/work-state.js).
+  const ws = require('../src/services/work-state');
+  assert.deepEqual(ws.fromStage({ stage: 'build_queued' }, {}).line, { code: 'queued' });
+  assert.equal(ws.stageSays(ws.fromStage({ stage: 'build_queued' }, {})), 'Ready to build');
 });
 
 test('#6216: a person\'s request says its project\'s own build number, not the default', async () => {
@@ -422,9 +449,12 @@ test('#6219: a plan waiting for Build it wins over a question left open from bef
   assert.equal(stage({ ...waiting, question_at: ago(90) }).stage, 'plan', 'a question older than the run');
   assert.equal(stage({ ...waiting, question_at: ago(45) }).stage, 'question', 'the plan\'s own look asked it');
   assert.equal(stage({ ...waiting }).stage, 'plan');
-  // The bot page lists a plan under Needs you; a question it leaves to the feed.
-  const { BOT_STANDING } = require('../src/services/ai-work');
-  assert.deepEqual(BOT_STANDING.plan, { group: 'needs', what: 'plan' });
+  // Every page lists a plan as waiting for you (services/work-state.js),
+  // which the bot page puts under Needs you; a question it leaves to the feed.
+  const ws = require('../src/services/work-state');
+  const plan = ws.fromStage({ stage: 'plan' }, {});
+  assert.deepEqual([plan.stage, plan.why], ['waiting_for_you', 'plan']);
+  assert.equal(ws.placeFor(plan, { requester: true }), 'needs');
 });
 
 // #6246 (4 Nov 2026): #6149's and #6081's plans waited for Build it but
@@ -507,7 +537,7 @@ test('#6228: a fresh reply on a handed-back request reads as waiting to be read'
   const handed = { mode: 'live', verdict: 'person', run_at: ago(10) };
   // Not queued yet: the refresh's window.
   assert.deepEqual(stage({ ...handed, reply_at: ago(1), reply_user_id: 7 }), {
-    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'about to read the newest reply',
+    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'reading the new reply in a moment',
   });
   // handedBack still says Decide on its own; stageOf answers first.
   assert.equal(progress.handedBack({ ...handed, reply_at: ago(1) }), 'decide');
@@ -517,11 +547,11 @@ test('#6228: a fresh reply on a handed-back request reads as waiting to be read'
   // Queued, on hold: it waits for the week, not a read.
   assert.equal(stage({ ...handed, queue_id: 4, enqueued_at: ago(45), held_until: new Date(NOW.getTime() + 60 * 60 * 1000).toISOString(), reply_at: ago(30) }).stage, 'on_hold');
   assert.deepEqual(stage({ ...handed, queue_id: 4, enqueued_at: ago(2), reply_at: ago(1) }), {
-    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'about to read the newest reply',
+    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'reading the new reply in a moment',
   });
   // The read started: reading the reply, with the reading clock.
   assert.deepEqual(stage({ ...handed, started_at: ago(1), reply_at: ago(2) }), {
-    stage: 'reading', reply: true, since: ago(1), doing: 'reading the newest reply', limit: 'reading',
+    stage: 'reading', reply: true, since: ago(1), doing: 'reading the new reply', limit: 'reading',
   });
   // A reply older than the look was already read.
   assert.equal(stage({ ...handed, reply_at: ago(20), run_at: ago(10) }), null);
@@ -595,8 +625,35 @@ test('#6234: where the bot\'s fix of its change\'s checks stands: fixing, queued
   assert.equal(await progress.changeBotFix(fixPool({ session: BOT_CHANGE }), 5001), null);
 });
 
-test('#6234: a change of a person\'s, one not up for a vote, one whose checks pass, and a read that fails all read as nothing', async () => {
-  const person = fixPool({ session: { ...BOT_CHANGE, username: 'maya' }, queue: [{ started_at: ago(1), enqueued_at: ago(2) }] });
+// #6388: the bot already leaves a failure that looks like the platform's to
+// Homeroom's preview (homeroom-bot.js oweChecksFix). changeBotFix had no state
+// for that, so the card fell back to "Its author needs to fix this".
+test('#6388: a failure that looks like the platform is left to Homeroom, not the bot to fix', async () => {
+  const infra = {
+    name: 'Pages render with their stylesheets (platform check)',
+    path: '/app/staging-demo-admins',
+    status: 'fail',
+    failureReason: 'HTTP 503 Service Unavailable for /b/594ec2a2…/usernode-native/v1/native.css',
+  };
+  const onHead = { ...BOT_CHANGE, checks_commit_sha: 'a'.repeat(40), test_results: [infra] };
+  assert.deepEqual(await progress.changeBotFix(fixPool({ session: onHead }), 5001), { state: 'platform', since: null, reason: null });
+  // A queue row for a fix still wins, as it always did.
+  const queued = fixPool({ session: onHead, queue: [{ started_at: null, enqueued_at: ago(2) }] });
+  assert.deepEqual(await progress.changeBotFix(queued, 5001), { state: 'queued', since: ago(2), reason: null });
+  // An assertion failure is the change's own: no platform state.
+  const own = fixPool({
+    session: {
+      ...onHead,
+      test_results: [{ name: 'Signed-in people see the vote button', path: '/vote', status: 'fail', failureReason: 'Expected selector #vote-btn' }],
+    },
+  });
+  assert.equal(await progress.changeBotFix(own, 5001), null);
+  // A verdict on another commit says nothing about the head up for a vote.
+  const older = fixPool({ session: { ...onHead, checks_commit_sha: 'b'.repeat(40) }, runs: [{ id: 901 }] });
+  assert.deepEqual(await progress.changeBotFix(older, 5001), { state: 'handed_off', since: null, reason: null });
+});
+
+test('#6234: a change of a person\'s, one not up for a vote, one whose checks pass, and a read that fails all read as nothing', async () => {  const person = fixPool({ session: { ...BOT_CHANGE, username: 'maya' }, queue: [{ started_at: ago(1), enqueued_at: ago(2) }] });
   assert.equal(await progress.changeBotFix(person, 5001), null);
   assert.equal(person.asked.length, 1, 'nothing more is read for a person\'s change');
   for (const session of [
@@ -628,8 +685,55 @@ test('#6234: both reads of a change carry it, and the Homeroom bot page keeps it
   assert.deepEqual(stage({ ...open, started_at: ago(4), queue_reason: 'checks_failing' }),
     { stage: 'fixing', since: ago(4), doing: 'fixing what its tests found' });
   assert.equal(stage({ ...open, queue_id: 8, enqueued_at: ago(1), queue_reason: 'checks_failing' }).stage, 'fix_queued');
-  const { BOT_STANDING } = require('../src/services/ai-work');
-  assert.deepEqual(BOT_STANDING.fixing, { group: 'next', what: 'fixing' });
-  assert.deepEqual(BOT_STANDING.fix_queued, { group: 'waiting', what: 'fix_queued' });
-  assert.equal(require('../src/services/homeroom-bot-track').fromStage('fixing').why, 'fixing');
+  const ws = require('../src/services/work-state');
+  const fixing = ws.fromStage({ stage: 'fixing' }, {});
+  assert.deepEqual([fixing.stage, fixing.line, ws.placeFor(fixing, { own: true })], ['building', { code: 'fixing' }, 'next']);
+  const queued = ws.fromStage({ stage: 'fix_queued' }, {});
+  assert.deepEqual([queued.stage, queued.line, ws.placeFor(queued, { own: true })], ['up_for_vote', { code: 'update_queued' }, 'waiting']);
+  assert.equal(require('../src/services/homeroom-bot-track').STEP_OF_STAGE[fixing.stage], 'build', 'its track lights Build');
+});
+
+// #6357 (evan): "homeroom bot says building time used up, but i think we're
+// still under budget?" A request whose look threw THROWN_TRIES times in a
+// row is held for a day (src/workflow/bot-request/machine.ts), and every
+// reader said that hold was the week's building time, until Monday.
+test('#6357: a hold says why: the week\'s building time, or a day\'s pause after repeated errors', () => {
+  const inADay = new Date(NOW.getTime() + 24 * 3600 * 1000).toISOString();
+  const monday = '2026-10-05T00:00:00.000Z';
+  const queued = { queue_id: 4, enqueued_at: ago(30) };
+  // Recorded by the workflow.
+  assert.deepEqual(progress.holdOf({ held_until: inADay, held_reason: 'cooldown' }, { now: NOW }), { kind: 'cooldown', until: inADay });
+  assert.deepEqual(progress.holdOf({ held_until: monday, held_reason: 'allowance' }, { now: NOW }), { kind: 'allowance', until: monday });
+  // Stored before it was: only an end on the week's reset is the allowance's.
+  assert.deepEqual(progress.holdOf({ held_until: inADay }, { now: NOW }), { kind: 'cooldown', until: inADay });
+  assert.deepEqual(progress.holdOf({ held_until: monday }, { now: NOW }), { kind: 'allowance', until: monday });
+  assert.equal(require('../src/services/limits').weeklyResetAt(NOW), monday, 'the boundary is the week\'s reset');
+  // No hold, or one over.
+  assert.equal(progress.holdOf({ held_until: null }, { now: NOW }), null);
+  assert.equal(progress.holdOf({ held_until: ago(1), held_reason: 'cooldown' }, { now: NOW }), null);
+  // The stage: on hold either way, saying which, with its own end.
+  assert.deepEqual(stage({ ...queued, held_until: inADay, held_reason: 'cooldown' }), {
+    stage: 'on_hold', hold: 'cooldown', until: inADay, since: ago(30), waitingOn: 'time',
+    doing: 'paused after repeated errors: trying again at 2026-10-03 16:04 UTC',
+  });
+  assert.deepEqual(stage({ ...queued, held_until: monday, held_reason: 'allowance' }), {
+    stage: 'on_hold', until: monday, since: ago(30), waitingOn: 'time',
+    doing: 'on hold until Monday: this week\'s building time is used up',
+  });
+  // Every screen's line (services/work-state.js) keeps them apart.
+  const ws = require('../src/services/work-state');
+  const cool = ws.fromStage(stage({ ...queued, held_until: inADay }), {});
+  assert.deepEqual(cool.line, { code: 'cooldown' });
+  assert.equal(ws.says(cool), 'Not started yet · Paused after repeated errors: Homeroom bot tries again later');
+  const week = ws.fromStage(stage({ ...queued, held_until: monday }), {});
+  assert.deepEqual(week.line, { code: 'on_hold' });
+  assert.equal(ws.lineSays(week), 'On hold until Monday: this week\'s building time is used up');
+  assert.equal(ws.placeFor(cool, { own: true }), 'waiting');
+  assert.equal(ws.placeFor(week, { own: true }), 'waiting');
+  // The same rule in SQL: the week's reset, Monday 00:00 UTC.
+  assert.match(progress.HOLD_IS_ALLOWANCE_SQL, /q\.held_reason = 'allowance'/);
+  const flat = (sql) => sql.replace(/\s+/g, ' ');
+  assert.ok(flat(require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-dm.js'), 'utf8'))
+    .includes(flat(progress.HOLD_IS_ALLOWANCE_SQL)), 'the week\'s DM counts only the week\'s holds, by the same rule');
+  assert.match(progress.HOLD_IS_ALLOWANCE_SQL, /q\.held_reason IS NULL\s+AND q\.held_until = date_trunc\('week', q\.held_until AT TIME ZONE 'UTC'\) AT TIME ZONE 'UTC'/);
 });

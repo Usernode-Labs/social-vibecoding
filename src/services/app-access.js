@@ -81,7 +81,7 @@ const NON_SECRET_APP_COLUMNS = [
   // #2253: the per-app database storage cap's state. Operational, not
   // secret: the admin console shows all of it.
   'db_size_bytes', 'db_size_measured_at', 'db_storage_cap_bytes',
-  'db_storage_frozen_at', 'db_storage_warned_at', 'db_storage_grace_until',
+  'db_storage_frozen_at', 'db_storage_warned_at', 'db_storage_warn_level', 'db_storage_grace_until',
   // Demo mode (routes/demo-mode.js): the switch, its synthetic partner and
   // the commit a reset puts main back to. The settings dialog reads the
   // first; nothing about any of them is secret.
@@ -92,6 +92,9 @@ const NON_SECRET_APP_COLUMNS = [
   // A production deploy app delivery is running (src/workflow/app-delivery/):
   // the version pill's "deploying".
   'deploy_state', 'deploy_started_at', 'deploy_from_sha',
+  // Offline apps (services/offline-cache-refusals.js): the build whose page
+  // was found not to open at the cacheable address. A commit sha.
+  'offline_cache_off_sha',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list

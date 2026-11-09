@@ -29,6 +29,11 @@
 // The admin is read fresh from the database on every run and every confirm,
 // so somebody who lost admin can neither read nor confirm. A person who is not
 // an admin is never offered these tools at all.
+//
+// #6427: two more reads, of live production, which are this module's own
+// rather than the connector's: query_prod_db and prod_status (see
+// "Production debugging" below). They are offered only in a full admin's own
+// chat with the bot, and refused everywhere else.
 
 const crypto = require('node:crypto');
 const log = require('../logger');
@@ -363,17 +368,344 @@ async function prepare(pool, ctx, name, args) {
   };
 }
 
+// ── Production debugging (#6427) ────────────────────────────────────────
+//
+// A full admin can ask the bot to debug production in their own chat with it
+// ("is anything stuck right now?", "why is request 6351 held?"):
+//
+//   query_prod_db  one read-only SQL statement, run as the reviewed
+//                  `usernode_debug_ro` role (services/debug-access.js
+//                  runQuery), never on the main pool. Its grants are
+//                  READABLE_COLUMNS: operational columns only, no contact
+//                  details, nothing that signs anyone in, no text people
+//                  wrote. A new table or column stays unreadable until
+//                  someone reviews it onto that list.
+//   prod_status    the platform's health snapshot (services/status.js
+//                  gather()), as the agent-session Mayor's get_prod_status
+//                  had it, with the words people and agents wrote left out
+//                  and contact details masked (statusForModel).
+//
+// The bot's model runs through OpenRouter, so whatever these return leaves
+// the platform. That is why the role reads no personal column, and why the
+// snapshot is trimmed before the model sees it.
+//
+// Where they run: only in a full admin's (isAdminCtx) own conversation with
+// the bot, the one whose only two members are the admin and the bot (Main
+// Chat and its private threads). beforeTurn reads that before the turn says
+// what it offers; every call reads both again (freshAdmin, ownChatWithBot)
+// and refuses with PROD_DEBUG_REFUSAL, running nothing, unless both still
+// hold. Project threads, request discussions and project chats are answered
+// by homeroom-bot-voice.js and homeroom-bot-chat.js, which never load these
+// tools; a conversation with a third member is refused here as well.
+//
+// Every call is recorded before it runs, as the internal prod-debug routes
+// record theirs (routes/internal.js): a `prod-debug` log line with the admin,
+// the conversation and the SQL text, and a homeroom_bot_admin_actions row with
+// the statement sealed, as a confirm card's input is (it starts `running`, so
+// no Confirm tap can ever claim it). A call that cannot be recorded does not
+// run. The row is also how a card that posts somewhere public knows a
+// database read happened in its thread (dbReadIn).
+
+const PROD_DEBUG_TOOLS = Object.freeze(['query_prod_db', 'prod_status']);
+const PROD_DEBUG_REFUSAL = 'Only a full platform admin can use that, and only in their own chat with me. Nothing was run.';
+const MAX_SQL_CHARS = 4000;
+const PROD_STATUS_LOG_LINES = 50;
+// Snapshot fields that hold words somebody, or a coding agent, wrote: a
+// change's title, a session's title, an agent's last progress line.
+const STATUS_FREE_TEXT = new Set(['prTitle', 'sessionTitle', 'lastProgress']);
+// Contact details that a log line or a value can still carry, masked before
+// the model sees them. Defense in depth: the role reads no such column.
+const PERSONAL_PATTERNS = Object.freeze([
+  [/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g, '[email]'],
+  [/\+\d[\d\s().-]{6,}\d/g, '[phone]'],
+  [/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[ip]'],
+  [/\b(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}\b/gi, '[ip]'],
+]);
+
+function debugAccessOf(ctx) { return ctx?.deps?.debugAccess || require('../debug-access'); }
+function statusOf(ctx) { return ctx?.deps?.statusSvc || require('../status'); }
+
+/** The thread of the chat a turn is in: its root message, or null for Main. */
+function threadRootOf(ctx) {
+  return Number(ctx?.deps?.threadRequest?.rootId || ctx?.deps?.threadRootId) || null;
+}
+
+/**
+ * Whether `conversationId` is `userId`'s own conversation with the bot: a
+ * direct conversation whose only two members are them and the bot, both
+ * still in it. Every member row counts, whatever its status, so somebody
+ * invited, or who left, makes it somebody else's too. Never throws: false
+ * when it cannot tell.
+ */
+async function ownChatWithBot(pool, { conversationId, userId, botId }) {
+  const ids = [conversationId, userId, botId].map(Number);
+  if (!ids.every((n) => Number.isSafeInteger(n) && n > 0) || ids[1] === ids[2]) return false;
+  try {
+    const { rows: [m] } = await pool.query(
+      `SELECT COUNT(*)::int AS members,
+              COUNT(*) FILTER (WHERE cm.user_id = $2 AND cm.status = 'member')::int AS person,
+              COUNT(*) FILTER (WHERE cm.user_id = $3 AND cm.status = 'member' AND u.is_synthetic = TRUE)::int AS bot
+         FROM conversation_members cm
+         JOIN conversations c ON c.id = cm.conversation_id AND c.kind = 'direct'
+         JOIN users u ON u.id = cm.user_id
+        WHERE cm.conversation_id = $1`,
+      ids,
+    );
+    return !!m && Number(m.members) === 2 && Number(m.person) === 1 && Number(m.bot) === 1;
+  } catch (err) {
+    log.warn('homeroom-bot-admin', 'Could not read whose conversation this is', { conversationId: ids[0], err: err.message });
+    return false;
+  }
+}
+
+function chatOf(ctx) {
+  return { conversationId: ctx?.conversationId, userId: ctx?.user?.id, botId: ctx?.bot?.id };
+}
+
+/** Pure: whether this turn offers the production reads (beforeTurn found it is the admin's own chat with the bot). */
+function prodDebugOffered(ctx) {
+  return isAdminCtx(ctx) && Number(ctx.conversationId) > 0 && ctx.ownChatWithBot === Number(ctx.conversationId);
+}
+
+function readableColumnsLine() {
+  return Object.entries(debugAccessOf(null).READABLE_COLUMNS)
+    .map(([table, columns]) => `${table}(${columns.join(', ')})`).join('; ');
+}
+
+/** The model's function definitions for the two production reads. */
+function prodDebugTools() {
+  const where = 'Admin only, and only here, in their own chat with you.';
+  return [
+    {
+      type: 'function',
+      function: {
+        name: 'query_prod_db',
+        description: `${where} Run ONE read-only SQL statement (PostgreSQL) on Homeroom's live production database, `
+          + 'as a read-only role that can read only these reviewed columns, table(columns): '
+          + `${readableColumnsLine()}. `
+          + 'It reads no email, phone number, real name, address, token, title, body or message text. Name the columns '
+          + 'you need (never *): any other column is refused as permission denied. At most 5 seconds and 500 rows.',
+        parameters: {
+          type: 'object',
+          properties: { sql: { type: 'string', description: 'One SELECT statement.' } },
+          required: ['sql'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'prod_status',
+        description: `${where} Homeroom's production health right now: stuck sessions, workers, staging previews, `
+          + 'the checks queue, capacity, the deploy in progress, today\'s spend against its limits, and the recent '
+          + 'platform log events.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+      },
+    },
+  ];
+}
+
+/** Pure: `text` with email addresses, phone numbers and IP addresses masked. */
+function maskPersonal(text) {
+  let out = String(text == null ? '' : text);
+  for (const [pattern, replacement] of PERSONAL_PATTERNS) out = out.replace(pattern, replacement);
+  return out;
+}
+
+function scrubbed(value) {
+  if (typeof value === 'string') return maskPersonal(value);
+  if (Array.isArray(value)) return value.map(scrubbed);
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const out = {};
+    for (const [key, v] of Object.entries(value)) if (!STATUS_FREE_TEXT.has(key)) out[key] = scrubbed(v);
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Pure: the health snapshot as the model reads it, at most MAX_RESULT_CHARS.
+ * The per-app tree is left out (driftContainers names the apps whose runtime
+ * is missing, and query_prod_db reads the rest); the log ring is given once,
+ * as recentLog, and is the first thing dropped when the snapshot is too long.
+ */
+function statusForModel(status, recentLog = []) {
+  const { apps: _apps, events: _events, ...rest } = status && typeof status === 'object' ? status : {};
+  const tries = [
+    { ...rest, recentLog },
+    { ...rest, recentLog: [], note: 'recentLog left out: the snapshot was too long' },
+    {
+      ...rest, workers: undefined, llmUsage: undefined, stagingPerUser: undefined, recentLog: [],
+      note: 'workers, today\'s spend per person and recentLog left out: the snapshot was too long',
+    },
+  ];
+  let text = '';
+  for (const snapshot of tries) {
+    text = JSON.stringify(scrubbed(snapshot));
+    if (text.length <= MAX_RESULT_CHARS) return text;
+  }
+  return clip(text, MAX_RESULT_CHARS);
+}
+
+/** Pure: query rows as the model reads them, at most MAX_RESULT_CHARS. */
+function rowsForModel({ rows = [], rowCount = 0, truncated = false } = {}) {
+  const text = maskPersonal(JSON.stringify({ rowCount, truncated, rows }));
+  if (text.length <= MAX_RESULT_CHARS) return text;
+  return `${clip(text, MAX_RESULT_CHARS - 120)} [cut at ${MAX_RESULT_CHARS} characters: ask for fewer rows or columns]`;
+}
+
+/**
+ * The record of one production read, written before it runs: the log line
+ * (with the SQL text, redacted as the internal route redacts it) and the
+ * admin-actions row (with it sealed). The row's id, or null when it could not
+ * be written, and then nothing runs. Never throws.
+ */
+async function recordProdDebug(pool, ctx, name, sql) {
+  const id = crypto.randomUUID();
+  const userId = Number(ctx.user.id);
+  const conversationId = Number(ctx.conversationId);
+  const threadRootId = threadRootOf(ctx);
+  log.info('prod-debug', name === 'query_prod_db' ? 'Homeroom bot SQL query' : 'Homeroom bot status snapshot', {
+    userId, conversationId, threadRootId, actionId: id, tool: name,
+    ...(sql != null ? { query: log.redactString(sql.slice(0, 2000)) } : {}),
+  });
+  try {
+    const { sealed, inputHash } = confirmations.sealAction(sql != null ? { sql } : {}, ctx.config?.dataEncryptionKey);
+    const { issuedAt, expiresAt } = confirmations.expiryFor(new Date(), CARD_TTL_MS);
+    await pool.query(
+      `INSERT INTO homeroom_bot_admin_actions
+         (id, user_id, conversation_id, thread_root_id, tool_name, sealed_input, input_hash, status, expires_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, 'running', $8, $9)`,
+      [id, userId, conversationId, threadRootId, name, JSON.stringify(sealed), inputHash, expiresAt, issuedAt],
+    );
+    return id;
+  } catch (err) {
+    log.warn('homeroom-bot-admin', 'Could not record a production read before it ran, so it did not run', {
+      userId, tool: name, err: err.message,
+    });
+    return null;
+  }
+}
+
+/** What a production read came to, on its row: never the rows it read. Never throws. */
+async function settleProdDebug(pool, id, outcome) {
+  await pool.query(
+    `UPDATE homeroom_bot_admin_actions SET status = $2, result = $3::jsonb, decided_at = NOW()
+      WHERE id = $1 AND status = 'running'`,
+    [id, outcome.ok ? 'done' : 'failed', JSON.stringify(outcome)],
+  ).catch((err) => log.warn('homeroom-bot-admin', 'Could not record what a production read came to', { actionId: id, err: err.message }));
+}
+
+function queryError(err) {
+  const said = clip(log.redactString(String(err?.message || '')), 400);
+  if (err?.code === 'unavailable') return 'Production debugging is not available right now. Nothing was read.';
+  if (err?.code === '42501') {
+    return `The read-only role refused it (${said}). It reads only the reviewed columns listed in query_prod_db. Nothing was read.`;
+  }
+  return `The database refused it${said ? ` (${said})` : ''}. Nothing was read.`;
+}
+
+async function runProdDebug(pool, ctx, name, args) {
+  const allowed = isAdminCtx(ctx)
+    && await freshAdmin(pool, ctx.user.id)
+    && await ownChatWithBot(pool, chatOf(ctx));
+  if (!allowed) {
+    log.warn('prod-debug', 'Refused a Homeroom bot production read', {
+      userId: Number(ctx?.user?.id) || null, conversationId: Number(ctx?.conversationId) || null, tool: name,
+    });
+    return { ok: false, error: PROD_DEBUG_REFUSAL };
+  }
+  ctx.adminToolsUsed = true;
+  let sql = null;
+  if (name === 'query_prod_db') {
+    sql = typeof args?.sql === 'string' ? args.sql.trim() : '';
+    if (!sql) return { ok: false, error: 'Pass one read-only SQL statement as sql. Nothing was run.' };
+    if (sql.length > MAX_SQL_CHARS) return { ok: false, error: `That statement is over ${MAX_SQL_CHARS} characters. Nothing was run.` };
+  }
+  const id = await recordProdDebug(pool, ctx, name, sql);
+  if (!id) return { ok: false, error: 'I could not record this read, so I did not run it. Nothing was run.' };
+  const started = Date.now();
+  let outcome = { ok: false, code: 'not_run' };
+  try {
+    if (name === 'query_prod_db') {
+      const r = await debugAccessOf(ctx).runQuery(sql, { config: ctx.config });
+      outcome = { ok: true, rowCount: Number(r?.rowCount) || 0, truncated: !!r?.truncated };
+      looked(ctx, 'Read production\'s database');
+      return { result: rowsForModel(r) };
+    }
+    const status = await statusOf(ctx).gather(ctx.config, { isAdmin: true });
+    outcome = { ok: true };
+    looked(ctx, 'Read production\'s health');
+    return { result: statusForModel(status, log.tail(PROD_STATUS_LOG_LINES)) };
+  } catch (err) {
+    outcome = { ok: false, code: typeof err?.code === 'string' ? err.code.slice(0, 32) : 'failed' };
+    if (name === 'query_prod_db') return { ok: false, error: queryError(err) };
+    log.warn('prod-debug', 'Homeroom bot status snapshot failed', { actionId: id, err: err.message });
+    return { ok: false, error: 'The health snapshot could not be read just now. Nothing was read.' };
+  } finally {
+    ctx.lookedMs = (Number(ctx.lookedMs) || 0) + (Date.now() - started);
+    await settleProdDebug(pool, id, outcome);
+  }
+}
+
+/**
+ * #6427: whether a database read (query_prod_db) happened in any of these
+ * threads of a person's chat with the bot (null or 0 for Main), so a card
+ * that posts somewhere public says so (homeroom-bot-mayor.js offer). Never
+ * throws: false when it cannot tell.
+ */
+async function dbReadIn(pool, { userId, conversationId, threadRootIds = [null] }) {
+  const user = Number(userId);
+  const conversation = Number(conversationId);
+  if (!Number.isSafeInteger(user) || user <= 0 || !Number.isSafeInteger(conversation) || conversation <= 0) return false;
+  const roots = [...new Set((Array.isArray(threadRootIds) ? threadRootIds : [threadRootIds])
+    .map((r) => (Number.isSafeInteger(Number(r)) && Number(r) > 0 ? Number(r) : 0)))];
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM homeroom_bot_admin_actions
+        WHERE user_id = $1 AND conversation_id = $2 AND tool_name = 'query_prod_db'
+          AND status IN ('running', 'done') AND COALESCE(thread_root_id, 0) = ANY($3::int[])
+        LIMIT 1`,
+      [user, conversation, roots],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    log.warn('homeroom-bot-admin', 'Could not read whether a database read happened in a thread', { conversationId: conversation, err: err.message });
+    return false;
+  }
+}
+
+/** Before the turn says what it offers: whether this is a full admin's own chat with the bot. Never throws. */
+module.exports.beforeTurn = async function beforeTurn(pool, ctx) {
+  if (!ctx || !isAdminCtx(ctx)) return;
+  if (await ownChatWithBot(pool, chatOf(ctx))) ctx.ownChatWithBot = Number(ctx.conversationId);
+};
+
+/** The production reads are this module's to refuse, offered or not, so a call by name gets their refusal. */
+module.exports.claims = function claims(name) {
+  return PROD_DEBUG_TOOLS.includes(name);
+};
+
 module.exports.tools = function tools(ctx) {
   if (!isAdminCtx(ctx)) return [];
+  let list = [];
   try {
-    return curatedTools();
+    list = curatedTools();
   } catch (err) {
     log.warn('homeroom-bot-admin', 'Could not describe the admin tools', { err: err.message });
-    return [];
+  }
+  if (!prodDebugOffered(ctx)) return list;
+  try {
+    return [...list, ...prodDebugTools()];
+  } catch (err) {
+    log.warn('homeroom-bot-admin', 'Could not describe the production reads', { err: err.message });
+    return list;
   }
 };
 
 module.exports.run = async function run(pool, ctx, name, args) {
+  if (PROD_DEBUG_TOOLS.includes(name)) return runProdDebug(pool, ctx, name, args);
   if (!Object.prototype.hasOwnProperty.call(TOOLS, name)) return undefined;
   if (!isAdminCtx(ctx) || !(await freshAdmin(pool, ctx.user?.id))) {
     return { ok: false, error: 'Only a full platform admin can use that. Nothing was run.' };
@@ -399,6 +731,14 @@ module.exports.promptLines = function promptLines(ctx) {
     '  change per reply. Typing "yes" confirms nothing: if they type it, point them to the card. A bench run',
     '  always needs the most it may spend from them, in dollars: ask, never guess. Read before you change',
     '  settings, and say each old and new value.',
+    ...(prodDebugOffered(ctx) ? [
+      '- Here, in their own chat with you, you can also read live production, read-only: prod_status (its health',
+      '  now) and query_prod_db (one read-only SQL statement, on reviewed operational columns only). Use them to',
+      '  answer what they ask about production from what is there, not from guesses, and say what you read.',
+      '  Never copy query results (rows, values, lists of ids) into anything that will be posted: a request, a',
+      '  reply on a request or a change, a plan, or a thread filed as a request. Describe what you found in your',
+      '  own words instead.',
+    ] : []),
   ];
 };
 
@@ -446,9 +786,9 @@ function outcomeLine(name, stored) {
       return `Retired @${plainText(s.username) || '?'}${apps ? `, and took down ${apps} ${apps === 1 ? 'app' : 'apps'}` : ''}.`;
     }
     case 'send_test_release_email': {
-      // services/mail: failed, no_transport and suppressed_* mean it did not go.
+      // services/mail: failed, no_transport, no_template and suppressed_* mean it did not go.
       const status = plainText(s.mail?.status) || 'unknown';
-      return /^(failed|no_transport|suppressed|unknown)/.test(status)
+      return /^(failed|no_transport|no_template|suppressed|unknown)/.test(status)
         ? `The release email to ${plainText(s.email)} did not go out (${status.replace(/_/g, ' ')}).`
         : `Sent the release email to ${plainText(s.email)}.`;
     }
@@ -583,8 +923,17 @@ Object.assign(module.exports, {
   READS,
   WRITES,
   CARD_TTL_MS,
+  PROD_DEBUG_TOOLS,
+  PROD_DEBUG_REFUSAL,
   isAdminCtx,
   freshAdmin,
+  ownChatWithBot,
+  prodDebugOffered,
+  prodDebugTools,
+  maskPersonal,
+  statusForModel,
+  rowsForModel,
+  dbReadIn,
   curatedTools,
   modelTool,
   rowsOf,

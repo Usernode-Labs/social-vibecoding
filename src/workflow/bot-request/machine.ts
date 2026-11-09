@@ -54,7 +54,12 @@ export interface Owed {
   threadSeenAt: string | null;
   enqueuedAt: string;
   heldUntil: string | null;
+  // #6357: why it is held: its payer's week is spent (`allowance`), or its
+  // look threw THROWN_TRIES times in a row (`cooldown`). Absent on a hold
+  // stored before it was recorded (readers infer it: progress holdOf).
+  heldFor?: HoldReason | null;
 }
+export type HoldReason = 'allowance' | 'cooldown';
 // A look under way: its work `look:<n>`, the slot the lane granted it, the
 // session it runs on (one of its project's triage sessions, its read
 // slot's, or its change's).
@@ -69,6 +74,10 @@ export interface Look {
   interrupted: boolean;
 }
 // `heldUntil`: its payer's week is spent; it waits for its slot from then.
+// A build stored while builds waited for a change touching the same files
+// (#6423) may still carry `heldFor` and `overlap`: since #6428 that hold
+// holds nothing (the lane grants it on its next pass, BUILD_CANDIDATES_SQL),
+// and both fields go at the build's next step (current).
 export interface Build { runId: number; phase: 'waiting' | 'starting' | 'running'; since: string; key: string | null; heldUntil?: string | null }
 // A read's `readSlot`: which of its project's triage sessions it runs on
 // (the lane's pick, never another read's while it runs).
@@ -159,6 +168,9 @@ const EVENTS = {
   LookOn: (p: any) => ({ ...request(p), n: int(p?.n, 'n'), sessionId: int(p?.sessionId, 'sessionId') }),
   // A person's Stop of the bot's turn on a session (the session's routes).
   StopRequested: (p: any) => ({ sessionId: optInt(p?.sessionId), by: optText(p?.by, 100) }),
+  // #6377: a payer's week has room again (a weekly limit raised or set to 0,
+  // a charge refunded): what the spent week held back may look again now.
+  AllowanceFreed: (p: any) => request(p),
   // Its clock: a hold or a backoff.
   Due: () => ({}),
 };
@@ -214,6 +226,15 @@ function latest(a: string | null, b: string | null): string | null {
 function waitUntil(d: Data): Date | null {
   const t = [d.owed?.heldUntil, d.backoff?.until].filter(Boolean).map((v) => Date.parse(v as string)).filter(Number.isFinite);
   return t.length ? new Date(Math.max(...t)) : null;
+}
+
+// A build as this build of the machine keeps it: without the fields an
+// overlap hold stored (#6423), whose hold, if it was one, holds nothing now
+// (#6428). A hold for the payer's week stays.
+function current(b: Build): Build {
+  const { heldFor, overlap, ...kept } = b as Build & { heldFor?: unknown; overlap?: unknown };
+  if (heldFor === undefined && overlap === undefined) return b;
+  return heldFor === 'overlap' ? { ...kept, heldUntil: null } : kept;
 }
 
 // Owed and waiting for a slot: the lane hears, and the instance's clock is
@@ -310,7 +331,7 @@ function granted(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): Out
   if (p.kind === 'build') {
     if (s.name !== 'building' || !d.build || d.build.phase !== 'waiting') return step(s.name, d, { messages: [look(d)] });
     const b = (d.b || 0) + 1;
-    const build: Build = { ...d.build, phase: 'starting' };
+    const build: Build = { ...current(d.build), phase: 'starting', heldUntil: null };
     return step('building', { ...d, b, slot, build }, {
       work: [{ kind: WORK.build, key: `build:${b}`, input: { appId: d.appId, issueNumber: d.issueNumber, runId: build.runId, n: b, person: slot.person } }],
       push: workChanged(slot.person),
@@ -399,7 +420,7 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
       // whose work threw pauses nothing else (THROWN_TRIES).
       const failures = (d.faults || 0) + 1;
       back = failed && failures >= THROWN_TRIES
-        ? { ...lk.owed, heldUntil: later(ctx, THROWN_HOLD_MS).toISOString() }
+        ? { ...lk.owed, heldUntil: later(ctx, THROWN_HOLD_MS).toISOString(), heldFor: 'cooldown' }
         : lk.owed;
       backoff = { failures, until: later(ctx, backoffMs(failures)).toISOString(), reason: String(failed ? 'look_failed' : r.error || 'platform').slice(0, 64) };
       lane = failed ? {} : { fault: true };
@@ -410,7 +431,7 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
     // grants nothing until it resets.
     case 'github': back = lk.owed; lane = { github: optTime(r.until) }; break;
     case 'held': {
-      back = { ...lk.owed, heldUntil: optTime(r.until) || later(ctx, 7 * 24 * 3600 * 1000).toISOString() };
+      back = { ...lk.owed, heldUntil: optTime(r.until) || later(ctx, 7 * 24 * 3600 * 1000).toISOString(), heldFor: 'allowance' };
       lane = {};
       break;
     }
@@ -490,15 +511,17 @@ function buildStarted(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext)
   if (r.outcome === 'requested' && typeof r.key === 'string') {
     return step('building', { ...d, build: { ...d.build, phase: 'running', key: r.key } });
   }
-  if (r.outcome === 'held') {
+  if (r.outcome === 'held' && r.heldFor !== 'overlap') {
     const until = optTime(r.until) || later(ctx, 7 * 24 * 3600 * 1000).toISOString();
-    return step('building', { ...d, slot: null, build: { ...d.build, phase: 'waiting', heldUntil: until } },
+    return step('building', { ...d, slot: null, build: { ...current(d.build), phase: 'waiting', heldUntil: until } },
       { timer: { at: new Date(until), event: { type: 'Due' } }, messages: [toLane('Released', {}, d.appId)] });
   }
-  if (r.outcome === 'fault' || r.outcome === 'budget' || r.outcome === 'github' || r.outcome === 'not_started') {
+  // An older build's start held it for an overlap (#6423), which holds
+  // nothing now (#6428): it waits for its slot again, as one not started.
+  if (r.outcome === 'held' || r.outcome === 'fault' || r.outcome === 'budget' || r.outcome === 'github' || r.outcome === 'not_started') {
     const lane: Record<string, Json> = r.outcome === 'budget' ? { budget: true } : r.outcome === 'fault' ? { fault: true }
       : r.outcome === 'github' ? { github: optTime(r.until) } : {};
-    return step('building', { ...d, slot: null, build: { ...d.build, phase: 'waiting' } },
+    return step('building', { ...d, slot: null, build: { ...current(d.build), phase: 'waiting' } },
       { messages: [toLane('Released', lane, d.appId)] });
   }
   return rest({ ...d, build: null, slot: null }, ctx, { messages: [toLane('Released', {}, d.appId)] });
@@ -518,7 +541,7 @@ function fixAsked(s: RState, e: Event<any>, f: Facts, ctx: TransitionContext): O
   if (s.name === 'queued') {
     // A hold for its payer's week does not hold an uncharged fix (trace L7).
     const o = merged(d.owed, debt, ctx);
-    return queue({ ...d, owed: { ...o, heldUntil: null } }, ctx);
+    return queue({ ...d, owed: { ...o, heldUntil: null, heldFor: null } }, ctx);
   }
   if (LOOKING.has(s.name as string) || s.name === 'building') {
     return step(s.name as Name, { ...d, owed: merged(d.owed, debt, ctx) });
@@ -584,6 +607,20 @@ function due(s: Live, _e: Event<any>, _f: Facts, ctx: TransitionContext): Outcom
   return step(s.name, d, { timer: null });
 }
 
+// The payer's week has room again (a weekly limit raised or cleared, a charge
+// refunded): the hold it put on the request is lifted now rather than on
+// Monday, and the lane looks at what waits again. A backoff is a different
+// wait and stays; a look under way decides at its own end.
+function allowanceFreed(s: Live, _e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<RState> {
+  const d0 = s.data;
+  const d: Data = d0.owed?.heldUntil ? { ...d0, owed: { ...d0.owed, heldUntil: null } } : d0;
+  if (s.name === 'queued') return queue(d, ctx);
+  if (s.name === 'building' && d.build?.heldUntil) {
+    return step('building', { ...d, build: { ...current(d.build), heldUntil: null } }, { timer: null, messages: [look(d)] });
+  }
+  return step(s.name, d);
+}
+
 function workDone(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<RState> {
   const p = e.payload as WorkResultPayload;
   const d = s.data;
@@ -618,7 +655,7 @@ export function botRequest(deps: Deps = { staging: false }) {
   const row = {
     Owed: any(owed), NotOwed: live(notOwed), Activity: any(activity), Granted: live(granted), BuildOwed: any(buildOwed),
     BuildEnded: live(buildEnded), FixAsked: any(fixAsked), RequestMerged: live(requestMerged), StopRequested: live(stopRequested),
-    LookOn: live(lookOn), Due: live(due),
+    LookOn: live(lookOn), AllowanceFreed: live(allowanceFreed), Due: live(due),
     WorkSucceeded: live(workDone), WorkFailed: live(workDone), WorkExhausted: live(workDone),
   };
   const states: Name[] = ['idle', 'queued', 'reading', 'following_up', 'building'];
@@ -626,7 +663,8 @@ export function botRequest(deps: Deps = { staging: false }) {
   transitions[NONE] = {
     Owed: any(owed), Activity: any(activity), BuildOwed: any(buildOwed), FixAsked: any(fixAsked),
     NotOwed: { ignore: 'not_owed' }, Granted: { ignore: 'not_owed' }, BuildEnded: { ignore: 'not_building' },
-    RequestMerged: { ignore: 'nothing_owed' }, StopRequested: { ignore: 'not_looking' }, LookOn: { ignore: 'not_looking' }, Due: { ignore: 'gone' },
+    RequestMerged: { ignore: 'nothing_owed' }, StopRequested: { ignore: 'not_looking' }, LookOn: { ignore: 'not_looking' },
+    AllowanceFreed: { ignore: 'gone' }, Due: { ignore: 'gone' },
     '*': { ignore: 'not_owed' },
   };
   return defineMachine<RState, Facts>({
@@ -651,7 +689,7 @@ export function botRequest(deps: Deps = { staging: false }) {
     },
     authorize: {
       Owed: anyProducer, NotOwed: anyProducer, Activity: anyProducer, Granted: fromLane, BuildOwed: anyProducer,
-      BuildEnded: fromBuild, FixAsked: fromChange, RequestMerged: anyProducer, LookOn: anyProducer,
+      BuildEnded: fromBuild, FixAsked: fromChange, RequestMerged: anyProducer, LookOn: anyProducer, AllowanceFreed: anyProducer,
       StopRequested: (e) => (['route', 'system', 'admin'].includes(e.source.kind) ? ok() : reject('not_a_producer')),
       Due: (e) => (e.source.kind === 'timer' ? ok() : reject('not_the_clock')),
     },
@@ -678,15 +716,17 @@ export function botRequest(deps: Deps = { staging: false }) {
       const started = looking ? d.look?.startedAt ?? null : null;
       await tx.query(
         `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, thread_seen_at, requested_by, enqueued_at,
-                                         started_at, held_until, payer_user_id, changed_by, wait_reason, wait_until)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                                         started_at, held_until, payer_user_id, changed_by, wait_reason, wait_until,
+                                         held_reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          ON CONFLICT (app_id, issue_number) DO UPDATE SET
            priority = EXCLUDED.priority, reason = EXCLUDED.reason, thread_seen_at = EXCLUDED.thread_seen_at,
            requested_by = EXCLUDED.requested_by, enqueued_at = EXCLUDED.enqueued_at, started_at = EXCLUDED.started_at,
            held_until = EXCLUDED.held_until, payer_user_id = EXCLUDED.payer_user_id, changed_by = EXCLUDED.changed_by,
-           wait_reason = EXCLUDED.wait_reason, wait_until = EXCLUDED.wait_until`,
+           wait_reason = EXCLUDED.wait_reason, wait_until = EXCLUDED.wait_until, held_reason = EXCLUDED.held_reason`,
         [d.appId, d.issueNumber, o.priority, o.reason, o.threadSeenAt, o.requestedBy, o.enqueuedAt, started, o.heldUntil,
-          o.payer, o.changedBy, looking ? null : d.backoff?.reason ?? null, looking ? null : d.backoff?.until ?? null]);
+          o.payer, o.changedBy, looking ? null : d.backoff?.reason ?? null, looking ? null : d.backoff?.until ?? null,
+          o.heldUntil ? o.heldFor ?? null : null]);
       void before;
     },
   });

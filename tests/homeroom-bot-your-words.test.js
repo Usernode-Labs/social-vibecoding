@@ -4,7 +4,9 @@
 //
 //   - what somebody asked for is kept in their own words (asked_text): their
 //     message to the bot, the description they wrote when they asked for a
-//     change, a first version's brief. Their activity card leads with it.
+//     change, a first version's brief. A first version's activity card leads
+//     with it (an ordinary request's card is no longer sent: its news is on
+//     its page, 5 Nov 2026).
 //   - a change the bot built credits them in its description.
 //   - a change is named a change on its card, with where it is in words.
 //
@@ -123,11 +125,29 @@ test('B4: their words and the credit, against the full PostgreSQL schema', { tim
     const opened = await require('../src/services/conversations').ensureAdmittedDirect(pool, bot.id, maya.id);
     assert.ok(opened);
     const settings = { mode: 'live' };
-    const sent = await require('../src/services/homeroom-bot-activity').startCard(pool, { inDm: true,
+    const activity = require('../src/services/homeroom-bot-activity');
+    // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): an ordinary request's
+    // activity card is its news, said on its page, so none is sent to her chat.
+    assert.equal(await activity.startCard(pool, { inDm: true,
       app, issueNumber: 4, requester: await dm.requesterOf(pool, app.id, 4), bot, jobKey: 'words-1', settings,
+    }), null);
+    const { rows: none } = await pool.query(
+      `SELECT id FROM conversation_messages WHERE conversation_id = $1 AND metadata->'homeroomBot'->>'kind' = 'activity'`,
+      [opened.conversationId],
+    );
+    assert.deepEqual(none, [], 'nothing in her chat with the bot');
+    // A first version still has its card there, and it leads with her brief.
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text, first_version)
+       VALUES ($1, 1, $2, 'First version of Plant Pal', 'A list of my plants and when to water them', TRUE)`,
+      [app.id, maya.id],
+    );
+    const sent = await activity.startCard(pool, { inDm: true,
+      app, issueNumber: 1, requester: await dm.requesterOf(pool, app.id, 1), bot, jobKey: 'words-2', settings,
     });
+    assert.ok(sent?.messageId, 'her first version\'s card is sent');
     const { rows: [msg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
-    assert.equal(msg.metadata.homeroomBot.askedText, 'Add a weekly reminder on Sunday mornings');
+    assert.equal(msg.metadata.homeroomBot.askedText, 'A list of my plants and when to water them');
   });
 
   await t.test('her change credits her in its description, and its author stays the bot', async () => {

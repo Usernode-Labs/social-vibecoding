@@ -109,7 +109,7 @@
   },
   "work.heading": {
     "text": "Your work",
-    "description": "Heading over the first list of rows on the viewer's own profile: their changes, requests and votes."
+    "description": "Heading over the first list of rows on the viewer's own profile: their changes, requests, feedback and votes."
   },
   "work.changes.title": {
     "text": "Your changes",
@@ -118,14 +118,6 @@
   "work.changes.hint": {
     "text": "Everything you have started",
     "description": "Small line under \"Your changes\" on the viewer's profile when there are no counts to show."
-  },
-  "work.changes.loadFailed": {
-    "text": "Your changes could not be loaded.",
-    "description": "Shown on the \"Your changes\" screen when the list could not be fetched. \"Changes\" is a noun."
-  },
-  "work.changes.empty": {
-    "text": "You have not started a change yet.",
-    "description": "Shown on the \"Your changes\" screen when the viewer has never started a change to a project. \"Change\" is a noun."
   },
   "work.requests.title": {
     "text": "Your requests",
@@ -139,17 +131,13 @@
     "text": "Counting your requests",
     "description": "Read by screen readers only, under \"Your requests\" on the viewer's profile, while the counts of their open and done requests are still loading; on screen a grey placeholder bar stands in for the line."
   },
-  "work.requests.loadFailed": {
-    "text": "Your requests could not be loaded.",
-    "description": "Shown on the \"Your requests\" screen when the list could not be fetched. \"Requests\" is a noun."
+  "work.feedback.title": {
+    "text": "Your feedback",
+    "description": "Row on the viewer's own profile that opens the Your feedback sheet: the history of the feedback they sent and whether it counted."
   },
-  "work.requests.empty": {
-    "text": "You have not suggested an improvement yet.",
-    "description": "Shown on the \"Your requests\" screen when the viewer has never asked for anything."
-  },
-  "work.requests.suggest": {
-    "text": "Suggest an improvement",
-    "description": "Button at the foot of the \"Your requests\" screen: opens the form for asking for an improvement."
+  "work.feedback.hint": {
+    "text": "What you sent, and whether it counted",
+    "description": "Small line under \"Your feedback\" on the viewer's profile when the sent and counted tally could not be loaded."
   },
   "work.votes.title": {
     "text": "Your votes",
@@ -159,41 +147,9 @@
     "text": "The changes and decisions you voted on",
     "description": "Small line under \"Your votes\" on the viewer's profile when there is no latest vote to show. \"Changes\" is a noun."
   },
-  "work.votes.loadFailed": {
-    "text": "Your votes could not be loaded.",
-    "description": "Shown on the \"Your votes\" screen when the list could not be fetched."
-  },
-  "work.votes.empty": {
-    "text": "You have not voted on anything yet.",
-    "description": "Shown on the \"Your votes\" screen when the viewer has never voted."
-  },
-  "work.votes.note": {
-    "text": "Every vote you cast is here, newest first. If you changed a vote or took it back, each one you cast is its own row.",
-    "description": "Note under the list on the \"Your votes\" screen: the list is every vote the viewer cast, not only the ones still counted, so a vote they changed shows as two rows (one per side)."
-  },
   "work.votes.latest": {
     "text": "Latest: {{title}}",
     "description": "Small line under \"Your votes\" on the viewer's profile. {{title}} is the title of the change or decision they voted on most recently."
-  },
-  "work.fold.allLive": {
-    "text": "Show all live",
-    "description": "Row at the end of the \"Live\" group on the \"Your changes\" screen when only the first few are shown: unfolds the rest. \"Live\" means changes that are running."
-  },
-  "work.fold.allDecided": {
-    "text": "Show all",
-    "description": "Row at the end of the \"Decided\" group on the \"Your votes\" screen when only the first few are shown: unfolds the rest."
-  },
-  "work.tab.changes": {
-    "text": "Changes",
-    "description": "Tab on the Your work screen (Me › Your work) that shows the changes the person started. A noun, plural: proposed changes to apps."
-  },
-  "work.tab.requests": {
-    "text": "Requests",
-    "description": "Tab on the Your work screen (Me › Your work) that shows the requests the person filed. A noun, plural: things they asked to have built or fixed."
-  },
-  "work.tab.votes": {
-    "text": "Votes",
-    "description": "Tab on the Your work screen (Me › Your work) that shows the votes the person cast. A noun, plural."
   },
   "work.changes.live_one": {
     "text": "{{number}} live",
@@ -237,7 +193,7 @@
   },
   "more.appSlots.title": {
     "text": "App slots",
-    "description": "Row on the viewer's own profile: opens the dialog for creating an app, which says how many apps they may have. A \"slot\" is room for one app."
+    "description": "Row on the viewer's own profile: says how many app slots are free and opens the App allowance card, where more can be requested. A \"slot\" is room for one app."
   },
   "more.appSlots.hint": {
     "text": "How many apps you can create",
@@ -354,158 +310,6 @@
   "date.daysAgo_other": {
     "text": "{{count}} days ago",
     "description": "A date said relative to now, placed inside a longer line such as \"sent 3 days ago\" or after an app's name. {{count}} is a number of days from 2 to 13."
-  },
-  "changes.group.inProgress": {
-    "text": "In progress",
-    "description": "Heading on the \"Your changes\" screen over the changes still being worked on or voted on."
-  },
-  "changes.group.live": {
-    "text": "Live",
-    "description": "Heading on the \"Your changes\" screen over the changes that were approved and are running. An adjective."
-  },
-  "changes.group.closed": {
-    "text": "Closed",
-    "description": "Heading on the \"Your changes\" screen over the changes that ended without going live. An adjective."
-  },
-  "changes.untitled": {
-    "text": "Untitled change to {{project}}",
-    "description": "Stands in for a change's title on the \"Your changes\" tab of the Your work screen when nobody has named it yet. {{project}} is the name of the project (app) the change is for."
-  },
-  "changes.untitledPr": {
-    "text": "Change #{{number}} to {{project}}",
-    "description": "Stands in for a change's title on the \"Your changes\" tab of the Your work screen when nobody has named it yet but it has a pull request. {{number}} is the pull request's number, {{project}} the name of the project (app) the change is for."
-  },
-  "changes.filter.all": {
-    "text": "All",
-    "description": "Filter chip on the \"Your changes\" tab of the Your work screen, first of a row of chips: shows every change, whatever stage it is at. An adjective standing for \"all changes\"."
-  },
-  "changes.filter.upForVote": {
-    "text": "Up for vote",
-    "description": "Filter chip on the \"Your changes\" tab of the Your work screen, and the heading over its rows when picked: changes the members are voting on, or that were approved and are going live."
-  },
-  "changes.filter.stage": {
-    "text": "Show changes by stage",
-    "description": "Accessible name, read by a screen reader, of the row of filter chips (All, In progress, Up for vote, Live, Closed) on the \"Your changes\" tab of the Your work screen."
-  },
-  "changes.filter.project": {
-    "text": "Project",
-    "description": "Accessible name, read by a screen reader, of the drop-down on the \"Your changes\" tab of the Your work screen that narrows the list to one project. A noun: an app being built."
-  },
-  "changes.filter.allProjects": {
-    "text": "All projects",
-    "description": "First choice of the drop-down on the \"Your changes\" tab of the Your work screen that narrows the list to one project: shows the changes of every project."
-  },
-  "changes.filter.noMatch": {
-    "text": "None of your changes match these filters.",
-    "description": "Shown on the \"Your changes\" tab of the Your work screen when the stage chip and the project picked together leave no rows."
-  },
-  "changes.step.continue": {
-    "text": "Continue",
-    "description": "Small pill at the end of a row on the \"Your changes\" tab of the Your work screen, for a change whose agent session was paused: the next step is to open it and carry on working on it. A verb."
-  },
-  "changes.step.fixChecks": {
-    "text": "Fix checks",
-    "description": "Small pill at the end of a row on the \"Your changes\" tab of the Your work screen, for a change whose automated checks failed: the next step is to open it and get them passing. A verb phrase; \"checks\" is a noun, the automated tests run on the change."
-  },
-  "changes.state.waiting": {
-    "text": "waiting for approval",
-    "description": "One fact on the small line of a row of the \"Your changes\" screen, after the app's name: the change is being voted on. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
-  },
-  "changes.state.inProgress": {
-    "text": "in progress",
-    "description": "One fact on the small line of a row of the \"Your changes\" screen, after the app's name: the change is still being worked on. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
-  },
-  "changes.state.paused": {
-    "text": "paused",
-    "description": "One fact on the small line of a row of the \"Your changes\" tab of the Your work screen, after the app's name: the change's agent session was paused to free a slot, and is still unfinished. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
-  },
-  "changes.state.closed": {
-    "text": "closed without going live",
-    "description": "One fact on the small line of a row of the \"Your changes\" screen, after the app's name: the change was withdrawn or archived without becoming part of the app. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
-  },
-  "changes.state.goingLive": {
-    "text": "going live",
-    "description": "One fact on the small line of a row of the \"Your changes\" tab of the Your work screen, after the app's name: the change was approved and is on its way into the running app. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
-  },
-  "requests.group.open": {
-    "text": "Open",
-    "description": "Heading on the \"Your requests\" screen over the requests that are not finished. An adjective."
-  },
-  "requests.group.done": {
-    "text": "Done",
-    "description": "Heading on the \"Your requests\" screen over the requests that are finished, whether built or closed."
-  },
-  "requests.fallbackTitle": {
-    "text": "Request #{{number}}",
-    "description": "Stands in for a request's title on the \"Your requests\" screen when it has none. {{number}} is the request's number. \"Request\" is a noun."
-  },
-  "requests.anApp": {
-    "text": "An app",
-    "description": "Stands in for the app's name on a row of the \"Your requests\" screen when it is not known."
-  },
-  "requests.state.waiting": {
-    "text": "nobody on it yet",
-    "description": "One fact on the small line of a row of the \"Your requests\" screen, after the app's name: nobody has started working on the request. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
-  },
-  "requests.state.underway": {
-    "text": "someone is on it",
-    "description": "One fact on the small line of a row of the \"Your requests\" screen, after the app's name: somebody is working on the request. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
-  },
-  "requests.state.shipped": {
-    "text": "live",
-    "description": "One fact on the small line of a row of the \"Your requests\" screen, after the app's name: what was asked for has been built and is running. An adjective. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
-  },
-  "requests.state.closed": {
-    "text": "closed",
-    "description": "One fact on the small line of a row of the \"Your requests\" screen, after the app's name: the request was closed without being built. An adjective. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
-  },
-  "votes.group.open": {
-    "text": "Still open",
-    "description": "Heading on the \"Your votes\" screen over the votes whose voting has not ended. \"Open\" is an adjective."
-  },
-  "votes.group.decided": {
-    "text": "Decided",
-    "description": "Heading on the \"Your votes\" screen over the votes whose outcome is settled."
-  },
-  "votes.title.change": {
-    "text": "Change #{{number}}",
-    "description": "Stands in for the title of a change the viewer voted on, when it has none. {{number}} is the change's number. \"Change\" is a noun."
-  },
-  "votes.title.aChange": {
-    "text": "A change",
-    "description": "Stands in for the title of a change the viewer voted on, when it has neither a title nor a number. \"Change\" is a noun."
-  },
-  "votes.title.decision": {
-    "text": "A group decision",
-    "description": "Stands in for the title of a community decision the viewer voted on, when it has none."
-  },
-  "votes.anApp": {
-    "text": "An app",
-    "description": "Stands in for the app's name on a row of the \"Your votes\" screen when it is not known."
-  },
-  "votes.votedYes": {
-    "text": "you voted yes",
-    "description": "On a row of the \"Your votes\" screen, after the app's name: the viewer's vote was yes. Lower case."
-  },
-  "votes.votedNo": {
-    "text": "you voted no",
-    "description": "On a row of the \"Your votes\" screen, after the app's name: the viewer's vote was no. Lower case."
-  },
-  "votes.outcome.live": {
-    "text": "live",
-    "description": "On a row of the \"Your votes\" screen, after the viewer's vote: the change was approved and is running. Lower case; an adjective."
-  },
-  "votes.outcome.goingLive": {
-    "text": "going live",
-    "description": "On a row of the \"Your votes\" screen, after the viewer's vote: the change was approved and is being put into the running project. Lower case."
-  },
-  "votes.outcome.closed": {
-    "text": "closed",
-    "description": "On a row of the \"Your votes\" screen, after the viewer's vote: the change ended without going live. Lower case; an adjective."
-  },
-  "votes.outcome.decided": {
-    "text": "decided",
-    "description": "On a row of the \"Your votes\" screen, after the viewer's vote: the community decision has been settled. Lower case."
   },
   "feedback.title": {
     "text": "Your feedback",
@@ -1106,5 +910,17 @@
   "feedback.editLeft_other": {
     "text": "You can edit it for {{count}} more minutes.",
     "description": "Action or time remaining beside a recent request in Your feedback. {{count}}, when present, is the number of minutes rounded up."
+  },
+  "votes.title.change": {
+    "text": "Change #{{number}}",
+    "description": "Stands in for the title of a change the viewer voted on, when it has none. {{number}} is the change's number. \"Change\" is a noun."
+  },
+  "votes.title.aChange": {
+    "text": "A change",
+    "description": "Stands in for the title of a change the viewer voted on, when it has neither a title nor a number. \"Change\" is a noun."
+  },
+  "votes.title.decision": {
+    "text": "A group decision",
+    "description": "Stands in for the title of a community decision the viewer voted on, when it has none."
   }
 }

@@ -327,8 +327,6 @@ const OWNED = [
   { sel: '#settings-local-agents-list' },    // features/settings/local-agents-list.tsx
   { sel: '#agent-files-instructions-list' }, // features/settings/agent-files-list.tsx
   { sel: '#agent-files-skills-list' },
-  { sel: '#browse-list' },                   // features/apps/browse-list.tsx
-  { sel: '#browse-sort-bar' },               // features/apps/browse-screen.tsx (#1383)
   // The WHOLE Workshop screen (#workshop): features/workshop/index.tsx renders
   // and reconciles every node under this root, and no public/js/** module has
   // ever written inside it — App.navigateToWorkshop drives it through the
@@ -336,6 +334,7 @@ const OWNED = [
   // uses. Listed on the day it shipped so it cannot acquire a second author
   // later without the sweep saying so.
   { sel: '#workshop-screen' },               // features/workshop/index.tsx
+  { sel: '#weekly-digest-screen' },          // features/weekly-digest/index.tsx (#6371)
   { sel: '#standings-tabs' },                // @/components/ui/tabs, via the leaderboard
   { sel: '#leaderboard-event-bar' },         // features/leaderboard/event-bar.tsx
   { sel: '#admin-section-content', when: '#admin/e2e' },     // features/admin/admin-e2e.tsx
@@ -345,6 +344,7 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/push' },    // features/admin/admin-push.tsx
   { sel: '#admin-section-content', when: '#admin/campaigns' }, // features/admin/admin-campaigns.tsx
   { sel: '#admin-section-content', when: '#admin/mail' },    // features/admin/admin-mail.tsx
+  { sel: '#admin-section-content', when: '#admin/email-templates' }, // features/admin/admin-email-templates.tsx
   { sel: '#admin-section-content', when: '#admin/sms' },     // features/admin/admin-sms.tsx
   { sel: '#admin-section-content', when: '#admin/status' },  // features/admin/admin-status.tsx
   { sel: '#admin-section-content', when: '#admin/incidents' }, // features/admin/admin-incidents.tsx (#4296)
@@ -400,7 +400,7 @@ const OWNED = [
 const ROUTES = [
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990411',
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401',
-  '#home', '#apps', '#apps/recipebot', '#workshop', '#ai', '#settings', '#settings/app-ai',
+  '#home', '#workshop', '#week', '#ai', '#settings', '#settings/app-ai',
   '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/linked-accounts', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#messages', '#notifications',
   '#agent/990801', '#agent/990801/changes', '#messages/agent/990801',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
@@ -424,7 +424,7 @@ const ROUTES = [
   // #4455: a change's page in the same layout (`.dev-request.dev-change`),
   // on the demo proposal whose testing is part way through.
   '?demo=1#app/usernode-2d5619/dev/proposals/9000026',
-  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/apps', '#admin/rollover', '#admin/staging-reap', '#admin/templates', '#admin/workflows',
+  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/email-templates', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/apps', '#admin/rollover', '#admin/staging-reap', '#admin/templates', '#admin/workflows',
   '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/test-accounts', '#admin/access-review', '#admin/compliance', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
   // Its Configurations (once Bot configurations, #admin/bot-configs) and Calls tabs.
   '#admin/homeroom-bot/configs', '#admin/homeroom-bot/calls',

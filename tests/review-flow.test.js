@@ -81,6 +81,47 @@ test('feed items become review items: plain summary, shaped screens, phone first
   assert.deepEqual(legacy.pair, { before: '/visuals/' + 'c'.repeat(32), after: '/visuals/' + 'd'.repeat(32) });
 });
 
+test('#6344: the decisions, ballots and questions the run cannot draw become rows on their own page', () => {
+  const t = (id, values) => message(id, values);
+  const feed = [
+    feedItem({ kind: 'proposal', id: 1 }),
+    feedItem({ kind: 'governance', id: 9, title: 'Rename the app to Recipe Box', number: null }),
+    feedItem({
+      kind: 'ballot', id: 12, title: 'a ballot has its own title', number: 4,
+      ballot: { number: 3, title: 'Which sign-in screen should go live?', options: [], close: null },
+    }),
+    feedItem({ kind: 'question', id: 15, title: '', number: 7 }),
+    feedItem({ kind: 'governance', id: 20, title: '', number: null }),
+    feedItem({ kind: 'ballot', id: 22, title: '', number: null, ballot: { number: null, title: null, options: [], close: null } }),
+    feedItem({ kind: 'governance', id: 30, title: 'No project here', app: null }),
+    // #6439: a vote to close a request is decided on the request's page.
+    feedItem({ kind: 'governance', id: 24, title: 'Close it: covered elsewhere', number: null, decision: { kind: 'close_issue', issueNumber: 7 } }),
+  ];
+  const pages = model.pageItems(feed, t);
+  assert.deepEqual(pages.map((p) => p.key), ['governance:9', 'ballot:12', 'question:15', 'governance:20', 'ballot:22', 'governance:24'],
+    'the feed order, only the kinds decided on their own page, and none without a project');
+  assert.deepEqual(pages.map((p) => p.href), [
+    '#app/homeroom/dev/governance/9',
+    '#app/homeroom/dev/issues/3',
+    '#app/homeroom/dev/issues/7',
+    '#app/homeroom/dev/governance/20',
+    '#app/homeroom/workshop',
+    '#app/homeroom/dev/issues/7',
+  ], 'a decision opens its own page; a close vote, a ballot and a question their request\'s, else the Workshop');
+  assert.deepEqual(pages.map((p) => p.kind), ['governance', 'ballot', 'question', 'governance', 'ballot', 'governance']);
+  assert.deepEqual(pages.map((p) => p.title), [
+    'Rename the app to Recipe Box',
+    'Which sign-in screen should go live?',
+    message('communities:reel.fallbackTitle.question'),
+    message('communities:reel.fallbackTitle.decision'),
+    message('communities:reel.ballot.fallbackTitle', { number: '' }),
+    'Close it: covered elsewhere',
+  ], 'its own title, else the fallback the feed already uses');
+  const close = model.toReviewItems([feed[7]], () => null)[0];
+  assert.equal(close.request, 7, '#6439: the review item knows the request its vote would close');
+  assert.equal(model.toReviewItems([feed[1]], () => null)[0].request, null, 'a rename has no request');
+});
+
 test('the title shot crops the after side to what changed, at its own proportions', () => {
   const crop = model.titleCrop(SCREEN, { w: 300, h: 200 });
   // The after box (20,300,240,60) with 24px of room, clamped at the left
@@ -206,6 +247,27 @@ test('the picture takes the page\'s free height, up to 3:2, and gives way to 2:1
   assert.match(read('frontend/src/features/review-flow/review-flow.tsx'), /const PAGE_CHROME = 6 \+ 42 \+ 14 \+ 120;/);
   assert.match(read('public/css/app.css'), /\.rf-claim \{ flex: none; margin: 0 0 14px; padding: 6px 16px 0; min-height: 42px;/, 'the budget is the line\'s own box');
 });
+test('#6356: from 768px the panel\'s room stops at the window\'s foot, whatever is above it', () => {
+  const flow = loadTsx('frontend/src/features/review-flow/review-flow.tsx');
+  // Under the platform header alone (top 72 in a 965 window) app.css's room already fits.
+  assert.equal(flow.pageRoom(845, 72, 965, true), 845, 'the card under the header keeps app.css\'s room');
+  // Under a project's header and tabs (top 240) the room is what the window leaves, 16px clear.
+  assert.equal(flow.pageRoom(845, 240, 965, true), 965 - 240 - 16, 'a project page: the vote stays on screen');
+  // A very short window keeps a floor: the stage scrolls inside, the window past it.
+  assert.equal(flow.pageRoom(845, 500, 600, true), 360, 'never under the floor');
+  // A phone's page has no max height and is left exactly as it was.
+  assert.ok(Number.isNaN(flow.pageRoom(NaN, 240, 844, true)), 'no max height: nothing to clamp');
+  assert.equal(flow.pageRoom(700, 240, 844, false), 700, 'under 768px: unchanged');
+  // The picture is sized from the same clamped budget as the page itself.
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(src, /page\.style\.removeProperty\('--rf-room'\);\s*const pr = page\.getBoundingClientRect\(\);\s*const css = parseFloat\(getComputedStyle\(page\)\.maxHeight\);/);
+  assert.match(src, /window\.matchMedia\('\(min-width: 768px\)'\)\.matches;\s*const max = pageRoom\(css, pr\.top, window\.innerHeight, wide\);/);
+  assert.match(src, /if \(max !== css && Number\.isFinite\(max\)\) page\.style\.setProperty\('--rf-room', `\$\{max\}px`\);/);
+  assert.match(src, /const h = \(Number\.isFinite\(max\) && max > 0 \? max : pr\.height\) - bar - safe;/);
+  assert.match(src, /window\.addEventListener\('resize', measure\);/, 'measured again on a resize');
+  assert.match(src, /if \(!page\.getClientRects\(\)\.length\) return;/, 'a hidden pane keeps its last size');
+  assert.match(src, /new IntersectionObserver\(/, 'measured again when a hidden pane shows');
+});
 // ── 2b. The preview card ────────────────────────────────────────────────
 
 test('the page leads with what the change does, then its picture, then the strip', () => {
@@ -276,10 +338,10 @@ test('the run\'s bar: back, the title and ⌄; the title, ⌄ or the line opens 
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   // Back is the arrow alone, named for where it goes, and it leaves the run.
   assert.match(src, /const toProject = header === 'project' && item && item\.app \? item\.app\.name : '';/);
-  assert.match(src, /t\('communities:review\.back\.label', \{ place: toProject \|\| t\('communities:switcher\.all\.name'\) \}\)/);
+  assert.match(src, /t\('communities:review\.back\.label', \{ place: toProject \|\| t\('core:tabs\.home'\) \}\)/);
   assert.match(src, /<button type="button" className="rf-back" onClick=\{onDone\} aria-label=\{backName\} data-rf-back="">/);
   assert.match(src, /header="project"/);
-  assert.match(read('frontend/src/features/workshop/index.tsx'), /onDone=\{\(\) => workshopController\.setTab\('status'\)\}/, 'from Communities, back to Communities');
+  assert.match(read('frontend/src/features/workshop/index.tsx'), /onDone=\{leaveNeeds\}/, 'from Needs you, back to Home (One Home, #6361)');
   assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => openTab\('status'\)\} \/>/, 'from a project, back to its hub');
   // Three ways in, one state.
   assert.match(src, /<button type="button" className="rf-bar-title-btn" onClick=\{\(\) => setDesc\(\(d\) => !d\)\} aria-expanded=\{desc\} aria-controls="rf-desc">\{item\.title\}<\/button>/);
@@ -701,6 +763,11 @@ test('on a wide window the run is one column as wide as the page', () => {
   assert.match(css, new RegExp(`\\.rf-page \\{[^}]*width: min\\(100%, ${cap}px\\); margin-inline: auto;`));
   assert.match(src, /<p className="rf-feed-note [^"]*" data-needs-error="">/);
   assert.match(src, /data-needs-empty="" data-review-flow="">/);
+  // #6344: when something waits that the run cannot draw, the same branch
+  // lists it rather than saying nothing does.
+  assert.match(src, /if \(onPage\.length && pagesOnly\) \{/);
+  assert.match(src, /data-needs-pages=\{onPage\.length\}/);
+  assert.match(src, /t\('communities:reel\.pages\.note'\)/);
   assert.match(src, /<div ref=\{anchorRef\} className="rf-run rf-loading" data-review-flow=""/);
 });
 test('a small change inside a close-up is drawn from it, big and sharp; without one it keeps the still\'s size', () => {

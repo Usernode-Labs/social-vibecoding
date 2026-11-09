@@ -31,7 +31,7 @@
 
 import { useEffect, useRef, type ReactNode } from 'react';
 
-import { ChevronLeftIcon, Squares2X2Icon } from '@/components/ui/icons';
+import { ChevronLeftIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -40,7 +40,6 @@ import { useStoreState } from '../../lib/use-store-state';
 import { openPlace } from '../dev-board/workshop/place-store';
 import { litPlace, placeHandle, placeName, type PlaceKey } from '../dev-board/workshop/places';
 import { improveStore } from '../improve/improve-store.js';
-import { goToCommunity } from '../workshop/community-scope';
 import { botBack, botDepth, botDrawerStore } from './bot-drawer';
 import { headerFrame, titleSlot, type HeaderFrame } from './drawer-math';
 import { communitiesDepth, drawerStore, reducedMotion, type DepthChannel } from './drawer-store';
@@ -121,9 +120,15 @@ export function upFromPlace(slug: string | null, place: string): void {
   openPlace(slug, lit !== key ? lit : 'status');
 }
 
-/** The Hub's grid: every community you are in (#communities). */
-export function toAllCommunities(): void {
-  goToCommunity(null);
+/**
+ * ONE HOME (#6361): the Hub's way back is Home, where your communities are
+ * now. It was a grid of every community (#communities), which Home's Pinned
+ * communities and its All communities tile replace.
+ */
+export function toHome(): void {
+  const app = (window as unknown as { App?: { navigateHome?: (opts?: unknown) => void } }).App;
+  if (app?.navigateHome) app.navigateHome();
+  else window.location.hash = '#home';
 }
 
 export function DrawerBack(): ReactNode {
@@ -140,7 +145,7 @@ export function DrawerBack(): ReactNode {
   // places (audit N05, 1 Nov 2026).
   if (subTab === 'topic') return null;
   if (shown.place === 'status') {
-    return <BackDisc mode={mode} grid label={t('core:header.drawer.allCommunities')} onBack={toAllCommunities} />;
+    return <BackDisc mode={mode} label={t('core:header.drawer.toHome')} onBack={toHome} />;
   }
   const up = litPlace(shown.place as PlaceKey);
   const label = up !== shown.place && up !== 'status'
@@ -149,7 +154,7 @@ export function DrawerBack(): ReactNode {
   return <BackDisc mode={mode} label={label} onBack={() => upFromPlace(shown.slug, shown.place)} />;
 }
 
-function BackDisc({ mode, label, onBack, grid = false }: { mode: Mode; label: string; onBack: () => void; grid?: boolean }): ReactNode {
+function BackDisc({ mode, label, onBack }: { mode: Mode; label: string; onBack: () => void }): ReactNode {
   const ref = useRef<HTMLButtonElement>(null);
   useHeaderFrame(mode, (frame) => {
     const el = ref.current;
@@ -166,14 +171,11 @@ function BackDisc({ mode, label, onBack, grid = false }: { mode: Mode; label: st
       type="button"
       className={BACK_CLASS}
       data-nav-drawer-back=""
-      data-nav-drawer-grid={grid ? '' : undefined}
       aria-label={label}
       title={label}
       onClick={() => onBack()}
     >
-      {grid
-        ? <Squares2X2Icon className="w-[18px] h-[18px]" aria-hidden="true" />
-        : <ChevronLeftIcon className="w-5 h-5" aria-hidden="true" />}
+      <ChevronLeftIcon className="w-5 h-5" aria-hidden="true" />
     </button>
   );
 }
@@ -187,7 +189,7 @@ export function DrawerTitles(): ReactNode {
   const messages = mode === 'messages';
   const onBot = mode === 'bot';
   const two = messages ? conversation : onBot ? bot : null;
-  // A community's Hub names the community alone, where the arrow's grid is:
+  // A community's Hub names the community alone, beside the arrow home:
   // its title sits as a name alone does (headerFrame at 1), with no line.
   const hub = mode === 'communities' && shown.place === 'status';
   // Where it rests, for a screen reader: the title on show, and the small

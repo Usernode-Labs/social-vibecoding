@@ -59,7 +59,26 @@ async function setUsageAnalytics(pool, userId, enabled) {
   return rows[0] ? rows[0].usage_analytics === true : null;
 }
 
+// An account made in the last 15 minutes, which is what the shell's sign_up
+// event needs to know (#6314). The browser remembers having sent it, so the
+// window only has to outlast a sign-up's redirects. Unreadable answers false.
+const JUST_SIGNED_UP_MS = 15 * 60 * 1000;
+
+async function justSignedUp(pool, userId, now = Date.now()) {
+  const id = Number(userId);
+  if (!Number.isSafeInteger(id) || id <= 0) return false;
+  try {
+    const { rows } = await pool.query('SELECT created_at FROM users WHERE id = $1', [id]);
+    const at = rows[0] ? new Date(rows[0].created_at).getTime() : NaN;
+    return Number.isFinite(at) && now - at < JUST_SIGNED_UP_MS;
+  } catch (err) {
+    log.warn('usage-analytics', 'Could not read when the account was made', { userId: id, err: err && err.message });
+    return false;
+  }
+}
+
 module.exports = {
+  justSignedUp,
   sharesUsageAnalytics,
   setUsageAnalytics,
 };

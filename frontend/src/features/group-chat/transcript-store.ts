@@ -123,18 +123,6 @@ export interface Quote {
 export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share' | 'github';
 
 /**
- * B9: a request's chip on its message (homeroom-bot-chat.js setStatus).
- * `fixing`: a fix asked for on one of the bot's changes still waiting for
- * approval, until that change is ready again. `waiting_first_version`: a
- * request held until the project's first version is live.
- */
-export interface BotRequestChip {
-  status: 'reading' | 'building' | 'ready' | 'live' | 'fixing' | 'waiting_first_version';
-  issueNumber: number | null;
-  sessionId: number | null;
-}
-
-/**
  * 10 October: what Homeroom bot offered to do in its reply in a thread
  * (homeroom-bot-voice.js): file a request, withdraw one of its changes, or
  * open a vote on closing a request. Nothing happens until the person it was
@@ -144,7 +132,7 @@ export interface BotRequestChip {
 export interface BotOfferView {
   status: 'open' | 'deciding' | 'done' | 'declined' | 'failed';
   forMe: boolean;
-  actions: { id: 'yes' | 'no'; label: string; primary: boolean }[];
+  actions: { id: 'yes' | 'no' | 'first'; label: string; primary: boolean }[];
   /** #6305: 'file_many' when one request is offered on several projects. */
   kind?: string;
   rows?: BotOfferRow[] | null;
@@ -166,6 +154,8 @@ export interface BotOfferRow {
 export interface BotSuggestView {
   status: 'open' | 'closed';
   forMe: boolean;
+  /** #6391: whose set this is: the people the reply answered, or the other members. */
+  audience: 'answered' | 'others' | null;
   actions: { id: string; label: string; primary: boolean }[];
 }
 
@@ -367,6 +357,8 @@ export interface TranscriptMessage {
   at?: string | null;
   /** Sanitized markdown for an ordinary message; plain text for a system row. */
   bodyHtml: string;
+  /** Task 2020 follow-up: Homeroom bot's reply laid out (group-chat.js _botHtmlOf), drawn in place of `bodyHtml` by ./long-body.tsx. */
+  botHtml?: string | null;
   systemText: string;
   /** Set by transcript.tsx's foldRepeats: how many identical lines this one stands for. */
   repeat?: number;
@@ -428,12 +420,6 @@ export interface TranscriptMessage {
    * snapshot, when the card shows the change's name and its doors alone.
    */
   vote?: VoteView | null;
-  /**
-   * B9: how a request asked of Homeroom bot on this message is going, which
-   * everybody in the room sees (metadata the server alone sets): reading,
-   * building, ready (with its change to try), live. Null for none.
-   */
-  botRequest?: BotRequestChip | null;
   /** B9: the card under the viewer's own message about it, theirs alone. */
   botCard?: BotRequestCard | null;
   /** B9: "Make this a request" is offered on this message (theirs, and the bot answers them here). */
@@ -459,6 +445,11 @@ export interface TranscriptMessage {
    * that change. Absent on every other row.
    */
   changeOf?: { sessionId: number | null };
+  /**
+   * #6421: on a request's page, a message written on another request of a
+   * merged thread, tagged with that request's number ("on #6212").
+   */
+  requestOf?: { number: number | null };
   /** Spec-share rows only — see SpecShareView. Null on every other kind. */
   specShare: SpecShareView | null;
   /**

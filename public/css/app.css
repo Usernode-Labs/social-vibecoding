@@ -567,6 +567,11 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    `.messages-layout` around it (project-discussion.tsx). */
 .messages-layout,
 .dev-ws-discussion,
+/* #6431: the column's heading beside the bot page is the same kind of row as
+   Main's, and its ⋯ menu is Messages' own (.messages-thread-menu). Those
+   tokens are only declared where they are drawn, so the menu's fill resolved
+   to nothing there and the page showed through it. */
+.side-panel-head,
 #ai-screen .ai-askbar {
   /* The OPAQUE surfaces drawn on the two planes: a bubble from the other
      side, a shared-item card, a floating disc, the composer. White on the
@@ -590,6 +595,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .dark .messages-layout,
 .dark .dev-ws-discussion,
+.dark .side-panel-head,
 .dark #ai-screen .ai-askbar {
   --messages-surface: var(--dc-raised);
   --messages-surface-2: #3a3a3c;
@@ -1253,6 +1259,10 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   overflow-wrap: anywhere;
 }
 .messages-message-self .messages-bubble { background: var(--accent-tint); }
+/* Task 2020: a Homeroom bot answer laid out (features/messages/bot-html.tsx)
+   is drawn in a frame, which has no width of its own to shrink the bubble
+   to, so the bubble takes the row's width, up to a reading measure. */
+.messages-bubble.messages-bubble-rich { width: 100%; max-width: min(100%, 720px); }
 .messages-message-bubble .messages-attachments,
 .messages-message-bubble .messages-object-list { width: 100%; max-width: 78%; }
 /* A saved message in a bubble is outlined in the accent: the inset bar a
@@ -1673,6 +1683,93 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   font-size: 11px;
   font-weight: 600;
   opacity: .7;
+}
+/* #6426: Main Chat's "Welcome back" card, just above the message box. It is
+   the message box's own card (same surface, radius, shadow and width) with a
+   hairline, and its chips are the suggested-reply pill above, in one row
+   that scrolls sideways with a soft fade at its right edge. */
+.messages-welcome {
+  position: relative;
+  /* The message box's own width: the bar around that box holds 12px each
+     side (and the 720px reading column on a wide Main), so the card takes
+     the same inset. */
+  margin: 0 12px 8px;
+  padding-block: 12px;
+  padding-inline: 14px 44px;
+  border-radius: 22px;
+  background: var(--messages-surface);
+  box-shadow: var(--messages-disc-shadow), inset 0 0 0 1px var(--app-sheet-line);
+}
+.messages-welcome-title {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.messages-welcome-line {
+  margin: 2px 0 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.messages-welcome-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  /* A soft edge says the row goes on, at the inline end of the text. */
+  -webkit-mask-image: linear-gradient(to right, #000 85%, transparent);
+  mask-image: linear-gradient(to right, #000 85%, transparent);
+}
+[dir='rtl'] .messages-welcome-chips {
+  -webkit-mask-image: linear-gradient(to left, #000 85%, transparent);
+  mask-image: linear-gradient(to left, #000 85%, transparent);
+}
+.messages-welcome-chips::-webkit-scrollbar { display: none; }
+.messages-welcome-chips button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 6px 13px;
+  border-radius: 9999px;
+  color: var(--brand-ink);
+  background: var(--brand-tint);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.messages-welcome-chips button:hover { filter: brightness(.97); }
+.messages-welcome-chips button:focus-visible,
+.messages-welcome-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.messages-welcome-dismiss {
+  position: absolute;
+  top: 6px;
+  inset-inline-end: 6px;
+  display: flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+}
+.messages-welcome-dismiss:hover { background: var(--messages-surface-2); }
+@media (max-width: 767px) {
+  /* On a phone the chips run off the card's edge, behind the 44px ×. */
+  .messages-welcome-chips { margin-inline-end: -44px; }
+  .messages-welcome-dismiss { top: 0; inset-inline-end: 0; width: 44px; height: 44px; }
+}
+/* Main Chat's 720px reading column (see `.chat-composer-bar` below): the
+   card keeps the box's inset at every width. */
+#ai-screen .ai-main-pane .messages-layout[data-main-chat] .messages-welcome {
+  margin-inline: max(12px, calc((100% - 720px) / 2));
 }
 .messages-bot-answered {
   margin-top: 4px;
@@ -2269,10 +2366,16 @@ form.agent-session-composer:focus-within {
    around its shoulders. Below that exactly one pane is rendered at a time
    (the list until a row is picked, the thread after, the header bar's back
    arrow between them) and both stay full width. */
+/* ONE LIST MEASURE (#6495, 9 Nov 2026): 22rem is the width the inbox's list
+   has always had, read by `.messages-list-pane` below. On the Homeroom bot
+   tab (#6520) the list fills the room beside the open column instead, and
+   this width is only its floor, through `--ai-list-min` (THE AI TAB'S MAIN
+   VIEW). */
+:root { --list-pane-w: 22rem; }
 @media (min-width: 768px) {
   .messages-list-pane {
-    flex: 0 0 22rem;
-    width: 22rem;
+    flex: 0 0 var(--list-pane-w);
+    width: var(--list-pane-w);
     padding-inline-end: 8px;
   }
   .messages-thread-pane {
@@ -3504,7 +3607,6 @@ html[data-browser-scroller] body::before {
   background: var(--home-wallpaper);
 }
 html[data-browser-scroller="home-screen"] #home-screen,
-html[data-browser-scroller="browse-screen"] #browse-screen,
 html[data-browser-scroller="leaderboard-screen"] #leaderboard-screen,
 html[data-browser-scroller="profile-screen"] #profile-screen,
 html[data-browser-scroller="settings-screen"] #settings-screen,
@@ -3600,7 +3702,7 @@ html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll > :has(> 
    painted from the last-session snapshot. In document flow those roots must
    leave the layout too, so visitors see only the anonymous page. */
 html[data-browser-scroller^="auth-"] :is(
-  #platform-header, #home-screen, #browse-screen, #leaderboard-screen,
+  #platform-header, #home-screen, #leaderboard-screen,
   #profile-screen, #settings-screen, #messages-screen, #admin-screen, #app-view
 ) {
   display: none;
@@ -3642,9 +3744,6 @@ html[data-browser-scroller] #landing-header {
   --fake-glass-tint: color-mix(in srgb, var(--home-ground) 92%, transparent);
   background: transparent;
   clip-path: inset(0);
-}
-html[data-browser-scroller="browse-screen"] #browse-search-bar {
-  top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top));
 }
 html[data-browser-scroller^="auth-"] :is(
   #auth-login-screen, #auth-register-screen, #auth-waiting-screen
@@ -3937,7 +4036,7 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
    these lists and was on none of them: the page kept the gray body and the
    bar its zinc-200 surface. Every list here that names #workshop-screen,
    its React-owned sibling, names it as well. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #f4f2e4;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
@@ -3975,7 +4074,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    screen — so on every other route these selectors are exactly the two they
    were. See "THE BAR TAKES THE APP'S TONE" below for the tokens that ride
    along with the ground. */
-:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
   /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
      with its one palette entry re-tinted: #DEEDF8 on #F4F2E4 is a faint cool
@@ -4015,7 +4114,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    at every width on its own — the second rule here gives dark the same
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -4029,7 +4128,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
-  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -4072,7 +4171,7 @@ html:root body:has(#app-view:not(.hidden):not([data-app-surface="platform"])),
    what makes the launcher → app push read as one bar: both routes paint
    the same wallpaper under the same cleared bar, so the bar's snapshot is
    identical on both sides of the transition and only the page moves. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
 
@@ -4100,8 +4199,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    this bar's bottom edge is `rounded-b-2xl -mb-2`, a notch every platform
    surface below tucks 8px up into, so a line drawn across it would cut the
    notch in half. The frost IS the edge here. */
-body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
-             #settings-screen, #messages-screen, #workshop-screen, #ai-screen,
+body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
+             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
              #agent-session-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header {
   background-color: var(--dc-sheet-fill);
@@ -4129,8 +4228,8 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    bar's own `rounded-b-2xl` (1.25rem in tailwind.config.js), so the notch
    the surfaces below tuck into keeps its shape. Nothing inside the header
    reaches past its box, so the clip cuts nothing. */
-body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
-             #settings-screen, #messages-screen, #workshop-screen, #ai-screen,
+body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
+             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
              #agent-session-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
@@ -4147,8 +4246,8 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    opaque ground under its glass, the glass's own solid plane colour. The
    layer covers it whole (its washes end on the ground colour), so nothing
    on the bar changes; only the strip does. */
-html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
-             #settings-screen, #messages-screen, #workshop-screen, #ai-screen,
+html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
+             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
              #agent-session-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header,
 html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
@@ -4178,7 +4277,7 @@ html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not
    (`overflow: hidden`, 100dvh), scrolls, and nothing scrolls it, so the
    bar stays where it sits in the flow; and it is already `relative z-10`,
    so it was a stacking context and a containing block before. */
-html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(:is(#messages-screen, #workshop-screen, #ai-screen,
+html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(:is(#messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
              #agent-session-screen, #profile-proposals-screen):not(.hidden)) #platform-header,
 html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   position: sticky;
@@ -4384,7 +4483,7 @@ html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scro
    value, so the browser chrome and a cold launch frame the page in it.
    The launch cover reads the same ground, so the app opens on the page's
    colour in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
   background-color: var(--home-ground);
 }
 /* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
@@ -5169,48 +5268,11 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
   pointer-events: none;
 }
 
-/* ── THE TILE GRID IS RETIRED ───────────────────────────────
-   `.home-discover-tiles` was six explicit grid tracks (`--lane-tracks`, set
-   from the lane's own count and floored at four), `.home-discover-icon-wrap`
-   capped the fluid icon at the 40px the tile always drew at, `.home-discover-
-   icon` held it square, `.home-discover-tiles .home-discover-tile` stripped
-   the launcher card's padding back off, and `.home-discover-name` clamped the
-   label to two lines because a ~55px track rendered most names as "Opinio…".
-   Every one of those existed to fit six icons into ONE grid cell on a phone.
-
-   The lane is a rail of cards (see `.home-discover-rail` below) and the block
-   is a section that grows to its content, so none of that arithmetic has
-   anything left to constrain. What survives is the lane wrapper and the
-   empty note.
-
-   The NAME keeps its class and loses its clamp: on a 152px card a real name
-   has room to be read on one line, and the second line would only ever be
-   spent on the longest few. Truncation is a utility on the element now. */
-.home-discover-lane {
-  flex: 1 1 auto;
-}
-/* `.home-discover-divider` is RETIRED. It drew the hairline row that carried
-   the "Popular" caption between the block's two rails. Discover is one
-   category and one rail now — the curated apps and the most-used ones flow
-   as a single continuous set of cards — so there is no sub-group left to
-   label and no seam left to draw. */
-/* The empty state: no rail at all, one centred line in its place, so the
-   block reads as a compact strip rather than a mostly-blank box. */
-/* #1913: a card now, in the rail's card language (the tint vars come from
-   the `.home-tint-*` class on the element) — so the empty lane still reads
-   as a lane with something in it, and the whole plate is the link on to
-   the directory. */
-.home-discover-empty {
-  display: flex;
-  padding: 0.875rem 1rem;
-  border-radius: 0.875rem;
-  background: var(--tint-bg);
-  border: 1px solid var(--tint-line);
-  text-decoration: none;
-}
-.home-discover-empty:hover { filter: brightness(0.98); }
-.home-discover-empty:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
+/* ── THE DISCOVER LANE IS RETIRED (One Home, #6361) ───────────
+   Home's Discover section, its rail of cards, its empty note and its tile
+   grid before that went with it: Communities to join is the directory now.
+   The card itself (`.home-discover-card` and its art, below) stays, as the
+   featured-illustration editor's preview. */
 /* ── THE CARD LANGUAGE: TINTS ───────────────────────────────
    Discover's app cards and Challenges' challenge cards are the same object
    in two sizes — a tinted plate with art on it — and they share one palette
@@ -5267,102 +5329,6 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
 }
 .dark :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="light"], :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="light"] {
   --tint-bg: var(--tone-50); --tint-line: var(--tone-light-line); --tint-art: var(--tone-50);
-}
-
-/* ── Discover: the card rail ────────────────────────────────
-   The lane was a GRID of six 40px icon tiles inside the block's white card:
-   the most an area called Discover could say about an app was its name,
-   clamped to two lines at 9.6px. It is a horizontal rail of cards now — art,
-   name, the app's own sentence, and how many people built it — which is what
-   the design asks for and what makes the area answer "should I open this?"
-
-   IT BLEEDS TO BOTH SCREEN EDGES. The negative margin cancels the section's
-   px-3 gutter so the first card starts on the text's left edge and the last
-   one runs off the right, which is the affordance: a card cut by the edge
-   says there are more. #home-screen states `overflow-x: hidden` (see the
-   gesture rule above, pinned by tests/home-vertical-scroll-only.test.js), so
-   the overhang is clipped by the feed rather than widening it.
-
-   BOTH AXES, AND THE SECOND ONE IS NOT OPTIONAL (#1762). This rule said
-   `touch-action: pan-x` for the same reason the switcher's app rail carries
-   it — without it a diagonal drag that starts here can be claimed by the
-   vertical feed and the rail never moves — under a comment claiming that "a
-   VERTICAL drag still reaches the page, the browser only takes the axis this
-   element declares". That claim is simply false, and it cost the whole
-   screen: `touch-action` is not a preference about which axis this element
-   would like, it is the complete set of gestures the browser may run for a
-   touch that STARTS here, intersected down the ancestor chain. `pan-x`
-   therefore DENIES vertical panning; it does not hand it to the feed. Two
-   rails of ~13rem cards bleeding to both screen edges is most of the
-   Discover block, so on a phone that was a band you could not scroll the
-   page from at all — put a finger on a card, drag up, and nothing moved, not
-   even the rubber band. (`.un-sheet:has(#notifications-sheet)` a thousand lines up
-   has to opt vertical panning back IN for its scroller for exactly this
-   reason, and states the rule correctly.)
-
-   `pan-x pan-y` is what `html, body` already declares, so this is the page's
-   own value rather than a new one: both axes are legal for a touch starting
-   here and the browser's axis lock picks the one the drag is going in — a
-   mostly-horizontal drag scrolls the rail, a mostly-vertical one scrolls the
-   feed. What that costs is the narrow case the `pan-x` was written for: a
-   genuinely diagonal drag that is slightly more vertical now scrolls the
-   feed instead of the rail. That is the trade every horizontal rail on the
-   web makes, and it is the right side of it — failing to scroll the rail
-   costs one retry, failing to scroll the page costs the screen.
-
-   It also has to stay `pan-y` for the drag-to-add gesture (#1763): the kit
-   arms a lift on a long press with a movement slop, so a scroll that starts
-   here cancels the press rather than competing with it — but only if the
-   scroll is allowed to start. */
-.home-discover-rail {
-  display: flex;
-  gap: 0.625rem;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-snap-type: x proximity;
-  -webkit-overflow-scrolling: touch;
-  touch-action: pan-x pan-y;
-  scrollbar-width: none;
-  margin-inline: -0.75rem;
-  padding-inline: 0.75rem;
-  /* The snap position must be the KEYLINE, not the rail's own edge. Without
-     it `scroll-snap-align: start` lines the first card up with the scrollport
-     edge — 0.75rem outside the section's gutter, since the negative margin
-     above cancelled it — and WebKit applies that snap on layout, so on iOS
-     the rail arrived pre-scrolled with the first card stuck to the screen. */
-  scroll-padding-inline: 0.75rem;
-  /* Room for the cards' own shadow-less hairline to not be clipped, and for
-     a focus ring on the last card. */
-  padding-block: 0.125rem;
-}
-.home-discover-rail::-webkit-scrollbar { display: none; }
-
-/* ── THE RAIL STOPS AT THE CONTENT'S EDGE, AND FADES THERE (#2718 review) ──
-
-   On a phone the rail BLEEDS: `margin-inline: -0.75rem` with the padding
-   added back lets a card scroll flush to the screen edge, which is the whole
-   affordance — the row visibly continues past the frame.
-
-   On a desktop the frame is not the screen. The page has a rail on its left
-   and a gutter mirrored on its right (see --platform-gutter), and a lane that
-   bleeds 12px past that gutter puts its cards 12px closer to the window edge
-   than every other thing on the page — which reads as the lane being
-   misaligned rather than as it continuing.
-
-   So the bleed is cancelled and a MASK says the same thing instead: the last
-   2rem of the scrollport fades to transparent, so a row with more in it
-   trails off rather than being cut. The mask is static rather than driven by
-   scroll position — a lane shorter than the port fades empty space, which is
-   invisible, and the alternative is a scroll-timeline this shell cannot rely
-   on in every browser it ships to. */
-@media (min-width: 768px) {
-  .home-discover-rail {
-    margin-inline: 0;
-    padding-inline: 0;
-    scroll-padding-inline: 0;
-    -webkit-mask-image: linear-gradient(to var(--fade-to-inline-end, right), #000 calc(100% - 2rem), transparent);
-    mask-image: linear-gradient(to var(--fade-to-inline-end, right), #000 calc(100% - 2rem), transparent);
-  }
 }
 
 /* The card was enlarged for #6012, from 9.5rem to 11.25rem, so the artwork
@@ -5657,200 +5623,8 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
    min-height is what keeps the hidden search bar pullable on a short page,
    which was always a separate job. */
 
-/* ── Browse screen rows / boxes ─────────────────────────────
-   The #apps screen renders ONE row markup (icon · name+meta · Add
-   button) and lets CSS pick the layout: a hairline-divided vertical
-   list on a phone, bordered app boxes in a 2/3-column grid on a wide
-   screen — the Apple App Store shape at both sizes. Only the GRID is
-   Tailwind (responsive classes on #browse-list); every border lives
-   here, which is deliberate and load-bearing:
-
-   Tailwind's `divide-y` compiles to
-     .divide-y > :not([hidden]) ~ :not([hidden]) { border-top-width: 1px;
-                                                   border-bottom-width: 0 }
-   and `md:divide-y-0` zeroes BOTH widths on the same selector. That
-   selector is (0,3,0) and beats a bare `.browse-row` (0,1,0), so mixing
-   the two mechanisms stripped the top AND bottom border from every box
-   except the first child — which is exactly the bug this replaced. The
-   hairline is therefore a sibling rule here, in the same cascade as the
-   box, and #browse-list carries no divide-* utilities at all.
-
-   Written as one min-width query matching Tailwind's `md` (768px) —
-   keep the two in step if the container's breakpoint ever moves. */
-
-.browse-row {
-  /* One hairline token per theme so the rules below never need a `.dark`
-     variant (which would out-specify the sibling/hover rules). */
-  --browse-border: var(--border-light);
-  transition: background-color 150ms, border-color 150ms;
-}
-.dark .browse-row { --browse-border: var(--border); }
-/* Neutral, not --bg-card: that token is an accent TINT, so a plain hover read
-   as a selected/highlighted row once the accent turned blue. */
-.browse-row:hover { background-color: var(--bg-secondary); }
-
-/* ONE ROW SHAPE AT EVERY WIDTH (overnight audit W08, 1 Nov 2026): icon,
-   then the name over its meta line, then Join, centred on the row. #1617
-   gave a phone the name on a row of its own, with the meta line and a 44px
-   Join under it in a three-cell grid; the Join set the second row's height,
-   so the meta line fell ~37px under the name and each row was ~96px tall,
-   which read as a wrapping bug and fitted three apps on a phone. The Duo
-   upright, which never had the grid, showed the compact row this is.
-
-   The name may take TWO lines before it ellipsises (QA 2026-09-24 Q10, which
-   cut "Staging demo Puzzle Chain" to "Staging de..." in a desktop box), and
-   it breaks BETWEEN words (L05): `overflow-wrap: anywhere` cut "Group" to
-   "Grou / p" in a narrow card. `break-word` still breaks a single word too
-   long for the line, as the last resort. */
-.browse-row .browse-row-title { white-space: normal; }
-.browse-row .browse-row-title > span { align-items: baseline; }
-.browse-row .browse-row-name {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  white-space: normal;
-  overflow-wrap: break-word;
-}
-
-/* Phone: a single hairline BETWEEN consecutive rows, INSET to the text column.
-   The rows sit in one white card now (#browse-list carries the card classes
-   below md), so a rule running the card's full width would reach its corner
-   radius — the same reason the home panels' hairlines are inset, and the same
-   4.75rem depth @/components/ui/grouped-list.tsx uses for a row with a leading
-   tile (px-4 1rem + tile 2.75rem + gap-4 1rem).
-
-   A pseudo-element rather than `border-top` so the md+ box below can own the
-   `border` shorthand outright: .browse-row is a ListRow, which is already
-   `relative`. */
-.browse-row + .browse-row::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  inset-inline-start: 4.75rem;
-  inset-inline-end: 0;
-  height: 1px;
-  background: var(--browse-border);
-  pointer-events: none;
-}
-
-/* md+: every row is its own complete box. The sibling selector is listed
-   alongside so this wins over the phone rule at equal specificity rather
-   than relying on source order alone. */
-@media (min-width: 768px) {
-  /* Each row is its own box here, so the between-rows hairline has nothing to
-     separate — it would draw across the top of every box but the first. */
-  .browse-row + .browse-row::before { content: none; }
-  .browse-row,
-  .browse-row + .browse-row {
-    /* The widget language separates by figure/ground, and the box is still a
-       white surface on the grey page, but the fill alone let the rows run
-       together (#5928 item 11): the wallpaper's pale end is a point or two off
-       white, and in dark the box is near-black on near-black. So at rest it
-       wears the hairline every card wears, the sheets' own --app-sheet-line,
-       which has its dark and more-contrast values. Width is unchanged from
-       when this border was transparent, so the hover rule below only recolours
-       it and the box does not change size under the cursor. */
-    border: 1px solid var(--app-sheet-line);
-    background-color: var(--bg-primary);
-    border-radius: 1rem;
-  }
-  .browse-row:hover,
-  .browse-row + .browse-row:hover { border-color: var(--accent-light); }
-}
-
-/* ── The phone directory: controls on the ground, the list in a card ────
-   SINCE THE COMMUNITIES PROTOTYPE the search, the filter chips and Sort sit
-   on the ground above the card rather than as its head: the card holds what
-   it lists, and the controls over it read as the control rows over Home's
-   and the Communities screen's cards do. What follows is #1919's reasoning
-   for the one-pane shape it replaces; the parts, the page-scoped classes
-   and the empty-note rule still hold, and the split ring does not (the
-   body and the note are whole cards now).
-
-   #1919: below md the search bar, the Sort control and the list they narrow wear
-   the Workshop's working pane (`.dev-ws-pane`, further down): one frosted
-   sheet (`--dc-sheet-fill` over `--dc-frost`), a 22px radius and a hairline
-   ring, with the head pinned at the top and the rows sliding under its
-   frost. Before this the bar was a wallpaper-coloured strip and the list a
-   plain white rounded-2xl card below it, which is the pre-pane shape every
-   other recent screen has moved off.
-
-   PAGE-SCOPED CLASSES, deliberately not the Workshop's own. The two panes
-   are the same treatment today and should be allowed to move separately;
-   sharing `.dev-ws-pane-*` would also drag the Workshop's sticky offset and
-   its stage-board width rules onto a screen that has neither.
-
-   NO WRAPPER, so no single element to ring. The head (#browse-search-bar)
-   and the body (#browse-list) are siblings under #browse-screen — the head
-   sticks against the SCREEN's scroller, and wrapping both in a pane would
-   put a new ancestor between the head and the thing it sticks in. So the
-   ring is a `border` split across the two parts (the head keeps no bottom
-   edge, the body no top edge) rather than the Workshop's inset box-shadow,
-   which cannot leave one side out. Same margins on both parts is what makes
-   the two half-rings meet as one.
-
-   The parts paint the SAME fill over the SAME backdrop, for the reason the
-   Workshop's note gives: a fill on a wrapper plus a fill on the sticky head
-   stacks 50% on 50% and draws a lighter band across the controls.
-
-   THE NOTE IS THE BODY WHEN THE LIST IS EMPTY. A search that matches nothing
-   leaves #browse-list with no children and #browse-empty with the sentence;
-   the empty list collapses (`:empty`) and the note takes the body's bottom
-   half of the ring instead, so the pane still closes. And while neither is
-   drawn — the directory is still loading, or the load failed and the error
-   card is the body's only child — the head closes itself (`:has`, the same
-   way the shell's body rules already read screen state).
-
-   Written as one max-width query matching the md breakpoint's lower edge
-   (767px), the mirror of the min-width query above — keep the two in step
-   if the container's breakpoint ever moves. */
-@media (max-width: 767px) {
-  /* The controls on the ground (the prototype's Discover): no sheet, no
-     ring, no fill, and NOT PINNED on a phone. A pinned head has to hide the
-     rows sliding under it, which takes a fill, and a fill is a band across
-     the wallpaper's washes and star that no flat colour matches (the header
-     fakes its glass for the same reason; a fixed layer inside this
-     scroller is not safe to fake, since the screen transitions transform
-     it). So on a phone the controls scroll away with the list, as a search
-     over a store list does. md+ keeps its pinned bar as it was. */
-  #browse-screen .browse-pane-head {
-    position: static;
-    margin: 0;
-    /* 20px at the top: 8 under the header's notch, 12 of air (12 left the
-       search field 4px under the bar). */
-    padding: 20px 12px 10px;
-    background: transparent;
-  }
-  #browse-screen .browse-pane-body,
-  #browse-screen .browse-pane-note {
-    background-color: var(--dc-sheet-fill);
-    backdrop-filter: var(--dc-frost);
-    -webkit-backdrop-filter: var(--dc-frost);
-    border: 1px solid var(--app-sheet-line);
-    margin: 0 12px 12px;
-    border-radius: 22px;
-    /* The rows' hover fill and the hairlines would otherwise poke out of
-       the corners. Nothing in the body positions itself outside it (the
-       "+" menu the Workshop pane keeps `overflow: visible` for has no
-       counterpart here). */
-    overflow: hidden;
-  }
-  #browse-screen .browse-pane-body:empty { display: none; }
-  #browse-screen .browse-pane-note { padding: 12px 14px 16px; }
-}
-/* Where there is no backdrop-filter the fill is all there is, and 50% white
-   with rows sliding crisply under the pinned head is the rendering fault the
-   frost prevents. All three parts go opaque together, because they must stay
-   the same colour as each other above all. */
-/* SOLID ON A PHONE, ALL THREE TOGETHER, on every platform. The list scrolls
-   under the pinned head, so with no blur the head has to be opaque, and the
-   three parts are one pane, so they stay one colour (see --dc-sheet-solid).
-   md+ is untouched: there the bar wears the wallpaper's own ground. */
-@media (max-width: 767px) {
-  #browse-screen .browse-pane-body,
-  #browse-screen .browse-pane-note { background-color: var(--dc-sheet-solid); }
-}
+/* Discover's rows and its phone pane (#apps) went with its screen (One
+   Home, #6361): its directory is Home's Communities to join. */
 
 /* ── App-card "…" actions menu ─────────────────────────────
    Popover built by Home.openCardMenu (appended to <body>, fixed-
@@ -15805,6 +15579,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-unit-where { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
 .dev-ledger-unit-reason { margin: 6px 0 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .dev-ledger-unit-output { margin-top: 8px; }
+/* The rest of a failed check's output (#6491): the console errors and test
+   printouts fold under the reason, and the app's own tests fold every failing
+   test but the first. Same fold, one step in from the one that opened it. */
+.dev-ledger-why-full, .dev-ledger-unit-more { margin-top: 6px; }
 /* A failed run's "What went wrong", over its failures. It spans the run's
    grid, as the failures' list and its note do. */
 .dev-ledger-explain { grid-column: 1 / -1; margin: 2px 0 8px; font-size: 12.5px; }
@@ -16345,6 +16123,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-step-label { font-weight: 600; color: var(--text-primary); }
 .dev-step-done .dev-step-label { color: var(--text-secondary); }
 .dev-step-pending .dev-step-label { color: var(--text-muted); }
+/* A step an admin's force merge skips is done, but greyed: it was not cleared. */
+.dev-step[data-req-skipped] .dev-step-label { color: var(--text-muted); }
 .dev-step-actor { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 .dev-step-body { grid-column: 2 / 4; display: flex; flex-direction: column; gap: 3px; margin-top: 2px; min-width: 0; font-size: 12.5px; color: var(--text-muted); }
 .dev-step-body .dev-ledger-text { color: var(--text-secondary); }
@@ -16702,6 +16482,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-request-shots p,
 .dev-request-shots .dc-p { margin: 0 0 4px; }
 .dev-request-shots strong { color: var(--text-primary); }
+/* #6387: hold a picture's or a video's place while it loads, so nothing
+   under it jumps. The box is the size the page usually shows one in (512px
+   wide, its 320px cap at 16:10) in the status card's plane colour, until
+   `data-shot-ready` says the media knows its own shape
+   (topic/request-head.tsx RequestWords); then it takes that shape. */
+.dev-request-shots .dc-inline-img:not([data-shot-ready]),
+.dev-request-shots .dc-inline-video:not([data-shot-ready]) {
+  width: 512px;
+  max-width: 100%;
+  aspect-ratio: 16 / 10;
+  background: var(--messages-surface);
+}
 .pin-shot { position: relative; display: block; width: fit-content; max-width: 100%; margin: 6px 0; }
 .pin-shot > .dc-inline-img-link,
 .pin-shot > .dc-inline-img { margin: 0; }
@@ -17041,23 +16833,24 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 
 /* Votes, then Testing: two cards in the Messages surface. */
 .dev-change-pair { margin-top: 12px; display: grid; gap: 8px; }
-/* #5725: the Votes card repeated at the top of a change's thread, in the
-   scroller's pin host (#gc-thread-pin, group-chat/thread-shell.tsx). The
-   host is a child of the scroller, so sticky gives the card the whole
-   transcript to travel: it pins to the reading area's top edge while the
-   replies pass under it, and where the vote stands and its button stay on
-   screen at any scroll position (evan asked for it to stick as you scroll,
-   not only sit at the bottom). `--dc-sheet-solid` is the plane colour for a
-   surface content passes behind, so nothing shows through the card's
-   padding. It sits in the transcript's column, with a message's own side
-   padding, and is hidden while the card under the description is on screen,
-   so a short page shows one card and not two. */
-/* `-4px` is `.messages-thread-scroll`'s own top padding: at `top: 0` the
-   card stopped 4px below the reading area's edge, and the sliver of the
-   reply scrolling behind it showed through. */
-#gc-thread-pin { position: sticky; top: -4px; z-index: 10; }
-.dev-change-gate-repeat { padding: 8px 16px 12px; background-color: var(--dc-sheet-solid); }
-.dev-change-gate-repeat[hidden] { display: none; }
+/* 6 Nov 2026 (#6419): on the change's own page the pair sticks under the
+   sheet's header instead of a second Votes card appearing above the replies
+   (#5725, removed). A sticky box travels only within its parent, so it is
+   the pair, not the Votes card alone, that sticks: the pair's parent is the
+   article's content column, which ends with the change's own content, above
+   the replies, so the pair lets go there by itself. The mark is the 1px
+   sentinel above it that says when the pair has left the top of the
+   scroller: it has an area to observe and its -1px margin moves nothing.
+   `-4px` is `.messages-thread-scroll`'s own top padding, as the old pin had.
+   `--dc-sheet-solid` is the plane colour for a surface content passes
+   behind, so nothing shows through the card's padding or the pair's gap. */
+.dev-change-pair-mark { display: block; height: 1px; margin-bottom: -1px; }
+.dev-change-pair[data-stick] { position: sticky; top: -4px; z-index: 10; }
+.dev-change-pair[data-stuck] { gap: 4px; padding-block: 8px; background-color: var(--dc-sheet-solid); }
+.dev-change-pair[data-stuck] .dev-change-gate { padding: 8px 12px; }
+.dev-change-pair[data-stuck] :is(.dev-change-bar, .dev-change-gate-facts, .dev-change-gate-note,
+  .dev-change-gate-why, .dev-change-gate-fix, .dev-change-gate-refused) { display: none; }
+.dev-change-pair[data-stuck] [data-change-gate="testing"] .dev-change-gate-act { display: none; }
 .dev-change-gate {
   min-width: 0;
   display: grid;
@@ -17304,12 +17097,12 @@ p.dev-change-issue-pointer {
   .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
   .dev-change-gate-name { min-width: 0; }
   .dev-change-gate-figure { white-space: nowrap; }
-  /* #5991: the pinned repeat keeps only the heading, the figure, the bar
-     and the vote; its note stays on the full card in the thread. */
-  .dev-change-gate-repeat { padding: 4px 12px 8px; }
-  .dev-change-gate-repeat .dev-change-gate { padding: 10px 12px; }
-  .dev-change-gate-repeat .dev-change-gate-act { margin-top: 8px; }
-  .dev-change-gate-repeat .dev-change-gate-note { display: none; }
+  /* #6419: the stuck pair keeps only the heading, the figure and the vote,
+     a little tighter; its note stays on the full card in the thread. The
+     Vote button goes back on the card's own line, so the card stays one
+     line on a phone as it does on a computer. */
+  .dev-change-pair[data-stuck] .dev-change-gate { grid-template-columns: minmax(0, 1fr) auto; padding: 8px 12px; }
+  .dev-change-pair[data-stuck] .dev-change-gate-act { order: 0; margin-top: 0; flex-wrap: nowrap; }
 }
 
 /* ── The Workshop ──────────────────────────────────────────────────
@@ -18424,10 +18217,14 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    it) takes the same width in Main's place.
    UNTIL A WIDTH IS CHOSEN (30 Oct 2026), Main takes the room the list does
    not need. Since 3 Nov 2026 that is ALL of it, with no 720px upper limit:
-   the list is 672px (max-w-2xl) and a gutter each side, so Main is the rest
-   of the window, and only the list's own margins separate them. With the
-   old cap at 720px a 1720px window left a band of empty background between
-   the two and a narrow, tall column for plan cards. The 400px floor stays.
+   Main is the rest of the window, and only the list's own margins separate
+   them. With the old cap at 720px a 1720px window left a band of empty
+   background between the two and a narrow, tall column for plan cards. The
+   400px floor stays. THE LIST GIVES WHAT IT TAKES (#6495, 9 Nov 2026): while
+   something is open beside it the list is the inbox's own measure
+   (`--list-pane-w`), so the two list-and-open pages share one layout; with
+   nothing open it stays the centred 672px single column (`max-w-2xl`,
+   features/ai/index.tsx), as Home and Needs you are.
    A width dragged on Main's edge is Main's own (`--ai-main-chosen-w` and its
    own device key, features/side-panel/resize.ts), so a width chosen for the
    side panel beside an app no longer sizes Main, and the reverse.
@@ -18452,8 +18249,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    short. A design's preview pads the column, as its ✕ is at its top. */
 body:has(#ai-screen:not(.hidden)) {
   --ai-room: var(--platform-usable-w);
-  --ai-list-min: 480px;
-  --ai-main-auto: max(400px, calc(var(--ai-room) - 720px));
+  --ai-list-min: var(--list-pane-w);
+  --ai-main-auto: max(400px, calc(var(--ai-room) - var(--list-pane-w)));
   --ai-main-w: max(320px, min(var(--ai-main-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
 }
 html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
@@ -18484,7 +18281,11 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
 @media (max-width: 1023.98px) {
   body:has(#ai-screen:not(.hidden)) { --ai-list-min: 280px; }
 }
-#ai-screen[data-ai-docked] { padding-inline-end: var(--ai-main-w); }
+/* THE COLUMN'S LANE IS KEPT ONLY WHILE IT IS OPEN (6 Nov 2026, #6425): a
+   desktop opens on the lists alone, and they take the room the column would
+   have. A row, a link or Main Chat's row opens it, and the list gives the
+   lane up again. */
+#ai-screen[data-ai-docked][data-ai-open] { padding-inline-end: var(--ai-main-w); }
 /* NO GUTTER AFTER THE RAIL WHILE MAIN IS DOCKED (1 Nov 2026). Every screen
    beside the rail pads a gutter after it and mirrors it on the far edge, so
    a column inside centres. Here Main is the far edge, with no gutter, so the
@@ -18492,6 +18293,24 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    16px from Main. Without it they sit 16px from both, and the list centres
    between them. */
 #ai-screen[data-ai-docked] { padding-inline-start: var(--platform-rail-w, 0px); }
+/* THE BOT TAB'S LIST FILLS THE ROOM BESIDE THE OPEN COLUMN (#6520, 9 Nov
+   2026). With something open beside it the body has the room between the
+   rail and the open column (the `--ai-main-w` above) to itself, and it
+   takes all of that room, up to the page's own 672px single column
+   (`max-w-2xl` in features/ai/index.tsx) and centred in it, rather than
+   staying the inbox's 22rem against the rail and leaving the rest bare.
+   `--list-pane-w` remains the list's floor through `--ai-list-min`, so
+   dragging the column wider still stops where it did. With nothing open
+   beside the lists the rule does not match and the body keeps
+   `max-w-2xl mx-auto`, a single centred page as Home and Needs you are. */
+#ai-screen[data-ai-docked][data-ai-open] .ai-screen-body {
+  width: 100%;
+  max-width: 42rem;
+  margin-inline: auto;
+}
+/* The aside stays mounted, because a thread is opened from the place it is
+   handed (`at`); with nothing open beside the lists it is not drawn. */
+#ai-screen:not([data-ai-open]) .ai-main-pane { display: none; }
 /* #6147: 8px below the header, as the list's first card and the Workshop's
    side panel (.dev-ws-side) are, not 8px up into its rounded lower edge. The
    preview pane and Main's divider start on the same line. */
@@ -18610,29 +18429,49 @@ html[data-side-panel] #ai-screen .ai-main-pane { display: none; }
 @media (min-width: 768px) {
   html[data-side-panel] #ai-screen { padding-inline-end: var(--ai-main-w); }
 }
+/* #6394: a plan, or a change's before and after, open beside a page held in
+   the panel is a third column, so the list gives up the room both columns
+   take. This outranks the rule above, which keeps the panel's lane only
+   while the panel is the whole of that lane. */
+html[data-side-panel] #ai-screen[data-ai-preview="three"] {
+  padding-inline-end: calc(var(--ai-col-w) + var(--ai-preview-w));
+}
 body:has(#ai-screen:not(.hidden)) .side-panel {
   width: calc(var(--ai-main-w) + var(--ai-edge, 0px));
   border-start-end-radius: 0;
   border-start-start-radius: 1.75rem;
 }
-.side-panel-head > :is(.side-panel-main, .side-panel-place, .side-panel-more) { display: none; }
+/* #6394: beside a page the panel holds, with a plan or a change's shots open
+   beside THAT, the panel is the middle column: as wide as a thread is in
+   three columns and ending where the preview begins, its rounded corner
+   kept. In halves the list has stepped aside and the panel takes the rest
+   of the room beside the preview. */
+body:has(#ai-screen:is([data-ai-preview="three"], [data-ai-preview="halves"]):not(.hidden)) .side-panel {
+  width: var(--ai-col-w);
+  inset-inline-end: calc(var(--ai-preview-w) + var(--ai-edge, 0px));
+}
+.side-panel-head > :is(.side-panel-ai-close, .side-panel-place, .side-panel-more) { display: none; }
 body:has(#ai-screen:not(.hidden)) .side-panel :is(#side-panel-back, #side-panel-title, #side-panel-expand, #side-panel-close) {
   display: none;
 }
-body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-main, .side-panel-place, .side-panel-more) { display: inline-flex; }
+body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-ai-close, .side-panel-place, .side-panel-more) { display: inline-flex; }
 /* And the page in it leaves out its own way back, "‹ Workshop": the column's
-   ‹ Main Chat is the way back, and its project is beside it. The class is on the
+   × is the way back, and its project is beside it. The class is on the
    panel document's <html> while it stands beside this page (side-panel
    controller BESIDE_AI_CLASS). */
 html.in-side-panel.side-panel-beside-ai :is(.dev-topic-backs, .dev-topic-back) { display: none; }
 /* AND THE COLUMN IS ONE SHEET (30 Oct 2026), as Main is: the page lies flat
-   under the column's heading rather than lifting its own sheets off it. The
-   heading names what is open and its number, so a request's or a change's own
-   bar keeps only its status, its category and its ⋯ here, and goes when it
-   has none of them. */
+   under the column's heading rather than lifting its own sheets off it.
+   AND, SINCE #6431, ONE HEADER: the column's heading names what is open, its
+   number, where it stands (the page's own status pill) and everything its ⋯
+   holds, so the page's bar is not drawn here at all — a request's or a
+   change's, its number included. Two rows and two ⋯ buttons, with the
+   actions split between them, were what Evan reported (6 Nov 2026). The page
+   itself, everywhere else (the full page, the Workshop's side panel), keeps
+   its bar exactly as it was. */
 html.in-side-panel.side-panel-beside-ai .dc-lift { border-radius: 0; border-top: 0; box-shadow: none; }
-html.in-side-panel.side-panel-beside-ai .dev-request-bar :is([data-request-kicker], .dev-request-bar-title) { display: none; }
-html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu-btn, [data-request-status], [data-request-category])) { display: none; }
+html.in-side-panel.side-panel-beside-ai .dev-request-bar :is([data-request-kicker], .dev-request-bar-title, [data-request-category], [data-change-category]) { display: none; }
+html.in-side-panel.side-panel-beside-ai .dev-request-bar { display: none; }
 /* AND THE PAGE ITSELF REACHES THE COLUMN'S EDGES (3 Nov 2026). The 30 Oct
    rule above took the sheet's radius, top edge and shadow, but three things
    still drew a second box inside the column: #dev-topic-thread's 12px
@@ -18666,14 +18505,42 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 :is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) :is(.dev-request-bar, .dev-request-scroll) {
   padding-inline: 12px;
 }
+/* THE COLUMN HAS MAIN CHAT'S SURFACE, #6432. The 30 Oct rules above took the
+   page's own sheets away so it would lie flat in the column, but nothing
+   painted the column itself: the panel document's body still drew the route
+   wallpaper (its star, grain and washes), sized to the column and not lined
+   up with the page's own, so Evan saw it through the request (6 Nov 2026).
+   Main got a surface under it (#ai-screen .ai-main-pane, --home-ground with
+   the --dc-sheet-fill thread pane over it); --dc-sheet-solid is that same
+   composite, the list's cards' colour in both themes, so the page lies on it
+   here. `background` clears the image too. `!important` is what beats the
+   route rule's `:has(:is(#…))` (one id deep) and the brand skin's body
+   background; the app-launch cover is written the same way. The fixed layer
+   is a second copy the phone's browser scroller paints behind the body, and
+   it goes too. No media query: the phone's drawer holds the same page. Only
+   the document beside the bot page (a panel document, never the top one) is
+   touched, so the full page and the Workshop's .dev-ws-side keep theirs, and
+   the thread's own cards keep their fills. */
+html.in-side-panel.side-panel-beside-ai body {
+  background: var(--dc-sheet-solid) !important;
+}
+html.in-side-panel.side-panel-beside-ai body::before {
+  background: none !important;
+}
 /* A DESIGN'S PREVIEW, A COLUMN OF ITS OWN (1 Nov 2026, threads, one loop
    C1; features/ai/preview.ts). Opened from a version in a thread, the design
    pane stands beside the thread: list | thread | preview where the three fit
    (1500px and up: the list keeps 480px, the thread 440px at most, the
    preview the rest), the thread and the preview in halves where they do not
-   (the list steps aside), and the whole screen on a phone. The thread's
-   width is the preview's to decide while it is open, so its edge is no
-   handle then. */
+   (the list steps aside), and the whole screen on a phone.
+   BOTH EDGES ARE HANDLES (#6359, 6 Nov 2026). Each sets the width of the
+   column after it and the list takes what is left: the thread's edge
+   `--ai-col-chosen-w`, the preview's `--ai-preview-chosen-w`
+   (features/side-panel/resize.ts). Until one is dragged the widths are the
+   ones above. The floors hold here as in the drag: the list 480px, the
+   thread 320px, the preview 360px; a preview dragged wide narrows the
+   thread before it squeezes the list. In halves the list has stepped aside,
+   so only the preview's edge is a handle there, and the thread is the rest. */
 #ai-screen .ai-preview-pane {
   position: fixed;
   z-index: 21;
@@ -18690,15 +18557,35 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
   border-inline-start: 1px solid var(--app-sheet-line);
 }
 #ai-screen .ai-preview-pane > .messages-design-pane { border-radius: 0; box-shadow: none; padding-top: 4px; }
-#ai-screen[data-ai-preview] .ai-main-pane > .side-panel-divider { display: none; }
+#ai-screen:not([data-ai-preview="three"])[data-ai-preview] .ai-main-pane > .side-panel-divider { display: none; }
+/* THE WIDTHS ARE DECLARED ON THE BODY, NOT ON #ai-screen (#6394, 6 Nov
+   2026). While a page is in the side panel, that panel is the middle column
+   and it is an island of its own beside #ai-screen, so it can only read these
+   through the body the two share. Everything they are made of (`--ai-room`
+   and `--ai-main-w` on body, the `--ai-*-chosen-w` on <html>) already
+   resolves there. #ai-screen inherits them, and its own padding below still
+   takes the list down to where the columns begin. */
+body:has(#ai-screen[data-ai-preview="three"]:not(.hidden)) {
+  --ai-preview-auto: max(360px, calc(var(--ai-room) - 480px - min(var(--ai-main-w), 440px)));
+  --ai-preview-w: max(360px, min(var(--ai-preview-chosen-w, var(--ai-preview-auto)), calc(var(--ai-room) - 800px)));
+  --ai-col-w: max(320px, min(var(--ai-col-chosen-w, min(var(--ai-main-w), 440px)), calc(var(--ai-room) - 480px - var(--ai-preview-w))));
+}
+body:has(#ai-screen[data-ai-preview="halves"]:not(.hidden)) {
+  --ai-preview-w: max(320px, min(var(--ai-preview-chosen-w, calc(var(--ai-room) / 2)), calc(var(--ai-room) - 320px)));
+  --ai-col-w: calc(var(--ai-room) - var(--ai-preview-w));
+}
 #ai-screen[data-ai-preview="three"] {
-  --ai-col-w: min(var(--ai-main-w), 440px);
-  --ai-preview-w: max(360px, calc(var(--ai-room) - 480px - var(--ai-col-w)));
   padding-inline-end: calc(var(--ai-col-w) + var(--ai-preview-w));
 }
-#ai-screen[data-ai-preview="halves"] {
-  --ai-col-w: calc(var(--ai-room) / 2);
-  --ai-preview-w: var(--ai-col-w);
+/* The edges' lines: the thread's and Main's on their pane's own hairline, the
+   edge each drags (and outweighing that rule, at THE DIVIDER below), the
+   preview's on the hairline where it meets the thread. */
+body:has(#ai-screen:not(.hidden)) #ai-screen[data-ai-preview="three"] #ai-main-divider {
+  --divider-at: calc(var(--ai-col-w) + var(--ai-preview-w) + var(--ai-edge, 0px));
+}
+#ai-preview-divider {
+  --divider-at: calc(var(--ai-preview-w) + var(--ai-edge, 0px));
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) + .5rem);
 }
 #ai-screen[data-ai-preview="halves"] .ai-screen-body { display: none; }
 #ai-screen:is([data-ai-preview="three"], [data-ai-preview="halves"]) .ai-main-pane {
@@ -20494,6 +20381,118 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
    back. In Messages it opens beside the chat, as a thread does. */
 .messages-layout-embedded.messages-has-blank-thread > .messages-thread-pane { display: none; }
 .messages-layout-embedded.messages-has-blank-thread > .messages-reply-pane { flex: 1 1 auto; margin-inline-start: 0; }
+/* THE BLANK THREAD'S OPENING (5 Nov 2026, new-thread.tsx). In the middle of
+   the empty thread, where the first message will land: the bot's face, what
+   it asks, and the ways to start, each its own pill. A pill is set in the
+   message box's own type (`.messages-composer-input`: 17px over 22px, 15px
+   from 768px) because it is the words a tap writes into the box; its "…" is
+   the box's placeholder ink. The one the message begins with wears the
+   card's focus ring. Auto margins centre the block in a scroller that keeps
+   its `justify-end`, and let it scroll when a short screen cannot hold it. */
+.messages-starts {
+  margin-block: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+}
+.messages-starts-hello { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+.messages-starts-hello > img { width: 40px; height: 40px; margin-bottom: 6px; border-radius: 12px; object-fit: cover; }
+.messages-starts-title { margin: 0; color: var(--text-primary); font-size: 17px; font-weight: 700; line-height: 22px; text-wrap: balance; }
+.messages-starts-sub { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 17px; }
+.messages-starts-list { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
+.messages-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  min-height: 44px;
+  padding-block: 10px;
+  padding-inline: 14px 18px;
+  border-radius: 9999px;
+  color: var(--text-primary);
+  background: var(--messages-surface);
+  box-shadow: var(--messages-disc-shadow), 0 6px 16px -10px var(--app-sheet-shadow-near);
+  font-size: 17px;
+  line-height: 22px;
+  text-align: start;
+  transition: background 150ms, box-shadow 150ms;
+}
+.messages-start > svg {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  color: var(--text-muted);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.messages-start:hover { background: var(--messages-surface-2); }
+.messages-start:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.messages-start[aria-pressed="true"] { box-shadow: var(--messages-disc-shadow), 0 0 0 2px var(--accent); }
+.messages-start-more { color: var(--text-faint); }
+@media (min-width: 768px) {
+  .messages-start { font-size: 15px; }
+}
+/* THE PROJECT IT IS FOR, floating over the box: a disc of its own above the
+   card, not a row inside it, which opens the "Your communities" rows
+   (project-picker.tsx). A project picked tints it in its community's colour,
+   as the switcher tints the row you are on. */
+.messages-project-row { display: flex; padding-bottom: 8px; }
+.messages-project-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 34px;
+  padding-inline: 6px 11px;
+  border-radius: 9999px;
+  color: var(--text-secondary);
+  background: var(--messages-surface);
+  box-shadow: var(--messages-disc-shadow), 0 6px 16px -8px var(--app-sheet-shadow-near);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 150ms;
+}
+.messages-project-chip:hover { background: var(--messages-surface-2); }
+.messages-project-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.messages-project-chip[data-picked] {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--project-ink) 14%, var(--messages-surface));
+}
+.messages-project-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.messages-project-chip-tile {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.messages-project-chip-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
+.messages-project-chip-tile > span { font-size: inherit; line-height: 1; }
+.messages-project-chip-any { color: var(--text-muted); box-shadow: inset 0 0 0 1.5px var(--app-sheet-line); }
+.messages-project-chip-any > svg,
+.messages-project-chip-chev {
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.messages-project-chip-any > svg { width: 14px; height: 14px; stroke-width: 1.8; }
+.messages-project-chip-chev { width: 14px; height: 14px; color: var(--text-muted); stroke-width: 2.4; }
+@media (prefers-reduced-motion: reduce) {
+  .messages-start,
+  .messages-project-chip { transition: none; }
+}
 /* A PROJECT'S OWN CHANNEL'S REPLY THREAD, IN PLACE TOO (#3653). The pane
    Messages opens beside an app channel (AppReplyThreadPane) opens beside the
    group chat's pane here: to its right on a desktop, over it on a phone,
@@ -20922,7 +20921,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
      and the header is sticky over it, so 0 was the top of the SCREEN: the
      strip pinned there drew straight over the header and hid it. There it
      is the header's own height, as everything else that sticks under the
-     header in that mode is measured (#browse-search-bar). */
+     header in that mode is measured. */
   #dev-workshop { --ws-pin-top: var(--dev-ws-head-foot, 7px); }
   html[data-browser-scroller="dev-forum-scroll"] #dev-workshop {
     --ws-pin-top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top));
@@ -21349,7 +21348,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   align-items: flex-start;
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  /* BOTH AXES. `.home-discover-rail` carries the post-mortem (#1762): a rail
+  /* BOTH AXES. The Discover rail carried the post-mortem (#1762): a rail
      that declares `touch-action: pan-x` DENIES vertical panning for every
      touch that starts on it, so on a phone it becomes a band you cannot
      scroll the page from. Failing to page the deck costs one retry; failing
@@ -22636,8 +22635,8 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):
    route with no wallpaper gets the solid plane colour. */
 .platform-tabs::before,
 .platform-parked::before,
-body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
-             #settings-screen, #messages-screen, #workshop-screen, #ai-screen,
+body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
+             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
              #agent-session-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header::before,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header::before,
@@ -22650,40 +22649,6 @@ html[data-browser-scroller] #landing-header::before {
   background:
     linear-gradient(var(--fake-glass-tint, var(--dc-sheet-fill)), var(--fake-glass-tint, var(--dc-sheet-fill))),
     var(--home-washes, var(--dc-sheet-solid));
-}
-/* DISCOVER'S SEARCH BAND FROM 768px (polish N12), the same faked layer.
-   It pinned on a flat `--home-ground` fill: the washes behind the page do
-   not reach it, so it read as a band of a different colour across them, and
-   with no edge the cards slid under it into nothing. Now it paints the
-   wallpaper's own grain and washes, fixed so they line up with the body's
-   pixel for pixel: the band is the page, opaque, and only its hairline
-   says where the cards pass under. The phone's head is not sticky
-   (`browse-pane-head` above) and keeps its transparent fill. */
-@media (min-width: 768px) {
-  #browse-search-bar {
-    background: transparent;
-    clip-path: inset(0);
-  }
-  #browse-search-bar::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    background:
-      var(--home-grain, none) 0 0 / 240px 240px repeat,
-      var(--home-washes, var(--dc-sheet-solid));
-  }
-  #browse-search-bar::after {
-    content: '';
-    position: absolute;
-    inset-inline-start: 0;
-    inset-inline-end: 0;
-    bottom: 0;
-    height: 1px;
-    background: var(--app-sheet-line);
-    pointer-events: none;
-  }
 }
 /* THE HAIRLINE GOES BACK ON TOP. The layer paints over its surface's own
    border (a stacking context's negative layer comes after its background and
@@ -22949,7 +22914,9 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
      are a little wider than the other three: they hold the longest words,
      and the bar's other labels (Home, Messages, and your name last, which
      ellipsizes) have room to spare in theirs. */
-  #platform-tabs { grid-template-columns: .85fr 1.3fr 1.4fr 1.1fr .85fr; }
+  /* ONE HOME (#6361): four seats, Home · Homeroom bot · Messages · You. The
+     bot's holds the longest word, so it is a little wider. */
+  #platform-tabs { grid-template-columns: 1fr 1.4fr 1.15fr 1fr; }
   :is(#platform-tab-workshop, #platform-tab-ai) { overflow: visible; }
   :is(#platform-tab-workshop, #platform-tab-ai) .platform-tab-label {
     letter-spacing: -.02em;
@@ -22960,27 +22927,28 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
 @media (max-width: 374.98px) {
   /* The smallest phones: every label drops half a point and tightens, the
      cells lose their 2px sides, and the two wide seats widen a little less. */
-  #platform-tabs { grid-template-columns: .85fr 1.25fr 1.35fr 1.1fr .85fr; }
+  #platform-tabs { grid-template-columns: 1fr 1.35fr 1.15fr 1fr; }
   .platform-tab { padding: 0; }
   .platform-tab .platform-tab-label { font-size: 10.5px; letter-spacing: -.02em; }
 }
 
 /* TWO ORDERS, ONE MARKUP (Evan, 29 Oct 2026). The tabs' markup is the
-   desktop rail's order, Home, Discover, Messages, AI, Communities, then you,
-   so a keyboard on a desktop moves through them in the order it sees
-   (features/nav/tab-bar.tsx TABS). The phone's bar keeps #6019's order,
-   Home · Communities · AI · Messages · You, as five cells: `order` lays it
-   out, and the Discover tab is the rail's alone (Home's Discover block opens
-   the page there). The orders are below zero so the side strip's own
-   (`order: 1` for the app you left, `2` for you, further down) still come
-   after the four. You keeps the default, last in the markup. */
+   desktop rail's order, Home, AI, Messages, Communities, then you, so a
+   keyboard on a desktop moves through them in the order it sees
+   (features/nav/tab-bar.tsx TABS). The phone's bar is four cells since One
+   Home (#6361), Home · AI · Messages · You, which `order` lays out. The
+   orders are below zero so the side strip's own (`order: 1` for the app you
+   left, `2` for you, further down) still come after the three. You keeps
+   the default, last in the markup. */
 @media (max-width: 767.98px) {
-  #platform-tab-discover { display: none; }
   #platform-tab-home { order: -4; }
-  #platform-tab-workshop { order: -3; }
-  #platform-tab-ai { order: -2; }
-  #platform-tab-messages { order: -1; }
+  #platform-tab-ai { order: -3; }
+  #platform-tab-messages { order: -2; }
 }
+/* ONE HOME (#6361): the Communities tab is drawn on neither bar: Home holds
+   your communities and the ones to join. Its node stays, for the route and
+   links that still name it. */
+#platform-tab-workshop { display: none !important; }
 
 /* A QUIET GREY DISC, NOT THE BELL'S RED (#2912). This used to be the same
    red disc as #notifications-badge, on the argument that two counts on one
@@ -24279,7 +24247,7 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
      #profile-proposals-screen likewise (#3498): Your requests and Your votes
      centred in the whole window, so from a laptop width down their cards
      began under the rail. */
-  :is(#home-screen, #browse-screen, #workshop-screen, #ai-screen, #leaderboard-screen,
+  :is(#home-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #leaderboard-screen,
       #profile-screen, #admin-screen, #settings-screen, #messages-screen,
       #agent-session-screen, #profile-proposals-screen) {
     /* A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review).
@@ -24526,7 +24494,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
    The parts only the sidebar draws are in the markup at every width and
    drawn only here. */
 .platform-rail-communities,
-.platform-rail-conversations,
 .platform-tab-all-glyph,
 .platform-tab-all-label,
 .platform-tab-all-votes,
@@ -24534,47 +24501,8 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   display: none;
 }
 
-/* ── ALL COMMUNITIES: ONE LIST, UNDER A SEARCH AND ITS CHIPS (#5296) ──
-   features/workshop/index.tsx. The search heads the list at every width
-   (D drew it from 768px only); the sidebar's Communities heading opens it
-   lit. A search's answer is the list itself, so nothing here hides
-   anything while it is up: the screen leaves Join and Start out itself. */
-.workshop-search {
-  margin: 0 16px 10px;
-}
-.workshop-search .messages-search {
-  margin: 0;
-}
-/* THE SEARCH SITS A SMALL GAP UNDER THE NEEDS YOU CARD (UX audit, 20 Oct
-   2026). The card's section carried no bottom margin, so the field touched
-   it. Twelve is the gap the chip row already keeps below the search. Only
-   when something heads the list: with no card (or with no loading skeleton
-   in its place) the search keeps the place it had. */
-section + .workshop-search {
-  margin-top: 12px;
-}
-/* THE CHIP ROW FADES WHERE IT IS CUT, the same 2rem fade Home's Discover
-   lane uses on desktop (`.home-discover-rail`). The rail scrolls sideways
-   with its scrollbar hidden, so without a cue a half-visible "Just you" read
-   as the end of the row. `data-more` is set by AudienceChips from its own
-   scroll measurement — on only while a chip is past the right edge. */
-.audience-chips[data-more] {
-  -webkit-mask-image: linear-gradient(to var(--fade-to-inline-end, right), #000 calc(100% - 2rem), transparent);
-  mask-image: linear-gradient(to var(--fade-to-inline-end, right), #000 calc(100% - 2rem), transparent);
-}
-/* LIT, from the sidebar's search (features/workshop/communities-search.ts),
-   until focus leaves it: the place's own tint, so the eye lands on it. */
-.workshop-search[data-lit] .messages-search-input {
-  border-color: var(--lit-ink);
-  background: var(--lit-tint);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lit-ink) 22%, transparent);
-}
-.workshop-search-none {
-  margin: 0;
-  padding: 12px 22px;
-  color: var(--text-muted);
-  font-size: 14px;
-}
+/* All communities' search and audience chips went with its list, which is
+   Home's since One Home (#6361). */
 
 @media (min-width: 768px) {
   /* THE ONE NUMBER THE REST FOLLOWS. Everything the strip's width placed
@@ -24960,26 +24888,21 @@ section + .workshop-search {
   /* ── v3: WHAT THE SECOND COLUMN HELD, NESTED UNDER ITS ROW ────────────
      features/nav/rail-nest.tsx. The community whose page is up opens its
      places under its row (features/nav/rail-communities.tsx: the section
-     column's own list, ../dev-board/workshop/project-places.tsx), and the
-     inbox opens its five latest conversations and All messages under
-     Messages (features/nav/rail-conversations.tsx). So there is no second
-     column from here: the page has the 264px it took.
+     column's own list, ../dev-board/workshop/project-places.tsx). So there
+     is no second column from here: the page has the 264px it took. Messages
+     nested its five latest conversations here too until 7 Nov 2026; the
+     inbox draws its own list beside a conversation now.
 
      ONE INDENT A LEVEL, ONE LINE. A nested row's glyph starts 30px in; a
-     group under a sub-header (Channels, Topics, Agents, People) is tabbed in
-     a step further, its sub-header where the rows above it start. One
-     hairline runs unbroken from under the parent's tile to the last row,
-     past the sub-headers, All messages included. The sub-headers are
-     sentence case: the section headings' small capitals are a level up.
+     group under a sub-header (Channels, Topics) is tabbed in a step
+     further, its sub-header where the rows above it start. One hairline runs
+     unbroken from under the parent's tile to the last row, past the
+     sub-headers. The sub-headers are sentence case: the section headings'
+     small capitals are a level up.
 
      THE PARENT ROW GIVES ITS FILL TO THE ROW LIT UNDER IT. It keeps
      `aria-current` (the declared checks and a screen reader read it), and is
      named in the ink and a heavier weight instead, so one row is lit. */
-  .platform-rail-conversations {
-    display: flex;
-    flex: none;
-    flex-direction: column;
-  }
   /* The part's one grid row is what features/nav/rail-nest.tsx animates
      (`0fr` to `1fr`, which is the rows' own height on every frame). */
   /* ITS ONE COLUMN IS THE RAIL'S WIDTH (N19). With no column size the
@@ -25072,29 +24995,6 @@ section + .workshop-search {
   }
   .platform-rail-nest [aria-current="page"] :is(.dev-ws-place-glyph, .platform-rail-sub-glyph) {
     color: inherit;
-  }
-  .platform-rail-face {
-    flex: none;
-    display: grid;
-    width: 18px;
-    height: 18px;
-    place-items: center;
-  }
-  /* Over the avatar's own size utilities, which load after this file (#938). */
-  .platform-rail-nest .platform-rail-face > * {
-    width: 18px;
-    height: 18px;
-    border-radius: 5px;
-    font-size: 9px;
-  }
-  .platform-rail-face .messages-inbox-agent-tile {
-    background: none;
-    border: 0;
-    color: var(--text-muted);
-  }
-  .platform-rail-face svg {
-    width: 16px;
-    height: 16px;
   }
   .platform-rail-nest :is(.dev-ws-place-label, .platform-rail-sub-name) {
     flex: 1 1 auto;
@@ -25207,17 +25107,11 @@ section + .workshop-search {
   .platform-rail-nest .platform-rail-places > .platform-rail-nest-in::before {
     display: none;
   }
-  /* The parent: lit by its page, filled by none, its count said under it.
-     Messages only while a row under it is lit (#21): a conversation that is
-     not among the five adds no row now, and Messages keeps its fill. */
-  .platform-rail-community[data-rail-open][aria-current="page"],
-  .platform-tabs:has(#platform-rail-conversations > [data-nest="open"] [aria-current="page"]) #platform-tab-messages[aria-current="page"] {
+  /* The parent: lit by its page, filled by none, its count said under it. */
+  .platform-rail-community[data-rail-open][aria-current="page"] {
     background: transparent;
     color: var(--text-primary);
     font-weight: 650;
-  }
-  .platform-tabs:has(#platform-rail-conversations > [data-nest="open"] [aria-current="page"]) #platform-tab-messages[aria-current="page"] .platform-tab-glyph {
-    color: var(--text-primary);
   }
   /* The places are in the sidebar, so the place bar's button to the tray has
      nothing to open beside it. Folded, the sidebar is away and the button
@@ -25226,26 +25120,17 @@ section + .workshop-search {
     display: none;
   }
 
-  /* ── MESSAGES, ONE PANE AT A TIME (v3) ───────────────────────────────
-     features/messages/index.tsx. The list is in the sidebar, so an open
-     conversation has the page to itself (`messages-list-in-rail`: the list
-     and its full-width toggle step aside, as on a strip too narrow for
-     both), and with nothing open the whole list is the page
-     (`messages-list-page`, All messages): its search, its headings, its rows
-     with their previews and times, in a readable column. */
-  .messages-layout.messages-list-in-rail > .messages-list-pane {
-    display: none;
-  }
-  .messages-layout.messages-list-in-rail .messages-list-toggle {
-    display: none;
-  }
-  .messages-layout.messages-list-in-rail > .messages-thread-pane {
-    margin-inline-start: 0;
-  }
+  /* ── MESSAGES ON A DESKTOP: THE LIST AS THE PAGE ─────────────────────
+     features/messages/index.tsx. With nothing open the whole list is the
+     page (`messages-list-page`, All messages): its search, its headings, its
+     rows with their previews and times, in a readable column. An open
+     conversation has the list beside it (from v3 until 7 Nov 2026 the list
+     sat in the sidebar instead, and the conversation had the page alone). */
   /* AUDIT C04 (2 Nov 2026): a conversation with nothing beside it keeps a
      reading width, as All messages keeps its column, rather than running
-     about 1500px wide at 1920, its bubbles a screen apart. */
-  .messages-layout.messages-list-in-rail > .messages-thread-pane:last-child {
+     about 1500px wide at 1920, its bubbles a screen apart. Since the list
+     came back beside it, that is a conversation set to Full width. */
+  .messages-layout.messages-list-collapsed > .messages-thread-pane:last-child {
     max-width: 960px;
     margin-inline: auto;
   }
@@ -25688,8 +25573,9 @@ html.dark .messages-inbox-change-tile {
      hides and shows with it; centred on `--divider-at`, the line's distance
      from the window's right edge. Beside an app that is the panel's own edge,
      where the two sheets meet; beside the Homeroom bot's list it is the
-     middle of the gutter between the list and Main (below). Inside the panel
-     the bar and the grip sat on the panel's side of the gap. Nothing between
+     pane's own edge too, the hairline it drags (below), with half the handle
+     in the gutter and half over the pane. Inside the panel the bar and the
+     grip sat on the panel's side of the gap. Nothing between
      it and the window may take a transform or a filter, which would make
      that ancestor its frame instead. */
   --divider-w: 10px;
@@ -25705,11 +25591,36 @@ html.dark .messages-inbox-change-tile {
   outline: none;
 }
 /* Beside the bot's list: Main (and a page in Main's place) is
-   `--ai-main-w` wide plus the Duo's column it runs under, and the list's
-   16px padding is the gutter before it. Main's own handle starts where Main
-   does, which is not under the banner the side panel clears. */
+   `--ai-main-w` wide plus the Duo's column it runs under. #6397: the handle
+   is centred on that pane's own edge, the hairline it drags, so it reads as
+   the edge moving and not as a line floating in the list's 16px gutter.
+   Main's own handle starts where Main does, which is not under the banner
+   the side panel clears. */
 body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
-  --divider-at: calc(var(--ai-main-w) + var(--ai-edge, 0px) + 8px);
+  --divider-at: calc(var(--ai-main-w) + var(--ai-edge, 0px));
+}
+/* IN THE MIDDLE OF THE GAP (#6447). Below 1024px the two sheets are close,
+   so the list's 16px gutter is the gap you see between them, and the handle
+   on the pane's edge read as stuck to the column. Half of that gutter (8px)
+   toward the list puts the line, its bar and the touch grip halfway across
+   the empty space. A desktop keeps the pane's own edge above: its gap is
+   wide and a line in it would float. Same specificity as that rule, so
+   source order decides, and this block stays before the three and halves
+   rules below so those still win. */
+@media (max-width: 1023.98px) {
+  body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
+    --divider-at: calc(var(--ai-main-w) + var(--ai-edge, 0px) + 8px);
+  }
+}
+/* #6394: with a plan open beside the page the panel holds, the panel's edge
+   is the thread's edge of three columns, on the line where the panel begins.
+   In halves the list has stepped aside and the preview's own handle is the
+   one that drags, so this edge is not drawn (as .ai-main-pane's is not). */
+body:has(#ai-screen[data-ai-preview="three"]:not(.hidden)) #side-panel-divider {
+  --divider-at: calc(var(--ai-col-w) + var(--ai-preview-w) + var(--ai-edge, 0px));
+}
+body:has(#ai-screen[data-ai-preview="halves"]:not(.hidden)) #side-panel-divider {
+  display: none;
 }
 #ai-main-divider {
   top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) + .5rem);
@@ -25725,6 +25636,14 @@ body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
   opacity: 0;
   transition: opacity 120ms ease;
 }
+/* #6397: the bar starts where the pane's rounded top corner ends (28px), so it
+   meets the straight part of the edge instead of standing beside the curve.
+   Only the panes that have that corner: Main and the side panel beside the bot
+   page. #ai-preview-divider has none, and neither does the side panel beside a
+   running app (its top-left corner is square). */
+body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider)::after {
+  top: 1.75rem;
+}
 /* Under a pointer that hovers only: a finger's tap leaves iOS holding
    :hover on the handle, which kept the bar lit after the drag (iPhone Duo,
    1 November 2026). */
@@ -25739,8 +25658,8 @@ html.side-panel-resizing .side-panel-divider::after {
    2026). The bar above shows only under a pointer, which a finger never
    hovers over, and 10px is narrower than a fingertip, so the edge read as
    no handle at all. With a coarse pointer the handle is 24px across the
-   line, reaching 4px into Main past the gutter (its rows and the reply box
-   begin 12 to 18px in), and a short grip on the line is drawn at rest.
+   line, reaching 12px into the pane (its rows and the reply box begin 12 to
+   18px in), and a short grip on the line is drawn at rest.
    THE GRIP IS THE WHOLE MARK. The full-height bar is a pointer's hover
    cue; under a finger it ran the screen's height beside the grip, held or
    focused, and read as a second divider. The grip darkens while held. */
@@ -25806,12 +25725,28 @@ body:has(#ai-screen:not(.hidden)) .side-panel-head {
    measures it from the screen whichever document has the focus
    (`un-kb`, `--un-kb-inset`), so the panel ends above it. */
 html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-inset, 0px); }
-/* The topic's back chip, centred in the row rather than at its top. */
-.side-panel-head > .side-panel-main { margin: 0; align-self: center; }
+/* The column's × that closes the page, centred in the row rather than at its
+   top (6 Nov 2026, #6425: it took the "‹ Main Chat" chip's place). */
+.side-panel-head > .side-panel-ai-close { margin: 0; align-self: center; }
 /* The ⋯ beside the column's heading (3 Nov 2026), at the row's end: Copy
    link, the item's own page address. It is a sibling of the heading, so it
-   stays put when the heading's words are long. */
-.side-panel-more { margin-inline-start: auto; align-self: center; }
+   stays put when the heading's words are long.
+   #6431: and it is a LAYER ABOVE THE PAGE, solidly (Evan, 6 Nov 2026: the
+   menu "is overlapping weirdly? Maybe because it is fully transparent?").
+   Its surface tokens come from .side-panel-head, which is in the lists that
+   declare Messages' (above), and the wrapper stacks above the panel's body
+   so no page content paints over it. */
+.side-panel-more {
+  position: relative;
+  z-index: 2;
+  margin-inline-start: auto;
+  align-self: center;
+}
+/* The menu's own hairline, on top of the lift its base rule already draws, so
+   it reads as a sheet lying over the page rather than a hole in it. */
+.side-panel-more .messages-thread-menu {
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .18), inset 0 0 0 1px var(--messages-hair);
+}
 /* The column's heading, as Main's header reads (30 Oct 2026): the project's
    tile, then what is open over where it is, the rows' 15 over 13. The
    project's name is the door to it, underlined under the pointer. */
@@ -25828,9 +25763,24 @@ html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-i
   color: var(--text-primary);
 }
 .side-panel-place-where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 13px;
   line-height: 18px;
   color: var(--text-faint);
+}
+/* The project and the number truncate; the pill after them never does
+   (#6431 — it is the page's own, at the size the page's bar drew it). */
+.side-panel-place-where-text { min-width: 0; }
+.side-panel-place-status { flex: none; display: inline-flex; }
+/* The thin divider between the column's own two rows and the page's (#6431):
+   Copy link and Open in workshop, then everything the page's ⋯ holds. */
+.side-panel-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--app-sheet-line);
 }
 .side-panel-place-link { color: inherit; text-decoration: none; border-radius: 4px; }
 .side-panel-place-link:hover { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }
@@ -26825,8 +26775,11 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
    `data-detail` says which, and `:has()` lets a frame that has always
    been one flex row split by it. */
 
-/* The shots viewer used to be a popover over the page; in the column it
-   is simply its contents, scrolling under the reader's header. */
+/* The shots viewer is still a popover, even here; in the column only its
+   CLOSED state is flattened into the column's contents, scrolling under
+   the reader's header. Open, it must keep `.shots-viewer:popover-open`: it
+   goes to the top layer and is drawn as the window-sized card over a dim.
+   Flattening that too left a dim with nothing readable in it (#6382). */
 .gc-detail-shots {
   flex: 1 1 auto;
   min-height: 0;
@@ -26834,7 +26787,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   overflow: auto;
   padding: 0 4px 12px;
 }
-.gc-detail-shots :is(.shots-viewer, [popover]) {
+.gc-detail-shots :is(.shots-viewer, [popover]):not(:popover-open) {
   display: block !important;
   position: static !important;
   inset: auto !important;
@@ -26844,6 +26797,26 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   border: 0;
   padding: 0;
 }
+/* #6381: the before and after's own toolbar has no way out of the column,
+   so this small head above it carries the close the design preview has in
+   its header — an × at the right, or the back arrow at the left where the
+   column is the whole screen. */
+.gc-detail-shots-head {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 4px 8px 2px;
+}
+.gc-detail-shots-close {
+  margin-inline-start: auto;
+  width: 32px; height: 32px; padding: 0; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 999px; cursor: pointer;
+  background: transparent; color: var(--text-primary, #18181b);
+}
+.gc-detail-shots-close:hover { background: var(--state-neutral-bg, rgba(24,24,27,.06)); }
+.gc-detail-shots-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gc-detail-shots-close svg { width: 18px; height: 18px; }
 .gc-detail-back {
   width: 32px; height: 32px; padding: 0; flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -26902,52 +26875,147 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   .dev-ws-side { inset-inline-start: calc(var(--dev-ws-side-start) + var(--platform-gutter, 0px) + 24px); }
 }
 
+/* ── ONE HOME (#6361): THE SIDEBAR'S RECENTS ────────────────────────────
+   One list under one heading: the communities pinned to its top
+   (#platform-rail-pinned, community_pins, four at most), then the ones you
+   opened lately, each where it first arrived (#platform-rail-communities).
+   The pinned group carries the heading when it is drawn, and the list under
+   it then draws none of its own. The search beside the heading went with
+   the Communities page: Home lists and searches every community. */
+@media (min-width: 768px) {
+  #platform-rail-pinned:not(.hidden) + #platform-rail-communities > .platform-rail-head { display: none; }
+  #platform-rail-search { display: none; }
+
+  /* A row: the link fills it, and the pin and the count sit over its end in
+     their own columns, the pin first, so the count keeps the row's end and
+     does not move when the pin shows. */
+  .platform-rail-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+  }
+  .platform-rail-row > .platform-rail-community { grid-column: 1 / -1; grid-row: 1; padding-inline-end: 38px; }
+  .platform-rail-row[data-votes] > .platform-rail-community { padding-inline-end: 62px; }
+  .platform-rail-pin {
+    grid-column: 2; grid-row: 1; position: relative; z-index: 2;
+    width: 26px; height: 26px; margin-inline-end: 6px; border-radius: 8px;
+    display: grid; place-items: center;
+    color: var(--text-muted);
+    opacity: 0;
+    transition: opacity 120ms ease, background-color 120ms ease;
+  }
+  .platform-rail-row[data-votes] > .platform-rail-pin { margin-inline-end: 2px; }
+  .platform-rail-row > .platform-rail-votes {
+    grid-column: 3; grid-row: 1; position: relative; z-index: 2;
+    margin-inline-end: 8px; pointer-events: none;
+  }
+  .platform-rail-pin-glyph { width: 16px; height: 16px; }
+  .platform-rail-row:hover > .platform-rail-pin,
+  .platform-rail-row:focus-within > .platform-rail-pin { opacity: 1; }
+  .platform-rail-pin:hover { background: var(--lit-tint); color: var(--lit-ink); }
+  .platform-rail-pin[aria-pressed="true"] { opacity: 1; color: var(--lit-ink); }
+  .platform-rail-pin[aria-pressed="true"] .platform-rail-pin-glyph { fill: currentColor; }
+  .platform-rail-pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; opacity: 1; }
+}
+@media (min-width: 768px) and (hover: none) {
+  .platform-rail-pin { opacity: .55; }
+}
+
 /* ── THE NEW LOOK, AN EXPERIMENT (Settings › Experimental, off by default) ──
    Every rule here is scoped to html[data-skin="brand"], which the head's
    window.Skin sets from the device's stored choice before this sheet
    applies; without it not one rule below matches. Light shell only, and not
    over a dark app either (:not(.dark), :not([data-app-tone="dark"])): dark
    is the standard dark either way.
-   The look, from the brand-kit pass: a flat cream ground, without the grain,
-   the star or the washes; Geist for every word; warm hairlines; where you
-   are in ink on a pale blue pill with an ink edge; unread counts in ink; on
-   a project's Hub, the actions raised by an ink edge and a hard shadow; a
-   change's picture framed by a plain ink outline.
-   Appended last on purpose. The declarations other rules count
-   (--home-washes, --home-wallpaper, --dc-sheet-fill) are not redeclared:
-   the ground and the bars are painted over them instead. */
+
+   The look is "Baseplate" (request #6278): bricks on a baseplate.
+   - A light warm grey ground, the plate, with white cards and white bars
+     on it. A community's own header colour stays on its pages.
+   - One palette: warm greys, and an ink (#1d231c) for text.
+   - One job per colour. Sun (#ffd95a, on a darker #d6a92a edge) means
+     "do this": the main action, Join, and the votes waiting for you. Ink
+     means "you are here" or "selected": the lit tab, the lit row, the
+     chosen chip. The old blue's other jobs (links, text, quieter fills) go
+     to ink.
+   - Geist for words, Young Serif for page titles, Geist Mono for counts.
+   - The website's own figures in two empty states.
+
+   Appended last on purpose. The declarations other rules count (the home
+   washes, the wallpaper, the sheet fill) are not redeclared: the ground
+   and the bars are painted over them instead. */
 @font-face {
   font-family: 'Geist';
   /* Absolute: the build-scoped copy of this sheet (/b/<sha>/css/app.css)
      serves only .js and .css, so a relative url would 404 there. A browser
      without the new look never matches a rule that names Geist, so it never
-     downloads the file. */
+     downloads the file. The same holds for the two faces below. */
   src: url('/fonts/geist/Geist-Variable.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/geist-mono/GeistMono-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Young Serif';
+  src: url('/fonts/young-serif/young-serif-latin-400-normal.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   font-family: 'Geist', ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  background-color: #fcfbf3;
-  /* Cards are white on the cream ground. */
+  background-color: #f4f4f0;
+  /* Surfaces: white cards on the plate. */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f4f4f0;
+  --bg-tertiary: #e9e9e3;
+  --bg-input: #f4f4f0;
+  --dc-strip: #f4f4f0;
+  --dc-sheet: #ffffff;
+  --dc-sheet-raise: #ffffff;
+  --dc-raised: #f4f4f0;
   --dc-sheet-solid: #ffffff;
-  /* Where you are: ink on a pale blue pill with an ink edge. */
-  --lit-ink: #111111;
-  --lit-tint: #dcebfa;
-  --lit-line: #111111;
+  --dc-strip-solid: #f4f4f0;
+  --border: #dcdcd5;
+  --border-light: #e9e9e3;
+  /* Ink and its warm greys. */
+  --text-primary: #1d231c;
+  --text-secondary: #3d4039;
+  --text-muted: #62655d;
+  --text-faint: #8d9088;
+  /* The old blue's jobs that are not "do this" go to ink: links, text,
+     outlines and the quieter fills. Sun is given out by name below. */
+  --accent: #1d231c;
+  --accent-light: #3d4039;
+  --accent-ink: #ffffff;
+  --accent-tint: rgba(29, 35, 28, 0.06);
+  --accent-tint-ink: #1d231c;
+  --accent-wash: #fff5d1;
+  --accent-wash-ink: #5c4400;
+  /* Lit things elsewhere (steps, tags, the theme switch) on a pale warm
+     grey; the tab and the row you are on are ink, below. */
+  --lit-ink: #1d231c;
+  --lit-tint: #e9e9e3;
+  --lit-line: rgba(29, 35, 28, 0.14);
   /* The header's own ink on the top-level screens. A project's bar sets
      its own on #platform-header (white on the project's colour). */
-  --brand-ink: #111111;
-  --brand-tint: #f1efe6;
-  --brand-line: #e2dfcf;
+  --brand-ink: #1d231c;
+  --brand-tint: #f4f4f0;
+  --brand-line: #dcdcd5;
 }
-/* Warm hairlines, unless high contrast asked for darker ones. */
+/* Hairlines in ink at 8%, unless high contrast asked for darker ones. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-contrast="more"]) {
-  --app-sheet-line: #e7e4d4;
+  --app-sheet-line: rgba(29, 35, 28, 0.08);
 }
 
-/* THE GROUND. The wallpaper is drawn on <body> by the route rule (one id
+/* THE PLATE. The wallpaper is drawn on <body> by the route rule (one id
    deep); `:has(#platform-tabs)` is always true in the shell and makes this
    rule one id deep as well, so it wins by its classes. The tile zoom paints
    the moving view from --un-zoom-bg, so it follows. --home-ground moves with
@@ -26955,97 +27023,206 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-contras
    launch cover and the washes end on it. The scroller's fixed layer repaints
    the wallpaper; it is flat here too. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) body:has(#platform-tabs) {
-  --home-ground: #fcfbf3;
-  --un-zoom-bg: #fcfbf3;
-  background: #fcfbf3;
+  --home-ground: #f4f4f0;
+  --un-zoom-bg: #f4f4f0;
+  background: #f4f4f0;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) body::before {
-  background: #fcfbf3;
+  background: #f4f4f0;
 }
 
-/* THE BARS. On the top-level screens the header is a flat cream bar with a
-   hairline foot and square corners, not the faked glass with the rounded
-   notch; a project's bar (html[data-community-tint]) keeps its colour. The
-   doubled id outranks the route rules (two ids deep) by its classes. The
-   tab bar keeps its own layer, filled flat. */
+/* THE BARS are white. On the top-level screens the header is a flat bar
+   with a hairline foot and square corners, not the faked glass with the
+   rounded notch. A project's bar (html[data-community-tint]) keeps its
+   community's colour. The doubled id outranks the route rules (two ids
+   deep) by its classes. The tab bar keeps its own layer, filled flat. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-community-tint]) #platform-header#platform-header {
-  background-color: #fcfbf3;
+  background-color: #ffffff;
   clip-path: none;
   border-end-start-radius: 0;
   border-end-end-radius: 0;
-  box-shadow: inset 0 -1px 0 #e7e4d4;
+  box-shadow: inset 0 -1px 0 rgba(29, 35, 28, 0.08);
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-community-tint]) #platform-header#platform-header::before {
   display: none;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs::before {
-  background: #fcfbf3;
-}
-/* Unread conversations count in ink (the vote count keeps the accent). */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-badge {
-  background: #111111;
-  color: #fcfbf3;
+  background: #ffffff;
 }
 
-/* A PROJECT'S HUB. Open app, Invite and the ⋯ beside them are raised: an
-   ink edge and a hard shadow, pressed down a pixel when tapped. Open app
-   takes the accent, the other two are white. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-open-app[data-ws-community-open-app],
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-community-invite],
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-plus-btn-hero {
-  border: 1px solid #111111;
-  box-shadow: 1.5px 2px 0 #111111;
+/* YOU ARE HERE: ink. On a phone the lit tab sits on the sliding marker;
+   from 768px the lit row of the sidebar is the tab itself. The places of a
+   project (its Hub, Workshop, channels) light the same way, in the drawer,
+   the tray and the sidebar's nest. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs-marker {
+  background: #1d231c;
+  box-shadow: none;
 }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab[aria-current="page"] {
+  color: #ffffff;
+}
+@media (min-width: 768px) {
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab[aria-current="page"] {
+    background: #1d231c;
+  }
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-place[aria-current="page"] {
+  background: #1d231c;
+  color: #ffffff;
+}
+
+/* DO THIS: sun with ink words, on a darker edge. The shell's primary
+   button, Join, starting a conversation, and the counts of votes waiting
+   for you. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-600,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty button,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .card-add-btn[data-join]:not([data-join="joined"]) {
+  background-color: #ffd95a;
+  border-color: transparent;
+  color: #1d231c;
+  box-shadow: 0 2px 0 #d6a92a;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-violet-500:hover,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty button:hover {
+  background-color: #ffe07a;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-600:active,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty button:active,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .card-add-btn[data-join]:active {
+  box-shadow: 0 0 0 #d6a92a;
+  transform: translateY(1px);
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-votes,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-all-votes,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-rail-votes,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-foryou-pill:not([data-ws-channel-unread]) {
+  background: #ffd95a;
+  color: #1d231c;
+  font-variant-numeric: tabular-nums;
+}
+/* The old blue as words and pale fills: ink, and a pale sun. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-violet-500,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-violet-600,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-violet-700 {
+  color: #1d231c;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) a.text-violet-600,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) a.text-violet-700 {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-50,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-100 {
+  background-color: #fff5d1;
+}
+
+/* WARM GREYS. The zinc ramp is a cool grey; on the warm plate its common
+   fills, words and lines take the warm one. The chosen chip (zinc-900) is
+   the ink. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-50 { background-color: #f7f7f3; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-100,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-zinc-100:hover { background-color: #ebebe5; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-200,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-zinc-200:hover { background-color: #e2e2dc; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-900 { background-color: #1d231c; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-900 { color: #1d231c; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-800 { color: #2c3029; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-700 { color: #3d4039; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-600 { color: #4d5049; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-500 { color: #62655d; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-400 { color: #8d9088; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-200 { border-color: #e2e2dc; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-300 { border-color: #cfd0c9; }
+
+/* BRICKS: white cards on the plate, with a hairline and a soft shadow. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\],
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-section-card,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty {
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(29, 35, 28, 0.05), 0 8px 20px -14px rgba(29, 35, 28, 0.22);
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .app-icon-tile,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-discover-card {
+  border-color: rgba(29, 35, 28, 0.08);
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-discover-card {
+  box-shadow: 0 1px 2px rgba(29, 35, 28, 0.05), 0 8px 20px -14px rgba(29, 35, 28, 0.22);
+}
+/* Unread conversations: coral, the colour of people talking. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-badge {
+  background: #ff8a78;
+  color: #1d231c;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A PROJECT'S HUB. Open app is ink: it goes somewhere, it does not ask for
+   you. Invite and the ⋯ beside it are white bricks. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-open-app[data-ws-community-open-app] {
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: #1d231c;
+  color: #ffffff;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-community-invite],
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-plus-btn-hero {
   background: #ffffff;
-  color: #111111;
+  color: #1d231c;
+  box-shadow: inset 0 0 0 1px rgba(29, 35, 28, 0.10), 0 1px 2px rgba(29, 35, 28, 0.06);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-open-app[data-ws-community-open-app]:active,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-community-invite]:active,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-plus-btn-hero:active {
-  transform: translate(1px, 1px);
-  box-shadow: 0.5px 1px 0 #111111;
-}
-/* For you: each row's glyph on its own pale colour, and the channel's
-   unread count in ink. */
+/* For you: each row's glyph on the pale tint of its job (sun for what
+   waits on you, sky for your own work, grass for the conversation), and the
+   channel's unread count in ink. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-hub-needs] .dev-ws-foryou-row > :first-child {
-  background: #fcfab3;
-  color: #111111;
+  background: #fff5d1;
+  color: #1d231c;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-mine-card] > :first-child {
-  background: #dcebfa;
-  color: #111111;
+  background: #e6f0fb;
+  color: #1d231c;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-channel="preview"] > :first-child {
-  background: #e1efd9;
-  color: #111111;
+  background: #e3f5e8;
+  color: #1d231c;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-foryou-pill[data-ws-channel-unread] {
-  background: #111111;
-  color: #fcfbf3;
+  background: #1d231c;
+  color: #ffffff;
 }
-
-/* PICTURES OF A CHANGE: a plain ink outline, drawn over the picture so an
-   image filling the box does not hide it. */
+/* Pictures of a change: a hairline, drawn over the picture so an image
+   filling the box does not hide it. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-recent-pic,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-media-view {
-  outline: 1px solid #111111;
+  outline: 1px solid rgba(29, 35, 28, 0.10);
   outline-offset: -1px;
 }
 
-/* HOME: warm hairlines on the app tiles and the community cards, and Join
-   in ink. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .app-icon-tile,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-discover-card {
-  border-color: #e7e4d4;
+/* TYPE BY ROLE. A page's title in the serif (not the header's own name,
+   and not the small line the made screen keeps in an h1); the Workshop's
+   counts in mono, so the figures line up. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) h1:not(#platform-header h1):not(#first-session-made-title) {
+  font-family: 'Young Serif', Georgia, 'Times New Roman', serif;
+  font-weight: 400;
+  letter-spacing: -0.005em;
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .card-add-btn[data-join] {
-  border-color: #111111;
-  color: #111111;
-  box-shadow: none;
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-dash-cell b {
+  font-family: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* MOMENTS. The website's own figures above two empty states: Messages
+   before the first conversation, and Homeroom bot when nothing needs you.
+   Background images, so the experiment off never loads them. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty::before {
+  content: "";
+  display: block;
+  align-self: stretch;
+  height: 170px;
+  margin-bottom: 12px;
+  background: url('/illustrations/people/phone.png') center / contain no-repeat;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ai-empty=""]::before {
+  content: "";
+  display: block;
+  height: 130px;
+  margin: 2px 0 10px;
+  background: url('/illustrations/people/log.png') center / contain no-repeat;
 }

@@ -207,7 +207,7 @@ async function publish(pool, { appId, issueNumber, voiceOwed = false, deps = {} 
       replyId: read.replyId,
     });
     if (!read.replyId) return;
-    const tray = deps.tray || require('./homeroom-bot-tray');
+    const tray = deps.workChanged || require('./bot-work-changed');
     const dm = deps.dm || require('./homeroom-bot-dm');
     const people = new Set();
     try {

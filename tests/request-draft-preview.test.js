@@ -20,58 +20,66 @@ const assert = require('node:assert/strict');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { message } = require('./lib/platform-i18n');
 
-// The store's only React is useSyncExternalStore; calling the hook directly
-// reads the snapshot the module keeps.
-const preview = loadTsx('frontend/src/features/ai/preview.ts', {
-  stubs: { react: { useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot() } },
-});
+// The store moved into ./detail.ts (#6230, 3 Nov 2026); ./preview.ts is the
+// design card's and the pane's spelling of it. detailEntry() reads the entry
+// the store keeps, without React.
+const detail = loadTsx('frontend/src/features/ai/detail.ts');
+const preview = loadTsx('frontend/src/features/ai/preview.ts');
 
-test('previewBeside: a design needs its thread, a draft in Main is shown while Main is', () => {
-  assert.equal(preview.previewBeside(null, null), false);
-  assert.equal(preview.previewBeside({ rootId: 9 }, 9), true);
-  assert.equal(preview.previewBeside({ rootId: 9 }, 10), false);
-  assert.equal(preview.previewBeside({ rootId: 9 }, null), false, 'a design has no Main');
-  assert.equal(preview.previewBeside({ rootId: null }, null), true, 'a draft said in Main');
-  assert.equal(preview.previewBeside({ rootId: null }, 9), false, 'a thread opening closes it');
-  assert.equal(preview.previewBeside({ rootId: 9 }, undefined), false);
+test('a design keeps its thread; a draft is said in a thread or in Main', () => {
+  preview.openPreview({ conversationId: 4, rootId: 9, version: 2 });
+  let open = detail.detailEntry();
+  assert.equal(open.kind, 'design');
+  assert.equal(open.ref.conversationId, 4);
+  assert.equal(open.ref.rootId, 9);
+
+  preview.openDraftPreview({ conversationId: 4, rootId: 9, actionId: 42 });
+  open = detail.detailEntry();
+  assert.equal(open.kind, 'draft');
+  assert.equal(open.ref.rootId, 9, 'a draft said in its own thread');
+
+  preview.openDraftPreview({ conversationId: 4, rootId: null, actionId: 43 });
+  open = detail.detailEntry();
+  assert.equal(open.ref.rootId, undefined, 'a draft said in Main');
+  assert.equal(open.ref.actionId, 43);
 });
 
 test('openPreview opens a design; openDraftPreview opens a draft, in a thread or in Main', () => {
   preview.openPreview({ conversationId: 4, rootId: 9, version: 2 });
-  let open = preview.usePreview();
+  let open = detail.detailEntry();
   assert.deepEqual(
-    { kind: open.kind, actionId: open.actionId, rootId: open.rootId, version: open.version, copy: open.copy },
-    { kind: 'design', actionId: null, rootId: 9, version: 2, copy: null },
+    { kind: open.kind, actionId: open.ref.actionId, rootId: open.ref.rootId, version: open.version, copy: open.payload?.draft ?? null },
+    { kind: 'design', actionId: undefined, rootId: 9, version: 2, copy: null },
   );
 
   const copy = { title: 'Add a search box', project: 'Plant pal', details: 'Search notes by their text.', appSlug: 'plant-pal' };
   preview.openDraftPreview({ conversationId: 4, rootId: 9, actionId: 42, copy });
-  open = preview.usePreview();
+  open = detail.detailEntry();
   assert.deepEqual(
-    { kind: open.kind, actionId: open.actionId, rootId: open.rootId, version: open.version, copy: open.copy },
+    { kind: open.kind, actionId: open.ref.actionId, rootId: open.ref.rootId, version: open.version, copy: open.payload?.draft ?? null },
     { kind: 'draft', actionId: 42, rootId: 9, version: null, copy },
   );
 
   preview.openDraftPreview({ conversationId: 4, rootId: null, actionId: 43, copy });
-  open = preview.usePreview();
-  assert.equal(open.rootId, null, 'a draft said in Main');
-  assert.equal(open.actionId, 43);
+  open = detail.detailEntry();
+  assert.equal(open.ref.rootId, undefined, 'a draft said in Main');
+  assert.equal(open.ref.actionId, 43);
 });
 
 test('invalid ids change nothing; each open bumps seq', () => {
   preview.openDraftPreview({ conversationId: 4, rootId: null, actionId: 8 });
-  const first = preview.usePreview();
+  const first = detail.detailEntry();
   preview.openDraftPreview({ conversationId: 4, rootId: null, actionId: 8 });
-  assert.equal(preview.usePreview().seq, first.seq + 1, 'the same draft opened again is drawn again');
+  assert.equal(detail.detailEntry().seq, first.seq + 1, 'the same draft opened again is drawn again');
 
-  const before = preview.usePreview();
+  const before = detail.detailEntry();
   preview.openDraftPreview({ conversationId: 0, rootId: null, actionId: 9 });
   preview.openDraftPreview({ conversationId: 4, rootId: null, actionId: 0 });
   preview.openDraftPreview({ conversationId: 4, rootId: -1, actionId: 9 });
-  assert.equal(preview.usePreview(), before, 'nothing valid changed');
+  assert.equal(detail.detailEntry(), before, 'nothing valid changed');
 
   preview.closePreview();
-  assert.equal(preview.usePreview(), null);
+  assert.equal(detail.detailEntry(), null);
 });
 
 test('the pane draws the message’s copy read-only, with a close and nothing to press', () => {

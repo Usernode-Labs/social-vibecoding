@@ -105,7 +105,7 @@
 
 import { Fragment, useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 
-import { AppWindowIcon, SearchIcon, XIcon } from '@/components/ui/icons';
+import { AppWindowIcon, PushPinIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
@@ -124,7 +124,7 @@ import { openCommunitiesSearch } from '../workshop/communities-search';
 import { communityScopeStore, goToCommunity, type CommunityInfo } from '../workshop/community-scope';
 import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
-import { openPinMenu } from './pin-actions';
+import { isPinned, openPinMenu, togglePin } from './pin-actions';
 import { pinnedAppsStore } from './pinned-apps-store.js';
 import { NestSlot } from './rail-nest';
 import { recentAppsStore } from './recent-apps-store.js';
@@ -411,8 +411,6 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
   // it), and an unexplained grey dot on the lit row read as a warning
   // (audit N04, 1 Nov 2026).
   const keptOpen = running && onApp !== slug;
-  // The part: everything while you are in it, its App row alone while its app runs.
-  const part = open || (sidebarRows && app && (running || onApp === slug));
   // Open, its votes are Needs you's count under it.
   const needs = c && !c.unchosen ? Number(c.needs) || 0 : 0;
   const votes = open ? 0 : needs;
@@ -423,8 +421,16 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
   // While Home is on show, a section row can be dragged onto My apps (#6025).
   // A pin keeps its own drag-out to unpin, so it is not one of these.
   const dragToHome = !pin && sidebarRows && screen === 'home-screen';
+  const stuck = !!pin || isPinned(slug);
+  const keepTop = () => togglePin({ slug, name, iconUrl: icon.icon_url, iconEmoji: icon.icon_emoji });
+  // The part: everything while you are in it, its App row alone while its app runs.
+  const part = open || (sidebarRows && app && (running || onApp === slug));
   return (
     <Fragment>
+      {/* RECENTS' ROW (One Home, #6361): the link fills the row, and the pin
+          and the count sit over its end in their own columns, the pin first,
+          so the count keeps the row's end (app.css .platform-rail-row). */}
+      <div className="platform-rail-row" data-rail-row={slug} {...(votes > 0 ? { 'data-votes': '' } : null)}>
       <a
         className="platform-rail-community"
         href={href}
@@ -468,12 +474,26 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
           <AppIconContent app={icon} />
         </span>
         <span className="platform-rail-name">{name}</span>
-        {votes > 0 ? (
-          <span className="platform-rail-votes" aria-label={t('core:tabs.votesWaiting', { count: votes })}>
-            {votes > 99 ? '99+' : String(votes)}
-          </span>
-        ) : null}
+        {votes > 0 ? <span className="sr-only">{t('core:tabs.votesWaiting', { count: votes })}</span> : null}
       </a>
+      <button
+        type="button"
+        className="platform-rail-pin"
+        data-rail-pin={slug}
+        aria-pressed={stuck}
+        aria-label={stuck ? t('core:rail.pin.unpinTop', { name }) : t('core:rail.pin.keepTop', { name })}
+        title={stuck ? t('core:rail.pin.unpin') : t('core:rail.pin.add')}
+        onClick={(event) => { event.preventDefault(); event.stopPropagation(); keepTop(); }}
+      >
+        {/* Filled while pinned: app.css keys it off aria-pressed. */}
+        <PushPinIcon className="platform-rail-pin-glyph" aria-hidden="true" />
+      </button>
+      {votes > 0 ? (
+        <span className="platform-rail-votes" aria-hidden="true">
+          {votes > 99 ? '99+' : String(votes)}
+        </span>
+      ) : null}
+      </div>
       <NestSlot open={part} className="platform-rail-nest" rows=".platform-rail-app, .dev-ws-place, .dev-ws-places-head">
         {app ? (
           // A row wrapper, because the close control cannot live inside the
@@ -575,7 +595,7 @@ export function RailCommunities({ shown }: { shown: string[] }) {
         <a
           id="platform-rail-search"
           className="platform-rail-search"
-          href="#communities"
+          href="/"
           aria-label={t('core:rail.search')}
           title={t('core:rail.search')}
           onClick={(event) => {

@@ -22,6 +22,10 @@
 //      presence, and both states open the same create flow.
 //   5. The section it replaced is gone, and the declared checks follow it.
 //
+// ONE HOME (#6361) took this tile off the grid and left making a project to
+// Pinned communities' New community tile; #6522 brought it back, so the
+// properties above hold again (the New community tile stays where it is).
+//
 // Run with: node --test tests/home-create-tile.test.js
 
 const test = require('node:test');
@@ -180,107 +184,13 @@ function makeHome({ search = '', canCreateApps = true } = {}) {
   // Cross-realm: the store lives in the vm context, so round-trip through JSON.
   const model = () => JSON.parse(JSON.stringify(gridStore.get()));
   const moreCount = () => sandbox.chromeStore.get().moreCount;
-  return { Home: sandbox.__Home, model, moreCount };
+  return { Home: sandbox.__Home, model, moreCount, sandbox };
 }
 
 const mine = (n) => Array.from({ length: n }, (_, i) => ({
   slug: `app-${i}`, name: `App ${i}`, status: 'running',
   is_favorited: true, favorite_order: i, is_collaborator: false,
 }));
-
-test('Home.render() puts the tile in the cell straight after the last tile', () => {
-  const { Home, model } = makeHome();
-  Home._apps = mine(3);
-  Home.render();
-  assert.deepEqual(model().create.placement, { col: 3, row: 0, w: 1, h: 1 }, 'beside a short row');
-  Home._apps = mine(4);
-  Home.render();
-  assert.deepEqual(model().create.placement, { col: 0, row: 1, w: 1, h: 1 }, 'a full row wraps it');
-});
-
-test('a hole the viewer left stays a hole: the tile follows the LAST tile', () => {
-  const { Home, model } = makeHome();
-  Home._apps = mine(2);
-  Home._layouts = { 4: [
-    { type: 'app', slug: 'app-0', col: 0, row: 0 },
-    { type: 'app', slug: 'app-1', col: 1, row: 2 },
-  ] };
-  Home.render();
-  const state = model();
-  assert.deepEqual(state.create.placement, { col: 2, row: 2, w: 1, h: 1 });
-  assert.ok(state.items.every((it) => it.placement.row !== 2 || it.placement.col !== 2),
-    'and no app shares its cell');
-});
-
-test('it survives "Show all N apps": last in the collapsed grid and the expanded one', () => {
-  const { Home, model } = makeHome();
-  // Rows 0-1 full, two apps on row 2 and one on row 3.
-  Home._apps = mine(11);
-  Home._layouts = { 4: [
-    ...Array.from({ length: 10 }, (_, i) => ({ type: 'app', slug: `app-${i}`, col: i % 4, row: Math.floor(i / 4) })),
-    { type: 'app', slug: 'app-10', col: 0, row: 3 },
-  ] };
-  Home.visibleRowBudget = () => 3;
-  Home.render();
-  let state = model();
-  // Budget 3 → rows 0-2 shown; row 2 has room, so the tile fits beside its
-  // two apps while row 3 is behind the button.
-  assert.equal(state.items.length, 10, 'three rows of apps shown, row 3 held back');
-  assert.deepEqual(state.create.placement, { col: 2, row: 2, w: 1, h: 1 },
-    'the tile ends the collapsed grid');
-  // "Show all 11 apps" — the same flag the button sets.
-  Home._appsExpanded = true;
-  Home.render();
-  state = model();
-  assert.equal(state.items.length, 11);
-  assert.deepEqual(state.create.placement, { col: 1, row: 3, w: 1, h: 1 },
-    'and moves to the end of the expanded grid');
-});
-
-test('#3047: the tile goes behind "Show all" when it would add a row past 2 rows / 8 apps', () => {
-  const { Home, model, moreCount } = makeHome();
-  Home.visibleRowBudget = () => 2;
-
-  // Seven apps: the tile fits in the eighth cell, no expander.
-  Home._apps = mine(7);
-  Home.render();
-  let state = model();
-  assert.deepEqual(state.create.placement, { col: 3, row: 1, w: 1, h: 1 });
-  assert.equal(moreCount(), 0, 'nothing to show more of');
-
-  // Eight apps fill both rows: the tile would start a third row, so it is
-  // held back — and the grid still shows all eight apps.
-  Home._apps = mine(8);
-  Home.render();
-  state = model();
-  assert.equal(state.items.length, 8, 'every app still shown');
-  assert.equal(state.create.heldBack, true, 'the tile is behind "Show all"');
-  assert.equal(state.create.placement, null, 'a held-back tile holds no cell');
-  assert.ok(state.items.every((it) => it.placement.row <= 1), 'two rows, nothing more');
-  assert.equal(moreCount(), 8, 'the expander appears for the tile alone, naming every app');
-
-  // Seventeen apps: two rows of apps, no third row for the tile.
-  Home._apps = mine(17);
-  Home.render();
-  state = model();
-  assert.equal(state.items.length, 8);
-  assert.equal(state.create.heldBack, true);
-
-  // A taller budget holds it back the same way, trading no apps for it.
-  Home._apps = mine(16);
-  Home.visibleRowBudget = () => 4;
-  Home.render();
-  state = model();
-  assert.equal(state.items.length, 16, 'four full rows of apps, not three');
-  assert.equal(state.create.heldBack, true);
-
-  // "Show all" brings it back, ending the expanded grid.
-  Home._appsExpanded = true;
-  Home.render();
-  state = model();
-  assert.deepEqual(state.create.placement, { col: 0, row: 4, w: 1, h: 1 });
-  assert.equal(moreCount(), 0, 'expanded: the expander goes away');
-});
 
 test('#3047: the expander appears for the tile alone, naming every app', () => {
   const HOME = HOME_SRC;
@@ -440,51 +350,27 @@ test('without a held-back tile, or with a count, the line is the expander alone'
   );
 });
 
-test('no apps, or tiles in the overflow, and the tile flows after them', () => {
+// #6522: Home.render() hands the grid its Create view again, and the three
+// cases that decide whether it is there at all.
+test('#6522: a normal account\'s render yields the Create view, search and private members none', () => {
   const { Home, model } = makeHome();
-  Home._apps = [];
+  Home._apps = mine(2);
   Home.render();
-  assert.equal(model().create.placement, null, 'after the empty note, in flow');
+  const create = model().create;
+  assert.ok(create && typeof create === 'object', 'a normal account gets the trailing New project tile');
+  assert.equal(typeof create.enabled, 'boolean');
+  assert.equal(create.heldBack, false, 'with two apps the tile fits its own cell');
 
-  // 33 apps: the canvas holds 32 cells, and the 33rd renders in the overflow
-  // region with no cell of its own — so the tile flows after it.
-  Home._apps = mine(33);
-  Home._appsExpanded = true;
-  Home.render();
-  const state = model();
-  assert.ok(state.items.some((it) => it.placement === null), 'one tile is in the overflow');
-  assert.equal(state.create.placement, null);
-});
-
-test('a search turns the tile off; clearing it brings the tile back', () => {
-  const { Home, model } = makeHome();
-  Home._apps = mine(3);
   Home._query = 'App 1';
   Home.render();
-  assert.equal(model().view, 'search');
-  assert.equal(model().create, null);
-  Home._query = '';
-  Home.render();
-  assert.ok(model().create);
-});
+  assert.equal(model().create, null, 'the search view is a flat list of matches: no create control');
 
-// ── 4. every account ──────────────────────────────────────────────────
-
-test('quota decides the treatment, never the presence', () => {
-  for (const [search, enabled] of [['?shot=create-enabled', true], ['?shot=create-disabled', false]]) {
-    const { Home, model } = makeHome({ search, canCreateApps: !enabled });
-    Home._apps = mine(2);
-    Home.render();
-    const { create } = model();
-    assert.ok(create, `${search}: the tile is there`);
-    assert.equal(create.enabled, enabled, `${search}: the ?shot= link pins the treatment`);
-    assert.equal(create.hint, 'View your app allowance or request more slots.');
-  }
-  // And off the account itself.
-  const { Home, model } = makeHome({ canCreateApps: false });
-  Home._apps = mine(1);
-  Home.render();
-  assert.equal(model().create.enabled, false);
+  // A private member makes no apps until they are let in off the waitlist.
+  const { Home: privateHome, model: privateModel, sandbox } = makeHome();
+  sandbox.App.user.privateMember = true;
+  privateHome._apps = mine(2);
+  privateHome.render();
+  assert.equal(privateModel().create, null, 'a private member gets no trailing tile');
 });
 
 test('the tile draws both states, and never the disabled attribute', () => {
@@ -564,17 +450,24 @@ test('the Create section is retired everywhere it was mounted', () => {
   assert.doesNotMatch(read('scripts/audit-react-ownership.mjs'), /sel: '#home-create-section'/);
 });
 
-test('the declared Create checks select the grid\'s last child', () => {
+test('the declared Create checks select both New project and New community, in their two places (#6522)', () => {
   const declared = JSON.parse(read('dapp.json')).tests || [];
   const creates = declared.filter((t) => /data-panel-slot=\\?"create\\?"|data-panel-slot="create"/.test(t.expectSelector || ''));
   assert.equal(creates.length, 2, 'the enabled and the locked treatment');
   for (const t of creates) {
-    assert.match(t.expectSelector, /#app-list > #home-create-tile\.home-create-btn\[data-panel-slot="create"\]\[data-create-enabled="(true|false)"\]:last-child/);
-    assert.match(t.name, /re-pointed/i, 'a re-pointed check says so in its name');
-    assert.equal(t.expectText, 'New project');
+    // The New community tile is still the last of Pinned communities…
+    assert.match(t.expectSelector, /#home-communities-section:not\(\[hidden\]\) #home-new-community\[data-panel-slot="create"\]\[data-create-enabled="(true|false)"\]/);
+    assert.match(t.expectSelector, /:last-child/);
+    assert.equal(t.expectText, 'New community');
   }
   const paths = creates.map((t) => t.path).sort();
   assert.deepEqual(paths, ['/?demo=1&shot=create-disabled', '/?demo=1&shot=create-enabled']);
+  // …and the enabled check folds in the grid's own trailing tile, which is
+  // back on My apps (#6522), without a :not(:has()) guard asserting it gone.
+  const enabled = creates.find((t) => t.path === '/?demo=1&shot=create-enabled');
+  assert.match(enabled.expectSelector,
+    /#home-apps-section:not\(\[hidden\]\):has\(#home-create-tile\[data-panel-slot="create"\]\[data-create-enabled="true"\]\)/);
+  assert.doesNotMatch(enabled.expectSelector, /:not\(:has\(#home-create-tile\)\)/);
   // No check still anchors on the retired section (a :not(:has()) guard that
   // says it is gone is the one allowed mention).
   for (const t of declared) {
@@ -620,4 +513,22 @@ test('not editing, the trailing tile is the Create tile as before', () => {
   assert.doesNotMatch(html, /data-editing=/, 'the attribute is absent, not "false"');
   // The initial store renders neither the tile nor an editing mark.
   assert.doesNotMatch(renderGrid({}), /home-create-tile|data-editing/);
+});
+
+test('#6372: the − and + corner discs sit above the tile\'s own hit area', () => {
+  // TILE carries un-touch-target, whose ::after (native.css) covers the tile
+  // and paints after its children. The discs live in the face's wrapper,
+  // which the edit-mode wiggle (a transform) makes a stacking context, so the
+  // lift must be on that wrapper: a z-index on a disc cannot leave it
+  // (checked by hit-testing in Chromium when this was fixed).
+  const src = read('frontend/src/features/home/pinned-communities.tsx');
+  assert.match(src, /const TILE = '[^']*\bun-touch-target\b/);
+  assert.match(read('public/usernode-native/v1/native.css'), /\.un-touch-target::after \{[^}]*position: absolute;/);
+  const wrap = src.match(/const FACE_WRAP = '([^']*)'/);
+  assert.ok(wrap, 'FACE_WRAP is one literal');
+  assert.match(wrap[1], /\brelative\b/);
+  assert.match(wrap[1], /\bz-\[1\]/, 'the wrapper is lifted above the ::after');
+  assert.match(src, /<span className=\{editing \? `\$\{FACE_WRAP\} \$\{WIGGLE\}` : FACE_WRAP\}>/, 'both branches use it');
+  assert.match(src, /className=\{`\$\{CORNER\} -start-1\.5 \$\{CORNER_UNPIN\}`\}/);
+  assert.match(src, /className=\{`\$\{CORNER\} -end-1\.5 \$\{CORNER_PIN\}`\}/);
 });

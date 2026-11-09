@@ -59,13 +59,14 @@ import {
 } from './request-model';
 import { requestShots, togglePinShot } from './request-shots';
 import { ThreadItems, pageSlug, useThreadPayload } from './thread-items';
-import { ThreadChanges } from './thread-changes';
+import { ThreadChanges, ChangeSectionSkeleton } from './thread-changes';
 import { requestPill, threadLayout, type ThreadHere } from './thread-model';
 import { rereadOnChangeNews } from './change-detail-refresh';
 import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
 import { OwnAgentLink } from './own-agent-link';
 import { requestMenuKey, useThreadMenu } from './thread-menu';
+import { usePanelHead } from '../../side-panel/head-store';
 
 function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -118,6 +119,11 @@ export function RequestBar({ r, pill = null, threadMenu = false }: {
     : r.status.stage === 'voted'
       ? t('project:topic.request.bar.kickerDone', { number: r.number })
       : t('project:topic.request.bar.title', { number: r.number });
+  // #6431: beside the Homeroom bot page this bar is not drawn at all (app.css),
+  // and the column's heading carries its pill and its rows instead. Publishing
+  // them is all this does there; nowhere else does it publish anything.
+  const menuKey = r.menuKey || threadMenu ? requestMenuKey(r.menuKey, r.number) : null;
+  usePanelHead({ kind: 'request', pill, menuKey });
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
@@ -130,11 +136,11 @@ export function RequestBar({ r, pill = null, threadMenu = false }: {
         <div className="messages-thread-name line-clamp-2 dev-request-bar-title">{r.title}</div>
         {r.category ? <div className="messages-thread-sub" data-request-category="">{r.category}</div> : null}
       </div>
-      {r.menuKey || threadMenu ? (
+      {menuKey ? (
         <button
           type="button"
           className="messages-thread-action dev-card-menu-btn"
-          data-card-menu={requestMenuKey(r.menuKey, r.number)}
+          data-card-menu={menuKey}
           aria-haspopup="true"
           aria-label={t('project:topic.request.bar.more')}
           title={t('project:topic.request.bar.more')}
@@ -189,6 +195,33 @@ export function RequestWords({ html, translate, note }: {
   // a comment someone hid.
   const inner = useInnerHtml(words);
   const shotsInner = useInnerHtml(shots);
+  // #6387: a picture or video keeps a fixed box (app.css) until it has its
+  // own shape, so the cards under it do not jump as it loads. The nodes come
+  // from `dangerouslySetInnerHTML`, which React does not reconcile, so the
+  // attribute it writes is safe.
+  const shotBox = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const box = shotBox.current;
+    if (!box) return undefined;
+    const cleanups: Array<() => void> = [];
+    const settle = (el: Element, ready: () => boolean, events: string[]) => {
+      if (ready()) { el.setAttribute('data-shot-ready', ''); return; }
+      const done = () => {
+        el.setAttribute('data-shot-ready', '');
+        off();
+      };
+      const off = () => { for (const name of events) el.removeEventListener(name, done); };
+      for (const name of events) el.addEventListener(name, done);
+      cleanups.push(off);
+    };
+    for (const img of Array.from(box.querySelectorAll<HTMLImageElement>('img.dc-inline-img'))) {
+      settle(img, () => img.complete && img.naturalWidth > 0, ['load', 'error']);
+    }
+    for (const video of Array.from(box.querySelectorAll<HTMLVideoElement>('video.dc-inline-video'))) {
+      settle(video, () => video.readyState >= 1, ['loadedmetadata', 'error']);
+    }
+    return () => { for (const off of cleanups) off(); };
+  }, [shots]);
   // `open` is what the clamp says; `shown` is what the button says, which
   // turns with the press rather than when the text has finished moving.
   const [open, setOpen] = useState(false);
@@ -261,7 +294,7 @@ export function RequestWords({ html, translate, note }: {
       {words ? <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} /> : null}
       {translate ? <div className="mt-1 flex flex-wrap items-center gap-4">{more}{translate}</div> : more}
       {note}
-      {shots ? <div className="dev-request-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null}
+      {shots ? <div ref={shotBox} className="dev-request-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null}
     </div>
   );
 }
@@ -497,11 +530,28 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const here = useMemo<ThreadHere>(() => ({ type: 'request', id: r.number }), [r.number]);
   const threadRead = useThreadPayload(slug, r.number);
   const layout = useMemo(() => threadLayout(threadRead.data, here), [threadRead.data, here]);
+  // #6387: the row says a change addresses this request, so while its thread
+  // is still being read the page holds the change section's place instead of
+  // drawing a status card that may contradict it ("needs 1 more yes" while a
+  // check has failed) and swapping it out a moment later.
+  const holding = !r.status.closed && !!r.status.changeExpected && threadRead.loading;
   // Once a change is built for it (or a vote to close it is open), the
   // change's own cards say where it stands, so the steps and the bot's track
-  // give way to them; a closed request still says how it ended.
-  const working = layout.changes.length > 0 || !!layout.close;
-  const pill = requestPill(layout, r.status.closed ? 'closed' : track ? track.state : null, (id) => translate(id));
+  // give way to them; a closed request still says how it ended. A change
+  // section held open while the thread loads counts the same way: its own
+  // outline already says where things stand.
+  const working = layout.changes.length > 0 || (!!layout.close && layout.close.status === 'open') || holding;
+  // #6532: a build waiting its turn reads Ready to build, as the progress
+  // card under the bar does, never Being built.
+  const stand = useMemo(() => {
+    if (r.status.closed) return 'closed';
+    if (!track) return null;
+    const code = track.work.line?.code;
+    if (track.work.stage === 'building' && !track.busy
+      && (code === 'queued' || code === 'held_builds' || code === 'held_waiting')) return 'ready_to_build';
+    return track.work.stage;
+  }, [track, r.status.closed]);
+  const pill = requestPill(layout, stand, (id) => translate(id));
   // A plan a change in the thread was built from goes with that change.
   const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
   // 1 Nov 2026 (one page per thread): its changes' replies are in its one
@@ -555,6 +605,28 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           <h1 className="dev-request-title" data-issue-title={r.number}>
             <TitleContent t={{ text: shownTitle, title: r.title, editing: r.titleEditing || undefined }} />
           </h1>
+          {/* #6421: a request in a merged thread says which thread it is one of
+              and opens its lead's page. */}
+          {(() => {
+            const held = threadRead.data?.thread;
+            if (!slug || !held || Number(held.requests) <= 1 || held.number == null || held.number === r.number) return null;
+            return (
+              <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-part-of={held.number}>
+                <RichMessage
+                  id="project:topic.thread.page.partOf"
+                  values={{ count: Number(held.requests), name: held.name || `#${held.number}` }}
+                  components={[(
+                    <a
+                      key="lead"
+                      href={`#app/${encodeURIComponent(slug)}/dev/issues/${held.number}`}
+                      className="font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                      data-thread-part-of-link={held.number}
+                    />
+                  )]}
+                />
+              </p>
+            );
+          })()}
           {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : (
             <RequestWords
               html={bodyHtml}
@@ -583,7 +655,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             // of having to open the chat to find out. Drawn from the board's
             // older row it holds its place unseen (`trackPending`, app.css),
             // and says where the work is once the fresh row lands.
-            <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.state} inert={!!r.trackPending}>
+            <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.work.stage} inert={!!r.trackPending}>
               <TrackCard track={track} title={r.title} links={trackLinks(track, { request: false })} pictures />
             </div>
           ) : null}
@@ -596,6 +668,8 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               thread, under a rule; then the rest of it as a list. */}
           {threadRead.data ? (
             <ThreadChanges slug={slug} data={threadRead.data} number={r.number} changes={layout.changes} close={layout.close} plans={plans} onChanged={threadRead.reread} />
+          ) : holding ? (
+            <ChangeSectionSkeleton />
           ) : null}
           <ThreadItems slug={slug} number={r.number} here={here} payload={threadRead.data} items={layout.listed} onChanged={threadRead.reread} menuKey={menuKey} />
         </div>

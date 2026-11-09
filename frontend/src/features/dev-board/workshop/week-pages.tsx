@@ -26,16 +26,14 @@
 
 import { useState, type MouseEvent, type ReactNode } from 'react';
 
-import { ChevronDownIcon, ChevronRightIcon, LockIcon, PencilSquareIcon, SparklesIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, ChevronRightIcon, PencilSquareIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { getDateLocale, t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
-import { trackLine, trackShort } from '../../messages/bot-track';
 import { openHref } from '../card/fold';
-import type { RowBrief, RowTag } from '../card/model';
 import { PageBack } from './page-back';
-import { TILE, WorkList, lineTags, topicRef, type CardRow, type TopicRef } from './work-row';
+import { TILE, WorkList, topicRef, type CardRow, type TopicRef } from './work-row';
 import type { SinceWeek } from './workshop';
 
 /**
@@ -74,23 +72,19 @@ export function weekName(week: Pick<SinceWeek, 'title' | 'key' | 'startMs' | 'en
 }
 
 /**
- * Whether a row belongs to catching up at all. Your own work in flight is
- * Your work's, on the same tab, and so is a change Homeroom bot is building
- * from your request (#4538); once it is live, it is news like anyone's
- * (#4505: catch-up keeps your merged contributions).
+ * What moved in a week since your last visit: the dots, and the week's "N
+ * new". 5 Nov 2026: your own work too, in flight or live. It was left out
+ * while the Workshop listed it under What's happening (catchUp, #4505,
+ * #4538); your work is the Homeroom bot tab's now, and here it is the
+ * project's news like anyone's, marked You.
  */
-export function catchUp(b: Pick<RowBrief, 'mine' | 'requested' | 'stage'>): boolean {
-  return !(b.mine || b.requested) || b.stage === 'live';
-}
-
-/** What moved in a week since your last visit: the dots, and the week's "N new". */
 export function weekFresh(week: Pick<SinceWeek, 'fresh'>): CardRow[] {
-  return week.fresh.filter((r) => !!r.brief && catchUp(r.brief));
+  return week.fresh.filter((r) => !!r.brief);
 }
 
 /** What moved in a week before your last visit, which you have seen. */
 export function weekSeen(week: Pick<SinceWeek, 'seen'>): CardRow[] {
-  return week.seen.filter((r) => !!r.brief && catchUp(r.brief));
+  return week.seen.filter((r) => !!r.brief);
 }
 
 /** How many changes went live in the week, where the server can stand behind it. */
@@ -270,25 +264,22 @@ const GOING_LIVE = new Set(['deploying', 'delivery_pending', 'merging']);
  * out (or the pill's own words when it is stuck), and when it moved. On a
  * phone the title wraps and the rest goes under it (app.css).
  *
- * `standing`: What's happening's own-work rows (Waiting on you, Your work,
- * Going live) draw this same row, ending it with where the work stands
- * instead: its most important tag in its tone ("Checks failing",
- * "Homeroom bot asked you", "Started"), then who made it when
- * that is not simply you ("Only you", Homeroom bot), as Your work's two
- * lines picked them (work-row.tsx lineTags). Everything here is yours, so
- * no row says You, and the tag already says when where it matters.
+ * 5 Nov 2026: a new request nobody has picked up ends with its one thing to
+ * do (`act`, Build it), as New for you's rows did before it folded in here.
+ * The row's `standing` form, which What's happening's own-work parts drew
+ * (where each stood, Homeroom bot's step), went with those parts: your work
+ * is the Homeroom bot tab's.
  */
-export function HappenedRow({ row, fresh, slug, on = false, onOpen, standing = false }: {
+export function HappenedRow({ row, fresh, slug, on = false, onOpen, act = null }: {
   row: CardRow;
   fresh: boolean;
   slug: string;
   on?: boolean;
   onOpen?: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
-  standing?: boolean;
+  /** The row's one thing to do, at its end, above the stretched link: Build it. */
+  act?: ReactNode;
 }): ReactNode {
   const t = useMessages('project');
-  // #5385: a bot row's step words come from the messages' bot.track catalog.
-  useMessages('messages');
   const b = row.brief;
   if (!b) return null;
   const card = row.card;
@@ -299,24 +290,7 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, standing = f
   const stuck = b.kind === 'live' && !!s && !going && s.tone === 'blocked';
   const Glyph = TILE[b.kind] || PencilSquareIcon;
   const at = Number(row.at) || 0;
-  const when = at > 0 && !standing ? agoStamp(at) : null;
-  // A merge going live (or stuck) already says where it stands; who made it
-  // still follows (#4728: Homeroom bot's change from your request).
-  const stand = standing ? lineTags(b, card) : null;
-  const first = stand && !going && !stuck && stand.ranked.length ? stand.ranked[0] : null;
-  const maker = stand ? stand.maker : null;
-  // #5385: where the bot is on the viewer's request, in the drawer's own
-  // words, at the line's end. A wait already said by a plan or question
-  // tag (Waiting on you's) is not said twice; the tone asks for the viewer
-  // only when the track does.
-  const bot = b.botTrack || null;
-  const botStep = bot && !first ? (bot.state === 'held' ? trackShort(bot) : trackLine(bot)) : null;
-  const botStepTone = bot && (bot.state === 'waiting' || (bot.state === 'checks' && bot.why === 'handed_over'))
-    ? 'warn' : 'run';
-  // #6145: a bot row opens like every row: in the side panel beside the
-  // Workshop (onOpen), else at its href, the request's page, which carries
-  // the bot's story itself. The step at the line's end still says where the
-  // bot is; the chat's door is the request card's See progress.
+  const when = at > 0 ? agoStamp(at) : null;
   return (
     <li
       className="dev-ws-hrow"
@@ -344,45 +318,16 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, standing = f
           </a>
         ) : <span className="dev-ws-hrow-link">{card.title.text}</span>}
         <span className="dev-ws-hrow-meta">
-          {b.mine && !standing ? <span className="dev-ws-hrow-you">{t('project:happened.row.you')}</span> : null}
+          {b.mine ? <span className="dev-ws-hrow-you">{t('project:happened.row.you')}</span> : null}
           {going ? <span className="dev-ws-hrow-tag" data-tone="run">{t('project:happened.row.goingLive')}</span> : null}
           {stuck && s ? <span className="dev-ws-hrow-tag" data-tone="bad">{s.label}</span> : null}
-          {bot ? (
-            <>
-              {maker ? <MetaTag tag={maker} /> : null}
-              {first ? <MetaTag tag={first} /> : null}
-              {botStep ? (
-                <span className="dev-ws-hrow-tag" data-ws-bot-step="" data-tone={botStepTone} title={botStep}>{botStep}</span>
-              ) : null}
-            </>
-          ) : (
-            <>
-              {first ? <MetaTag tag={first} /> : null}
-              {maker ? <MetaTag tag={maker} /> : null}
-            </>
-          )}
           {when && when.text ? (
             <time className="dev-ws-hrow-ago" dateTime={new Date(at).toISOString()} title={when.title}>{when.text}</time>
           ) : null}
+          {act ? <span className="dev-ws-arow-act" data-ws-row-act="">{act}</span> : null}
         </span>
       </span>
     </li>
-  );
-}
-
-/**
- * A tag at the end of a one-line row: its words in its tone, no pill (the
- * row is one line of type), with the lock or Homeroom bot's glyph where the
- * tag has one, and its fewer words where it has them, saying the rest to a
- * screen reader as the tags line does (work-row.tsx Tag).
- */
-function MetaTag({ tag }: { tag: RowTag }): ReactNode {
-  return (
-    <span className="dev-ws-hrow-tag" data-tone={tag.tone} title={tag.title || (tag.short ? tag.label : undefined)}>
-      {tag.glyph === 'lock' ? <LockIcon aria-hidden="true" /> : null}
-      {tag.glyph === 'bot' ? <SparklesIcon aria-hidden="true" /> : null}
-      {tag.short ? <><span aria-hidden="true">{tag.short}</span><span className="sr-only">{tag.label}</span></> : tag.label}
-    </span>
   );
 }
 
@@ -397,12 +342,14 @@ export const THIS_WEEK_SEEN = 3;
  * which opens the week's own page. A quiet visit has no new ones to draw;
  * a first visit has no rows at all, only the week and its figure.
  */
-export function ThisWeek({ week, slug, openKey, onOpen, onAll }: {
+export function ThisWeek({ week, slug, openKey, onOpen, onAll, act }: {
   week: SinceWeek;
   slug: string;
   openKey: string | null;
   onOpen: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
   onAll: () => void;
+  /** A new row's one thing to do (HappenedRow `act`): Build it, on a new request nobody has picked up. */
+  act?: (row: CardRow) => ReactNode;
 }): ReactNode {
   const t = useMessages('project');
   const live = weekLive(week);
@@ -435,6 +382,7 @@ export function ThisWeek({ week, slug, openKey, onOpen, onAll }: {
               slug={slug}
               on={!!openKey && keyOf(row) === openKey}
               onOpen={onOpen}
+              act={isNew && act ? act(row) : null}
             />
           ))}
         </ul>

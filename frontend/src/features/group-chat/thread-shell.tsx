@@ -64,7 +64,7 @@
  * draft, the typing ping, the multi-line submit semantics and the Escape rule.
  */
 
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { ChatComposerBar } from '@/components/ui/chat';
 import { useMessages } from '../../lib/i18n/react';
@@ -102,9 +102,14 @@ export interface ThreadShellProps {
    * as its root post. Fill mode only.
    */
   change?: boolean;
+  /**
+   * #6440: a governance vote's page — the same sheet again, with the vote as
+   * its root post. Fill mode only.
+   */
+  decision?: boolean;
 }
 
-function Composer({ fill, readOnly, notice, placeholder, maxLength, request = false, change = false }: ThreadShellProps) {
+function Composer({ fill, readOnly, notice, placeholder, maxLength, request = false, change = false, decision = false }: ThreadShellProps) {
   // `platform-safe-bar` on BOTH variants: in fill mode this block is the
   // bottom of the screen, so it carries the home-indicator inset above its own
   // padding, and the read-only notice that replaces it needs the identical
@@ -122,7 +127,7 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength, request = fa
       </div>
     );
   }
-  if (request || change) {
+  if (request || change || decision) {
     return (
       <ChatComposerBar className="messages-composer messages-composer-thread">
         <ComposerSlots scope="thread" />
@@ -158,24 +163,55 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength, request = fa
  * #4455: a change's page is the same sheet, with the change as its root post
  * (features/dev-board/topic/change-head.tsx). `.dev-change` beside
  * `.dev-request` is what app.css tells the two apart by.
+ *
+ * #6440: a governance vote's page is the same sheet a third time, with the
+ * vote as its root post (features/dev-board/topic/governance-head.tsx); it
+ * wears `.dev-decision` beside `.dev-request`, which is what app.css reads.
  */
 function RequestShell(props: ThreadShellProps) {
   const t = useMessages('project');
   const scroll = useRef<HTMLDivElement>(null);
   const change = !!props.change;
+  const decision = !!props.decision;
+  // #6440: a decision opens at its TOP — its root post and Votes card are
+  // what the page is for, not the newest reply. The thread renderer places
+  // a chat at its bottom, and its history lands a paint or two later, so
+  // hold the top for the first moment of the page; any scroll, wheel or
+  // touch from the reader ends that at once and leaves the page to them.
+  useEffect(() => {
+    if (!decision) return undefined;
+    const el = scroll.current;
+    if (!el) return undefined;
+    const started = performance.now();
+    let raf = 0;
+    const stop = () => { cancelAnimationFrame(raf); };
+    const holdTop = () => {
+      el.scrollTop = 0;
+      const gc = (window as Window & { GroupChat?: { _threadPinned?: boolean } }).GroupChat;
+      if (gc) gc._threadPinned = false;
+      if (performance.now() - started < 1500) raf = requestAnimationFrame(holdTop);
+    };
+    raf = requestAnimationFrame(holdTop);
+    el.addEventListener('pointerdown', stop, { once: true });
+    el.addEventListener('wheel', stop, { once: true, passive: true });
+    el.addEventListener('touchmove', stop, { once: true, passive: true });
+    return () => {
+      stop();
+      el.removeEventListener('pointerdown', stop);
+      el.removeEventListener('wheel', stop);
+      el.removeEventListener('touchmove', stop);
+    };
+  }, [decision]);
+  const cls = change ? 'dev-request dev-change platform-kb-column'
+    : decision ? 'dev-request dev-decision platform-kb-column'
+      : 'dev-request platform-kb-column';
   return (
-    <div className={change ? 'dev-request dev-change platform-kb-column' : 'dev-request platform-kb-column'}>
+    <div className={cls}>
       <div id="gc-thread-back" className="dev-request-back" />
-      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? t('project:topic.change.sheetLabel') : t('project:topic.request.sheetLabel')}>
+      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? t('project:topic.change.sheetLabel') : decision ? t('project:topic.decision.sheetLabel') : t('project:topic.request.sheetLabel')}>
         <div id="gc-thread-bar" className="dev-request-bar" />
         <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain chat-transcript">
           <div id="gc-thread-head" />
-          {/* #5725: a change page's pin, where its Votes card is repeated and
-              sticks to the top of the scroller while the reader scrolls the
-              thread (topic/change-head.tsx). It is the scroller's own child,
-              so it travels the whole transcript; a request page renders none,
-              so its markup is unchanged. */}
-          {change ? <div id="gc-thread-pin" /> : null}
           <div id="gc-thread-messages" />
         </div>
         {/* Floating over the transcript's foot, with nothing behind it
@@ -194,7 +230,7 @@ function RequestShell(props: ThreadShellProps) {
 export function ThreadShell(props: ThreadShellProps) {
   const { fill, withHeader } = props;
   const scroll = useRef<HTMLDivElement>(null);
-  if (fill && (props.request || props.change)) return <RequestShell {...props} />;
+  if (fill && (props.request || props.change || props.decision)) return <RequestShell {...props} />;
   if (fill) {
     return (
       // `platform-kb-column` is what app.css hangs the keyboard reservation

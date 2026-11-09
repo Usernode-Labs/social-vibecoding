@@ -1356,11 +1356,12 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
             className="px-2.5 py-1 grid grid-cols-[1rem_1fr] gap-x-1.5 items-baseline text-[0.72rem]"
             data-req-gate={g.key}
             data-req-state={g.state}
+            data-req-skipped={g.skipped ? 'force' : undefined}
           >
             <span className={`text-center font-bold ${REQ_TONE[g.state] || REQ_TONE.pending}`} aria-hidden="true">
               {g.state === 'active'
                 ? <span className="dc-status-spinner inline-block align-[-1px]" />
-                : (REQ_MARK[g.state] || '·')}
+                : (g.skipped ? '–' : (REQ_MARK[g.state] || '·'))}
             </span>
             <span className={g.state === 'done' || g.state === 'pending'
               ? 'text-zinc-500 dark:text-zinc-400'
@@ -1400,7 +1401,7 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
  * words, because the empty state (the app icon shows instead) is a real
  * outcome a voter is deciding on, not a missing picture.
  */
-function IllustrationPreviewRow({ x }: { x: Extract<ExtraSpec, { t: 'illustration' }> }): ReactNode {
+export function IllustrationPreviewRow({ x }: { x: Extract<ExtraSpec, { t: 'illustration' }> }): ReactNode {
   const t = useMessages('project');
   const side = (label: string, which: 'current' | 'proposed', art: typeof x.proposed) => (
     <figure className="m-0 flex min-w-0 flex-1 flex-col gap-1" data-illustration-side={which}>

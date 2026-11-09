@@ -212,6 +212,41 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
     void askedLone;
   });
 
+  // #6423: a bot change built on top of another (not an import) waits the
+  // same way: its base is that change's branch, it stays out of the line,
+  // and it is retargeted once its parent merges.
+  await t.test('S2b a change built on top of another waits for it too, imported or not', async () => {
+    defaults();
+    const owner = await user();
+    const a = await app(owner);
+    const A = await imported({ appRow: a, owner });
+    const n = ++seq;
+    const h = SHA('9');
+    const { rows: [B] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, branch_name, pr_number, pr_title,
+                                  reviewed_head_sha, promoted_at, check_state, checks_commit_sha,
+                                  integration_merges_clean, integration_head_sha, integration_main_sha,
+                                  imported_pr_base_ref, waits_for_session_id)
+       VALUES ($1, $2, 'promoted', $3, $4, $5, $6, NOW() - interval '1 hour', 'passing', $6, TRUE, $6, $7, $8, $9)
+       RETURNING *`,
+      [a.id, owner.id, `dev/stacked-${n}`, 6100 + n, `Bot change ${n}`, h, SHA('e'), A.branch_name, A.id]);
+    B.app = a;
+    B.owner = owner;
+    await vote(A);
+    await vote(B);
+    const line = await readLine(pool, a.id, new Date());
+    assert.deepEqual(line.map((c) => c.id), [A.id], 'the bot change is out of the line while its parent is open');
+    await toProposal(B, 'Adopted');
+    const asked = await toProposal(B, 'MergeRequested', { queueN: 12 }, fromQueue);
+    await settle();
+    const ends = (await eventsOf(QUEUE, appKey(a.id), 'AttemptEnded')).map((e) => [e.payload.sessionId, e.payload.n, e.payload.reason]);
+    assert.ok(ends.some(([id, n2, reason]) => id === B.id && n2 === 12 && reason === 'waits_for_parent'),
+      'a change that is not an import is refused by the same rule');
+    await settle();
+    assert.equal((await row(B)).status, 'promoted');
+    void asked;
+  });
+
   await t.test('S3 a gate found ready is not claimed once the row says it is stacked', async () => {
     defaults();
     const owner = await user();

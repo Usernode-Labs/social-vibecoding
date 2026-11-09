@@ -220,6 +220,8 @@ function harness({
       // updates people asked for.
       if (/COUNT\(\*\) FILTER \(WHERE NOT asked\)/.test(s)) return { rows: [{ own: revisions, asked: 0 }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
+      // #6409: the start line's claim. New unless a test says otherwise.
+      if (/INSERT INTO events \(app_id, session_id, event_type, metadata\)/.test(s)) return { rows: [{ id: 4242 }] };
       if (/FROM platform_settings/.test(s)) {
         return { rows: [{ key: 'homeroom_bot_mode', value: 'shadow' }] };
       }
@@ -439,10 +441,10 @@ test('red checks on its own proposal: one build turn fixes them, the proposal is
   assert.deepEqual(h.look.out.fix, { outcome: 'looked' }, 'and the change machine hears the round looked at the head');
 });
 
-// #6234: the start line goes out before the turn, once per look, and never
-// on a path that hands over without a turn, nor on the second try after
-// running out of time (checks_retry already said so).
-test('#6234: the fix\'s start line is posted on the change once, before its turn', async (t) => {
+// #6234/#6409: the start line goes out from the turn's start callback, once
+// the change's session is held, and never on a path that hands over without
+// a turn.
+test('#6409: the fix\'s start line is posted on the change once, as its turn really starts', async (t) => {
   const h = harness();
   const exec = h.deps.worker.execInWorker;
   let notesAtTurn = null;
@@ -451,27 +453,103 @@ test('#6234: the fix\'s start line is posted on the change once, before its turn
     return exec(id, opts);
   };
   await run(t, h);
-  assert.deepEqual(notesAtTurn, ['checks_fixing'], 'said before the turn starts');
+  assert.deepEqual(notesAtTurn, ['checks_fixing'], 'said from the turn\'s start, before its work');
   assert.equal(h.calls.onProposal.filter((p) => p.kind === 'checks_fixing').length, 1, 'once');
   assert.equal(h.calls.onProposal[0].sessionId, 5001, 'on the change\'s own thread, which its request\'s page reads');
   assert.equal(h.calls.posts.length, 0, 'nothing on the request itself: the end line is the request\'s news');
-  // The caller hands over what failed, with no run yet.
+  // The caller hands over what failed with no run yet, only from onStart,
+  // and never before the turn.
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /await note\('checks_fixing', \{ runId: null, text: followup\.checksFixingText\(\{ failing, broken, skipped \}\) \}\);/);
-  assert.match(src, /look\.once\('retriedAtStart', \(\) => checksRetried\(pool, session\.id, head\)\)/);
+  assert.match(src, /const onStart = !startLine \|\| !deps\.ws \? null : async \(\) => \{/);
+  assert.match(src, /await claimChecksStart\(pool, \{ app, session, head, attempt: startAttempt \}\)/);
+  assert.match(src, /await note\('checks_fixing', \{ runId: null, text: startLine \}\);/);
+  assert.match(src, /onStart,\n    steps: look\.steps/);
+  assert.ok(src.indexOf("note('checks_fixing'") > src.indexOf('followup.runFollowUpTurn({'),
+    'the line is not posted before the turn');
 });
 
-test('#6234: no start line on the second try after running out of time, nor on a hand-off without a turn', async (t) => {
-  // This head's fix ran out of time once (checksRetryError): checks_retry said so.
-  const retried = harness();
-  const real = retried.pool.query.bind(retried.pool);
-  retried.pool.query = async (sql, params) => {
+// #6409: a try that finds the change busy said "I'm fixing ..." and then did
+// nothing, twice in a row on PR 6406. It now starts the line only from the
+// turn's start callback, so a busy try posts nothing.
+test('#6409: a try that finds the change busy posts no start line', async (t) => {
+  const h = harness();
+  h.deps.worker.ensureWorker = async () => {
+    const err = new Error('running a turn on other storage');
+    err.code = 'session_busy';
+    throw err;
+  };
+  const out = await run(t, h);
+  assert.equal(out.ran, false, 'no run spent: the queue row is kept for a retry');
+  assert.equal(h.calls.exec.length, 0, 'no turn ran');
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), [], 'nothing said while it waits');
+  assert.ok(!h.calls.queries.some((q) => /homeroom_bot_checks_fix_started/.test(q.s)), 'and no claim made');
+});
+
+// #6409: a busy try, then a try that starts on the same head, says it once.
+test('#6409: a busy try then a started try on the same head says it once', async (t) => {
+  const h = harness();
+  let busy = true;
+  h.deps.worker.ensureWorker = async () => {
+    if (busy) {
+      const err = new Error('running a turn on other storage');
+      err.code = 'session_busy';
+      throw err;
+    }
+    return 'usernode-worker-5001';
+  };
+  await run(t, h);
+  busy = false;
+  await run(t, h);
+  const kinds = h.calls.onProposal.map((p) => p.kind);
+  assert.equal(kinds.filter((k) => k === 'checks_fixing').length, 1, 'one start line');
+  assert.deepEqual(kinds.filter((k) => k === 'checks_fixing'), ['checks_fixing'], 'at the start of the try that ran');
+});
+
+// #6409: a start line already claimed for this failing head is not said again,
+// even when the try runs (a retry or a restart).
+test('#6409: a head whose start line was already claimed posts none', async (t) => {
+  const h = harness();
+  const real = h.pool.query.bind(h.pool);
+  h.pool.query = async (sql, params) => {
+    if (/INSERT INTO events \(app_id, session_id, event_type, metadata\)/.test(String(sql))) return { rows: [] };
+    return real(sql, params);
+  };
+  await run(t, h);
+  assert.equal(h.calls.exec.length, 1, 'the turn still runs');
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_revise'], 'only the end line');
+});
+
+// #6409: after a fix ran out of time, the retry says it did not pass instead
+// of promising the fix again; checks_retry's end line still comes first.
+test('#6409: a retry after running out of time says "The fix didn\'t pass; trying once more."', async (t) => {
+  const h = harness();
+  const real = h.pool.query.bind(h.pool);
+  h.pool.query = async (sql, params) => {
     if (/AND error = \$2 LIMIT 1/.test(String(sql))) return { rows: [{ one: 1 }] };
     return real(sql, params);
   };
-  await run(t, retried);
-  assert.equal(retried.calls.exec.length, 1, 'the second try runs');
-  assert.deepEqual(retried.calls.onProposal.map((p) => p.kind), ['checks_revise'], 'only the end line');
+  await run(t, h);
+  assert.equal(h.calls.exec.length, 1, 'the second try runs');
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_fixing', 'checks_revise'],
+    'it says trying once more, then the end line');
+  assert.equal(h.calls.onProposal[0].text, followup.checksFixingAgainText());
+});
+
+// #6409: the bot's own fix landed and the new head still fails: a new
+// attempt, in its own words, because the earlier line was about the old head.
+test('#6409: a new failing head after the bot\'s fix landed says "trying once more"', async (t) => {
+  const h = harness();
+  const real = h.pool.query.bind(h.pool);
+  h.pool.query = async (sql, params) => {
+    if (/lower\(checks_head_sha\) <> lower\(\$2\)/.test(String(sql))) return { rows: [{ one: 1 }] };
+    return real(sql, params);
+  };
+  await run(t, h);
+  assert.equal(h.calls.onProposal[0].kind, 'checks_fixing');
+  assert.equal(h.calls.onProposal[0].text, followup.checksFixingAgainText());
+});
+
+test('#6234: no start line on a hand-off without a turn', async (t) => {
   // Out of revisions: handed over with no turn, so nothing has started.
   const over = harness({ revisions: followup.MAX_REVISIONS });
   await run(t, over);
@@ -541,7 +619,8 @@ test('a red check the change did not cause, on a change behind main: synced with
   assert.equal(out.verdict, 'person', 'the run says what the turn found');
   assert.deepEqual(h.calls.sync, [{ sessionId: 5001, head: HEAD }], 'the failing head it looked at');
   assert.equal(h.calls.posts.length, 0, 'nothing on the request, on GitHub or in the DM');
-  assert.ok(!h.calls.queries.some((q) => /INSERT INTO events/.test(q.s)), 'no incident: main may have fixed it');
+  assert.ok(!h.calls.queries.some((q) => /INSERT INTO events/.test(q.s)
+    && !/homeroom_bot_checks_fix_started/.test(q.s)), 'no incident: main may have fixed it');
   // #6234: the start line (the turn ran), then the one line where the group votes.
   assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_fixing', 'checks_synced'], 'one line where the group votes');
   assert.equal(h.calls.onProposal[1].text, followup.checksSyncedText({ failingCount: 1 }));

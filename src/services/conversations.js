@@ -172,9 +172,9 @@ const HOMEROOM_BOT_USERNAME = 'homeroom_bot';
 
 /**
  * Whether a conversation is a person's direct chat with the Homeroom bot:
- * the one direct conversation with reply threads, one per request (the
- * request's card is the thread's first message). Other direct chats keep
- * none. The client reads the same off a conversation's `homeroomBot` flag
+ * the one direct conversation with reply threads (its private threads: an
+ * ask, a draft, an idea, a design, and older requests' card threads, which
+ * take no new news). Other direct chats keep none. The client reads the same off a conversation's `homeroomBot` flag
  * (frontend/src/features/messages threadsAllowed).
  */
 async function isHomeroomBotDirect(db, conversationId) {
@@ -418,6 +418,35 @@ function isBotNewsRow(row) {
   if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
   if (meta.moment === 'reply' || BOT_CONVERSATION_KINDS.has(meta.kind)) return false;
   return Number(meta.issueNumber) > 0 || !!meta.firstVersion || meta.kind === 'activity';
+}
+
+/**
+ * Pure (5 Nov 2026, docs/plans/bot-one-model.md step 4): whether a message
+ * of the bot's, by its metadata, is a request's news (REQUEST_NEWS_KINDS
+ * below), as a test of one message about to be sent. Such a message is no longer sent
+ * at all (homeroom-bot-dm.js sendDm): a request's news is said on its own
+ * page, and its requester's bell rings from its stage (services/work-state.js).
+ * A first version's news is not one: it has no request page yet.
+ */
+// The kinds of the bot's messages that report how a request is going, as
+// its senders stamp them: the posts relayed from its thread (homeroom-bot-
+// live.js post kinds), its activity card and quiet step lines, its plan card
+// for a complicated request, and the notes on its change (a preview that
+// failed, a look owed, merged) and on the request (closed by somebody
+// else's change, taken by a person). Anything else is the conversation: a
+// reply to what the person said or tapped (`closing`, `ack`, …), a hello, a
+// notice about their account (`allowance`, `paused`). Named, not inferred
+// from an issue number: a reply about a request is still a reply.
+const REQUEST_NEWS_KINDS = new Set([
+  'activity', 'step', 'plan', 'plan_stopped', 'looking', 'question', 'spec', 'proposal', 'checks',
+  'build_failed', 'followup_failed', 'followup_person', 'blocked', 'empty', 'person', 'live',
+  'preview_failed', 'needs_look', 'merged', 'request_closed', 'request_taken',
+]);
+
+function isRequestNewsMeta(meta) {
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
+  if (meta.moment === 'reply' || meta.firstVersion === true) return false;
+  return REQUEST_NEWS_KINDS.has(String(meta.kind || ''));
 }
 
 /** The cards a main-stream page of this conversation carries: all of them, but in the chat with the bot. */
@@ -1023,6 +1052,7 @@ async function conversationRow(db, user, conversationId) {
             me.role AS my_role, me.status AS membership_status, me.invited_by,
             me.invite_note,
             me.last_read_message_id,
+            me.last_visit_at,
             inviter.username AS requester_username,
             inviter_avatar.id AS requester_avatar_id,
             peer.user_id AS peer_id, peer.status AS peer_status, peer_user.username AS peer_username,
@@ -1125,9 +1155,14 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
   // a member who has read nothing, which countUnread reads the same way; null
   // is "not yours to know", hidden until acceptance like the count itself.
   let lastReadMessageId = null;
+  // #6426: when the viewer last looked at this conversation, for Main Chat's
+  // "Welcome back" card. A member's own reading state, hidden like the
+  // cursor until acceptance.
+  let lastVisitAt = null;
   if (row.membership_status === 'member' && !row.deleted_peer) {
     unread = await countUnread(db, row.id, user.id, row.last_read_message_id);
     lastReadMessageId = Number(row.last_read_message_id) || 0;
+    lastVisitAt = row.last_visit_at ? new Date(row.last_visit_at).toISOString() : null;
   }
   // An invitation is a consent envelope, not conversation access. The
   // requester identity is shown so the recipient can decide; roster, peer,
@@ -1181,6 +1216,7 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     lastActivityAt: accepted ? (latest?.createdAt || row.created_at) : (row.updated_at || row.created_at),
     unreadCount: unread,
     lastReadMessageId,
+    lastVisitAt,
     awaitingAcceptance,
     canSend: row.membership_status === 'member' && row.status === 'active'
       && !(awaitingAcceptance && row.has_messages),
@@ -2275,8 +2311,11 @@ async function markRead(pool, user, conversationId, messageId) {
       };
     }
     const cursor = Math.max(current, messageId);
+    // #6426: this is a VISIT to the main stream. `last_visit_at` moves on
+    // every read, even when the cursor is already at the same message, so
+    // Main Chat can tell a return after hours away from a glance.
     await db.query(
-      `UPDATE conversation_members SET last_read_message_id = $1
+      `UPDATE conversation_members SET last_read_message_id = $1, last_visit_at = NOW()
         WHERE conversation_id = $2 AND user_id = $3`,
       [cursor, conversationId, user.id]
     );
@@ -2593,6 +2632,8 @@ module.exports = {
   threadsAllowed,
   isBotNewsRow,
   BOT_CONVERSATION_KINDS,
+  isRequestNewsMeta,
+  REQUEST_NEWS_KINDS,
   ALSO_IN_CHAT,
   REQUEST_NEWS,
   PLUS_THREAD_OPENER,

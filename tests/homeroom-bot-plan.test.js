@@ -191,7 +191,8 @@ test('the look reads a live first version\'s people into its prompt and its snap
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /const members = liveMode && requester\?\.firstVersion\s+\? await projectMembers\(pool, app\)\.catch\(/);
   assert.match(src, /seed, issueNumber, firstVersion: !!requester\?\.firstVersion, decider,\s+\.\.\.\(members \? \{ members \} : \{\}\),/);
-  assert.match(src, /\.\.\.\(deciderNote\(decider\) \? \{ decider \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+(?:\.\.\.\(starter \? \{ starter \} : \{\}\),\s+)?\},/,
+  // #6383: the plan the read saw rides beside them.
+  assert.match(src, /\.\.\.\(deciderNote\(decider\) \? \{ decider \} : \{\}\),[\s\S]{0,90}\.\.\.\(personPlan \? \{ personPlan \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+(?:\.\.\.\(starter \? \{ starter \} : \{\}\),\s+)?\},/,
     'kept in the snapshot');
   assert.match(read('src/services/bench/runner.js'), /members: snapshot\.extra\?\.members \|\| null,/);
 });
@@ -498,7 +499,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal(card.meta.status, 'open');
     assert.deepEqual(card.meta.plan, PLAN);
     assert.match(card.content, /^Here's my plan for \*\*Plant Pal\*\*:/);
-    const { rows: [action] } = await pool.query('SELECT * FROM homeroom_bot_dm_actions WHERE id = $1', [card.meta.actionId]);
+    const { rows: [action] } = await pool.query('SELECT * FROM bot_cards WHERE id = $1', [card.meta.actionId]);
     assert.deepEqual([action.kind, action.status, Number(action.message_id)], ['build_plan', 'open', Number(card.id)]);
     const { rows: [rang] } = await pool.query('SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id DESC LIMIT 1', [maya.id]);
     // "One story": a first version's plan rings as needs you, worded as its plan.
@@ -547,7 +548,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     // it went, and stays done, never "plan gone".
     const retried = await mayor.actOnTap(pool, {}, { userId: maya.id, actionId: card.meta.actionId, choice: 'build', key: `action:${card.meta.actionId}` });
     assert.deepEqual(retried, { done: true, why: null });
-    const { rows: [action] } = await pool.query('SELECT status, error FROM homeroom_bot_dm_actions WHERE id = $1', [card.meta.actionId]);
+    const { rows: [action] } = await pool.query('SELECT status, error FROM bot_cards WHERE id = $1', [card.meta.actionId]);
     assert.deepEqual([action.status, action.error], ['done', null]);
     await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_ok = FALSE, build_error = $2 WHERE id = $1', [first, 'test: done']);
   });
@@ -595,7 +596,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.deepEqual([run.awaiting_go_at, run.build_ok, run.build_error], [null, false, 'skipped: the request was read again']);
     const card = await planMessage(third);
     assert.equal(card.meta.status, 'closed');
-    const { rows: [action] } = await pool.query('SELECT status FROM homeroom_bot_dm_actions WHERE id = $1', [card.meta.actionId]);
+    const { rows: [action] } = await pool.query('SELECT status FROM bot_cards WHERE id = $1', [card.meta.actionId]);
     assert.equal(action.status, 'declined');
     const late = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'build' });
     assert.equal(late.status, 409, 'a closed plan builds nothing');

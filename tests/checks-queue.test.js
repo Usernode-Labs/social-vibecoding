@@ -92,6 +92,32 @@ test('a dead admitted run holds its slot only while its Jobs may still be runnin
   assert.equal(plan.admit.length, 1, 'so the waiting run takes the second slot');
 });
 
+test('an unavailable dedicated pool queues proposals and main-watch without revoking running work', () => {
+  const running = promoted({ admitted: true });
+  const waiting = [main(), promoted(), draft()];
+  const blocked = checksQueue.planAdmission([running, ...waiting], { cap: 4, available: false });
+  assert.deepEqual(blocked.admit, []);
+  assert.equal(blocked.byRun.get(running.run_id).holding, true);
+  assert.ok(waiting.every((r) => !blocked.byRun.get(r.run_id).admitted));
+  const recovered = checksQueue.planAdmission([running, ...waiting], { cap: 4, available: true });
+  assert.equal(recovered.admit.length, 3);
+});
+
+test('required batch admission cannot bypass the queue after a failed insert or a lost row', async (t) => {
+  const prior = process.env.CHECK_NODE_POOL_REQUIRED;
+  process.env.CHECK_NODE_POOL_REQUIRED = 'true';
+  t.after(() => {
+    if (prior === undefined) delete process.env.CHECK_NODE_POOL_REQUIRED;
+    else process.env.CHECK_NODE_POOL_REQUIRED = prior;
+  });
+  await assert.rejects(checksQueue.enqueue({ async query() { throw new Error('database unavailable'); } },
+    { runId: 'run' }), /database unavailable/);
+  t.mock.method(require('../src/services/kubernetes'), 'checkPoolCapacity', async () => ({ available: true, cap: 4 }));
+  const client = { async query() { return { rows: [] }; }, release() {} };
+  await assert.rejects(checksQueue.waitForSlot({ async connect() { return client; } }, { runId: 'gone' }),
+    /lost its queue row/);
+});
+
 // ── The order ───────────────────────────────────────────────────────────
 
 test('slots go to main-watch, then promoted proposals, then submitted hand-offs, then drafts', () => {

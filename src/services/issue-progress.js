@@ -1,5 +1,7 @@
 'use strict';
 
+const { planRecordSql } = require('./request-specs');
+
 // WHICH ISSUES SOMEBODY IS ACTUALLY WORKING ON, and the two rules that
 // decide it. Both halves are described on `issue_claims` in schema.sql:
 //
@@ -83,12 +85,16 @@ async function inProgressIssueNumbers(pool, appId) {
   // The automatic half. Same predicate as the Board's: active, promoted and
   // merging always count; paused ages out on last_activity_at; archived and
   // merged exclude themselves. Headless runs are deliberately absent — they
-  // ship as their own field and are ORed by the client, not here.
+  // ship as their own field and are ORed by the client, not here. A person's
+  // posted plan (request-specs.js) is not work: a planning record with no
+  // branch never counts, the same rule as issue-proposal-ref.js
+  // (1 Nov 2026, #6385).
   const { rows: sessionRows } = await pool.query(
     `SELECT DISTINCT UNNEST(cs.linked_issues) AS n
        FROM chat_sessions cs
       WHERE cs.app_id = $1 AND cs.is_headless = FALSE
         AND cardinality(cs.linked_issues) > 0
+        AND NOT ${planRecordSql('cs')}
         AND (cs.status IN ('active','promoted','merging')
              OR (cs.status = 'paused'
                  AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,

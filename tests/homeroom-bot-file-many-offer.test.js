@@ -114,7 +114,7 @@ test('#6305: several projects make one card, one row each, in the named order', 
   assert.deepEqual(c.card.rows[1].choices.map((ch) => ch.slug), ['block-game']);
   assert.equal(c.card.rows[2].match, 'exact');
   // Nothing is filed by the offer: no request, no action row.
-  assert.equal(pool.writes.filter((w) => /homeroom_bot_dm_actions|INTO issues/.test(w.sql)).length, 0);
+  assert.equal(pool.writes.filter((w) => /bot_cards|INTO issues/.test(w.sql)).length, 0);
 });
 
 test('#6305: a row for an app that already does it says so and starts unticked', async () => {
@@ -128,13 +128,15 @@ test('#6305: a row for an app that already does it says so and starts unticked',
   assert.equal(c.card.rows.find((r) => r.slug === 'viatales').ticked, true);
 });
 
-test('#6305: a second offer in the turn is refused', async () => {
+// 5 Nov 2026 (docs/plans/bot-one-model.md, decision 2): up to three offers
+// under one reply; the same one twice is one card.
+test('#6305: the same offer twice in the turn is refused', async () => {
   const pool = fakePool();
   const c = ctx();
   await mayor.runTool(pool, c, 'offer_request', ARGS);
   const again = await mayor.runTool(pool, c, 'offer_request', ARGS);
   assert.equal(again.ok, false);
-  assert.match(again.error, /One offer per turn/);
+  assert.equal(again.error, 'That is already under this reply for them to decide.');
 });
 
 test('#6305: an unanswered look leaves its row ticked with no sentence', async () => {
@@ -145,4 +147,43 @@ test('#6305: an unanswered look leaves its row ticked with no sentence', async (
     assert.equal(row.done, null);
     assert.equal(row.ticked, true);
   }
+});
+
+// 5 Nov 2026: a look before filing runs on the bot's turn engine, asked
+// through askModel (retried on a fresh route like every turn's requests),
+// and what it costs is counted: with the turn that asked for it, or debited
+// on its own when there is none to count toward.
+const lookChat = async () => ({
+  content: '{"done": false}', toolCalls: [], usage: { inputTokens: 100, outputTokens: 5, costUsd: 0.002 },
+});
+
+test('a look before filing counts its cost toward the turn that asked for it', async () => {
+  const done = require('../src/services/homeroom-bot-already-done');
+  const parent = { usage: { inputTokens: 1, outputTokens: 1, costUsd: 0.001 }, failures: [], message: { id: 12 } };
+  const out = await done.alreadyDoes({}, {
+    user: { id: 7, username: 'ada' }, apps: [{ slug: 'a', name: 'A' }, { slug: 'b', name: 'B' }],
+    title: 'Guests can play', details: 'Without an account.',
+    deps: { chat: lookChat, apiKey: 'sk-test' },
+    ctx: { turn: parent, bot: { id: 900 }, settings: {}, config: {} },
+  });
+  assert.deepEqual(out, { a: { done: false, sentence: null }, b: { done: false, sentence: null } });
+  assert.equal(parent.usage.inputTokens, 201, 'both looks counted with the turn');
+  assert.ok(Math.abs(parent.usage.costUsd - 0.005) < 1e-9);
+});
+
+test('with no turn to count toward, a look before filing is debited on its own', async () => {
+  const done = require('../src/services/homeroom-bot-already-done');
+  const debited = [];
+  await done.alreadyDoes({}, {
+    user: { id: 7, username: 'ada' }, apps: [{ slug: 'a', name: 'A' }],
+    title: 'Guests can play', details: 'Without an account.',
+    deps: {
+      chat: lookChat, apiKey: 'sk-test',
+      managedOpenRouter: { usesIncludedKey: async () => true },
+      limits: { recordSpend: async (_pool, botId, cents) => { debited.push({ botId, cents }); } },
+    },
+    ctx: { bot: { id: 900 }, settings: {}, config: {} },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(debited, [{ botId: 900, cents: 0.2 }]);
 });

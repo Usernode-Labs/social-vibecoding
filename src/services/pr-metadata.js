@@ -1108,6 +1108,9 @@ async function applyPrMetadata({
         title: prTitle,
         body: prBody,
         draft: session.status === 'active' || session.status === 'paused',
+        // #6423: a change built on top of another open change merges into
+        // that change's branch until it lands (rules/pr-base.ts).
+        ...(session.imported_pr_base_ref ? { base: session.imported_pr_base_ref } : {}),
       });
       session.pr_number = pr.number;
       session.pr_url = pr.html_url;

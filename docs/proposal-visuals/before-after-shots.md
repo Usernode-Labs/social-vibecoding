@@ -1370,7 +1370,10 @@ Still open:
   (`playwright-mcp`), renames an element's `ref` to `target`, and replaces
   `--save-video` with `browser_start_video`/`browser_stop_video`; the same
   server is the coding agent's in-loop browser. Upgrading is its own change.
-- The agent does not always call `browser_wait_for` before shooting.
+- The agent does not always call `browser_wait_for` before shooting. The
+  screenshot tool now settles by itself first (its own requests finished and
+  a stable page, at most 3 s), so a conversation that loads late is in the
+  shot; the agent's own wait still applies on top of it for specific text.
 - The hosted-app shots fixture (a child app beside the platform) was not
   part of the local runs, so the platform-asset route for child apps is
   covered by tests, not yet by a model run.

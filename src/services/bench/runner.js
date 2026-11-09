@@ -560,6 +560,10 @@ function triagePrompt(snapshot, seed, readsImages = false, guidance = null) {
     members: snapshot.extra?.members || null,
     // The game starter its first version builds on (firstVersionNote).
     starter: snapshot.extra?.starter || null,
+    // #6383: the newest plan a person posted on the request, as the read saw it.
+    personPlan: snapshot.extra?.personPlan || null,
+    // #6211: the board the read was given, so the replay says the same.
+    overlapCandidates: snapshot.extra?.overlapCandidates || null,
     // A studio trial's context pack (services/bench/packs.js).
     guidance,
   });

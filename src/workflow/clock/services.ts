@@ -199,6 +199,42 @@ export const JOBS: readonly Job[] = Object.freeze([
       })),
   },
   {
+    // What the triggers marked as changed since (work_state_dirty: a write
+    // to what a work state is derived from, made anywhere), derived again
+    // and pushed, within seconds (services/work-state.js drainDirty).
+    name: 'work-state-drain', everyMs: 3000,
+    async run(_ctx: WorkContext, { pool }: JobDeps) {
+      const ws = legacy('services/work-state');
+      let taken = 0;
+      let changed = 0;
+      const pushes: unknown[] = [];
+      // A burst (a build's many writes, a merge that closes many requests)
+      // is drained in a few passes of one run.
+      for (let pass = 0; pass < 5; pass++) {
+        const out = await ws.drainDirty(pool, { limit: 200 });
+        taken += out.taken;
+        changed += out.changed.length;
+        pushes.push(...out.pushes);
+        if (out.taken < 200) break;
+      }
+      await ws.publish(pool, pushes);
+      return { taken, changed };
+    },
+  },
+  {
+    // One work state per request and change (services/work-state.js): the
+    // rows still moving, derived again (a stage that moves on by time, a
+    // fact written where nothing refreshed it), and a row for each request
+    // the bot knows that has none yet. What changed is pushed.
+    name: 'work-states', everyMs: MIN,
+    async run(_ctx: WorkContext, { pool }: JobDeps) {
+      const ws = legacy('services/work-state');
+      const out = await ws.sweep(pool);
+      await ws.publish(pool, out.pushes);
+      return { checked: out.checked, seeded: out.seeded, changed: out.changed.length };
+    },
+  },
+  {
     // A coding record no work item holds (the old orphan sweep's and
     // watchdog's case): a `recover` turn asked for it
     // (services/turn-leftovers.js).
@@ -415,6 +451,11 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/weekly-digest').sweep(pool),
   },
   {
+    // The Monday row: how many changes you voted on were decided last week.
+    name: 'voted-digest', everyMs: HOUR,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/voted-digest').sweep(pool),
+  },
+  {
     // A person let in gets the welcome group an admin set up.
     name: 'welcome-dm', everyMs: 30 * 1000,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/welcome-dm').sweep(pool),
@@ -467,6 +508,16 @@ export const JOBS: readonly Job[] = Object.freeze([
       const heal = legacy('services/app-heal');
       return heal.intervalMs(config) ? heal.scan(config, pool, { n: ctx.input.n, shouldStop: stopped(ctx) }) : { off: true };
     },
+  },
+  {
+    name: 'production-sleep', everyMs: MIN, leaseMs: 5 * MIN,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) =>
+      legacy('services/production-sleep').sweep(config, pool, { shouldStop: stopped(ctx) }),
+  },
+  {
+    name: 'app-resource-profiles', everyMs: MIN, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) =>
+      legacy('services/app-resource-profiles').reconcile(config, pool),
   },
   {
     // #6233: Homeroom's own release is Live once the web Deployment reports

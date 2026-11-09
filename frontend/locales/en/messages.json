@@ -631,6 +631,14 @@
     "text": "Your building time for this week is used up",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"On hold until Monday\": why the work waits."
   },
+  "bot.state.cooldown": {
+    "text": "Paused after repeated errors",
+    "description": "Small heading on a Homeroom bot activity card: Homeroom bot's tries at the request failed several times in a row, so it waits a day before trying again. Nothing to do with building time."
+  },
+  "bot.state.line.cooldown": {
+    "text": "Homeroom bot tries again later",
+    "description": "The line under a Homeroom bot activity card's title, under the heading \"Paused after repeated errors\": the work waits a day and is then tried again."
+  },
   "bot.state.line.stop.time": {
     "text": "It took longer than I’m allowed",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"Stopped\": the bot (speaking as I) ran out of the time it may spend building."
@@ -671,14 +679,6 @@
     "text": "I’ll start when one of my changes across Homeroom is voted in or closed",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"Waiting\": the bot has as many changes up for a vote across all of Homeroom as it may, and starts once one is decided."
   },
-  "bot.strip.name": {
-    "text": "Your requests",
-    "description": "Accessible name of the activity drawer of the chat with Homeroom bot: the person's requests to the bot and where each stands."
-  },
-  "bot.strip.activity": {
-    "text": "Activity",
-    "description": "Label of the bar under the header of the chat with Homeroom bot that opens the activity drawer: the person's requests to the bot and where each stands."
-  },
   "bot.strip.summary.needs_one": {
     "text": "{{count}} needs you",
     "description": "Part of the summary line of the activity drawer of the chat with Homeroom bot: how many requests wait on the person. {{count}} is that number."
@@ -715,22 +715,6 @@
     "text": "Done another way",
     "description": "How a request the bot was working on ended, said on hover and to a screen reader beside its small status square: somebody else's change shipped what it asked for."
   },
-  "bot.strip.group.needs": {
-    "text": "Needs you",
-    "description": "Small heading over the rows of the activity drawer of the chat with Homeroom bot that wait on the person."
-  },
-  "bot.strip.group.ready": {
-    "text": "Ready to try",
-    "description": "Small heading over the rows of the activity drawer of the chat with Homeroom bot whose change is ready for the person to try."
-  },
-  "bot.strip.group.progress": {
-    "text": "In progress",
-    "description": "Small heading over the line of the activity drawer of the chat with Homeroom bot naming the requests the bot is working on now."
-  },
-  "bot.strip.group.done": {
-    "text": "Finished today",
-    "description": "Heading of the activity drawer's group of requests that went live (or were closed) in the last day, in the chat with Homeroom bot."
-  },
   "bot.strip.firstVersion": {
     "text": "{{project}}, first version",
     "description": "Name of a project's first version on a row of the activity drawer of the chat with Homeroom bot and on a news line in the chat with Homeroom bot. {{project}} is the project's name."
@@ -738,146 +722,6 @@
   "bot.strip.requestNumber": {
     "text": "Request #{{number}}",
     "description": "Name of a request with no title on a row of the activity drawer of the chat with Homeroom bot and on a news line in the chat with Homeroom bot. {{number}} is its number on the project's board, keep the #."
-  },
-  "bot.strip.doing.reading": {
-    "text": "reading",
-    "description": "What Homeroom bot is doing on a request, in the In progress line of the activity drawer: reading it. Lower case, it follows the request's title in brackets."
-  },
-  "bot.strip.doing.planning": {
-    "text": "planning",
-    "description": "What Homeroom bot is doing on a request, in the In progress line of the activity drawer: writing its plan. Lower case, it follows the request's title in brackets."
-  },
-  "bot.strip.doing.building": {
-    "text": "building",
-    "description": "What Homeroom bot is doing on a request, in the In progress line of the activity drawer: building it. Lower case, it follows the request's title in brackets."
-  },
-  "bot.strip.doing.testing": {
-    "text": "testing",
-    "description": "What Homeroom bot is doing on a request, in the In progress line of the activity drawer: testing what it built. Lower case, it follows the request's title in brackets."
-  },
-  "bot.strip.doing.queued": {
-    "text": "in the queue",
-    "description": "What Homeroom bot is doing on a request, in the In progress line of the activity drawer: the request waits its turn. Lower case, it follows the request's title in brackets."
-  },
-  "bot.strip.doing.followingUp": {
-    "text": "following up",
-    "description": "What Homeroom bot is doing on a request, in the In progress line of the activity drawer: updating its change after replies. Lower case, it follows the request's title in brackets."
-  },
-  "bot.strip.doing.goingLive": {
-    "text": "going live",
-    "description": "What Homeroom bot is doing on a request, in the In progress line of the activity drawer: its change is going live. Lower case, it follows the request's title in brackets."
-  },
-  "bot.strip.doing.settingUp": {
-    "text": "setting up",
-    "description": "What Homeroom bot is doing on a request, in the In progress line of the activity drawer: setting up a new project. Lower case, it follows the request's title in brackets."
-  },
-  "bot.strip.state.needsAnswer": {
-    "text": "Needs your answer",
-    "description": "Line under a request's title on a Needs you row of the activity drawer of the chat with Homeroom bot: the bot asked a question."
-  },
-  "bot.strip.state.planReady": {
-    "text": "Your plan is ready",
-    "description": "Line under a request's title on a Needs you row of the activity drawer of the chat with Homeroom bot: the bot's plan waits for the person to say Build it."
-  },
-  "bot.strip.state.needsDecision": {
-    "text": "Needs your decision",
-    "description": "Line under a request's title on a Needs you row of the activity drawer of the chat with Homeroom bot: a person has to decide something before the bot builds it."
-  },
-  "bot.strip.state.stopped": {
-    "text": "Stopped",
-    "description": "Line under a request's title on a Needs you row of the activity drawer of the chat with Homeroom bot: the bot's work on it stopped before it finished."
-  },
-  "bot.strip.state.stoppedTime": {
-    "text": "Stopped: took too long",
-    "description": "Line under a request's title on a Needs you row of the activity drawer of the chat with Homeroom bot: the bot's build stopped because it ran out of time."
-  },
-  "bot.strip.state.blocked": {
-    "text": "Can’t build it as written",
-    "description": "Line under a request's title on a Needs you row of the activity drawer of the chat with Homeroom bot: the bot needs more detail to build it."
-  },
-  "bot.strip.state.empty": {
-    "text": "Nothing to build yet",
-    "description": "Line under a request's title on a Needs you row of the activity drawer of the chat with Homeroom bot: the bot found nothing to build in it yet."
-  },
-  "bot.strip.state.needsLook": {
-    "text": "Needs a person to look",
-    "description": "Line under a request's title on a Needs you row of the activity drawer of the chat with Homeroom bot: a person has to look at the change before it can go on."
-  },
-  "bot.strip.state.onHold": {
-    "text": "On hold until Monday",
-    "description": "Line under a request's title on a Needs you row of the activity drawer of the chat with Homeroom bot: the person's building time for this week is used up."
-  },
-  "bot.strip.state.secrets": {
-    "text": "Waiting for its secrets",
-    "description": "Line under a request's title on a Needs you row of the activity drawer of the chat with Homeroom bot: a new project waits for the person to add its secrets (keys and passwords it needs)."
-  },
-  "bot.strip.state.needsYou": {
-    "text": "Needs you",
-    "description": "Line under a request's title on a Needs you row of the activity drawer of the chat with Homeroom bot: when nothing more specific is known."
-  },
-  "bot.strip.state.testing": {
-    "text": "Being tested",
-    "description": "Line under a request's title on a Ready to try row of the activity drawer of the chat with Homeroom bot: the change is built and being tested before anyone tries it."
-  },
-  "bot.strip.state.readyForYes": {
-    "text": "Ready for your yes",
-    "description": "Line under a request's title on a Ready to try row of the activity drawer of the chat with Homeroom bot: the person's approval would count."
-  },
-  "bot.strip.state.waitingFor": {
-    "text": "Waiting for {{who}}",
-    "description": "Line under a request's title on a Ready to try row of the activity drawer of the chat with Homeroom bot: who still has to approve the change. {{who}} is one or more @names."
-  },
-  "bot.strip.state.waitingApproval": {
-    "text": "Waiting for approval",
-    "description": "Line under a request's title on a Ready to try row of the activity drawer of the chat with Homeroom bot: the change waits for people to approve it."
-  },
-  "bot.strip.state.live": {
-    "text": "Live",
-    "description": "Line under a request's title on a Done row of the activity drawer of the chat with Homeroom bot: its change is live."
-  },
-  "bot.strip.state.closed": {
-    "text": "Closed",
-    "description": "Line under a request's title on a Done row of the activity drawer of the chat with Homeroom bot: its change was closed without going live."
-  },
-  "bot.strip.action.answer": {
-    "text": "Answer",
-    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at the bot's question."
-  },
-  "bot.strip.action.buildIt": {
-    "text": "Build it",
-    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at the bot's plan, where Build it starts the build. \"Build\" is a verb."
-  },
-  "bot.strip.action.decide": {
-    "text": "Decide",
-    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at what needs deciding."
-  },
-  "bot.strip.action.tryAgain": {
-    "text": "Try again",
-    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread at the message that stopped, with its Try again."
-  },
-  "bot.strip.action.addDetail": {
-    "text": "Add detail",
-    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread to say more about what is wanted."
-  },
-  "bot.strip.action.open": {
-    "text": "Open",
-    "description": "Button on a Needs you row of the activity drawer of the chat with Homeroom bot: opens the request's thread."
-  },
-  "bot.strip.action.tryIt": {
-    "text": "Try it",
-    "description": "Button on a Ready to try row of the activity drawer of the chat with Homeroom bot: opens a preview of the change."
-  },
-  "bot.strip.action.approve": {
-    "text": "Approve",
-    "description": "Button on a Ready to try row of the activity drawer of the chat with Homeroom bot: the person's yes vote on the change."
-  },
-  "bot.strip.approveStale": {
-    "text": "It changed since you looked. Try it again first.",
-    "description": "Shown under a Ready to try row of the activity drawer of the chat with Homeroom bot when Approve was refused because the change was updated."
-  },
-  "bot.strip.approveFailed": {
-    "text": "Couldn’t approve it. Try again.",
-    "description": "Shown under a Ready to try row of the activity drawer of the chat with Homeroom bot when Approve failed."
   },
   "bot.news.started": {
     "text": "I’ve started on it",
@@ -1871,6 +1715,10 @@
     "text": "No longer needed.",
     "description": "Line under a question from Homeroom bot once it no longer applies."
   },
+  "bot.dbRead.note": {
+    "text": "A database read happened in this thread. Check this holds nothing private before you post it.",
+    "description": "Line under a card in a platform admin's private chat with Homeroom bot that would post something publicly (a request to file, a reply, a plan), shown when the bot read the production database in that thread, so the admin checks the draft quotes nothing private."
+  },
   "bot.actions.questionsYouCanAsk": {
     "text": "Questions you can ask",
     "description": "Accessible name of the group of buttons under a message from Homeroom bot when each button is a question the person can ask it."
@@ -2282,10 +2130,6 @@
   "object.fromProject": {
     "text": "From {{project}}",
     "description": "On a card for a request, change or other item shared in a project's channel, when the item belongs to a different project than the channel's: says which project it comes from. {{project}} is that project's name. Joined to the item's status with a middle dot, for example \"From KasirKU · open\"."
-  },
-  "channel.backCommunities": {
-    "text": "Communities",
-    "description": "Label of the back control on the #general channel when it leads to the Communities screen."
   },
   "thread.jumpToLatest": {
     "text": "Jump to latest",
@@ -3151,6 +2995,10 @@
     "text": "AI",
     "description": "Small badge beside a message author's name when the author is an AI assistant rather than a person."
   },
+  "row.botHtml.frameTitle": {
+    "text": "Homeroom bot's answer, laid out",
+    "description": "Accessible name of the frame that shows the Homeroom bot's longer answer formatted with headings, lists or tables, in place of its plain words."
+  },
   "row.edited": {
     "text": "edited",
     "description": "Small note beside a message's time when the message was changed after it was sent. Lower case."
@@ -3186,14 +3034,6 @@
   "inbox.noMessages": {
     "text": "No messages yet",
     "description": "Second line of a row in the conversation list for a conversation or channel in which nothing has been written."
-  },
-  "inbox.unread_one": {
-    "text": "{{count}} unread",
-    "description": "Accessible name of the number badge on a row of the conversation list: how many unread messages that conversation or channel has. {{count}} is that number."
-  },
-  "inbox.unread_other": {
-    "text": "{{count}} unread",
-    "description": "Accessible name of the number badge on a row of the conversation list: how many unread messages that conversation or channel has. {{count}} is that number."
   },
   "inbox.memberCount_one": {
     "text": "{{count}} member",
@@ -3731,6 +3571,14 @@
     "text": "Drawing the screen",
     "description": "On the card at the end of the chat while Homeroom bot draws a design of a screen. Three animated dots follow it, as an ellipsis."
   },
+  "thread.botWorking.capturing": {
+    "text": "Opening {{page}} as it is now",
+    "description": "On the card at the end of the chat while Homeroom opens one of its own pages in a browser of its own, to copy it as the first version of a design. {{page}} is the page's name, such as Homeroom bot page. Three animated dots follow it, as an ellipsis."
+  },
+  "thread.botWorking.capturingUnnamed": {
+    "text": "Opening the page as it is now",
+    "description": "On the card at the end of the chat while Homeroom opens one of its own pages to copy it as the first version of a design, when the page's name is not known. Three animated dots follow it, as an ellipsis."
+  },
   "thread.botWorking.designing": {
     "text": "Changing the design",
     "description": "On the card at the end of the chat while Homeroom bot changes a design it drew. Three animated dots follow it, as an ellipsis."
@@ -3964,11 +3812,11 @@
     "description": "Drops the pin being placed and its words."
   },
   "design.pane.propose": {
-    "text": "Propose it",
+    "text": "Request it",
     "description": "Button in the design pane that opens the card for filing the design as a public request."
   },
   "design.pane.proposed": {
-    "text": "Proposed as request #{{number}}",
+    "text": "Filed as request #{{number}}",
     "description": "Link in the design pane once the design was filed: opens the request it became."
   },
   "design.pane.frameTitle": {
@@ -4045,99 +3893,167 @@
   },
   "newThread.project": {
     "text": "Project",
-    "description": "Label of the menu in a new thread that chooses the project the change is for."
+    "description": "Title of the menu, on a wide window, that chooses which project a new thread with Homeroom bot is for."
   },
   "newThread.anyProject": {
     "text": "Any project",
-    "description": "The project menu's first choice and default in a new thread: the change is not tied to one project yet."
-  },
-  "newThread.kind": {
-    "text": "Change",
-    "description": "Label of the menu in a new thread that chooses what kind of change to make."
-  },
-  "newThread.kinds.any": {
-    "text": "Any kind of change",
-    "description": "The change menu's first choice and default in a new thread."
+    "description": "The default project of a new thread with Homeroom bot, on its chip over the message box and first in the project picker: the thread is not tied to one project yet."
   },
   "newThread.kinds.fix": {
     "text": "Fix something broken",
-    "description": "A choice in the change menu of a new thread with Homeroom bot."
+    "description": "Names a thread started with Homeroom bot to fix something broken (its message began \"I want to fix an issue\")."
   },
   "newThread.kinds.add": {
     "text": "Add something new",
-    "description": "A choice in the change menu of a new thread with Homeroom bot."
+    "description": "Names a thread started with Homeroom bot to add something new (its message began \"I want to add a feature\")."
   },
   "newThread.kinds.design": {
     "text": "Design a screen",
-    "description": "A choice in the change menu of a new thread with Homeroom bot: work on how a screen looks, in a design thread with a live preview."
+    "description": "Names a thread started with Homeroom bot to design a screen (its message began \"I want to redesign the page\" or \"I want to design a new page\")."
   },
   "newThread.draws": {
     "text": "Describe the screen and Homeroom bot draws it.",
-    "description": "In a new thread with Homeroom bot, under the kind of change once \"Design a screen\" is picked: the person says what the screen should be in the message box, and the bot draws it in the thread."
-  },
-  "newThread.hint": {
-    "text": "Start a change here, or just type what you want into the chat.",
-    "description": "Small text at the end of the welcome block of a new thread with Homeroom bot."
+    "description": "In a new thread with Homeroom bot, over the message box while the message begins \"I want to redesign the page\" or \"I want to design a new page\": the person describes the screen there, and the bot draws it in the thread."
   },
   "newThread.placeholder": {
     "text": "Message Homeroom bot",
     "description": "Placeholder and accessible name of the message box in a new blank thread."
   },
-  "newThread.send": {
-    "text": "Send",
-    "description": "Sends the first message of a new thread, which starts it."
-  },
   "newThread.failed": {
     "text": "The thread couldn't be started just now. Try again in a minute.",
     "description": "Shown in a new thread when starting it failed for a reason that was not said."
+  },
+  "newThread.welcome.title": {
+    "text": "What do you want to do?",
+    "description": "In the middle of a new, empty thread with Homeroom bot, over the ways to start."
+  },
+  "newThread.welcome.sub": {
+    "text": "Pick a start and finish the sentence, or just type.",
+    "description": "Under \"What do you want to do?\" in a new thread with Homeroom bot: tapping a start writes its words into the message box for the person to finish."
+  },
+  "newThread.starts.label": {
+    "text": "Ways to start",
+    "description": "Accessible name of the group of starts in a new thread with Homeroom bot."
+  },
+  "newThread.starts.fix.label": {
+    "text": "I want to fix an issue<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, for fixing something broken. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+  },
+  "newThread.starts.fix.text": {
+    "text": "I want to fix an issue",
+    "description": "Written into the message box when the \"I want to fix an issue…\" pill is tapped, for the person to finish the sentence. Must be the same words as that pill: a message that begins with them is read as fixing something broken."
+  },
+  "newThread.starts.add.label": {
+    "text": "I want to add a feature<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, for adding something new. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+  },
+  "newThread.starts.add.text": {
+    "text": "I want to add a feature",
+    "description": "Written into the message box when the \"I want to add a feature…\" pill is tapped, for the person to finish the sentence. Must be the same words as that pill: a message that begins with them is read as adding something new."
+  },
+  "newThread.starts.redesign.label": {
+    "text": "I want to redesign the page<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, for changing how an existing page looks; Homeroom bot draws it. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+  },
+  "newThread.starts.redesign.text": {
+    "text": "I want to redesign the page",
+    "description": "Written into the message box when the \"I want to redesign the page…\" pill is tapped, for the person to finish the sentence. Must be the same words as that pill: a message that begins with them is read as changing how an existing page looks; Homeroom bot draws it."
+  },
+  "newThread.starts.newPage.label": {
+    "text": "I want to design a new page<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, for designing a page that does not exist yet; Homeroom bot draws it. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+  },
+  "newThread.starts.newPage.text": {
+    "text": "I want to design a new page",
+    "description": "Written into the message box when the \"I want to design a new page…\" pill is tapped, for the person to finish the sentence. Must be the same words as that pill: a message that begins with them is read as designing a page that does not exist yet; Homeroom bot draws it."
+  },
+  "newThread.starts.ask.label": {
+    "text": "I have a question about<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, for asking Homeroom bot a question. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+  },
+  "newThread.starts.ask.text": {
+    "text": "I have a question about",
+    "description": "Written into the message box when the \"I have a question about…\" pill is tapped, for the person to finish the sentence. Must be the same words as that pill: a message that begins with them is read as asking Homeroom bot a question."
+  },
+  "newThread.projectChip": {
+    "text": "Project: {{project}}",
+    "description": "Accessible name and tooltip of the chip over the message box of a new thread with Homeroom bot, which opens the project picker. {{project}} is the project picked, or \"Any project\"."
+  },
+  "newThread.picker.title": {
+    "text": "Which project is it for?",
+    "description": "Title of the sheet, on a phone, that chooses which project a new thread with Homeroom bot is for."
+  },
+  "newThread.picker.search": {
+    "text": "Search your projects",
+    "description": "Placeholder and accessible name of the search box in the project picker of a new thread with Homeroom bot."
+  },
+  "newThread.picker.anySub": {
+    "text": "Homeroom bot works out which one",
+    "description": "Under \"Any project\" in the project picker of a new thread: the bot decides which project the message is about."
+  },
+  "newThread.picker.recent": {
+    "text": "Recent",
+    "description": "Small caps label over the projects you used lately, in the project picker of a new thread with Homeroom bot."
+  },
+  "newThread.picker.more": {
+    "text": "All your projects",
+    "description": "Small caps label over the rest of the projects you are in, in the project picker of a new thread with Homeroom bot."
+  },
+  "newThread.picker.none": {
+    "text": "None of your projects match “{{query}}”.",
+    "description": "In the project picker of a new thread, when nothing matches the search. {{query}} is what was typed."
+  },
+  "newThread.picker.loading": {
+    "text": "Loading your projects…",
+    "description": "In the project picker of a new thread while the projects you are in are read."
   },
   "design.pane.showPreview": {
     "text": "Preview",
     "description": "On a phone, in a design thread's header: switches from the thread to the design's preview."
   },
   "design.propose.heading": {
-    "text": "Propose this design",
+    "text": "Request this design",
     "description": "Heading of the card that files the design as a request."
   },
   "design.propose.warning": {
     "text": "This files a public request on {{project}} under your name. Its plan shows the first version and version {{version}} side by side, and anyone who can see the project can see them. Check they show nothing private, such as names, messages or numbers. This thread stays private.",
-    "description": "Warning in the Propose it card, before anything is filed: what becomes public."
+    "description": "Warning in the Request it card, before anything is filed: what becomes public."
   },
   "design.propose.defaultTitle": {
     "text": "Design: {{title}}",
-    "description": "The request's title the Propose it card starts with: the screen's name after \"Design:\"."
+    "description": "The request's title the Request it card starts with: the screen's name after \"Design:\"."
   },
   "design.propose.titleLabel": {
     "text": "Title",
-    "description": "Label of the request title field in the Propose it card."
+    "description": "Label of the request title field in the Request it card."
   },
   "design.propose.notesLabel": {
     "text": "What changes, and why",
-    "description": "Label of the notes field in the Propose it card; the notes become the request's description."
+    "description": "Label of the notes field in the Request it card; the notes become the request's description."
   },
   "design.propose.send": {
     "text": "File the request",
-    "description": "Submit button of the Propose it card."
+    "description": "Submit button of the Request it card."
   },
   "design.propose.cancel": {
     "text": "Cancel",
-    "description": "Closes the Propose it card without filing."
+    "description": "Closes the Request it card without filing."
   },
   "design.propose.failed": {
     "text": "It couldn't be filed just now. Try again in a minute.",
-    "description": "Shown in the Propose it card when filing failed for a reason that was not said."
+    "description": "Shown in the Request it card when filing failed for a reason that was not said."
   },
   "design.propose.headingOn": {
     "text": "Post this design as a plan",
-    "description": "Heading of the design pane's Propose it card when the design's thread is about a request (a filed issue): it posts the design on that request as the person's plan."
+    "description": "Heading of the design pane's Request it card when the design's thread is about a request (a filed issue): it posts the design on that request as the person's plan."
   },
   "design.propose.warningOn": {
     "text": "This posts version {{version}} as your plan on request #{{number}} on {{project}}, under your name, where anyone who can see the project can see it. Check it shows nothing private, such as names, messages or numbers. This thread stays private.",
-    "description": "Warning in the design pane's Propose it card when the thread is about a request (a filed issue), before anything is posted: what becomes public."
+    "description": "Warning in the design pane's Request it card when the thread is about a request (a filed issue), before anything is posted: what becomes public."
   },
   "design.propose.sendOn": {
     "text": "Post it as a plan",
-    "description": "Submit button of the design pane's Propose it card when the thread is about a request: posts the design on it as the person's plan."
+    "description": "Submit button of the design pane's Request it card when the thread is about a request: posts the design on it as the person's plan."
   },
   "design.pane.postedOn": {
     "text": "Posted as a plan on request #{{number}}",
@@ -4288,8 +4204,8 @@
     "description": "Words sent to Homeroom bot as the person's own message when they pick the screen as it is today on the card that compares versions of a design."
   },
   "botCards.compare.propose": {
-    "text": "Propose version {{version}}",
-    "description": "Button on the card that compares versions of a design, once a version was picked: opens the design's Propose it card for that version."
+    "text": "Request version {{version}}",
+    "description": "Button on the card that compares versions of a design, once a version was picked: opens the design's Request it card for that version."
   },
   "botCards.compare.failed": {
     "text": "That didn't work just now. Try again in a minute.",
@@ -4297,11 +4213,7 @@
   },
   "replies.close": {
     "text": "Close thread",
-    "description": "Accessible name and tooltip of the X button on the thread side pane: closes the thread and returns to the conversation."
-  },
-  "replies.backToMain": {
-    "text": "Back to Main Chat",
-    "description": "Accessible name and tooltip of the back arrow at the start of a private thread opened in Main Chat's place on the Homeroom bot tab (from 768px): closes the thread and shows Main Chat again. \"Main Chat\" is that chat's name; keep it the same as its title."
+    "description": "Accessible name and tooltip of the X button on the thread side pane: closes the thread and returns to the conversation. On the Homeroom bot tab it closes the private thread opened beside the lists, which leaves the lists alone, or Main Chat when it was open just before."
   },
   "replies.resize": {
     "text": "Resize the thread",
@@ -4403,57 +4315,9 @@
     "text": "Nothing in this section.",
     "description": "Shown in a tab of the whole plan opened on Homeroom bot's plan card when that half of the plan is empty."
   },
-  "bot.track.state.queued": {
-    "text": "Queued",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: waiting for the bot to start on it."
-  },
-  "bot.track.state.planning": {
-    "text": "Planning",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the bot is reading the request or writing its plan."
-  },
-  "bot.track.state.waiting": {
-    "text": "Waiting on you",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the bot needs something from the person reading: an answer, a go-ahead, more detail or a look."
-  },
   "bot.track.state.waitingNamed": {
     "text": "Waiting on @{{username}}",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the bot needs something from the person who asked for it (an answer, a go-ahead, more detail), shown to somebody else, on a page anyone can open. {{username}} is that person's username, after an @."
-  },
-  "bot.track.state.building": {
-    "text": "Building",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the bot is building the change."
-  },
-  "bot.track.state.checks": {
-    "text": "Testing",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the change's automated checks are running or have just run."
-  },
-  "bot.track.state.vote": {
-    "text": "Up for a vote",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the change is waiting for the group's approval."
-  },
-  "bot.track.state.going_live": {
-    "text": "Going live",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the change was approved and is being made live."
-  },
-  "bot.track.state.live": {
-    "text": "Live",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the change is live."
-  },
-  "bot.track.state.held": {
-    "text": "On hold",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the request is ready but held back by a limit."
-  },
-  "bot.track.state.stopped": {
-    "text": "Stopped",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the bot stopped working on it."
-  },
-  "bot.track.state.done_elsewhere": {
-    "text": "Done another way",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: somebody else's change shipped what the request asked for."
-  },
-  "bot.track.state.closed": {
-    "text": "Closed",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the request was closed."
   },
   "bot.track.step.plan": {
     "text": "Plan",
@@ -4487,185 +4351,17 @@
     "text": "{{duration}} so far",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. How long this try has been running. {{duration}} is a short duration such as \"15m\" or \"2h 5m\". Only this try is counted, never an earlier one."
   },
-  "bot.track.line.queued.turn": {
-    "text": "Waiting for a free builder",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"queued\" when the reason is \"turn\"."
-  },
-  "bot.track.line.queued.queue": {
-    "text": "Waiting for a free builder",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"queued\" when the reason is \"queue\"."
-  },
-  "bot.track.line.queued.build_turn": {
-    "text": "Ready to build, waiting its turn",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"queued\" when the reason is \"build_turn\"."
-  },
-  "bot.track.line.queued.next": {
-    "text": "Ready to build, next in line",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"queued\" when the reason is \"next\"."
-  },
-  "bot.track.line.queued.first_version_pending": {
-    "text": "Waiting for the project's first version",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"queued\" when the reason is \"first_version_pending\"."
-  },
-  "bot.track.line.queued.project_busy": {
-    "text": "Waiting for the project's other builds to finish",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"queued\" when the reason is \"project_busy\"."
-  },
-  "bot.track.line.queued.project_building": {
-    "text": "Waiting for the project's other builds to finish",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"queued\" when the reason is \"project_building\"."
-  },
-  "bot.track.line.queued.person_limit": {
-    "text": "Waiting for your other requests to finish",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"queued\" when the reason is \"person_limit\"."
-  },
-  "bot.track.line.planning.reading": {
-    "text": "Reading the request",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"planning\" when the reason is \"reading\"."
-  },
-  "bot.track.line.planning.reply": {
-    "text": "Reading the newest reply",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"planning\" when the reason is \"reply\": Homeroom bot is reading the reply somebody just posted on the request."
-  },
-  "bot.track.line.planning.planning": {
-    "text": "Writing the plan",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"planning\" when the reason is \"planning\"."
-  },
-  "bot.track.line.planning.setting_up": {
-    "text": "Setting up the project",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"planning\" when the reason is \"setting_up\"."
-  },
-  "bot.track.line.planning.answered": {
-    "text": "Reading your answer",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"planning\" when the reason is \"answered\"."
-  },
-  "bot.track.line.waiting.question": {
-    "text": "It has a question for you",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"question\"."
-  },
   "bot.track.line.waiting.questionNamed": {
     "text": "It has a question for @{{username}}",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"question\", shown to somebody other than the person it waits on. {{username}} is that person's username, after an @."
-  },
-  "bot.track.line.waiting.plan": {
-    "text": "Its plan is ready for you to say Build it",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"plan\"."
   },
   "bot.track.line.waiting.planNamed": {
     "text": "Its plan is ready for @{{username}} to say Build it",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"plan\", shown to somebody other than the person it waits on. {{username}} is that person's username, after an @. \"Build it\" is the name of the button that person taps: keep it as the button reads."
   },
-  "bot.track.line.waiting.detail": {
-    "text": "It can't build this as written: add detail",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"detail\"."
-  },
   "bot.track.line.waiting.detailNamed": {
     "text": "It can't build this as written: it needs more detail from @{{username}}",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"detail\", shown to somebody other than the person it waits on. {{username}} is that person's username, after an @."
-  },
-  "bot.track.line.waiting.look": {
-    "text": "Built: it needs you to look before it goes up for a vote",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"look\"."
-  },
-  "bot.track.line.waiting.lookNamed": {
-    "text": "Built: it needs @{{username}} to look before it goes up for a vote",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"look\", shown to somebody other than the person it waits on. {{username}} is that person's username, after an @."
-  },
-  "bot.track.line.building.default": {
-    "text": "Building it",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"building\"."
-  },
-  "bot.track.line.building.reviewing": {
-    "text": "Checking its screens and fixing what it finds",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"building\" when the reason is \"reviewing\"."
-  },
-  "bot.track.line.building.proposing": {
-    "text": "Getting it ready to try",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"building\" when the reason is \"proposing\"."
-  },
-  "bot.track.line.building.fix_queued": {
-    "text": "Its checks failed: waiting to try again",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"building\" when the reason is \"fix_queued\"."
-  },
-  "bot.track.line.building.fixing": {
-    "text": "Fixing what its checks found",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"building\" when the reason is \"fixing\"."
-  },
-  "bot.track.line.building.changes_queued": {
-    "text": "Changes were asked for: waiting to make them",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"building\" when the reason is \"changes_queued\"."
-  },
-  "bot.track.line.building.revising": {
-    "text": "Making the changes asked for",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"building\" when the reason is \"revising\"."
-  },
-  "bot.track.line.building.stalled": {
-    "text": "Nothing new from its build for a while",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"building\" when the reason is \"stalled\"."
-  },
-  "bot.track.line.checks.default": {
-    "text": "Its checks are running",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"checks\"."
-  },
-  "bot.track.line.checks.failed": {
-    "text": "Its checks failed",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"checks\" when the reason is \"failed\"."
-  },
-  "bot.track.line.checks.handed_over": {
-    "text": "Its checks failed, and it handed them to a person",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"checks\" when the reason is \"handed_over\"."
-  },
-  "bot.track.line.vote.default": {
-    "text": "Waiting for the group's approval",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"vote\"."
-  },
-  "bot.track.line.going_live.default": {
-    "text": "Approved, and being made live",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"going_live\"."
-  },
-  "bot.track.line.live.default": {
-    "text": "It's live",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"live\"."
-  },
-  "bot.track.line.held.builds": {
-    "text": "Waiting for its turn: Homeroom bot is building as much on this project as it may at once",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"held\" when the reason is \"builds\": the bot is already building as many changes on the project at once as it may."
-  },
-  "bot.track.line.held.slots": {
-    "text": "Waiting for votes: Homeroom bot is at its limit of changes up for a vote here",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"held\" when the reason is \"slots\": as many of the bot's changes on the project as may wait for a vote at once are waiting, so it waits for one of them to be voted in or closed."
-  },
-  "bot.track.line.held.bot_wide": {
-    "text": "Waiting: Homeroom bot is at its limit across projects",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"held\" when the reason is \"bot_wide\"."
-  },
-  "bot.track.line.held.allowance": {
-    "text": "On hold: this week's building time is used up",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"held\" when the reason is \"allowance\"."
-  },
-  "bot.track.line.held.taken": {
-    "text": "With @{{username}} now, not Homeroom bot",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under the title of a request the bot had found ready but that a person has taken since (they claimed it, or have a change of their own for it). {{username}} is that person's username."
-  },
-  "bot.track.line.held.takenNoName": {
-    "text": "With a person now, not Homeroom bot",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under the title of a request the bot had found ready but that a person has taken since, when who it is is not known."
-  },
-  "bot.track.line.stopped.needs_person": {
-    "text": "This needs a person, not Homeroom bot",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"stopped\" when the reason is \"needs_person\"."
-  },
-  "bot.track.line.stopped.nothing_to_build": {
-    "text": "It found nothing to build",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"stopped\" when the reason is \"nothing_to_build\"."
-  },
-  "bot.track.line.stopped.withdrawn": {
-    "text": "Its change was withdrawn",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"stopped\" when the reason is \"withdrawn\"."
-  },
-  "bot.track.line.stopped.skipped": {
-    "text": "It stopped before building it",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"stopped\" when the reason is \"skipped\"."
   },
   "bot.track.line.stopped.time": {
     "text": "It ran out of time",
@@ -4711,22 +4407,6 @@
     "text": "Its build didn't finish",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"stopped\" when the reason is \"build_failed\"."
   },
-  "bot.track.line.stopped.failed": {
-    "text": "Something went wrong",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"stopped\" when the reason is \"failed\"."
-  },
-  "bot.track.line.stopped.unknown": {
-    "text": "It stopped",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"stopped\" when the reason is \"unknown\"."
-  },
-  "bot.track.line.done_elsewhere.default": {
-    "text": "Another change shipped it",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"done_elsewhere\"."
-  },
-  "bot.track.line.closed.default": {
-    "text": "The request was closed",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"closed\"."
-  },
   "bot.track.line.done_elsewhere.by": {
     "text": "{{username}} shipped it in PR {{number}}",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under the title of a request somebody else's merged change shipped. {{username}} is that person's username and {{number}} the pull request's number."
@@ -4738,6 +4418,10 @@
   "bot.track.line.held.until": {
     "text": "On hold until {{date}}: this week's building time is used up",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under the title of a request held because the building time of whoever pays for it is used up this week. {{date}} is when it resets, a short weekday and time."
+  },
+  "bot.track.line.cooldown.until": {
+    "text": "Paused after repeated errors: trying again {{date}}",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under the title of a request Homeroom bot paused because its tries failed several times in a row (nothing to do with building time). {{date}} is when it tries again, a short weekday and time."
   },
   "bot.track.held.next": {
     "text": "Next in line for a slot",
@@ -4987,6 +4671,14 @@
     "text": "Show {{count}} more",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Row at the end of a list showing only its first rows: shows the rest. {{count}} is how many more."
   },
+  "ai.work.showMoreFresh_one": {
+    "text": "Show {{count}} more · {{fresh}} new",
+    "description": "The AI tab's Live this week list: the button under a project's first rows when some of the folded rows have something new. {{count}} is how many more rows it shows, {{fresh}} how many of them are new."
+  },
+  "ai.work.showMoreFresh_other": {
+    "text": "Show {{count}} more · {{fresh}} new",
+    "description": "The AI tab's Live this week list: the button under a project's first rows when some of the folded rows have something new. {{count}} is how many more rows it shows, {{fresh}} how many of them are new."
+  },
   "ai.work.showLess": {
     "text": "Show less",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Row at the end of a list showing all its rows: shows only the first ones again."
@@ -4995,25 +4687,25 @@
     "text": "{{project}} · #{{number}}",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a row (its whole line; read by a screen reader too) that needs the person: the project and the request or change number."
   },
-  "ai.row.decide": {
-    "text": "{{project}} · #{{number}} · Homeroom bot says a person needs to decide",
-    "description": "The AI tab's main view, Needs you: tooltip of the row of a request of the person's that Homeroom bot read and handed back, because a person has to decide something before it can be built."
+  "ai.row.fixYours": {
+    "text": "{{project}} · #{{number}} · Your change needs a fix",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of a change the person made themselves that waits on them: its checks failed, its preview did not build, or merging it hit a conflict a person has to resolve."
   },
-  "ai.row.alreadyWorks": {
-    "text": "{{project}} · #{{number}} · Already works: {{reason}}",
-    "description": "The AI tab's main view, Needs you: tooltip of the row of a request Homeroom bot read and found already works, with the bot's one-sentence reason. The row offers Propose to close."
+  "ai.row.waitsOnFixTests": {
+    "text": "{{project}} · #{{number}} · It has its votes; its tests fail, so you fix it",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change, made through a coding agent, whose votes are in but whose tests fail. {{project}} is the project's name and {{number}} the request or change number."
   },
-  "ai.row.alreadyWorksPlain": {
-    "text": "{{project}} · #{{number}} · Already works",
-    "description": "The AI tab's main view, Needs you: tooltip of the row of a request Homeroom bot read and found already works, when it wrote no reason. The row offers Propose to close."
+  "ai.row.waitsOnFixConflict": {
+    "text": "{{project}} · #{{number}} · It has its votes; it conflicts with main, so you fix it",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change, made through a coding agent, whose votes are in but which conflicts with main. {{project}} is the project's name and {{number}} the request or change number."
   },
-  "ai.row.buildStopped": {
-    "text": "{{project}} · #{{number}} · Homeroom bot's build stopped",
-    "description": "The AI tab's main view, Needs you: tooltip of the row of a request of the person's whose build by Homeroom bot came to nothing, so nothing happens until somebody asks it to try again."
+  "ai.row.waitsOnFixBoth": {
+    "text": "{{project}} · #{{number}} · It has its votes; its tests fail and it conflicts with main, so you fix it",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change, made through a coding agent, whose votes are in but whose tests fail and which conflicts with main. {{project}} is the project's name and {{number}} the request or change number."
   },
-  "ai.row.fixStopped": {
-    "text": "{{project}} · #{{number}} · Checks failing · Homeroom bot stopped",
-    "description": "The AI tab's main view, Needs you: tooltip of the row of a change of the person's whose checks failed after Homeroom bot stopped at its own limit of fixes, so somebody may let it try again."
+  "ai.row.fixYoursPr": {
+    "text": "{{project}} · PR {{number}} · Your change needs a fix",
+    "description": "The AI tab's main view, Needs you: the same tooltip on a project whose code is on GitHub, where a change's number is its pull request's (\"PR 12\"). Its checks failed, its preview did not build, or merging it hit a conflict a person has to resolve."
   },
   "ai.row.voteFreesSlot": {
     "text": "{{project}} · #{{number}} · Your vote helps free a build slot",
@@ -5043,6 +4735,14 @@
     "text": "Only you · Not in a community yet",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a private thread's row (its whole line; read by a screen reader too) with an idea that is for no project yet: only the person can see it."
   },
+  "ai.row.requests_one": {
+    "text": "· {{count}} request",
+    "description": "After the title of a row in the Homeroom bot tab's lists, when its thread holds one request and several were merged: how many requests the thread holds."
+  },
+  "ai.row.requests_other": {
+    "text": "· {{count}} requests",
+    "description": "After the title of a row in the Homeroom bot tab's lists, when its thread holds several requests: how many requests the thread holds."
+  },
   "ai.row.privateAbout": {
     "text": "Only you · {{project}} · About #{{number}}",
     "description": "Tooltip (and phone second line) of a row in the Homeroom bot tab's Needs you list for a private thread opened from a request's page: only the person sees it, the project, and the request it is about."
@@ -5055,41 +4755,53 @@
     "text": "Vote",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: the person owes a vote on it."
   },
+  "ai.pill.testsFailing": {
+    "text": "Tests failing",
+    "description": "The AI tab's main view, Needs you: pill at the end of the row of the person's own change, made through a coding agent, whose votes are in but whose tests fail. It says what the change waits on instead of Vote."
+  },
+  "ai.pill.conflicts": {
+    "text": "Conflicts with main",
+    "description": "The AI tab's main view, Needs you: pill at the end of the row of the person's own change, made through a coding agent, whose votes are in but which conflicts with main. It says what the change waits on instead of Vote."
+  },
   "ai.pill.approve": {
     "text": "Approve",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: a change on a project that is just this person's waits for their approval (their yes alone decides it). A verb."
   },
   "ai.pill.pick": {
-    "text": "Pick one",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: the person owes a pick between competing changes."
+    "text": "Choose a version",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: the person owes a pick between competing changes. A verb."
   },
   "ai.pill.answer": {
-    "text": "Answer",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: Homeroom bot asked the person a question about it."
+    "text": "Needs Reply",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: Homeroom bot asked the person a question about it and needs their reply. A short label, not a verb."
   },
   "ai.pill.buildIt": {
-    "text": "Build it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: a plan waits for the person to say Build it."
+    "text": "Review plan",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: a plan is ready to build; it opens the plan, where Build it is the button. A verb."
   },
   "ai.pill.decide": {
-    "text": "Decide",
-    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot handed back because a person has to decide something first. Opens the request."
+    "text": "Needs Reply",
+    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot handed back because a person has to decide something first, and the bot needs their reply about what happens next. Opens the request. A short label, not a verb."
   },
   "ai.pill.proposeClose": {
-    "text": "Propose to close",
-    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot found already works. Opens the request, where Propose to close starts its close vote."
+    "text": "Confirm it works",
+    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot found already works. Opens the request, where Propose to close starts its close vote. A verb."
   },
   "ai.pill.tryAgain": {
-    "text": "Try again",
-    "description": "The AI tab's main view, Needs you: the pill on a request whose build by Homeroom bot stopped. Opens the request, where Homeroom bot can be asked to build it again."
+    "text": "Restart build",
+    "description": "The AI tab's main view, Needs you: the pill on a request whose build by Homeroom bot stopped. Opens the request, where Homeroom bot can be asked to build it again. A verb."
   },
   "ai.pill.letTryAgain": {
-    "text": "Try again",
-    "description": "The AI tab's main view, Needs you: the pill on a change whose checks failed after Homeroom bot stopped at its own limit. Opens the change's Testing card, where its requester or an admin may let it try once more."
+    "text": "Retry the fix",
+    "description": "The AI tab's main view, Needs you: the pill on a change whose checks failed after Homeroom bot stopped at its own limit. Opens the change's Testing card, where its requester or an admin may let it try once more. A verb."
+  },
+  "ai.pill.fixIt": {
+    "text": "Fix it",
+    "description": "The AI tab's main view, Needs you: the pill on a change the person made themselves whose checks failed, whose preview did not build, or that conflicts. Opens the change, where its Testing card says what failed. A verb."
   },
   "ai.pill.needsYou": {
-    "text": "Needs you",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row that waits on the person, when it says no more than that."
+    "text": "Take a look",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row that waits on the person, when it says no more than that. A verb."
   },
   "ai.busy.title_one": {
     "text": "Waiting & in progress · {{count}}",
@@ -5098,198 +4810,6 @@
   "ai.busy.title_other": {
     "text": "Waiting & in progress · {{count}}",
     "description": "The AI tab's main view: small caps label over the card of the person's work that is under way or waits on someone else, beside Needs you and Live this week. {{count}} is how many rows it holds."
-  },
-  "ai.next.goingLive": {
-    "text": "{{project}} · #{{number}} · Going live",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): its change was approved and is being put live."
-  },
-  "ai.next.merging": {
-    "text": "{{project}} · #{{number}} · Merging",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): its change was approved and is being merged."
-  },
-  "ai.next.fixing": {
-    "text": "{{project}} · #{{number}} · Homeroom bot is fixing what its tests found",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): one of its change's tests failed, and Homeroom bot, the platform's builder bot (a name), is fixing it now."
-  },
-  "ai.next.revising": {
-    "text": "{{project}} · #{{number}} · Homeroom bot is following up on the replies",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is changing its change after the newest replies on it."
-  },
-  "ai.next.updating": {
-    "text": "{{project}} · #{{number}} · Updating: {{ask}}",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is changing its change now, and {{ask}} is what somebody asked it to change, one line, cut short with an ellipsis when long."
-  },
-  "ai.next.updatingBare": {
-    "text": "{{project}} · #{{number}} · Updating the change",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is changing its change now, with nothing particular asked of it."
-  },
-  "ai.next.updatingPr": {
-    "text": "{{project}} · PR {{number}} · Updating: {{ask}}",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is changing its change now, and {{ask}} is what somebody asked it to change, one line, cut short with an ellipsis when long. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.next.updatingBarePr": {
-    "text": "{{project}} · PR {{number}} · Updating the change",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is changing its change now, with nothing particular asked of it. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.next.reading": {
-    "text": "{{project}} · #{{number}} · Homeroom bot is reading it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is reading the request to decide whether to ask a question or build it. \"it\" is the request."
-  },
-  "ai.next.readingReply": {
-    "text": "{{project}} · #{{number}} · Homeroom bot is reading the newest reply",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is reading the reply somebody just posted on the request."
-  },
-  "ai.next.building": {
-    "text": "{{project}} · #{{number}} · Being built",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): somebody other than the person and Homeroom bot is building a change for it."
-  },
-  "ai.next.botBuilding": {
-    "text": "{{project}} · #{{number}} · Homeroom bot is building it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is building a change for it. \"it\" is the request or thread the row is."
-  },
-  "ai.next.youBuilding": {
-    "text": "{{project}} · #{{number}} · You're building it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): the person themself is building a change for it. \"it\" is the request or thread the row is."
-  },
-  "ai.next.claimed": {
-    "text": "{{project}} · #{{number}} · {{username}} is building it",
-    "description": "The AI tab's main view, In progress: tooltip of the row of a request of the person's that someone has claimed to build and has no change for yet. {{username}} is who claimed it."
-  },
-  "ai.up.vote": {
-    "text": "{{project}} · #{{number}} · Waiting for votes",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): its change is up for a vote and waits for other people's votes; the person's own does not need giving (a change they made on Homeroom counts as their yes)."
-  },
-  "ai.up.checking": {
-    "text": "{{project}} · #{{number}} · Waiting for checks",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): its change is up for a vote, but its checks have not passed yet, so the checks are what it waits on."
-  },
-  "ai.up.voteYes": {
-    "text": "{{project}} · #{{number}} · Waiting for votes · you voted Yes",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): its change is up for a vote, the person voted Yes on it, and it waits for other people's votes. \"Yes\" is the vote button's label; keep it the same as the button."
-  },
-  "ai.up.voteNo": {
-    "text": "{{project}} · #{{number}} · Waiting for votes · you voted No",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): its change is up for a vote, the person voted No on it, and it waits for other people's votes. \"No\" is the vote button's label; keep it the same as the button."
-  },
-  "ai.up.decision": {
-    "text": "{{project}} · Waiting for votes",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too) with no number: a group decision the person put up (a new name, a new card picture, …) that has nothing to build and waits for other people's votes. {{project}} is the project's name."
-  },
-  "ai.up.decisionYes": {
-    "text": "{{project}} · Waiting for votes · you voted Yes",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too) with no number: a group decision (a new name, a new card picture, …) the person voted Yes on, waiting for other people's votes. {{project}} is the project's name. \"Yes\" is the vote button's label; keep it the same as the button."
-  },
-  "ai.up.decisionNo": {
-    "text": "{{project}} · Waiting for votes · you voted No",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too) with no number: a group decision (a new name, a new card picture, …) the person voted No on, waiting for other people's votes. {{project}} is the project's name. \"No\" is the vote button's label; keep it the same as the button."
-  },
-  "ai.up.fixQueued": {
-    "text": "{{project}} · #{{number}} · A test failed · waiting for a free builder to fix it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): one of its change's tests failed, and Homeroom bot will fix it when one of its builders is free."
-  },
-  "ai.up.followUpQueued": {
-    "text": "{{project}} · #{{number}} · Waiting for a free builder to follow up on the replies",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot will change its change after the newest replies when one of its builders is free."
-  },
-  "ai.up.updateQueued": {
-    "text": "{{project}} · #{{number}} · Update queued: {{ask}}",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): somebody asked Homeroom bot to change its change, and that waits its turn; {{ask}} is what was asked, one line, cut short with an ellipsis when long."
-  },
-  "ai.up.updateQueuedBare": {
-    "text": "{{project}} · #{{number}} · Update queued",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): an update to its change waits its turn, and nobody's ask is recorded behind it."
-  },
-  "ai.up.updateQueuedPr": {
-    "text": "{{project}} · PR {{number}} · Update queued: {{ask}}",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): somebody asked Homeroom bot to change its change, and that waits its turn; {{ask}} is what was asked, one line, cut short with an ellipsis when long. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.updateQueuedBarePr": {
-    "text": "{{project}} · PR {{number}} · Update queued",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): an update to its change waits its turn, and nobody's ask is recorded behind it. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.buildQueued": {
-    "text": "{{project}} · #{{number}} · Ready to build · waiting its turn",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot read the request and will build it; it waits for its turn, behind the project's other builds."
-  },
-  "ai.up.held": {
-    "text": "{{project}} · #{{number}} · Ready to build · waits until a change up for a vote is decided",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot read the request and will build it, but only so many of a project's changes may wait for a vote at once, so it starts once one of them goes live or is closed."
-  },
-  "ai.up.heldTurn": {
-    "text": "{{project}} · #{{number}} · Ready to build · waits for Homeroom bot's turn on this project",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot read the request and will build it, but it is already building as many changes on the project at once as it may, so it starts once one of those builds is done."
-  },
-  "ai.up.heldYours_one": {
-    "text": "{{project}} · #{{number}} · Ready to build · a vote you owe can free its slot",
-    "description": "The AI tab's main view, Waiting: a request of the person's that Homeroom bot is ready to build, held because its changes up for a vote fill the project's slots, one of which waits on the person's vote (in Needs you)."
-  },
-  "ai.up.heldYours_other": {
-    "text": "{{project}} · #{{number}} · Ready to build · {{count}} votes you owe can free its slot",
-    "description": "The AI tab's main view, Waiting: a request of the person's that Homeroom bot is ready to build, held because its changes up for a vote fill the project's slots, several of which wait on the person's vote (in Needs you)."
-  },
-  "ai.up.stalled": {
-    "text": "{{project}} · #{{number}} · Ready to build · its build has not started",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot found the request ready to build, but nothing about the build has been recorded since."
-  },
-  "ai.up.queued": {
-    "text": "{{project}} · #{{number}} · Waiting for a free builder",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): the request is in Homeroom bot's queue, waiting for one of its builders to read it."
-  },
-  "ai.up.onHold": {
-    "text": "{{project}} · #{{number}} · On hold until Monday",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): the request waits in Homeroom bot's queue until the week resets, because this week's building time for it is used up."
-  },
-  "ai.up.notPickedUp": {
-    "text": "{{project}} · #{{number}} · Nobody is on it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): a request in a thread the person is in that nobody has started a change for, and that Homeroom bot is not working on."
-  },
-  "ai.up.awaitingPlan": {
-    "text": "{{project}} · #{{number}} · Waiting for your plan",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): their own request, which Homeroom bot does not build while they work on it with it in a private thread, until they post a plan or let it go ahead."
-  },
-  "ai.up.notPickedUpBare": {
-    "text": "{{project}} · Nobody is on it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too) with no number (a decision): nobody has started a change for it. {{project}} is the project's name."
-  },
-  "ai.up.quiet_one": {
-    "text": "{{project}} · #{{number}} · Nobody is on it · quiet {{count}} day",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): a request nobody has started a change for and nobody has written on lately. {{count}} is how many days."
-  },
-  "ai.up.quiet_other": {
-    "text": "{{project}} · #{{number}} · Nobody is on it · quiet {{count}} days",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): a request nobody has started a change for and nobody has written on lately. {{count}} is how many days."
-  },
-  "ai.up.inLine": {
-    "text": "{{project}} · #{{number}} · #{{place}} in line for Homeroom bot to read it",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) that is in Homeroom bot's queue on its project. {{place}} is its place in that line, counted from 1."
-  },
-  "ai.up.heldPlace": {
-    "text": "{{project}} · #{{number}} · Ready to build · #{{place}} for a slot",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) that Homeroom bot read and is ready to build, held for one of the project's slots for changes up for a vote. {{place}} is its place among the requests held the same way, counted from 1, oldest first."
-  },
-  "ai.up.needsPerson": {
-    "text": "{{project}} · #{{number}} · Homeroom bot left it for a person to decide",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) that Homeroom bot read and handed back for a person to decide. A person who decides on the project or asked for it sees it under Needs you instead."
-  },
-  "ai.up.needsPersonWhy": {
-    "text": "{{project}} · #{{number}} · Homeroom bot left it for a person to decide: {{reason}}",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row Homeroom bot read and handed back for a person to decide, with Homeroom bot's own reason. {{reason}} is that reason, cut to its first line."
-  },
-  "ai.up.nothingToBuild": {
-    "text": "{{project}} · #{{number}} · Homeroom bot found nothing to build in it",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) that Homeroom bot read and found nothing to build in."
-  },
-  "ai.up.nothingToBuildWhy": {
-    "text": "{{project}} · #{{number}} · Homeroom bot found nothing to build in it: {{reason}}",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row Homeroom bot read and found nothing to build in, with Homeroom bot's own reason. {{reason}} is that reason, cut to its first line."
-  },
-  "ai.up.notRead": {
-    "text": "{{project}} · #{{number}} · Homeroom bot has not read it yet · ask it from the request's page",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) Homeroom bot has not read yet. The row opens the request's page, where Ask Homeroom bot is."
-  },
-  "ai.up.operator": {
-    "text": "{{project}} · #{{number}} · An operator task: nobody can do it from Homeroom",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) for the people who run Homeroom, which nobody can do from Homeroom."
   },
   "ai.up.stillCount_one": {
     "text": "Not moving · {{count}}",
@@ -5407,6 +4927,18 @@
     "text": "Done",
     "description": "The AI tab's main view: button at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; closes it. Picks apply as they are made."
   },
+  "ai.search.open": {
+    "text": "Search your threads",
+    "description": "The Homeroom bot tab, beside the round plus at the top: the name and tooltip of the round search button, which opens a box that narrows every list on the page to the threads whose title, number or project matches what is typed."
+  },
+  "ai.search.label": {
+    "text": "Search your threads",
+    "description": "The Homeroom bot tab: placeholder and accessible name of the search box under the heading, which narrows every list on the page to the threads whose title, number or project matches what is typed."
+  },
+  "ai.search.none": {
+    "text": "No threads match “{{query}}”",
+    "description": "The Homeroom bot tab: shown in place of the lists when the search box's text matches no thread on the page. {{query}} is what the person typed."
+  },
   "ai.live.number": {
     "text": "#{{number}}",
     "description": "The AI tab's main view, Live this week: the number at the end of a one-line row for a change that went live this week."
@@ -5418,38 +4950,6 @@
   "ai.short.reload": {
     "text": "Reload",
     "description": "The AI tab's main view: the word at the right end of a Live this week row that the page open in this tab is too old to show, and the button under that list which reloads the page onto the running version."
-  },
-  "ai.short.goingLive": {
-    "text": "Going live",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: its change is going live."
-  },
-  "ai.short.merging": {
-    "text": "Merging",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: its change is being merged."
-  },
-  "ai.short.fixing": {
-    "text": "Fixing its tests",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: Homeroom bot is fixing what its tests found."
-  },
-  "ai.short.revising": {
-    "text": "Following up",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: Homeroom bot is following up on replies to its change."
-  },
-  "ai.short.updating": {
-    "text": "Updating",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: Homeroom bot is changing this change now, after something somebody asked for."
-  },
-  "ai.short.updateQueued": {
-    "text": "Update queued",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: an update to this change waits its turn."
-  },
-  "ai.short.reading": {
-    "text": "Reading it",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: Homeroom bot is reading the request."
-  },
-  "ai.short.readingReply": {
-    "text": "Reading the reply",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: Homeroom bot is reading the reply somebody just posted on the request."
   },
   "ai.short.bot": {
     "text": "Homeroom bot",
@@ -5463,82 +4963,6 @@
     "text": "{{username}}",
     "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: who claimed it and is building it, by username."
   },
-  "ai.short.building": {
-    "text": "Being built",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: somebody is building it."
-  },
-  "ai.short.votes": {
-    "text": "Votes",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: it waits for the group's votes."
-  },
-  "ai.short.checks": {
-    "text": "Checks",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: it waits for its checks to pass before the vote can merge it."
-  },
-  "ai.short.builder": {
-    "text": "A builder",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: it waits for a free builder in Homeroom bot's queue."
-  },
-  "ai.short.turn": {
-    "text": "In line",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: ready to build, waiting in line behind the project's other builds (not its turn yet)."
-  },
-  "ai.short.slot": {
-    "text": "A slot",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: ready to build, waiting for one of Homeroom bot's slots for changes up for a vote."
-  },
-  "ai.short.stalled": {
-    "text": "Stalled",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: its build was due to start and has not."
-  },
-  "ai.short.monday": {
-    "text": "Monday",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: on hold until Monday, when the week's building time resets."
-  },
-  "ai.short.nobody": {
-    "text": "Nobody on it",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: nobody is working on it."
-  },
-  "ai.short.inLine": {
-    "text": "#{{place}} in line",
-    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request that is in Homeroom bot's queue, or held for the bot's turn among the project's builds. {{place}} is its place in that line, counted from 1."
-  },
-  "ai.short.heldPlace": {
-    "text": "Held · #{{place}} for a slot",
-    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request Homeroom bot is ready to build, held for one of the project's slots for changes up for a vote. {{place}} is its place among the requests held the same way, counted from 1."
-  },
-  "ai.short.needsPerson": {
-    "text": "Needs a person",
-    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request Homeroom bot read and handed back for a person to decide."
-  },
-  "ai.short.nothingToBuild": {
-    "text": "Nothing to build",
-    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request Homeroom bot read and found nothing to build in."
-  },
-  "ai.short.notRead": {
-    "text": "Not read yet",
-    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request Homeroom bot has not read yet."
-  },
-  "ai.short.operator": {
-    "text": "Operator task",
-    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request that is for the people who run Homeroom, which nobody can do from Homeroom."
-  },
-  "ai.short.quiet_one": {
-    "text": "Nobody on it · quiet {{count}} day",
-    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request nobody is working on and nobody has written on lately. {{count}} is how many days."
-  },
-  "ai.short.quiet_other": {
-    "text": "Nobody on it · quiet {{count}} days",
-    "description": "The AI tab's main view, Waiting: the one word at the right end of a one-line row for a request nobody is working on and nobody has written on lately. {{count}} is how many days."
-  },
-  "ai.short.yourPlan": {
-    "text": "Your plan",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: Homeroom bot waits for the person's plan for their own request before it builds it."
-  },
-  "ai.short.waiting": {
-    "text": "Waiting",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting, when nothing more specific applies."
-  },
   "ai.short.private": {
     "text": "Only you",
     "description": "Homeroom bot tab: the word on the right of a private thread's row (only the person can see it), and the heading, beside a lock, over private ideas that are in no project yet."
@@ -5551,25 +4975,145 @@
     "text": "Yesterday",
     "description": "The AI tab's main view: the one word at the right end of a one-line row in Live this week: it went live yesterday."
   },
-  "ai.why.decide": {
-    "text": "Homeroom bot needs a person to decide",
-    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row Homeroom bot handed back for a person to decide."
+  "ai.why.fixYours": {
+    "text": "Checks failed, its preview did not build, or it conflicts",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for a change the person made themselves that waits on their fix."
   },
-  "ai.why.alreadyWorks": {
-    "text": "Already works: {{reason}}",
-    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for a request Homeroom bot found already works, with its one-sentence reason."
+  "ai.why.fixTests": {
+    "text": "Tests failing",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change, made through a coding agent, whose votes are in but whose tests fail."
   },
-  "ai.why.alreadyWorksPlain": {
-    "text": "Already works",
-    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for a request Homeroom bot found already works, when it wrote no reason."
+  "ai.why.fixConflict": {
+    "text": "Conflicts with main",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change, made through a coding agent, whose votes are in but which conflicts with main."
   },
-  "ai.why.buildStopped": {
-    "text": "Homeroom bot's build stopped",
-    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row whose build by Homeroom bot stopped without a change."
+  "ai.why.fixBoth": {
+    "text": "Tests failing · conflicts with main",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change, made through a coding agent, whose votes are in but whose tests fail and which conflicts with main."
   },
-  "ai.why.fixStopped": {
-    "text": "Checks failing · Homeroom bot stopped",
-    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for a change whose checks failed after Homeroom bot stopped at its own limit of fixes."
+  "ai.history.title": {
+    "text": "History",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Its heading, small caps over the card."
+  },
+  "ai.history.kind.label": {
+    "text": "Show one kind of work",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Accessible name, read by a screen reader, of its row of filter chips (All, Changes, Requests, Votes, Only you)."
+  },
+  "ai.history.kind.all": {
+    "text": "All",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Filter chip, the first: every kind of work."
+  },
+  "ai.history.kind.change": {
+    "text": "Changes",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Filter chip: only changes (code changes to an app) the person built, or Homeroom bot built from their request. A noun, plural."
+  },
+  "ai.history.kind.request": {
+    "text": "Requests",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Filter chip: only requests the person filed (things they asked to have built or fixed) that somebody else built or that were closed. A noun, plural."
+  },
+  "ai.history.kind.vote": {
+    "text": "Votes",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Filter chip: only changes and group decisions the person voted on or opened, once decided. A noun, plural."
+  },
+  "ai.history.kind.solo": {
+    "text": "Only you",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Filter chip: only the person's private threads with Homeroom bot, which nobody else can see."
+  },
+  "ai.history.live": {
+    "text": "Live {{date}}",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a change that went live (people using the app have it). {{date}} is the day, short, as \"Oct 24\"."
+  },
+  "ai.history.closed": {
+    "text": "Closed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a change closed without being merged, or a request closed with nothing built."
+  },
+  "ai.history.shipped": {
+    "text": "Shipped",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a request of the person's that somebody else built, and that is live now."
+  },
+  "ai.history.passed": {
+    "text": "Passed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a group decision the person opened (a rename, a new picture, …) that the group voted through."
+  },
+  "ai.history.withdrawn": {
+    "text": "Withdrawn",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a group decision the person opened and then withdrew."
+  },
+  "ai.history.done": {
+    "text": "Done",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a private thread with Homeroom bot that the person marked done."
+  },
+  "ai.history.putAway": {
+    "text": "Put away",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a private thread with Homeroom bot that the person put away without filing it."
+  },
+  "ai.history.filedShipped": {
+    "text": "Filed #{{number}} · shipped",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a private thread with Homeroom bot that the person filed as a request, which then went live. {{number}} is the request's number."
+  },
+  "ai.history.filedClosed": {
+    "text": "Filed #{{number}} · closed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a private thread with Homeroom bot that the person filed as a request, which was then closed with nothing built. {{number}} is the request's number."
+  },
+  "ai.history.yesMerged": {
+    "text": "You: yes · merged",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a change the person voted Yes on, which was merged."
+  },
+  "ai.history.noMerged": {
+    "text": "You: no · merged",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a change the person voted No on, which was merged anyway."
+  },
+  "ai.history.yesClosed": {
+    "text": "You: yes · closed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a change or decision the person voted Yes on, which was closed without going through."
+  },
+  "ai.history.noClosed": {
+    "text": "You: no · closed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a change or decision the person voted No on, which was closed without going through."
+  },
+  "ai.history.yesPassed": {
+    "text": "You: yes · passed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a group decision the person voted Yes on, which the group voted through."
+  },
+  "ai.history.noPassed": {
+    "text": "You: no · passed",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a group decision the person voted No on, which the group voted through anyway."
+  },
+  "ai.history.yesWithdrawn": {
+    "text": "You: yes · withdrawn",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a group decision the person voted Yes on, which its author withdrew."
+  },
+  "ai.history.noWithdrawn": {
+    "text": "You: no · withdrawn",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The end of a row for a group decision the person voted No on, which its author withdrew."
+  },
+  "ai.history.wherePr": {
+    "text": "{{project}} · PR {{number}}",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). A row's tooltip, for a change on a project whose code is on GitHub, where its number is its pull request's. {{project}} is the project's name."
+  },
+  "ai.history.left": {
+    "text": "You left",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Beside a project's name over its rows, for a private community the person is no longer in: only what they made there stays listed."
+  },
+  "ai.history.earlier": {
+    "text": "Earlier months",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Button under the card: shows the months before the ones listed."
+  },
+  "ai.history.empty": {
+    "text": "Nothing finished yet.",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Shown in the card when none of the person's work has finished (or none of the kind and projects picked)."
+  },
+  "ai.history.loading": {
+    "text": "Loading your history",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Accessible name, read by a screen reader, of the placeholder bars shown while the card's rows load."
+  },
+  "ai.history.failed": {
+    "text": "Your history could not be read.",
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). Shown in the card when its rows could not be loaded, above a Try again button. Plain, not an alarm."
+  },
+  "ai.filter.emptyProject": {
+    "text": "Nothing of yours in {{project}} right now.",
+    "description": "The Homeroom bot tab, Needs you, when the project chips are narrowed to one project and nothing of the person's is under way or waiting there. {{project}} is the project's name."
   },
   "ai.why.voteFreesSlot": {
     "text": "Your vote helps free a build slot",
@@ -5590,6 +5134,10 @@
   "ai.main.sub": {
     "text": "Only you can see this chat",
     "description": "The AI tab on a wide window: the line under the title \"Main\" over the person's private chat with Homeroom bot, docked beside their list of work, after a lock glyph. Says that nobody else can read it."
+  },
+  "ai.main.close": {
+    "text": "Close Main Chat",
+    "description": "Accessible name and tooltip of the X button at the end of Main Chat's header on the AI tab (a wide window): closes it and leaves the person's list of work alone, taking no room beside it."
   },
   "ai.main.new_one": {
     "text": "{{count}} new",
@@ -6019,150 +5567,6 @@
     "text": "Only you · {{project}} · About change PR {{number}}",
     "description": "Tooltip (and phone second line) of a row in the Homeroom bot tab's Needs you list for a private thread opened from a change's page: only the person sees it, the project, and the change it is about. On a project whose code is on GitHub, the change's number is written PR, not #."
   },
-  "ai.next.goingLivePr": {
-    "text": "{{project}} · PR {{number}} · Going live",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): its change was approved and is being put live. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.next.mergingPr": {
-    "text": "{{project}} · PR {{number}} · Merging",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): its change was approved and is being merged. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.next.fixingPr": {
-    "text": "{{project}} · PR {{number}} · Homeroom bot is fixing what its tests found",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): one of its change's tests failed, and Homeroom bot, the platform's builder bot (a name), is fixing it now. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.next.revisingPr": {
-    "text": "{{project}} · PR {{number}} · Homeroom bot is following up on the replies",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is changing its change after the newest replies on it. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.next.readingPr": {
-    "text": "{{project}} · PR {{number}} · Homeroom bot is reading it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is reading the request to decide whether to ask a question or build it. \"it\" is the request. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.next.readingReplyPr": {
-    "text": "{{project}} · PR {{number}} · Homeroom bot is reading the newest reply",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is reading the reply somebody just posted on the request. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.next.buildingPr": {
-    "text": "{{project}} · PR {{number}} · Being built",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): somebody other than the person and Homeroom bot is building a change for it. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.next.botBuildingPr": {
-    "text": "{{project}} · PR {{number}} · Homeroom bot is building it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): Homeroom bot, the platform's builder bot (a name), is building a change for it. \"it\" is the request or thread the row is. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.next.youBuildingPr": {
-    "text": "{{project}} · PR {{number}} · You're building it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of an In progress row (its whole line; read by a screen reader too): the person themself is building a change for it. \"it\" is the request or thread the row is. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.next.claimedPr": {
-    "text": "{{project}} · PR {{number}} · {{username}} is building it",
-    "description": "The AI tab's main view, In progress: tooltip of the row of a request of the person's that someone has claimed to build and has no change for yet. {{username}} is who claimed it. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.votePr": {
-    "text": "{{project}} · PR {{number}} · Waiting for votes",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): its change is up for a vote and waits for other people's votes; the person's own does not need giving (a change they made on Homeroom counts as their yes). On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.checkingPr": {
-    "text": "{{project}} · PR {{number}} · Waiting for checks",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): its change is up for a vote, but its checks have not passed yet, so the checks are what it waits on. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.voteYesPr": {
-    "text": "{{project}} · PR {{number}} · Waiting for votes · you voted Yes",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): its change is up for a vote, the person voted Yes on it, and it waits for other people's votes. \"Yes\" is the vote button's label; keep it the same as the button. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.voteNoPr": {
-    "text": "{{project}} · PR {{number}} · Waiting for votes · you voted No",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): its change is up for a vote, the person voted No on it, and it waits for other people's votes. \"No\" is the vote button's label; keep it the same as the button. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.fixQueuedPr": {
-    "text": "{{project}} · PR {{number}} · A test failed · waiting for a free builder to fix it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): one of its change's tests failed, and Homeroom bot will fix it when one of its builders is free. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.followUpQueuedPr": {
-    "text": "{{project}} · PR {{number}} · Waiting for a free builder to follow up on the replies",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot will change its change after the newest replies when one of its builders is free. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.buildQueuedPr": {
-    "text": "{{project}} · PR {{number}} · Ready to build · waiting its turn",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot read the request and will build it; it waits for its turn, behind the project's other builds. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.heldPr": {
-    "text": "{{project}} · PR {{number}} · Ready to build · waits until a change up for a vote is decided",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot read the request and will build it, but only so many of a project's changes may wait for a vote at once, so it starts once one of them goes live or is closed. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.heldTurnPr": {
-    "text": "{{project}} · PR {{number}} · Ready to build · waits for Homeroom bot's turn on this project",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot read the request and will build it, but it is already building as many changes on the project at once as it may, so it starts once one of those builds is done. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.heldYoursPr_one": {
-    "text": "{{project}} · PR {{number}} · Ready to build · a vote you owe can free its slot",
-    "description": "The AI tab's main view, Waiting: a request of the person's that Homeroom bot is ready to build, held because its changes up for a vote fill the project's slots, one of which waits on the person's vote (in Needs you). On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.heldYoursPr_other": {
-    "text": "{{project}} · PR {{number}} · Ready to build · {{count}} votes you owe can free its slot",
-    "description": "The AI tab's main view, Waiting: a request of the person's that Homeroom bot is ready to build, held because its changes up for a vote fill the project's slots, several of which wait on the person's vote (in Needs you). On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.stalledPr": {
-    "text": "{{project}} · PR {{number}} · Ready to build · its build has not started",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): Homeroom bot found the request ready to build, but nothing about the build has been recorded since. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.queuedPr": {
-    "text": "{{project}} · PR {{number}} · Waiting for a free builder",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): the request is in Homeroom bot's queue, waiting for one of its builders to read it. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.onHoldPr": {
-    "text": "{{project}} · PR {{number}} · On hold until Monday",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): the request waits in Homeroom bot's queue until the week resets, because this week's building time for it is used up. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.notPickedUpPr": {
-    "text": "{{project}} · PR {{number}} · Nobody is on it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): a request in a thread the person is in that nobody has started a change for, and that Homeroom bot is not working on. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.awaitingPlanPr": {
-    "text": "{{project}} · PR {{number}} · Waiting for your plan",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): their own request, which Homeroom bot does not build while they work on it with it in a private thread, until they post a plan or let it go ahead. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.quietPr_one": {
-    "text": "{{project}} · PR {{number}} · Nobody is on it · quiet {{count}} day",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): a request nobody has started a change for and nobody has written on lately. {{count}} is how many days. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.quietPr_other": {
-    "text": "{{project}} · PR {{number}} · Nobody is on it · quiet {{count}} days",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): a request nobody has started a change for and nobody has written on lately. {{count}} is how many days. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.inLinePr": {
-    "text": "{{project}} · PR {{number}} · #{{place}} in line for Homeroom bot to read it",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) that is in Homeroom bot's queue on its project. {{place}} is its place in that line, counted from 1. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.heldPlacePr": {
-    "text": "{{project}} · PR {{number}} · Ready to build · #{{place}} for a slot",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) that Homeroom bot read and is ready to build, held for one of the project's slots for changes up for a vote. {{place}} is its place among the requests held the same way, counted from 1, oldest first. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.needsPersonPr": {
-    "text": "{{project}} · PR {{number}} · Homeroom bot left it for a person to decide",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) that Homeroom bot read and handed back for a person to decide. A person who decides on the project or asked for it sees it under Needs you instead. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.needsPersonWhyPr": {
-    "text": "{{project}} · PR {{number}} · Homeroom bot left it for a person to decide: {{reason}}",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row Homeroom bot read and handed back for a person to decide, with Homeroom bot's own reason. {{reason}} is that reason, cut to its first line. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.nothingToBuildPr": {
-    "text": "{{project}} · PR {{number}} · Homeroom bot found nothing to build in it",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) that Homeroom bot read and found nothing to build in. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.nothingToBuildWhyPr": {
-    "text": "{{project}} · PR {{number}} · Homeroom bot found nothing to build in it: {{reason}}",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row Homeroom bot read and found nothing to build in, with Homeroom bot's own reason. {{reason}} is that reason, cut to its first line. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.notReadPr": {
-    "text": "{{project}} · PR {{number}} · Homeroom bot has not read it yet · ask it from the request's page",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) Homeroom bot has not read yet. The row opens the request's page, where Ask Homeroom bot is. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "ai.up.operatorPr": {
-    "text": "{{project}} · PR {{number}} · An operator task: nobody can do it from Homeroom",
-    "description": "The AI tab's main view, Waiting: tooltip of a request's row (its whole line; read by a screen reader too) for the people who run Homeroom, which nobody can do from Homeroom. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
   "ai.live.rowPr": {
     "text": "{{project}} · PR {{number}} · Live",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a one-line row in Live this week: its project and number. On a project whose code is on GitHub, the change's number is written PR, not #."
@@ -6178,18 +5582,6 @@
   "ai.thread.aboutChangeUntitledPr": {
     "text": "Change PR {{number}}",
     "description": "The name over a private thread with Homeroom bot that was opened from a change's page, when the change's title is not known. On a project whose code is on GitHub, the change's number is written PR, not #."
-  },
-  "bot.track.line.queued.planRetry": {
-    "text": "Retrying the plan",
-    "description": "The track of a request Homeroom bot works on: where the request is, drawn in the chat with the bot, a request's thread, the request's page and the bot's slots page. Its line for a request queued to be read again after Homeroom bot could not write its plan, so it is trying the plan again."
-  },
-  "ai.short.retryPlan": {
-    "text": "Retrying the plan",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: Homeroom bot is queued to try the plan again after it could not write one, and has not started reading the request yet."
-  },
-  "ai.up.retryingPlan": {
-    "text": "Homeroom bot is trying the plan again",
-    "description": "The AI tab's main view: the tooltip of a one-line row in Waiting whose request is queued to be read again after Homeroom bot could not write its plan."
   },
   "botCards.fileMany.label_one": {
     "text": "New request on {{count}} project",
@@ -6250,5 +5642,129 @@
   "botCards.fileMany.tick": {
     "text": "Tick {{name}}",
     "description": "What a screen reader says for the tick on a row of that card. {{name}} is the project's name."
+  },
+  "ai.row.stage": {
+    "text": "{{project}} · #{{number}} · {{stage}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's whole line (its tooltip; read by a screen reader too): its project, its request's number, and where it stands. {{stage}} is the stage's own words, already translated (for example Building, or Up for a vote)."
+  },
+  "ai.row.stagePr": {
+    "text": "{{project}} · PR {{number}} · {{stage}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's whole line for a change on a GitHub-hosted project, whose number is written PR 12: its project, the change's number, and where it stands. {{stage}} is the stage's own words, already translated."
+  },
+  "ai.row.stageLine": {
+    "text": "{{project}} · #{{number}} · {{stage}} · {{line}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's whole line: its project, its request's number, where it stands and what that means now. {{stage}} and {{line}} are already translated (for example Ready to build and Number 2 in line)."
+  },
+  "ai.row.stageLinePr": {
+    "text": "{{project}} · PR {{number}} · {{stage}} · {{line}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's whole line for a change on a GitHub-hosted project: its project, the change's number (written PR 12), where it stands and what that means now. {{stage}} and {{line}} are already translated."
+  },
+  "ai.row.stageBare": {
+    "text": "{{project}} · {{stage}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's whole line for something with no number (a group decision): its project and where it stands. {{stage}} is already translated."
+  },
+  "ai.row.stageLineBare": {
+    "text": "{{project}} · {{stage}} · {{line}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's whole line for something with no number: its project, where it stands and what that means now. {{stage}} and {{line}} are already translated."
+  },
+  "ai.why.votedYes": {
+    "text": "You voted Yes",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line: it is up for a vote, and the person voted Yes."
+  },
+  "ai.why.votedNo": {
+    "text": "You voted No",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line: it is up for a vote, and the person voted No."
+  },
+  "ai.why.asked": {
+    "text": "Asked: {{ask}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line on a change being updated: what somebody asked for. {{ask}} is their words, one line."
+  },
+  "ai.why.quiet_one": {
+    "text": "Quiet for {{count}} day",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line: nobody has started on the request, and nothing happened on it for this many days. {{count}} is a number."
+  },
+  "ai.why.quiet_other": {
+    "text": "Quiet for {{count}} days",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line: nobody has started on the request, and nothing happened on it for this many days. {{count}} is a number."
+  },
+  "ai.why.botBuilding": {
+    "text": "Homeroom bot is building it",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line: Homeroom bot, the platform's builder bot (a name), is making the change."
+  },
+  "ai.why.youBuilding": {
+    "text": "You're building it",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line: the person is making the change themselves."
+  },
+  "welcome.title": {
+    "text": "Welcome back",
+    "description": "Main Chat: the heading of the small card shown above the message box the first time somebody opens the chat after eight hours away."
+  },
+  "welcome.dismiss": {
+    "text": "Dismiss",
+    "description": "Main Chat's Welcome back card: the accessible name of its × button, which hides the card until the next return."
+  },
+  "welcome.since": {
+    "text": "Since {{day}}: {{news}}",
+    "description": "Main Chat's Welcome back card: the line under the heading when something happened since the last visit. {{day}} is when that visit was (Tuesday, yesterday, this morning); {{news}} is the list of counts joined by dots."
+  },
+  "welcome.quiet": {
+    "text": "Nothing new since {{day}}. Things you can ask me:",
+    "description": "Main Chat's Welcome back card: the line under the heading when nothing happened since the last visit. {{day}} is when that visit was (Tuesday, yesterday, this morning)."
+  },
+  "welcome.live_one": {
+    "text": "{{count}} change went live",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for one change that went live. {{count}} is 1."
+  },
+  "welcome.live_other": {
+    "text": "{{count}} changes went live",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for changes that went live. {{count}} is a number above 1."
+  },
+  "welcome.votes_one": {
+    "text": "{{count}} waits for your vote",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for one change or decision waiting for the person's vote. {{count}} is 1."
+  },
+  "welcome.votes_other": {
+    "text": "{{count}} wait for your vote",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for changes or decisions waiting for the person's vote. {{count}} is a number above 1."
+  },
+  "welcome.build_one": {
+    "text": "{{count}} plan waits for your Build it",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for one plan waiting for the person to press Build it. {{count}} is 1."
+  },
+  "welcome.build_other": {
+    "text": "{{count}} plans wait for your Build it",
+    "description": "Main Chat's Welcome back card: one part of what changed since the last visit, for plans waiting for the person to press Build it. {{count}} is a number above 1."
+  },
+  "welcome.day.thisMorning": {
+    "text": "this morning",
+    "description": "Main Chat's Welcome back card: the day of the last visit, when it was earlier today before noon. It fills {{day}} in the card's line and in the What went live chip."
+  },
+  "welcome.day.earlierToday": {
+    "text": "earlier today",
+    "description": "Main Chat's Welcome back card: the day of the last visit, when it was today after noon. It fills {{day}} in the card's line and in the What went live chip."
+  },
+  "welcome.day.yesterday": {
+    "text": "yesterday",
+    "description": "Main Chat's Welcome back card: the day of the last visit, when it was the day before. It fills {{day}} in the card's line and in the What went live chip."
+  },
+  "welcome.chip.waiting": {
+    "text": "What's waiting on me?",
+    "description": "Main Chat's Welcome back card: the first chip, a question the person can send to Homeroom bot."
+  },
+  "welcome.chip.live": {
+    "text": "What went live since {{day}}?",
+    "description": "Main Chat's Welcome back card: the second chip, a question the person can send to Homeroom bot. {{day}} is the day of their last visit (Tuesday, yesterday, this morning)."
+  },
+  "welcome.chip.project": {
+    "text": "Catch me up on {{project}}",
+    "description": "Main Chat's Welcome back card: the third chip, a question the person can send to Homeroom bot. {{project}} is the name of the project with the most activity since their last visit."
+  },
+  "welcome.chip.newProject": {
+    "text": "Let's start a new project",
+    "description": "Main Chat's Welcome back card: the fourth chip, a message the person can send to Homeroom bot."
+  },
+  "welcome.separator": {
+    "text": "·",
+    "description": "Main Chat's Welcome back card: the dot between the parts of the line under the heading, for example between '3 changes went live' and '2 wait for your vote'."
   }
 }

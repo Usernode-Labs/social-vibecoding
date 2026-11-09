@@ -1337,11 +1337,11 @@
   },
   "experimental.newLook.label": {
     "text": "New look",
-    "description": "Label of a switch in Settings, Experimental. When on, Homeroom is drawn in its new visual style: a warmer background, a new typeface and calmer colours."
+    "description": "Label of a switch in Settings, Experimental. When on, Homeroom is drawn in its new visual style: white cards on a light grey background, a new typeface, yellow for what needs the person and black for where they are."
   },
   "experimental.newLook.description": {
-    "text": "Try Homeroom's new look: a warmer background, the Geist typeface and calmer colours, closer to the Homeroom website. Light mode only. On for this browser.",
-    "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name."
+    "text": "Try Homeroom's new look: white cards on a light grey background, the Geist typeface with a serif for titles, and colours that each have a job: yellow for what needs you, black for where you are. Light mode only. On for this browser.",
+    "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name. Yellow and black name the colours of the highlights on screen."
   },
   "experimental.localAgents.title": {
     "text": "Local coding agent",
@@ -1484,7 +1484,7 @@
     "description": "Heading of the last block of Settings > Privacy, above the Share usage analytics switch."
   },
   "privacy.usageAnalytics.intro": {
-    "text": "Whether Homeroom may record how you use it.",
+    "text": "Whether Homeroom may keep a record of how you use it, linked to your account.",
     "description": "One line under the Usage analytics heading in Settings > Privacy."
   },
   "privacy.usageAnalytics.label": {
@@ -1492,7 +1492,7 @@
     "description": "Label of the switch in Settings > Privacy that lets Homeroom record how the person uses it. Off unless they turn it on."
   },
   "privacy.usageAnalytics.stateOff": {
-    "text": "Off. Homeroom doesn't record how you use it unless you turn this on.",
+    "text": "Off. Homeroom doesn't keep a record linked to your account unless you turn this on.",
     "description": "First line under the Share usage analytics switch in Settings > Privacy while the switch is off: what is true now."
   },
   "privacy.usageAnalytics.stateOn": {
@@ -1506,6 +1506,10 @@
   "privacy.usageAnalytics.neverRecords": {
     "text": "We never record: what you type or what is on screen.",
     "description": "Last line under the Share usage analytics switch in Settings > Privacy: what is never recorded, whether the switch is on or off."
+  },
+  "privacy.usageAnalytics.googleAnalytics": {
+    "text": "On or off, Google Analytics counts the screens and apps you open, without your name. When this is on, those visits also carry your account number.",
+    "description": "Line under the Share usage analytics switch in Settings > Privacy. Says Google Analytics counts visits whatever the switch says, and what the switch adds."
   },
   "privacy.usageAnalytics.alreadyRecorded": {
     "text": "Turning this off doesn't delete what was already recorded.",
@@ -1960,11 +1964,11 @@
     "description": "Paragraph in Settings > User guide. \"Just you\", \"Private community\" and \"Public community\" are the names shown on screen for who a community is for. \"Workshop\" is the name of a place on a project's page."
   },
   "guide.place.apps.title": {
-    "text": "My apps",
-    "description": "Row title in Settings > User guide, about the My apps section of the home screen. Same words as that section's heading."
+    "text": "Pinned apps",
+    "description": "Row title in Settings > User guide, about the Pinned apps section of the home screen. Same words as that section's heading."
   },
   "guide.place.apps.body": {
-    "text": "Home lists the apps from your communities under My apps. Select one to open it. + New project starts your own: it asks what the app should do and what to call it, then makes a private community you can invite people to.",
+    "text": "Home lists the apps from your communities under Pinned apps. Select one to open it. + New project starts your own: it asks what the app should do and what to call it, then makes a private community you can invite people to.",
     "description": "Paragraph in Settings > User guide. \"+ New project\" is the tile on the home screen that starts a project."
   },
   "guide.place.appMenu.title": {

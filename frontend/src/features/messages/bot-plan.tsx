@@ -139,6 +139,16 @@ export function planProgress(card: HomeroomBotActivity | null | undefined, state
 }
 
 /**
+ * #6404: whether a message asks with a Questions card (open, answered or
+ * skipped). Its card is the one set of answers, so the suggested replies
+ * beside it are not drawn, even on a message stored before this rule.
+ */
+export function asksWithQuestionsCard(message: ConversationMessage): boolean {
+  const meta = botMeta(message);
+  return !!meta && !message.deleted && meta.card?.type === 'questions';
+}
+
+/**
  * Pure (#4046): whether a bot message offers its own answers to pick now: a
  * plan waiting for Build it, or an open question.
  */

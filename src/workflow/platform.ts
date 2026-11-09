@@ -27,6 +27,7 @@ import { MACHINE as CREATION, appCreation, creationKey } from './app-creation/ma
 import { appCreationServices } from './app-creation/services.ts';
 import { bootRelease } from './release/boot.ts';
 import { MACHINE as PREVIEW, preview, sessionKey as previewKey } from './preview/machine.ts';
+import { requestWake as askPreviewWake } from './preview/wake.ts';
 import { PREPARE_LEASE_MS, previewServices } from './preview/services.ts';
 import { LIVE as SHOTS_LIVE, MACHINE as SHOTS, sessionKey as shotsKey, shots } from './shots/machine.ts';
 import { shotsServices } from './shots/services.ts';
@@ -88,6 +89,10 @@ const pg = createRequire(import.meta.url)('pg');
 
 let runtime: Runtime | null = null;
 let kernelPool: Pool & { end(): Promise<void> } | null = null;
+// The security-clock pull-in `startWorkflowLoops` started, owned so
+// `stopWorkflow` can end it: it queries the workflow pool between rounds,
+// and must not still be doing so after that pool is closed.
+let pullIn: { abort: AbortController; done: Promise<void> } | null = null;
 let log: Logger | null = null;
 // The configuration the runtime started with (the release's own steps read it).
 let appConfig: any = null;
@@ -301,6 +306,13 @@ export async function startWorkflow(config: any, opts: { loops: boolean; preview
     // read on the runtime's own pool, never waiting behind the app's.
     newest: () => newestBuild(workflowPool),
     publish: (q, pushes) => publishPushes(q, pushes, { badges: !!config.mobilePushEnabled }),
+    // One work state per request and change (services/work-state.js): an
+    // accepted event of a machine that moves one stores it again, in the
+    // event's own transaction, and pushes what changed.
+    afterAccepted: {
+      wants: (info) => legacy('services/work-state').wants(info),
+      run: (q, info) => legacy('services/work-state').afterTransition(q, info),
+    },
   });
   try {
     await started.start({ slots: true });
@@ -362,8 +374,18 @@ export async function startWorkflowLoops(): Promise<void> {
     await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: {
       job: job.name, everyMs: job.everyMs, firstDueAt: new Date().toISOString(), onDemand: false,
     } }, { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
-    void pullInSecurityClock(job, release).catch((err: Error) =>
-      log!.warn('workflow', 'Could not pull the preview retirement clock in', { message: err.message }));
+    // Boot never waits for it, but it is not left loose either: it keeps the
+    // runtime and pool it started with, and `stopWorkflow` aborts it and
+    // waits for `done` before closing the pool. One already running is kept.
+    if (!pullIn) {
+      const abort = new AbortController();
+      const done = pullInSecurityClock(job, release, runtime, kernelPool!, abort.signal)
+        .catch((err: Error) => log!.warn('workflow', 'Could not pull the preview retirement clock in', { message: err.message }))
+        // Done on its own (the proof is there): a later loops start may pull
+        // in again. A stop has already cleared it, and awaits `done` itself.
+        .finally(() => { if (pullIn?.abort === abort) pullIn = null; });
+      pullIn = { abort, done };
+    }
   }
   await runtime.append(RELEASE, releaseKey(release), { type: 'Booted', payload: { release } },
     { requestKey: `booted:${release}`, source: { kind: 'system', name: 'boot' } });
@@ -387,28 +409,52 @@ export async function startWorkflowLoops(): Promise<void> {
 const PULL_IN_FOR_MS = 180_000;
 const PULL_IN_EVERY_MS = 2_000;
 const PULL_IN_INTERVAL_MS = 1_000;
-async function pullInSecurityClock(job: { name: string; everyMs: number }, release: string): Promise<void> {
+
+// A pause between pull-in rounds that ends at once when the runtime stops, so
+// a stop never waits out its two seconds. Still unref'd: a pull-in nobody is
+// waiting for never holds the process open.
+function pullInPause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) { resolve(); return; }
+    const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
+    const timer = setTimeout(done, ms);
+    timer.unref?.();
+    signal.addEventListener('abort', done, { once: true });
+  });
+}
+
+async function pullInSecurityClock(job: { name: string; everyMs: number }, release: string,
+  rt: Runtime, pool: Pool, signal: AbortSignal): Promise<void> {
   const startup = legacy('services/platform-preview-startup');
   const key = clockKey(job.name);
   const me = randomUUID().slice(0, 8);
-  const arm = (everyMs: number, requestKey: string) => runtime!.append(CLOCK, key,
+  const arm = (everyMs: number, requestKey: string) => rt.append(CLOCK, key,
     { type: 'Arm', payload: { job: job.name, everyMs, onDemand: false } },
     { requestKey, source: { kind: 'system', name: 'release' } });
+  // The runtime this pull-in belongs to has ended or been replaced (a
+  // restart), or `stopWorkflow` has ended it: nothing more to say on it.
+  const stopped = () => signal.aborted || runtime !== rt;
   const deadline = Date.now() + PULL_IN_FOR_MS;
-  for (let n = 0; runtime && Date.now() < deadline; n += 1) {
-    const proven = await startup.proven(appConfig, kernelPool);
-    const { rows: [clock] } = await kernelPool!.query(
+  for (let n = 0; !stopped() && Date.now() < deadline; n += 1) {
+    const proven = await startup.proven(appConfig, pool);
+    if (stopped()) return;
+    const { rows: [clock] } = await pool.query(
       `SELECT state, (data->>'everyMs')::bigint AS every,
               (data->>'due')::timestamptz > clock_timestamp() + make_interval(secs => $3) AS later
          FROM wf_instances WHERE machine = $1 AND key = $2`,
       [CLOCK, key, PULL_IN_EVERY_MS / 1000]);
+    if (stopped()) return;
     if (!clock) return;
-    if (!proven && clock.state === 'waiting' && clock.later) await arm(PULL_IN_INTERVAL_MS, `pull-in:${release}:${me}:${n}`);
+    if (!proven && clock.state === 'waiting' && clock.later) {
+      await arm(PULL_IN_INTERVAL_MS, `pull-in:${release}:${me}:${n}`);
+      if (stopped()) return;
+    }
     if (Number(clock.every) !== job.everyMs || (!proven && clock.state === 'waiting' && clock.later)) {
       await arm(job.everyMs, `pull-back:${release}:${me}:${n}`);
+      if (stopped()) return;
     }
     if (proven) return;
-    await new Promise((resolve) => setTimeout(resolve, PULL_IN_EVERY_MS).unref?.());
+    await pullInPause(PULL_IN_EVERY_MS, signal);
   }
 }
 
@@ -793,6 +839,14 @@ export async function botNotOwed(db: Db, p: { appId: number; issueNumber: number
   await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
     type: 'NotOwed', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), quiet: !!p.quiet } as any,
   }, { requestKey: p.key, source: BOT_SOURCE('refresh'), appId: Number(p.appId) });
+}
+
+// #6377: the payer's week has room again (a weekly limit raised or cleared, a
+// charge refunded): what was held for its building time may look again now.
+export async function botAllowanceFreed(db: Db, p: { appId: number; issueNumber: number; key: string }): Promise<void> {
+  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'AllowanceFreed', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber) } as any,
+  }, { requestKey: p.key, source: BOT_SOURCE('allowance'), appId: Number(p.appId) });
 }
 
 // A person wrote on a request's thread (in the statement's transaction).
@@ -1268,8 +1322,14 @@ export function workflowWorkRunning(): number {
 
 export async function stopWorkflow(): Promise<void> {
   const r = runtime;
+  // The pull-in goes first: it queries the workflow pool between rounds, so
+  // the pool is ended only once it has stopped.
+  const pulled = pullIn;
+  pullIn = null;
+  pulled?.abort.abort();
   runtime = null;
   await r?.stop();
+  await pulled?.done;
   await kernelPool?.end();
   kernelPool = null;
 }
@@ -1736,6 +1796,12 @@ export async function reportUnreachable(appId: number, requestKey: string): Prom
     { requestKey, source: { kind: 'system', name: 'visit' }, appId });
 }
 
+export async function reportAppWake(appId: number, requestKey: string): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(DELIVERY, appKey(appId), { type: 'WakeRequested', payload: { appId } },
+    { requestKey, source: { kind: 'system', name: 'app-wake' }, appId });
+}
+
 // main at a commit production does not run (the main-drift clock, keyed by
 // the movement: what production ran when it was seen, and the commit; an
 // admin's Check for updates, by hand): what app delivery decided. Main
@@ -1798,6 +1864,11 @@ export async function submitRevision(r: { sessionId: number; appId: number; head
   return runtime!.appendAndWait(PREVIEW, previewKey(r.sessionId), { type: 'RevisionSubmitted', payload: {
     sessionId: r.sessionId, head: r.head, source: r.source, trigger: r.trigger ?? null, carryFrom: r.carryFrom ?? null,
   } }, { requestKey: `rev:${r.head}:${r.source}:${randomUUID()}`, source: sys(r.source), appId: r.appId, waitMs: 2000 });
+}
+
+// Web asks a conductor to wake the existing runtime and waits for its receipt.
+export function requestPreviewWake(r: Parameters<typeof askPreviewWake>[2], opts?: Parameters<typeof askPreviewWake>[3]) {
+  return askPreviewWake(running(), kernelPool!, r, opts);
 }
 
 // A person asks for the preview (ensure: the Preview click; deploy).

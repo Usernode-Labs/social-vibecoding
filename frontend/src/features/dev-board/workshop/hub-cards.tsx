@@ -6,10 +6,10 @@
  * for and who is around this week), top to bottom:
  *
  *   FOR YOU, one card of doors, a row each, each opening its place: Needs
- *   you (the first vote you owe "and 3 more", "4 to vote"), Your work (the
- *   first of yours in flight, "1 in progress", or "No work in progress.")
- *   and the Discussion (#general and its last line, or "No messages yet.").
- *   ForYouCard.
+ *   you (the first vote you owe "and 3 more", "4 to vote"), the Workshop
+ *   (what happened, and every item; 6 Nov 2026: it took Your work's place
+ *   there) and the Discussion (#general and its last line, or "No messages
+ *   yet."). ForYouCard.
  *   RECENTLY LIVE, the last three changes that went live, each as its after
  *   shot, its title, and who made it and when; before any has, the app
  *   itself and since when it has been live. RecentlyLive.
@@ -41,9 +41,9 @@
  * nothing (`alone` in NothingToVote). For a while an empty Your work and
  * the Discussion left a new project's hub too, and a ready-made app's hub
  * then looked nothing like an older project's (15 Oct 2026). So For you is
- * the same card from the first day: Your work and the Discussion always,
- * each saying so when it is empty, and Needs you only when something needs
- * you.
+ * the same card from the first day: the Workshop and the Discussion always,
+ * the Discussion saying so when it is empty, and Needs you only when
+ * something needs you.
  *
  * ── The channel lives on the page ──────────────────────────────────────
  *
@@ -586,48 +586,25 @@ function NeedsRow({ queue, slug, canPost, onOpen }: {
 }
 
 /**
- * YOUR WORK, as the card's second row: the first of your items in flight
- * (newest activity first, the Workshop's order) and how many there are,
- * opening the Workshop, where they are listed in full. With nothing in
- * progress it says so (#3489), "No work in progress.", on every project
- * from its first day (15 Oct 2026). No row for a visitor, who has no work
- * to have none of.
+ * THE WORKSHOP, For you's door to the place: what happened here, and All
+ * items. It was the phone's row alone (3 Nov 2026), with Your work beside it
+ * from 5 Nov 2026; on 6 Nov 2026 it took Your work's place at every width,
+ * so the Hub's rows are the places it leads to. Your own work is the Homeroom
+ * bot tab's, and its card is on the Workshop tab (./your-work.tsx,
+ * YourWorkCard).
  */
-function WorkRow({ mine, onOpen, place = false }: {
-  mine: DevWorkshopView['mine'] | null | undefined;
-  onOpen: () => void;
-  /** On a phone the row is the way to the Workshop, and is named for it. */
-  place?: boolean;
-}): ReactNode {
+function WorkshopRow({ onOpen }: { onOpen: () => void }): ReactNode {
   const t = useMessages('project');
-  const cards = (mine?.rows || []).filter((row): row is Extract<BoardRow, { t: 'card' }> => row.t === 'card');
-  if (!cards.length && !mine?.viewer) return null;
-  const first = cards[0] || null;
-  const sub = first ? (
-    <span
-      data-ws-mine-first={first.key}
-      // The viewer's own session (#1887): `?shot=mine-session` leads with one.
-      data-ws-mine-session={first.card.attrs && first.card.attrs['data-session-chip'] ? '' : undefined}
-    >
-      {first.card.title.text || first.card.title.title}
-    </span>
-  ) : (
-    <span data-ws-mine-empty="">{t('project:hub.work.empty')}</span>
-  );
   return (
     <ListRow
       as="button"
       inset="none"
       className="dev-ws-foryou-row"
-      data-ws-mine-card=""
-      data-ws-mine-open="workshop"
+      data-ws-workshop-row=""
       onClick={onOpen}
       leading={<IconTile size="xs"><BoardIcon aria-hidden="true" /></IconTile>}
-      title={place ? placeName('workshop') : t('project:hub.work.title')}
-      subtitle={sub}
-      trailing={cards.length ? (
-        <span className="dev-ws-foryou-count">{t('project:hub.forYou.work.inProgress', { count: cards.length })}</span>
-      ) : undefined}
+      title={placeName('workshop')}
+      subtitle={t('project:hub.workshop.sub')}
     />
   );
 }
@@ -710,16 +687,20 @@ function DiscussionRow({ data, onOpen }: {
 
 /**
  * FOR YOU: what on this project is the viewer's, one card of doors under its
- * label — Needs you, Your work, the Discussion — each row a door to its
+ * label — Needs you, the Workshop, the Discussion — each row a door to its
  * place, at most one pill on it, 15 over 13. The same card from a project's
- * first day (15 Oct 2026): Your work and the Discussion are always there,
- * saying so when they are empty, and Needs you only when a vote waits on
- * you. With no vote owed, Needs you is the quiet line that says so
+ * first day (15 Oct 2026): the Workshop and the Discussion are always there,
+ * the Discussion saying so when it is empty, and Needs you only when a vote
+ * waits on you. With no vote owed, Needs you is the quiet line that says so
  * (NothingToVote, #3408), or nothing on a project nobody else is in.
  * Nothing at all when no row has anything to say.
+ *
+ * 6 Nov 2026: the Workshop's row is drawn at every width, in the place Your
+ * work had, and opens the Workshop (the phone's row until then). Your work
+ * is the Homeroom bot tab's, said on the Workshop tab's own card.
  */
 export function ForYouCard({
-  slug, queue, unclaimed, mine, alone, data, canPost, onNeeds, onWork, onDiscussion, places = false,
+  slug, queue, unclaimed, mine, alone, data, canPost, onNeeds, onWork, onDiscussion,
 }: {
   slug: string;
   queue: DevWorkshopView['queue'];
@@ -735,17 +716,15 @@ export function ForYouCard({
   onNeeds: () => void;
   onWork: () => void;
   onDiscussion: () => void;
-  /** A phone (3 Nov 2026): the Hub is the way to the community's places, so
-      the Workshop's row is always drawn, and named for the place it opens. */
-  places?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   const headId = useId();
   const owes = owesVote(queue);
   const claims = Math.max(0, Number(unclaimed) || 0);
   const needs = owes || !alone || claims > 0;
-  const cards = (mine?.rows || []).some((row) => row.t === 'card');
-  const work = cards || !!mine?.viewer || places;
+  // The Workshop's row is for anyone signed in, whose work there may be, or
+  // not; a visitor has no work to be told about.
+  const work = !!mine?.viewer;
   const talk = !!(data && data.channel);
   if (!needs && !work && !talk) return null;
   return (
@@ -755,7 +734,7 @@ export function ForYouCard({
         {owes
           ? <NeedsRow queue={queue} slug={slug} canPost={canPost} onOpen={onNeeds} />
           : <NothingToVote unclaimed={claims} onOpen={onWork} alone={alone} />}
-        <WorkRow mine={mine} onOpen={onWork} place={places} />
+        {work ? <WorkshopRow onOpen={onWork} /> : null}
         <DiscussionRow data={data} onOpen={onDiscussion} />
       </div>
     </section>

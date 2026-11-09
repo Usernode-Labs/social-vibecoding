@@ -79,6 +79,7 @@ function factLine(parts) {
  * @property {string} friendsStatus         — why the last answer failed, if it did
  * @property {boolean} feedbackOpen         — the "Your feedback" list is up (#3186)
  * @property {boolean} friendsOpen          — the Friends card is up (UI overhaul)
+ * @property {boolean} appSlotsOpen         — the App allowance card is up (#6446)
  */
 
 export const profileStore = createStore(/** @type {ProfileState} */ ({
@@ -96,6 +97,7 @@ export const profileStore = createStore(/** @type {ProfileState} */ ({
   friendsStatus: '',
   feedbackOpen: false,
   friendsOpen: false,
+  appSlotsOpen: false,
 }));
 
 /** Only ever render an http(s) URL as a real anchor. Escaping alone would not
@@ -507,189 +509,7 @@ export function mergedAgo(iso, now = Date.now()) {
   }
 }
 
-/**
- * The stages Your changes can be narrowed to (#5272), in the order its chips
- * show them. Each is one of GET /api/me/proposal-history's four buckets, so a
- * chip lists exactly what the server filed there: `openForVote` is up for a
- * vote, or approved and still going live (merging, or merged with no live_at).
- */
-export const CHANGE_STAGES = ['inProgress', 'openForVote', 'merged', 'closed'];
-
-/** What each stage's chip says, and the heading over its rows when picked. */
-export const CHANGE_STAGE_LABELS = {
-  all: 'profile:changes.filter.all',
-  inProgress: 'profile:changes.group.inProgress',
-  openForVote: 'profile:changes.filter.upForVote',
-  merged: 'profile:changes.group.live',
-  closed: 'profile:changes.group.closed',
-};
-
-/**
- * "Your changes" (UI overhaul; it was "Your proposals", #5310): every change
- * the viewer has started, from GET /api/me/proposal-history, in three groups.
- * In progress takes what is in an agent session and what is up for a vote,
- * newest first, each saying which (it was two sections, and also the
- * Communities tab's "What you are working on"); then Merged; then Closed. A
- * group with no rows is left out. `loaded: false` is a read that has not
- * answered yet, distinct from a real "you have started nothing".
- *
- * #5272 narrows it on the client, over the rows the read returned (up to
- * PROPOSALS_PER_BUCKET per bucket, src/routes/profile.js):
- *
- *   filter.stage    one of CHANGE_STAGES, or 'all'. A stage shows its rows
- *                   alone, under its own heading; 'all' is the three groups.
- *   filter.project  an app slug, or '' for every project.
- *
- * `stages` and `projects` say which chips and which project choices the list
- * can offer (only those with rows), and `filtered` tells "nothing matches"
- * apart from "nothing started". A row's `step` is its next step, only where
- * the row's own fields say there is one: checks that failed on a change still
- * underway or up for a vote (`checkState: 'failing'`) are fixed first, and a
- * paused session (its worker was stopped to free a slot) is picked up again
- * from its page. Whether a session is ready to put to a vote is not in it.
- */
-export function proposalsView(data, now = Date.now(), filter = {}) {
-  const buckets = data && data.proposals && typeof data.proposals === 'object'
-    ? data.proposals : null;
-  if (!buckets) {
-    return { loaded: false, sections: [], empty: true, filtered: false, stages: [], projects: [] };
-  }
-  const rowsOf = (key) => (Array.isArray(buckets[key]) ? buckets[key] : [])
-    .filter((row) => row && row.appSlug && Number(row.sessionId) > 0)
-    .map((row) => ({ row, key }));
-  const shape = ({ row, key }) => {
-    const app = row.appName || row.appSlug;
-    const when = mergedAgo(row.at, now);
-    let where = when;
-    if (key === 'openForVote') {
-      // Approved and on its way (merging, or merged and not yet running):
-      // the vote is over, so it is not "waiting for approval" any more.
-      where = row.status === 'merging' || row.status === 'merged'
-        ? t('profile:changes.state.goingLive') : t('profile:changes.state.waiting');
-    } else if (key === 'inProgress') {
-      where = row.status === 'paused' ? t('profile:changes.state.paused') : t('profile:changes.state.inProgress');
-    } else if (key === 'closed') where = t('profile:changes.state.closed');
-    const slug = encodeURIComponent(row.appSlug);
-    const id = Number(row.sessionId);
-    // A change nobody named yet goes by its pull request's title, else its
-    // number, and says which project it is for rather than a bare "Change";
-    // the line under it then need not name the project again.
-    const named = row.title || row.prTitle || '';
-    const untitled = !named;
-    const pr = Number(row.prNumber);
-    let title = String(named);
-    if (untitled) {
-      title = Number.isSafeInteger(pr) && pr > 0
-        ? t('profile:changes.untitledPr', { number: pr, project: app })
-        : t('profile:changes.untitled', { project: app });
-    }
-    // Failing checks hold a change back before anything else does, so they
-    // outrank picking a paused session up again; one step per row at most.
-    const stillOpen = key === 'inProgress' || (key === 'openForVote' && row.status !== 'merging' && row.status !== 'merged');
-    let step = null;
-    if (stillOpen && row.checkState === 'failing') step = t('profile:changes.step.fixChecks');
-    else if (key === 'inProgress' && row.status === 'paused') step = t('profile:changes.step.continue');
-    return {
-      key: String(row.sessionId),
-      href: key === 'inProgress' ? `#app/${slug}/dev/sessions/${id}` : `#app/${slug}/dev/proposals/${id}`,
-      title,
-      meta: factLine(untitled ? [where] : [app, where]) || '',
-      stage: key,
-      step,
-      // The project's own icon leads the row, so one list across every
-      // project still reads project by project (#3364). In app-card.js's
-      // field names, which is what AppIconContent draws from.
-      app: {
-        slug: row.appSlug,
-        name: app,
-        icon_emoji: row.appIconEmoji || null,
-        icon_url: row.appIconUrl || null,
-      },
-      at: Date.parse(row.at || '') || 0,
-    };
-  };
-  const all = {};
-  for (const key of CHANGE_STAGES) all[key] = rowsOf(key).map(shape);
-
-  const projects = [];
-  const seen = new Set();
-  for (const key of CHANGE_STAGES) {
-    for (const row of all[key]) {
-      if (seen.has(row.app.slug)) continue;
-      seen.add(row.app.slug);
-      projects.push({ slug: row.app.slug, name: row.app.name });
-    }
-  }
-  projects.sort((x, y) => String(x.name).localeCompare(String(y.name)));
-  const stages = CHANGE_STAGES.filter((key) => all[key].length > 0);
-
-  const project = filter && seen.has(filter.project) ? filter.project : '';
-  const stage = filter && CHANGE_STAGES.includes(filter.stage) ? filter.stage : 'all';
-  const pick = (key) => (project ? all[key].filter((row) => row.app.slug === project) : all[key]);
-
-  let sections;
-  if (stage === 'all') {
-    const underway = pick('openForVote').concat(pick('inProgress')).sort((x, y) => y.at - x.at);
-    sections = [
-      { key: 'inProgress', label: t('profile:changes.group.inProgress'), rows: underway },
-      { key: 'merged', label: t('profile:changes.group.live'), rows: pick('merged') },
-      { key: 'closed', label: t('profile:changes.group.closed'), rows: pick('closed') },
-    ];
-  } else {
-    const rows = pick(stage);
-    sections = [{ key: stage, label: t(CHANGE_STAGE_LABELS[stage]), rows }];
-  }
-  sections = sections.filter((section) => section.rows.length > 0);
-  const started = stages.length > 0;
-  return {
-    loaded: true,
-    sections,
-    empty: sections.length === 0,
-    filtered: started && sections.length === 0,
-    stages,
-    projects,
-    stage,
-    project,
-  };
-}
-
-/** Where a request stands, as its line says it. See MY_REQUESTS_SQL in
- *  src/routes/profile.js for what each is read from. */
-const REQUEST_STATE = {
-  waiting: 'profile:requests.state.waiting',
-  underway: 'profile:requests.state.underway',
-  shipped: 'profile:requests.state.shipped',
-  closed: 'profile:requests.state.closed',
-};
-
-/**
- * "Your requests" (UI overhaul; it was "Your feedback", #3186): every
- * request the viewer asked for, from the Suggest an improvement dialog or a
- * board, from GET /api/me/requests. Open (nobody on it yet, or someone is),
- * then Done (shipped, or closed by a vote). Each opens the request.
- */
-export function requestsView(data) {
-  const list = data && Array.isArray(data.requests) ? data.requests : null;
-  if (!list) return { loaded: false, sections: [], empty: true, truncated: false };
-  const rows = list.filter((r) => r && Number(r.number) > 0).map((r) => {
-    const slug = typeof r.appSlug === 'string' && APP_SLUG.test(r.appSlug) ? r.appSlug : null;
-    const state = REQUEST_STATE[r.state] ? r.state : 'waiting';
-    return {
-      key: `${r.appSlug || ''}#${r.number}`,
-      href: slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${Number(r.number)}` : null,
-      title: r.title ? String(r.title) : t('profile:requests.fallbackTitle', { number: Number(r.number) }),
-      meta: factLine([r.appName || t('profile:requests.anApp'), t(REQUEST_STATE[state])]),
-      done: state === 'shipped' || state === 'closed',
-    };
-  });
-  const sections = [
-    { key: 'open', label: t('profile:requests.group.open'), rows: rows.filter((r) => !r.done) },
-    { key: 'done', label: t('profile:requests.group.done'), rows: rows.filter((r) => r.done) },
-  ].filter((section) => section.rows.length > 0);
-  return { loaded: true, sections, empty: sections.length === 0, truncated: !!data.truncated };
-}
-
-/** What a vote was on, in the words its row leads with. */
+/** What a vote was cast on, by its title: the Your votes row's latest one. */
 function voteTitle(item) {
   if (item.type === 'pr_vote') {
     const pr = item.pr || {};
@@ -698,88 +518,6 @@ function voteTitle(item) {
   }
   const issue = item.issue || {};
   return issue.title ? String(issue.title) : t('profile:votes.title.decision');
-}
-
-/** Whether the thing voted on is still being decided. */
-function voteOpen(item) {
-  if (item.type === 'pr_vote') {
-    // #6101: a merge (or close) already written is decided, whatever status
-    // the row still carries: a list read before it merged must not keep it
-    // under Still open.
-    if (item.merged_at || item.closed_at) return false;
-    return item.status === 'promoted' || item.status === 'merging';
-  }
-  return item.status === 'open';
-}
-
-/** How it was decided, once it was. */
-function voteOutcome(item) {
-  if (item.type === 'pr_vote') {
-    if (item.status === 'merged') return t('profile:votes.outcome.live');
-    // Merged, its deploy still to come (api/me/history).
-    if (item.status === 'going_live') return t('profile:votes.outcome.goingLive');
-    // A row whose status has not caught up with its merged_at: the merge
-    // happened, the deploy is still to come.
-    if (item.merged_at) return t('profile:votes.outcome.goingLive');
-    return t('profile:votes.outcome.closed');
-  }
-  return t('profile:votes.outcome.decided');
-}
-
-/** The side a vote took, in the words the row says: a request or group
- *  decision is voted up/down (routes/issues.js), a change yes/no. */
-function voteSide(vote) {
-  if (vote === 'yes' || vote === 'up') return 'yes';
-  if (vote === 'no' || vote === 'down') return 'no';
-  return null;
-}
-
-/**
- * "Your votes" (UI overhaul; it was a filter of Kudos › My history): the
- * changes and group decisions the viewer voted on, from GET
- * /api/me/history?type=votes. Still open, then Decided, by where the target
- * stands now. Every vote CAST is a row (#6102): a vote changed, or cleared
- * by a new version, is still listed, so one change can have two rows, one
- * per side, newest first, and each row says the day it was cast. The
- * server keys each item (`key`); the row's key is that, so two casts on
- * the same change are told apart.
- */
-export function votesView(data, now = Date.now()) {
-  const items = data && Array.isArray(data.items) ? data.items : null;
-  if (!items) return { loaded: false, sections: [], empty: true, more: false };
-  const rows = items
-    .filter((item) => item && (item.type === 'pr_vote' || item.type === 'proposal_vote'))
-    .map((item, index) => {
-      const app = item.app || {};
-      const slug = typeof app.slug === 'string' && APP_SLUG.test(app.slug) ? app.slug : null;
-      const open = voteOpen(item);
-      const vote = voteSide(item.vote);
-      const meta = [app.name || app.slug || t('profile:votes.anApp')];
-      if (vote) meta.push(vote === 'yes' ? t('profile:votes.votedYes') : t('profile:votes.votedNo'));
-      const when = mergedAgo(item.created_at, now);
-      if (when) meta.push(when);
-      if (!open) meta.push(voteOutcome(item));
-      let href = null;
-      if (slug && item.type === 'pr_vote' && Number(item.pr && item.pr.sessionId) > 0) {
-        href = changeHref(slug, item.pr.sessionId, item.pr.number);
-      } else if (slug && item.type === 'proposal_vote' && Number(item.issue && item.issue.id) > 0) {
-        href = `#app/${encodeURIComponent(slug)}/dev/governance/${Number(item.issue.id)}`;
-      }
-      return {
-        key: typeof item.key === 'string' && item.key
-          ? item.key
-          : `${item.type}:${(item.pr && item.pr.sessionId) || (item.issue && (item.issue.id || item.issue.number)) || index}:${index}`,
-        href,
-        title: voteTitle(item),
-        meta: factLine(meta),
-        open,
-      };
-    });
-  const sections = [
-    { key: 'open', label: t('profile:votes.group.open'), rows: rows.filter((r) => r.open) },
-    { key: 'decided', label: t('profile:votes.group.decided'), rows: rows.filter((r) => !r.open) },
-  ].filter((section) => section.rows.length > 0);
-  return { loaded: true, sections, empty: sections.length === 0, more: !!data.nextBefore };
 }
 
 /** The opt-in public profile's owner controls (#582). */

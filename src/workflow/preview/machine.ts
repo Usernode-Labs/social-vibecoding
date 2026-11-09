@@ -30,6 +30,7 @@ import type { SessionRoute } from '../pushes.ts';
 import * as store from '../rules/check-store.ts';
 import * as rowStore from './check-store.ts';
 import { createCheckFailedNotification } from '../rules/change-notifications.ts';
+import { createPrProposedNotifications } from '../rules/proposal-notifications.ts';
 import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
 import { withinAutoRetries } from '../rules/check-retries.ts';
 import { OPEN, readFacts } from './facts.ts';
@@ -38,8 +39,10 @@ import { NOT_MOVING_KINDS } from '../session-work.ts';
 
 export const MACHINE = 'preview';
 export const sessionKey = (sessionId: number) => `session:${sessionId}`;
+export const wakeKey = (eventId: number) => `wake:${eventId}`;
 
 export const WORK = Object.freeze({
+  wake: 'preview.wake',
   prepare: 'preview.prepare',
   // The repo's unit suite, started with the build of an attempt and read by
   // the checks run against it (services.ts).
@@ -153,6 +156,8 @@ const REQUEST_REASONS: ReadonlySet<string> = new Set(['ensure', 'deploy', 'previ
 const optInt = (v: unknown, what: string) => (v == null ? null : int(v, what));
 
 const EVENTS = {
+  WakeRequested: (p: any) => ({ sessionId: int(p?.sessionId, 'sessionId'),
+    reason: word(p?.reason, 'reason'), repairRoute: p?.repairRoute === true }),
   // A head announced by any source (a turn, an upload, an update, a sync,
   // an imported pull request, the merge gate, fleet, recovery).
   // `carryFrom`: a mechanical merge of main into a tested head (votes.js
@@ -1089,6 +1094,11 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       : toRetiring(s, 'stale-env', false, ctx, deps)),
   };
   const house = (name: Name): Record<string, Entry> => ({
+    WakeRequested: SERVES.has(name) ? {
+      guard: (s, e, f) => s.data.serving && f.session && OPEN.has(f.session.status) ? ok() : reject('not_serving'),
+      to: (s, e) => step({ name, data: s.data, work: [{ kind: WORK.wake, key: wakeKey(e.id),
+        input: { sessionId: s.data.sessionId, reason: e.payload.reason, repairRoute: e.payload.repairRoute } }] }),
+    } : notHere('not_serving'),
     IdleDue: SERVES.has(name) ? idleDue : notHere('not_serving'),
     ChecksDue: name === 'settled' || name === 'idle' ? checksDue : notHere('not_owed_here'),
     EnvStale: SERVES.has(name) ? envStale : notHere(name === 'preparing' || name === 'checking' ? 'busy' : 'not_serving'),
@@ -1637,13 +1647,14 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     // 8: a preview lost again soon after it was rebuilt is its head's error
     // (lostAgain), counted by `losses`, which an older Pod would neither keep
     // nor read: it would rebuild such a preview every time it is lost.
-    version: 8,
+    // 9: request-triggered wakes are conductor work, including route repair.
+    version: 9,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared', 'RecheckFolded'],
     // What web appends: a revision or a preview asked for, a recheck, what the
     // ensure-staging and recheck routes find, a hand-off's build, a demo reset,
     // and the admin console's actions.
-    web: ['RevisionSubmitted', 'PreviewRequested', 'RecheckRequested', 'ChecksSkipped', 'RecheckFolded', 'PreviewLost', 'RetireRequested', 'OperationStarted', 'OperationEnded', 'AdminRetry', 'AdminRetire', 'AdminEnd'],
+    web: ['WakeRequested', 'RevisionSubmitted', 'PreviewRequested', 'RecheckRequested', 'ChecksSkipped', 'RecheckFolded', 'PreviewLost', 'RetireRequested', 'OperationStarted', 'OperationEnded', 'AdminRetry', 'AdminRetire', 'AdminEnd'],
     terminal: ['retired'],
     decode: (row) => ({ name: row.state, data: row.data } as PState),
     facts: (tx, state, event) => {
@@ -1655,6 +1666,7 @@ export function preview(deps: Deps): Machine<PState, Facts> {
       return readFacts(tx, id, { lock: !operation, holders: [...new Set(holders)] });
     },
     authorize: {
+      WakeRequested: system,
       RevisionSubmitted: producedOrProposal,
       PreviewRequested: produced,
       ChecksSkipped: produced,
@@ -1717,6 +1729,21 @@ async function buildCardOpen(tx: Tx, sessionId: number): Promise<boolean> {
         AND (metadata ? 'stagingBuild' OR metadata ? 'stagingUrl' OR metadata ? 'stagingFailed')
       ORDER BY id DESC LIMIT 1`, [sessionId]);
   return last?.build === 'running';
+}
+
+// #6402: the vote request goes out when the checks settle passing (or
+// skipped), not at promotion. `createPrProposedNotifications` itself checks
+// the row is promoted and ready, and dedupes per session, so a later
+// settlement of the same change never asks twice.
+async function notifyVoteReady(tx: Tx, sessionId: number, ctx: any) {
+  if (!ctx) return;
+  const { rows: [row] } = await tx.query(
+    `SELECT app_id, user_id FROM chat_sessions WHERE id = $1 AND status = 'promoted'`, [sessionId]);
+  if (!row) return;
+  const made = await createPrProposedNotifications(tx, {
+    appId: Number(row.app_id), sessionId, proposerId: row.user_id == null ? null : Number(row.user_id),
+  });
+  for (const n of made) ctx.push(toUser(Number(n.user_id), { type: 'notification_new', notificationId: Number(n.id) }));
 }
 
 const WRITES = {
@@ -1827,11 +1854,14 @@ const WRITES = {
   // capture outcome, the run's media, and the app's check history (counted
   // once per run). Nothing of it is written for a verdict about a head the
   // row has since left.
-  async settled(tx: Tx, w: any) {
+  async settled(tx: Tx, w: any, ctx: any) {
     const stored = await rowStore.storeChecks(tx, w.sessionId, w.head,
       { state: w.state, results: w.results, ...(w.platformFault ? { platformFault: true } : {}),
         ...(w.unitSuiteAbsent ? { unitSuiteAbsent: true } : {}) }, w.detail);
     if (!stored) { await dropMedia(tx, w.sessionId); return; }
+    // #6402: a passing (or skipped) verdict is the moment the change becomes
+    // votable, so the "new proposal" ping goes out here.
+    if (w.state === 'passing' || w.state === 'skipped') await notifyVoteReady(tx, w.sessionId, ctx);
     if (w.console) await rowStore.storeConsoleCheck(tx, w.sessionId, w.console, w.head);
     if (w.capture) await rowStore.storeCaptureOutcome(tx, w.sessionId, w.capture.state, w.capture.detail, w.head);
     if (w.media) await publishMedia(tx, w.sessionId, w.runId); else await dropMedia(tx, w.sessionId);
@@ -1873,7 +1903,11 @@ const WRITES = {
   carried: (tx: Tx, w: any) => tx.query('UPDATE chat_sessions SET checks_commit_sha = $2 WHERE id = $1', [w.sessionId, w.head]),
 
   // Nothing to test, against the row's pin as the transition read it.
-  skipped: (tx: Tx, w: any) => rowStore.storeChecksSkipped(tx, w.sessionId, w.head, w.reason, w.expected ?? null),
+  async skipped(tx: Tx, w: any, ctx: any) {
+    const stored = await rowStore.storeChecksSkipped(tx, w.sessionId, w.head, w.reason, w.expected ?? null);
+    if (stored) await notifyVoteReady(tx, w.sessionId, ctx);
+    return stored;
+  },
 
   // A promoted head that conflicts with main: previewed, verdict deferred.
   async deferred(tx: Tx, w: any) {

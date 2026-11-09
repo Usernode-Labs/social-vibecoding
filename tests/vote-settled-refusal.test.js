@@ -9,7 +9,7 @@
 //
 //   - the rows it painted keep the status the server reported (never a live
 //     Yes and No), and the page is repainted from them;
-//   - the lists are read fresh, and Your votes is told;
+//   - the lists are read fresh;
 //   - the caller hears `onSettled`, so a feed can drop the card;
 //   - the toast names the reason instead of the server's generic error.
 //
@@ -104,7 +104,7 @@ test('a promoted row that merged after the read: the refusal closes the card and
   assert.equal(reads, 1, 'the lists are read fresh');
   assert.deepEqual(AppView.__toasts, [message('changes:vote.toast.alreadyMerged')],
     'the toast names the merge, not the server\'s generic error');
-  assert.equal(AppView.__voted.length, 1, 'Your votes is told to move the row to Decided');
+  assert.equal(AppView.__voted.length, 0, 'no Your votes screen to tell: it is the Homeroom bot tab\'s History, read fresh when shown (5 Nov 2026)');
   assert.equal(AppView._pendingVotes.size, 0, 'nothing is held over later loads');
 });
 
@@ -154,5 +154,5 @@ test('a refusal that is not about the vote being over keeps today\'s rollback', 
   assert.deepEqual(settled, [], 'nothing is settled');
   assert.deepEqual(AppView.__toasts, ['This proposal changed while your vote was being recorded.'],
     'the server\'s own words are still said');
-  assert.equal(AppView.__voted.length, 0, 'Your votes is not re-read for an ordinary refusal');
+  assert.equal(AppView.__voted.length, 0, 'nothing is re-read for an ordinary refusal');
 });

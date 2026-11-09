@@ -5,7 +5,7 @@
  *
  * It draws the version shown in a sandboxed frame of the size it was
  * captured at, scaled to fit (../design/frame.ts says what the frame may
- * do), with a version picker; comments pinned on it; and Propose it, which
+ * do), with a version picker; comments pinned on it; and Request it, which
  * files the design as a request with its plan once the person has read what
  * becomes public.
  *
@@ -354,8 +354,24 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
 }
 
 /**
- * Propose it: what becomes public, said before it is; then the request it
- * filed. Also a compare card's Propose (./bot-cards/compare.tsx).
+ * What the Request card's "What changes, and why" starts with: the note of
+ * the version being filed, else the newest earlier one that says what
+ * changed. The capture's note marks the starting screen, not a change.
+ */
+export function startingNotes(design: DesignThread, version: number): string {
+  const earlier = design.versions
+    .filter((v) => v.version <= version && v.author !== 'capture' && v.note !== 'As it is now')
+    .sort((a, b) => b.version - a.version);
+  for (const v of earlier) {
+    const note = (v.note || '').trim();
+    if (note) return note;
+  }
+  return '';
+}
+
+/**
+ * Request it: what becomes public, said before it is; then the request it
+ * filed. Also a compare card's Request (./bot-cards/compare.tsx).
  */
 export function ProposeCard({ design, version, onClose, onDone }: {
   design: DesignThread;
@@ -365,7 +381,7 @@ export function ProposeCard({ design, version, onClose, onDone }: {
 }): ReactNode {
   const t = useMessages('messages');
   const [title, setTitle] = useState(() => t('messages:design.propose.defaultTitle', { title: design.title }));
-  const [notes, setNotes] = useState('');
+  const [notes, setNotes] = useState(() => startingNotes(design, version).slice(0, 2000));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const project = design.app?.name || design.app?.slug || '';

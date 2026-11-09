@@ -1,4 +1,5 @@
 import type { ReleaseOutlook } from '../../lib/release-eta';
+import type { WorkState } from '../../lib/work-state';
 import type { UnreadMark } from './unread-anchor';
 
 /**
@@ -65,6 +66,8 @@ export interface HomeroomBotMeta {
   card?: HomeroomBotCard;
   /** Homeroom bot parity, P1: what the reply looked at (./bot-looked.tsx). */
   looked?: HomeroomBotLooked;
+  /** Task 2020: a chat answer laid out as an HTML fragment, drawn in place of its words (./bot-html.tsx). */
+  html?: string;
   /** #6071: a design thread's version this message says (kind 'design_version'). */
   designVersion?: number;
   /** #6071: the screen a design thread is of (kind 'opened_design', and 1 Nov 2026 a version's and a drawn thread's line). */
@@ -85,13 +88,19 @@ export interface HomeroomBotMeta {
   issueTitle?: string;
   firstVersion?: boolean;
   mirrors?: boolean;
+  /**
+   * #6427: an offer that posts somewhere public, made in a thread where a
+   * database read happened (an admin's query_prod_db), says so before the
+   * tap (./bot-question.tsx DbReadNote).
+   */
+  dbRead?: boolean;
   question?: string;
   answers?: string[];
   status?: 'open' | 'answered' | 'closed';
   answer?: string;
   link?: string;
   // B3: the decision a message's `server` buttons settle
-  // (homeroom_bot_dm_actions.id), the buttons themselves, and which one was
+  // (bot_cards.id), the buttons themselves, and which one was
   // chosen. An activity card's start and its live state ride along too.
   actionId?: number;
   actions?: HomeroomBotAction[];
@@ -396,28 +405,15 @@ export interface HomeroomBotPastJob extends HomeroomBotJob {
   at: string | null;
 }
 
+/**
+ * The viewer's requests, one track each (GET /api/ai/tracks: each request's
+ * stored work state with what its card draws, services/homeroom-bot-track.js).
+ */
 export interface HomeroomBotWork {
-  now: HomeroomBotCurrentJob[];
-  needsYou: HomeroomBotPastJob[];
-  history: HomeroomBotPastJob[];
-  /**
-   * 16 Oct 2026: one track per request (services/homeroom-bot-track.js),
-   * which every surface draws. Absent from an older server's answer.
-   */
-  tracks?: BotTrack[];
+  tracks: BotTrack[];
 }
 
-/**
- * Where a request the Homeroom bot has is, as one track every surface draws
- * the same way (services/homeroom-bot-track.js). A loop: queued, planning,
- * building, checks, vote, going live, live, going back to `waiting` (on the
- * person) for a question and to `building` for its next try; or held at a
- * limit, stopped, done another way, or closed. Codes only: the client words
- * them (./bot-track.tsx).
- */
-export type BotTrackState =
-  | 'queued' | 'planning' | 'waiting' | 'building' | 'checks' | 'vote' | 'going_live' | 'live'
-  | 'held' | 'stopped' | 'done_elsewhere' | 'closed';
+/** The five steps a request's track bar draws (services/homeroom-bot-track.js). */
 export type BotTrackStep = 'plan' | 'build' | 'checks' | 'vote' | 'live';
 
 export interface BotTrack {
@@ -430,12 +426,16 @@ export interface BotTrack {
   issueNumber: number | null;
   title: string | null;
   firstVersion: boolean;
-  state: BotTrackState;
+  /**
+   * Where it stands: its stored work state (lib/work-state.ts), the same
+   * one every screen draws (5 Nov 2026).
+   */
+  work: WorkState;
   /** The step of the five its bar lights, or null for one before them all. */
   step: BotTrackStep | null;
-  /** Why it is where it is, as a code (bot.track.why.*), or null. */
-  why: string | null;
   waitingOn: 'you' | 'group' | null;
+  /** Why a build that did not finish stopped, as a code (homeroom-bot-track.js buildStopWhy). */
+  cause?: string;
   /**
    * Who a track waiting on "you" waits on, by username, where it is drawn
    * for somebody else (a request's page: homeroom-bot-track.js forViewer).
@@ -467,6 +467,8 @@ export interface BotTrack {
   links: HomeroomBotLinks;
   /** `by`: who has it, for a request a person took (limit 'taken'). */
   held?: { limit: string; position: number | null; until: string | null; by?: string | null };
+  /** #6357: paused after repeated errors (line `cooldown`): when Homeroom bot tries again. */
+  retryAt?: string;
   queue?: { ahead: number };
   doneBy?: { username: string | null; prNumber: number | null };
   release?: ReleaseOutlook;
@@ -793,6 +795,13 @@ export interface ConversationSummary {
    * invitation, whose unread state is hidden, and from an older server.
    */
   lastReadMessageId?: number | null;
+  /**
+   * #6426: when the viewer last looked at this conversation, as the server
+   * records it (its read state). Main Chat's "Welcome back" card shows after
+   * eight hours away. Absent from an older server, and hidden on an
+   * invitation like the read cursor.
+   */
+  lastVisitAt?: string | null;
   /**
    * QA 2026-09-24 Q2: the viewer asked for this direct conversation and the
    * other person has not accepted yet. One opening message is allowed; after

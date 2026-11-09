@@ -11,6 +11,7 @@ import { activeUserIds } from './electorate.ts';
 import { appMetaFromRow } from './governance-gate.ts';
 import { allowsKind, filterUsersByCategory } from './notification-preferences.ts';
 import { firstVersionSql } from './first-version.ts';
+import { voteReadySql } from './vote-ready.ts';
 
 export interface NotificationRow {
   id: number; user_id: number; app_id: number | null; session_id: number | null; source_user_id: number | null;
@@ -51,9 +52,10 @@ async function onlyCollaborators(db: Queryable, appId: number, userIds: number[]
 // favoriters: everyone active anywhere counts as active on it, and asking
 // them all would ping the whole platform on every self-edit. Muted
 // recipients (the new_proposals category, off by default) are left out, a
-// recipient already asked about this proposal is not asked again, and
-// nobody is asked to vote on a project's first version (it goes live
-// without one).
+// recipient already asked about this proposal is not asked again, nobody is
+// asked to vote on a project's first version (it goes live without one), and
+// nobody is asked before its checks pass and it merges cleanly with main
+// (#6402; the preview machine calls this when the verdict settles).
 export async function createPrProposedNotifications(
   db: Queryable, { appId, sessionId, proposerId }: { appId: number; sessionId: number; proposerId: number | null },
   deps: FanOutDeps = {},
@@ -64,7 +66,7 @@ export async function createPrProposedNotifications(
   const { rows: extra } = await db.query(
     `SELECT created_by AS id FROM apps WHERE id = $1 AND created_by IS NOT NULL
      UNION
-     SELECT user_id AS id FROM app_favorites WHERE app_id = $1`,
+     SELECT user_id AS id FROM app_stakes WHERE app_id = $1`,
     [appId]);
   const all = new Set<number>([...active.map(Number), ...extra.map((r) => Number(r.id))]);
   if (proposerId != null) all.delete(Number(proposerId));
@@ -82,6 +84,15 @@ export async function createPrProposedNotifications(
       )
         AND NOT EXISTS (
           SELECT 1 FROM chat_sessions cs WHERE cs.id = $3 AND ${firstVersionSql('cs')}
+        )
+        -- #6402: ask for a vote only once the change is ready to be reviewed:
+        -- its checks passed (or it had nothing to test) and it merges
+        -- cleanly with main. The proposal machine's proposed write at
+        -- promotion is then a no-op, and the preview machine calls this
+        -- again when the verdict settles.
+        AND EXISTS (
+          SELECT 1 FROM chat_sessions cs
+           WHERE cs.id = $3 AND cs.status = 'promoted' AND ${voteReadySql('cs')}
         )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
     [ids, appId, sessionId, proposerId ?? null]);

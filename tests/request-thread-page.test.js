@@ -137,6 +137,19 @@ test('an empty stream says so once its history is in, and "Loading replies…" b
   assert.match(renderComponent(TRANSCRIPT, 'RequestRows', { view: { lead: lead(false), messages: [] } }), /Loading replies…/);
 });
 
+// #6421: a thread may hold several requests. A reply written on another one
+// is tagged with it, so the merged discussion still says where each word was
+// written.
+test('a reply written on another request of the merged thread is tagged with it', () => {
+  const lead = { earlier: false, placeholder: null, language: 'request', request: { loaded: true, githubMore: null } };
+  const html = renderComponent(TRANSCRIPT, 'RequestRows', { view: { lead, messages: [
+    row({ id: 1, username: 'sam', bodyHtml: '<p>Dawn is better</p>', requestOf: { number: 6212 } }),
+    row({ id: 2, username: 'evan', bodyHtml: '<p>On this one</p>' }),
+  ] } });
+  assert.match(html, /data-msg-on-request="6212"[^>]*>on #6212</);
+  assert.doesNotMatch(html, /On this one[\s\S]*data-msg-on-request/, 'the page\'s own request carries no tag');
+});
+
 const requestView = (status) => ({
   number: 4417, category: 'Communities & projects', menuKey: 'request:4417', asker: 'evan',
   askedAt: '2026-10-08T14:01:11Z', askedTime: '04:01 PM', askedTitle: 'Oct 8, 2026, 04:01 PM',
@@ -189,6 +202,41 @@ function appView(username = 'evan', globals = {}) {
   };
   c.window = c;
   c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  vm.createContext(c);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8'), c);
+  vm.runInContext('globalThis.av = AppView', c);
+  c.av.appData = { slug: 'example', can_collaborate: true };
+  c.av._govProposals = [];
+  return c.av;
+}
+
+/** app-view.js in a sandbox whose `location` and `querySelector` a test owns. */
+function sandboxAppView(location, query, fetchImpl) {
+  const c = {
+    console,
+    App: { user: { id: 42, username: 'evan' }, currentApp: 'example' },
+    relTime: () => 'just now',
+    document: {
+      getElementById: () => null,
+      querySelector: (sel) => query[sel] || null,
+      querySelectorAll: () => ({ forEach: () => {} }),
+      addEventListener() {},
+      createElement: () => ({ style: {}, classList: { add() {}, remove() {} } }),
+      body: { appendChild: () => {} },
+      documentElement: {},
+    },
+    localStorage: { getItem: () => null, setItem: () => {} },
+    addEventListener() {},
+    dispatchEvent() {},
+    CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init && init.detail; } },
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    fetch: fetchImpl || (async () => ({ ok: true, json: async () => ({}) })),
+    location, URLSearchParams,
+  };
+  c.window = c;
+  c.globalThis = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  require('./lib/repo-link').installRepoLink(c);
   vm.createContext(c);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8'), c);
   vm.runInContext('globalThis.av = AppView', c);
@@ -280,6 +328,73 @@ test('the status card asks the bot no more once its change waits for approval', 
   assert.equal(built.action.act, undefined);
 });
 
+// #6399: the status card and the track card said different things at once:
+// "WAITING FOR YOU TO DECIDE" beside "Nobody is working on this yet." with
+// Ask Homeroom bot to build this. The status card now reads the same track.
+test('#6399 the status card agrees with the track when Homeroom bot waits for you', () => {
+  const av = appView();
+  av._ghIssuesMeta = { homeroomBot: { typicalMinutes: 7 } };
+  const reason = 'A design decision: the request does not say which of the two layouts to keep.';
+  const track = (why, line, since = '2026-11-05T11:19:00Z') => ({ work: { stage: 'waiting_for_you', why, line, since } });
+
+  const decide = av._requestStatusView(issue({ track: track('decide', { code: 'reason', text: reason }) }));
+  assert.equal(decide.lead, `Waiting for you to decide. ${reason}`);
+  assert.equal(decide.action.label, 'Go ahead');
+  assert.deepEqual(JSON.parse(JSON.stringify(decide.action.act)),
+    { fn: 'answerBotOnRequest', args: [4417, 0, 1, 'Go ahead'] });
+  assert.equal(decide.botSays, true);
+  assert.equal(decide.ownAgent, false);
+  assert.notEqual(decide.lead, 'Nobody is working on this yet.');
+
+  // Its note in the thread is the reply Go ahead goes to.
+  const noted = av._requestStatusView(issue({
+    botAwaits: { kind: 'person', messageId: 9 }, track: track('decide', { code: 'reason', text: reason }),
+  }));
+  assert.deepEqual(JSON.parse(JSON.stringify(noted.action.act)),
+    { fn: 'answerBotOnRequest', args: [4417, 9, 1, 'Go ahead'] });
+
+  // Waiting for more detail replies to it instead.
+  const detail = av._requestStatusView(issue({ track: track('needs_detail', { code: 'reason', text: 'It needs the screen to change.' }) }));
+  assert.equal(detail.lead, 'Waiting for more detail from you. It needs the screen to change.');
+  assert.equal(detail.action.label, 'Reply to Homeroom bot');
+  assert.deepEqual(JSON.parse(JSON.stringify(detail.action.act)), { fn: 'answerBotOnRequest', args: [4417, 0, 1] });
+
+  // A held queue row keeps its own sentence, as before.
+  assert.equal(av._requestStatusView(issue({ track: { work: { stage: 'reading', why: null, line: { code: 'on_hold' }, since: null } } })).lead,
+    'On hold until Monday: this week\'s building time is used up');
+
+  // A person's session on it wins over the stored track.
+  const worked = av._requestStatusView(issue({
+    in_progress: { claims: [{ username: 'evan', mine: true, claimedAt: '2026-11-05T11:00:00Z' }], sessions: [], users: [], count: 0 },
+    track: track('decide', { code: 'reason', text: reason }),
+  }));
+  assert.equal(worked.lead, 'You’re working on this.');
+
+  // Read-only viewers see the sentence and no action.
+  av.appData = { slug: 'example', can_collaborate: false };
+  const readOnly = av._requestStatusView(issue({ track: track('decide', { code: 'reason', text: reason }) }));
+  assert.equal(readOnly.lead, `Waiting for you to decide. ${reason}`);
+  assert.equal(readOnly.action, null);
+});
+
+// #6399: #6351's reason named a limit Homeroom lifted on 6 Nov 2026. The
+// card says so and offers to read the request again.
+test('#6399 an out-of-date hand-back reason offers to read it again', () => {
+  const av = appView();
+  const stale = av._requestStatusView(issue({
+    track: {
+      work: {
+        stage: 'waiting_for_you', why: 'decide', since: '2026-11-05T11:19:00Z',
+        line: { code: 'reason', text: 'version 3 plan cannot be read here', outdated: 'posted_plan' },
+      },
+    },
+  }));
+  assert.equal(stale.note, 'Homeroom bot can read posted plans now, so this may be out of date.');
+  assert.equal(stale.action.label, 'Ask Homeroom bot to read this again');
+  assert.deepEqual(JSON.parse(JSON.stringify(stale.action.act)), { fn: 'askBotToReadAgain', args: [4417] });
+  assert.notEqual(stale.action.label, 'Ask Homeroom bot to build this');
+});
+
 // One request, one story: the status card says what is really happening.
 test('the status card says what Homeroom bot is really doing, or waiting for', () => {
   const av = appView();
@@ -309,9 +424,116 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   const button = (bot) => av._issuePrimaryActionSpec(issue({ bot }), { noNav: true });
   // #6210: a plan opens its request's page at the plan, for anyone.
   assert.equal(button({ what: 'queued', plan: true, askedBy: 'sam' }).label, 'See the plan');
-  assert.equal(JSON.stringify(button({ what: 'queued', plan: true, askedBy: 'sam' }).act), JSON.stringify({ fn: 'openBotChatFromRequest', args: [issue().number] }));
+  assert.equal(JSON.stringify(button({ what: 'queued', plan: true, askedBy: 'sam' }).act), JSON.stringify({ fn: 'openBotChatFromRequest', args: [issue().number, 'plan'] }));
+  // #6401: See progress names the progress card, not the plan.
+  assert.equal(JSON.stringify(button({ what: 'building', askedBy: 'sam', mine: true }).act), JSON.stringify({ fn: 'openBotChatFromRequest', args: [issue().number, 'progress'] }));
   assert.equal(button({ what: 'queued', held: true }).label, 'Homeroom bot will build this');
   assert.equal(button({ what: 'queued' }).label, 'Homeroom bot is on it');
+});
+
+// #6401: pressing See progress from the Workshop list does not redraw the
+// page when the side panel is already on it (its route is the path, the hash
+// empty), lands on the card the label names even when the plan is there, and
+// outlines that card.
+test('#6401 See progress and See the plan land on the card their label names, without redrawing the page', () => {
+  const calls = [];
+  const card = (track) => ({
+    getAttribute: (name) => (name === 'data-request-track' ? track : null),
+    scrollIntoView: (opts) => calls.push({ card: track || 'plan', scroll: opts }),
+    animate: (frames, opts) => calls.push({ card: track || 'plan', animate: opts, frames }),
+  });
+  const location = { hash: '', pathname: '/app/example/dev/issues/4417' };
+  const query = { '.dev-request-track': card('reading'), '[data-request-plan]': card(null) };
+  const av = sandboxAppView(location, query);
+  av.openBotChatFromRequest(4417, 'progress');
+  assert.equal(location.hash, '', 'the side panel is already on the request: no hash, no redraw');
+  assert.equal(calls[0].card, 'reading');
+  assert.equal(calls[0].scroll.block, 'center');
+  assert.equal(calls[0].scroll.behavior, 'smooth');
+  assert.equal(calls[1].card, 'reading', 'the progress card, not the plan card beside it');
+  assert.equal(calls[1].animate.duration, 1600);
+  assert.match(calls[1].frames[0].outline, /^3px solid /);
+  assert.equal(calls[1].frames[2].outline, '3px solid transparent', 'it fades back to normal');
+
+  // See the plan lands on the plan, with no fallback to the progress card.
+  calls.length = 0;
+  av.openBotChatFromRequest(4417, 'plan');
+  assert.equal(location.hash, '');
+  assert.deepEqual(calls.map((c) => c.card), ['plan', 'plan']);
+
+  // From the board, the hash is written and the page draws.
+  const board = { hash: '#app/example/dev/workshop', pathname: '/app/example/dev/workshop' };
+  const away = sandboxAppView(board, query);
+  away.openBotChatFromRequest(4417, 'progress');
+  assert.equal(board.hash, '#app/example/dev/issues/4417');
+});
+
+// #6401: the progress card drawn from the board's older row (`pending`) is
+// not landed on: the loop waits for the fresh row.
+test('#6401 a pending progress card is waited for, not scrolled to', () => {
+  const calls = [];
+  const pending = {
+    getAttribute: () => 'pending',
+    scrollIntoView: () => calls.push('scroll'),
+    animate: () => calls.push('animate'),
+  };
+  const av = sandboxAppView({ hash: '#app/example/dev/issues/4417', pathname: '/' },
+    { '.dev-request-track': pending, '[data-request-plan]': null });
+  av.openBotChatFromRequest(4417, 'progress');
+  assert.deepEqual(calls, [], 'the hidden card holds its place unseen');
+});
+
+// #6387: a change whose checks failed cannot go live, however many yes votes
+// it still needs; the status card says that instead of counting them.
+test('#6387 the status card says a failing check holds the change back', () => {
+  const av = appView();
+  av.voteState = { bySession: { 9: { id: 9, status: 'promoted' } }, byPrNumber: {} };
+  av.statusPillState = () => ({ yes: 1, majority: 3 });
+  const change = { sessionId: 9, state: 'review', prNumber: 12, title: 'Topics' };
+  const failing = { work: { stage: 'checking', line: { code: 'checks_failing', failing: 1 } } };
+  assert.equal(av._requestStatusView(issue({ addressed_by: change, track: failing })).lead,
+    'Up for a vote, but a test is failing. It needs a fix before it can go live.');
+  assert.equal(av._requestStatusView(issue({ addressed_by: change, track: { work: { stage: 'checking', line: { code: 'checks_running' } } } })).lead,
+    'Up for a vote: needs 2 more yes.', 'a check that has not failed counts the votes as before');
+  assert.equal(av._requestStatusView(issue({ addressed_by: change })).lead, 'Up for a vote: needs 2 more yes.');
+});
+
+test('#6387 the row says a change is expected, so the page can hold its place', () => {
+  const av = appView();
+  assert.equal(av._requestStatusView(issue()).changeExpected, false);
+  assert.equal(av._requestStatusView(issue({ addressed_by: { sessionId: 9, state: 'review', prNumber: 12 } })).changeExpected, true);
+  assert.equal(av._requestStatusView(issue({ addressed_by: { sessionId: 9, state: 'underway' } })).changeExpected, true);
+});
+
+test('#6387 the page holds the change section\'s place while its thread loads', () => {
+  const head = fs.readFileSync(path.join(__dirname, '..', HEAD), 'utf8');
+  assert.match(head, /const holding = !r\.status\.closed && !!r\.status\.changeExpected && threadRead\.loading;/);
+  // The held place counts as a working section, so the status card, the plan
+  // and the bot's track give way to it as they do once it has loaded.
+  assert.match(head, /const working = layout\.changes\.length > 0 \|\| \(!!layout\.close && layout\.close\.status === 'open'\) \|\| holding;/);
+  assert.match(head, /\) : holding \? \(\s+<ChangeSectionSkeleton \/>/);
+});
+
+// #6385: posting a plan writes a branchless planning record, and that is not
+// work on the request. With the route no longer reporting it as in_progress
+// or as myPrSessionId, the card reads like any request nobody has started:
+// "Nobody is working on this yet." and the start it would offer anyway.
+test('a request where you only posted a plan offers a start, not Continue your work', () => {
+  const i18n = require('./lib/platform-i18n').englishPlatformI18n();
+  const av = appView();
+  const onlyPlan = issue({ in_progress: null, myPrSessionId: null });
+  const view = av._requestStatusView(onlyPlan);
+  assert.equal(view.lead, i18n.t('changes:request.status.lead.nobody'));
+  assert.ok(view.action, 'the card still offers the next step');
+  assert.notEqual(view.action.label, i18n.t('changes:request.status.action.continueWork'));
+  assert.notEqual(view.action.act && view.action.act.fn, 'openChangeWorkspace',
+    'nothing opens a change workspace that does not exist');
+  // "Build it with your own Claude Code" is offered again, as for anyone else.
+  assert.equal(view.ownAgent, true);
+  av._ghIssues = [onlyPlan];
+  const labels = JSON.parse(JSON.stringify(av._requestMenuItems(onlyPlan).map((item) => item.label)));
+  assert.ok(!labels.includes(i18n.t('changes:issue.menu.startMore')),
+    '⋯ does not offer Start more work because of a posted plan');
 });
 
 // #5987: "Build it with your own Claude Code" is offered only where starting
@@ -372,6 +594,26 @@ test('GitHub comments become stream rows; Homeroom bot\'s spec rides as githubSp
   assert.equal(out.rows[1].githubSpec.title, 'Topics');
   assert.equal(out.rows[1].bodyHtml, '');
   assert.equal(av._requestThreadRows(1), null, 'nothing until the comments are in hand');
+});
+
+// #6497: the request's first page brings its GitHub comments with it
+// (`request_comments`), so the page's one render draws the whole discussion.
+test('#6497: a request\'s first-page comments fill the cache the stream draws from', () => {
+  const av = appView();
+  av._ghIssues = [issue({ number: 6497, htmlUrl: 'https://github.com/o/r/issues/6497' })];
+  assert.equal(av._requestThreadRows(6497), null, 'nothing until the first page lands');
+  av._takeIssueComments('example', 6497, {
+    truncated: false,
+    comments: [{ id: 21, author: 'maztrilover', body: 'in dribs', createdAt: '2026-11-09T10:00:00Z' }],
+  });
+  const out = av._requestThreadRows(6497);
+  assert.equal(out.rows.length, 1, 'the comments are in hand for the same render');
+  assert.equal(out.rows[0].username, 'maztrilover');
+  assert.equal(out.rows[0].key, '21');
+  assert.equal(out.truncated, false);
+  // Keyed by app, never by number alone (#4178): another app's copy is its own.
+  av._takeIssueComments('other', 6497, { comments: [{ id: 22, author: 'x', body: 'y' }] });
+  assert.equal(av._requestThreadRows(6497).rows[0].key, '21');
 });
 
 // #6020 / #6021: on a native request Homeroom writes its comments as
@@ -519,6 +761,56 @@ test('GitHub comments are slotted into the thread by time, and the thread\'s own
   assert.deepEqual(merged, [1, 'a', 2, 3, 4, 'b']);
 });
 
+// #6497: a request's first page is read whole (the server's 500 ceiling) and
+// carries its comments, which are taken before the one render — no separate
+// comments fetch after paint.
+test('#6497: a request\'s first page takes its comments in the same read', async () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'group-chat.js'), 'utf8');
+  const taken = [];
+  const urls = [];
+  const payload = {
+    truncated: false,
+    comments: [{ id: 7, author: 'maztrilover', body: 'in dribs', createdAt: '2026-11-09T10:00:00Z' }],
+  };
+  const sandbox = {
+    location: { search: '', protocol: 'http:', host: 'localhost' }, URLSearchParams,
+    document: {
+      getElementById: () => null, querySelector: () => null, querySelectorAll: () => [],
+      addEventListener() {}, createElement: () => ({ style: {} }), visibilityState: 'visible',
+    },
+    window: { matchMedia: () => ({ matches: false }) }, navigator: {},
+    localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
+    App: { user: { id: 1, username: 'alice' } },
+    AppView: { _takeIssueComments: (slug, ref, data) => taken.push([slug, ref, data]) },
+    fetch: async (url) => {
+      urls.push(url);
+      return {
+        ok: true, headers: { get: () => null }, text: async () => '',
+        json: async () => ({
+          messages: [{ id: 1, content: 'hi', msg_type: 'message', at: '2026-11-09T10:00:00Z' }],
+          has_more_before: false,
+          has_more_after: false,
+          request_comments: payload,
+        }),
+      };
+    },
+    console, setTimeout, clearTimeout, setInterval, clearInterval, Date, Math, JSON,
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`${src}\nglobalThis.__M = { GroupChat };`, sandbox);
+  const GroupChat = sandbox.__M.GroupChat;
+  GroupChat.appSlug = 'homeroom';
+  await GroupChat.loadThreadHistory('issue', 6497);
+  const page = urls.find((u) => u.includes('/messages?'));
+  assert.equal(page, '/api/apps/homeroom/messages?thread_type=issue&thread_ref=6497&limit=500',
+    'one read asks for the whole discussion');
+  assert.deepEqual(taken, [['homeroom', 6497, payload]],
+    'the comments are in hand before the render, from that same answer');
+  assert.equal(urls.filter((u) => u.includes('/github-issues/')).length, 0,
+    'no separate comments request');
+});
+
 // ── F18 (#5683): the bar names the request, and the plan card wraps ────
 
 test('the bar shows the request\'s own title under a kicker that says its number and how it ended', () => {
@@ -536,6 +828,18 @@ test('the bar shows the request\'s own title under a kicker that says its number
   assert.match(page, /<h1 class="dev-request-title" data-issue-title="4417">Add topics as discussion containers<\/h1>/);
 });
 
+test('the request bar publishes the page\'s pill and its ⋯ key for the column beside the bot page (#6431)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', HEAD), 'utf8');
+  // The bar itself does not change: the column's heading draws the pill and
+  // the rows beside the bot page, and this is what tells it which.
+  assert.match(src, /const menuKey = r\.menuKey \|\| threadMenu \? requestMenuKey\(r\.menuKey, r\.number\) : null;/);
+  assert.match(src, /usePanelHead\(\{ kind: 'request', pill, menuKey \}\);/);
+  assert.match(src, /data-card-menu=\{menuKey\}/, 'the page\'s ⋯ carries the same key it publishes');
+  const store = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/side-panel/head-store.ts'), 'utf8');
+  assert.match(store, /if \(!isEmbeddedPanel\(\)\) return undefined;/,
+    'and nothing is published where the page keeps its own bar');
+});
+
 test('the plan card\'s title and byline wrap in full rather than being cut off', () => {
   const html = renderComponent(HEAD, 'SpecCard', { card: {
     key: 's7296', title: 'Let cashiers split one bill between two payment methods', version: 1,
@@ -551,4 +855,88 @@ test('a plan Homeroom bot shared reads "Homeroom bot", not "homeroom_bot"', () =
   const { requestStream } = loadTsx(MODEL);
   const out = requestStream([row({ id: 1, kind: 'spec_share', specShare: specShare(1, { sharedBy: 'homeroom_bot' }) })]);
   assert.equal(out.specs[0].by, 'Homeroom bot');
+});
+
+// #6439: a vote to close a request is read on the request's page. Once it
+// has ended the card stays there and says how it ended, so the layout keeps
+// the latest ended close (the open one always wins) out of the list below.
+test('#6439 a request\'s page keeps the latest vote to close, open or ended', () => {
+  const { threadLayout, requestPill } = loadTsx('frontend/src/features/dev-board/topic/thread-model.ts');
+  const here = { type: 'request', id: 1 };
+  const payload = (items) => ({
+    thread: { id: 1, number: 4417, kind: 'work', lead: 'request', title: 'Add topics', state: 'open' },
+    items, follow: null,
+  });
+  const old = { type: 'close', id: 40, number: null, title: 'Close #4417', status: 'closed', replies: 2, outcome: 'closed' };
+  const newer = { type: 'close', id: 41, number: null, title: 'Close it again', status: 'closed', replies: 0, outcome: 'kept' };
+  const open = { type: 'close', id: 42, number: null, title: 'Close it', status: 'open', replies: 0, outcome: null };
+
+  const ended = threadLayout(payload([old]), here);
+  assert.equal(ended.close && ended.close.id, 40, 'an ended vote keeps its card');
+  assert.ok(!ended.listed.some((i) => i.id === 40), 'and is not listed a second time');
+  assert.equal(requestPill(ended, null, (id) => id), null, 'the header does not say a vote is on');
+
+  const many = threadLayout(payload([old, newer]), here);
+  assert.equal(many.close && many.close.id, 41, 'the latest ended vote is the one drawn');
+  assert.deepEqual(many.listed.map((i) => i.id), [40], 'older ended votes stay in the list below');
+
+  const live = threadLayout(payload([old, open]), here);
+  assert.equal(live.close && live.close.id, 42, 'an open vote wins over an ended one');
+  assert.deepEqual(live.listed.map((i) => i.id), [40]);
+  assert.equal(requestPill(live, null, (id) => id).key, 'close', 'the header says a vote is on');
+});
+
+test('#6439 a close vote\'s home is its request, and a rename keeps its own page', async () => {
+  const seen = [];
+  const av = sandboxAppView({ hash: '#app/example/dev/workshop', pathname: '/app/example/dev/workshop' }, {}, async (url) => {
+    seen.push(url);
+    if (url.includes('/governance/40')) {
+      return { ok: true, json: async () => ({ proposal: { kind: 'close_issue', payload: { issueNumber: 4417 } } }) };
+    }
+    if (url.includes('/governance/41')) {
+      return { ok: true, json: async () => ({ proposal: { kind: 'rename', payload: { newName: 'Topics' } } }) };
+    }
+    return { ok: false, json: async () => null };
+  });
+  assert.equal(await av._closeVoteHomeOf(40), 4417, 'a close vote opens the request');
+  assert.equal(await av._closeVoteHomeOf(41), null, 'a rename keeps its governance page');
+  assert.match(seen.find((u) => u.includes('/governance/40')), /^\/api\/apps\/example\/governance\/40$/);
+  // The row is read once; asking again is the same answer, not a second call.
+  assert.equal(await av._closeVoteHomeOf(40), 4417);
+  assert.equal(seen.filter((u) => u.includes('/governance/40')).length, 1);
+});
+
+// #6439: once a vote to close has ended its card stays on the request's page
+// and says how it ended, with no vote buttons and its replies under it.
+test('#6439 an ended vote to close says how it ended and keeps its replies', () => {
+  const changes = 'frontend/src/features/dev-board/topic/thread-changes.tsx';
+  const view = (outcome, status = 'closed') => {
+    const close = {
+      type: 'close', id: 40, number: null, title: 'Close it', status,
+      reason: 'Covered by #6438.', by: 'evan', myVote: 'yes', replies: 3, outcome,
+      folded: [
+        { id: 1, username: 'evan', text: '#6438 covers the rename and the link.' },
+        { id: 2, username: 'ada', text: 'Agreed, closing makes sense.' },
+      ],
+    };
+    const data = {
+      thread: { id: 1, number: 4417, kind: 'work', lead: 'request', title: 'Add topics', state: 'closed' },
+      items: [close], follow: null,
+    };
+    return renderComponent(changes, 'ThreadChanges', {
+      slug: 'example', data, number: 4417, changes: [], close, onChanged() {},
+    });
+  };
+  const closed = view('closed');
+  assert.match(closed, /data-done="true"/, 'the card is drawn as done');
+  assert.doesNotMatch(closed, /data-close-vote=/, 'no Yes or No once it has ended');
+  assert.match(closed, /Closed by vote\./, 'it says how it ended');
+  assert.match(closed, /data-thread-fold="close:40"/, 'its replies are shown under it');
+  assert.match(closed, /msgx-thread-line/);
+  assert.match(closed, /#6438 covers the rename and the link\./);
+  assert.match(closed, /Show all replies/, 'the rest are one tap away');
+  assert.match(closed, /Covered by #6438\./, 'the reason stays');
+  assert.doesNotMatch(closed, /<button[^>]*>Covered by #6438\./, 'and is plain text, not a link back to the old page');
+  assert.match(view('kept'), /Kept open\./);
+  assert.match(view('elsewhere'), /Ended: the request closed another way\./);
 });

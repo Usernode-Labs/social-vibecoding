@@ -85,6 +85,9 @@ const CATEGORY_DEFINITIONS = Object.freeze([
       // #4396: a project you joined while it was made is open: its first
       // version going live, the same lifecycle (services/project-opened.js).
       'project_opened',
+      // #5404: the Monday count of the changes you voted on that were
+      // decided (services/voted-digest.js). Its seed row is a migration.
+      'voted_digest',
     ]),
   }),
   Object.freeze({

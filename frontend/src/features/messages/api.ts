@@ -1,3 +1,4 @@
+import { normalizeWorkState } from '../../lib/work-state';
 import type {
   DesignPin,
   ConversationDetail,
@@ -12,8 +13,6 @@ import type {
   HomeroomBotAction,
   HomeroomBotGoesLive,
   HomeroomBotMeta,
-  HomeroomBotPastJob,
-  HomeroomBotPhase,
   HomeroomBotPlan,
   HomeroomBotPlanQuestion,
   HomeroomBotReadyNow,
@@ -23,7 +22,6 @@ import type {
   BotSlotEntry,
   BotSlotsView,
   BotTrack,
-  BotTrackState,
   BotTrackStep,
   MessageAttachment,
   DiscussionMessage,
@@ -336,8 +334,15 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       ...(normalizeBotLooked(pick(bot, 'looked')) ? { looked: normalizeBotLooked(pick(bot, 'looked'))! } : {}),
       // #6151: what happens to a design filed as a request (./bot-track.tsx filedNextLine).
       ...(normalizeFiledNext(pick(bot, 'filedNext')) ? { filedNext: normalizeFiledNext(pick(bot, 'filedNext'))! } : {}),
+      // Task 2020: a chat answer laid out, drawn in place of its words (./bot-html.tsx).
+      ...(replyHtmlOf(pick(bot, 'html')) ? { html: replyHtmlOf(pick(bot, 'html'))! } : {}),
     },
   };
+}
+
+/** Task 2020: a reply's laid-out copy as stored (homeroom-bot-html.js bounds it to 30000), or null. */
+function replyHtmlOf(input: unknown): string | null {
+  return typeof input === 'string' && input.trim() && input.length <= 60000 ? input : null;
 }
 
 const FILED_LIMITS: ReadonlySet<string> = new Set(['builds', 'slots', 'bot_wide', 'allowance']);
@@ -602,6 +607,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     lastActivityAt: dateText(pick(row, 'lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at')),
     unreadCount: Number(pick(row, 'unreadCount', 'unread_count')) || 0,
     lastReadMessageId: readCursor(pick(row, 'lastReadMessageId', 'last_read_message_id')),
+    lastVisitAt: text(pick(row, 'lastVisitAt', 'last_visit_at')) || null,
     awaitingAcceptance: kind === 'direct' && pick(row, 'awaitingAcceptance', 'awaiting_acceptance') === true,
     canSend: typeof canSendValue === 'boolean' ? canSendValue : membershipStatus !== 'invited',
     canInvite: bool(pick(row, 'canInvite', 'can_invite'), kind === 'group' && membershipStatus !== 'invited'),
@@ -874,7 +880,7 @@ export interface DesignThread {
   height: number;
   latest: number;
   versions: Array<{ version: number; author: string; note: string | null; messageId: number | null }>;
-  /** 1 Nov 2026 (C2.2): the open request Propose it posts the plan on (the thread's), or null for a new one. */
+  /** 1 Nov 2026 (C2.2): the open request Request it posts the plan on (the thread's), or null for a new one. */
   planOn?: number | null;
 }
 
@@ -1219,13 +1225,12 @@ export async function setMessageSaved(
  * so), with the version it is at now.
  */
 /**
- * #5452: a saved Yes belongs in Your votes and the Kudos My history tab.
- * Both listen on the window bridge, so this says the vote landed without
- * this chunk importing the profile screen. Optional at every link: neither
- * listener needs to be up for the Yes itself to be counted.
+ * #5452: a saved Yes belongs in the Kudos My history tab. It listens on the
+ * window bridge, so this says the vote landed without this chunk importing
+ * that screen. Optional: the listener need not be up for the Yes itself to
+ * be counted.
  */
 function announceApprovalVote() {
-  (window as any).UsernodeReact?.profileProposals?.voted?.();
   (window as any).Leaderboard?.invalidateHistory?.();
 }
 
@@ -1393,9 +1398,6 @@ function appIconUrl(value: unknown): string | null {
   return /^\/app-icons\/[\w-]+$/.test(src) ? src : null;
 }
 
-const BOT_PHASES = new Set<HomeroomBotPhase>([
-  'setting_up', 'queued', 'looking', 'building', 'follow_up_queued', 'following_up', 'merging',
-]);
 
 /**
  * #3692: who one of the Homeroom bot's tray entries is about, and where it
@@ -1483,79 +1485,33 @@ function threadFieldsOf(row: JsonRecord): Pick<HomeroomBotJob, 'cardId' | 'ask' 
   };
 }
 
-/** A past entry (Needs you or History). One without a known ending says what waits instead, or is dropped. */
-function normalizeBotPastJob(entry: unknown): HomeroomBotPastJob | null {
-  const row = record(entry);
-  const outcome = text(pick(row, 'outcome')) as HomeroomBotActivityOutcome;
-  const known = ACTIVITY_OUTCOMES.has(outcome);
-  const doing = text(pick(row, 'doing')) || null;
-  if (!known && !doing && !outcome) return null;
-  const release = outcome === 'going_live' ? releaseOf(pick(row, 'release')) : null;
-  return {
-    ...normalizeBotJob(row),
-    ...(release ? { release } : {}),
-    id: strictId(pick(row, 'id')) || 0,
-    outcome: known ? outcome : (outcome ? 'failed' : null),
-    doing,
-    at: text(pick(row, 'at')) || null,
-  };
-}
 
 export function normalizeBotWork(input: unknown): HomeroomBotWork {
-  const data = record(input);
-  const now = array(pick(data, 'now')).map((entry) => {
-    const row = record(entry);
-    const phase = text(pick(row, 'phase')) as HomeroomBotPhase;
-    const step = strictId(pick(row, 'step'));
-    const of = strictId(pick(row, 'of'));
-    const whole = !!step && !!of && step <= of && of <= 12;
-    // A merge of Homeroom itself going live: when its release comes.
-    const release = phase === 'merging' ? releaseOf(pick(row, 'release')) : null;
-    return {
-      ...normalizeBotJob(row),
-      ...(release ? { release } : {}),
-      phase: BOT_PHASES.has(phase) ? phase : 'looking',
-      ...(/^[a-z_]{1,40}$/.test(text(pick(row, 'stage'))) ? { stage: text(pick(row, 'stage')) } : {}),
-      step: whole ? step : null,
-      of: whole ? of : null,
-      stepName: whole ? text(pick(row, 'stepName')) || null : null,
-      doing: text(pick(row, 'doing')) || null,
-      since: text(pick(row, 'since')) || null,
-    };
-  });
-  const past = (key: string) => array(pick(data, key)).map(normalizeBotPastJob)
-    .filter((job): job is HomeroomBotPastJob => !!job);
-  const tracks = pick(data, 'tracks');
-  return {
-    now, needsYou: past('needsYou'), history: past('history'),
-    ...(Array.isArray(tracks) ? { tracks: tracks.map(normalizeBotTrack).filter((track): track is BotTrack => !!track) } : {}),
-  };
+  const tracks = pick(record(input), 'tracks');
+  return { tracks: Array.isArray(tracks) ? tracks.map(normalizeBotTrack).filter((track): track is BotTrack => !!track) : [] };
 }
 
-const TRACK_STATES = new Set<BotTrackState>([
-  'queued', 'planning', 'waiting', 'building', 'checks', 'vote', 'going_live', 'live', 'held', 'stopped', 'done_elsewhere', 'closed',
-]);
 const TRACK_STEPS = new Set<BotTrackStep>(['plan', 'build', 'checks', 'vote', 'live']);
 const CODE = /^[a-z_]{1,40}$/;
 
 /**
  * 16 Oct 2026: one request's track (services/homeroom-bot-track.js), field
- * by field. Null for one in a state the client does not know, which it
- * then draws nowhere rather than guessing at.
+ * by field. Null for one whose work state the client does not know, which
+ * it then draws nowhere rather than guessing at.
  */
 export function normalizeBotTrack(input: unknown): BotTrack | null {
   const row = record(input);
-  const state = text(pick(row, 'state')) as BotTrackState;
-  if (!TRACK_STATES.has(state)) return null;
+  const work = normalizeWorkState(pick(row, 'work'));
+  if (!work) return null;
   const job = normalizeBotJob(row);
   const step = text(pick(row, 'step')) as BotTrackStep;
-  const why = text(pick(row, 'why'));
+  const cause = text(pick(row, 'cause'));
   const waitingOn = text(pick(row, 'waitingOn'));
   const held = record(pick(row, 'held'));
   const queue = record(pick(row, 'queue'));
   const doneBy = record(pick(row, 'doneBy'));
   const tries = strictId(pick(row, 'try')) || 1;
-  const release = state === 'going_live' ? releaseOf(pick(row, 'release')) : null;
+  const release = work.stage === 'going_live' ? releaseOf(pick(row, 'release')) : null;
   return {
     key: job.key,
     appSlug: job.appSlug,
@@ -1566,9 +1522,9 @@ export function normalizeBotTrack(input: unknown): BotTrack | null {
     issueNumber: job.issueNumber,
     title: job.title,
     firstVersion: job.firstVersion,
-    state,
+    work,
     step: TRACK_STEPS.has(step) ? step : null,
-    why: CODE.test(why) ? why : null,
+    ...(CODE.test(cause) ? { cause } : {}),
     waitingOn: waitingOn === 'you' || waitingOn === 'group' ? waitingOn : null,
     ...(waitingOn === 'you' && text(pick(row, 'waitingFor')) ? { waitingFor: text(pick(row, 'waitingFor')).slice(0, 64) } : {}),
     busy: bool(pick(row, 'busy')),
@@ -1581,7 +1537,7 @@ export function normalizeBotTrack(input: unknown): BotTrack | null {
     proposalId: strictId(pick(row, 'proposalId')),
     sessionId: strictId(pick(row, 'sessionId')),
     links: job.links,
-    ...(state === 'held' ? {
+    ...(pick(row, 'held') ? {
       held: {
         limit: CODE.test(text(pick(held, 'limit'))) ? text(pick(held, 'limit')) : 'slots',
         position: strictId(pick(held, 'position')),
@@ -1589,8 +1545,9 @@ export function normalizeBotTrack(input: unknown): BotTrack | null {
         ...(text(pick(held, 'limit')) === 'taken' ? { by: text(pick(held, 'by')) || null } : {}),
       },
     } : {}),
-    ...(state === 'queued' && pick(queue, 'ahead') !== undefined ? { queue: { ahead: Math.max(0, Number(pick(queue, 'ahead')) || 0) } } : {}),
-    ...(state === 'done_elsewhere' && pick(row, 'doneBy') ? {
+    ...(text(pick(row, 'retryAt')) ? { retryAt: text(pick(row, 'retryAt')) } : {}),
+    ...(pick(queue, 'ahead') !== undefined ? { queue: { ahead: Math.max(0, Number(pick(queue, 'ahead')) || 0) } } : {}),
+    ...(work.stage === 'closed' && pick(row, 'doneBy') ? {
       doneBy: { username: text(pick(doneBy, 'username')) || null, prNumber: strictId(pick(doneBy, 'prNumber')) },
     } : {}),
     ...(release ? { release } : {}),
@@ -1670,7 +1627,7 @@ export async function getBotSlots(slug: string): Promise<BotSlotsView | null> {
  * header said "Working on…" for work long finished (see ReadOptions).
  */
 export async function getHomeroomBotWork(options?: ReadOptions): Promise<HomeroomBotWork> {
-  return normalizeBotWork(await request<unknown>('/api/conversations/homeroom-bot/work', readInit(options)));
+  return normalizeBotWork(await request<unknown>('/api/ai/tracks', readInit(options)));
 }
 
 /**
@@ -1718,7 +1675,8 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
       ...(working && from && to && from <= to && to <= 120 ? { typicalMinutes: { from, to } } : {}),
       // Who the work waits on while it waits (`them`: the viewer), so the card can say it needs them.
       ...(working && text(pick(row, 'waitingOn')) ? { waitingOn: text(pick(row, 'waitingOn')).slice(0, 40) } : {}),
-      // The stage it is at while it works (`on_hold`: until Monday), a short word.
+      // The stage it is at while it works (`on_hold`: until Monday; `cooldown`:
+      // paused after repeated errors), a short word.
       ...(working && /^[a-z_]{1,40}$/.test(text(pick(row, 'stage'))) ? { stage: text(pick(row, 'stage')) } : {}),
       // Why a build stopped, and which limit holds a request back: known words only.
       ...(!working && outcome === 'build_failed' && STOP_CAUSES.has(text(pick(row, 'stopCause')))

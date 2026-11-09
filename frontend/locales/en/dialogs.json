@@ -475,13 +475,29 @@
     "text": "{{count}} app slots · more requested",
     "description": "Line on the account panel of the profile, when only the limit is known and the person has asked the admins for more. {{count}} is how many app slots they have in total. Keep the middle dot as a separator."
   },
-  "allowance.headline.usedRequested_one": {
-    "text": "{{used}} of {{count}} app slot used · more requested",
-    "description": "Line on the account panel of the profile after the person asked the admins for more app slots. {{count}} is how many slots they have in total and {{used}} how many are taken. Keep the middle dot as a separator."
+  "allowance.line.free_one": {
+    "text": "{{count}} app slot free of {{limit}}",
+    "description": "Line under the App slots row on the viewer's own profile: how much room they have left for apps. {{count}} is how many app slots are free and {{limit}} how many they have in total."
   },
-  "allowance.headline.usedRequested_other": {
-    "text": "{{used}} of {{count}} app slots used · more requested",
-    "description": "Line on the account panel of the profile after the person asked the admins for more app slots. {{count}} is how many slots they have in total and {{used}} how many are taken. Keep the middle dot as a separator."
+  "allowance.line.free_other": {
+    "text": "{{count}} app slots free of {{limit}}",
+    "description": "Line under the App slots row on the viewer's own profile: how much room they have left for apps. {{count}} is how many app slots are free and {{limit}} how many they have in total."
+  },
+  "allowance.line.freeRequested_one": {
+    "text": "{{count}} app slot free of {{limit}} · more requested",
+    "description": "Line under the App slots row on the viewer's own profile, after they asked the admins for more app slots. {{count}} is how many app slots are free and {{limit}} how many they have in total. Keep the middle dot as a separator."
+  },
+  "allowance.line.freeRequested_other": {
+    "text": "{{count}} app slots free of {{limit}} · more requested",
+    "description": "Line under the App slots row on the viewer's own profile, after they asked the admins for more app slots. {{count}} is how many app slots are free and {{limit}} how many they have in total. Keep the middle dot as a separator."
+  },
+  "allowance.line.none": {
+    "text": "No app slots free · Request more",
+    "description": "Line under the App slots row on the viewer's own profile when every app slot is taken: pressing the row opens the App allowance card, whose button is \"Request more\"."
+  },
+  "allowance.line.noneRequested": {
+    "text": "No app slots free · more requested",
+    "description": "Line under the App slots row on the viewer's own profile when every app slot is taken and they have asked the admins for more. Keep the middle dot as a separator."
   },
   "allowance.detail.admin": {
     "text": "Admin accounts can create apps without a slot limit.",
@@ -771,13 +787,13 @@
     "text": "Only items the group voted onto you",
     "description": "Explanation under the \"Assigned to you\" switch in the board filters dialog: the group assigns an item to a person by vote."
   },
-  "boardFilters.created.title": {
-    "text": "Created by you",
-    "description": "Label of a switch in the board filters dialog: show only items this person opened."
+  "boardFilters.yours.title": {
+    "text": "Yours",
+    "description": "Title of a switch in the board's Filters dialog: show only the person's own work as the Homeroom bot tab reads it: everything they filed, built, claimed, voted on, wrote in or chose Notify me on."
   },
-  "boardFilters.created.description": {
-    "text": "Only items you opened yourself",
-    "description": "Explanation under the \"Created by you\" switch in the board filters dialog. To open an item is to file it."
+  "boardFilters.yours.description": {
+    "text": "Only what you filed, built, voted on, wrote in or follow",
+    "description": "Second line under the Yours switch in the board's Filters dialog, saying what it keeps: the person's own work as the Homeroom bot tab reads it: everything they filed, built, claimed, voted on, wrote in or chose Notify me on."
   },
   "createProgress.title.creating": {
     "text": "Creating {{app}}",

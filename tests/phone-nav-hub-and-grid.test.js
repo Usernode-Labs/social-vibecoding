@@ -8,10 +8,11 @@
 // how a phone reaches the places, and All communities, a grid of tiles, is
 // where it switches community. These pin the two halves of that:
 //
-//   - the Hub's rows: For you's Workshop row, always there on a phone and
-//     named for the place it opens, and a Topics card, a row a live topic,
-//     each opening its channel (frontend/src/features/dev-board/workshop/
-//     hub-cards.tsx TopicsCard, drawn by ./workshop.tsx on a phone only);
+//   - the Hub's rows: For you's Workshop row, always there for a signed-in
+//     viewer and named for the place it opens, and a Topics card, a row a
+//     live topic, each opening its channel (frontend/src/features/dev-board/
+//     workshop/hub-cards.tsx TopicsCard, drawn by ./workshop.tsx on a phone
+//     only);
 //   - All communities as a grid on a phone (frontend/src/features/workshop/
 //     index.tsx CommunityTile), whose tile is a door to the Hub.
 //
@@ -45,30 +46,15 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(ws, /\{slug && drawerOn \? <TopicsCard data=\{community\} onOpen=\{\(key\) => openTab\(key\)\} \/> : null\}/,
     'on a phone only: a wide window lists the topics in its sidebar');
-  assert.match(ws, /places=\{drawerOn\}\s*\/>/);
 });
 
-test('on a phone For you\'s Workshop row is always there, and named for the place it opens', () => {
+test('For you\'s Workshop row is there at every width, opening the Workshop, and named for the place', () => {
   const cards = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
-  assert.match(cards, /const work = cards \|\| !!mine\?\.viewer \|\| places;/);
-  assert.match(cards, /<WorkRow mine=\{mine\} onOpen=\{onWork\} place=\{places\} \/>/);
-  assert.match(cards, /title=\{place \? placeName\('workshop'\) : t\('project:hub\.work\.title'\)\}/);
-});
-
-test('on a phone All communities is a grid of tiles, each a door to its Hub', () => {
-  const screen = read('frontend/src/features/workshop/index.tsx');
-  assert.match(screen, /phone \? \(\s*\/\*[\s\S]*?\*\/\s*<div className="grid grid-cols-4 gap-x-1 gap-y-4 px-3 pt-1" data-workshop-rows=\{pressed\} data-workshop-grid="">/,
-    'four to a row, keeping the list\'s data attribute for the checks');
-  assert.match(screen, /\{shown\.map\(\(row\) => <CommunityTile key=\{row\.slug\} row=\{row\} \/>\)\}/);
-  const tile = screen.slice(screen.indexOf('export function CommunityTile('), screen.indexOf('/**\n * Four rows of the real geometry'));
-  // A door to the Hub (AGENTS.md: a door calls AppView._landOnHub first).
-  assert.match(tile, /win\.AppView\?\._landOnHub\?\.\(row\.slug\);[^\n]*\n\s*win\.App\?\.navigateToApp\?\.\(row\.slug, 'dev'\);/);
-  assert.match(tile, /href=\{href\}/, 'an anchor with the hub\'s address, so a new tab opens it too');
-  assert.match(tile, /data-workshop-app=\{row\.slug\}/);
-  // The votes it waits on you for: a badge in the accent, said in words to a reader.
-  assert.match(tile, /bg-violet-600 text-white/);
-  assert.match(tile, /\{votes > 0 \? <span className="sr-only">\{t\('communities:row\.toVote', \{ count: votes \}\)\}<\/span> : null\}/);
-  assert.doesNotMatch(tile, /\{votes\}\s*<\/span>\s*\) : \(/, 'a zero says nothing');
-  // Settled after mount, so the first render is the prerender's list.
-  assert.match(screen, /function usePhoneWidth\(\): boolean \{\s*const \[phone, setPhone\] = useState\(false\);/);
+  // 3 Nov 2026: a row of its own on a phone, beside Your work, which opened
+  // the Homeroom bot tab. 6 Nov 2026: it takes Your work's place, at every
+  // width, as For you's door to the project's Workshop.
+  assert.match(cards, /\{work \? <WorkshopRow onOpen=\{onWork\} \/> : null\}/);
+  assert.match(cards, /if \(!needs && !work && !talk\) return null;/, 'there for a signed-in viewer, with no phone-only flag');
+  assert.doesNotMatch(cards, /places=\{drawerOn\}|data-ws-mine-card/, 'no Your work row on the Hub any more');
+  assert.match(cards, /title=\{placeName\('workshop'\)\}\s+subtitle=\{t\('project:hub\.workshop\.sub'\)\}/);
 });

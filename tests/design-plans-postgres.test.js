@@ -274,7 +274,7 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     const meta = card.metadata.homeroomBot;
     assert.equal(meta.kind, 'confirm');
     assert.deepEqual(meta.actions.map((a) => [a.id, a.label, a.type]), [['yes', 'Post as a plan on #12', 'server'], ['no', 'Not yet', 'server']]);
-    const { rows: [action] } = await pool.query('SELECT * FROM homeroom_bot_dm_actions WHERE id = $1', [meta.actionId]);
+    const { rows: [action] } = await pool.query('SELECT * FROM bot_cards WHERE id = $1', [meta.actionId]);
     assert.deepEqual([action.kind, action.source_issue_number, Number(action.private_thread_id), action.design_version, action.message_id],
       ['post_design', 12, about.threadId, 2, sent.messageId]);
 
@@ -291,7 +291,7 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     assert.equal((await specs.listRequestSpecs(pool, { appId: app.id, issueNumber: 12, viewerId: ada.id })).length, before + 1, 'posted');
     const after = (await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [sent.messageId])).rows[0].metadata.homeroomBot;
     assert.deepEqual([after.status, after.answer, after.chosen], ['answered', 'Post as a plan on #12', 'yes']);
-    const { rows: [done] } = await pool.query('SELECT status, issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [meta.actionId]);
+    const { rows: [done] } = await pool.query('SELECT status, issue_number FROM bot_cards WHERE id = $1', [meta.actionId]);
     assert.deepEqual(done, { status: 'done', issue_number: 12 });
     const twice = await mayor.decideOfferTap(pool, config, { user: ada, actionId: meta.actionId, choice: 'yes', deps: { replies } });
     assert.deepEqual([twice.ok, twice.status], [false, 409]);
@@ -342,11 +342,11 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
       design: idea, offer: checked.offer, key: 'test-new-project-offer', deps,
     });
     const card = (await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [sent.messageId])).rows[0];
-    assert.match(card.content, /^Want me to post this as a plan on Plant pal\?/);
+    assert.match(card.content, /^Tap New request to file a request on Plant pal with version 1 as its plan, publicly, under your name, or add it to a request you name\./);
     const meta = card.metadata.homeroomBot;
     assert.deepEqual(meta.actions.map((a) => [a.label, a.type]),
       [['New request', 'server'], ['Add to an existing request…', 'prompt']]);
-    const { rows: [action] } = await pool.query('SELECT app_id, kind, design_version FROM homeroom_bot_dm_actions WHERE id = $1', [meta.actionId]);
+    const { rows: [action] } = await pool.query('SELECT app_id, kind, design_version FROM bot_cards WHERE id = $1', [meta.actionId]);
     assert.deepEqual([Number(action.app_id), action.kind, action.design_version], [Number(app.id), 'post_design', 1]);
 
     // The tap files the request on that project, and the thread joins it.

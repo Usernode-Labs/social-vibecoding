@@ -51,10 +51,12 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
+import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { changeHref } from '../../lib/change-href';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { callAppView } from '../dev-board/card/fold';
 import type { NeedsFeedItem } from '../workshop/needs-reel';
 import { filterByVoteType, voteTallies, VoteTypeChips, type VoteFilter, type VoteType } from '../workshop/vote-filter';
@@ -62,8 +64,8 @@ import { CompareSlider } from './compare';
 import { Illustration } from './illustrations';
 import { readInks, useInks } from './ink';
 import {
-  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pictoMarks, screenLine, toReviewItems,
-  type AreaKind, type BenefitKind, type DecisionKind, type GlyphBar, type Ink, type Placement, type ReviewItem, type SheetPlate,
+  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pageItems, pictoMarks, screenLine, toReviewItems,
+  type AreaKind, type BenefitKind, type DecisionKind, type GlyphBar, type Ink, type PageKind, type Placement, type ReviewItem, type SheetPlate,
 } from './model';
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
 import { dirSign } from '../../lib/i18n/direction';
@@ -99,6 +101,24 @@ const PAGE_CHROME = 6 + 42 + 14 + 120;
 export function heroHeight(inner: number, pageH: number, strip: boolean): number {
   const room = pageH - PAGE_CHROME - (strip ? STRIP_H : 0);
   return Math.round(Math.max(inner * 0.5, Math.min(inner * 1.5, room)));
+}
+/** From 768px, what the panel keeps clear under its foot (app.css `--rf-room`). */
+const FOOT_CLEAR = 16;
+/** The least the panel is clamped to: past it the window scrolls, never clips. */
+const ROOM_FLOOR = 360;
+
+/**
+ * #6356: the panel's room from 768px. app.css's `--rf-room` assumes the
+ * panel starts right under the platform header; on a project's page it starts
+ * under the project's own header and tabs too, and a room that tall pushed
+ * the vote off the bottom of the window. So the room is also what the window
+ * leaves below the panel's top, less 16px clear under it, never under
+ * ROOM_FLOOR. A phone's page (no max height, `cssMax` NaN) is left alone.
+ */
+export function pageRoom(cssMax: number, top: number, viewH: number, wide: boolean): number {
+  if (!wide || !Number.isFinite(cssMax) || cssMax <= 0) return cssMax;
+  const fit = Math.max(ROOM_FLOOR, Math.round(viewH - top - FOOT_CLEAR));
+  return Math.min(cssMax, fit);
 }
 /** The change page is never wider than this (app.css `.rf-page`). */
 const COLUMN = 520;
@@ -153,6 +173,12 @@ const DECISION_LABEL: Record<DecisionKind, string> = {
   rename: 'communities:review.decision.rename',
   secret_change: 'communities:review.decision.secret',
   decision: 'communities:review.decision.other',
+};
+/** What a waiting item on its own page is, under its title. */
+const PAGE_LABEL: Record<PageKind, string> = {
+  governance: 'communities:reel.pages.governance',
+  ballot: 'communities:reel.pages.ballot',
+  question: 'communities:reel.pages.question',
 };
 
 /**
@@ -500,12 +526,12 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   error: boolean;
   capped: boolean;
   onDone: () => void;
-  /** The end's way on; "Back to your communities" when not given. */
+  /** The end's way on; "Back to Home" when not given. */
   doneLabel?: string;
   /**
-   * Whose header the run sits under: the Communities screen's, which the run
-   * names (../header/review-run-store.js), or a project's, which already
-   * names the community and the place.
+   * Whose header the run sits under: Needs you's (#needs, the page left of
+   * the Communities screen, One Home #6361), whose way back is Home, or a
+   * project's, which already names the community and the place.
    */
   header?: 'communities' | 'project';
   onAnswered?: (id: number, epoch: number | null) => void;
@@ -553,6 +579,10 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
 
   const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)) : null), [items]);
+  // #6344: the items the run cannot draw (a group decision, competing
+  // changes, the bot's question). Each is decided on its own page, so when
+  // nothing else waits they are listed with a way there.
+  const onPage = useMemo(() => (items ? pageItems(items, t) : []), [items, t]);
   useEffect(() => {
     if (!shaped || list) return;
     setList(shaped);
@@ -574,9 +604,20 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const page = pageRef.current;
     if (!open || !page) return undefined;
     const measure = () => {
+      // A hidden pane (the Communities screen keeps it mounted) has no top to
+      // measure from: keep the last size, and measure again once it shows.
+      if (!page.getClientRects().length) return;
+      // From 768px the panel is as tall as what it holds, up to its room:
+      // app.css's, read with this page's own clamp taken off, then clamped to
+      // what the window leaves below the panel's top (pageRoom). The clamp is
+      // set as the page's `--rf-room`, so the page's max height, the vote
+      // sheet's (a No's reason) and the picture all keep to the one budget.
+      page.style.removeProperty('--rf-room');
       const pr = page.getBoundingClientRect();
-      // From 768px the panel is as tall as what it holds, up to its room.
-      const max = parseFloat(getComputedStyle(page).maxHeight);
+      const css = parseFloat(getComputedStyle(page).maxHeight);
+      const wide = typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 768px)').matches;
+      const max = pageRoom(css, pr.top, window.innerHeight, wide);
+      if (max !== css && Number.isFinite(max)) page.style.setProperty('--rf-room', `${max}px`);
       // Less the bar over it, which on a phone also holds the status bar's
       // inset, and the home indicator's inset the vote bar keeps clear of.
       const safe = safeRef.current ? safeRef.current.offsetHeight : 0;
@@ -587,8 +628,20 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       setSize({ w: Math.min(COLUMN, pr.width), h });
     };
     measure();
+    // Again once what is above it has settled (a project's header and tabs
+    // can land a frame later and move the panel's top), and on every resize.
+    const frame = window.requestAnimationFrame(measure);
     window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
+    // And when a hidden pane comes back into view.
+    const seen = typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) measure(); })
+      : null;
+    if (seen) seen.observe(page);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', measure);
+      if (seen) seen.disconnect();
+    };
   }, [open]);
 
   // The run comes up in the pane: the page fades in.
@@ -778,7 +831,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // opened from. The shell's header steps aside for it on a phone, as it did
   // for the run's old head.
   const toProject = header === 'project' && item && item.app ? item.app.name : '';
-  const backName = t('communities:review.back.label', { place: toProject || t('communities:switcher.all.name') });
+  const backName = t('communities:review.back.label', { place: toProject || t('core:tabs.home') });
 
   /* ── Drawing ── */
   if (error) {
@@ -821,6 +874,36 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     );
   }
   if (!item) {
+    // #6344: the feed is not empty, but everything waiting on you (a group
+    // decision, competing changes, a question) is decided on its own page.
+    // List those rather than say nothing is waiting. A feed that also holds
+    // a change is about to open on it once the run is fixed, so until then it
+    // keeps the frame it drew before.
+    const pagesOnly = list !== null || !shaped?.some((it) => it.kind !== 'governance');
+    if (onPage.length && pagesOnly) {
+      return (
+        <div ref={anchorRef} className="rf-run" data-review-flow="" data-needs-pages={onPage.length}>
+          <p className="rf-feed-note px-4 pt-3 pb-2 text-sm text-zinc-500 dark:text-zinc-400">{t('communities:reel.pages.note')}</p>
+          <GroupedList tone="plane" aria-label={t('communities:reel.pages.label')} data-needs-pages-list="">
+            {onPage.map((p) => (
+              <ListRow
+                key={p.key}
+                as="a"
+                href={p.href}
+                data-needs-page-row={p.key}
+                leading={(
+                  <span className="app-icon-tile workshop-reel-tile" data-icon={appIconKind(p.app as never)} aria-hidden="true">
+                    <AppIconContent app={p.app as never} />
+                  </span>
+                )}
+                title={p.title}
+                subtitle={t(PAGE_LABEL[p.kind], { project: p.app?.name || p.app?.slug || '' })}
+              />
+            ))}
+          </GroupedList>
+        </div>
+      );
+    }
     return <p ref={anchorRef as never} className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{t('communities:reel.empty')}</p>;
   }
 

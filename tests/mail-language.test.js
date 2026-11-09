@@ -1,11 +1,15 @@
 'use strict';
 
-// An email in its recipient's language: the catalog
-// (frontend/locales/en/email.json), the templates' use of it, and the door
-// (src/services/mail/index.js) that asks for a translator. These say the mail
-// follows the rule the push follows (frontend/locales/README.md, "An email"),
-// that a translation is untrusted text that can never become markup or a
-// header, and that a problem anywhere costs a mail its translation, never its
+// An email in its recipient's language. The words of every mail are the stored
+// templates (src/services/mail/template-store.js), written and translated in the
+// admin console: a reader with a language gets that language's row where there
+// is one, and the English row where there is not. What is left of the email
+// catalog (frontend/locales/en/email.json) is the few words an action builds in
+// code (src/services/mail/actions.js: build_ready, invite_activity), asked of
+// the translator at send time for a translated row. These say the door
+// (src/services/mail/index.js) picks the language and reads only what can
+// matter, that a translation is untrusted text that can never become markup or
+// a header, and that a problem anywhere costs a mail its translation, never its
 // code or its link.
 
 const test = require('node:test');
@@ -18,16 +22,19 @@ const { hash } = require('../scripts/language-packs');
 const cache = require('../src/services/language-cache');
 const dbPool = require('../src/db/pool');
 const mail = require('../src/services/mail');
-const { buildMessage, KINDS, ENGLISH_ONLY_KINDS } = require('../src/services/mail/templates');
+const { buildMessage } = require('../src/services/mail/templates');
+const { ACTIONS } = require('../src/services/mail/actions');
+const { renderResolved } = require('../src/services/mail/render');
 const { translatorFor, requestLanguage } = require('../src/services/mail/language');
 const { translator, reset } = require('../src/services/push-language');
+const { SEEDS, englishTemplate } = require('../src/db/email-template-seeds');
 const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const ENGLISH = JSON.parse(fs.readFileSync(path.join(ROOT, 'frontend/locales/en/email.json'), 'utf8'));
 const english = (key) => ENGLISH[key].text;
 const row = (key, text) => ({ language: 'es', key, source: hash(english(key)), text });
-const URL_RESET = 'https://app.onhomeroom.com/#reset-password/abc';
+const SEEDED = (kind) => englishTemplate(kind);
 
 function sourceWith(committed = {}) {
   return {
@@ -40,121 +47,67 @@ function sourceWith(committed = {}) {
   };
 }
 
-/** A pool holding `rows` as language_translations, plus what the door reads and writes. */
-function poolWith(rows = [], { fail = null, hang = false } = {}) {
-  const db = { reads: 0, namespaces: [] };
-  return {
-    db,
-    async query(sql, params) {
-      if (/FROM language_translations/.test(sql)) {
-        db.reads += 1;
-        db.namespaces.push(params[1]);
-        if (hang) await new Promise(() => {});
-        if (fail) throw fail;
-        return { rows: rows.filter((r) => r.language === params[0] && params[1] === 'email') };
-      }
-      return { rows: [], rowCount: 0 };
-    },
-  };
+// A Spanish otp, as Translate or an admin would store it.
+const SPANISH_OTP = {
+  subject: 'Tu código de Homeroom',
+  preheader: '',
+  why: 'Lo recibes por la actividad de tu cuenta.',
+  html: '<p>Tu código de Homeroom es:</p><p style="font-size:28px">{{code}}</p><p>Caduca en 10 minutos.</p>',
+  text: 'Tu código de Homeroom es {{code}}.\n\nCaduca en 10 minutos.',
+};
+
+// A Spanish invite_activity row: the same template, so what changes is only the
+// words built in code, which a translated row asks the translator for.
+const SPANISH_INVITE = (({ name: _n, layout: _l, ...words }) => ({ ...words, why: 'Hubo novedades para ti en Homeroom.' }))(SEEDED('invite_activity'));
+
+/** The stored templates: every kind's seed in English, with `spanish` rows by kind. */
+function storedTemplates(spanish) {
+  const templates = Object.keys(ACTIONS).map((kind, i) => {
+    const { name, layout, ...fields } = SEEDED(kind);
+    const translations = spanish[kind] ? { es: spanish[kind] } : {};
+    return { id: i + 1, action: kind, name, layout_family_id: layout ? 1 : null, translations, ...fields };
+  });
+  const [layout] = SEEDS.layouts;
+  return { templates, layouts: [{ id: 1, family_id: 1, name: layout.name, html: layout.html, text: layout.text, translations: {} }] };
 }
 
-/** Everything `t` asks for, translated by `rows` over the real English. */
-async function es(rows, options = {}) {
-  return translator(poolWith(rows), 'es', { namespace: 'email', source: sourceWith(), ...options });
+/**
+ * A pool holding `rows` as language_translations (the words built in code), the
+ * stored templates with `spanish` rows, and what the door reads and writes.
+ */
+function poolWith(rows = [], { fail = null, hang = false, spanish = { otp: SPANISH_OTP, invite_activity: SPANISH_INVITE } } = {}) {
+  const db = { reads: 0, namespaces: [], templateReads: 0 };
+  const stored = storedTemplates(spanish);
+  const query = async (sql, params) => {
+    if (/FROM language_translations/.test(sql)) {
+      db.reads += 1;
+      db.namespaces.push(params[1]);
+      if (hang) await new Promise(() => {});
+      if (fail) throw fail;
+      return { rows: rows.filter((r) => r.language === params[0] && params[1] === 'email') };
+    }
+    if (/FROM email_templates/.test(sql)) {
+      db.templateReads += 1;
+      return { rows: stored.templates };
+    }
+    if (/FROM email_layouts/.test(sql)) return { rows: stored.layouts };
+    return { rows: [], rowCount: 0 };
+  };
+  return {
+    db,
+    query,
+    async connect() { return { query, release() {} }; },
+  };
 }
 
 test.beforeEach(() => reset());
 
-// ── Translated, with its parameters ──────────────────────────────────────
-
-test('a translated mail has its subject, text and html in the language, with its parameters', async () => {
-  const translate = await es([
-    row('otp.subject', 'Tu código de Homeroom'),
-    row('otp.text.code', 'Tu código de Homeroom es {{code}}.'),
-    row('otp.html.code', 'Tu código de Homeroom es:'),
-    row('otp.expiry', 'Caduca en 10 minutos.'),
-    row('frame.why', 'Lo recibes por la actividad de tu cuenta.'),
-  ]);
-  const sent = buildMessage('otp', { code: '123456', translate });
-  assert.equal(sent.subject, 'Tu código de Homeroom');
-  assert.equal(sent.text, 'Tu código de Homeroom es 123456.\n\nCaduca en 10 minutos.');
-  assert.match(sent.html, /<p>Tu código de Homeroom es:<\/p>/);
-  assert.match(sent.html, />123456<\/p>/);
-  assert.match(sent.html, /<p>Caduca en 10 minutos\.<\/p>/);
-  assert.match(sent.html, /Lo recibes por la actividad de tu cuenta\./);
-});
-
-test('a link inside a translated sentence is the code\'s, and the words around it are the translation\'s', async () => {
-  const translate = await es([
-    row('passwordReset.link', 'Elige una contraseña: {{url}}'),
-    row('passwordReset.subject', 'Cambia tu contraseña'),
-  ]);
-  const sent = buildMessage('password_reset', { url: URL_RESET, translate });
-  assert.equal(sent.subject, 'Cambia tu contraseña');
-  assert.ok(sent.text.includes(`Elige una contraseña: ${URL_RESET}`));
-  assert.ok(sent.html.includes(`<p>Elige una contraseña: <a href="${URL_RESET}"`));
-});
-
-test('numbered tags keep their elements in code, whichever order a language wants them in', async () => {
-  const translate = await es([
-    row('waitlistReleased.mobile.ios.html', '<1>abre la invitación</1> en <0>iPhone</0>.'),
-  ]);
-  const sent = buildMessage('waitlist_released', { url: 'https://x/', mobile: { ios: 'https://store/i?a=1&b=2' }, translate });
-  assert.ok(sent.html.includes('<a href="https://store/i?a=1&amp;b=2" style="color:#0a6ee0">abre la invitación</a> en <strong>iPhone</strong>.'));
-});
-
-test('an invite is worded for what it knows, and only English is the default', async () => {
-  const translate = await es([
-    row('projectInvite.named.subject', '@{{inviter}} te invitó a {{project}}'),
-    row('projectInvite.noInviter.subject', 'Alguien te invitó a {{project}}'),
-    row('projectInvite.noProject.subject', '@{{inviter}} te invitó a un proyecto'),
-    row('projectInvite.nothing.subject', 'Alguien te invitó a un proyecto'),
-  ]);
-  const subject = (payload) => buildMessage('project_invite', { ...payload, translate }).subject;
-  assert.equal(subject({ inviter: 'ada', project: 'Plant Pal' }), '@ada te invitó a Plant Pal');
-  assert.equal(subject({ project: 'Plant Pal' }), 'Alguien te invitó a Plant Pal');
-  assert.equal(subject({ inviter: 'ada' }), '@ada te invitó a un proyecto');
-  assert.equal(subject({}), 'Alguien te invitó a un proyecto');
-});
-
-test('an invite-activity mail takes its line from the notice it stands for', async () => {
-  const translate = await es([row('inviteActivity.firstMessage', '@{{actor}} saludó en {{app}}.')]);
-  const notice = { id: 'first_message', values: { actor: 'sam', app: 'Run Club' } };
-  const sent = buildMessage('invite_activity', {
-    appName: 'Run Club', line: message('email:inviteActivity.firstMessage', { actor: 'sam', app: 'Run Club' }), notice, url: 'https://x/', translate,
-  });
-  assert.equal(sent.subject, '@sam saludó en Run Club');
-  const inEnglish = buildMessage('invite_activity', { appName: 'Run Club', line: '@sam said hi in Run Club.', notice, url: 'https://x/' });
-  assert.equal(inEnglish.subject, '@sam said hi in Run Club');
-});
-
-// ── Falling back ─────────────────────────────────────────────────────────
-
-test('a message with no translation is English, on its own', async () => {
-  const translate = await es([row('otp.subject', 'Tu código')]);
-  const sent = buildMessage('otp', { code: '123456', translate });
-  assert.equal(sent.subject, 'Tu código');
-  assert.ok(sent.text.startsWith('Your Homeroom login code is 123456.'));
-});
-
-test('a translator that throws, returns nothing, or is not text, is the whole mail in English', () => {
-  const plain = buildMessage('otp', { code: '123456' });
-  const translators = [
-    () => { throw new Error('boom'); },
-    () => '',
-    () => undefined,
-    () => 42,
-    () => ({ toString() { return '<script>'; } }),
-  ];
-  for (const translate of translators) {
-    assert.deepEqual(buildMessage('otp', { code: '123456', translate }), plain);
-  }
-});
+// ── Words built in code ──────────────────────────────────────────────────
 
 test('a failed cache read, a hung one or a lookup that breaks is English, soon', async (t) => {
   t.mock.method(cache, 'readSource', () => sourceWith());
   const failing = await translatorFor(poolWith([], { fail: new Error('connection lost') }), 'es');
-  assert.equal(failing('email:otp.subject'), english('otp.subject'), 'a failed read');
+  assert.equal(failing('email:buildReady.lead.ready'), english('buildReady.lead.ready'), 'a failed read');
   reset();
   // The patience timer is unref'd, as a live server needs nothing else to stay
   // up. A test does: with only that timer, the loop empties and the test is cancelled.
@@ -177,133 +130,61 @@ test('no language, English, or one Homeroom does not have: no translator and no 
   assert.equal(pool.db.reads, 0);
 });
 
-test('a translation that drops a code or a link is not used for that mail', () => {
-  // The catalog rule already refuses one (parameters must match); the mail
-  // does not rest on it, because a lost code is a person locked out.
-  const otp = buildMessage('otp', { code: '123456', translate: () => 'Sin código' });
-  assert.deepEqual(otp, buildMessage('otp', { code: '123456' }));
-  const reset = buildMessage('password_reset', { url: URL_RESET, translate: () => 'Sin enlace' });
-  assert.deepEqual(reset, buildMessage('password_reset', { url: URL_RESET }));
-  const joined = { code: '123456', confirmUrl: 'https://x/confirm/abc', url: 'https://x/#more/abc' };
-  assert.deepEqual(buildMessage('waitlist_joined', { ...joined, translate: () => 'Nada' }), buildMessage('waitlist_joined', joined));
+test('words built in code carrying markup reach the html as text', () => {
+  const HOSTILE = '<script>alert(1)</script><a href="https://evil.example">x</a><0>y</0>{{code}}$&$1';
+  const t = (_id, values) => `${HOSTILE} ${Object.values(values || {}).join(' ')}`;
+  const layout = { html: SEEDS.layouts[0].html, text: SEEDS.layouts[0].text };
+  for (const kind of ['build_ready', 'invite_activity']) {
+    const english = SEEDED(kind);
+    const spanish = { ...english, why: 'Hubo novedades.' };
+    const sent = renderResolved(kind, { template: spanish, layout, english: { template: english, layout }, t },
+      { url: 'https://x/o', unsubscribeUrl: 'https://x/u' });
+    assert.ok(sent.html.includes('&lt;script&gt;'), `${kind} used the translation`);
+    assert.doesNotMatch(sent.html, /<script/i, kind);
+    assert.doesNotMatch(sent.html, /<a href="https:\/\/evil/, kind);
+    assert.doesNotMatch(sent.html, /<0>/, kind);
+    assert.doesNotMatch(sent.subject, /[\r\n]/, kind);
+  }
 });
 
 test('what only an admin or an operator receives is English, whatever is asked', async (t) => {
-  assert.deepEqual([...ENGLISH_ONLY_KINDS].sort(), ['admin_test', 'content_report']);
-  const everything = () => 'TRADUCIDO';
-  for (const kind of ENGLISH_ONLY_KINDS) {
-    assert.deepEqual(buildMessage(kind, { translate: everything }), buildMessage(kind, {}), kind);
-  }
+  const only = Object.entries(ACTIONS).filter(([, action]) => action.englishOnly).map(([kind]) => kind).sort();
+  assert.deepEqual(only, ['admin_test', 'content_report']);
   t.mock.method(cache, 'readSource', () => sourceWith());
   const sends = [];
-  const pool = poolWith([row('otp.subject', 'NO')]);
+  const pool = poolWith([row('buildReady.lead.ready', 'NO')]);
   t.mock.method(dbPool, 'getPool', () => pool);
   await mail.send({ databaseUrl: 'x', mailStagingLogOnly: false, mailTransport: { provider: 'test', send: async (p) => { sends.push(p); } } },
     { kind: 'content_report', to: 'ops@example.com', locale: 'es', reason: 'spam' });
   assert.equal(sends.length, 1);
   assert.equal(sends[0].translate, undefined);
+  assert.equal(sends[0].resolved.readerHasLanguage, false);
   assert.equal(pool.db.reads, 0);
 });
 
 // ── Hostile text ─────────────────────────────────────────────────────────
 
-const HOSTILE = '<script>alert(1)</script><a href="https://evil.example">x</a><0>y</0>{{code}}$&$1';
-
-test('a translation carrying markup reaches the html as text, in every kind', () => {
-  // Anything that keeps the credentials goes through, so this keeps them.
-  const keeping = (_id, values) => `${HOSTILE} ${Object.values(values || {}).join(' ')}`;
-  const shapes = {
-    otp: { code: '123456' },
-    account_email: { code: '123456' },
-    username_change: { code: '123456' },
-    waitlist_joined: { code: '123456', confirmUrl: 'https://x/c' },
-    waitlist_code: { code: '123456', confirmUrl: 'https://x/c' },
-    waitlist_released: { url: 'https://x/' },
-    password_reset: { url: URL_RESET },
-    project_invite: { inviter: 'ada', project: 'Pal', url: 'https://x/w' },
-    build_ready: { appName: 'Pal', url: 'https://x/o', unsubscribeUrl: 'https://x/u' },
-    invite_activity: { appName: 'Pal', url: 'https://x/o', unsubscribeUrl: 'https://x/u' },
-    project_opened: { appName: 'Pal', url: 'https://x/o', unsubscribeUrl: 'https://x/u' },
-  };
-  assert.deepEqual(Object.keys(shapes).concat([...ENGLISH_ONLY_KINDS]).sort(), [...KINDS].sort(), 'every kind is here');
-  for (const [kind, payload] of Object.entries(shapes)) {
-    const sent = buildMessage(kind, { ...payload, translate: keeping });
-    assert.ok(sent.html.includes('&lt;script&gt;'), `${kind} used the translation`);
-    assert.doesNotMatch(sent.html, /<script/i, kind);
-    assert.doesNotMatch(sent.html, /evil\.example"/, `${kind}: an href`);
-    assert.doesNotMatch(sent.html, /<a href="https:\/\/evil/, kind);
-    assert.doesNotMatch(sent.html, /<0>/, kind);
-  }
-});
-
-test('a tag the message does not have, or a typed entity, stays text', async () => {
-  const translate = await es([row('waitlistReleased.mobile.ios.html', '<0>iPhone</0> <1>abre</1> <2>x</2> &lt;1&gt;y&lt;/1&gt;')]);
-  // The catalog rule refuses the extra tag, so it never gets this far...
-  const refused = buildMessage('waitlist_released', { url: 'https://x/', mobile: { ios: 'https://i/' }, translate });
-  assert.ok(refused.html.includes('Install TestFlight'));
-  // ...and if a translator handed it over anyway, it is text.
-  const handed = buildMessage('waitlist_released', {
-    url: 'https://x/', mobile: { ios: 'https://i/' }, translate: (id) => (id.endsWith('ios.html') ? '<0>iPhone</0> <1>abre</1> <2>x</2> &lt;1&gt;y&lt;/1&gt;' : ''),
-  });
-  assert.ok(handed.html.includes('<strong>iPhone</strong> <a href="https://i/" style="color:#0a6ee0">abre</a> &lt;2&gt;x&lt;/2&gt; &amp;lt;1&amp;gt;y&amp;lt;/1&amp;gt;'));
-});
-
-test('a name cannot become markup, a parameter or a tag, in English or translated', async () => {
+test('a name cannot become markup, a parameter or a tag, and is read once', async () => {
   const inviter = '<img src=x>{{project}}$&';
   const project = '{{inviter}}<0>$1</0>"><script>';
   const payload = { inviter, project, url: 'https://x/w?a="><script>' };
-  const translate = await es([
-    row('projectInvite.named.subject', 'De @{{inviter}} para {{project}}'),
-    row('projectInvite.named.lead', 'De @{{inviter}} para {{project}}, en Homeroom.'),
-    row('projectInvite.named.headline', 'De @{{inviter}} para {{project}}.'),
-  ]);
-  for (const options of [{}, { translate }]) {
-    const sent = buildMessage('project_invite', { ...payload, ...options });
-    assert.doesNotMatch(sent.html, /<img src=x/);
-    assert.doesNotMatch(sent.html, /<script/);
-    assert.doesNotMatch(sent.html, /<0>/);
-    assert.ok(sent.html.includes(`@&lt;img src=x&gt;{{project}}$&amp;`), 'a name is escaped once and read no further');
-  }
-  const sent = buildMessage('project_invite', { ...payload, translate });
-  assert.equal(sent.subject, `De @${inviter} para ${project}`, 'read once');
-  assert.ok(sent.text.startsWith(`De @${inviter} para ${project}, en Homeroom.`));
-});
-
-test('a subject carries no line break or control character, and the text keeps the English\'s lines', async () => {
-  const injected = 'Hola\r\nBcc: victim@example.com';
-  const translate = await es([
-    row('otp.subject', injected),
-    row('otp.expiry', 'Caduca\n\nX-Evil: yes'),
-  ]);
-  const sent = buildMessage('otp', { code: '123456', translate });
-  assert.equal(sent.subject, english('otp.subject'), 'a translated line break costs that message its translation');
-  assert.equal(sent.text, `Your Homeroom login code is 123456.\n\n${english('otp.expiry')}`);
-  // A name is outside the translation's control: it cannot break the subject either.
-  const named = await es([row('projectInvite.named.subject', 'De @{{inviter}} para {{project}}')]);
-  const header = buildMessage('project_invite', { inviter: 'ada', project: 'Pal\r\nBcc: x@example.com', translate: named }).subject;
-  assert.doesNotMatch(header, /[\r\n]/);
-  assert.equal(header, 'De @ada para Pal Bcc: x@example.com');
-  // A translation with the English's own line break is fine.
-  const signoff = await es([row('waitlistReleased.signoff', 'Hasta pronto,\nEvan de Homeroom')]);
-  const released = buildMessage('waitlist_released', { url: 'https://x/', translate: signoff });
-  assert.ok(released.text.endsWith('Hasta pronto,\nEvan de Homeroom'));
-  assert.ok(released.html.includes('<p>Hasta pronto,<br>Evan de Homeroom</p>'));
-});
-
-test('a stray private-use mark in a translation cannot move a link anywhere but its own place', () => {
-  const sent = buildMessage('password_reset', { url: URL_RESET, translate: (id, values) => (id === 'email:passwordReset.link' ? `<b> ${values.url}` : 'x') });
-  assert.doesNotMatch(sent.html, /<b>/);
+  const sent = buildMessage('project_invite', payload);
+  assert.doesNotMatch(sent.html, /<img src=x/);
+  assert.doesNotMatch(sent.html, /<script/);
+  assert.doesNotMatch(sent.html, /<0>/);
+  assert.ok(sent.html.includes(`@&lt;img src=x&gt;{{project}}$&amp;`), 'a name is escaped once and read no further');
+  assert.ok(sent.subject.includes(`@${inviter}`) && sent.subject.includes(project), 'read once');
 });
 
 // ── English stays as it was ──────────────────────────────────────────────
 
-test('with no translator, a bare ampersand the English always had is still bare', () => {
+test('a bare ampersand the English always had is still bare', () => {
   assert.ok(buildMessage('account_email', { code: '1' }).html.includes('Settings → Email & recovery to link'));
 });
 
-test('with no English at all, a code and a link still arrive', () => {
+test('with no email catalog at all, every mail still arrives with its code and its link', () => {
   // The runtime image has only .source.json; a build that somehow lost it must
-  // not send a blank login mail.
+  // not send a blank mail. Only the words built in code read the catalog.
   const script = `
     const fs = require('node:fs');
     const real = fs.readFileSync;
@@ -318,13 +199,14 @@ test('with no English at all, a code and a link still arrive', () => {
       buildMessage('password_reset', { url: 'https://x/#reset-password/abc' }),
       buildMessage('waitlist_code', { code: '654321', confirmUrl: 'https://x/c' }),
       buildMessage('project_opened', { appName: 'Pal', url: 'https://x/o', unsubscribeUrl: 'https://x/u' }),
+      buildMessage('build_ready', { appName: 'Pal', url: 'https://x/b', unsubscribeUrl: 'https://x/u' }),
       buildMessage('admin_test', { provider: 'p' }),
     ]));
   `;
   const { stdout, status, stderr } = spawnSync(process.execPath, ['-e', script], { cwd: ROOT, encoding: 'utf8' });
   assert.equal(status, 0, stderr);
-  const [otp, reset, code, opened, admin] = JSON.parse(stdout);
-  assert.ok(otp.subject);
+  const [otp, reset, code, opened, ready, admin] = JSON.parse(stdout);
+  assert.equal(otp.subject, 'Your Homeroom login code');
   assert.ok(otp.text.includes('123456'));
   assert.ok(otp.html.includes('123456'));
   assert.ok(reset.text.includes('https://x/#reset-password/abc'));
@@ -332,10 +214,12 @@ test('with no English at all, a code and a link still arrive', () => {
   assert.ok(code.text.includes('654321') && code.text.includes('https://x/c'));
   assert.deepEqual(opened.headers, { 'List-Unsubscribe': '<https://x/u>', 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' });
   assert.ok(opened.text.includes('https://x/o'));
-  assert.equal(admin.subject, 'Homeroom test email', 'an operator\'s mail never needed the catalog');
+  assert.ok(ready.text.includes('https://x/b'));
+  assert.deepEqual(ready.headers, opened.headers);
+  assert.equal(admin.subject, 'Homeroom test email');
 });
 
-test('with no frontend/, as in the runtime image, the English is the running build\'s', () => {
+test('with no frontend/, as in the runtime image, the words built in code are the running build\'s', () => {
   const script = `
     const fs = require('node:fs');
     const real = fs.readFileSync;
@@ -344,14 +228,14 @@ test('with no frontend/, as in the runtime image, the English is the running bui
       return real(file, ...rest);
     };
     const english = JSON.parse(real('frontend/locales/en/email.json', 'utf8'));
-    english['otp.subject'].text = 'FROM THE BUILD';
+    english['buildReady.lead.ready'].text = 'FROM THE BUILD';
     require('./src/services/language-cache').readSource = () => ({ files: { 'en/email.json': english } });
     const { buildMessage } = require('./src/services/mail/templates');
-    process.stdout.write(buildMessage('otp', { code: '1' }).subject);
+    process.stdout.write(buildMessage('build_ready', { appName: 'Pal', unsubscribeUrl: 'https://x/u' }).text);
   `;
   const { stdout, status, stderr } = spawnSync(process.execPath, ['-e', script], { cwd: ROOT, encoding: 'utf8' });
   assert.equal(status, 0, stderr);
-  assert.equal(stdout, 'FROM THE BUILD');
+  assert.ok(stdout.startsWith('FROM THE BUILD'), stdout);
 });
 
 // ── The door ─────────────────────────────────────────────────────────────
@@ -377,13 +261,29 @@ function doorFor(t, pool) {
 }
 
 test('the door words a mail in the language it is told, and never hands the language on', async (t) => {
-  const pool = poolWith([row('otp.subject', 'Tu código')]);
+  const pool = poolWith();
   const { config, sends, rendered } = doorFor(t, pool);
   await mail.sendOtpMail(config, 'a@example.com', '123456', { locale: 'es' });
-  assert.equal(rendered[0].subject, 'Tu código');
-  assert.ok(rendered[0].text.includes('123456'));
+  assert.equal(rendered[0].subject, 'Tu código de Homeroom');
+  assert.equal(rendered[0].text, 'Tu código de Homeroom es 123456.\n\nCaduca en 10 minutos.');
+  assert.match(rendered[0].html, /Lo recibes por la actividad de tu cuenta\./);
   assert.equal(sends[0].locale, undefined);
+  // The words are the stored template's Spanish row: a login code reads no
+  // translation of its own at send time.
+  assert.equal(pool.db.templateReads, 1);
+  assert.deepEqual(pool.db.namespaces, []);
+});
+
+test('an invite-activity mail takes its line from the notice it stands for, translated for a translated row', async (t) => {
+  const pool = poolWith([row('inviteActivity.firstMessage', '@{{actor}} saludó en {{app}}.')]);
+  const { config, rendered } = doorFor(t, pool);
+  const notice = { id: 'first_message', values: { actor: 'sam', app: 'Run Club' } };
+  const payload = { appName: 'Run Club', line: message('email:inviteActivity.firstMessage', { actor: 'sam', app: 'Run Club' }), notice, url: 'https://x/', unsubscribeUrl: 'https://x/u' };
+  await mail.send(config, { kind: 'invite_activity', to: 'a@example.com', locale: 'es', ...payload });
+  assert.equal(rendered[0].subject, '@sam saludó en Run Club');
   assert.deepEqual(pool.db.namespaces, ['email']);
+  await mail.send(config, { kind: 'invite_activity', to: 'b@example.com', ...payload });
+  assert.equal(rendered[1].subject, '@sam said hi in Run Club');
 });
 
 test('a mail with no language costs the door no read and hands nothing new on', async (t) => {
@@ -393,15 +293,15 @@ test('a mail with no language costs the door no read and hands nothing new on', 
   await mail.send(config, { kind: 'otp', to: 'b@example.com', code: '1', locale: 'en' });
   await mail.send(config, { kind: 'otp', to: 'c@example.com', code: '1', locale: null });
   assert.equal(pool.db.reads, 0);
-  assert.equal(rendered[0].subject, english('otp.subject'));
+  assert.equal(rendered[0].subject, SEEDED('otp').subject);
   for (const sent of sends) assert.ok(!('translate' in sent) && !('locale' in sent));
 });
 
-test('a login code goes out in English when the translations cannot be read', async (t) => {
-  const pool = poolWith([], { fail: new Error('connection lost') });
+test('a reader whose language has no row gets the English, with its code', async (t) => {
+  const pool = poolWith([], { fail: new Error('connection lost'), spanish: {} });
   const { config, rendered } = doorFor(t, pool);
   await mail.sendOtpMail(config, 'a@example.com', '123456', { locale: 'es' });
-  assert.equal(rendered[0].subject, english('otp.subject'));
+  assert.equal(rendered[0].subject, SEEDED('otp').subject);
   assert.ok(rendered[0].text.includes('123456'));
 });
 
@@ -419,7 +319,7 @@ test('a throttled or suppressed mail reads no translation', async (t) => {
 });
 
 test('the push and the email keep their translations apart', async () => {
-  const rows = [{ language: 'es', key: 'otp.subject', source: hash(english('otp.subject')), text: 'CORREO' }];
+  const rows = [{ language: 'es', key: 'buildReady.lead.ready', source: hash(english('buildReady.lead.ready')), text: 'CORREO' }];
   const pool = {
     async query(_sql, params) {
       return { rows: params[1] === 'email' ? rows : [] };
@@ -428,9 +328,9 @@ test('the push and the email keep their translations apart', async () => {
   const source = sourceWith();
   const email = await translator(pool, 'es', { namespace: 'email', source, now: 1000 });
   const push = await translator(pool, 'es', { source, now: 1000 });
-  assert.equal(email('email:otp.subject'), 'CORREO');
+  assert.equal(email('email:buildReady.lead.ready'), 'CORREO');
   assert.equal(typeof push, 'function');
-  assert.notEqual(push('email:otp.subject'), 'CORREO');
+  assert.notEqual(push('email:buildReady.lead.ready'), 'CORREO');
 });
 
 // ── Which language ───────────────────────────────────────────────────────
@@ -543,10 +443,14 @@ test('a notice\'s English line reads as it always has, whatever its names hold',
 // ── The catalog and the code agree ───────────────────────────────────────
 
 test('every email id in the code is in the catalog whole, and every entry is asked for', () => {
-  const sources = ['src/services/mail/templates.js', 'src/services/activity-mail.js'].map(SOURCE).join('\n');
+  const sources = ['src/services/mail/actions.js', 'src/services/activity-mail.js'].map(SOURCE).join('\n');
   assert.deepEqual(sources.match(/[`"]email:[^`"]*[`"]/g) || [], [], 'an id is one plain quoted literal');
   const used = new Set([...sources.matchAll(/'email:([A-Za-z0-9_.-]+)'/g)].map((match) => match[1]));
-  assert.ok(used.size > 50, 'the templates are read');
+  // Only the words built in code: the mails themselves are stored templates.
+  assert.deepEqual([...used].sort(), [
+    'buildReady.lead.notWorking', 'buildReady.lead.ready', 'buildReady.subject.notWorking', 'buildReady.subject.ready', 'buildReady.unnamedProject',
+    'inviteActivity.firstMessage', 'inviteActivity.joined', 'inviteActivity.joinedSomeone', 'inviteActivity.joinedUnnamed',
+  ]);
   const stems = new Set(Object.keys(ENGLISH));
   assert.deepEqual([...used].filter((id) => !stems.has(id)), [], 'an id the catalog does not have');
   assert.deepEqual([...stems].filter((id) => !used.has(id)), [], 'an entry nothing asks for');

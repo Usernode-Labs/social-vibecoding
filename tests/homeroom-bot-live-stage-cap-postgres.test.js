@@ -107,6 +107,8 @@ test('#6280: a request being built is read past the 25-request cap, with the sta
     assert.ok(row, 'the track has a row for the request');
     const state = progress.stageOf(row, { now: new Date() });
     assert.equal(state.stage, 'building');
-    assert.equal(track.jobOfRow(row, { stageOf: progress.stageOf, outcomeOf: () => null }).stage, 'building');
+    // Its track is its stored work state, derived from the same records.
+    const tracks = await track.tracksForRequests(pool, { appId: app.id, numbers: [6251] });
+    assert.equal(tracks.get(6251).work.stage, 'building');
   });
 });

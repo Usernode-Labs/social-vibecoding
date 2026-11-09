@@ -21,11 +21,10 @@
 // EventTarget for `document`, so the event Home sends is the one the block
 // hears.
 //
-// #4600: the same goes for a join from Home's featured list. Its ⊕ is
-// Home.toggleAdded, a PIN (POST /api/apps/:slug/favorite), which joins
-// through the app_favorites trigger; the route now counts that join on the
-// spot and answers `joined: true`, and toggleAdded says so on `document` as
-// setMembership does. A pin of something already joined says nothing.
+// #4600 counted a pin from Home's featured list as a join, because a pin
+// joined through the app_favorites trigger. One Home (#6361) dropped that
+// trigger: Home.toggleAdded pins an app and nothing else, so it says nothing
+// on `document` and the block is not read again for it.
 //
 // Run with: node --test tests/home-challenges-after-join.test.js
 'use strict';
@@ -290,18 +289,14 @@ test('a forced read does not share a read that left before the join: it reads ag
   assert.equal(h.HP._queued, null);
 });
 
-test('#4600: a join from Home\'s featured list (a pin) ticks "Join a community" at once too', async () => {
+test('One Home (#6361): pinning an app joins nobody, so it says nothing and reads nothing', async () => {
   const h = makeHome();
   h.Home._apps = [{ slug: 'garden', name: 'City garden', is_member: false, is_favorited: false }];
   await h.Home.toggleAdded('garden', true);
   await h.settle();
-  assert.deepEqual(h.events.map((d) => ({ ...d })), [{ slug: 'garden', joined: true }]);
-  assert.deepEqual(h.log, [
-    'POST /api/apps/garden/favorite',
-    'refresh-intent',
-    'GET /api/home-panels',
-  ], 'the block reads again after the pin answered, and tells the worker first');
-  assert.equal(h.joinCard().done, true);
+  assert.deepEqual(h.events, [], 'no membership event: an app pin is only a pin');
+  assert.deepEqual(panelReads(h.log), []);
+  assert.equal(h.Home._apps[0].is_member, false, 'and the cached flag says so');
 });
 
 test('#4600: a pin that joined nothing (already a member) says nothing', async () => {

@@ -757,7 +757,8 @@ test('B8: where Homeroom bot builds, asking it is the card\'s act, and building 
   // While the bot is on it there is nothing to start: the asker can follow
   // it, everybody else reads who asked; and no Build it now.
   const mineOn = AppView._issueCardModel(baseIssue({ bot: { what: 'building', since: null, askedBy: 'maya', mine: true } }));
-  assert.ok(hasAction(mineOn, 'openBotChatFromRequest'), 'See progress');
+  // #6401: the label names the card it lands on — the bot's progress card.
+  assert.ok(hasAction(mineOn, 'openBotChatFromRequest', 5, 'progress'), 'See progress, at the progress card');
   assert.match(cardHtml(mineOn), />See progress</);
   const theirs = AppView._issueCardModel(baseIssue({ bot: { what: 'queued', since: null, askedBy: 'maya', mine: false } }));
   const theirsHtml = cardHtml(theirs);

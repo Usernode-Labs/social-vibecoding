@@ -282,7 +282,8 @@ test('Main Chat draws a screen in place of the screen picker: draw_screen, no Pi
   assert.match(prompt, /\(draw_screen\): your designer draws it from their words/);
   assert.doesNotMatch(prompt, /offer_design|Pick the screen/);
   const src = read('src/services/homeroom-bot-mayor.js');
-  assert.match(src, /while \(rounds < limit && !ctx\.reply && !ctx\.drawScreen\) \{/, 'the turn ends with it');
+  // The chat is a profile on the turn engine: its rounds end with a reply or a screen handed over.
+  assert.match(src, /done: \(\) => !!ctx\.reply \|\| !!ctx\.drawScreen,/, 'the turn ends with it');
   assert.match(src, /if \(ctx\.drawScreen\) \{\n(?:\s+\/\/[^\n]*\n)*\s+const where = ctx\.projectThread \? [^\n]+\n\s+return \(deps\.designBot \|\| require\('\.\/design-bot'\)\)\.draw\(pool, config, \{/);
   // B01: drawn in the new project's thread when this turn opened one.
   assert.match(src, /const where = ctx\.projectThread \? \{ \.\.\.deps, threadRootId: ctx\.projectThread\.rootId, threadRequest: null \} : deps;/);
@@ -302,7 +303,8 @@ test('the preview: its own column beside the thread, three where they fit, halve
   // #6230: the preview is one kind of the detail column, drawn by
   // ../detail/detail-pane.tsx; the page still sets data-ai-preview for it.
   assert.match(ai, /data-ai-preview=\{detailHere \? layout : undefined\}/);
-  assert.match(ai, /<aside className="ai-preview-pane" data-ai-preview-pane=\{layout\} aria-label=\{detail\.kind === 'draft' \? t\('messages:draft\.pane\.label'\) : t\('messages:design\.pane\.label'\)\}>\n\s+<DetailPane layout=\{layout\} \/>/);
+  assert.match(ai, /<aside\n\s+ref=\{previewRef\}\n\s+id="ai-preview-pane"\n\s+className="ai-preview-pane"\n\s+data-ai-preview-pane=\{layout\}\n\s+aria-label=\{detail\.kind === 'draft' \? t\('messages:draft\.pane\.label'\) : t\('messages:design\.pane\.label'\)\}\n\s+>/);
+  assert.match(ai, /probe=\{previewProbe\}\n\s+\/>\n\s+\)\}\n\s+<DetailPane layout=\{layout\} \/>/);
   assert.match(read('frontend/src/features/detail/detail-pane.tsx'),
     /onClose=\{closeDetail\}\n\s+closeAs=\{layout === 'full' \? 'back' : 'close'\}/);
   assert.match(ai, /const detailHere = !!detail && !!botId && \(detail\.kind === 'design'\n\s+\? detail\.ref\.conversationId === botId && openRoot === detail\.ref\.rootId/,
@@ -310,7 +312,11 @@ test('the preview: its own column beside the thread, three where they fit, halve
   assert.match(ai, /if \(detail\.kind === 'design' && openRoot && openRoot !== detail\.ref\.rootId\) closeDetail\(\);/, 'another thread in the column closes it');
   assert.match(ai, /if \(window\.location\.hash === BOT_TAB\) closeDetail\(\);/, 'the tab brings the list back');
   const css = read('public/css/app.css');
-  assert.match(css, /#ai-screen\[data-ai-preview="three"\] \{\n\s+--ai-col-w: min\(var\(--ai-main-w\), 440px\);/);
+  // #6394: the widths are on the body, where the side panel (an island beside
+  // #ai-screen) can read them too; the screen inherits them.
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) \{\n\s+--ai-preview-auto: max\(360px, calc\(var\(--ai-room\) - 480px - min\(var\(--ai-main-w\), 440px\)\)\);/);
+  assert.match(css, /\n\s+--ai-col-w: max\(320px, min\(var\(--ai-col-chosen-w, min\(var\(--ai-main-w\), 440px\)\), calc\(var\(--ai-room\) - 480px - var\(--ai-preview-w\)\)\)\);/,
+    'until its edge is dragged the thread is Main\'s width, 440px at most');
   assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \.ai-screen-body \{ display: none; \}/, 'the list steps aside');
   assert.match(css, /#ai-screen\[data-ai-preview="full"\] \.ai-preview-pane \{\n\s+position: absolute;\n\s+inset: 0;/);
 });

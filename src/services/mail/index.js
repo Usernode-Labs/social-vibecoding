@@ -11,9 +11,13 @@
 // operator can see what happened even though the user can't.
 //
 // What this module owns, in order:
-//   1. rendering is delegated to ./templates
+//   1. rendering: the stored templates (./template-store, read from memory)
+//      rendered by ./templates buildMessage, or the owner's failure order when
+//      there are none
 //   2. the throttle decision (./rate-limit, fed from mail_deliveries)
-//   3. picking the transport (./select, resolved once at boot in config.js)
+//   3. picking the transport (./select: resolved at boot in config.js, and
+//      swapped at send time when an admin saved another provider in
+//      Admin → Email delivery)
 //   4. recording the outcome in mail_deliveries
 //   5. swallowing absolutely everything
 //
@@ -31,7 +35,8 @@ const select = require('./select');
 const events = require('./events');
 const tracking = require('./tracking');
 const language = require('./language');
-const { ENGLISH_ONLY_KINDS } = require('./templates');
+const store = require('./template-store');
+const { actionFor } = require('./actions');
 
 // How long a delivery record is kept. Long enough to answer "did that
 // user ever get their code last week", short enough that the table is not
@@ -62,6 +67,36 @@ function stagingLogOnly(config) {
     return config.mailStagingLogOnly;
   }
   return process.env.USERNODE_ENV === 'staging';
+}
+
+// Which transport this send goes out on: { transport, provider }.
+//
+// config.js resolved one at boot from the environment. An admin's saved
+// provider (./select savedChoice, read through its ten-second cache) wins
+// over it, so the switch in Admin → Email delivery needs no redeploy. A
+// staging preview is never switched: its boot transport is the log, and a
+// copy of production's saved row must not point a preview at a real provider.
+// A saved provider that is not configured is null, the same loud
+// "NOT delivered" a named PLATFORM_MAIL_PROVIDER gets, never a quiet
+// fallback to another sender.
+async function transportFor(config, pool) {
+  // `mailTransport` is what config.js resolves today;
+  // `topochainMailTransport` is the original hook name, still honoured
+  // so an injected test transport and any older caller keep working.
+  const boot = (config && (config.mailTransport || config.topochainMailTransport)) || null;
+  const bootProvider = (boot && boot.provider)
+    || (config && config.mailProvider)
+    || (boot ? 'injected' : null);
+  if (stagingLogOnly(config)) return { transport: boot, provider: bootProvider };
+  const saved = await select.savedChoice(pool);
+  if (!saved || saved === bootProvider) return { transport: boot, provider: bootProvider };
+  const transport = select.transportNamed(saved, process.env);
+  if (!transport) {
+    log.error('platform-mail',
+      'The mail provider saved in the admin console is not configured — email will NOT be delivered',
+      { provider: saved });
+  }
+  return { transport, provider: transport ? saved : null };
 }
 
 function maxPerHour(config) {
@@ -191,6 +226,52 @@ async function pruneDeliveries(pool) {
   }
 }
 
+// The suppression list, read failing OPEN as readHistory does: an address
+// that bounced getting one more mail during a database outage is a smaller
+// problem than sign-in codes stopping because the read broke.
+async function suppressionOf(pool, to) {
+  try {
+    return await events.suppression(pool, to);
+  } catch (err) {
+    log.warn('platform-mail', 'Could not read mail suppressions: sending anyway', { message: err.message });
+    return null;
+  }
+}
+
+// ─── the words ──────────────────────────────────────────────────────────
+
+// What a send renders with: the stored template and layout for `kind`, each in
+// the reader's language where that part is translated (./template-store
+// resolve), the English of both, and the translator for the words an action
+// builds in code. That translator is read only when it can matter: an action
+// with such words, whose template is translated. `readerHasLanguage` is set for
+// every reader with a language other than English, row or no row, because their
+// subject is cleaned either way (render.js). A null template sends the owner's
+// failure order (templates.js buildMessage).
+// With no database configured at all, the first templates in memory
+// (template-store seededSnapshot); a configured database that cannot be had is
+// the failure order, never those.
+async function resolvedFor(config, pool, kind, locale) {
+  const action = actionFor(kind);
+  const reader = action.englishOnly ? null : language.readerLanguage(locale);
+  try {
+    const snapshot = pool ? await store.getSnapshot(pool) : (config && config.databaseUrl ? null : store.seededSnapshot());
+    const parts = store.resolve(snapshot, kind, reader);
+    const bodyTranslated = !!parts.template && parts.template !== parts.english.template;
+    const t = bodyTranslated && action.codeWords ? await language.translatorFor(pool, locale) : null;
+    return { ...parts, t, readerHasLanguage: !!reader };
+  } catch (err) {
+    // A row shaped as nothing expected must not cost a sign-in code: it is the
+    // same as having no template.
+    log.error('platform-mail', 'Could not resolve an email template', { kind, message: err.message });
+    return { template: null, layout: null, t: null, readerHasLanguage: !!reader };
+  }
+}
+
+function unknownKind(kind) {
+  return new Error(`unknown mail kind: ${kind}`);
+}
+
 // ─── the send door ──────────────────────────────────────────────────────
 
 // send(config, { kind, to, locale, ...payload }) → always resolves undefined.
@@ -205,18 +286,12 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
       return;
     }
     const messageId = events.messageId();
-    // Render first: an unknown kind is a programming error and there is
-    // no point consulting a throttle or a provider for it.
-    buildMessage(kind, { ...payload, messageId, trackingEnabled: false });
+    // First: an unknown kind is a programming error and there is no point
+    // consulting a throttle, a provider or the templates for it.
+    if (!actionFor(kind)) throw unknownKind(kind);
 
-    // `mailTransport` is what config.js resolves today;
-    // `topochainMailTransport` is the original hook name, still honoured
-    // so an injected test transport and any older caller keep working.
-    const transport = (config && (config.mailTransport || config.topochainMailTransport)) || null;
-    const provider = (transport && transport.provider)
-      || (config && config.mailProvider)
-      || (transport ? 'injected' : null);
     const pool = poolFor(config);
+    const { transport, provider } = await transportFor(config, pool);
 
     if (!transport) {
       await record(pool, { kind, to, messageId, provider: null, status: 'no_transport' });
@@ -237,7 +312,7 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
       return;
     }
 
-    const blocked = await events.suppression(pool, to);
+    const blocked = await suppressionOf(pool, to);
     if (blocked) {
       await record(pool, { kind, to, messageId, provider, status: 'suppressed_bounce', error: blocked });
       return;
@@ -264,10 +339,24 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
     // Store destinations before exposing a tracked link to any provider.
     // If persistence fails, deliver ordinary links with no pixel instead.
     // Asked for last, so a mail that is not going out reads nothing. A
-    // transport renders from what it is handed, so the same words reach it.
-    const translate = ENGLISH_ONLY_KINDS.has(kind) ? null : await language.translatorFor(pool, locale);
-    const worded = translate ? { ...payload, translate } : payload;
-    const rendered = buildMessage(kind, { ...worded, messageId, trackingEnabled: !!pool && !!tracking.secret() });
+    // transport renders from what it is handed, so the same words reach it:
+    // `resolved` travels with the payload, and nothing logs or stores it.
+    const worded = { ...payload, resolved: await resolvedFor(config, pool, kind, locale) };
+    let rendered;
+    try {
+      rendered = buildMessage(kind, { ...worded, messageId, trackingEnabled: !!pool && !!tracking.secret() });
+    } catch (err) {
+      if (err.code !== 'no_template') throw err;
+      // The owner's third rule: no template and nothing a plain mail could
+      // carry, or a mail that must carry an unsubscribe link. Not sent.
+      await record(pool, { kind, to, messageId, provider, status: 'no_template', error: err.message });
+      log.error('platform-mail', 'No email template could be used: mail NOT sent', { kind, message: err.message });
+      return;
+    }
+    if (rendered.plainBecause) {
+      log.error('platform-mail', 'No email template could be used: sent a plain message with its code or link',
+        { kind, reason: rendered.plainBecause });
+    }
     const deliveryId = rendered.trackingLinks
       ? await record(pool, { kind, to, messageId, provider, status: 'sending', trackingLinks: rendered.trackingLinks, engagementTracked: true })
       : null;
@@ -310,9 +399,16 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
 //
 // It still never throws. A caller gets an outcome object with a `status`
 // drawn from the same vocabulary mail_deliveries uses:
-//   sent | skipped_staging | failed | no_transport | suppressed_rate_limit | suppressed_bounce
+//   sent | skipped_staging | failed | no_transport | suppressed_rate_limit | suppressed_bounce | no_template
 // plus `invalid_recipient` for a request that never reached a provider.
-async function sendTest(config, { to } = {}) {
+//
+// `preview`, from the email template editor, sends a template that is not
+// saved: `{ kind, payload, resolved }`, the action's sample payload and the
+// words to render it with (the shape send() resolves). It goes the same way as
+// the diagnostic mail and is recorded as one (`admin_test` in the ledger), so a
+// test of a sign-in template is not counted as a sign-in mail; the transport
+// renders it as `kind`, as it would the real one.
+async function sendTest(config, { to, preview = null } = {}) {
   const startedAt = Date.now();
   const outcome = {
     status: 'failed',
@@ -330,11 +426,14 @@ async function sendTest(config, { to } = {}) {
   };
 
   try {
-    // Presence summary for the panel: which provider was ASKED for and
-    // which keys are absent. describe() reads env only — it never returns
-    // a value, so nothing here can carry a credential.
+    const pool = poolFor(config);
+
+    // Presence summary for the panel: which provider was ASKED for (an
+    // admin's saved choice first, then the deploy's) and which keys are
+    // absent. describe() never returns a value, so nothing here can carry a
+    // credential.
     try {
-      const described = select.describe(process.env);
+      const described = select.describe(process.env, { saved: await select.savedChoice(pool) });
       outcome.requestedProvider = described.requestedProvider || null;
       outcome.missing = Array.isArray(described.missing) ? described.missing : [];
       outcome.from = described.from || null;
@@ -349,14 +448,10 @@ async function sendTest(config, { to } = {}) {
       return outcome;
     }
 
-    const transport = (config && (config.mailTransport || config.topochainMailTransport)) || null;
-    const provider = (transport && transport.provider)
-      || (config && config.mailProvider)
-      || (transport ? 'injected' : null);
+    const { transport, provider } = await transportFor(config, pool);
     outcome.provider = provider;
     if (transport && transport.from) outcome.from = transport.from;
 
-    const pool = poolFor(config);
     const messageId = events.messageId();
 
     // A short, non-secret handle that appears in the email body, in the
@@ -364,7 +459,8 @@ async function sendTest(config, { to } = {}) {
     // that landed in their inbox to the attempt that produced it.
     const reference = require('crypto').randomBytes(4).toString('hex');
     outcome.reference = reference;
-    const payload = {
+    const kind = preview ? preview.kind : 'admin_test';
+    const payload = preview ? { ...(preview.payload || {}), messageId } : {
       provider: provider || 'none',
       from: outcome.from || '(unset)',
       sentAt: new Date().toISOString(),
@@ -372,8 +468,32 @@ async function sendTest(config, { to } = {}) {
     };
 
     // Render before anything else, so the console can show the exact copy
-    // that was (or would have been) delivered even on the failure paths.
-    const message = buildMessage('admin_test', payload);
+    // that was (or would have been) delivered even on the failure paths. The
+    // same stored template a send uses, and the same words reach the transport.
+    const resolved = preview ? preview.resolved : await resolvedFor(config, pool, 'admin_test', null);
+    let message;
+    try {
+      message = buildMessage(kind, { ...payload, resolved });
+    } catch (err) {
+      if (err.code !== 'no_template') throw err;
+      outcome.status = 'no_template';
+      outcome.error = String(err.message).slice(0, 500);
+      outcome.deliveryId = await record(pool, {
+        kind: 'admin_test', to, messageId, provider, status: 'no_template', error: outcome.error,
+      });
+      log.error('platform-mail', 'No email template could be used for the admin test mail', { message: outcome.error });
+      return outcome;
+    }
+    // A template under test that does not render would go out as the plain
+    // fallback, which is not what the admin asked to see.
+    if (preview && message.plainBecause) {
+      outcome.status = 'no_template';
+      outcome.error = `The template could not be used: ${message.plainBecause}`.slice(0, 500);
+      outcome.deliveryId = await record(pool, {
+        kind: 'admin_test', to, messageId, provider, status: 'no_template', error: outcome.error,
+      });
+      return outcome;
+    }
     outcome.message = { subject: message.subject, text: message.text };
 
     if (!transport) {
@@ -387,7 +507,7 @@ async function sendTest(config, { to } = {}) {
       return outcome;
     }
 
-    const blocked = await events.suppression(pool, to);
+    const blocked = await suppressionOf(pool, to);
     if (blocked) {
       outcome.status = 'suppressed_bounce';
       outcome.error = blocked;
@@ -413,7 +533,7 @@ async function sendTest(config, { to } = {}) {
     }
 
     try {
-      const detail = await transport.send({ to, kind: 'admin_test', ...payload });
+      const detail = await transport.send({ to, kind, ...payload, resolved });
       if (detail && detail.providerMessageId) {
         outcome.providerMessageId = String(detail.providerMessageId).slice(0, 128);
       }
@@ -610,6 +730,9 @@ module.exports = {
   KINDS,
   chooseTransport: select.chooseTransport,
   describe: select.describe,
+  savedChoice: select.savedChoice,
+  setProvider: select.setProvider,
+  transportFor,
   RETENTION_DAYS,
   PRUNE_LIMIT,
 };

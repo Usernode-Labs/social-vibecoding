@@ -51,7 +51,7 @@ export function DetailPane({ layout }: { layout: DetailLayout }): ReactNode {
       />
     );
   }
-  if (entry.kind === 'shots') return <DetailPaneShots entry={entry} />;
+  if (entry.kind === 'shots') return <DetailPaneShots entry={entry} layout={layout} />;
   return (
     <SpecPanelView
       open

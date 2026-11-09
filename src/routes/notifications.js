@@ -127,6 +127,17 @@ function stagingMockNotifications() {
       sessionId: null, sessionTitle: null,
       prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
+    // #5404: the Monday count of the changes you voted on that were decided.
+    // It names no project (services/voted-digest.js), so its app fields are
+    // nulled; a preview has no Monday to wait for without this row.
+    {
+      ...base,
+      id: 990230, kind: 'voted_digest',
+      createdAt: new Date(now - 3.2 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      detail: '3',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     // #5580: one request's story, from Homeroom bot: it says the change is
     // live here, and (990215, further down) that it was ready to try before
     // that. Both are about the same mock request (storyIssueNumber 990301),
@@ -1122,6 +1133,7 @@ function notificationsRoutes(config) {
       id, ids, all, chat_message_id: chatMessageId, app_id: appId,
       conversation_id: conversationId, session_id: sessionId,
       kinds, exclude_kinds: excludeKinds, older_than_days: olderThanDays,
+      keep_plain_messages: keepPlainMessages,
     } = req.body || {};
     // #5929 (item 13): `{ all: true, older_than_days: N }` is the Unread
     // tab's "Mark everything older than a week as read": the mark-all,
@@ -1135,7 +1147,8 @@ function notificationsRoutes(config) {
     if (olderThanDays != null) {
       const windowOk = Number.isInteger(olderThanDays) && olderThanDays >= 1 && olderThanDays <= 365;
       if (!windowOk || !all || id != null || ids != null || chatMessageId != null || appId != null
-        || conversationId != null || sessionId != null || kinds != null || excludeKinds != null) {
+        || conversationId != null || sessionId != null || kinds != null || excludeKinds != null
+        || keepPlainMessages != null) {
         return res.status(400).json({ error: 'Invalid older_than_days' });
       }
       olderThan = olderThanDays;
@@ -1257,6 +1270,10 @@ function notificationsRoutes(config) {
       // like the branches above whenever something actually changed.
       const cleared = await notifications.markRead(pool, req.user.id, {
         id, ids: idList, all: !!all, kinds: kindList, excludeKinds: excludeList, olderThanDays: olderThan,
+        // #6498: opening the bell clears exactly what it counts, leaving the
+        // plain messages the Messages tab owns. `all` without this flag is
+        // still the "Mark all read" clear-all.
+        keepPlainMessages: keepPlainMessages === true,
       });
       const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
       if (cleared > 0) {

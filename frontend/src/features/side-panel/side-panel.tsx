@@ -33,9 +33,12 @@
  * There the panel is in Main's place, the chat docked beside the list, and
  * is drawn as that column rather than as a panel of its own (Evan: "not in
  * a new side panel that can be maximized and has its own Workshop back
- * button"): ‹ Main Chat, which gives Main its place back, and the project the
- * page is in, which opens it; no title, Expand, Close, Back or divider, and
- * the page in it leaves out its own "‹ Workshop" (controller BESIDE_AI_CLASS).
+ * button"): the project the page is in, which opens it, the page's own name,
+ * its ⋯ and a ×, which closes it; no title, Expand, Close, Back or divider,
+ * and the page in it leaves out its own "‹ Workshop" (controller
+ * BESIDE_AI_CLASS). Closing it gives the lists back, or Main Chat or a
+ * private thread when one of those was open behind it (6 Nov 2026, #6425:
+ * the × replaced the "‹ Main Chat" chip).
  * Both rows are always rendered and app.css shows the one that applies
  * (`body:has(#ai-screen:not(.hidden))`), so the prerender is one markup.
  *
@@ -68,10 +71,12 @@ import { useMenuKeyboard } from '../../lib/menu-keys';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { pageLinkFor } from '../ai/door';
+import { StatusPill } from '../dev-board/card/dev-card';
+import type { StatusPillState } from '../dev-board/card/model';
 import { copyToClipboard } from '../message-actions/clipboard';
 import { useDismiss } from '../message-actions/use-dismiss';
-import { SidePanel as controller } from './controller';
-import { panelPage, titleFor } from './routes';
+import { SidePanel as controller, type PanelMenuRow } from './controller';
+import { panelPage, samePage, titleFor, workshopItemOf } from './routes';
 import {
   AI_MAIN_WIDTH_KEY,
   KEY_STEP,
@@ -86,8 +91,10 @@ import {
   inlineStartOf,
   shownWidth,
   writeStoredWidth,
+  type LayoutProbe,
 } from './resize';
 import { sidePanelRefs, sidePanelStore } from './store.js';
+import { panelEdgeStore } from './edge-store';
 import { dirSign } from '../../lib/i18n/direction';
 
 /** The app header's round control, as its #back-btn draws it — less its
@@ -113,6 +120,10 @@ const BACK = `hidden ${DISC_BOX}`;
 export function SidePanel(): ReactNode {
   const t = useMessages('agent');
   const s = useStoreState(sidePanelStore);
+  // The AI page sets this while the panel is the middle column of three,
+  // beside a detail opened from the page it holds (#6394); otherwise the
+  // divider keeps its own defaults.
+  const edge = useStoreState(panelEdgeStore).slot;
   const rootRef = useRef<HTMLElement | null>(null);
   const backRef = useRef<HTMLButtonElement | null>(null);
   const loadingRef = useRef<HTMLDivElement | null>(null);
@@ -134,7 +145,13 @@ export function SidePanel(): ReactNode {
       className="side-panel hidden"
       aria-labelledby="side-panel-title"
     >
-      <SidePanelDivider panelRef={rootRef} shown={s.open && !!s.frameSrc} />
+      <SidePanelDivider
+        panelRef={rootRef}
+        shown={s.open && !!s.frameSrc}
+        widthKey={edge?.widthKey}
+        probe={edge?.probe}
+        watch={edge?.watch}
+      />
       <div className="side-panel-head flex items-center gap-2 shrink-0">
         <Button
           id="side-panel-back"
@@ -182,21 +199,27 @@ export function SidePanel(): ReactNode {
         >
           <XIcon className="w-4 h-4" aria-hidden="true" />
         </Button>
-        {/* Beside the AI tab's page only (app.css): ‹ Main Chat, which gives
-            Main its place back, and the column's heading as Main's own reads,
-            the project's tile, what is open, and its project and number
-            (30 Oct 2026). The chip is the topic's own back chip. */}
-        <button
+        {/* Beside the AI tab's page only (app.css): the column's heading as
+            Main's own reads, the project's tile, what is open, and its
+            project and number (30 Oct 2026). */}
+        <PanelHeading route={s.route} place={s.place} reported={s.reported} label={s.label} head={s.head} />
+        <PanelMore route={s.route} />
+        {/* 6 Nov 2026 (#6425): the × that closes the page, in the "‹ Main
+            Chat" chip's place: the lists alone behind it, or Main Chat or a
+            thread when one of those was open there. The round disc the
+            panel's own Close draws. */}
+        <Button
           type="button"
-          className="side-panel-main dev-topic-back un-touch-target"
-          aria-label={t('agent:sidePanel.mainLabel')}
+          variant="unstyled"
+          size="icon"
+          ink="none"
+          className={`side-panel-ai-close ${DISC}`}
+          aria-label={t('agent:sidePanel.close')}
+          title={t('agent:sidePanel.close')}
           onClick={() => controller.close()}
         >
-          <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
-          <span>{t('agent:sidePanel.main')}</span>
-        </button>
-        <PanelHeading route={s.route} place={s.place} reported={s.reported} label={s.label} />
-        <PanelMore route={s.route} />
+          <XIcon className="w-4 h-4" aria-hidden="true" />
+        </Button>
       </div>
       <div id="side-panel-body" className="side-panel-body">
         {/* data-un-keyboard-relay: a tap in the panel that closes the
@@ -228,6 +251,14 @@ export function SidePanel(): ReactNode {
 
 type Place = { slug: string; name: string; icon_url?: string | null; icon_emoji?: string | null };
 
+/** What the page on screen published for the column (#6431), as the store holds it. */
+type PanelHeadView = {
+  route: string;
+  kind: 'request' | 'change';
+  pill: StatusPillState | null;
+  menuKey: string | null;
+};
+
 /** Which "Project · …" line a page's route reads as, and its number. */
 function whereOf(route: string): { id: string; number: number | null } {
   const m = route.match(/\/dev\/(issues|changes|proposals|sessions|shared|governance)\/(\d+)/);
@@ -246,9 +277,15 @@ function whereOf(route: string): { id: string; number: number | null } {
  * (its Hub). Its tile and name are the ones the door named, while the page is
  * still in that project; after a link to another one, the name its page
  * reported. Only the title on a page that is in no project.
+ *
+ * #6431: the page's own status pill rides after "Request #N" or "Change #N",
+ * at the size its own bar drew it. It is the page's `head` (./head-store.ts,
+ * reported through ./embedded.ts), taken only when that head is THIS page's —
+ * one page's pill never shows on the next.
  */
-function PanelHeading({ route, place, reported, label }: {
+function PanelHeading({ route, place, reported, label, head }: {
   route: string | null; place: Place | null; reported: string; label: { route: string; text: string } | null;
+  head: PanelHeadView | null;
 }): ReactNode {
   const t = useMessages('agent');
   if (!route) return null;
@@ -258,6 +295,7 @@ function PanelHeading({ route, place, reported, label }: {
   const title = (label && label.route === route && label.text) || titleFor(route, reported);
   const where = whereOf(route);
   const link = pageLinkFor(route);
+  const pill = head && head.pill && samePage(head.route, route) ? head.pill : null;
   return (
     <div className="side-panel-place">
       {same ? (
@@ -268,37 +306,44 @@ function PanelHeading({ route, place, reported, label }: {
       <span className="min-w-0 flex flex-col">
         <span className="side-panel-place-title truncate">{title}</span>
         {slug ? (
-          <span className="side-panel-place-where truncate">
-            <RichMessage
-              id={where.id}
-              values={{ project, number: where.number }}
-              components={[
-                <a
-                  className="side-panel-place-link"
-                  href={`#app/${encodeURIComponent(slug)}/workshop`}
-                  aria-label={t('agent:sidePanel.openProject', { project })}
-                  onClick={() => {
-                    // A door to the project: its Hub, not the tab its page was last on.
-                    try { (window as any).AppView?._landOnHub?.(slug); } catch { /* the page as it opens */ }
-                  }}
-                />,
-                // The item's own page, the one Expand opens (3 Nov 2026): a
-                // plain left press goes there inside the shell, as Expand does;
-                // a middle press or a modified one gives the real address.
-                link ? (
+          <span className="side-panel-place-where">
+            <span className="side-panel-place-where-text truncate">
+              <RichMessage
+                id={where.id}
+                values={{ project, number: where.number }}
+                components={[
                   <a
                     className="side-panel-place-link"
-                    href={link}
-                    onClick={(e) => {
-                      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-                      e.preventDefault();
-                      try { (window as any).Improve?.enterTopicFrom?.(window.location.hash); } catch { /* the page as it opens */ }
-                      controller.expand();
+                    href={`#app/${encodeURIComponent(slug)}/workshop`}
+                    aria-label={t('agent:sidePanel.openProject', { project })}
+                    onClick={() => {
+                      // A door to the project: its Hub, not the tab its page was last on.
+                      try { (window as any).AppView?._landOnHub?.(slug); } catch { /* the page as it opens */ }
                     }}
-                  />
-                ) : <span />,
-              ]}
-            />
+                  />,
+                  // The item's own page, the one Expand opens (3 Nov 2026): a
+                  // plain left press goes there inside the shell, as Expand does;
+                  // a middle press or a modified one gives the real address.
+                  link ? (
+                    <a
+                      className="side-panel-place-link"
+                      href={link}
+                      onClick={(e) => {
+                        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                        e.preventDefault();
+                        try { (window as any).Improve?.enterTopicFrom?.(window.location.hash); } catch { /* the page as it opens */ }
+                        controller.expand();
+                      }}
+                    />
+                  ) : <span />,
+                ]}
+              />
+            </span>
+            {pill ? (
+              <span className="side-panel-place-status" data-side-panel-status={pill.key}>
+                <StatusPill s={pill} inline />
+              </span>
+            ) : null}
           </span>
         ) : null}
       </span>
@@ -308,14 +353,25 @@ function PanelHeading({ route, place, reported, label }: {
 
 /**
  * The ⋯ beside the column's heading (3 Nov 2026), drawn as Main's own header
- * menu (../messages/index.tsx): one item, Copy link, which copies the item's
- * own page address — the one to share, not the tab's. Only a page that has
- * one shows it, so the prerender (no route yet) draws nothing.
+ * menu (../messages/index.tsx): Copy link, which copies the item's own page
+ * address — the one to share, not the tab's — and (#6380) Open in workshop,
+ * present only for a request, change or decision of a project. Only a page
+ * that has a link shows the menu at all, so the prerender (no route yet)
+ * draws nothing.
+ *
+ * #6431: under those two, the page's OWN rows — Build it with your own Claude
+ * Code, Notify me or Mute, the moves, Change category, Edit title and the
+ * rest — under a thin divider. They are read from the page when the menu
+ * opens (controller `panelMenuRows`, the same list its own ⋯ shows) and run in
+ * the page (controller `runPanelMenuRow`), so the column's menu and the page's
+ * are one menu with one behaviour. The page's own ⋯ is not drawn beside the
+ * bot page (app.css), so this is the only one there.
  */
 function PanelMore({ route }: { route: string | null }): ReactNode {
   const t = useMessages('agent');
   const link = route ? pageLinkFor(route) : null;
   const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<PanelMenuRow[]>([]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -325,12 +381,19 @@ function PanelMore({ route }: { route: string | null }): ReactNode {
   // Another page is another heading: a menu left open does not follow.
   useEffect(() => { setOpen(false); }, [route]);
   if (!link) return null;
+  // Read when the menu opens, never while it is up: a page that moved on
+  // (Notify me becoming Mute) says so the next time it is opened.
+  const toggle = () => {
+    if (open) { setOpen(false); return; }
+    setRows(controller.panelMenuRows());
+    setOpen(true);
+  };
   return (
     <div className="side-panel-more relative" ref={wrapRef}>
       <button
         ref={btnRef}
         type="button"
-        onClick={() => setOpen((shown) => !shown)}
+        onClick={toggle}
         className="messages-thread-action"
         aria-label={t('agent:sidePanel.moreLabel')}
         aria-haspopup="menu"
@@ -358,6 +421,42 @@ function PanelMore({ route }: { route: string | null }): ReactNode {
           >
             {t('agent:sidePanel.menu.copyLink')}
           </button>
+          {/* #6380: the same request, change or decision, open in the panel
+              beside its project's Workshop. Only a project's own work has a
+              place there; a private thread or a page in no project keeps the
+              menu as it was. */}
+          {route && workshopItemOf(route) ? (
+            <button
+              type="button"
+              role="menuitem"
+              data-side-panel-open-workshop=""
+              onClick={() => {
+                btnRef.current?.focus({ preventScroll: true });
+                setOpen(false);
+                controller.openInWorkshop();
+              }}
+            >
+              {t('agent:sidePanel.menu.openInWorkshop')}
+            </button>
+          ) : null}
+          {rows.length ? <div className="side-panel-menu-sep" role="separator" /> : null}
+          {rows.map((row, i) => (
+            <button
+              key={`${i}:${row.label}`}
+              type="button"
+              role="menuitem"
+              data-side-panel-page-row={i}
+              title={row.title || undefined}
+              disabled={row.disabled}
+              onClick={(e) => {
+                btnRef.current?.focus({ preventScroll: true });
+                setOpen(false);
+                controller.runPanelMenuRow(i, row.label, e.nativeEvent);
+              }}
+            >
+              {row.label}
+            </button>
+          ))}
         </div>
       ) : null}
     </div>
@@ -393,6 +492,8 @@ export function SidePanelDivider({
   id = 'side-panel-divider',
   controls = 'platform-side-panel',
   widthKey,
+  probe: measure = probeLayout,
+  watch,
 }: {
   panelRef: RefObject<HTMLElement | null>;
   shown: boolean;
@@ -401,6 +502,13 @@ export function SidePanelDivider({
   /** Which stored width this edge sets; by default Main's while the bot
    *  page is up, the side panel's everywhere else. */
   widthKey?: string;
+  /** The layout as this edge reads it, for a column that is not the last or
+   *  has more than one neighbour (the bot page with a preview open, #6359);
+   *  the side panel's own reading by default. Keep it stable (useCallback). */
+  probe?: () => LayoutProbe;
+  /** A neighbour whose width this edge's bound is read from: its range is
+   *  read again whenever that one is resized (the preview beside the thread). */
+  watch?: RefObject<HTMLElement | null>;
 }): ReactNode {
   const t = useMessages('agent');
   const [range, setRange] = useState<WidthRange | null>(null);
@@ -419,7 +527,7 @@ export function SidePanelDivider({
   // window that narrows gives the width back, and one that grows returns it.
   const settle = useCallback(() => {
     const key = resolveKey();
-    const probe = probeLayout();
+    const probe = measure();
     const b = bounds(probe);
     const stored = readStoredWidth(undefined, key);
     applyWidth(stored == null ? null : clampWidth(stored, b), undefined, key);
@@ -429,14 +537,20 @@ export function SidePanelDivider({
     const box = panel ? panel.getBoundingClientRect() : null;
     const now = box && box.width > 0 ? shownWidth(inlineStartOf(box), probe) : 0;
     setRange(now > 0 ? { now, ...b } : null);
-  }, [panelRef, resolveKey]);
+  }, [panelRef, resolveKey, measure]);
 
   useEffect(() => {
     settle();
     if (!shown) return undefined;
     window.addEventListener('resize', settle);
-    return () => window.removeEventListener('resize', settle);
-  }, [shown, settle]);
+    const other = watch?.current;
+    const observer = other && typeof ResizeObserver === 'function' ? new ResizeObserver(() => settle()) : null;
+    if (observer && other) observer.observe(other);
+    return () => {
+      window.removeEventListener('resize', settle);
+      observer?.disconnect();
+    };
+  }, [shown, settle, watch]);
 
   // A drag that never ended (the island unmounting mid-drag) must not leave
   // the whole document stuck in the resize cursor.
@@ -446,7 +560,7 @@ export function SidePanelDivider({
 
   const set = (width: number, persist: boolean): number => {
     const key = resolveKey();
-    const b = bounds(probeLayout());
+    const b = bounds(measure());
     const next = clampWidth(width, b);
     applyWidth(next, undefined, key);
     setRange({ now: next, ...b });
@@ -463,7 +577,7 @@ export function SidePanelDivider({
     drag.current = {
       id: e.pointerId,
       startX: e.clientX,
-      startW: shownWidth(inlineStartOf(panel.getBoundingClientRect()), probeLayout()),
+      startW: shownWidth(inlineStartOf(panel.getBoundingClientRect()), measure()),
       width: null,
     };
     // Frames swallow pointer events that cross them; while a drag is on, the
@@ -497,7 +611,7 @@ export function SidePanelDivider({
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const panel = panelRef.current;
     if (!panel) return;
-    const now = shownWidth(inlineStartOf(panel.getBoundingClientRect()), probeLayout());
+    const now = shownWidth(inlineStartOf(panel.getBoundingClientRect()), measure());
     const step = e.shiftKey ? KEY_STEP * 4 : KEY_STEP;
     let next: number | null = null;
     if (e.key === 'ArrowLeft') next = now + step * dirSign();

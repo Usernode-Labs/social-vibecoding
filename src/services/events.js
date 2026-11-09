@@ -118,6 +118,19 @@ const EVENT_TYPES = Object.freeze({
   // the provider accepted it. No backfill — the button didn't exist
   // before this shipped.
   MAIL_TEST_SENT: 'mail_test_sent',
+  // An admin switched who sends platform mail (src/routes/admin.js PUT
+  // /api/admin/mail/provider). Metadata carries { from, to }, provider names
+  // (`from` is null when nothing could send before), never a credential.
+  MAIL_PROVIDER_CHANGED: 'mail_provider_changed',
+  // An admin changed an email template or layout from Admin > Email templates
+  // (src/routes/admin-email-templates.js). Metadata carries { what:
+  // 'template'|'layout', change: 'saved'|'restored'|'deleted', id, action or
+  // familyId, version or replacementId }: which version, never its words. The
+  // version rows themselves (created_by) keep who wrote each one; this is the
+  // trace of restores and deletes, which write no new row. A test send from the
+  // editor is a MAIL_TEST_SENT with { action }. No backfill: the section did
+  // not exist before this shipped.
+  EMAIL_TEMPLATE_CHANGED: 'email_template_changed',
   // An admin sent a diagnostic text from Admin → SMS delivery
   // (src/routes/admin.js POST /api/admin/sms/test). Metadata carries
   // { status, providerCode, phoneLast4 } — the last four digits only,

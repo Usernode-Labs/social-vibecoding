@@ -17,13 +17,17 @@
  *               way first, then what waits.
  *   Live        yours that went live this week.
  *
- * The last four are GET /api/ai/work's, and where Homeroom bot works on a
- * request for you, its list is the bot's own word on it (services/ai-work.js
- * botStages), so this page and the bot's answer in Main agree (29 Oct 2026).
+ * The last four are GET /api/ai/work's. Each row carries its request's (or
+ * change's) stored work state, the one every screen draws (lib/work-state.ts,
+ * services/work-state.js: 5 Nov 2026), so its words are the same stage words
+ * the chat's drawer, the request's page and Homeroom bot's answers use.
  *
  * A row's words are phrases (an id and its values), translated where they
  * are drawn, so this module needs no i18n runtime and its tests read it bare.
  */
+
+import { lineWords, stageWords } from '../../lib/work-state';
+import type { WorkState } from '../../lib/work-state';
 
 export interface AiApp {
   slug: string;
@@ -57,6 +61,8 @@ export interface AiPrivate {
   resultRef?: number | null;
   /** #6271: the day it was marked done, for Live this week (absent from an older server). */
   doneAt?: string | null;
+  /** Filed (or posted) as a request that has since finished: History's, not Needs you's. */
+  resultDone?: boolean;
 }
 
 export interface AiThread {
@@ -66,16 +72,26 @@ export interface AiThread {
   title: string | null;
   app: AiApp | null;
   change: { id: number; number: number | null } | null;
+  /**
+   * #6421: how many requests the thread holds (a change for several requests
+   * gathers their threads into one). Absent from an older server, which reads
+   * as one.
+   */
+  requests?: number;
   href: string;
   group: 'needs' | 'next' | 'waiting' | 'live';
-  what:
-    | 'plan' | 'decide' | 'already_works' | 'build_stopped' | 'fix_stopped'
-    | 'going_live' | 'merging' | 'fixing' | 'revising' | 'updating' | 'building' | 'reading' | 'reading_reply'
-    | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'update_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'retrying_plan' | 'on_hold'
-    | 'not_picked_up' | 'needs_person' | 'nothing_to_build' | 'not_read' | 'operator' | 'awaiting_plan'
-    | 'live'
-    /** #6271: a private thread marked done this week. */
-    | 'closed';
+  /**
+   * Where it stands: its request's stored work state, or its change's
+   * (lib/work-state.ts). #6271: a private thread marked done this week is
+   * `closed`.
+   */
+  work: WorkState;
+  /**
+   * Your own change (not Homeroom bot's) waits on your fix: its checks
+   * failed, its preview did not build, or it conflicts. Needs you, with Fix
+   * it; its stage stays the change's own (absent from an older server).
+   */
+  fixYours?: boolean;
   at: string | null;
   /**
    * #6233: on a Live row, when the change merged and its id, so the tab can
@@ -85,23 +101,12 @@ export interface AiThread {
   mergedAt?: string | null;
   changeId?: number | null;
   quietDays?: number;
-  /** #6158: its place in Homeroom bot's line, or among the project's builds held for a slot (1-based). */
-  place?: number;
-  /** #6158: Homeroom bot's reason, first line only, on a request it left for a person or found nothing to build in. */
-  reason?: string | null;
   /** #6282: what was asked for, on an Updating or Update queued row (one line, 80 characters at most). */
   ask?: string | null;
   /** Up for a vote (a change's, or a decision's): how you voted, if you have. */
   myVote?: 'yes' | 'no' | null;
-  /** Being made: by Homeroom bot, by you, or by someone else. */
+  /** Being made: by Homeroom bot, by you, or by someone else (a claim's line names who). */
   by?: 'bot' | 'you' | 'someone';
-  /**
-   * Held back: until a change up for a vote is decided, or for Homeroom
-   * bot's turn among the project's builds (#6156: votes do not free it).
-   */
-  heldBy?: 'approvals' | 'turn';
-  /** A request someone has claimed and has no change for yet: who. */
-  claimedBy?: string | null;
   /** Held for a slot: how many of Homeroom bot's changes holding one wait on your vote (upNext). */
   yourVotes?: number;
   /**
@@ -139,6 +144,11 @@ export interface NeedItem {
   ballot?: { number?: number | null; title?: string | null } | null;
   /** A change for a request: the request it closes (absent from an older server). */
   request?: { number?: number | null; title?: string | null } | null;
+  /**
+   * A group decision's facts (routes/workshop-overview.js decisionFacts): what
+   * kind it is, and for a vote to close a request, the request's number.
+   */
+  decision?: { kind?: string | null; issueNumber?: number | null } | null;
   /** Who proposed it, by username: Homeroom bot's own changes hold its slots. */
   author?: string | null;
   /**
@@ -147,9 +157,19 @@ export interface NeedItem {
    * Approve, as its card and the project's own Needs you do; Vote elsewhere.
    */
   approve?: boolean;
+  /**
+   * #6389: a change the viewer made through a coding agent whose votes are
+   * in but which waits on their fix (`checks` and/or `conflict`). Its row
+   * says what it waits on instead of Vote.
+   */
+  waitingOn?: string[];
+  /** #6389: the coding tool the change was made in, such as `claude-code`. */
+  agent?: string | null;
   /** #6262: the thread its page is, and how many messages in it are new. */
   threadId?: number | null;
   unread?: number;
+  /** When it started needing the viewer: the day its row is grouped under. */
+  at?: string | null;
 }
 
 /** Homeroom bot's account: its changes up for a vote hold a project's build slots. */
@@ -164,7 +184,7 @@ function holdsSlot(item: NeedItem): boolean {
 function heldProjects(work: AiWork | null): Set<string> {
   const held = new Set<string>();
   for (const t of work?.waiting || []) {
-    if (t.what === 'held' && t.heldBy !== 'turn' && t.app) held.add(t.app.slug);
+    if (t.work.line?.code === 'held_waiting' && t.app) held.add(t.app.slug);
   }
   return held;
 }
@@ -188,6 +208,8 @@ function shownNumber(item: NeedItem): number | null {
 export interface Phrase {
   id: string;
   values?: Record<string, string | number>;
+  /** Values that are phrases themselves (a stage's words inside a row's line), translated first. */
+  nested?: Record<string, Phrase>;
 }
 
 /** Who is in a thread, drawn on its tile: everyone in its community, only you inside one, or only you. */
@@ -201,6 +223,8 @@ export interface WorkRow {
   sub: Phrase;
   /** What you owe, on the row's one pill. */
   pill: Phrase | null;
+  /** The row's second line, where it is news (whyOf): a hand-back's reason, said by its stage. */
+  why?: Phrase | null;
   /** Where the row goes: a page, or a private thread of Main. */
   href: string | null;
   rootId: number | null;
@@ -212,6 +236,12 @@ export interface WorkRow {
    */
   threadId: number | null;
   unread: number;
+  /**
+   * When it first needed the viewer: the day its row is grouped under (6 Nov
+   * 2026, Needs you and Waiting & in progress split each project's rows by
+   * day). A private thread's last activity; absent from an older server.
+   */
+  at: string | null;
 }
 
 /**
@@ -232,6 +262,37 @@ export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: Ai
     groups[at.get(key)!].items.push(row);
   }
   return groups;
+}
+
+/**
+ * Pure (6 Nov 2026): the reader's own calendar day a row belongs to, as
+ * `YYYY-MM-DD`, or '' when its moment is missing or unreadable. Needs you and
+ * Waiting & in progress split each project's rows by it (./lists.tsx), so a
+ * row joins the day it first needed the viewer, read in their own time zone.
+ */
+export function dayKey(at: string | null | undefined): string {
+  const d = new Date(String(at || ''));
+  if (!Number.isFinite(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Pure (6 Nov 2026): rows by their day, the newest day first and each day's
+ * rows in the order they came in, so a project's day headings are one run
+ * each rather than Today, Yesterday, Today. A row with no day goes last.
+ */
+export function byDay<T extends { at?: string | null }>(rows: readonly T[]): T[] {
+  return rows
+    .map((row, i) => ({ row, i, key: dayKey(row.at) }))
+    .sort((a, b) => {
+      if (!a.key || !b.key) {
+        if (a.key) return -1;
+        if (b.key) return 1;
+        return a.i - b.i;
+      }
+      return a.key === b.key ? a.i - b.i : (a.key < b.key ? 1 : -1);
+    })
+    .map(({ row }) => row);
 }
 
 /**
@@ -256,16 +317,20 @@ export function holdOrder<T extends { key: string }>(rows: T[], drawn: readonly 
  *
  * #6262: a row with something new is never folded either. Show more is for
  * what you have already seen; hiding a new row behind it is what the dot was
- * meant to stop.
+ * meant to stop. That fits Needs you, where new means it wants you.
+ *
+ * #6408: Live this week calls it with `liftFresh` false. There, new only
+ * means a change went live since the viewer last looked, which is most of the
+ * list on a busy day, so it folds after its first few whatever is new.
  */
-export function groupRows<T extends { lit?: boolean; fresh?: boolean }>(items: T[], first: number, open: boolean): { items: T[]; shown: number; hidden: number } {
+export function groupRows<T extends { lit?: boolean; fresh?: boolean }>(items: T[], first: number, open: boolean, liftFresh = true): { items: T[]; shown: number; hidden: number } {
   const litAt = open ? -1 : items.findIndex((row) => row.lit);
   // Which rows past the first few must still be shown: the fresh ones and
   // the one you are on. They keep their order; the rest folds away.
   const lifted = new Set<number>();
   if (!open) {
     if (litAt >= first) lifted.add(litAt);
-    items.forEach((row, i) => { if (row.fresh && i >= first) lifted.add(i); });
+    if (liftFresh) items.forEach((row, i) => { if (row.fresh && i >= first) lifted.add(i); });
   }
   const rest = items.slice(first);
   const drawn = open
@@ -337,6 +402,23 @@ export function rankProjects(rows: WorkRow[], progress: AiThread[], waiting: AiT
 }
 
 /**
+ * Pure (5 Nov 2026): the ranking, then any project it does not name, once
+ * each and in their order, needing nothing: History's projects, and one a
+ * link picked (#homeroom-bot?project=…) that no list names yet. Their chips
+ * come after the rest, under More; a picked one leads the rail (railProjects).
+ */
+export function withProjects(ranked: ProjectTally[], apps: readonly (AiApp | null | undefined)[]): ProjectTally[] {
+  const out = [...ranked];
+  const seen = new Set(ranked.map((p) => p.app.slug));
+  for (const app of apps) {
+    if (!app || !app.slug || seen.has(app.slug)) continue;
+    seen.add(app.slug);
+    out.push({ app, needs: 0, progress: 0, waiting: 0, live: 0 });
+  }
+  return out;
+}
+
+/**
  * Pure: the projects the rail shows as chips: any picked from More, then the
  * first few of the ranking. A pick from More comes first, beside All, so
  * what the lists are narrowed to is on screen even where a phone's rail
@@ -354,12 +436,48 @@ const PILLS: Record<string, string> = {
   ballot: 'messages:ai.pill.pick',
   question: 'messages:ai.pill.answer',
   bot_question: 'messages:ai.pill.answer',
+};
+
+/**
+ * #6389: what a change the viewer made through a coding agent waits on once
+ * its votes are in: its pill, its tooltip, and the phone's second line. The
+ * pill says one reason (tests first); the tooltip and second line say both
+ * when both are true, so the row still fits on a phone.
+ */
+function waitingRow(reasons: string[]) {
+  const checks = reasons.includes('checks');
+  const conflict = reasons.includes('conflict');
+  if (checks) {
+    return {
+      pill: 'messages:ai.pill.testsFailing',
+      sub: conflict ? 'messages:ai.row.waitsOnFixBoth' : 'messages:ai.row.waitsOnFixTests',
+    };
+  }
+  return { pill: 'messages:ai.pill.conflicts', sub: 'messages:ai.row.waitsOnFixConflict' };
+}
+
+/**
+ * Pure: which hand-back a Needs you row of the bot's is, by its stage: the
+ * row's key and pill. A plan waits for Build it; a decision, for a person;
+ * #6306: one already there only needs closing; a stopped build, for a
+ * restart; #6284: failing checks it stopped fixing, for one more try.
+ */
+function needKind(work: WorkState): string {
+  if (work.stage === 'stopped') return work.reason === 'fix_stopped' ? 'fix_stopped' : 'stopped';
+  if (work.why === 'plan') return 'plan';
+  if (work.why === 'already_works') return 'works';
+  if (work.why === 'needs_detail') return 'detail';
+  return 'decide';
+}
+
+const NEED_PILLS: Record<string, string> = {
   plan: 'messages:ai.pill.buildIt',
   decide: 'messages:ai.pill.decide',
-  // #6306: nothing is left to build; the request only needs closing.
-  already_works: 'messages:ai.pill.proposeClose',
-  build_stopped: 'messages:ai.pill.tryAgain',
+  works: 'messages:ai.pill.proposeClose',
+  stopped: 'messages:ai.pill.tryAgain',
   fix_stopped: 'messages:ai.pill.letTryAgain',
+  detail: 'messages:ai.pill.needsYou',
+  fix_yours: 'messages:ai.pill.fixIt',
 };
 
 /**
@@ -374,7 +492,15 @@ export function needHref(item: NeedItem): string | null {
   const slug = item.app?.slug;
   if (!slug) return null;
   const app = encodeURIComponent(slug);
-  if (item.kind === 'governance') return `#app/${app}/dev/governance/${Number(item.id)}`;
+  if (item.kind === 'governance') {
+    // 6 Nov 2026 (#6439): a vote to close a request is decided on the
+    // request's page, where it already draws, not on the old governance
+    // page. Every other decision keeps its own page.
+    const closing = item.decision && item.decision.kind === 'close_issue'
+      ? Number(item.decision.issueNumber) : 0;
+    if (closing > 0) return `#app/${app}/dev/issues/${closing}`;
+    return `#app/${app}/dev/governance/${Number(item.id)}`;
+  }
   const closes = item.kind === 'proposal' ? Number(item.request?.number) : 0;
   if (closes > 0) return `#app/${app}/dev/issues/${closes}`;
   const number = needNumber(item);
@@ -471,6 +597,10 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
   const listed = listedKeys(needs, work);
   for (const item of needs || []) {
     const app = item.app || null;
+    // #6389: your own change made through a coding agent, its votes in and
+    // its fix still owed. It keeps its row because you are the one to act,
+    // and says what it waits on in place of Vote.
+    const waiting = item.waitingOn && item.waitingOn.length ? waitingRow(item.waitingOn) : null;
     rows.push({
       key: `need:${item.kind}:${item.id}`,
       title: (item.kind === 'ballot' && item.ballot?.title) || item.title || '',
@@ -478,52 +608,58 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       who: 'all',
       // A vote on a change of Homeroom bot's, where a request of yours waits
       // for one of its slots: deciding it lets that request be built.
-      sub: app && held.has(app.slug) && holdsSlot(item)
-        ? { id: 'messages:ai.row.voteFreesSlot', values: where(app, shownNumber(item)) }
-        : whereLine(app, shownNumber(item)),
-      pill: item.kind === 'proposal' && item.approve === true
-        ? { id: 'messages:ai.pill.approve' }
-        : { id: PILLS[item.kind] || 'messages:ai.pill.needsYou' },
+      sub: waiting
+        ? { id: waiting.sub, values: where(app, shownNumber(item)) }
+        : app && held.has(app.slug) && holdsSlot(item)
+          ? { id: 'messages:ai.row.voteFreesSlot', values: where(app, shownNumber(item)) }
+          : whereLine(app, shownNumber(item)),
+      pill: waiting
+        ? { id: waiting.pill }
+        : item.kind === 'proposal' && item.approve === true
+          ? { id: 'messages:ai.pill.approve' }
+          : { id: PILLS[item.kind] || 'messages:ai.pill.needsYou' },
       href: needHref(item),
       rootId: null,
       // #6262: a feed item's thread, and what is new in it.
       threadId: item.threadId ?? null,
       unread: Math.max(0, Number(item.unread) || 0),
+      at: item.at || null,
     });
   }
   for (const t of work?.needs || []) {
     if (isOwed(owed, t)) continue;
+    const kind = t.fixYours ? 'fix_yours' : needKind(t.work);
     rows.push({
-      key: `${t.what === 'decide' ? 'decide' : t.what === 'already_works' ? 'works' : t.what === 'build_stopped' ? 'stopped' : t.what === 'fix_stopped' ? 'fix_stopped' : 'plan'}:${t.threadId}`,
+      key: `${kind}:${t.threadId}`,
       title: t.title || '',
       app: t.app,
       who: 'all',
-      // Homeroom bot read it and handed it back (its verdict "a person must
-      // decide"): nothing moves until a person does, so it is Needs you's,
-      // and says why rather than "Nobody is building it yet" (30 Oct 2026).
-      // A build of Homeroom bot's that came to nothing waits on somebody
-      // asking again, so it is here too, with Try again.
-      sub: t.what === 'decide'
-        ? { id: 'messages:ai.row.decide', values: where(t.app, t.number) }
-        : t.what === 'already_works'
-          ? (t.reason
-            ? { id: 'messages:ai.row.alreadyWorks', values: { ...where(t.app, t.number), reason: t.reason } }
-            : { id: 'messages:ai.row.alreadyWorksPlain', values: where(t.app, t.number) })
-          : t.what === 'build_stopped'
-          ? { id: 'messages:ai.row.buildStopped', values: where(t.app, t.number) }
-          : t.what === 'fix_stopped'
-            ? { id: 'messages:ai.row.fixStopped', values: where(t.app, t.number) }
-            : whereLine(t.app, t.number),
-      pill: { id: PILLS[t.what] || 'messages:ai.pill.needsYou' },
+      // Homeroom bot handed it back (a plan, a decision, already there, more
+      // detail), or stopped: nothing moves until a person does, so it is
+      // Needs you's, and says so in its stage's words.
+      // Your own change waiting on your fix says so, in the change's words
+      // ("PR 12" on GitHub).
+      sub: t.fixYours
+        ? { id: prWord('messages:ai.row.fixYours', changeOnGithub(t)), values: where(t.app, t.number) }
+        : stageLine(t),
+      pill: { id: NEED_PILLS[kind] || 'messages:ai.pill.needsYou' },
+      // A phone shows it under the title, where nothing hovers: its second
+      // line where it has one (the bot's own reason), else its stage.
+      why: t.fixYours
+        ? { id: 'messages:ai.why.fixYours' }
+        : lineWords(t.work) || stageWords(t.work, { yours: true }),
       href: t.href,
       rootId: null,
       threadId: t.threadId,
       unread: Math.max(0, Number(t.unread) || 0),
+      at: t.at,
     });
   }
   for (const p of work?.private || []) {
     // #6159: a done thread is the only one left out (the server leaves it out too).
     if (p.state === 'done') continue;
+    // 5 Nov 2026: and one filed as a request that has finished: History's.
+    if (p.resultDone) continue;
     const key = filedKey(p);
     if (key && filed.get(key) === p.rootId && listed.has(key)) continue;
     // 1 Nov 2026: a thread about a request or a change is drawn by it, its
@@ -562,6 +698,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       // A private thread is not a `threads` row: Main Chat's "N new" counts it.
       threadId: null,
       unread: 0,
+      at: p.at || null,
     });
   }
   return rows;
@@ -574,12 +711,11 @@ export function owedCount(rows: WorkRow[]): number {
 
 /** The phone's second line for a Needs you row, by the reason its tooltip gives. */
 const WHY: Record<string, string> = {
-  'messages:ai.row.decide': 'messages:ai.why.decide',
-  'messages:ai.row.alreadyWorks': 'messages:ai.why.alreadyWorks',
-  'messages:ai.row.alreadyWorksPlain': 'messages:ai.why.alreadyWorksPlain',
-  'messages:ai.row.buildStopped': 'messages:ai.why.buildStopped',
-  'messages:ai.row.fixStopped': 'messages:ai.why.fixStopped',
   'messages:ai.row.voteFreesSlot': 'messages:ai.why.voteFreesSlot',
+  // #6389: the phone's second line for a change waiting on its author's fix.
+  'messages:ai.row.waitsOnFixTests': 'messages:ai.why.fixTests',
+  'messages:ai.row.waitsOnFixConflict': 'messages:ai.why.fixConflict',
+  'messages:ai.row.waitsOnFixBoth': 'messages:ai.why.fixBoth',
 };
 
 /**
@@ -588,19 +724,24 @@ const WHY: Record<string, string> = {
  * plan says nothing more than its pill does, so it has none.
  */
 export function whyOf(row: WorkRow): Phrase | null {
+  // A hand-back of the bot's says its stage's second line (#6306: an
+  // already-done row's reason is the bot's own sentence).
+  if (row.why) return row.why;
   const id = WHY[row.sub.id];
-  if (!id) return null;
-  // #6306: an already-done row's reason is the bot's own sentence.
-  if (id === 'messages:ai.why.alreadyWorks') {
-    return { id, values: { reason: row.sub.values?.reason ?? '' } };
-  }
-  return { id };
+  return id ? { id } : null;
 }
 
 /** Pure: the same for an In progress or Waiting row: a slot your votes can free. */
 export function threadWhy(t: AiThread): Phrase | null {
-  if (t.what === 'held' && t.yourVotes) return { id: 'messages:ai.why.heldYours', values: { count: t.yourVotes } };
-  return null;
+  if (t.work.line?.code === 'held_waiting' && t.yourVotes) return { id: 'messages:ai.why.heldYours', values: { count: t.yourVotes } };
+  if (t.myVote === 'yes') return { id: 'messages:ai.why.votedYes' };
+  if (t.myVote === 'no') return { id: 'messages:ai.why.votedNo' };
+  // #6282: what was asked for, on an update on its way.
+  if (t.ask) return { id: 'messages:ai.why.asked', values: { ask: t.ask } };
+  if (t.quietDays) return { id: 'messages:ai.why.quiet', values: { count: t.quietDays } };
+  if (t.by === 'bot' && t.work.stage === 'building' && !t.work.line) return { id: 'messages:ai.why.botBuilding' };
+  if (t.by === 'you' && t.work.stage === 'building' && !t.work.line) return { id: 'messages:ai.why.youBuilding' };
+  return lineWords(t.work);
 }
 
 /**
@@ -625,7 +766,7 @@ export function upNext(needs: NeedItem[] | null, work: AiWork | null): AiThread[
   const filed = filedThreads(work);
   return (work?.waiting || []).filter((t) => !isOwed(owed, t)).map((t) => {
     const row = withThread(filed, t);
-    if (row.what !== 'held' || row.heldBy === 'turn' || !row.app) return row;
+    if (row.work.line?.code !== 'held_waiting' || !row.app) return row;
     const yourVotes = (needs || []).filter((item) => item.app?.slug === row.app!.slug && holdsSlot(item)).length;
     return yourVotes ? { ...row, yourVotes } : row;
   });
@@ -660,7 +801,7 @@ export function liveThisWeek(work: AiWork | null, now = Date.now()): AiThread[] 
       change: null,
       href: '',
       group: 'live',
-      what: 'closed',
+      work: { stage: 'closed', since: p.doneAt },
       at: p.doneAt,
       rootId: p.rootId,
     });
@@ -669,83 +810,17 @@ export function liveThisWeek(work: AiWork | null, now = Date.now()): AiThread[] 
   return [...rows, ...closed];
 }
 
-/** The words of an In progress or Waiting row's tooltip, by what it waits on. */
-const THREAD_WORDS: Record<string, string> = {
-  going_live: 'messages:ai.next.goingLive',
-  merging: 'messages:ai.next.merging',
-  fixing: 'messages:ai.next.fixing',
-  revising: 'messages:ai.next.revising',
-  building: 'messages:ai.next.building',
-  reading: 'messages:ai.next.reading',
-  reading_reply: 'messages:ai.next.readingReply',
-  vote: 'messages:ai.up.vote',
-  checking: 'messages:ai.up.checking',
-  fix_queued: 'messages:ai.up.fixQueued',
-  followup_queued: 'messages:ai.up.followUpQueued',
-  build_queued: 'messages:ai.up.buildQueued',
-  held: 'messages:ai.up.held',
-  stalled: 'messages:ai.up.stalled',
-  queued: 'messages:ai.up.queued',
-  // #6313: queued again after a plan that could not be written.
-  retrying_plan: 'messages:ai.up.retryingPlan',
-  on_hold: 'messages:ai.up.onHold',
-  not_picked_up: 'messages:ai.up.notPickedUp',
-  // #6158: what a request nobody is moving waits on.
-  needs_person: 'messages:ai.up.needsPerson',
-  nothing_to_build: 'messages:ai.up.nothingToBuild',
-  not_read: 'messages:ai.up.notRead',
-  operator: 'messages:ai.up.operator',
-  // 1 Nov 2026: their own request, which the bot waits to plan with them.
-  awaiting_plan: 'messages:ai.up.awaitingPlan',
-};
-
 /**
  * The twin of a row's wording on a GitHub-hosted project, where a change's
  * number is written "PR 12" and never "#12" (lib/change-ref.ts). One literal
- * table, so every id stays a whole literal for the language inventory. A
- * count's twin keeps the runtime's `_one`/`_other` suffix (`quiet` ->
- * `quietPr`). Ids not in the table are unaffected.
+ * table, so every id stays a whole literal for the language inventory. Ids
+ * not in the table are unaffected.
  */
 const PR_TWIN: Record<string, string> = {
-  'messages:ai.next.goingLive': 'messages:ai.next.goingLivePr',
-  'messages:ai.next.merging': 'messages:ai.next.mergingPr',
-  'messages:ai.next.fixing': 'messages:ai.next.fixingPr',
-  'messages:ai.next.revising': 'messages:ai.next.revisingPr',
-  'messages:ai.next.updating': 'messages:ai.next.updatingPr',
-  'messages:ai.next.updatingBare': 'messages:ai.next.updatingBarePr',
-  'messages:ai.next.reading': 'messages:ai.next.readingPr',
-  'messages:ai.next.readingReply': 'messages:ai.next.readingReplyPr',
-  'messages:ai.next.building': 'messages:ai.next.buildingPr',
-  'messages:ai.next.botBuilding': 'messages:ai.next.botBuildingPr',
-  'messages:ai.next.youBuilding': 'messages:ai.next.youBuildingPr',
-  'messages:ai.next.claimed': 'messages:ai.next.claimedPr',
-  'messages:ai.up.vote': 'messages:ai.up.votePr',
-  'messages:ai.up.checking': 'messages:ai.up.checkingPr',
-  'messages:ai.up.voteYes': 'messages:ai.up.voteYesPr',
-  'messages:ai.up.voteNo': 'messages:ai.up.voteNoPr',
-  'messages:ai.up.fixQueued': 'messages:ai.up.fixQueuedPr',
-  'messages:ai.up.followUpQueued': 'messages:ai.up.followUpQueuedPr',
-  'messages:ai.up.updateQueued': 'messages:ai.up.updateQueuedPr',
-  'messages:ai.up.updateQueuedBare': 'messages:ai.up.updateQueuedBarePr',
-  'messages:ai.up.buildQueued': 'messages:ai.up.buildQueuedPr',
-  'messages:ai.up.held': 'messages:ai.up.heldPr',
-  'messages:ai.up.heldTurn': 'messages:ai.up.heldTurnPr',
-  'messages:ai.up.heldYours': 'messages:ai.up.heldYoursPr',
-  'messages:ai.up.stalled': 'messages:ai.up.stalledPr',
-  'messages:ai.up.queued': 'messages:ai.up.queuedPr',
-  'messages:ai.up.onHold': 'messages:ai.up.onHoldPr',
-  'messages:ai.up.notPickedUp': 'messages:ai.up.notPickedUpPr',
-  'messages:ai.up.quiet': 'messages:ai.up.quietPr',
-  'messages:ai.up.inLine': 'messages:ai.up.inLinePr',
-  'messages:ai.up.heldPlace': 'messages:ai.up.heldPlacePr',
-  'messages:ai.up.needsPerson': 'messages:ai.up.needsPersonPr',
-  'messages:ai.up.needsPersonWhy': 'messages:ai.up.needsPersonWhyPr',
-  'messages:ai.up.nothingToBuild': 'messages:ai.up.nothingToBuildPr',
-  'messages:ai.up.nothingToBuildWhy': 'messages:ai.up.nothingToBuildWhyPr',
-  'messages:ai.up.notRead': 'messages:ai.up.notReadPr',
-  'messages:ai.up.operator': 'messages:ai.up.operatorPr',
-  'messages:ai.up.awaitingPlan': 'messages:ai.up.awaitingPlanPr',
+  'messages:ai.row.stage': 'messages:ai.row.stagePr',
+  'messages:ai.row.stageLine': 'messages:ai.row.stageLinePr',
   'messages:ai.live.row': 'messages:ai.live.rowPr',
+  'messages:ai.row.fixYours': 'messages:ai.row.fixYoursPr',
 };
 
 /** Whether a row names a change on a project whose code is on GitHub. */
@@ -758,115 +833,52 @@ export function prWord(id: string, onGithub: boolean): string {
   return onGithub ? (PR_TWIN[id] || id) : id;
 }
 
-/** Pure: one In progress or Waiting row's whole line (its tooltip): its project, and what it waits on. */
+/** Pure: whether the viewer reads a row as its requester (Needs you's rows are theirs). */
+const yours = (t: AiThread) => t.group === 'needs';
+
+/**
+ * Pure: a row's whole line: its project and number, its stage, and the
+ * stage's second line when it has one ("Seed swap · #12 · Ready to build ·
+ * Number 2 in line"). A decision has no number.
+ */
+function stageLine(t: AiThread): Phrase {
+  const values = where(t.app, t.number);
+  const stage = stageWords(t.work, { yours: yours(t) });
+  const line = lineWords(t.work);
+  if (!t.number) {
+    return line
+      ? { id: 'messages:ai.row.stageLineBare', values: { project: values.project }, nested: { stage, line } }
+      : { id: 'messages:ai.row.stageBare', values: { project: values.project }, nested: { stage } };
+  }
+  return line
+    ? { id: 'messages:ai.row.stageLine', values, nested: { stage, line } }
+    : { id: 'messages:ai.row.stage', values, nested: { stage } };
+}
+
+/** Pure: one In progress or Waiting row's whole line (its tooltip): its project, and where it stands. */
 export function nextWords(t: AiThread): Phrase {
-  const words = nextWordsBase(t);
+  const words = stageLine(t);
   return changeOnGithub(t) ? { ...words, id: prWord(words.id, true) } : words;
 }
 
-function nextWordsBase(t: AiThread): Phrase {
-  const values = where(t.app, t.number);
-  if (t.what === 'not_picked_up') {
-    if (!t.number) return { id: 'messages:ai.up.notPickedUpBare', values: { project: values.project } };
-    if (t.quietDays) return { id: 'messages:ai.up.quiet', values: { ...values, count: t.quietDays } };
-  }
-  if (t.what === 'vote' && t.myVote === 'yes') return { id: 'messages:ai.up.voteYes', values };
-  if (t.what === 'vote' && t.myVote === 'no') return { id: 'messages:ai.up.voteNo', values };
-  // A decision has no number: its project, and that it waits for votes.
-  if (t.what === 'decision') {
-    const project = { project: values.project };
-    if (t.myVote === 'yes') return { id: 'messages:ai.up.decisionYes', values: project };
-    if (t.myVote === 'no') return { id: 'messages:ai.up.decisionNo', values: project };
-    return { id: 'messages:ai.up.decision', values: project };
-  }
-  if (t.what === 'held' && t.yourVotes) return { id: 'messages:ai.up.heldYours', values: { ...values, count: t.yourVotes } };
-  // #6158: its place in line, where the bot's records know it.
-  if (t.what === 'queued' && t.place) return { id: 'messages:ai.up.inLine', values: { ...values, place: t.place } };
-  if (t.what === 'held' && t.place) {
-    return t.heldBy === 'turn'
-      ? { id: 'messages:ai.up.inLine', values: { ...values, place: t.place } }
-      : { id: 'messages:ai.up.heldPlace', values: { ...values, place: t.place } };
-  }
-  if (t.what === 'held' && t.heldBy === 'turn') return { id: 'messages:ai.up.heldTurn', values };
-  // #6158: Homeroom bot's own reason, where it gave one.
-  if (t.what === 'needs_person' && t.reason) return { id: 'messages:ai.up.needsPersonWhy', values: { ...values, reason: t.reason } };
-  if (t.what === 'nothing_to_build' && t.reason) return { id: 'messages:ai.up.nothingToBuildWhy', values: { ...values, reason: t.reason } };
-  // #6282: an update on its way, with what was asked when there is one.
-  if (t.what === 'updating') {
-    return t.ask
-      ? { id: 'messages:ai.next.updating', values: { ...values, ask: t.ask } }
-      : { id: 'messages:ai.next.updatingBare', values };
-  }
-  if (t.what === 'update_queued') {
-    return t.ask
-      ? { id: 'messages:ai.up.updateQueued', values: { ...values, ask: t.ask } }
-      : { id: 'messages:ai.up.updateQueuedBare', values };
-  }
-  if (t.what === 'building' && t.by === 'bot') return { id: 'messages:ai.next.botBuilding', values };
-  if (t.what === 'building' && t.by === 'you') return { id: 'messages:ai.next.youBuilding', values };
-  // Claimed, with no change yet: who has it, not "Nobody is building it yet".
-  if (t.what === 'building' && t.claimedBy) return { id: 'messages:ai.next.claimed', values: { ...values, username: t.claimedBy } };
-  return { id: THREAD_WORDS[t.what] || 'messages:ai.row.where', values };
-}
-
-/** The one word on the right of an In progress or Waiting row, by what it waits on. Whole ids, so the inventory finds them. */
-const SHORT_WORDS: Record<string, string> = {
-  going_live: 'messages:ai.short.goingLive',
-  merging: 'messages:ai.short.merging',
-  fixing: 'messages:ai.short.fixing',
-  revising: 'messages:ai.short.revising',
-  // #6282: an update on its way: running, or waiting its turn.
-  updating: 'messages:ai.short.updating',
-  update_queued: 'messages:ai.short.updateQueued',
-  reading: 'messages:ai.short.reading',
-  reading_reply: 'messages:ai.short.readingReply',
-  building: 'messages:ai.short.building',
-  vote: 'messages:ai.short.votes',
-  checking: 'messages:ai.short.checks',
-  decision: 'messages:ai.short.votes',
-  fix_queued: 'messages:ai.short.builder',
-  followup_queued: 'messages:ai.short.builder',
-  queued: 'messages:ai.short.builder',
-  retrying_plan: 'messages:ai.short.retryPlan',
-  build_queued: 'messages:ai.short.turn',
-  held: 'messages:ai.short.slot',
-  stalled: 'messages:ai.short.stalled',
-  on_hold: 'messages:ai.short.monday',
-  not_picked_up: 'messages:ai.short.nobody',
-  // #6158: what a request nobody is moving waits on.
-  needs_person: 'messages:ai.short.needsPerson',
-  nothing_to_build: 'messages:ai.short.nothingToBuild',
-  not_read: 'messages:ai.short.notRead',
-  operator: 'messages:ai.short.operator',
-  awaiting_plan: 'messages:ai.short.yourPlan',
-};
-
 /**
  * #6158: the Waiting rows nobody is moving, which the tab folds under one
- * "Not moving" head: open with no claim, or a person's to decide, or
- * nothing to build, not read yet, or an operator task.
+ * "Not moving" head: not started on, or waiting on somebody else's move.
  */
-export const NOT_MOVING = new Set<string>(['not_picked_up', 'needs_person', 'nothing_to_build', 'not_read', 'operator']);
+export function notMoving(t: AiThread): boolean {
+  return (t.work.stage === 'reading' && t.work.line?.code === 'waiting')
+    || t.work.stage === 'waiting_for_you' || t.work.stage === 'stopped';
+}
 
 /**
- * Pure: the one word on the right of an In progress or Waiting row
- * (./lists.tsx): who is at it, or what it waits on. The whole line
- * (nextWords) is its tooltip.
+ * Pure: the word on the right of an In progress or Waiting row (./lists.tsx):
+ * who is building it, or its stage. The whole line (nextWords) is its tooltip.
  */
 export function shortWords(t: AiThread): Phrase {
-  if (t.what === 'building' && t.by === 'bot') return { id: 'messages:ai.short.bot' };
-  if (t.what === 'building' && t.by === 'you') return { id: 'messages:ai.short.you' };
-  if (t.what === 'building' && t.claimedBy) return { id: 'messages:ai.short.claimed', values: { username: t.claimedBy } };
-  // #6158: its place in line, where the bot's records know it.
-  if (t.what === 'queued' && t.place) return { id: 'messages:ai.short.inLine', values: { place: t.place } };
-  if (t.what === 'held' && t.place) {
-    return t.heldBy === 'turn'
-      ? { id: 'messages:ai.short.inLine', values: { place: t.place } }
-      : { id: 'messages:ai.short.heldPlace', values: { place: t.place } };
-  }
-  if (t.what === 'not_picked_up' && t.quietDays) return { id: 'messages:ai.short.quiet', values: { count: t.quietDays } };
-  if (t.what === 'held' && t.heldBy === 'turn') return { id: 'messages:ai.short.turn' };
-  return { id: SHORT_WORDS[t.what] || 'messages:ai.short.waiting' };
+  if (t.work.stage === 'building' && !t.work.line && t.by === 'bot') return { id: 'messages:ai.short.bot' };
+  if (t.work.stage === 'building' && !t.work.line && t.by === 'you') return { id: 'messages:ai.short.you' };
+  if (t.work.line?.code === 'claimed' && t.work.line.by) return { id: 'messages:ai.short.claimed', values: { username: t.work.line.by } };
+  return stageWords(t.work, { yours: yours(t) });
 }
 
 /**

@@ -85,6 +85,10 @@ stub('../src/services/visuals', {
 const sleeping = { next: null, asked: [], order: [] };
 stub('../src/services/preview-sleep', {
   ...require('../src/services/preview-sleep'),
+  async wake(config, pool, sessionId, options) {
+    sleeping.asked.push({ sessionId, options });
+    return sleeping.next || { status: 'woke', url: 'https://shop--s5.apps.test' };
+  },
   async wakeForRun(config, pool, sessionId) {
     sleeping.asked.push(sessionId);
     sleeping.order.push('wake');
@@ -101,6 +105,40 @@ const captured = [];
 const { previewServices } = require('../src/workflow/preview/services.ts');
 const { WORK } = require('../src/workflow/preview/machine.ts');
 const { LeaseLost } = require('../src/workflow/kernel/index.ts');
+
+test('the web wake receipt waits for conductor work, preserves failures and times out without a false success', async () => {
+  const { requestWake } = require('../src/workflow/preview/wake.ts');
+  const asked = [];
+  const rt = { async appendAndWait(...args) { asked.push(args); return { status: 'accepted', eventId: 42 }; } };
+  const request = { sessionId: 5, appId: 2, reason: 'link', repairRoute: true };
+  const receipts = [
+    { status: 'queued', result: { outcome: 'retry' } },
+    { status: 'running', result: null },
+    { status: 'reported', result: { outcome: 'succeeded', value: { status: 'woke', ms: 10 } } },
+  ];
+  const db = { async query(sql, params) {
+    assert.deepEqual(params, ['preview', 'session:5', 'preview.wake', 'wake:42']);
+    return { rows: [receipts.shift()] };
+  } };
+  assert.deepEqual(await requestWake(rt, db, request, { pollMs: 1 }), { status: 'woke', ms: 10 });
+  assert.deepEqual(asked[0].slice(0, 3), ['preview', 'session:5', { type: 'WakeRequested', payload: request }]);
+  receipts.push({ status: 'settled', result: { outcome: 'succeeded', value: { status: 'failed', detail: 'Route failed' } } });
+  assert.deepEqual(await requestWake(rt, db, request), { status: 'failed', detail: 'Route failed' });
+  receipts.push({ status: 'settled', result: { outcome: 'exhausted' }, last_error: { message: 'Lease lost' } });
+  assert.deepEqual(await requestWake(rt, db, request), { status: 'failed', detail: 'Lease lost' });
+  assert.equal((await requestWake(rt, db, request, { waitMs: 0 })).status, 'timeout');
+  const refused = { async appendAndWait() { return { status: 'ignored', eventId: 43 }; } };
+  assert.equal((await requestWake(refused, { query() { throw new Error('Refused requests have no work'); } }, request)).status, 'failed');
+});
+
+test('request-triggered wakes use bounded conductor work and preserve its result', async () => {
+  const handler = previewServices({ config: {}, pool })[WORK.wake];
+  assert.equal(handler.concurrency, 2);
+  const input = { sessionId: 5, reason: 'link', repairRoute: true };
+  const out = await handler.run({ input });
+  assert.deepEqual(out, { status: 'woke', url: 'https://shop--s5.apps.test' });
+  assert.deepEqual(sleeping.asked.pop(), { sessionId: 5, options: { reason: 'link', repairRoute: true } });
+});
 
 const work = { cancelled: true };
 const runs = { rows: [] };
@@ -341,6 +379,24 @@ test('the unit suite starts with the build, under the attempt\'s own id, unless 
   await workers[WORK.retire].run(ctx({ sessionId: 5, appId: 2, appSlug: 'shop', runtimeName: 'sv-preview-2-s5', runtimeKind: 'kubernetes',
     attempts: [{ n: 3, db: 'db3' }] }));
   assert.ok(calls.some((c) => c[0] === 'delete-jobs' && c[1] === id), 'and with the whole preview');
+});
+
+test('required batch mode cannot launch speculative early suites even with the legacy switch enabled', async (t) => {
+  const k8s = require('../src/services/kubernetes');
+  const prior = process.env.EARLY_UNIT_SUITE;
+  process.env.EARLY_UNIT_SUITE = '1';
+  t.after(() => {
+    if (prior === undefined) delete process.env.EARLY_UNIT_SUITE;
+    else process.env.EARLY_UNIT_SUITE = prior;
+  });
+  t.mock.method(k8s, 'countRunningUnitSuiteJobs', async () => assert.fail('count-then-launch must not decide admission'));
+  const workers = previewServices({ config: { workerRuntime: 'kubernetes',
+    kubernetes: { checkNodePoolRequired: true } }, pool });
+  suites.launched.length = 0;
+  const results = await Promise.all(Array.from({ length: 10 }, (_, i) =>
+    workers[WORK.unitEarly].run(ctx({ sessionId: 5 + i, appId: 2, n: 3, head }))));
+  assert.ok(results.every((r) => r.started === false && r.why === 'off'));
+  assert.equal(suites.launched.length, 0, 'unit suites run later inside the admitted checks run');
 });
 
 // services/unit-suite-reuse.js: a head whose suite already passed under the

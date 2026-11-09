@@ -224,6 +224,16 @@ injects it as a `?token=…` query param on the initial iframe load. The
 app's own frontend forwards that token on subsequent fetches via the
 `x-usernode-token` request header.
 
+**Read the token in a script AFTER the bridge tag.** Inside Homeroom a
+public app is framed with the token after `#` (`#un-token=…`), and the
+bridge's first step moves it into `?token=` (see "Offline" below). A
+script placed before `<script src="/usernode-bridge/v1/bridge.js">` that
+reads `location.search` finds no token, and the app opens signed out
+inside Homeroom. The bridge never removes `?token=` from the address, so
+there is nothing to capture early: put the read, and any fetch wrapper
+that forwards it, after the bridge tag. A proposal check flags a change
+that adds a token read before the bridge tag.
+
 Tokens are asymmetric and per-app: you hold only the public key, and
 the token's audience names your `USERNODE_APP_ID`. Verification must
 therefore pin three things — algorithm, issuer, audience — plus the
@@ -2511,7 +2521,9 @@ offline, on any number of apps, with no service worker. It needs only that:
   `new URLSearchParams(location.search).get('token')` works as it always
   has, as long as the bridge tag comes before your scripts. The bridge is
   also how the frame tells the shell it opened; without that, the shell
-  frames the app the old way on that device.
+  frames the app the old way on that device, and once frames on two
+  people's devices have not said so on the same build, on every device
+  until the app's next deploy.
 - **Your page loads without a token.** The page itself must answer 200 with
   no token and no signed-in person (the starters and the Empty template
   already do: data comes from `/api/*`). A page that answers 401 without a
@@ -3996,7 +4008,9 @@ cannot override them.
   advertising or session-recording SDKs, pixels or beacons, and no
   `<script>` from another origin. An app loads its own code and the
   centrally hosted Homeroom assets only. A legacy `cdn.tailwindcss.com`
-  tag (rule 1) is tolerated; new code adds none.
+  tag (rule 1) is tolerated; new code adds none. One exception:
+  the platform's own Google Analytics tag, isolated in
+  `public/analytics-frame.html`. It is no precedent: no app may add a tracker.
 - **Special-category data.** Never ask for, infer or store health,
   religious beliefs, sexual orientation, racial or ethnic origin, political
   opinions, trade-union membership, genetic or biometric data, whether

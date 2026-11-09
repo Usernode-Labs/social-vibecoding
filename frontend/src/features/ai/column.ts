@@ -7,9 +7,12 @@
  *   page <route>    a request, a change or a decision, on its own page
  *                   (the side panel, drawn as the column)
  *   new             a blank thread from "+"
- *   null            nothing: a phone's list, or before the page has mounted
+ *   null            nothing beside the lists: a phone's list, before the page
+ *                   has mounted, or a desktop with nothing opened yet
  *
- * The page (./index.tsx) works the column out once from what holds it (the
+ * On a desktop `null` is where the page starts (6 Nov 2026, #6425): the bare
+ * tab address is `null`, and `#homeroom-bot/main` is Main. The page
+ * (./index.tsx) works the column out once from what holds it (the
  * Messages store's route, the side panel, the blank thread, a phone's level)
  * and every reader takes it from there:
  *
@@ -99,8 +102,8 @@ function columnAddressBase(column: Column): string {
 
 /**
  * How the column came to show what it does: `row` (a row, Main Chat's row,
- * "+", the router's ask: anything this page opened) or `back` (the page's
- * own ‹ Main Chat, which closed it from inside the side panel).
+ * "+", the router's ask: anything this page opened) or `back` (the column's
+ * own ×, which closed it).
  */
 export type ColumnHow = 'row' | 'back';
 

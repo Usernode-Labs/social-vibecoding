@@ -37,6 +37,7 @@ function app(id, slug, extra = {}) {
     id, slug, name: slug.replace(/-/g, ' '), self_hosted: false,
     db_size_bytes: null, db_size_measured_at: null, db_storage_cap_bytes: null,
     db_storage_frozen_at: null, db_storage_grace_until: null, db_storage_warned_at: null,
+    db_storage_warn_level: null,
     ...extra,
   };
 }
@@ -77,10 +78,33 @@ poolMod.getPool = () => ({
       const a = byId(params[0]);
       return { rows: a ? [{ db_storage_frozen_at: a.db_storage_frozen_at, db_storage_grace_until: a.db_storage_grace_until, db_storage_cap_bytes: a.db_storage_cap_bytes }] : [] };
     }
-    if (/^UPDATE apps SET db_storage_frozen_at = \$1, db_storage_warned_at = COALESCE\(db_storage_warned_at, \$1\) WHERE id = \$2$/.test(q)) {
+    if (/^UPDATE apps SET db_storage_frozen_at = \$1, db_storage_warned_at = COALESCE\(db_storage_warned_at, \$1\), db_storage_warn_level = 2 WHERE id = \$2$/.test(q)) {
       const a = byId(params[1]);
       a.db_storage_frozen_at = params[0];
       if (!a.db_storage_warned_at) a.db_storage_warned_at = params[0];
+      a.db_storage_warn_level = 2;
+      return { rows: [], rowCount: 1 };
+    }
+    if (/^UPDATE apps SET db_storage_warn_level = 1 WHERE id = \$1 AND COALESCE\(db_storage_warn_level, 0\) < 1$/.test(q)) {
+      const a = byId(params[0]);
+      if ((a.db_storage_warn_level || 0) >= 1) return { rows: [], rowCount: 0 };
+      a.db_storage_warn_level = 1;
+      return { rows: [], rowCount: 1 };
+    }
+    if (/^UPDATE apps SET db_storage_warn_level = 2, db_storage_warned_at = COALESCE\(db_storage_warned_at, \$1\) WHERE id = \$2 AND COALESCE\(db_storage_warn_level, 0\) < 2$/.test(q)) {
+      const a = byId(params[1]);
+      if ((a.db_storage_warn_level || 0) >= 2) return { rows: [], rowCount: 0 };
+      a.db_storage_warn_level = 2;
+      if (!a.db_storage_warned_at) a.db_storage_warned_at = params[0];
+      return { rows: [], rowCount: 1 };
+    }
+    if (/^UPDATE apps SET db_storage_warn_level = \$1, db_storage_warned_at = NULL WHERE id = \$2 AND \(db_storage_warn_level IS DISTINCT FROM \$1 OR db_storage_warned_at IS NOT NULL\)$/.test(q)) {
+      const a = byId(params[1]);
+      const next = params[0] == null ? null : Number(params[0]);
+      const cur = a.db_storage_warn_level == null ? null : Number(a.db_storage_warn_level);
+      if (cur === next && !a.db_storage_warned_at) return { rows: [], rowCount: 0 };
+      a.db_storage_warn_level = next;
+      a.db_storage_warned_at = null;
       return { rows: [], rowCount: 1 };
     }
     // The sweep's transitions are compare-and-sets on what it read: each

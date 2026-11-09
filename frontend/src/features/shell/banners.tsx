@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 
 import { Alert } from '@/components/ui/alert';
-import { OFFLINE_BANNER_ID, offlineBannerVisible } from '../../lib/offline';
+import { OFFLINE_BANNER_ID, offlineBannerVisible, RESTART_NOTICE_ID, restartNoticeVisible } from '../../lib/offline';
 import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
@@ -44,12 +44,16 @@ export function OfflineBanner() {
   const ref = useRef<HTMLDivElement>(null);
   // `false` = the state the prerendered markup shipped with (`hidden`), so
   // the hydrating render always matches the server markup exactly.
-  const visible = useVisibility(OFFLINE_BANNER_ID, offlineBannerVisible());
+  const offline = useVisibility(OFFLINE_BANNER_ID, offlineBannerVisible());
+  // A planned restart (1012) says "Updating Homeroom..." in the same strip,
+  // without the offline look and without a second element.
+  const restarting = useVisibility(RESTART_NOTICE_ID, restartNoticeVisible());
+  const visible = offline || restarting;
   useHiddenClass(ref, !visible);
 
   return (
     <Alert ref={ref} id={OFFLINE_BANNER_ID} variant="banner" startHidden>
-      {t('core:banner.offline.text')}
+      {t(restarting ? 'core:banner.restart.text' : 'core:banner.offline.text')}
     </Alert>
   );
 }

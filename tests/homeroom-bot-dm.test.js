@@ -909,8 +909,10 @@ test('the typing moves to the thread the answer goes on in, with what it was doi
 test('a typing event carries only the kinds of work the screen words, and what they name', () => {
   // Homeroom bot parity: P1 'writing' (the answer as it is written), P3 'looking' (a helper sent into a
   // project's code, named by the project as 'code' is).
-  assert.deepEqual([...dm.DOING_KINDS], ['progress', 'request', 'code', 'drawing', 'designing', 'drafting', 'writing', 'looking']);
+  assert.deepEqual([...dm.DOING_KINDS], ['progress', 'request', 'code', 'drawing', 'capturing', 'designing', 'drafting', 'writing', 'looking']);
   assert.deepEqual(dm.typingDoing({ kind: 'looking', project: 'Gym Tracker', number: 3 }), { kind: 'looking', project: 'Gym Tracker' });
+  // #6354: Homeroom opening one of its own pages for a design.
+  assert.deepEqual(dm.typingDoing({ kind: 'capturing', page: 'Homeroom bot page' }), { kind: 'capturing', page: 'Homeroom bot page' });
   assert.deepEqual(dm.typingDoing({ kind: 'drawing', extra: 'x' }), { kind: 'drawing' });
   assert.deepEqual(dm.typingDoing({ kind: 'request', number: '7' }), { kind: 'request', number: 7 });
   assert.equal(dm.typingDoing({ kind: 'request' }), null, 'a request is named by its number');
@@ -993,6 +995,21 @@ test('a requester who does not decide on the project is told who does, and offer
   assert.doesNotMatch(text, /\u2014/);
 });
 
+// #6430: a go-ahead cannot settle this kind of change, so the DM says a
+// person has to build it and offers no Go ahead.
+test('#6430: a go-ahead that cannot settle it says a person has to build it', () => {
+  const ctx = { appName: 'Note board', issueNumber: 6, issueTitle: 'Read-only production debugging' };
+  const text = dm.dmText('person', {
+    reason: 'It changes permissions and production database access.',
+    goAheadDecides: false, firstStep: 'Just the three missing read tools',
+  }, ctx);
+  assert.match(text, /This needs a person to build, so I haven't built it: It changes permissions and production database access\./);
+  assert.match(text, /I don't build changes like this myself, even with a go-ahead\. A person has to build it, for example you with a coding agent, and the group votes on it as usual\. I can build this part now: Just the three missing read tools\.$/);
+  assert.doesNotMatch(text, /If you decide to go ahead/);
+  assert.doesNotMatch(text, /\bapprove/i);
+  assert.doesNotMatch(text, /\u2014/);
+});
+
 test('a request found already done says so, where it is, and that a vote on closing it follows', () => {
   const ctx = { appName: 'Ear Trainer', issueNumber: 14, issueTitle: 'Show my votes' };
   // One story: one message, the verdict and its offer (Propose to close,
@@ -1016,7 +1033,7 @@ test('#4239: a request about Homeroom itself says so, and offers the move instea
   assert.match(text, /This is about Homeroom itself rather than Ear Trainer, so no change to Ear Trainer can do it: The header is drawn by Homeroom\.$/);
   assert.doesNotMatch(text, /\u2014/);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
-  assert.match(src, /\.\.\.\(STUCK_ACTIONS\[kind\] && !\(kind === 'person' && \(dm\.platform \|\| personDeciders\(dm\)\.length\)\) && !dm\.done\n\s+\? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/);
+  assert.match(src, /\.\.\.\(STUCK_ACTIONS\[kind\] && !dm\.done\n\s+&& !\(kind === 'person' && \(dm\.platform \|\| dm\.goAheadDecides === false \|\| personDeciders\(dm\)\.length\)\)\n\s+\? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/);
   assert.match(src, /const offerKind = kind === 'person' && dm\.platform \? 'move_request'/);
 });
 

@@ -24,6 +24,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const Module = require('module');
 
 function makeRecordingRouter(routes) {
@@ -366,4 +368,80 @@ test('a real DB row always wins over a same-id mock', async () => {
   });
   const { payload } = await callGov(routes, { id: 9100062, query: { demo: '1' } });
   assert.equal(payload.proposal.title, 'Real row');
+});
+
+// #6440: where a vote belongs, and how it ended. `home` is the page a vote
+// about one request or thread is drawn on — the client forwards
+// `dev/governance/<id>` there — and `outcome` is the word the page's Votes
+// card reads, so it never says "waiting for votes" after the vote ended.
+test('a reopen vote names the request it would bring back as its home', async () => {
+  const row = makeRow({
+    kind: 'reopen_issue', status: 'open', row_type: undefined,
+    payload: { issueNumber: 12, issueTitle: 'Broken thing' },
+  });
+  const { routes } = loadIssues({ row });
+  const { payload } = await callGov(routes, { id: 4242 });
+  assert.deepEqual(payload.proposal.home, { kind: 'request', number: 12 });
+});
+
+test('a thread move names the thread it would merge or split as its home', async () => {
+  const row = makeRow({
+    kind: 'thread_move', status: 'open', row_type: undefined,
+    payload: { moveId: 91, threadNumber: 44 },
+  });
+  const { routes } = loadIssues({ row });
+  const { payload } = await callGov(routes, { id: 4242 });
+  assert.deepEqual(payload.proposal.home, { kind: 'request', number: 44 },
+    'the thread number, when the move row cannot be read');
+});
+
+test('a vote about the project has no home: it keeps its own page', async () => {
+  const row = makeRow({
+    kind: 'rename', status: 'open', row_type: undefined,
+    payload: { oldName: 'Plant Tracker', newName: 'Garden Notes' },
+  });
+  const { routes } = loadIssues({ row });
+  const { payload } = await callGov(routes, { id: 4242 });
+  assert.equal(payload.proposal.home, null);
+});
+
+test('an ended vote says how it ended', async () => {
+  const cases = [
+    ['applied', makeRow({ status: 'closed' })],
+    ['refused', makeRow({ status: 'closed', payload: { appliedAt: '2026-01-15T00:00:00.000Z', appliedBy: 'refused:checks' } })],
+    ['withdrawn', makeRow({ kind: 'rename', status: 'withdrawn', payload: { newName: 'Garden Notes' } })],
+    ['superseded', makeRow({ kind: 'rename', status: 'open', payload: { newName: 'Garden Notes', supersededAt: '2026-01-15T00:00:00.000Z' } })],
+  ];
+  for (const [outcome, row] of cases) {
+    const { routes } = loadIssues({ row });
+    const { payload } = await callGov(routes, { id: 4242 });
+    assert.equal(payload.proposal.outcome, outcome);
+  }
+});
+
+test('a passed vote whose window has elapsed is being applied', async () => {
+  const row = makeRow({
+    kind: 'rename', status: 'open', row_type: undefined,
+    payload: { newName: 'Garden Notes' },
+  });
+  const { routes } = loadIssues({ row });
+  const { payload } = await callGov(routes, { id: 4242 });
+  // The stubbed gate: 2 yes of 2 required, window ended 12 Jan.
+  assert.equal(payload.proposal.outcome, 'applying');
+});
+
+// #6439: a vote to close a request is read on the request's page, where its
+// thread draws it. The old `dev/governance/<id>` address forwards there (in
+// place of the old view, with its close card in view); every other decision
+// keeps its page. `_closeVoteHomeOf` answers only for a close_issue, so a
+// rename or a settings change still draws the governance view.
+test('#6439 the governance view forwards a close vote, and keeps every other decision', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8');
+  assert.match(src, /async _closeVoteHomeOf\(id\)/, 'the by-id row decides the home');
+  assert.match(src, /if \(!p \|\| p\.kind !== 'close_issue'\) return null;/, 'only a close vote has one');
+  assert.match(src, /if \(ref\.kind === 'gov' && ref\.id\) \{[\s\S]*?_closeVoteHomeOf\(ref\.id\)[\s\S]*?openTopic\('issue', closeHome, \{ replaceRoute: true \}\)/,
+    'the full page forwards without leaving a Back step');
+  assert.match(src, /showClose\?\.\(ref\.id\)/, 'at its close card');
+  assert.match(src, /} else if \(kind === 'gov'\) \{[\s\S]*?_closeVoteHomeOf\(id\)[\s\S]*?openTopicInPanel\('issue', home\)/,
+    'the side panel forwards the same way');
 });

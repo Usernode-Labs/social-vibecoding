@@ -512,7 +512,7 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   const failed = testing({ check_state: 'failing', test_results: [{ name: 'Home loads', status: 'fail' }] });
   assert.deepEqual([failed.figure, failed.tone, failed.details], ['Found a problem', 'bad', true]);
   assert.deepEqual(failed.note, ['One of this change’s checks failed on its preview.']);
-  assert.equal(failed.authorNote, 'Its author needs to fix this before it can go live.');
+  assert.equal(failed.authorNote, 'maya made this change and needs to fix this before it can go live.');
   assert.equal(testing({ check_state: 'skipped' }).figure, 'Not tested');
   assert.equal(testing({ check_state: 'error' }).figure, 'Couldn’t finish');
   assert.equal(testing({ check_state: null, staging_url: null }).figure, 'Not started');
@@ -588,6 +588,53 @@ test('a failed run says what went wrong in plain words, and offers its author Fi
   assert.ok(!text.includes('dev-ledger-explain-source'), 'no reading of the output yet');
 });
 
+// #6491: a failed check opens on the error that failed it, and everything it
+// collected besides sits behind one closed fold. The app's own tests lead
+// with the first failing test, folding the rest.
+test('#6491: a failed check leads with its error and folds the rest of the output', () => {
+  const own = context({ id: 7, username: 'maya' });
+  const NOISY = {
+    ...FAILED,
+    test_results: [{
+      name: 'The settings page shows the Save button', path: '/settings', status: 'fail',
+      failureReason: 'Expected .settings-save to be visible, but it was not found',
+      consoleErrors: [
+        { kind: 'console', message: 'TypeError: Cannot read properties of undefined', source: 'app.js:412' },
+        { kind: 'console', message: 'Failed to load resource: 404', source: '/api/settings' },
+      ],
+    }, {
+      ...UNIT_ROW,
+      failureDetails: [
+        { file: 'tests/settings.test.js', test: 'saving settings keeps the chosen theme', excerpt: "  location: 'tests/settings.test.js:42:1'\n  error: \"expected 'dark' to equal 'light'\"" },
+        { file: 'tests/settings.test.js', test: 'the Save button is disabled until something changes', excerpt: "  location: 'tests/settings.test.js:77:1'\n  error: 'expected true to be false'" },
+        { file: 'tests/list.test.js', test: 'the settings list renders every option', excerpt: "  location: 'tests/list.test.js:19:1'\n  error: 'expected 4 items, got 3'" },
+      ],
+    }],
+  };
+  const { details } = render(own, NOISY);
+  const text = unescape(details);
+
+  // The declared check: the reason and its page lead; the console messages
+  // and the test printouts sit behind one closed "Show the full output".
+  const full = message('project:topic.check.showFullOutput');
+  const reasonAt = text.indexOf('Expected .settings-save to be visible, but it was not found');
+  const foldAt = text.indexOf('dev-ledger-why-full');
+  assert.ok(reasonAt >= 0, 'the reason is in the body');
+  assert.ok(foldAt > reasonAt, 'the fold comes after the reason');
+  assert.match(text, new RegExp(`<details class="dev-ledger-why dev-ledger-why-full"><summary class="dev-ledger-check-line"><span class="dev-ledger-check-open">${full}</span></summary><div class="dev-ledger-why-body"><ul class="dev-ledger-why-errors">`));
+  assert.ok(text.indexOf('TypeError: Cannot read properties of undefined') > foldAt, 'console errors are inside the fold');
+  assert.ok(!/<details class="dev-ledger-why dev-ledger-why-full" open/.test(text), 'the full output starts closed');
+
+  // The app's own tests: the first failing test only, the other two folded.
+  const row = text.slice(text.indexOf('data-check-unit=""'), text.indexOf('</li>', text.indexOf('dev-ledger-unit-output')));
+  assert.match(row, new RegExp(`<div class="dev-ledger-unit-k">${message('project:topic.check.unit.testsThatFailed', { count: 3 })}</div><ul class="dev-ledger-unit-tests"><li><span class="dev-ledger-unit-test">saving settings keeps the chosen theme</span>`));
+  assert.ok(!row.slice(0, row.indexOf('dev-ledger-unit-more')).includes('the Save button is disabled until something changes'), 'only the first test is shown before the fold');
+  const more = message('project:topic.check.unit.showMore', { count: 2 });
+  assert.match(row, new RegExp(`<details class="dev-ledger-why dev-ledger-unit-more"><summary class="dev-ledger-check-line"><span class="dev-ledger-check-open">${more}</span></summary><ul class="dev-ledger-unit-tests">`));
+  assert.ok(row.includes('the Save button is disabled until something changes'), 'the other failing tests are still there');
+  assert.ok(row.includes('the settings list renders every option'), 'and the last one too');
+});
+
 test('a unit suite that stopped before any test ran says what it reported', () => {
   const own = context({ id: 7, username: 'maya' });
   const EARLY = {
@@ -648,10 +695,10 @@ test('a failed run, read by anybody else: the same words, who has to fix it, and
   const card = plain(av._changeTestingView(FAILED));
   assert.equal(card.fix, null);
   assert.deepEqual(card.actions, []);
-  assert.equal(card.authorNote, 'Its author needs to fix this before it can go live.');
+  assert.equal(card.authorNote, 'maya made this change and needs to fix this before it can go live.');
   const testing = unescape(render(av, FAILED).page);
   assert.match(testing, /data-change-gate-why="own-words">One of this change’s tests failed\. The test “every message/);
-  assert.match(testing, /<p class="dev-change-gate-note">Its author needs to fix this before it can go live\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
+  assert.match(testing, /<p class="dev-change-gate-note">maya made this change and needs to fix this before it can go live\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
   assert.ok(!testing.includes('data-change-fix-checks') && !testing.includes('dev-change-gate-fix'));
   // Its author, on a change with no conversation to ask: the re-run, as before.
   const own = context({ id: 7, username: 'maya' });
@@ -1394,4 +1441,60 @@ test('the Testing card on a request\'s page offers the preview its row says it h
   av.appData.can_collaborate = false;
   assert.doesNotMatch(testing(av, { staging_url: null, can_preview: true }), open);
   assert.match(testing(av, { staging_url: 'https://preview.example', can_preview: true }), open);
+});
+
+// #6389: the Votes card says who has to fix a change that has its votes and
+// fails its checks: the viewer, in the tool they made it in; or whoever made
+// it, by name. A change Homeroom bot built keeps today's sentence.
+test('#6389: the Votes card names who fixes a failing change that has its votes', () => {
+  const av = context({ id: 42, username: 'evan' });
+  const card = { pill: { state: { yes: 1, majority: 1 } } };
+  const row = { ...PR, status: 'promoted', check_state: 'failing', user_id: 42, username: 'evan', external_agent: 'claude-code' };
+  const note = (over) => av._changeVotesView({ ...row, ...over }, card).note.join(' ');
+  assert.match(note({}), new RegExp(message('changes:page.votes.note.liveOnceYouFixIn', { agent: 'Claude Code' }).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(note({ external_agent: 'other-agent' }), /once you fix it where you made it/);
+  assert.match(note({ external_agent: null }), /once you fix it and the fix passes testing/);
+  assert.match(note({ user_id: 7, username: 'snait' }), /once snait fixes it/);
+  assert.match(note({ user_id: 7, username: 'homeroom_bot' }), /once a fix passes testing/);
+  // Passing checks still say testing passes, not a fix.
+  assert.match(note({ check_state: 'pending' }), /once testing passes/);
+});
+
+// #6521: a pass earned before the change's latest version does not count as
+// tested. The thread list, the merge gate and the change page read one rule
+// (services/homeroom-bot-progress.js checksOnHead), so the page's Testing
+// card agrees with the list row instead of reading "Tested".
+test('#6521 list row and Testing card agree on a pass from an older version', () => {
+  const progress = require('../src/services/homeroom-bot-progress');
+  const old = {
+    status: 'promoted', source: 'native', check_state: 'passing',
+    checks_commit_sha: 'a'.repeat(40), reviewed_head_sha: 'b'.repeat(40),
+  };
+  // The list row reads its own shape: still checking.
+  assert.equal(progress.stageOf({
+    ...old, proposal_status: 'promoted', proposal_source: 'native', checks_sha: old.checks_commit_sha,
+  }).stage, 'checks');
+  // The page, read by the change's author (the re-run is theirs to press).
+  const own = context({ id: 7, username: 'maya' });
+  const card = plain(own._changeTestingView({ ...PR, checks_on_head: progress.sessionChecksOnHead(old) }));
+  assert.deepEqual([card.name, card.figure, card.done], ['Testing', 'Waiting', false]);
+  assert.deepEqual(card.segments, [{ weight: 1, pct: 0, state: 'moving' }]);
+  assert.deepEqual(card.note, []);
+  assert.deepEqual(card.actions.map((a) => a.label), [message('changes:recheck.label')]);
+  // Enough yes votes no longer reads as ready: the page says what it waits on.
+  const votes = plain(own._changeVotesView(
+    { ...PR, yes_count: 2, votes_required: 2, checks_on_head: progress.sessionChecksOnHead(old) },
+    { pill: { state: { yes: 2, majority: 2 } } },
+  ));
+  assert.ok(votes.note.includes(message('changes:page.votes.note.liveOnceTested')));
+  // The same verdict on the head up now is tested, as before.
+  const current = { ...old, reviewed_head_sha: old.checks_commit_sha };
+  const currentCard = plain(own._changeTestingView({ ...PR, checks_on_head: progress.sessionChecksOnHead(current) }));
+  assert.deepEqual([currentCard.name, currentCard.figure, currentCard.done], ['Tested', 'All checks passed', true]);
+  assert.equal(currentCard.actions.length, 0);
+  // Both routes hand the page the rule's answer through the one adapter.
+  const src = read('src/routes/votes.js');
+  assert.match(src, /row\.checks_on_head = sessionChecksOnHead\(row\)/);
+  assert.match(src, /proposal\.checks_on_head = sessionChecksOnHead\(proposal\)/);
+  assert.match(src, /cs\.reviewed_head_sha,\n\s+-- #6521[\s\S]{0,400}cs\.checks_commit_sha,/);
 });

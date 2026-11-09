@@ -477,6 +477,8 @@ export interface StepRow {
   fix?: FixChecksView | null;
   /** Extra hooks on the row (the superseded-base marker on Checks). */
   attrs?: Record<string, string>;
+  /** Done because an admin's force merge skips it, not because it was cleared. */
+  skipped?: boolean;
 }
 
 /**
@@ -591,6 +593,11 @@ export interface RequestStatusView {
   /** A closed request: the words that say so, and no stepper. */
   closed: string | null;
   /**
+   * #6387: the row says a change addresses this request, so the page holds
+   * the change section's place while the thread is still being read.
+   */
+  changeExpected?: boolean;
+  /**
    * The sentence already says what Homeroom bot is doing with its plan (or
    * its change), so no "Plan v1 is ready for comments." after it.
    */
@@ -659,12 +666,6 @@ export interface FixChecksView {
 }
 
 /** #4455: the Votes card or the Testing card under a change's summary. */
-/** A change's cost so far: the line, and what the figure counts as its tooltip. */
-export interface ChangeSpentView {
-  text: string;
-  title: string;
-}
-
 export interface ChangeGateView {
   name: string;
   /** The figure at the right of the name: "Needs 1 more yes", "about 6 min left". */
@@ -694,11 +695,6 @@ export interface ChangeGateView {
   noteDetail?: string;
   /** Testing only: its re-run, or a retry of the preview. */
   actions?: ActionSpec[];
-  /**
-   * #6116, Testing only: what the change has cost so far at list price, for
-   * its author or an admin (AppView._changeSpentView). Null otherwise.
-   */
-  spent?: ChangeSpentView | null;
   /** Testing only: a "See what failed" door into Details. */
   details?: boolean;
   /** Testing only, when its checks failed: what went wrong, in plain words. */
@@ -719,7 +715,7 @@ export interface ChangeGateView {
    * changeBotFix), carried on the card as `data-change-bot-fix`. The words
    * are in `authorNote`.
    */
-  botFix?: 'fixing' | 'queued' | 'handed_off' | 'stopped' | null;
+  botFix?: 'fixing' | 'queued' | 'platform' | 'handed_off' | 'stopped' | null;
   /**
    * Votes only, on a merge of Homeroom itself that is not live yet: the
    * server's `release` block, which the card words after the note and keeps
@@ -807,6 +803,11 @@ export interface ChangeUpstreamView {
 
 export interface TopicBody {
   changeId?: number;
+  /**
+   * #6440: a governance vote's page — the model its head draws
+   * (./governance-model.ts). The page has no card: the head IS the page.
+   */
+  decision?: any;
   issues?: IssueLink[];
   /** #2431 — on an ISSUE's page, the change on it (an open issue's). */
   addressedBy?: IssueProposalRef | null;

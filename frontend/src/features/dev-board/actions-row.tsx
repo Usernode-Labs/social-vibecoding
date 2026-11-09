@@ -56,7 +56,7 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, ArrowPathIcon, ArrowRightIcon, BookmarkIcon, BookmarkSolidIcon, ArrowUpTrayIcon, ChevronLeftIcon, ChevronRightIcon, CogIcon, EllipsisHorizontalIcon, GitHubIcon, GlobeIcon, HashIcon, KeyIcon, LightBulbIcon, LockIcon,
+  AppWindowIcon, ArrowPathIcon, ArrowRightIcon, BookmarkIcon, BookmarkSolidIcon, ArrowUpTrayIcon, ChevronLeftIcon, ChevronRightIcon, CogIcon, EllipsisHorizontalIcon, GitHubIcon, GlobeIcon, HashIcon, HomeIcon, KeyIcon, LightBulbIcon, LockIcon,
   PencilSparklesIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
@@ -111,6 +111,10 @@ export interface DevActionsRowProps {
    * the pins are drawn. Null leaves the row out.
    */
   pin?: { pinned: boolean; onToggle: () => void } | null;
+  /** ONE HOME (#6361): pin this project's APP to Home (its tile opens the app). */
+  homeApp?: { pinned: boolean; onToggle: () => void } | null;
+  /** ONE HOME (#6361): pin this COMMUNITY to Home (its tile opens this hub). */
+  homeCommunity?: { pinned: boolean; onToggle: () => void } | null;
 }
 
 /**
@@ -249,6 +253,8 @@ export function DevPlusMenu({
   onLeave = null,
   appName = null,
   pin = null,
+  homeApp = null,
+  homeCommunity = null,
 }: DevActionsRowProps): ReactNode {
   const t = useMessages('project');
   const [editingIllustration, setEditingIllustration] = useState(false);
@@ -379,6 +385,28 @@ export function DevPlusMenu({
                 title={t('project:menu.importPr.title')}
                 sub={t('project:menu.importPr.sub')}
                 dividerCls={PLUS_ROW_DIVIDER_CLS}
+              />
+            ) : null}
+            {/* ONE HOME (#6361): THE TWO HOME PINS, separate acts. The app's
+                tile opens the app; the community's opens this hub. Neither
+                joins, and neither needs you to have joined. */}
+            {homeApp ? (
+              <PlusRow
+                data-plus="home-app"
+                icon={<HomeIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title={homeApp.pinned ? t('project:menu.homeApp.remove') : t('project:menu.homeApp.add')}
+                sub={homeApp.pinned ? undefined : t('project:menu.homeApp.sub')}
+                dividerCls={PLUS_ROW_DIVIDER_CLS}
+                onClick={() => { callAppView('_closePlusMenu'); homeApp.onToggle(); }}
+              />
+            ) : null}
+            {homeCommunity ? (
+              <PlusRow
+                data-plus="home-community"
+                icon={<HomeIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title={homeCommunity.pinned ? t('project:menu.homeCommunity.remove') : t('project:menu.homeCommunity.add')}
+                sub={homeCommunity.pinned ? undefined : t('project:menu.homeCommunity.sub')}
+                onClick={() => { callAppView('_closePlusMenu'); homeCommunity.onToggle(); }}
               />
             ) : null}
             {/* PIN TO SIDEBAR (18 Oct 2026): a pin is a community's, so the

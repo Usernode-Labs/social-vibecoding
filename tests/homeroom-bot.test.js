@@ -88,8 +88,8 @@ test('a request that is already there is `done`: on a person or empty verdict, n
   const prompt = fs.readFileSync(path.join(__dirname, '..', 'src/prompts/homeroom-bot-triage.md'), 'utf8');
   assert.match(prompt, /- `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its members are offered a vote to close it\. When the requester, or somebody who decides on the project, says in the discussion that it works and can be closed \("you can propose closing this"\), and the code agrees, that is `done`\./);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
-  assert.match(src, /await say\('empty', parsed\.done \? live\.personText\(parsed\) : live\.emptyText\(parsed\), \{/);
-  assert.match(src, /dm: \{ reason: parsed\.reason, \.\.\.\(parsed\.done \? \{ done: true \} : \{\}\), \.\.\.quiet \},/);
+  assert.match(src, /await say\('empty', closeWanted \? live\.personText\(parsed\) : live\.emptyText\(parsed\), \{/);
+  assert.match(src, /dm: \{\n\s+reason: parsed\.reason, \.\.\.\(parsed\.done \? \{ done: true \} : \{\}\),\n\s+\.\.\.\(withdrawnNote \? \{ withdrawn: true, quiet: true \} : \{\}\), \.\.\.quiet,/);
 });
 
 test('a request that names who builds it is `builder`: a person verdict only, a bare name, and its news rings nobody', () => {
@@ -125,7 +125,7 @@ test('an older request\'s first read rings only when it is ready to try (16 Oct 
 
 test('a re-read and the ask to repair a reply restate the verdict\'s keys (runs 1390, 1451, 1454 answered in keys of their own)', () => {
   const again = bot.continuedTriagePrompt({ seed: 'SEED', issueNumber: 30 });
-  assert.match(again, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #30, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\."\}\nUse these keys and the others your instructions name \(such as `answers`, `blocker`, `assumptions`, `platform`\): a block with keys of its own, or no `verdict`, cannot be read\.$/);
+  assert.match(again, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #30, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false\}\nUse these keys and the others your instructions name \(such as `answers`, `blocker`, `assumptions`, `platform`\): a block with keys of its own, or no `verdict`, cannot be read\.$/);
   assert.match(bot.VERDICT_REPAIR_PROMPT, /with nothing before or after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person",[^\n]+\}\nUse these keys and the others your instructions name/);
   assert.ok(bot.triageClosing(30).endsWith(`in this format, and nothing after it:\n${bot.VERDICT_FORMAT}`), 'the first read says the same shape');
 });
@@ -1149,7 +1149,7 @@ test('the everyone moment: what the bot never read live before it went on for ev
   assert.match(SRC, /function everyoneSinceOf\(settings\) \{\n  return settings\?\.everyoneSince \|\| null;\n\}/);
 });
 
-test('a new request on a live app gets its card when it is queued, under the key its read starts from, whatever it is', async () => {
+test('a first version on a live app gets its card when it is queued, under the key its read starts from; an ordinary request none', async () => {
   const started = [];
   const events = [];
   const pool = {
@@ -1184,13 +1184,13 @@ test('a new request on a live app gets its card when it is queued, under the key
   };
   const app = { id: 9, slug: 'todo', name: 'Todo', repo_url: 'https://github.com/usernode-bot/todo' };
   const capRoom = { proposals_per_app: 5, proposals_total: 50 };
-  // One story: a request filed on the board gets its card too.
+  // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request filed on
+  // the board gets no card in its requester's chat with the bot; where it
+  // stands is on its page.
   let firstVersion = null;
   await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
-  assert.equal(started.length, 1);
-  assert.equal(started[0].idempotencyKey, 'hrbot-activity-r9-1', 'the request\'s own card (bot-loop lookCardKey)');
-  started.length = 0;
-  // So does a project's first version.
+  assert.equal(started.length, 0);
+  // A project's first version does.
   firstVersion = 1;
   await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
   assert.equal(started.length, 1);
@@ -1756,9 +1756,23 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // would build (`first_step`, about 300 more), offered as a reply to tap.
   // #6321: a requester's or decider's "it works, you can propose closing
   // this" is `done` (about 175 more), so its note carries the buttons.
-  assert.ok(prompt.length < 24600, `a triage prompt stays small: ${prompt.length} chars`);
+  // #6314: the data rules' one exception (about 150 more), so a request for
+  // a tracker in an app is still refused and the shell's own tag is named.
+  // #6383: the posted plan's rule (about 450 more), so a request whose plan
+  // says what to build is read from it rather than handed back as unreadable.
+  // 6 Nov 2026 (#6395): `go_ahead` (about 780 more), so a read can say that a
+  // go-ahead cannot settle a request and what part of it can still be built.
+  // 6 Nov 2026 (#6430): the reason's guidance (about 520 more), so it says a
+  // person has to build it, never names the reader in the third person and
+  // never says somebody has to approve it.
+  // 6 Nov 2026 (#6211): the board's overlap rule (about 1,250 more), so a read
+  // of a new request can name the open one it duplicates, is part of, or
+  // overlaps, and offer its requester the choice. The board itself is only
+  // added when the project has other open requests, so this read (no board)
+  // carries the rule alone.
+  assert.ok(prompt.length < 28400, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
-  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\."\}$/);
+  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false\}$/);
 });
 
 test('the bot\'s GitHub login resolves to a string, or to null when it cannot be read', async () => {

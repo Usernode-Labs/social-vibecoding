@@ -496,8 +496,13 @@ test('failed foreground refresh retries while the page stays active',
     await loaded.sandbox.SocialPush.init();
 
     loaded.fire('usernode:social-push-foreground');
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    await settle();
+    // The retry runs on a timer, which a loaded checks pod delays past any
+    // fixed sleep: wait for it instead (7 Nov 2026).
+    await until(
+      () => attempts >= 2 &&
+        loaded.sandbox.SocialPush._foregroundInvalidationDirty === false,
+      'the foreground retry succeeds'
+    );
 
     assert.equal(attempts, 2);
     assert.equal(loaded.sandbox.SocialPush._foregroundInvalidationDirty, false);

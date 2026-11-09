@@ -230,6 +230,9 @@ const GroupChat = {
   // the channel, every send and typing frame carries it, and the socket's
   // frames are sorted by it (`_isChannel`).
   _channel: null,
+  // #6391: whether this reader is a member of the project's community; null
+  // until a thread page says (viewer_member).
+  _member: null,
 
   // The channel a mount names (`app.channel`), normalised, or null.
   _channelOf(app) {
@@ -320,6 +323,9 @@ const GroupChat = {
    */
   mount(appSlug, app) {
     GroupChat._app = (app && app.slug === appSlug) ? app : null;
+    // #6391: whether this reader is a member, from the thread page's answer
+    // (`viewer_member`); null until a read of a thread says.
+    GroupChat._member = null;
     // #4417 follow-up: the channel this mount shows (null: the general stream).
     const channel = GroupChat._channelOf(GroupChat._app);
     // Side-panel hooks: bind the draggable divider on every mount
@@ -406,6 +412,7 @@ const GroupChat = {
     GroupChat._channel = channel || null;
     GroupChat.messages = [];
     GroupChat.threads = new Map();
+    GroupChat._member = null;
     // B9: another project's cards and door are not this one's.
     GroupChat._botCards = new Map();
     GroupChat._botHere = false;
@@ -487,6 +494,9 @@ const GroupChat = {
       GroupChat._flushPendingOutgoing();
       GroupChat._renderStatusLine();
       GroupChat.resyncLoaded();
+      // The socket is back: if a release raised the "Updating Homeroom"
+      // notice, it is over (issue #6403).
+      window.Offline?.restartDone();
     };
 
     ws.onmessage = (event) => {
@@ -505,7 +515,7 @@ const GroupChat = {
       // surface entirely); the existing socket reference is stale.
       if (GroupChat.ws !== ws) return;
       GroupChat._renderStatusLine();
-      GroupChat._scheduleReconnect();
+      GroupChat._scheduleReconnect(ev.code);
     };
 
     // onerror typically fires immediately before onclose; leave
@@ -517,7 +527,11 @@ const GroupChat = {
     };
   },
 
-  _scheduleReconnect() {
+  _scheduleReconnect(code) {
+    // 1012 is the server's "Service restart" on a release (src/services/ws.js
+    // closeAllForRelease): say Homeroom is updating rather than making a
+    // routine restart look like an outage (issue #6403).
+    if (code === 1012) window.Offline?.restartNotice();
     if (GroupChat._reconnectTimer) return;
     if (!GroupChat.appSlug) return;
     // 1s, 2s, 4s, 8s, 16s, capped at 30s. Plus 0–500ms jitter so a
@@ -776,11 +790,6 @@ const GroupChat = {
         GroupChat._updateMessageReactions(msg.messageId, msg.reactions || []);
         break;
       }
-      case 'bot_request_status': {
-        // B9: a request asked of Homeroom bot here moved on.
-        GroupChat._applyBotRequestStatus(msg);
-        break;
-      }
       case 'chat_message_updated': {
         // An offer of Homeroom bot's in a thread was decided.
         GroupChat._applyMessageUpdate(msg);
@@ -926,7 +935,7 @@ const GroupChat = {
           return;
         }
         GroupChat._react()?.appendTranscriptMessage(
-          GroupChat._messageView(msg, { language: GroupChat.activeThread && GroupChat.activeThread.language }),
+          GroupChat._messageView(msg, { language: GroupChat.activeThread && GroupChat.activeThread.language, number: GroupChat.activeThread && GroupChat.activeThread.ref }),
           'thread',
         );
         if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
@@ -1240,6 +1249,12 @@ const GroupChat = {
         : (opts && opts.language === 'request' && meta.aboutChange && Number(meta.aboutChange.sessionId))
           ? { changeOf: { sessionId: Number(meta.aboutChange.sessionId) } }
           : {}),
+      // #6421: on a request's page, a message written on another request of
+      // the merged thread carries that request's number, drawn as "on #N".
+      ...(opts && opts.language === 'request' && !changeRow && scopeType === 'issue' && opts.number != null
+        && Number(msg.thread_ref ?? (msg.thread && msg.thread.ref)) !== Number(opts.number)
+        ? { requestOf: { number: Number(msg.thread_ref ?? (msg.thread && msg.thread.ref)) || null } }
+        : {}),
       senderId: Number(msg.userId ?? msg.user_id) || null,
       kind,
       username,
@@ -1264,6 +1279,11 @@ const GroupChat = {
       // messages from one person on (groupsWithPrevious); `time` is display.
       at: msg.createdAt || msg.created_at || null,
       bodyHtml: kind === 'message' && !deleted ? renderMessageBody(msg.content) : '',
+      // Task 2020 follow-up: Homeroom bot's answer laid out, drawn in place of
+      // the words by the body (features/group-chat/long-body.tsx), which stay
+      // its fallback. Only the bot's own thread replies carry it: a person's
+      // message metadata is built by the server from fixed fields (ws.js).
+      botHtml: GroupChat._botHtmlOf(meta, kind, deleted),
       systemText: kind === 'message' ? '' : String(msg.content == null ? '' : msg.content),
       mine: msg.userId === App.user?.id || msg.user_id === App.user?.id,
       editedTitle: editedAt ? GroupChat._editedTitle(editedAt) : null,
@@ -1328,14 +1348,14 @@ const GroupChat = {
         icon: GroupChat._eventIcon(event.type, event),
       } : null,
       eventHref: linksProposal ? GroupChat._eventHref(GroupChat._voteRef(msg)[0], pr) : null,
-      // B9: how a request asked of Homeroom bot is going, on the message
-      // everybody sees (its metadata, set by the server alone), and the card
-      // under it for its writer alone (GroupChat._botCards).
-      botRequest: GroupChat._botRequestView(kind === 'message' && !deleted ? meta.botRequest : null),
+      // B9: the card under a request's message for its writer alone
+      // (GroupChat._botCards). 5 Nov 2026: the room's status chip is gone;
+      // where a request stands is on its own page.
       botCard: kind === 'message' && !deleted && (msg.userId === App.user?.id || msg.user_id === App.user?.id)
         ? (GroupChat._botCards.get(Number(msg.id)) || null) : null,
       canAskBot: GroupChat._botHere && kind === 'message' && !deleted && !threadType && msg.id != null
         && (msg.userId === App.user?.id || msg.user_id === App.user?.id)
+        // A message an older chip names (its metadata) is a request already.
         && !(meta.botRequest) && !GroupChat._botCards.has(Number(msg.id))
         && !/(^|[^\w])@(homeroom_bot\b|homeroom\s+bot\b)/i.test(String(msg.content || '')),
       // Only the message knows WHICH change it is about, so the pair rides
@@ -1373,6 +1393,15 @@ const GroupChat = {
     };
   },
 
+  // Task 2020 follow-up: the laid-out copy of a reply of Homeroom bot's in a
+  // thread (homeroom-bot-voice.js say), or null.
+  _botHtmlOf(meta, kind, deleted) {
+    const bot = meta && meta.homeroomBot;
+    if (kind !== 'message' || deleted || !bot || bot.kind !== 'voice' || bot.offer) return null;
+    const html = typeof bot.html === 'string' ? bot.html : '';
+    return html.trim() && html.length <= 60000 ? html : null;
+  },
+
   // The buttons under Homeroom bot's offer, from its message's metadata
   // (homeroom-bot-voice.js say): open until the person it was offered to
   // taps one, for everybody else only a record that it was offered. #6321:
@@ -1386,7 +1415,8 @@ const GroupChat = {
     if (!status) return null;
     const me = window.App && App.user ? Number(App.user.id) : null;
     const actions = (Array.isArray(bot.actions) ? bot.actions : [])
-      .filter((a) => a && (a.id === 'yes' || a.id === 'no') && typeof a.label === 'string' && a.label)
+      // #6211: an overlap note also offers `first` (build this one first).
+      .filter((a) => a && (a.id === 'yes' || a.id === 'no' || a.id === 'first') && typeof a.label === 'string' && a.label)
       .map((a) => ({ id: a.id, label: a.label.slice(0, 40), primary: a.style === 'primary' }));
     // #6305: a many-project offer carries the rows it would file.
     const rows = Array.isArray(bot.offer.rows) ? bot.offer.rows.slice(0, 12) : null;
@@ -1403,7 +1433,9 @@ const GroupChat = {
   // The suggested replies under Homeroom bot's message in a request's or a
   // change's discussion (homeroom-bot-live.js, homeroom-bot-voice.js): the
   // prompt actions its metadata carries, for the people it names
-  // (forUserIds) and only while the set is open. Closed draws nothing.
+  // (forUserIds) and only while the set is open. #6391: a member it did not
+  // answer gets the other members' set (`othersActions`) instead, and never
+  // both. Closed draws nothing.
   _botSuggestView(meta) {
     const bot = meta && meta.homeroomBot;
     if (!bot || !bot.suggest || typeof bot.suggest !== 'object') return null;
@@ -1411,14 +1443,20 @@ const GroupChat = {
     if (!status) return null;
     const me = window.App && App.user ? Number(App.user.id) : null;
     const ids = (Array.isArray(bot.suggest.forUserIds) ? bot.suggest.forUserIds : []).map(Number);
-    const actions = (Array.isArray(bot.actions) ? bot.actions : [])
+    const prompts = (list) => (Array.isArray(list) ? list : [])
       .filter((a) => a && a.type === 'prompt' && typeof a.label === 'string' && a.label)
       .map((a) => ({ id: String(a.id || a.label), label: a.label.slice(0, 60), primary: a.style === 'primary' }));
-    return {
-      status,
-      forMe: me != null && ids.includes(me) && !GroupChat._readOnly(),
-      actions,
-    };
+    const readOnly = GroupChat._readOnly();
+    if (me != null && ids.includes(me) && !readOnly) {
+      return { status, forMe: true, audience: 'answered', actions: prompts(bot.actions) };
+    }
+    // Only a member can post here (`requireIssueMembership`), so anyone whose
+    // membership is not known yet, or who is not one, sees none.
+    const others = prompts(bot.othersActions);
+    if (GroupChat._member === true && !readOnly && others.length) {
+      return { status, forMe: true, audience: 'others', actions: others };
+    }
+    return { status, forMe: false, audience: null, actions: [] };
   },
 
   // A tap on one of the bot's suggested replies sends its words as this
@@ -1442,7 +1480,7 @@ const GroupChat = {
   // room hears it was decided (`chat_message_updated`); a refusal is said.
   async decideBotOffer(messageId, choice, rows) {
     const slug = GroupChat.appSlug;
-    if (!slug || !messageId || (choice !== 'yes' && choice !== 'no')) return;
+    if (!slug || !messageId || (choice !== 'yes' && choice !== 'no' && choice !== 'first')) return;
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(messageId)}/bot-offer`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1631,7 +1669,7 @@ const GroupChat = {
     // the change as its root post and every notice a single line. `closed`
     // is what a change nobody else can see yet says instead of a stream: its
     // thread is not read at all (only its author can open the page).
-    const language = ['chat', 'request', 'change'].includes(opts.language) ? opts.language : 'flat';
+    const language = ['chat', 'request', 'change', 'decision'].includes(opts.language) ? opts.language : 'flat';
     const closed = language === 'change' && opts.closed ? String(opts.closed) : null;
     // #5007: a change built for a request points its replies at that
     // request's own page, where the conversation lives. Only the change
@@ -1690,6 +1728,8 @@ const GroupChat = {
       maxLength: GC_MAX_MESSAGE_LEN,
       request: fill && language === 'request',
       change: fill && language === 'change',
+      // #6440: a governance vote's page, the same sheet as a request's.
+      decision: fill && language === 'decision',
     });
 
     // Kit polish: keyboard avoidance on the unified thread scroller
@@ -1937,6 +1977,13 @@ const GroupChat = {
       if (!isFirstPage) GroupChat._takeOlder(st, thread, messages, data, events);
       else {
         if (GroupChat._fromSavedCopy(res)) GroupChat._owe(st, true);
+        // #6497: a request's first page carries its GitHub comments, so the
+        // one render below draws the whole discussion in time order. A
+        // payload only ever rides an issue thread's first page.
+        if (type === 'issue' && data.request_comments
+            && typeof AppView !== 'undefined' && AppView._takeIssueComments) {
+          AppView._takeIssueComments(slug, ref, data.request_comments);
+        }
         GroupChat._takeNewest(st, thread, messages, data, events, true);
       }
       st.loaded = true;
@@ -2041,12 +2088,21 @@ const GroupChat = {
   },
   // #4417 follow-up: no thread is the general pane's stream, which is a
   // topic's channel while one is open there (`_channel`).
+  //
+  // #6497: a request's discussion opens whole. Its first page asks for the
+  // server's request ceiling (500 rows), so a thread of a few dozen replies
+  // arrives in one read instead of 50 at a time; "Load earlier" still asks
+  // `&limit=50&before=`. Every other stream keeps 50. The URL stays
+  // byte-identical between the first load and `_refreshLatest`, as the
+  // comment above `_threadQuery` requires for the service worker.
   _firstPageUrl(slug, thread) {
     const scope = thread || GroupChat._channel;
+    const limit = scope && scope.type === 'issue' ? GroupChat.REQUEST_THREAD_LIMIT : 50;
     return scope
-      ? `${GroupChat._threadQuery(slug, scope)}&limit=50${GroupChat._demoParam()}`
+      ? `${GroupChat._threadQuery(slug, scope)}&limit=${limit}${GroupChat._demoParam()}`
       : `/api/apps/${slug}/messages?limit=50${GroupChat._demoParam()}`;
   },
+  REQUEST_THREAD_LIMIT: 500,
 
   // A catch-up waits for the network (the worker's `no-cache` rule, sw.js),
   // but not forever: a half-dead link would otherwise hold it, and "Load
@@ -2205,6 +2261,9 @@ const GroupChat = {
    * lacks it (the socket delivered it before the page landed).
    */
   _takeNewest(s, thread, latest, data, log, first = false) {
+    // #6391: the thread page says whether this reader is a member, so the
+    // bot's other-members buttons show for them (and only them).
+    if (typeof data.viewer_member === 'boolean') GroupChat._member = data.viewer_member;
     const full = typeof data.has_more_before === 'boolean' ? data.has_more_before : latest.length >= 50;
     const before = s.messages.filter((m) => log.held.has(String(m.id)));
     const arrived = s.messages.filter((m) => !log.held.has(String(m.id)));
@@ -2270,6 +2329,12 @@ const GroupChat = {
       if (!res.ok || GroupChat._fromSavedCopy(res)) return;
       const data = await res.json();
       if (GroupChat.appSlug !== slug || !current()) return;
+      // #6497: a catch-up refreshes the request's comments the same way its
+      // first page brought them.
+      if (thread && thread.type === 'issue' && data.request_comments
+          && typeof AppView !== 'undefined' && AppView._takeIssueComments) {
+        AppView._takeIssueComments(slug, thread.ref, data.request_comments);
+      }
       GroupChat._takeNewest(s, thread, Array.isArray(data.messages) ? data.messages : [], data, events);
       if (thread) {
         if (GroupChat._isOpenThread(thread.type, thread.ref)) GroupChat.renderThread({ keepScroll: true });
@@ -2484,7 +2549,7 @@ const GroupChat = {
     const prevTop = scroll ? scroll.scrollTop : 0;
     const wasLoaded = el.dataset.loaded === '1';
 
-    const language = ['chat', 'request', 'change'].includes(a.language) ? a.language : 'flat';
+    const language = ['chat', 'request', 'change', 'decision'].includes(a.language) ? a.language : 'flat';
     const chat = language === 'chat';
     GroupChat._react()?.mountTranscript(el, 'thread');
     // #2387: a reply thread opens with the message it hangs off — from the
@@ -2493,8 +2558,8 @@ const GroupChat = {
     if (a.type === 'message') {
       root = st.root || GroupChat.messages.find((m) => Number(m.id) === Number(a.ref)) || null;
     }
-    let rows = st.messages.map((m) => GroupChat._messageView(m, { language }));
-    if (root) rows.unshift(GroupChat._messageView({ ...root, _threadRoot: true }, { language }));
+    let rows = st.messages.map((m) => GroupChat._messageView(m, { language, number: a.ref }));
+    if (root) rows.unshift(GroupChat._messageView({ ...root, _threadRoot: true }, { language, number: a.ref }));
     // #4453: a request's page is ONE stream in time order. Its GitHub
     // comments (AppView's per-issue cache, fetched once the page opens) join
     // the thread's own rows by when they were written, and the specs among
@@ -3389,40 +3454,14 @@ const GroupChat = {
   // Apply a fresh reaction aggregate (from the WS 'reaction' broadcast or
   // history) to a message — update state + patch just its pill row. The
   // message may live in the general stream or any cached thread (#194).
-  // B9: the chip a request's message wears, from its metadata: reading,
-  // building, ready (with the change to try), live, fixing (a fix asked on
-  // one of the bot's changes waiting for approval), or waiting_first_version
-  // (held until the project's first version is live). Null for none.
-  _botRequestView(value) {
-    if (!value || typeof value !== 'object') return null;
-    const status = ['reading', 'building', 'ready', 'live', 'fixing', 'waiting_first_version'].includes(value.status) ? value.status : null;
-    if (!status) return null;
-    return {
-      status,
-      issueNumber: Number(value.issueNumber) || null,
-      sessionId: Number(value.sessionId) || null,
-    };
-  },
-
   // B9: one row's chat-request fields again, after a frame moved them.
   _repaintBotRequest(messageId) {
     const msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
     if (!msg) return;
     const view = GroupChat._messageView(msg);
     GroupChat._react()?.patchTranscriptMessage(Number(messageId), {
-      botRequest: view.botRequest, botCard: view.botCard, canAskBot: view.canAskBot,
+      botCard: view.botCard, canAskBot: view.canAskBot,
     });
-  },
-
-  // B9: the room said a request's status moved (`bot_request_status`).
-  _applyBotRequestStatus(frame) {
-    const msg = GroupChat.messages.find((m) => String(m.id) === String(frame.messageId));
-    if (!msg) return;
-    const meta = { ...(msg.metadata || msg.meta || {}) };
-    if (frame.botRequest) meta.botRequest = frame.botRequest;
-    else delete meta.botRequest;
-    msg.metadata = meta;
-    GroupChat._repaintBotRequest(frame.messageId);
   },
 
   // B9: the viewer's own card under one of their messages, pushed to their
@@ -3802,7 +3841,8 @@ const GroupChat = {
     const gc = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.groupChat : null;
     if (!gc || !gc.patchTranscriptMessage) return;
-    const patch = { bodyHtml: renderMessageBody(content) };
+    // An edited message's laid-out copy no longer says what its words do.
+    const patch = { bodyHtml: renderMessageBody(content), botHtml: null };
     if (editedAt) patch.editedTitle = GroupChat._editedTitle(editedAt);
     gc.patchTranscriptMessage(messageId, patch);
   },
@@ -3967,10 +4007,13 @@ const GroupChat = {
   // Operates only over messages the list actually references, so older
   // dotted messages outside the capped list aren't wrongly touched: a
   // referenced message's dot becomes (readAt == null).
+  // #6441: every kind a message can ring with is here, so a thread reply
+  // that arrives while the thread is open gets its dot and is then read by
+  // the transcript's on-screen observer.
   reconcileDotsFromNotifications() {
     const items = (window.Notifications && Notifications.items) || [];
     if (!Array.isArray(items)) return;
-    const KINDS = new Set(['mention', 'reply', 'reaction']);
+    const KINDS = new Set(['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply', 'change_thread_reply']);
     const state = new Map(); // chatMessageId -> isUnread
     for (const n of items) {
       if (!n || !KINDS.has(n.kind) || n.chatMessageId == null) continue;

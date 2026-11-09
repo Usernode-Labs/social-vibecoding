@@ -18,7 +18,7 @@ const APP_CSS = read('public/css/app.css');
 const {
   STRIP_ATTR, STRIP_W_PROP, STRIP_MIN_PX, STRIP_SHOT_PX,
   BAND_ATTR, BAND_H_PROP, BAND_MIN_WIDTH_PX,
-  CORNER_ATTR, CORNER_W_PROP, CORNER_SHOT_PX,
+  CORNER_ATTR, CORNER_W_PROP, CORNER_SHOT_PX, RESUME_SETTLE_MS,
   stripSide, stripShotSide, applyStrip, watchSideStrip,
   topBand, topBandShot, applyTopBand,
   sideCorner, cornerShot, applyCorner,
@@ -205,6 +205,7 @@ function fakePage({ withObserver = true } = {}) {
   const attrs = new Map();
   const props = new Map();
   const listeners = new Map();
+  const docListeners = new Map();
   const observers = [];
   const root = {
     getAttribute: (n) => (attrs.has(n) ? attrs.get(n) : null),
@@ -216,7 +217,15 @@ function fakePage({ withObserver = true } = {}) {
   const doc = {
     documentElement: root,
     createElement: () => ({ isConnected: false, style: {}, setAttribute() {} }),
+    // A page is visible unless a test says otherwise.
+    visibilityState: 'visible',
+    addEventListener: (type, fn) => docListeners.set(type, fn),
+    removeEventListener: (type) => docListeners.delete(type),
   };
+  // The frame and timer queues, flushed by hand (a resume's follow-up
+  // reads): a cancelled entry is nulled, so a flush skips it.
+  const frames = [];
+  const timers = [];
   const win = {
     location: { search: '' },
     // Upright by default: the corner's pose. A landscape case sets its own.
@@ -229,6 +238,10 @@ function fakePage({ withObserver = true } = {}) {
     }),
     addEventListener: (type, fn) => listeners.set(type, fn),
     removeEventListener: (type) => listeners.delete(type),
+    requestAnimationFrame: (fn) => frames.push(fn),
+    cancelAnimationFrame: (id) => { frames[id - 1] = null; },
+    setTimeout: (fn) => timers.push(fn),
+    clearTimeout: (id) => { timers[id - 1] = null; },
   };
   if (withObserver) {
     win.ResizeObserver = class {
@@ -238,7 +251,11 @@ function fakePage({ withObserver = true } = {}) {
       disconnect() { this.disconnected = true; }
     };
   }
-  return { insets, attrs, props, listeners, observers, doc, win, root };
+  const flushFrames = () => { for (const fn of frames.splice(0)) if (fn) fn(); };
+  const flushTimers = () => { for (const fn of timers.splice(0)) if (fn) fn(); };
+  return {
+    insets, attrs, props, listeners, docListeners, observers, doc, win, root, frames, timers, flushFrames, flushTimers,
+  };
 }
 
 test('the strip follows the inset itself, not only a resize (the tabs left at the foot on a real Duo)', () => {
@@ -287,6 +304,101 @@ test('with no ResizeObserver, the window\'s resize still reads the inset', () =>
   page.insets.right = 84;
   page.listeners.get('resize')();
   assert.equal(page.attrs.get(STRIP_ATTR), 'right');
+});
+
+// ── A resume reads the inset again (6450) ──────────────────────────────
+// Leaving the Duo for another app and coming back dropped the tabs to the
+// foot of the folded cover: the resume's own read found no inset, and with
+// the probe's box unchanged nothing read it again. Coming back now reads
+// now, on the next frame and once more after the phone's late report.
+
+test('a resume puts the strip back (6450)', () => {
+  const page = fakePage();
+  page.insets.right = 84;
+  const stop = watchSideStrip(page.doc, page.win);
+  assert.equal(page.attrs.get(STRIP_ATTR), 'right', 'the Duo\'s column, as before leaving');
+  // The resume's own pass reads no inset at all, and removes the column.
+  page.insets.right = 0;
+  page.listeners.get('resize')();
+  assert.equal(page.attrs.has(STRIP_ATTR), false);
+  // Back in the app, the phone reports the column again.
+  page.insets.right = 84;
+  page.listeners.get('pageshow')();
+  assert.equal(page.attrs.get(STRIP_ATTR), 'right');
+  assert.equal(page.props.get(STRIP_W_PROP), '84px');
+  stop();
+});
+
+test('coming back reads the inset as a visibility change too (6450)', () => {
+  const page = fakePage();
+  page.insets.right = 84;
+  const stop = watchSideStrip(page.doc, page.win);
+  page.insets.right = 0;
+  page.listeners.get('resize')();
+  assert.equal(page.attrs.has(STRIP_ATTR), false);
+  page.doc.visibilityState = 'hidden';
+  page.insets.right = 84;
+  page.docListeners.get('visibilitychange')();
+  assert.equal(page.attrs.has(STRIP_ATTR), false, 'a hidden page reads nothing');
+  page.doc.visibilityState = 'visible';
+  page.docListeners.get('visibilitychange')();
+  assert.equal(page.attrs.get(STRIP_ATTR), 'right', 'visible again: the column is read back');
+  assert.equal(page.props.get(STRIP_W_PROP), '84px');
+  stop();
+});
+
+test('a resume catches the inset WebKit hands over a moment later (6450)', () => {
+  assert.equal(RESUME_SETTLE_MS, 250, 'a quarter of a second after the resume');
+  const page = fakePage();
+  const stop = watchSideStrip(page.doc, page.win);
+  page.listeners.get('pageshow')();
+  assert.equal(page.attrs.has(STRIP_ATTR), false, 'the resume pass still says there is no column');
+  page.insets.right = 84;
+  page.flushFrames();
+  assert.equal(page.attrs.get(STRIP_ATTR), 'right', 'the next frame sees it');
+  page.flushTimers();
+  assert.equal(page.attrs.get(STRIP_ATTR), 'right', 'the settle read keeps it');
+  stop();
+
+  // Even later than the frame: the settle read is what catches it.
+  const late = fakePage();
+  const stopLate = watchSideStrip(late.doc, late.win);
+  late.listeners.get('pageshow')();
+  late.flushFrames();
+  assert.equal(late.attrs.has(STRIP_ATTR), false, 'nothing yet');
+  late.insets.right = 84;
+  late.flushTimers();
+  assert.equal(late.attrs.get(STRIP_ATTR), 'right');
+  assert.equal(late.props.get(STRIP_W_PROP), '84px');
+  stopLate();
+});
+
+test('a resume that really finds no inset still removes the strip (6450)', () => {
+  const page = fakePage();
+  page.insets.right = 84;
+  const stop = watchSideStrip(page.doc, page.win);
+  page.insets.right = 0;
+  page.listeners.get('pageshow')();
+  page.flushFrames();
+  page.flushTimers();
+  assert.equal(page.attrs.has(STRIP_ATTR), false, 'a real read of no column takes it away');
+  assert.equal(page.props.has(STRIP_W_PROP), false);
+  stop();
+});
+
+test('stop() removes the resume listeners and cancels its pending reads (6450)', () => {
+  const page = fakePage();
+  const stop = watchSideStrip(page.doc, page.win);
+  page.listeners.get('pageshow')();
+  assert.equal(page.frames.length, 1, 'a frame is queued');
+  assert.equal(page.timers.length, 1, 'and the settle timer');
+  stop();
+  assert.equal(page.listeners.size, 0);
+  assert.equal(page.docListeners.size, 0);
+  assert.ok(page.frames.every((fn) => fn === null), 'the frame is cancelled');
+  assert.ok(page.timers.every((fn) => fn === null), 'the timer is cancelled');
+  page.flushFrames();
+  page.flushTimers();
 });
 
 test('the top band follows the top inset, on the unfolded Duo that reports no column', () => {

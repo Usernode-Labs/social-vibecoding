@@ -67,6 +67,8 @@ const CURRENT_KINDS = [
   // #4396: a project the person joined while it was made is open
   // (proposal_alerts, services/project-opened.js).
   'project_opened',
+  // #5404: the Monday count of the changes you voted on that were decided.
+  'voted_digest',
   // A person's message in a small private group's discussion, the group's
   // chat, so it rides the Messages switch.
   'channel_message',

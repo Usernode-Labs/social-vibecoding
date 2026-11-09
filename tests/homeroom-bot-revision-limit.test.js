@@ -203,7 +203,6 @@ test('a stranger cannot grant', async () => {
 
 test('the Homeroom bot page lists a stopped change under Needs you', () => {
   const progress = require('../src/services/homeroom-bot-progress');
-  const { BOT_STANDING } = require('../src/services/ai-work');
   const HEAD = 'a'.repeat(40);
   const open = {
     proposal_status: 'promoted', proposal_at: new Date(Date.now() - 20 * 60000).toISOString(),
@@ -212,7 +211,11 @@ test('the Homeroom bot page lists a stopped change under Needs you', () => {
     stage: 'fix_stopped', since: open.checks_at || open.proposal_at,
     doing: 'its checks are failing, and Homeroom bot stopped fixing them', waitingOn: 'them',
   });
-  assert.deepEqual(BOT_STANDING.fix_stopped, { group: 'needs', what: 'fix_stopped' });
+  // Every page says it stopped (services/work-state.js); the bot page puts it under Needs you.
+  const ws = require('../src/services/work-state');
+  const stopped = ws.fromStage(progress.stageOf(open), open);
+  assert.deepEqual([stopped.stage, stopped.reason], ['stopped', 'fix_stopped']);
+  assert.equal(ws.placeFor(stopped, { requester: true }), 'needs');
 });
 
 

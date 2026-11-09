@@ -89,7 +89,8 @@ const EVENTS = {
   Heard: (p: any) => ({ ...where(p), messageId: int(p?.messageId, 'messageId') }),
   Settled: () => ({}),
   OfferTapped: (p: any) => {
-    const choice = p?.choice === 'yes' ? 'yes' : p?.choice === 'no' ? 'no' : null;
+    // #6211: `first` is an overlap note's third choice (build this one first).
+    const choice = p?.choice === 'yes' ? 'yes' : p?.choice === 'no' ? 'no' : p?.choice === 'first' ? 'first' : null;
     if (!choice) throw new Error('choice must be yes or no');
     const rows = Array.isArray(p?.rows) ? p.rows.filter((r: unknown) => typeof r === 'string').slice(0, 12) : undefined;
     return { ...where(p), offerId: int(p?.offerId, 'offerId'), userId: int(p?.userId, 'userId'), choice, ...(rows ? { rows } : {}) };
@@ -190,6 +191,8 @@ const tapGuard = (s: VState, e: Event<any>, f: Facts, ctx: TransitionContext): C
   // person: any member may tap it. The route's membership gate and the act's
   // closeGate decide who that is. Every other offer is its one person's.
   const anyMember = o.for_user_id == null && o.kind === 'close_request';
+  // #6211: the third choice belongs to an overlap note's buttons alone.
+  if (e.payload.choice === 'first' && o.kind !== 'overlap') return reject('no_such_choice');
   if (!anyMember && Number(o.for_user_id) !== e.payload.userId) return reject('not_for_you');
   const d = s.name === NONE ? null : (s as Live).data;
   if (o.status !== 'open' || d?.taps[String(o.id)]) return reject('already_decided');
@@ -265,10 +268,19 @@ const timer = (e: Event<any>): Check => (e.source.kind === 'timer' ? ok() : reje
 
 async function readFacts(tx: Tx, event: Event<any>): Promise<Facts> {
   if (event.type !== 'OfferTapped') return NO_FACTS;
+  const id = Number(event.payload?.offerId);
+  // 5 Nov 2026: a thread's offers are Homeroom bot's cards (bot_cards); one
+  // made before is still read from its old table (homeroom-bot-voice.js
+  // OFFERS_SQL). A card's id is above every older offer's.
+  const { rows: [card] } = await tx.query(
+    `SELECT o.id, o.app_id, o.kind, o.user_id AS for_user_id, o.status, m.thread_type, m.thread_ref, m.app_id AS message_app_id
+       FROM bot_cards o JOIN chat_messages m ON m.id = o.chat_message_id
+      WHERE o.id = $1 AND o.place = 'thread' FOR UPDATE OF o`, [id]);
+  if (card) return { offer: card };
   const { rows: [offer] } = await tx.query(
     `SELECT o.id, o.app_id, o.kind, o.for_user_id, o.status, m.thread_type, m.thread_ref, m.app_id AS message_app_id
        FROM homeroom_bot_voice_offers o JOIN chat_messages m ON m.id = o.message_id
-      WHERE o.id = $1 FOR UPDATE OF o`, [Number(event.payload?.offerId)]);
+      WHERE o.id = $1 FOR UPDATE OF o`, [id]);
   return { offer: offer || null };
 }
 
