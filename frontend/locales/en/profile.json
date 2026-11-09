@@ -1018,5 +1018,21 @@
   "votes.title.decision": {
     "text": "A group decision",
     "description": "Stands in for the title of a community decision the viewer voted on, when it has none."
+  },
+  "frame.numbers": {
+    "text": "In numbers",
+    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the strip of figures at the top (changes live, challenges done and the like)."
+  },
+  "frame.pair": {
+    "text": "{{first}} · {{second}}",
+    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Joins two short facts about the person on the one line under their handle, such as 'Building since April 2026' and 'Verified GitHub · name'."
+  },
+  "frame.week.time": {
+    "text": "{{time}} in apps",
+    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row under This week: how long the person spent inside apps in the last seven days; {{time}} is already a short duration such as '25m' or '2h 10m'."
+  },
+  "frame.week.apps": {
+    "text": "{{count}} {{label}}",
+    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row under This week: how many apps the person opened in the last seven days; {{label}} is already the counted words, such as 'apps opened'."
   }
 }

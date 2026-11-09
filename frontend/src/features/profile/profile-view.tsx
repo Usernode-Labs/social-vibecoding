@@ -43,6 +43,11 @@ import { FriendsSheet } from './friends-sheet';
 import { ProfileEditSheet } from './profile-edit-sheet';
 import { PublicProfileCard } from './public-profile-card';
 import { WeekShareSheet } from './week-share-sheet';
+import { appSlotsLine, useAppAllowance } from '../dialogs/app-allowance';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
+import { useVisibility } from '../../lib/visibility-store';
+import { YouFrame } from './frame/you-frame';
+import { useFramePage } from '../frame/frame-page-store';
 
 /** The round picture, or the initial-in-a-circle fallback — the idiom the rest
  *  of the app already uses for people. */
@@ -389,10 +394,41 @@ function ProfileSkeleton(): ReactNode {
   );
 }
 
+/**
+ * The You tab under one of the frame's looks: the kit's page
+ * (./frame/you-frame.tsx) from this screen's own view, with the two facts
+ * the standard rows read for themselves (the App slots line, and whether
+ * the viewer is an admin).
+ */
+function YouInFrame({ view }: { view: any }): ReactNode {
+  const allowance = useAppAllowance();
+  const admin = useVisibility('switcher-row-admin', false);
+  // The bar says You, as the tab does (the standard header says Profile).
+  const tc = useMessages('core');
+  useFramePage([tc('core:tabs.me')], null);
+  return (
+    <YouFrame
+      identity={view.identity}
+      stats={view.stats}
+      activity={view.activity}
+      rows={view.rows}
+      slots={appSlotsLine(allowance.quota, allowance.requestedAt as string | null)}
+      admin={admin}
+      onEdit={() => Profile.showEditSheet()}
+      onFriends={() => Profile.showFriends()}
+      onSlots={() => Profile.showAppSlots()}
+      onFeedback={() => Profile.showFeedback()}
+    />
+  );
+}
+
 export function ProfileRoot(): ReactNode {
   const state = useStoreState(profileStore);
   // Subscribed before the view is built: its lines are read as it is.
   const t = useMessages('profile');
+  // Under one of the frame's looks your own page is the kit's (the tour's
+  // s44); a public profile and the states before the data keep theirs.
+  const frame = isFrameSkin(useLiveSkin());
   const view = buildProfileView(state);
 
   if (view.kind === 'empty') return null;
@@ -488,6 +524,7 @@ export function ProfileRoot(): ReactNode {
           Your contributions, which closed the screen, is gone: Your changes
           lists every merged one.
       */}
+      {frame ? <YouInFrame view={view} /> : (
       <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
         <div className="lg:col-start-1 lg:row-start-1">
           <IdentityCard identity={view.identity} />
@@ -504,6 +541,7 @@ export function ProfileRoot(): ReactNode {
           <AdminPanel />
         </div>
       </div>
+      )}
     </>
   );
 }

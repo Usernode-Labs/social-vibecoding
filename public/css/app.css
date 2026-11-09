@@ -27045,6 +27045,14 @@ html[data-skin] #dev-workshop.dev-ws-on-needs > .dev-ws[data-ws-tab="needs"] > [
   html[data-skin] .dev-ws > [data-project-frame] ~ .dev-ws-tabbody { padding: 0 16px 32px; }
 }
 
+/* THE YOU TAB (features/profile/frame/you-frame.tsx). The kit's page is
+   drawn inside the profile's own hosts, which the standard look holds in a
+   padded, centred column. While it is up it says so on <html>
+   (data-you-frame), and the screen has the frame's page area. */
+html[data-skin][data-you-frame] #profile-screen { padding-inline-start: var(--platform-rail-w, 0px) !important; padding-inline-end: 0 !important; }
+html[data-skin][data-you-frame] #profile-screen > *,
+html[data-skin][data-you-frame] #profile-content { max-width: none; margin: 0; padding: 0; }
+
 /* A REQUEST'S PAGE (features/dev-board/topic/request-head.tsx). The page
    is the product's; under a look it is laid out as the kit's item page (the
    tour's s32): the head is the kit's (drawn in the bar's place), the bar
