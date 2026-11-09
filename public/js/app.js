@@ -7054,6 +7054,8 @@ const App = {
     'messages-screen': 'messages',
     'agent-session-screen': 'agent_session',
     'ai-screen': 'ai',
+    // This week (#6371): the page the weekly digest's bell row opens.
+    'weekly-digest-screen': 'weekly_digest',
   }),
 
   _navPending: null,

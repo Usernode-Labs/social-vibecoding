@@ -248,9 +248,8 @@ export function WeeklyDigestScreen() {
                 <p className="px-4 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">
                   {t('range', { from: longDate(state.data.since), to: longDate(state.data.until) })}
                   {' · '}
-                  {t('wentLiveCount', { count: state.data.mergedTotal })}
-                  {' '}
-                  {t('inProjects', { count: state.data.projectCount })}
+                  {t('wentLiveCount', { count: state.data.mergedTotal })
+                    + ' ' + t('inProjects', { count: state.data.projectCount })}
                 </p>
                 {state.data.projects.map((project) => (
                   <ProjectCard key={project.slug} project={project} />
