@@ -2251,7 +2251,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const kind = body.kind === 'opened' || body.kind === 'watched' ? body.kind : null;
       const runId = Number(body.runId);
       if (!kind || !Number.isInteger(runId) || runId <= 0) return res.status(400).json({ error: 'kind and runId are required' });
-      // Screen usage data: dropped for somebody who chose Leave me out.
+      // Screen usage data: dropped for somebody who objected to being recorded.
       if (!(await usageAnalytics.recordsUsage(pool, req.user.id))) return res.json({ ok: true, discarded: true });
       await require('../services/first-version-live').recordView(pool, {
         userId: req.user.id, appId: app.id, runId, kind, seconds: body.seconds, goodFrame: body.goodFrame === true,
@@ -4572,8 +4572,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!appRow) return res.status(404).json({ error: 'App not found' });
-      // Screen usage data: dropped for somebody who chose Leave me out
-      // (services/usage-analytics.js). A 2xx all the same, so the browser's
+      // Screen usage data: dropped for somebody who objected to being
+      // recorded (services/usage-analytics.js). A 2xx all the same, so the browser's
       // retry queue lets it go.
       if (!(await usageAnalytics.recordsUsage(pool, req.user.id))) {
         return res.status(200).json({ ok: true, discarded: true });

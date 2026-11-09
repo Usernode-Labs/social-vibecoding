@@ -40,7 +40,6 @@ const contactPreferences = require('../services/contact-preferences');
 const linkedPhones = require('../services/linked-phones');
 const linkedBrowsers = require('../services/linked-browsers');
 const uiTelemetry = require('../services/ui-telemetry');
-const usageAnalytics = require('../services/usage-analytics');
 const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
@@ -1015,15 +1014,9 @@ function authRoutes(config) {
         // Browser-check accounts authenticate normally to exercise protected
         // screens, but their scripted journeys must not enter product UI
         // analytics. The client waits for this server-owned decision.
-        // People who chose Leave me out (Settings > Privacy) or objected to
-        // being recorded (#3369) answer false too.
+        // People who objected to being recorded (services/usage-analytics.js)
+        // answer false too.
         uiTelemetryEligible: await uiTelemetry.isRecordable(pool, req.user),
-        // The shell's one Google Analytics sign_up (#6314). A browser-check
-        // account is not somebody signing up.
-        analyticsCounted: await uiTelemetry.countsInGoogleAnalytics(pool, req.user),
-        justSignedUp: uiTelemetry.isEligibleUser(req.user)
-          && !req.user.isSynthetic
-          && await require('../services/usage-analytics').justSignedUp(pool, req.user.id),
         isAdmin: req.user.isAdmin,
         // View-only admin role (issue #311). `isAdmin` still drives every
         // client read/visibility gate; `canAdminWrite` drives mutating
@@ -1574,48 +1567,6 @@ function authRoutes(config) {
       res.json({ ok: true, locale: normalized });
     } catch (err) {
       log.error('settings', 'Failed to save locale preference', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // Leave me out, Settings > Privacy (services/usage-analytics.js names what
-  // it stops). Screen usage data is recorded unless the person leaves
-  // themselves out. The answer carries uiTelemetryEligible and
-  // analyticsCounted, /api/auth/me's decisions recomputed, so the shell can
-  // stop or start sending, and Google Analytics counting, at once.
-  async function usageAnswer(req, choice) {
-    return {
-      leftOut: choice.leftOut,
-      leftOutAt: choice.leftOutAt,
-      uiTelemetryEligible: !choice.leftOut && await uiTelemetry.isRecordable(pool, req.user),
-      analyticsCounted: !choice.leftOut && await uiTelemetry.countsInGoogleAnalytics(pool, req.user),
-    };
-  }
-
-  router.get('/api/me/usage-analytics', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    try {
-      const choice = await usageAnalytics.readChoice(pool, req.user.id);
-      if (!choice) return res.status(404).json({ error: 'Account not found' });
-      res.set('Cache-Control', 'no-store');
-      res.json(await usageAnswer(req, choice));
-    } catch (err) {
-      log.error('settings', 'Failed to read the Leave me out choice', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  router.put('/api/me/usage-analytics', sameOriginBrowserOnly, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const { leftOut } = req.body || {};
-    if (typeof leftOut !== 'boolean') return res.status(400).json({ error: 'leftOut must be true or false' });
-    try {
-      const choice = await usageAnalytics.setLeftOut(pool, req.user.id, leftOut);
-      if (!choice) return res.status(404).json({ error: 'Account not found' });
-      log.info('settings', 'Leave me out choice saved', { userId: req.user.id, leftOut: choice.leftOut });
-      res.json({ ok: true, ...(await usageAnswer(req, choice)) });
-    } catch (err) {
-      log.error('settings', 'Failed to save the Leave me out choice', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

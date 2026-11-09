@@ -48,7 +48,7 @@ export function momentBody(kind: MadeMoment, detail: MomentDetail = {}, now: Dat
  */
 export function noteMoment(slug: string | null | undefined, kind: MadeMoment, detail: MomentDetail = {}, { once = false }: { once?: boolean } = {}): boolean {
   if (!slug) return false;
-  // Screen usage data: only for somebody who has not chosen Leave me out.
+  // Screen usage data: only for somebody who has not objected to being recorded.
   if (!sharesUsageAnalytics()) return false;
   if (once) {
     const key = `${slug}\u0000${kind}\u0000${JSON.stringify(detail)}`;

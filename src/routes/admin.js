@@ -65,7 +65,6 @@ const welcomeDm = require('../services/welcome-dm');
 const onboarding = require('../services/onboarding');
 const journeyLeftOut = require('../services/journey-left-out');
 const journey = require('../services/journey');
-const journeyMask = require('../services/journey-mask');
 const journeyDemoData = require('../services/journey-demo');
 const usernames = require('../services/usernames');
 // The CSV writer the topochain admin's two exports share: quoting plus the
@@ -966,11 +965,9 @@ function adminRoutes(config) {
         return res.json(demo(req, scope.day));
       }
       const leftOutIds = await journeyLeftOut.leftOutIds(pool);
-      // Leave me out: counted in every total above, named in no list below.
-      const selfLeftOut = await journeyMask.leftOutSet(pool);
-      const result = await handler(req, { leftOutIds, selfLeftOut, now: new Date() });
+      const result = await handler(req, { leftOutIds, now: new Date() });
       if (result && result.status) return res.status(result.status).json({ error: result.error });
-      return res.json(journeyMask.maskPeople(result, selfLeftOut));
+      return res.json(result);
     } catch (err) {
       log.error('admin', `Journey ${what} failed`, { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -1067,7 +1064,6 @@ function adminRoutes(config) {
 
   router.get('/api/admin/journey/people/:id', journeyRead('person', (req) => journeyDemoData.person(req.params.id),
     async (req, ctx) => {
-      if (journeyMask.personIsLeftOut(req.params.id, ctx.selfLeftOut)) return { status: 404, error: journeyMask.LEFT_OUT_PERSON };
       const found = await journey.person(pool, { userId: req.params.id, now: ctx.now });
       return found || { status: 404, error: 'There is no such person.' };
     }));

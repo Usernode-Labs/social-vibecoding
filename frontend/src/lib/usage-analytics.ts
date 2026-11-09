@@ -1,15 +1,15 @@
 /**
- * Usage analytics on the client (Settings > Privacy, Leave me out): whether
- * this page may send the screen usage data that is not the UI telemetry
- * module's own (an app opened from the App tab, the made screen's moments,
- * watching Live). public/js/ui-telemetry.js reads the same answer itself.
+ * Usage data on the client (Settings > Privacy): whether this page may send
+ * the screen usage data that is not the UI telemetry module's own (an app
+ * opened from the App tab, the made screen's moments, watching Live).
+ * public/js/ui-telemetry.js reads the same answer itself.
  *
  * Only the server's explicit TRUE says yes: `uiTelemetryEligible` on the
- * /api/auth/me user, which is true unless the person chose Leave me out
- * (and false for platform service accounts and people who asked not to be
- * recorded). Signed out, or before the answer arrives, nothing is sent. The
- * server drops these events for a left-out account in any case
- * (src/services/usage-analytics.js); this only saves the request.
+ * /api/auth/me user, which is true unless the person objected to being
+ * recorded (and false for platform service accounts). Signed out, or before
+ * the answer arrives, nothing is sent. The server drops these events for
+ * somebody who objected in any case (src/services/usage-analytics.js); this
+ * only saves the request.
  */
 
 type AnalyticsHost = { App?: { user?: { uiTelemetryEligible?: unknown } | null } };

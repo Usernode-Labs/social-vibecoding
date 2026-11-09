@@ -245,7 +245,7 @@ export function createAppOpeningRecorder(host: Host, options: RecorderOptions = 
   function commit(slug: string, opening: PendingAppOpening | null): void {
     if (!opening || !slug || currentUserId() !== opening.userId) return;
     // An app opened is screen usage data, sent only for somebody who
-    // has not chosen Leave me out.
+    // has not objected to being recorded.
     if (!sharesUsageAnalytics(host)) return;
     pruneExpired();
     const entry = { ...opening, slug };

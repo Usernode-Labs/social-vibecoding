@@ -330,6 +330,9 @@ function publicApiRoutes(config) {
       phone_sign_in: phoneAuth.offered(config),
       terms_link: await currentTermsLink(),
       privacy_link: privacyNoticeUrl(config),
+      // Where to write about your data (Settings › Privacy's usage data
+      // block): to be left out of screen usage data, or anything else.
+      data_protection_email: config.dataProtectionEmail || 'dataprotection@onhomeroom.com',
       child_safety_link: childSafetyUrl(config),
       account_deletion_link: accountDeletionUrl(config),
       // The same, from the Homeroom app's own sheets (the bridge's

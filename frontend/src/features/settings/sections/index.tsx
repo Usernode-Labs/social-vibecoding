@@ -91,7 +91,7 @@ export function SettingsSections() {
       <DeleteAccountSection />
       <LinkedAccountsSection />
       {/* ── #5104: who can message or invite you, and who can find you; and
-          Usage analytics and Leave me out under them. A stateful pane; see
+          what usage data Homeroom keeps under them. A stateful pane; see
           ./privacy.tsx. */}
       <PrivacySection />
       {/* ── #4938: the phones signed in with the Homeroom app, and Unlink

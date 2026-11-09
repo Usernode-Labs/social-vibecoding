@@ -13,13 +13,14 @@
 //             users.test_account_created_at), so taking its entry off this
 //             list does not bring it back; the reason is what marks any other
 //             account somebody tests with.
-//   objected  Somebody who asked not to be recorded. Adding them erases their
-//             UI telemetry (observations and delivery receipts) in the same
-//             transaction, and ui-telemetry.isRecordable() then answers false
-//             for them: the shell stops sending (uiTelemetryEligible on
-//             /api/auth/me) and the collector drops anything that still
-//             arrives. Removing the entry starts recording again; nothing
-//             erased comes back.
+//   objected  Somebody who asked not to be recorded, at the data protection
+//             address the Privacy page gives (services/usage-analytics.js).
+//             Adding them erases their screen usage data (SCREEN_USAGE_EVENT_TYPES)
+//             in the same transaction, and usage-analytics.recordsUsage() then
+//             answers false for them: the shell stops sending
+//             (uiTelemetryEligible on /api/auth/me) and every collector drops
+//             anything that still arrives. Removing the entry starts
+//             recording again; nothing erased comes back.
 //
 // Read through a short per-pool cache, so a change applies on every server
 // within CACHE_MS without a deploy. The settings row is read and written under
@@ -29,12 +30,22 @@ const log = require('./logger');
 
 const SETTING_KEY = 'journey_left_out';
 const SETTING_DESCRIPTION = 'People left out of the admin Journey page (#3369): test accounts, '
-  + 'and people who objected to being recorded (their UI telemetry is erased and no longer '
+  + 'and people who objected to being recorded (their screen usage data is erased and no longer '
   + 'collected). Edited from Admin → Journey.';
 const CACHE_MS = 10 * 1000;
 const REASONS = Object.freeze(new Set(['test', 'objected']));
 const NOTE_MAX = 200;
-const UI_EVENT_TYPES = Object.freeze(['ui_experience', 'ui_telemetry_delivery']);
+// Screen usage data: the shell's UI telemetry (observations and delivery
+// receipts), the made screen's moments, apps opened from the App tab, and
+// watching a first version's Live. An objection erases all of it.
+const SCREEN_USAGE_EVENT_TYPES = Object.freeze([
+  'ui_experience',
+  'ui_telemetry_delivery',
+  'first_session_moment',
+  'dapp_opened',
+  'live_build_opened',
+  'live_build_watched',
+]);
 
 const caches = new WeakMap();
 
@@ -205,7 +216,7 @@ async function add(pool, body, { actorId = null } = {}) {
     if (reason === 'objected') {
       const res = await client.query(
         'DELETE FROM events WHERE user_id = $1 AND event_type = ANY($2::text[])',
-        [userId, UI_EVENT_TYPES]
+        [userId, SCREEN_USAGE_EVENT_TYPES]
       );
       erased = res.rowCount || 0;
     }
@@ -250,7 +261,7 @@ module.exports = {
   NOTE_MAX,
   REASONS,
   SETTING_KEY,
-  UI_EVENT_TYPES,
+  SCREEN_USAGE_EVENT_TYPES,
   LeftOutError,
   add,
   addTestInTransaction,

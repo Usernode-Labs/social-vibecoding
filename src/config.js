@@ -1057,6 +1057,11 @@ function load() {
     // submitReport). Optional, like every mail key: the platform's own
     // compliance inbox is the default.
     complianceEmail: (process.env.PLATFORM_COMPLIANCE_EMAIL || '').trim() || 'compliance@usernodelabs.org',
+    // Where people write about their data: to object to screen usage data
+    // (services/usage-analytics.js) or exercise any other right. Settings ›
+    // Privacy shows it, as the privacy notice does (compliance item L-01).
+    // A self-hosted deployment sets its own.
+    dataProtectionEmail: (process.env.PLATFORM_DATA_PROTECTION_EMAIL || '').trim() || 'dataprotection@onhomeroom.com',
   };
 
   for (const [name, value] of [

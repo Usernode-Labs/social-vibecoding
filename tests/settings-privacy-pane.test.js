@@ -82,7 +82,7 @@ test('finding your profile is its own section, not part of messaging (#5926 item
     escape(message('settings:privacy.discoverable.title')),
     escape(message('settings:privacy.contact.title')),
     escape(message('settings:privacy.usageAnalytics.title')),
-  ], 'four sections: messaging, finding, email & texts (#6044), analytics');
+  ], 'four sections: messaging, finding, email & texts (#6044), usage data');
   assert.equal(message('settings:privacy.discoverable.title'), 'Who can find me');
   // The switch sits under its own heading, after the messaging radios.
   const findAt = html.indexOf(escape(message('settings:privacy.discoverable.title')));
@@ -130,15 +130,15 @@ test('helper text is 13px in rem and lighter in the dark theme (#5926)', () => {
   assert.doesNotMatch(html, /class="(?![^"]*\bmb-3\b)[^"]*\btext-xs text-zinc-500/, 'no helper line keeps the 12px size');
   const count = html.split(HELP).length - 1;
   // #6044 adds two: the Email & texts block's two switches' lines. Usage
-  // analytics adds one: what is kept, recorded and never recorded, above
-  // its Leave me out switch.
-  assert.equal(count, 7, `both choices, the four switches and what usage analytics keeps wear the helper style, found ${count}`);
+  // data adds one: what is kept, recorded and never recorded, and where to
+  // write to be left out. It has no switch.
+  assert.equal(count, 6, `both choices, the three switches and what usage data keeps wear the helper style, found ${count}`);
 });
 
 test('both switches are announced as switches and say Off before the account is read (#5926)', () => {
   const { PrivacySection } = loadTsx('frontend/src/features/settings/sections/privacy.tsx');
   const html = renderToHtml(createElement(PrivacySection, {}));
-  for (const id of ['settings-profile-discoverable', 'settings-contact-marketing-email', 'settings-contact-activity-email', 'settings-usage-analytics']) {
+  for (const id of ['settings-profile-discoverable', 'settings-contact-marketing-email', 'settings-contact-activity-email']) {
     const input = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`));
     assert.ok(input, `#${id} is rendered`);
     assert.match(input[0], /role="switch"/, `#${id} is announced as a switch`);
@@ -146,10 +146,9 @@ test('both switches are announced as switches and say Off before the account is 
     assert.doesNotMatch(input[0], /checked/);
   }
   const off = `<span aria-hidden="true" class="ms-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">${message('settings:privacy.state.off')}</span>`;
-  assert.equal(html.split(off).length - 1, 4, 'every switch, the two Email & texts ones (#6044) too');
+  assert.equal(html.split(off).length - 1, 3, 'every switch, the two Email & texts ones (#6044) too');
   assert.ok(!html.includes(`>${message('settings:privacy.state.on')}</span>`));
-  // The analytics switch is still described by its explanation.
-  assert.match(html, /id="settings-usage-analytics"[^>]*aria-describedby="settings-usage-analytics-description"|aria-describedby="settings-usage-analytics-description"[^>]*id="settings-usage-analytics"/);
+  assert.doesNotMatch(html, /id="settings-usage-analytics"/, 'usage data has no switch');
 });
 
 test('a switch that is on is checked and says On (#5926)', () => {
@@ -198,7 +197,6 @@ test('every switch\'s description is inside its label and describes it (#5926 it
     'settings-profile-discoverable': 'settings-profile-discoverable-description',
     'settings-contact-marketing-email': 'settings-contact-marketing-email-help',
     'settings-contact-activity-email': 'settings-contact-activity-email-help',
-    'settings-usage-analytics': 'settings-usage-analytics-description',
   };
   const labels = [...html.matchAll(/<label[^>]*>.*?<\/label>/g)].map((m) => m[0]);
   for (const [id, descriptionId] of Object.entries(described)) {
@@ -208,7 +206,6 @@ test('every switch\'s description is inside its label and describes it (#5926 it
     assert.ok(label.includes(`aria-describedby="${descriptionId}"`));
     assert.doesNotMatch(label, /<(p|div)\b/, 'a label holds spans');
   }
-  assert.ok(html.includes(escape(message('settings:privacy.usageAnalytics.leaveOut.offWhat'))));
 });
 
 test('the switch\'s name stays its label when the description joins the label (#5926 item 8)', () => {
@@ -229,7 +226,7 @@ test('the status lines are there, empty, before anything is saved (#5926 item 8)
   const { PrivacySection } = loadTsx('frontend/src/features/settings/sections/privacy.tsx');
   const html = renderToHtml(createElement(PrivacySection, {}));
   assert.ok(html.includes('<p id="settings-contact-privacy-status" role="status"></p>'));
-  assert.equal(html.split('<p role="status"></p>').length - 1, 2, 'Email & texts and Usage analytics');
+  assert.equal(html.split('<p role="status"></p>').length - 1, 1, 'Email & texts; usage data saves nothing');
   assert.ok(!html.includes(`>${message('settings:privacy.saved')}<`));
   assert.equal(message('settings:privacy.saved'), 'Saved');
 
@@ -316,6 +313,9 @@ function loadStepped(entry) {
       '../../../lib/legacy-dom': { useWindowEvent: () => {} },
       '@/components/ui/field': { SectionHeading: () => null },
       '@/components/ui/switch': { Switch: () => null },
+      // The usage data block's address (./usage-analytics.tsx): the default
+      // until the options arrive, which these pages never wait for.
+      '../../auth/waitlist-shared': { useWaitlistOptions: () => null },
     },
   });
   return { h, mod };
@@ -345,14 +345,6 @@ const SECTIONS = [
     control: 'settings-contact-activity-email',
     read: { activityEmail: false, email: true },
     wrote: { activityEmail: true, email: true },
-  },
-  {
-    name: 'Usage analytics',
-    entry: 'frontend/src/features/settings/sections/usage-analytics.tsx',
-    component: 'UsageAnalyticsSection',
-    control: 'settings-usage-analytics',
-    read: { enabled: false },
-    wrote: { enabled: true, uiTelemetryEligible: true },
   },
 ];
 

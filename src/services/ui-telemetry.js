@@ -4,7 +4,6 @@ const crypto = require('node:crypto');
 const { ipKeyGenerator } = require('express-rate-limit');
 const events = require('./events');
 const usernames = require('./usernames');
-const leftOut = require('./journey-left-out');
 const usageAnalytics = require('./usage-analytics');
 const { scrubText } = require('./platform-signal-evidence');
 
@@ -272,31 +271,13 @@ function isEligibleUser(user) {
   return !!user?.id && !usernames.isServiceIdentity(user.username);
 }
 
-// Eligible, has not chosen Leave me out in Settings › Privacy
-// (services/usage-analytics.js: recorded unless they did), and has not
-// objected to being recorded (#3369: an admin adds them to the Journey page's
-// left-out list as "objected"). This is the answer /api/auth/me sends as
-// uiTelemetryEligible and the collector enforces.
+// Eligible, and has not objected to being recorded (services/usage-analytics.js:
+// screen usage data is recorded for everyone; somebody who asks is added to
+// the Journey page's left-out list as "objected"). This is the answer
+// /api/auth/me sends as uiTelemetryEligible and the collector enforces.
 async function isRecordable(pool, user) {
   if (!isEligibleUser(user)) return false;
-  if (!(await usageAnalytics.recordsUsage(pool, user.id))) return false;
-  return !(await leftOut.hasObjected(pool, user.id));
-}
-
-// Whether the live shell's Google Analytics tag counts this person's visits
-// (#6314), never with their account number (frontend/src/lib/google-analytics.ts).
-// Leave me out stops it, an objection does too, and a service account is
-// nobody. An unreadable answer is false, so a failed read never counts
-// somebody who left themselves out or objected.
-async function countsInGoogleAnalytics(pool, user) {
-  if (!isEligibleUser(user) || user.isSynthetic) return false;
-  try {
-    if (!(await usageAnalytics.recordsUsage(pool, user.id))) return false;
-    const ids = await leftOut.idsByReason(pool);
-    return !!ids && !ids.objected.has(Number(user.id));
-  } catch {
-    return false;
-  }
+  return usageAnalytics.recordsUsage(pool, user.id);
 }
 
 function plainObject(value) {
@@ -1271,7 +1252,6 @@ module.exports = {
   browserLanguages,
   daysWindow,
   insertBatch,
-  countsInGoogleAnalytics,
   isEligibleUser,
   isRecordable,
   clientErrorCode,

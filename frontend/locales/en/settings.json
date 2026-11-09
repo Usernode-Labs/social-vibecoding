@@ -1461,11 +1461,11 @@
   },
   "privacy.state.on": {
     "text": "On",
-    "description": "Small word after a switch's label in Settings > Privacy (\"Let people find my profile\", \"Leave me out\") while that switch is on."
+    "description": "Small word after a switch's label in Settings > Privacy (\"Let people find my profile\") while that switch is on."
   },
   "privacy.state.off": {
     "text": "Off",
-    "description": "Small word after a switch's label in Settings > Privacy (\"Let people find my profile\", \"Leave me out\") while that switch is off."
+    "description": "Small word after a switch's label in Settings > Privacy (\"Let people find my profile\") while that switch is off."
   },
   "privacy.loadFailed": {
     "text": "Couldn't load your privacy settings. Try again in a moment.",
@@ -1480,80 +1480,48 @@
     "description": "Short confirmation under a block of the Settings > Privacy page when a change to one of its settings has been saved. It goes away after about three seconds."
   },
   "privacy.usageAnalytics.title": {
-    "text": "Usage analytics",
-    "description": "Heading of the last block of Settings > Privacy, above the Share usage analytics switch."
+    "text": "Usage data",
+    "description": "Heading of the last block of Settings > Privacy: what usage data Homeroom keeps."
   },
   "privacy.usageAnalytics.intro": {
     "text": "Homeroom keeps a record of how it's used, linked to your account, to see where people get stuck and fix it.",
-    "description": "One line under the Usage analytics heading in Settings > Privacy: what Homeroom records and why."
+    "description": "One line under the Usage data heading in Settings > Privacy: what Homeroom records and why."
   },
   "privacy.usageAnalytics.alwaysKept.title": {
     "text": "Always kept, because Homeroom runs on it",
-    "description": "Small heading in Settings > Privacy > Usage analytics over the list of what is kept for everyone and cannot be turned off."
+    "description": "Small heading in Settings > Privacy > Usage data over the list of what is kept for everyone and cannot be turned off."
   },
   "privacy.usageAnalytics.alwaysKept.apps": {
     "text": "Which apps you use each day, and for how long",
-    "description": "Item in the 'Always kept' list in Settings > Privacy > Usage analytics."
+    "description": "Item in the 'Always kept' list in Settings > Privacy > Usage data."
   },
   "privacy.usageAnalytics.alwaysKept.acts": {
     "text": "Your votes, messages, requests and projects",
-    "description": "Item in the 'Always kept' list in Settings > Privacy > Usage analytics."
+    "description": "Item in the 'Always kept' list in Settings > Privacy > Usage data."
   },
   "privacy.usageAnalytics.alwaysKept.challenges": {
     "text": "The challenges you earn",
-    "description": "Item in the 'Always kept' list in Settings > Privacy > Usage analytics."
+    "description": "Item in the 'Always kept' list in Settings > Privacy > Usage data."
   },
   "privacy.usageAnalytics.alsoRecorded.title": {
-    "text": "Also recorded, unless you leave yourself out",
-    "description": "Small heading in Settings > Privacy > Usage analytics over the list of screen usage data that Leave me out stops."
-  },
-  "privacy.usageAnalytics.alsoRecorded.titleLeftOut": {
-    "text": "Not recorded for you",
-    "description": "Small heading in Settings > Privacy > Usage analytics over the same list, shown once the person has chosen Leave me out."
+    "text": "Also recorded, for everyone: screen usage data",
+    "description": "Small heading in Settings > Privacy > Usage data over the list of screen usage data, which Homeroom records for everyone. Someone who doesn't want it can email to be left out (the block's last line)."
   },
   "privacy.usageAnalytics.alsoRecorded.screens": {
     "text": "The screens you open, and in what order",
-    "description": "Item in the 'Also recorded' list in Settings > Privacy > Usage analytics."
+    "description": "Item in the 'Also recorded' list in Settings > Privacy > Usage data."
   },
   "privacy.usageAnalytics.alsoRecorded.speed": {
     "text": "How long pages take to load, and actions that fail",
-    "description": "Item in the 'Also recorded' list in Settings > Privacy > Usage analytics."
+    "description": "Item in the 'Also recorded' list in Settings > Privacy > Usage data."
   },
   "privacy.usageAnalytics.neverRecorded": {
     "text": "Never recorded: what you type, or what's on your screen.",
-    "description": "Line in Settings > Privacy > Usage analytics: what Homeroom never records, whatever the person chooses."
+    "description": "Line in Settings > Privacy > Usage data: what Homeroom never records, for anyone."
   },
-  "privacy.usageAnalytics.googleAnalytics": {
-    "text": "Google Analytics counts the screens and apps people open, without names or account numbers.",
-    "description": "Line in Settings > Privacy > Usage analytics about Google Analytics, shown while the person is not left out."
-  },
-  "privacy.usageAnalytics.googleAnalyticsLeftOut": {
-    "text": "Google Analytics counts the screens and apps people open, without names or account numbers. It doesn't count you.",
-    "description": "Line in Settings > Privacy > Usage analytics about Google Analytics, shown once the person has chosen Leave me out."
-  },
-  "privacy.usageAnalytics.leaveOut.label": {
-    "text": "Leave me out",
-    "description": "Label of the switch in Settings > Privacy > Usage analytics that stops Homeroom recording the person's screen usage data. Off unless they turn it on."
-  },
-  "privacy.usageAnalytics.leaveOut.offWhat": {
-    "text": "Stops recording your screens and erases what was recorded, stops Google Analytics counting you, and takes your name off our per-person views.",
-    "description": "First line under the Leave me out switch while it is off: what turning it on does."
-  },
-  "privacy.usageAnalytics.leaveOut.offStill": {
-    "text": "You still count in totals, like how many people finished signing up. Your votes, messages and projects stay: Homeroom runs on them.",
-    "description": "Second line under the Leave me out switch while it is off: what turning it on leaves in place."
-  },
-  "privacy.usageAnalytics.leaveOut.onSince": {
-    "text": "On since {{date}}. Your screens aren't recorded, what was recorded is erased, and your name is off our per-person views.",
-    "description": "First line under the Leave me out switch while it is on. {{date}} is the day they turned it on, written like '7 Nov'."
-  },
-  "privacy.usageAnalytics.leaveOut.onStill": {
-    "text": "You still count in totals, like how many people finished signing up. Turn this off to be included again from then on.",
-    "description": "Second line under the Leave me out switch while it is on: what still happens, and what turning it off does."
-  },
-  "privacy.usageAnalytics.saveFailed": {
-    "text": "Could not save that. Try again.",
-    "description": "Error under the Share usage analytics switch in Settings > Privacy when saving the choice failed; the switch goes back to how it was."
+  "privacy.usageAnalytics.leaveOut.ask": {
+    "text": "Don't want your screen usage data recorded? Email us and we'll erase what was recorded and stop recording it:",
+    "description": "Settings > Privacy, the usage data block: its last line, followed by the data protection email address as a link. \"Screen usage data\" is the list above it: the screens someone opens, page load times and actions that fail."
   },
   "phones.title": {
     "text": "Linked devices",

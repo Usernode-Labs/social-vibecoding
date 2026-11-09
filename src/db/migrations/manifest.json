@@ -222,14 +222,9 @@
       "schemaSha256": "79aa7fdde06ea699fd1eda4a58de8ab7b5ed4bedd3ac065a953e885d1215e2ca"
     },
     {
-      "id": "usage-left-out",
-      "sha256": "e2fa2690ad4eaa0c6224331ee0af90cf1f073b1ebd169cb5f88df12c7b30c23f",
-      "schemaSha256": "f947323a3301551ec79a8f4a6869d9bca0b507916631e1e94f97fd09735473a7"
-    },
-    {
       "id": "waitlist-first-mile-facts",
       "sha256": "4d02dd130e5b9b37ef95a982ad488f68131af64f31d28662f3a67d1a16863af2",
-      "schemaSha256": "1f826df8d9a50f0a75067b1ed8458269e46c14e74b837c6187bb942ce79fde93"
+      "schemaSha256": "100f81a3dae5ac456e738df1b62e1b4e139913e34e7c07889d4446a45c0e7c33"
     }
   ]
 }

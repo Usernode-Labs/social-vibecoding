@@ -1,11 +1,10 @@
 'use strict';
 
-// Admin › Journey: how people came in, and Leave me out on its per-person
-// views. The waitlist row's facts, the "You're in" mail's own page, which
-// admit mail led in, how the account signed up, the "Invited, not let in
-// yet" cohort, and a left-out person counted in totals but named nowhere.
-// The SQL runs in the *-postgres suites; these pin the pure parts and the
-// shapes the readers depend on.
+// Admin › Journey: how people came in. The waitlist row's facts, the
+// "You're in" mail's own page, which admit mail led in, how the account
+// signed up, and the "Invited, not let in yet" cohort. The SQL runs in the
+// *-postgres suites; these pin the pure parts and the shapes the readers
+// depend on.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -13,7 +12,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const journey = require('../src/services/journey');
-const mask = require('../src/services/journey-mask');
 const releaseLinks = require('../src/services/release-links');
 
 const ROOT = path.join(__dirname, '..');
@@ -131,35 +129,6 @@ test('the facts come from records that exist: identities, the mail log, the wait
     /d\.kind = 'waitlist_released' AND d\.created_at <= COALESCE\(LEAST\(a\.release_link_followed_at, a\.release_code_asked_at, \(SELECT MIN\(d2\.created_at\) FROM mail_deliveries d2 WHERE d2\.recipient = a\.email AND d2\.kind = 'otp' AND d2\.created_at >= a\.released_at\)\), NOW\(\)\)\) AS mail_sends_before_follow/,
     /\(SELECT MIN\(w2\.release_page_opened_at\) FROM waitlist_signups w2\) AS mail_page_since/,
   ]) assert.match(facts, piece);
-});
-
-test('Leave me out: counted in totals, named in no list, its own page refused', () => {
-  const ids = new Set([5]);
-  const reading = {
-    steps: [{ key: 'opened', passed: 3, stuck: [{ userId: 5, name: 'left' }, { userId: 6, name: 'kept' }] }],
-    people: [{ userId: 5, name: 'left', steps: [] }, { userId: 6, name: 'kept', steps: [] }],
-    pairs: [{ pair: [{ userId: 5, name: 'left' }, { userId: 6, name: 'kept' }] }],
-    reporter: { userId: 5, name: 'left' },
-    at: new Date('2026-11-07T00:00:00Z'),
-  };
-  const out = mask.maskPeople(reading, ids);
-  assert.equal(out.steps[0].passed, 3, 'the total stands');
-  assert.deepEqual(out.steps[0].stuck.map((p) => p.name), ['kept']);
-  assert.deepEqual(out.people.map((p) => p.name), ['kept'], 'no row');
-  assert.deepEqual(out.pairs[0].pair, [{ userId: null, name: null, leftOut: true }, { userId: 6, name: 'kept' }], 'a pair stays a pair');
-  assert.deepEqual(out.reporter, { userId: null, name: null, leftOut: true });
-  assert.ok(out.at instanceof Date);
-  assert.equal(mask.maskPeople(reading, new Set()), reading, 'nobody left out: unchanged');
-  assert.equal(mask.personIsLeftOut('5', ids), true);
-  assert.equal(mask.personIsLeftOut(6, ids), false);
-
-  const admin = read('src/routes/admin.js');
-  assert.match(admin, /return res\.json\(journeyMask\.maskPeople\(result, selfLeftOut\)\);/, 'every Journey reading is masked');
-  assert.match(admin, /if \(journeyMask\.personIsLeftOut\(req\.params\.id, ctx\.selfLeftOut\)\) return \{ status: 404, error: journeyMask\.LEFT_OUT_PERSON \};/);
-  const tools = read('src/services/mcp-tools.js');
-  assert.match(tools, /const everyone = leaveMeOut\.maskPeople\(/, 'and so is the connector\'s first mile');
-  assert.match(tools, /raw = leaveMeOut\.maskPeople\(raw, await leaveMeOut\.leftOutSet\(pool\)\);/, 'and its readings');
-  assert.match(tools, /return toolError\('left_out', leaveMeOut\.LEFT_OUT_PERSON\);/, 'and its person read');
 });
 
 test('the mail\'s page is recorded by its own read and the link\'s spend, never undoing a sign-in', async () => {

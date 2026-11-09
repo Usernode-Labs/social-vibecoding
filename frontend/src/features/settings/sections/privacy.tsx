@@ -200,8 +200,8 @@ export function PrivacySection() {
       {/* #6044: Email & texts, what Homeroom may send you; its own state and
           its own endpoint (./contact-preferences.tsx). */}
       <ContactPreferencesSection />
-      {/* Usage analytics and Leave me out, the page's last block; its own state
-          and its own endpoint (./usage-analytics.tsx). */}
+      {/* Usage data, the page's last block: what Homeroom keeps, and where to
+          ask to be left out (./usage-analytics.tsx). */}
       <UsageAnalyticsSection />
     </div>
   );
