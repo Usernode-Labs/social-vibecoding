@@ -25,8 +25,10 @@
  * it closes (the sheet's useHeldUnread). A refresh that failed or was
  * superseded clears nothing, so nothing the person was not shown is marked.
  * A sheet opened by the `?shot=notifications` deep link is a capture, not
- * reading, so it marks nothing: `_shotOpened` is set before the sheet
- * presents.
+ * reading, so it marks nothing: ./notifications.js `init()` sets `_shotOpened`
+ * for the whole life of a capture page, before the first refresh, and
+ * `markReadOnOpen()` refuses on that flag itself. The check here is kept as
+ * the caller's own guard: a capture does not even ask.
  */
 
 import { createSheetController } from '../../lib/sheet-controller.js';

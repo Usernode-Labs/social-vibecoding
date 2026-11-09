@@ -285,7 +285,89 @@ test('markReadOnOpen stays quiet on a non-ok answer', async () => {
   assert.deepEqual(f.toasts, []);
 });
 
-// ── 5. the query itself, against a real PostgreSQL ──────────────────────
+// ── 5. the capture page marks nothing read ──────────────────────────────
+//
+// #6526: the shot page (`/?shot=notifications&demo=1`) is a picture of an
+// unread list, not somebody reading their notifications. When its rows were
+// marked read, #6506 drew their subjects regular-weight and dapp.json's
+// "unread rows read source, bold subject, muted preview" check failed on
+// changes that never touched notifications. The flag is decided in init(),
+// before the refresh that can present the sheet, and markReadOnOpen refuses
+// on it itself, so no refresh race can flip the shot's rows.
+
+test('the shot helper accepts the three capture names and refuses others', () => {
+  const src = FE_SRC.match(/function isNotificationsShotPage\(\) \{[\s\S]*?\n\}/);
+  assert.ok(src, 'isNotificationsShotPage() found in notifications.js');
+  // `location` is the building function's parameter, so each call builds the
+  // helper around the search string it is given.
+  const isShot = (search) => new Function('location', `return (${src[0]});`)({ search })();
+  for (const name of ['notifications', 'notifications-messages', 'notifications-all']) {
+    assert.equal(isShot(`?demo=1&shot=${name}`), true, name);
+  }
+  for (const name of ['dark', 'anon', 'notify', 'notifications-old']) {
+    assert.equal(isShot(`?shot=${name}`), false, name);
+  }
+  assert.equal(isShot(''), false, 'no shot parameter is an ordinary page');
+});
+
+// The shipped init(), extracted and run against stubs, so the ORDER is
+// exercised rather than only its text: the capture flag has to be decided
+// before the refresh that can present the sheet (and be marked read).
+function runInit(shotPage) {
+  const body = methodBody('init');
+  const calls = { refresh: 0, flagAtFirstRefresh: null };
+  const N = {
+    _shotOpened: false,
+    refresh() {
+      calls.refresh += 1;
+      if (calls.flagAtFirstRefresh === null) calls.flagAtFirstRefresh = N._shotOpened;
+    },
+    _setShowOlder() {},
+    _renderSaved() {},
+    _renderInvites() {},
+    _renderList() {},
+  };
+  const listeners = [];
+  const documentStub = {
+    getElementById: () => null,
+    addEventListener: (name) => listeners.push(name),
+  };
+  const App = { user: { username: 'bell_reader' } };
+  const run = new Function(
+    'Notifications', 'isNotificationsShotPage', 'location', 'document', 'window', 'App',
+    `(function () {${body}})();`
+  );
+  run(N, () => shotPage, { search: '' }, documentStub, { App }, App);
+  return { N, calls, listeners };
+}
+
+test('init() sets the capture flag before the first refresh, so no open can mark it read', () => {
+  const { N, calls, listeners } = runInit(true);
+  assert.equal(N._shotOpened, true, 'a capture page is known before the sheet can open');
+  assert.equal(calls.refresh, 1, 'the initial fetch still happens');
+  assert.equal(calls.flagAtFirstRefresh, true, 'the flag was already set when refresh ran');
+  assert.ok(listeners.includes('sv:drawer-open'), 'and the rest of init still wired the drawer');
+});
+
+test('init() leaves an ordinary page marking read on open', () => {
+  const { N, calls } = runInit(false);
+  assert.equal(N._shotOpened, false);
+  assert.equal(calls.refresh, 1);
+  assert.equal(calls.flagAtFirstRefresh, false, 'the flag is not set where there is no shot');
+});
+
+test('markReadOnOpen sends nothing on a capture page, even with unread rows and the sheet open', async () => {
+  const f = fixture({ _shotOpened: true });
+  okFetch.calls.length = 0;
+  const markReadOnOpen = buildMarkReadOnOpen(methodBody('async markReadOnOpen'));
+  const ok = await markReadOnOpen(f.N, okFetch({ unread: 0 }), f.windowStub, f.consoleStub);
+  assert.equal(ok, false, 'a capture is not reading');
+  assert.equal(okFetch.calls.length, 0, 'not even a request');
+  assert.equal(f.N.items[0].readAt, null, 'its unread rows stay unread');
+  assert.equal(f.rendered.badge + f.rendered.list + f.rendered.title, 0, 'nothing repainted');
+});
+
+// ── 6. the query itself, against a real PostgreSQL ──────────────────────
 //
 // The stub tests pin the SQL text; this runs the same call through the real
 // service against the full schema, so a predicate that reads right but
