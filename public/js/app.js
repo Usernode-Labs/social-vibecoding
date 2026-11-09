@@ -4687,10 +4687,14 @@ const App = {
     if (home) {
       // The Challenges block keeps its read for a minute (HomePanels.TTL_MS),
       // which a pull must not be answered from (#3985): it reads again,
-      // fresh, and Home.load() joins that read.
+      // fresh. The tiles' vote counts are re-read too (request 6500), by the
+      // same forced path the pull is for; it goes before Home.load() so the
+      // forced read is the one that starts, rather than Home's own unforced
+      // read already being under way.
       PlatformUI.pullToRefresh(home,
         () => App._refreshOrReload(() => Promise.all([
           window.HomePanels?.ensureLoaded?.({ force: true, fresh: true }),
+          window.UsernodeReact?.homePins?.refresh?.({ force: true }),
           Home.load(),
         ])));
     }
