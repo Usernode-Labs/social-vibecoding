@@ -84,7 +84,9 @@ test('the list pane hands its own conversations to the kit list under a look, an
   const src = read(PANE);
   assert.match(src, /const frame = isFrameSkin\(useSkin\(\)\);/);
   assert.match(src, /if \(frame\) \{[\s\S]*?<MessagesFrameList[\s\S]*?onNew=\{\(\) => startNew\('direct'\)\}/, 'New message is the pane\'s own way to start one');
-  assert.match(src, /color=\{swatchFor\(name \|\| '\?'\)\}/, 'a person with no picture wears the colour they wear everywhere');
+  assert.match(src, /color=\{swatchFor\(face\?\.username \|\| name \|\| '\?'\)\}/, 'a person with no picture wears the colour they wear everywhere');
+  assert.match(src, /const face = c\.kind === 'group' && !invited\s+\? c\.members\.find\(\(member\) => member\.status === 'member' && Number\(member\.id\) !== me\) \|\| null\s+: peer;/,
+    'a group wears the face of someone in it who is not you');
   assert.match(src, /data-frame-list=""/);
   const css = read('public/css/app.css');
   assert.match(css, /html\[data-skin\] \.messages-list-pane\[data-frame-list\] \{ flex: 0 0 520px; width: 520px; \}/, 'the list is the split\'s 520px pane');

@@ -99,6 +99,39 @@ test('the kit\'s root rule keeps colour and type for the frame root and drops th
   assert.match(css, /html\[data-skin\]\.dark\{--fr-ground:[^;]*;--fr-surface:#151823;/, 'dark tokens on any look');
 });
 
+// ── What the product's own markup wears ──────────────────────────────────
+
+test('a kit rule for a worn component also names the product\'s own markup for it', () => {
+  // A conversation is drawn by the product's renderer (message-row.tsx, the
+  // thread header, the composer): hundreds of behaviours the kit's markup
+  // has no word for. looks.json "wear" says which of the product's classes
+  // is each kit class of those components, and the rule names both.
+  assert.equal(looks.wornSelector('html[data-skin] .fr-post .fr-who'), 'html[data-skin]:where(:not([data-skin="brand"])) .messages-message .messages-message-author',
+    'the kit is any look\'s, and the New look ("brand") is not one: its conversations keep the standard markup\'s rules');
+  assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-post .fr-when'), 'html[data-skin="workbench"] .messages-message .messages-message-head time');
+  assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-post'), 'html[data-skin="workbench"] .messages-message');
+  assert.equal(looks.wornSelector('html[data-skin] .fr-day::before'), 'html[data-skin]:where(:not([data-skin="brand"])) .messages-day::before');
+  assert.equal(looks.wornSelector('html[data-skin][data-skin] .fr-dhead'), 'html[data-skin][data-skin]:where(:not([data-skin="brand"])) .messages-thread-header', 'a phone rule keeps its weight');
+  assert.equal(looks.wornSelector('html[data-skin].dark .fr-day'), 'html[data-skin].dark:where(:not([data-skin="brand"])) .messages-day');
+  assert.equal(looks.wornSelector('html[data-skin="brandkit"] .fr-dhead .fr-t'), 'html[data-skin="brandkit"] .messages-thread-header .messages-thread-name');
+  assert.equal(looks.wornSelector('html[data-skin="playground"].dark .fr-composer .fr-send.fr-go'), 'html[data-skin="playground"].dark .messages-composer-card .messages-send:not(:disabled)',
+    'a state the kit writes as a class is the product\'s own state');
+});
+
+test('a class the map does not name stays the kit\'s, and a rule for anything else is not repeated', () => {
+  assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-post .fr-av'), 'html[data-skin="workbench"] .messages-message .fr-av', 'the avatar in a message is the kit\'s own');
+  assert.equal(looks.wornSelector('html[data-skin] .fr-row .fr-t'), null, 'a row is drawn by the kit: nothing to repeat');
+  assert.equal(looks.wornSelector('html[data-skin] .fr-status .fr-txt'), null, 'a part only counts inside its own component');
+  assert.equal(looks.wornSelector('html[data-skin] .fr-post .fr-txt b'), null, 'left out by name: a bold word a person wrote is not an accent');
+});
+
+test('compiled, the worn selector rides on the kit\'s own rule, in the same place', () => {
+  const css = looks.compile('.post .who{font-weight:650}.phone .dhead{padding:8px 16px}.row .t{font-weight:650}', null);
+  assert.match(css, /html\[data-skin\] \.fr-post \.fr-who,html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-message \.messages-message-author\{font-weight:650\}/);
+  assert.match(css, /@media \(max-width: 767\.98px\)\{\nhtml\[data-skin\]\[data-skin\] \.fr-dhead,html\[data-skin\]\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-thread-header\{padding:8px 16px\}\n\}/);
+  assert.match(css, /html\[data-skin\] \.fr-row \.fr-t\{font-weight:650\}/);
+});
+
 // ── The committed section ────────────────────────────────────────────────
 
 const BEGIN = '/* looks:begin';
@@ -121,6 +154,10 @@ test('the section sits just before the New look\'s block, which stays last', () 
   assert.match(css.slice(end, end + 80), /^\n\n\/\* ── THE NEW LOOK, AN EXPERIMENT/);
 });
 
+// The product's classes looks.json "wear" names: the only ones the section may carry.
+const WORN = new Set(Object.values(looks.config.wear.roots).flatMap((root) => [root.to, ...Object.values(root.parts || {})])
+  .flatMap((sel) => sel.match(/\.[a-zA-Z][\w-]*/g) || []));
+
 test('every rule of the section starts from a look, and every class and token is the frame\'s', () => {
   const body = section().replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = [...body.matchAll(/(?:^|\n)([^@{}\n][^{}]*)\{([^{}]*)\}/g)];
@@ -129,7 +166,7 @@ test('every rule of the section starts from a look, and every class and token is
     for (const sel of head.split(/,(?![^()]*\))/).map((s) => s.trim())) {
       assert.match(sel, /^html\[data-skin/, `"${sel}" must start from a look`);
       const classes = sel.replace(/^html\[data-skin(?:="[a-z]+")?\](?:\[data-skin\])?(?:\.dark)?(?::not\(\.dark\))?(?::not\(\[data-app-tone="(?:dark|light)"\]\))?(?::where\([^)]*\)\))?/, '').match(/\.[a-zA-Z][\w-]*/g) || [];
-      for (const c of classes) assert.match(c, /^\.fr(-|$)/, `${c} in "${sel}" is not a frame class`);
+      for (const c of classes) assert.ok(/^\.fr(-|$)/.test(c) || WORN.has(c), `${c} in "${sel}" is neither a frame class nor one the product's markup wears`);
     }
     // --home-ground is the product's: the frame's ground follows it.
     for (const m of decls.matchAll(/var\((--[a-z0-9-]+)/g)) assert.match(m[1], /^--(fr-|home-ground$)/, `${m[1]} is read un-namespaced`);

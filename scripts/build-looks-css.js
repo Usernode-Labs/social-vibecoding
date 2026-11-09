@@ -82,6 +82,32 @@ function mapSelector(raw, id) {
   return { media, selector: `${head} ${sel}` };
 }
 
+/**
+ * A mapped selector → the same rule for the product's own markup, or null.
+ * looks.json "wear" names the kit components the product draws with its own
+ * renderer (a message, a day's label, an open item's head, the composer):
+ * the component's class becomes the product's, its inner classes the
+ * product's too, and any other kit class stays (an avatar in a message is
+ * the kit's own). `raw` is the tour's selector, for the skip list.
+ */
+function wornSelector(mapped, raw = null) {
+  const at = mapped.indexOf(' ');
+  // The kit's rules are any look's, and "brand" (the New look) carries the
+  // attribute without being one: it draws no kit markup, so only a worn
+  // rule could reach it. :where() leaves it out at no weight.
+  const head = mapped.slice(0, at) + (mapped.startsWith('html[data-skin=') ? '' : ':where(:not([data-skin="brand"]))');
+  let sel = mapped.slice(at);
+  const names = (sel.match(/\.fr-[\w-]+/g) || []).map((c) => c.slice(4));
+  const key = names.find((name) => config.wear.roots[name]);
+  if (!key) return null;
+  const root = config.wear.roots[key];
+  const plain = raw == null ? sel.trim().replace(/\.fr-/g, '.') : raw.trim().replace(/\s+/g, ' ').replace(/^\.(hr|phone|dark) /, '');
+  if ((root.skip || []).includes(plain)) return null;
+  const to = { [key]: root.to, ...(root.parts || {}) };
+  sel = sel.replace(/\.fr-([\w-]+)/g, (m, name) => (Object.prototype.hasOwnProperty.call(to, name) ? to[name] : m));
+  return head + sel;
+}
+
 /** One declaration → [prop, value], tokens namespaced where set and where read. */
 function mapDeclaration(prop, value) {
   const p = prop.startsWith('--') ? `--fr-${prop.slice(2)}` : prop;
@@ -127,6 +153,8 @@ function compile(source, id, rootExtra = { light: [], dark: [] }) {
       const key = to.media || '';
       if (!byPlace.has(key)) byPlace.set(key, []);
       byPlace.get(key).push(to.selector);
+      const worn = wornSelector(to.selector, sel);
+      if (worn) byPlace.get(key).push(worn);
     }
     for (const [key, sels] of byPlace) {
       const text = line(sels.join(','), mapped);
@@ -204,6 +232,11 @@ function build() {
    below matches. Kit markup exists only under a look (lib/skin.ts
    isFrameSkin), inside an element with class "fr".
 
+   A conversation is the one thing the kit's markup does not draw: the
+   product's own renderer does (a message, a day's label, an open item's
+   head, the composer). looks.json "wear" maps those kit components onto
+   the product's classes, and each of their rules names both.
+
    Weight: every rule carries one attribute on html; .dark adds a class and
    a phone rule repeats the attribute, as .dark and .phone each added a
    class in the tour, so the cascade is the tour's own. */
@@ -250,4 +283,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { mapSelector, mapDeclaration, compile, build, config };
+module.exports = { mapSelector, mapDeclaration, wornSelector, compile, build, config };

@@ -55,7 +55,7 @@ import { WelcomeBack } from './welcome-back';
 import { dropOnComposer, useComposerDropReady } from './pane-drop';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { useMessagesDrawer } from './phone-drawer';
-import { messagesDrawerStore } from '../nav-drawer/messages-drawer';
+import { messagesBack, messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
 import { fullTime, UserAvatar, senderName, swatchFor } from './format';
@@ -131,7 +131,8 @@ import {
 import { listArchivedSessions } from '../agent-session/api';
 import type { AgentSession as MayorSession } from '../agent-session/api';
 import { changeRowWords } from '../agent-session/transcript';
-import { isFrameSkin, useSkin } from '../../lib/skin';
+import { isFrameSkin, useLiveSkin, useSkin } from '../../lib/skin';
+import { useFramePage } from '../frame/frame-page-store';
 import { Av as KitAv, Lead as KitLead } from '@/components/ui/kit';
 import { MessagesFrameList, type FrameInboxRow, type FrameInboxTab } from './frame-list';
 import { Improve } from '../improve/improve-controller.js';
@@ -1026,6 +1027,9 @@ function ConversationList({ drawer = false }: {
         const peer = directPerson(c);
         const invited = c.membershipStatus === 'invited';
         const name = c.kind === 'direct' && peer ? senderName(peer, { bare: true }) : c.title;
+        const face = c.kind === 'group' && !invited
+          ? c.members.find((member) => member.status === 'member' && Number(member.id) !== me) || null
+          : peer;
         const sender = c.kind === 'group' && !invited ? c.latestMessage?.sender || null : null;
         const said = sender?.id && c.latestSummary
           ? (Number(sender.id) === me
@@ -1036,7 +1040,9 @@ function ConversationList({ drawer = false }: {
         rows.push({
           key: entry.key,
           section: entry.section,
-          lead: <KitAv size={40} name={name || '?'} src={peer?.avatarUrl} color={swatchFor(name || '?')} />,
+          // A group wears the face of someone in it who is not you (the
+          // tour's rows), a direct message the person's own.
+          lead: <KitAv size={40} name={face?.username || name || '?'} src={face?.avatarUrl} color={swatchFor(face?.username || name || '?')} />,
           title: name || '',
           line: c.homeroomBot ? botLine || said : said,
           time: agoStamp(c.lastActivityAt).text,
@@ -1443,7 +1449,12 @@ function ThreadHeader() {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const active = snap.active;
-  const { on: inDrawer } = useStoreState(messagesDrawerStore);
+  const { on: drawerOn } = useStoreState(messagesDrawerStore);
+  // Under one of the frame's looks a phone's bar says only where you are
+  // (Messages, and the way back to the list), so the conversation names
+  // itself here, as the tour's open-item pane does at any width (s17).
+  const frame = isFrameSkin(useLiveSkin());
+  const inDrawer = drawerOn && !frame;
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
   // QA 2026-09-24 Q18: the ⋯ menu is a real menu now. It closes on a press
@@ -3378,6 +3389,11 @@ export function MessagesScreen() {
   const agentWords = useAgentThreadWords(snap.route.agent);
   const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, threadWords, agentWords);
   const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 ? ' messages-drawer-alone' : ''}` : '';
+  // Under one of the frame's looks the phone's bar is the kit's: in a
+  // conversation it says Messages, and its arrow goes back to the list.
+  const frame = isFrameSkin(useSkin());
+  const tc = useMessages('core');
+  useFramePage(frame && snap.route.open && drawer.on && drawer.level === 1 ? [tc('core:tabs.messages')] : null, messagesBack);
   // ON A DESKTOP, with nothing open, the whole list is the page (All
   // messages), with its search and previews; an open conversation has the
   // list beside it. (v3, 18 Oct 2026, put the list in the sidebar under

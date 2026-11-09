@@ -294,5 +294,41 @@
         }
       ]
     }
+  },
+  "wear": {
+    "note": "What the product's own markup wears. A conversation is drawn by the product's renderer, not by kit components, so for each kit component named here (roots) every kit rule that mentions it is repeated for the product's class (to), with the component's inner classes swapped for the product's (parts: a kit class, or a state the kit writes as a class, to a product selector). skip lists tour selectors left out. A part only counts inside a rule that names its root. The composer's field is not worn: the kit draws a placeholder's words, not a field (app.css, THE FRAME IN THE SHELL).",
+    "roots": {
+      "post": {
+        "to": ".messages-message",
+        "parts": {
+          "who": ".messages-message-author",
+          "when": ".messages-message-head time",
+          "txt": ".messages-markdown"
+        },
+        "skip": [
+          ".post .txt b"
+        ]
+      },
+      "day": {
+        "to": ".messages-day"
+      },
+      "dhead": {
+        "to": ".messages-thread-header",
+        "parts": {
+          "t": ".messages-thread-name",
+          "s": ".messages-thread-sub"
+        }
+      },
+      "composer": {
+        "to": ".messages-composer-card",
+        "parts": {
+          "send": ".messages-send",
+          "go": ":not(:disabled)"
+        }
+      },
+      "ib": {
+        "to": ":is(.messages-thread-action,.messages-composer-action)"
+      }
+    }
   }
 }

@@ -14,7 +14,7 @@
  * before the look's is the price, and it is paid only on devices that
  * switched a look on.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 
 /**
  * The looks of the one frame, in the order the 2026-11-06 screen tour gives
@@ -66,4 +66,28 @@ export function useSkin(): Skin {
     window.Skin?.onChange?.(() => setSkin(currentSkin()));
   }, []);
   return skin;
+}
+
+// One listener on window.Skin for every reader below, however many there
+// are: the head module keeps what it is handed for the page's life.
+const skinReaders = new Set<() => void>();
+let skinHeard = false;
+export function subscribeSkin(onChange: () => void): () => void {
+  skinReaders.add(onChange);
+  if (!skinHeard && typeof window !== 'undefined' && window.Skin?.onChange) {
+    skinHeard = true;
+    window.Skin.onChange(() => { for (const reader of [...skinReaders]) reader(); });
+  }
+  return () => { skinReaders.delete(onChange); };
+}
+
+/**
+ * The look, for something drawn many times over (a message row, a face):
+ * 'standard' while a prerendered island hydrates, as useSkin answers, and
+ * the device's look at once for anything mounted after that, so a row that
+ * arrives later is never drawn in the standard markup first. All readers
+ * share one listener and each lets go of it when it unmounts.
+ */
+export function useLiveSkin(): Skin {
+  return useSyncExternalStore(subscribeSkin, currentSkin, () => 'standard');
 }
