@@ -65,10 +65,11 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, stale: false, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
-  // #396: per-issue cache of the GitHub comment thread fetched lazily when
-  // an issue topic opens, so _renderTopicHead's live-refreshes (WS-driven)
-  // reuse it instead of refetching. Each entry is `{ comments, truncated }`;
-  // absent means "not loaded yet".
+  // #396: per-issue cache of the GitHub comment thread. #6497: a request's
+  // first page now brings it (`_takeIssueComments`), and the feed's lazy
+  // previews fill the same cache, so _renderTopicHead's live-refreshes
+  // (WS-driven) reuse it instead of refetching. Each entry is
+  // `{ comments, truncated }`; absent means "not loaded yet".
   //
   // #4178: keyed by `_ghCommentsKey(slug, number)`, never by the number
   // alone. Every app has its own repository, so issue numbers repeat across
@@ -78,6 +79,20 @@ const AppView = {
 
   _ghCommentsKey(slug, number) {
     return `${slug}/${number}`;
+  },
+
+  // #6497: a request's first page carries its GitHub comments
+  // (`request_comments`, routes/chat.js), so the page paints the whole
+  // discussion once instead of fetching the comments after paint. This is
+  // that answer's one writer; `GroupChat` calls it before the render that
+  // merges the comments into the thread (`_requestThreadRows`). The feed's
+  // own lazy preview (`_wireFeedComments`) still fills the same cache.
+  _takeIssueComments(slug, ref, payload) {
+    if (!slug || ref == null || !payload) return;
+    AppView._ghComments.set(AppView._ghCommentsKey(slug, Number(ref)), {
+      comments: Array.isArray(payload.comments) ? payload.comments : [],
+      truncated: !!payload.truncated,
+    });
   },
 
   // Scroll-position memory for the Dev card list, keyed by app slug
@@ -387,9 +402,8 @@ const AppView = {
   // `_repaintDevBody` gives #dev-body to one at a time; what changed is that
   // the other one is no longer reachable.
   //
-  // localStorage, like VIEW_MODE_KEY and unlike the filter bar's
-  // sessionStorage: which way you read the board is a lasting preference,
-  // not a scratch narrowing that should quietly expire.
+  // localStorage, like VIEW_MODE_KEY: which way you read the board is a
+  // lasting preference, not a scratch narrowing that should quietly expire.
   WORKSHOP_GROUP_KEY: 'devWorkshopGroup',
   WORKSHOP_GROUPS: ['category', 'stage'],
   // #2332 spelled this pane 'theme' for one release, on the argument that it
@@ -479,12 +493,13 @@ const AppView = {
     AppView._repaintBoardSurface();
   },
   // #482: kanban filter-bar state. The active object always reflects the
-  // CURRENT app; it is (re)loaded per slug from sessionStorage whenever the
+  // CURRENT app; it is (re)loaded per slug from localStorage whenever the
   // board mounts (_repaintDevBody) and written back on every change
-  // (_repaintKanbanBoard). sessionStorage — not localStorage — is deliberate:
-  // filters survive in-app navigation and a page reload within the tab
-  // session, but auto-clear when the tab closes, so a filter can't land a
-  // user on a mysteriously empty board days later.
+  // (_repaintKanbanBoard). localStorage, per project (#6509): filters are
+  // remembered across tabs and browser restarts until the viewer changes or
+  // clears them, and the active chips are what explain a narrowed board. The
+  // old per-tab sessionStorage key is read once and moved here (see
+  // _loadKanbanFilters), so a filter set before this change is not lost.
   KANBAN_FILTERS_KEY: 'devKanbanFilters',
   // #633: sentinel value for the assignee dropdown's "Unassigned" option.
   // The leading space makes it collision-free against real assignees:
@@ -560,8 +575,24 @@ const AppView = {
     if (!slug) return def;
     const key = `${AppView.KANBAN_FILTERS_KEY}:${slug}`;
     let stored = def;
+    let raw = null;
+    try { raw = window.localStorage.getItem(key); } catch { raw = null; }
+    // #6509: one-time carry-over from the per-tab sessionStorage key this
+    // used before. Only when localStorage holds nothing for the project: a
+    // filter set in the tab already open is kept the first time the board
+    // loads after the change, then the old key is dropped.
+    if (!raw) {
+      let legacyRaw = null;
+      try { legacyRaw = window.sessionStorage.getItem(key); } catch { legacyRaw = null; }
+      let legacy = null;
+      try { legacy = legacyRaw ? JSON.parse(legacyRaw) : null; } catch { legacy = null; }
+      if (legacy && typeof legacy === 'object') {
+        try { window.localStorage.setItem(key, legacyRaw); } catch {}
+        try { window.sessionStorage.removeItem(key); } catch {}
+        raw = legacyRaw;
+      }
+    }
     try {
-      const raw = window.sessionStorage.getItem(key);
       const parsed = raw ? JSON.parse(raw) : null;
       if (parsed && typeof parsed === 'object') stored = { ...def, ...parsed };
     } catch { stored = def; }
@@ -574,29 +605,30 @@ const AppView = {
     const seed = AppView._takeKanbanSearchSeed();
     if (!seed && !yoursSeed) return stored;
     const seeded = seed ? { ...stored, q: seed } : stored;
-    try { window.sessionStorage.setItem(key, JSON.stringify(seeded)); } catch {}
+    try { window.localStorage.setItem(key, JSON.stringify(seeded)); } catch {}
     return seeded;
   },
   // Persist the current filters under the app slug. Clears the key when the
   // filters are at their defaults so a cleared board leaves no residue.
   _saveKanbanFilters(slug) {
     if (!slug) return;
+    const key = `${AppView.KANBAN_FILTERS_KEY}:${slug}`;
     try {
-      const key = `${AppView.KANBAN_FILTERS_KEY}:${slug}`;
       if (AppView._kanbanFiltersActive()) {
-        window.sessionStorage.setItem(key, JSON.stringify(AppView._kanbanFilters));
+        window.localStorage.setItem(key, JSON.stringify(AppView._kanbanFilters));
       } else {
-        window.sessionStorage.removeItem(key);
+        try { window.localStorage.removeItem(key); } catch {}
+        try { window.sessionStorage.removeItem(key); } catch {}
       }
     } catch {}
   },
   // #814: mobile kanban tabs. Below 640px the board shows ONE column at a
   // time behind a tab strip instead of scrolling sideways; which column is
-  // showing is this key. Same storage shape and lifetime as the filters
-  // above — per-app sessionStorage, so the tab survives in-app navigation
-  // and a reload but resets when the browser tab closes. Purely a display
-  // preference: the markup always carries all four columns and CSS decides
-  // what's visible, so desktop never reads this beyond marking the column.
+  // showing is this key. Per-app sessionStorage, unlike the filters above:
+  // the tab survives in-app navigation and a reload but resets when the
+  // browser tab closes. Purely a display preference: the markup always
+  // carries all four columns and CSS decides what's visible, so desktop
+  // never reads this beyond marking the column.
   KANBAN_TAB_KEY: 'devKanbanTab',
   // Column identities, in board order. Shared by the render, the tab strip,
   // the stored value and the ?col= override. NOTE: distinct from the
@@ -4966,7 +4998,7 @@ const AppView = {
 
     // The card list.
     // #482: kanban filters are NOT reset here — they persist per app across
-    // in-app navigation and are (re)loaded per slug from sessionStorage when
+    // in-app navigation and are (re)loaded per slug from localStorage when
     // the board mounts in _repaintDevBody. Resetting on every card-list mount
     // was the cause of filters vanishing on Back / tab switches.
 
@@ -6118,7 +6150,6 @@ const AppView = {
     // to dim them per paint is gone; this refreshes the one fact they read.
     AppView._refreshAiAvailability();
     AppView._fillKudosHosts(head);
-    if (t.kind === 'issue') AppView._loadIssueComments(item);
     if (t.kind === 'proposal' && ['promoted', 'merging'].includes(item.status)) AppView._loadVoteRoster(item.id);
     // #2603: the governance twin — loaded for settled rows too, because a
     // close proposal's page is read after the fact as much as before it.
@@ -6159,8 +6190,9 @@ const AppView = {
     if (t.kind === 'issue') {
       card = AppView._issueCardModel(item, { noNav: true });
       const closedBand = AppView._issueClosedBandView(item);
-      // #396: the issue body. Its GitHub comments are fetched lazily (after
-      // paint, `_loadIssueComments`) into the thread's stream (#4453).
+      // #396: the issue body. Its GitHub comments ride the thread's own
+      // first page since #6497 (`request_comments`), so they are in hand
+      // before the stream paints (#4453).
       body = {
         actions: AppView._detailActionsView('issue', item),
         // (#2431) The mirror of a proposal's issue chips: which change is
@@ -17349,7 +17381,8 @@ const AppView = {
   // GitHub is drawn as the same named row as one written here, in the order
   // they were written: `GroupChat.renderThread` merges these into the
   // thread's own rows by time (features/group-chat/transcript.tsx
-  // `RequestRows`). Null until `_loadIssueComments` has the comments.
+  // `RequestRows`). Null until the request's first page (or a feed preview)
+  // has put the comments in hand.
   //
   // What #396 and #1808 decided stays here: which authors are bots, and the
   // SANITIZER — a comment body is arbitrary GitHub markdown, run through
@@ -17544,9 +17577,9 @@ const AppView = {
   },
 
   // Fetch (or repaint from cache) one session's sanitised transcript.
-  // Best-effort in the same style as _loadIssueComments: a failure leaves a
-  // short note rather than breaking the page, and we re-resolve the slot
-  // after the await in case a repaint replaced it.
+  // Best-effort: a failure leaves a short note rather than breaking the
+  // page, and we re-resolve the slot after the await in case a repaint
+  // replaced it.
   async _loadSessionTranscript(sessionId) {
     if (!sessionId) return;
     const paint = (data) => {
@@ -17610,41 +17643,6 @@ const AppView = {
       const after = document.querySelector(`[data-transcript-body="${sessionId}"]`);
       if (after) after.innerHTML = `<div class="st-error">${PlatformI18n.htmlText('changes:transcript.loadFailedWith', { error: err.message })}</div>`;
     }
-  },
-
-  // #396: lazily fetch an issue's GitHub comments for its page's stream
-  // (`_requestThreadRows`). Cached per app and issue in _ghComments, so the
-  // WS-driven `_renderTopicHead` refreshes cost no refetch. Best-effort: a
-  // failed fetch leaves the stream with the thread's own rows. Re-checks the
-  // topic after the await, and bails if the reader has left this issue.
-  async _loadIssueComments(item) {
-    if (!item || item.number == null) return;
-    const number = item.number;
-
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    const key = AppView._ghCommentsKey(slug, number);
-    // In hand already: the stream drew it when the thread rendered.
-    if (AppView._ghComments.get(key)) return;
-
-    try {
-      const res = await fetch(
-        `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
-      );
-      if (!res.ok) return;
-      const data = await res.json();
-      AppView._ghComments.set(key, {
-        comments: Array.isArray(data.comments) ? data.comments : [],
-        truncated: !!data.truncated,
-      });
-      const t = AppView._devTopic;
-      if (!t || t.kind !== 'issue' || t.id !== number) return;
-      // Issue numbers repeat across apps: the same number open in another
-      // app is not this issue (#4178).
-      if ((AppView.appData && AppView.appData.slug) !== slug) return;
-      const a = typeof GroupChat !== 'undefined' ? GroupChat.activeThread : null;
-      if (a && a.type === 'issue' && Number(a.ref) === number) GroupChat.renderThread({ keepScroll: true });
-    } catch (_) { /* best-effort: the thread's own rows stand */ }
   },
 
   // The proposal's plain-language summary (pr_summary_md), rendered at the
@@ -28482,6 +28480,15 @@ const AppView = {
       // at a newer epoch asks again.
       AppView._noteOwnVote(sessionId, vote);
       AppView._publishVoteSaved(sessionId, vote, epoch);
+      // #6496: the pill above the change's chat is drawn from
+      // `DevChat.currentSession`, which only the best-effort `vote_update`
+      // frame used to refresh — a dropped frame left the pill a vote behind
+      // the card on the same screen until a reload. The vote is saved now, so
+      // ask the open session for its new tally directly. Same guard as
+      // `App.handleVoteUpdate`; a no-op unless this session is the open one.
+      if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
+        DevChat.refreshCurrentSessionStatus(sessionId);
+      }
       // The overlay stays until the post-vote read has landed: a load queued
       // ahead of it still publishes the pre-vote row first. The read joins
       // the burst the vote's own broadcast (vote_update) opens, so a vote
@@ -28700,6 +28707,11 @@ const AppView = {
       window.UsernodeReact?.actionOutbox?.drop?.(`vote:${sessionId}`);
       AppView._noteOwnVote(sessionId, null);
       AppView._publishVoteSaved(sessionId, null, epoch);
+      // #6496: an undo is saved too, so the pill above the change's chat
+      // re-reads the open session at once, exactly as a cast vote does.
+      if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
+        DevChat.refreshCurrentSessionStatus(sessionId);
+      }
       // #6109: the burst reads the chat's snapshot for this vote wherever it
       // is mounted (chatSlug), so the undo does not read it a second time.
       const refresh = typeof App !== 'undefined' && App._liveRefresh

@@ -1095,6 +1095,22 @@
     "text": "Your app has used most of its storage",
     "description": "Second line of the \"App storage\" notification when the app's name is not known: the app is close to its storage limit."
   },
+  "row.health.storage.early": {
+    "text": "<0>{{app}}</0> has used over half its storage: {{used}} of {{limit}}",
+    "description": "Second line of the \"App storage\" notification: the app is over half full, with the space used and the limit. {{app}} is the app's name and is shown bold; {{used}} and {{limit}} are sizes such as \"1.6 GB\" and \"3 GB\"."
+  },
+  "row.health.storage.earlyUnnamed": {
+    "text": "Your app has used over half its storage: {{used}} of {{limit}}",
+    "description": "Second line of the \"App storage\" notification when the app's name is not known: it is over half full. {{used}} and {{limit}} are sizes such as \"1.6 GB\" and \"3 GB\"."
+  },
+  "row.health.storage.warnSized": {
+    "text": "<0>{{app}}</0> has used most of its storage: {{used}} of {{limit}}",
+    "description": "Second line of the \"App storage\" notification: the app is close to its storage limit, with the space used and the limit. {{app}} is the app's name and is shown bold; {{used}} and {{limit}} are sizes such as \"2.5 GB\" and \"3 GB\"."
+  },
+  "row.health.storage.warnSizedUnnamed": {
+    "text": "Your app has used most of its storage: {{used}} of {{limit}}",
+    "description": "Second line of the \"App storage\" notification when the app's name is not known: it is close to its storage limit. {{used}} and {{limit}} are sizes such as \"2.5 GB\" and \"3 GB\"."
+  },
   "row.health.storage.full": {
     "text": "<0>{{app}} is out of storage.</0> New data cannot be saved until an admin raises its limit or allows time to clean up",
     "description": "Second line of the \"App storage\" notification: the app reached its storage limit. {{app}} is the app's name. The part in <0> is shown bold."

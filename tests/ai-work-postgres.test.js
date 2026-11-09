@@ -553,6 +553,37 @@ test('the demo rows are obviously fake, and staging-only', () => {
   assert.ok(demo.next.some((r) => r.work.line?.by === 'staging-demo-partner'), 'a claim');
   const { STAGES } = require('../src/services/work-state');
   assert.ok(rows.every((r) => STAGES.includes(r.work.stage)), 'every demo row says a stage the screens know');
+  // #6515: the busy card splits each project's rows by the reader's day
+  // (#6401), and the declared check reads this project's first three as
+  // siblings (#6160). Its five moving rows share one day and keep their
+  // order, whatever the hour the page loads at.
+  const sameDay = (list) => {
+    assert.equal(new Set(list.map((r) => new Date(r.at).toISOString().slice(0, 10))).size, 1, 'one UTC day');
+    for (const shift of [-11, 11]) {
+      const days = new Set(list.map((r) => new Date(Date.parse(r.at) + shift * 3600000).toISOString().slice(0, 10)));
+      assert.equal(days.size, 1, `one day read at UTC${shift > 0 ? '+' : ''}${shift}`);
+    }
+  };
+  const busyOf = (demo) => {
+    const busy = [...demo.next, ...demo.waiting].filter((r) => r.app.slug === 'staging-demo-your-app' && r.work.line?.code !== 'waiting');
+    assert.deepEqual(busy.map((r) => r.work.stage),
+      ['going_live', 'building', 'up_for_vote', 'up_for_vote', 'building'], 'under way, then what waits');
+    assert.equal(busy[busy.length - 1].work.line.code, 'held_waiting', 'a held build comes last');
+    assert.ok(busy.every((r) => Date.parse(r.at) < Date.now()), 'no row from the future');
+    sameDay(busy);
+  };
+  busyOf(demo);
+  // The hours that used to split the rows: the anchor moves, the day does not.
+  const realNow = Date.now;
+  try {
+    const today = new Date();
+    for (const [h, m] of [[0, 30], [7, 30], [11, 59], [12, 30], [23, 30]]) {
+      Date.now = () => Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), h, m);
+      busyOf(demoWork());
+    }
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test('#6282: a change with an update on its way is Updating, then Update queued', { timeout: 120000 }, async (t) => {
