@@ -26946,6 +26946,12 @@ html[data-skin] .fr-tx > .fr-t,
 html[data-skin] .fr-tx > .fr-s { display: block; }
 html[data-skin] button.fr-row,
 html[data-skin] button.fr-at { width: 100%; text-align: start; }
+/* The field's value is an <input> here, where the mock had a span: it takes
+   the field's width and brings no box of its own; the field shows the
+   focus the kit draws for it. */
+html[data-skin] .fr-inp > input.fr-v { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; color: var(--fr-ink); }
+html[data-skin] .fr-inp > input.fr-v::placeholder { color: var(--fr-faint); opacity: 1; }
+html[data-skin] .fr-inp:focus-within { box-shadow: inset 0 0 0 2px var(--fr-acc); color: var(--fr-ink); }
 
 /* A kit page brings its own margins (.fr-inner), so its screen gives up the
    gutter it adds after the sidebar and keeps only the sidebar's width. */

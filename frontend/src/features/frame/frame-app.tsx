@@ -40,6 +40,7 @@ import { useVisibility } from '../../lib/visibility-store';
 import { navStore } from '../nav/nav-store.js';
 import { useRailCommunities } from '../nav/rail-communities';
 import { communityScopeStore, goToCommunity } from '../workshop/community-scope';
+import { framePageStore } from './frame-page-store';
 import { FrameSheets, openFrameSheet } from './frame-sheets';
 
 const MARK = '/brand/homeroom-mark.png';
@@ -47,6 +48,12 @@ const MARK = '/brand/homeroom-mark.png';
 /** The shell's own control a press here is handed to. */
 function press(id: string) {
   document.getElementById(id)?.click();
+}
+
+/** Says which tab was pressed, for a kit page that has places of its own to come back from. */
+function pressTab(key: string) {
+  try { document.dispatchEvent(new CustomEvent('frame:tab', { detail: key })); } catch { /* nobody is listening */ }
+  press(`platform-tab-${key}`);
 }
 
 /** A plain click is handled here; a cmd-click or middle-click keeps the address. */
@@ -108,7 +115,12 @@ export function FrameChrome() {
   // The bar says where you are: the header's own words, else the tab's.
   const tabWord: Record<string, string> = { home: t('core:tabs.home'), ai: t('core:tabs.ai'), messages: t('core:tabs.messages'), me: t('core:tabs.me') };
   const title = headerTitle || (tab ? tabWord[tab] || '' : '');
-  const back = useNodeShown('back-btn');
+  const shellBack = useNodeShown('back-btn');
+  // A kit page with places of its own says its breadcrumb and its back.
+  const page = useStoreState(framePageStore);
+  const crumbs = page.crumb || (title ? [title] : []);
+  const back = page.crumb ? !!page.onBack : shellBack;
+  const goBack = () => { if (page.crumb && page.onBack) page.onBack(); else press('back-btn'); };
   const unread = useNodeShown('notifications-badge');
   const user = (typeof window === 'undefined' ? undefined : (window as any).App?.user) as { username?: string; avatar_url?: string | null } | undefined;
   const me = user?.username || '';
@@ -145,7 +157,7 @@ export function FrameChrome() {
       className={k('nv main', tab === key && !inCommunity && 'on')}
       href={href}
       aria-current={tab === key && !inCommunity ? 'page' : undefined}
-      onClick={(event) => handing(event, () => press(`platform-tab-${key}`))}
+      onClick={(event) => handing(event, () => pressTab(key))}
     >
       <Icon name={icon} />
       <span className={k('nm')}>{label}</span>
@@ -157,7 +169,7 @@ export function FrameChrome() {
       className={k('tb', tab === key && 'on')}
       href={href}
       aria-current={tab === key ? 'page' : undefined}
-      onClick={(event) => handing(event, () => press(`platform-tab-${key}`))}
+      onClick={(event) => handing(event, () => pressTab(key))}
     >
       <Icon name={icon} size={22} />
       {label}
@@ -246,17 +258,23 @@ export function FrameChrome() {
         <div className={k('colm')}>
           <header className={k('bar')}>
             {back ? (
-              <button type="button" className={k('ib')} aria-label={t('core:header.back')} onClick={() => press('back-btn')}>
+              <button type="button" className={k('ib')} aria-label={t('core:header.back')} onClick={goBack}>
                 <Icon name="cl" />
               </button>
             ) : (
               <span className={k('p')}><Tile size={28} src={MARK} color="#0f1116" name={t('core:frame.brand')} /></span>
             )}
             <div className={k('crumb')}>
-              <span className={k('ci here keep')}>{title}</span>
+              {crumbs.map((word, i) => (
+                <span key={`${i}:${word}`} style={{ display: 'contents' }}>
+                  {i > 0 ? <Icon name="cr" size={14} /> : null}
+                  <span className={k('ci', i === crumbs.length - 1 && 'here keep')}>{word}</span>
+                </span>
+              ))}
             </div>
             <span className={k('sp')} />
-            <button type="button" className={k('ib d')} aria-label={t('core:rail.search')} onClick={() => { (window as any).Home?.focusSearch?.(); }}>
+            {/* Search is your communities': the page that lists them, with its field. */}
+            <button type="button" className={k('ib d')} aria-label={t('core:rail.search')} onClick={() => goToCommunity(null)}>
               <Icon name="search" />
             </button>
             <button type="button" className={k('ib')} aria-label={t('core:header.notifications')} onClick={() => openFrameSheet('notifications')}>

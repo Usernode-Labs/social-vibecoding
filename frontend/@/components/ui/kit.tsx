@@ -339,6 +339,25 @@ export function PageBody({ title, purpose, acts, tabs, side, sideFirst, children
   );
 }
 
+/** The page's search field, under its tabs: one real input in the kit's field. */
+export function Search({ value, onChange, placeholder, label }: { value: string; onChange: (next: string) => void; placeholder: string; label?: string }) {
+  return (
+    <div className={k('search')}>
+      <label className={k('inp', value && 'val')}>
+        <Icon name="search" size={18} />
+        <input
+          type="search"
+          className={k('v')}
+          value={value}
+          placeholder={placeholder}
+          aria-label={label || placeholder}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </label>
+    </div>
+  );
+}
+
 /** An on or off setting on a row: the kit's switch, as a real one. */
 export function Tog({ on, onChange, label }: { on: boolean; onChange: (next: boolean) => void; label: string }) {
   return (

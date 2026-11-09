@@ -25,7 +25,7 @@ const NOW = Date.parse('2026-11-09T12:00:00Z');
 const fixedStore = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
 
 // The modules HomeFrame reads, stubbed by the specifier it imports them as.
-function homeStubs({ pins = [], joined = [], owed = {}, apps = [] } = {}) {
+function homeStubs({ pins = [], joined = [], owed = {}, apps = [], info = {} } = {}) {
   return {
     '../grid-store': { gridStore: fixedStore({ ready: true, view: 'grid', editing: false, items: apps.map((app) => ({ kind: 'card', placement: null, app })) }) },
     '../home-pins-store': {
@@ -33,6 +33,9 @@ function homeStubs({ pins = [], joined = [], owed = {}, apps = [] } = {}) {
       loadHomePins: async () => {},
     },
     '../communities-to-join': { readDirectory: async () => [] },
+    // What the two pages under Home read besides.
+    '../../frame/frame-page-store': { useFramePage() {} },
+    '../../workshop/community-scope': { communityScopeStore: fixedStore({ slug: null, list: [], info }) },
   };
 }
 const render = (props, stubs = homeStubs()) => renderComponent(HOME_FRAME, 'HomeFrame', { now: NOW, ...props }, { stubs, cache: false });
@@ -161,6 +164,65 @@ test('what went live this week sits in the side column, newest first, with how l
   assert.match(side, /<h2 class="fr-cap">Live this week<\/h2>/);
   assert.match(side, /Penalty shoot-out mode<\/span><span class="fr-s">GOAL! · Bruno<\/span><\/span><span class="fr-meta">2h<\/span>/);
   assert.match(side, /<span class="fr-meta">3d<\/span>/);
+});
+
+// ── The two pages under Home (the tour's s03 and s04) ───────────────────
+
+test('All apps: tabs and a search, then the pinned tiles and everything else in order', () => {
+  const html = renderComponent('frontend/src/features/home/frame/home-all-apps.tsx', 'HomeAllApps', {
+    onBack() {},
+    initialApps: [{ slug: 'zeta', name: 'Zeta' }, { slug: 'alpha', name: 'Alpha', icon_emoji: '🅰️' }, { slug: 'game-corner', name: 'Game Corner' }],
+  }, { stubs: homeStubs({ apps: [app('game-corner', 'Game Corner')] }), cache: false });
+  assert.match(html, /^<div class="fr" data-home-frame="apps"><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">All apps<\/h1><p class="fr-purpose">3 apps you can open\. Pinned ones show on Home\.<\/p>/);
+  assert.match(html, /<nav class="fr-tabs"><button type="button" class="fr-tab fr-on" aria-pressed="true">All<\/button><button type="button" class="fr-tab" aria-pressed="false">Pinned<\/button><\/nav>/);
+  assert.match(html, /<div class="fr-search"><label class="fr-inp"><svg[^>]*>.*?<\/svg><input type="search" class="fr-v" placeholder="Search your apps" aria-label="Search your apps" value=""\/><\/label><\/div>/s);
+  const pinned = html.indexOf('>Pinned to Home<');
+  const rest = html.indexOf('>Everything else, A to Z<');
+  assert.ok(pinned > -1 && rest > pinned, 'pinned first, then the rest');
+  assert.equal((html.slice(pinned, rest).match(/class="fr-at"/g) || []).length, 1);
+  assert.ok(html.indexOf('>Alpha<', rest) < html.indexOf('>Zeta<', rest), 'the rest in alphabetical order');
+  assert.doesNotMatch(html.slice(rest), />Game Corner</, 'a pinned app is not listed twice');
+  assert.match(html, /<a class="fr-at" href="\/app\/alpha">/, 'a tile launches its app');
+});
+
+test('All communities: tabs by audience, a search, rows grouped by what they need, context beside them', () => {
+  const html = renderComponent('frontend/src/features/home/frame/home-all-communities.tsx', 'HomeAllCommunities', {
+    onBack() {},
+    mine: [pin('homeroom', 'Homeroom'), pin('quiet', 'Quiet Place'), pin('solo', 'Solo')],
+    votes: [{ key: 'proposal:1', title: 'Email templates', community: 'Homeroom', slug: 'homeroom' }],
+  }, { stubs: homeStubs({
+    pins: [pin('homeroom', 'Homeroom')], owed: { homeroom: 1 },
+    info: { homeroom: { audience: 'open', memberCount: 228 }, quiet: { audience: 'invited', memberCount: 6 }, solo: { audience: 'solo', memberCount: 1 } },
+  }), cache: false });
+  assert.match(html, /<h1 class="fr-title">All communities<\/h1><p class="fr-purpose">The 3 communities you are in\. 1 pinned to Home\.<\/p>/);
+  assert.match(html, /<div class="fr-acts"><button type="button" class="fr-btn"><svg[^>]*>.*?<\/svg>New community<\/button>/s, 'the page\'s one primary action');
+  assert.deepEqual([...html.matchAll(/class="fr-tab[^"]*" aria-pressed="[a-z]+">([^<]+)</g)].map((m) => m[1]), ['All', 'Public', 'Private', 'Just you', 'Not pinned']);
+  assert.match(html, /placeholder="Search your communities"/);
+  const needs = html.indexOf('>Needs you<');
+  const rest = html.indexOf('>Your communities<');
+  assert.ok(needs > -1 && rest > needs);
+  assert.match(html.slice(needs, rest), /<span class="fr-t">Homeroom<\/span><span class="fr-s">Public community · 228 members<\/span><\/span><span class="fr-pill fr-act" data-kind="act">1 to vote<\/span>/,
+    'a community that waits for you says its audience and size, and ends in the blue pill');
+  assert.match(html.slice(rest), /<span class="fr-t">Quiet Place<\/span><span class="fr-s">Private community · 6 members<\/span>/);
+  assert.match(html.slice(rest), /<span class="fr-s">Just you · 1 member<\/span>/);
+  assert.equal((html.match(/data-kind="act"/g) || []).length, 2, 'blue only on the community that asks and on the vote owed beside it');
+  const side = html.slice(html.indexOf('>Votes waiting on you<'));
+  assert.match(side, /<a class="fr-link" href="#needs">Review all<\/a>/);
+  assert.match(side, /<span class="fr-t">Email templates<\/span><span class="fr-s">Homeroom<\/span><\/span><span class="fr-pill fr-act" data-kind="act">Vote<\/span>/);
+  assert.match(side, /<div class="fr-note"><svg[^>]*>.*?<\/svg><div>Pins live on Home\. Pin a community to keep it one tap away\.<\/div><\/div>/s);
+});
+
+test('Home opens each page from its own group, and comes back', () => {
+  const src = read('frontend', 'src', 'features', 'home', 'frame', 'home-frame.tsx');
+  assert.match(src, /if \(view === 'apps'\) return <HomeAllApps onBack=\{backHome\} \/>;/);
+  assert.match(src, /return <HomeAllCommunities onBack=\{backHome\} mine=\{mine\} votes=\{owedVotes\} \/>;/);
+  assert.match(src, /onClick=\{\(\) => show\('apps'\)\}/, 'the All tile of Pinned apps');
+  assert.match(src, /<GroupLink onClick=\{\(\) => show\('communities'\)\}>/, 'the All link of Pinned communities');
+  assert.match(src, /document\.addEventListener\('home:show-all-communities', all\)/, 'the shell\'s own All communities lands on the page too');
+  assert.match(src, /if \(\(event as CustomEvent\)\.detail === 'home'\) show\('home'\)/, 'and a press on Home in the chrome comes back');
+  for (const f of ['home-all-apps.tsx', 'home-all-communities.tsx']) {
+    assert.match(read('frontend', 'src', 'features', 'home', 'frame', f), /useFramePage\(\[tc\('core:tabs\.home'\), t\('home:frame\.all(Apps|Communities)\.title'\)\], onBack\)/, `${f} gives the bar its breadcrumb and back`);
+  }
 });
 
 test('every row is a door, not a page load', () => {

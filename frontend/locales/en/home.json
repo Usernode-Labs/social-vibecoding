@@ -1110,5 +1110,113 @@
   "frame.waiting.conflict": {
     "text": "Conflict",
     "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Status word on a Needs you row for a change that needs its conflict with the main branch resolved before it can be voted on."
+  },
+  "frame.allApps.title": {
+    "text": "All apps",
+    "description": "All apps, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's title, and its place in the bar's breadcrumb."
+  },
+  "frame.allApps.purpose_one": {
+    "text": "{{count}} app you can open. Pinned ones show on Home.",
+    "description": "All apps, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title. Singular."
+  },
+  "frame.allApps.purpose_other": {
+    "text": "{{count}} apps you can open. Pinned ones show on Home.",
+    "description": "All apps, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title. Plural."
+  },
+  "frame.allApps.search": {
+    "text": "Search your apps",
+    "description": "All apps, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Placeholder of the search field."
+  },
+  "frame.allApps.tabAll": {
+    "text": "All",
+    "description": "All apps, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). First tab: every app."
+  },
+  "frame.allApps.tabPinned": {
+    "text": "Pinned",
+    "description": "All apps, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Second tab: only the apps pinned to Home."
+  },
+  "frame.allApps.pinned": {
+    "text": "Pinned to Home",
+    "description": "All apps, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group of the apps the person pinned."
+  },
+  "frame.allApps.editPins": {
+    "text": "Edit pins",
+    "description": "All apps, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of the Pinned to Home label: goes to Home to arrange the pins."
+  },
+  "frame.allApps.rest": {
+    "text": "Everything else, A to Z",
+    "description": "All apps, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group of every other app, in alphabetical order."
+  },
+  "frame.allApps.more": {
+    "text": "{{count}} more",
+    "description": "All apps, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Name under the last tile of a group that is cut short: pressing it shows the rest."
+  },
+  "frame.allApps.none": {
+    "text": "No app matches your search.",
+    "description": "All apps, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Said in place of the groups when the search finds nothing."
+  },
+  "frame.allCommunities.title": {
+    "text": "All communities",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's title, and its place in the bar's breadcrumb."
+  },
+  "frame.allCommunities.purpose_one": {
+    "text": "The {{count}} community you are in. {{pinned}} pinned to Home.",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title: how many communities, and how many of them are pinned. Singular of the count of communities."
+  },
+  "frame.allCommunities.purpose_other": {
+    "text": "The {{count}} communities you are in. {{pinned}} pinned to Home.",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title: how many communities, and how many of them are pinned. Plural of the count of communities."
+  },
+  "frame.allCommunities.new": {
+    "text": "New community",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's one primary button: starts a new project, which is a new community."
+  },
+  "frame.allCommunities.search": {
+    "text": "Search your communities",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Placeholder of the search field."
+  },
+  "frame.allCommunities.tabAll": {
+    "text": "All",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). First tab: every community."
+  },
+  "frame.allCommunities.tabPublic": {
+    "text": "Public",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Tab: only public communities."
+  },
+  "frame.allCommunities.tabPrivate": {
+    "text": "Private",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Tab: only private communities."
+  },
+  "frame.allCommunities.tabSolo": {
+    "text": "Just you",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Tab: only the projects with no member but the person."
+  },
+  "frame.allCommunities.tabNotPinned": {
+    "text": "Not pinned",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Tab: only the communities that are not pinned to Home."
+  },
+  "frame.allCommunities.needsYou": {
+    "text": "Needs you",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the first group: communities where a vote waits for the person."
+  },
+  "frame.allCommunities.rest": {
+    "text": "Your communities",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group of the other communities."
+  },
+  "frame.allCommunities.votesWaiting": {
+    "text": "Votes waiting on you",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the side column's group: the next votes owed."
+  },
+  "frame.allCommunities.reviewAll": {
+    "text": "Review all",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of the Votes waiting on you label: opens Needs you."
+  },
+  "frame.allCommunities.pinsNote": {
+    "text": "Pins live on Home. Pin a community to keep it one tap away.",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). A note in the side column saying where pinned communities appear."
+  },
+  "frame.allCommunities.none": {
+    "text": "No community matches your search.",
+    "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Said in place of the groups when the search finds nothing."
   }
 }

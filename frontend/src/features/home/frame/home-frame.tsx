@@ -30,10 +30,17 @@
  *   Live this week       GET /api/workshop/live-feed (what went live in the
  *                        viewer's communities in the last seven days)
  *
+ * TWO PAGES UNDER IT, the tour's s03 and s04, that the router does not
+ * know: All apps (./home-all-apps.tsx) and All communities
+ * (./home-all-communities.tsx). Which is up is this component's own state;
+ * a group's "All N" opens one, the shell's own "All communities"
+ * (Home.showCommunities, by its document event) the other, and a press on
+ * Home in the frame's chrome comes back here.
+ *
  * Every row is a door (pinned-communities.tsx's rule): a plain click lands
  * on the place through AppView, a cmd-click or middle-click keeps the href.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { Btn, GroupLink, Meta, PageBody, Pill, Row, Sec, Card, Tile, TileItem, Tiles, Lead, type PillKind } from '@/components/ui/kit';
 import { useMessages } from '../../../lib/i18n/react';
@@ -41,6 +48,8 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { readDirectory } from '../communities-to-join';
 import { gridStore, type IconView } from '../grid-store';
 import { homePinsStore, loadHomePins, type HomePin, type JoinedCommunity } from '../home-pins-store';
+import { HomeAllApps } from './home-all-apps';
+import { HomeAllCommunities, type OwedVote } from './home-all-communities';
 
 /** How many rows a group shows before its link opens the rest (the tour's Home). */
 const NEEDS_SHOWN = 3;
@@ -136,12 +145,13 @@ async function readJson(url: string): Promise<any> {
 }
 
 /** `initial*` seed the state a render test cannot reach through effects. */
-export function HomeFrame({ initialFeed = null, initialQuestions = null, initialDirectory = null, initialCounts = null, initialLive = null, now = Date.now() }: {
+export function HomeFrame({ initialFeed = null, initialQuestions = null, initialDirectory = null, initialCounts = null, initialLive = null, initialView = 'home', now = Date.now() }: {
   initialFeed?: FeedRow[] | null;
   initialQuestions?: BotQuestion[] | null;
   initialDirectory?: DirectoryApp[] | null;
   initialCounts?: Counts | null;
   initialLive?: LiveRow[] | null;
+  initialView?: 'home' | 'apps' | 'communities';
   now?: number;
 }) {
   const t = useMessages('home');
@@ -152,6 +162,22 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
   const [directory, setDirectory] = useState<DirectoryApp[] | null>(initialDirectory);
   const [counts, setCounts] = useState<Counts | null>(initialCounts);
   const [live, setLive] = useState<LiveRow[] | null>(initialLive);
+  const [view, setView] = useState<'home' | 'apps' | 'communities'>(initialView);
+  const show = useCallback((next: 'home' | 'apps' | 'communities') => {
+    setView(next);
+    try { document.getElementById('home-screen')?.scrollTo?.({ top: 0 }); } catch { /* nothing to scroll */ }
+  }, []);
+  const backHome = useCallback(() => show('home'), [show]);
+  useEffect(() => {
+    const all = () => show('communities');
+    const tab = (event: Event) => { if ((event as CustomEvent).detail === 'home') show('home'); };
+    document.addEventListener('home:show-all-communities', all);
+    document.addEventListener('frame:tab', tab);
+    return () => {
+      document.removeEventListener('home:show-all-communities', all);
+      document.removeEventListener('frame:tab', tab);
+    };
+  }, [show]);
 
   useEffect(() => {
     let on = true;
@@ -270,6 +296,15 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
     </Sec>
   ) : null;
 
+  if (view === 'apps') return <HomeAllApps onBack={backHome} />;
+  if (view === 'communities') {
+    const owedVotes: OwedVote[] = votes.map((v) => ({
+      key: `${v.kind}:${v.id}`, title: v.title || v.app?.name || '', community: v.app?.name || '', slug: v.app?.slug || '',
+      iconUrl: v.app?.icon_url, iconEmoji: v.app?.icon_emoji,
+    }));
+    return <HomeAllCommunities onBack={backHome} mine={mine} votes={owedVotes} />;
+  }
+
   return (
     <PageBody
       data-home-frame=""
@@ -308,7 +343,7 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
             ))}
             {apps.length > APPS_SHOWN ? (
               <TileItem
-                onClick={() => { (window as any).Home?.setEditing?.(true); }}
+                onClick={() => show('apps')}
                 tile={<Lead icon="grid" size={52} />}
                 name={t('home:frame.all', { count: apps.length })}
               />
@@ -322,7 +357,7 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
           label={t('home:frame.pinnedCommunities')}
           id="home-frame-communities"
           action={mine.length > COMMUNITIES_SHOWN
-            ? <GroupLink onClick={() => { (window as any).Home?.showCommunities?.({ all: true }); }}>{t('home:frame.all', { count: mine.length })}</GroupLink>
+            ? <GroupLink onClick={() => show('communities')}>{t('home:frame.all', { count: mine.length })}</GroupLink>
             : null}
         >
           <Card>

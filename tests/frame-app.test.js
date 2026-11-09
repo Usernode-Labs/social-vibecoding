@@ -26,8 +26,9 @@ const INFO = {
   'game-corner': { slug: 'game-corner', name: 'Game Corner', iconUrl: null, iconEmoji: '🎮', iconColor: '#3b2d8f', needs: 0 },
   lobby: { slug: 'lobby', name: 'Lobby', iconUrl: null, iconEmoji: null, iconColor: null, needs: 9, unchosen: true },
 };
-function stubs({ tab = 'home', screen = 'home-screen', bot = false, messages = 2, ai = 18, slug = null } = {}) {
+function stubs({ tab = 'home', screen = 'home-screen', bot = false, messages = 2, ai = 18, slug = null, page = { crumb: null, onBack: null } } = {}) {
   return {
+    './frame-page-store': { framePageStore: fixedStore(page) },
     '../nav/nav-store.js': { navStore: fixedStore({ tab, screen, bot, messages, ai, viewer: 'snait' }) },
     '../nav/rail-communities': { useRailCommunities: () => ['homeroom', 'game-corner', 'lobby'] },
     '../workshop/community-scope': { communityScopeStore: fixedStore({ slug, info: INFO, list: Object.keys(INFO) }), goToCommunity() {} },
@@ -76,13 +77,23 @@ test('the bot\'s chat lights Homeroom bot, though it is drawn on the Messages sc
 
 test('the bar says where you are, with search and the bell; the phone\'s tab bar has the four places', () => {
   const html = chrome({ tab: 'messages' });
-  assert.match(html, /<header class="fr-bar">.*?<div class="fr-crumb"><span class="fr-ci fr-here fr-keep">Messages<\/span><\/div><span class="fr-sp"><\/span>/s);
+  assert.match(html, /<header class="fr-bar">.*?<div class="fr-crumb"><span style="display:contents"><span class="fr-ci fr-here fr-keep">Messages<\/span><\/span><\/div><span class="fr-sp"><\/span>/s);
   assert.match(html, /<button type="button" class="fr-ib fr-d" aria-label="[^"]+">/, 'search, on a desktop');
   assert.match(html, /<button type="button" class="fr-ib" aria-label="Notifications">/);
   const bar = html.slice(html.indexOf('<nav class="fr-tabbar"'));
   assert.deepEqual([...bar.matchAll(/<a class="fr-tb[^"]*" href="([^"]+)"/g)].map((m) => m[1]), ['#home', '#homeroom-bot', '#messages', '#profile']);
   assert.match(bar, /<a class="fr-tb fr-on" href="#messages" aria-current="page">/);
   assert.match(bar, />Bot<span class="fr-n">18<\/span>/, 'the bar has room for one short word');
+});
+
+test('a kit page with places of its own gives the bar its breadcrumb and its back arrow', () => {
+  const html = chrome({ page: { crumb: ['Home', 'All apps'], onBack() {} } });
+  assert.match(html, /<button type="button" class="fr-ib" aria-label="Back">/, 'the back arrow, in place of the phone\'s mark');
+  assert.match(html, /<span class="fr-ci">Home<\/span><\/span><span style="display:contents"><svg class="fr-ic"[^>]*>.*?<\/svg><span class="fr-ci fr-here fr-keep">All apps<\/span>/s,
+    'each place, a chevron between, the last one where you are');
+  const src = read('frontend', 'src', 'features', 'frame', 'frame-app.tsx');
+  assert.match(src, /if \(page\.crumb && page\.onBack\) page\.onBack\(\); else press\('back-btn'\);/, 'its back, else the shell\'s');
+  assert.match(src, /new CustomEvent\('frame:tab', \{ detail: key \}\)/, 'and a press on a tab is said, so such a page can come back to its first place');
 });
 
 test('a press is handed to the shell\'s own control, and a cmd-click keeps the address', () => {
