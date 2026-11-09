@@ -242,9 +242,14 @@
       "schemaSha256": "5291751cc4cff86d4b8a549c189baa255ae220b747bb79a81bf0b0610ce8e7cb"
     },
     {
+      "id": "author-yes-withdrawn",
+      "sha256": "b0e7d4100f335f44ba319a86ee0e8dd36c7369f7db8c4c33e6d2de66f9fafec6",
+      "schemaSha256": "deda4df491c0d5238f3695158a7357f4b8d45e85a1df3f88577f34ab0c788a89"
+    },
+    {
       "id": "change-close-reason",
       "sha256": "eb3c93d285e4d76faa45b681de0b5851db785aba364c7df3d848bd6e49f8aaef",
-      "schemaSha256": "c393788a800160a4827345fbfd17a3d7716d1407f978377836767b4a4bb96b2a"
+      "schemaSha256": "5189a0b1a61505260a43103e9faa926546c58e91cd330e5b837f2ebb61533d4a"
     }
   ]
 }
