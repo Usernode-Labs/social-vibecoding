@@ -243,6 +243,10 @@ function GroupFaces({ conversation }: { conversation: Pick<ConversationSummary, 
   const others = conversation.members
     .filter((member) => member.status === 'member' && Number(member.id) !== viewerId)
     .slice(0, 2);
+  // Under one of the frame's looks a group wears one face, a member's who is
+  // not you, at the row's size (the tour's group, s18).
+  const frame = isFrameSkin(useLiveSkin());
+  if (frame) return <UserAvatar user={others[0] || null} title={conversation.title} size="lg" shape="square" />;
   if (others.length === 2) {
     return (
       <span className="messages-group-faces" aria-hidden="true">

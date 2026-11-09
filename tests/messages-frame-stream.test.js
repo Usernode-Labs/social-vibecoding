@@ -152,3 +152,10 @@ test('on a phone the conversation names itself in its own head under a look, and
     assert.doesNotMatch(read(file), /(&&|\|\||\?)\s*!?isFrameSkin\(use(Live)?Skin\(\)\)/, `${file}: the look is read behind a condition`);
   }
 });
+
+test('a group wears one face under a look, a member\'s who is not you', () => {
+  const src = read('frontend/src/features/messages/index.tsx');
+  const faces = src.slice(src.indexOf('function GroupFaces('), src.indexOf('const ConversationRow = memo('));
+  assert.match(faces, /const frame = isFrameSkin\(useLiveSkin\(\)\);\s+if \(frame\) return <UserAvatar user=\{others\[0\] \|\| null\} title=\{conversation\.title\} size="lg" shape="square" \/>;/);
+  assert.ok(faces.indexOf('const frame = ') < faces.indexOf('if (others.length === 2)'), 'before the standard look\'s stacked pair');
+});
