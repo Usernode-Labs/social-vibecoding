@@ -355,7 +355,7 @@ function EmailTile({ slug, sessionId, picture }: { slug: string; sessionId: numb
     <li className="flex min-w-0 flex-col gap-1" data-bot-change-picture={picture.id} data-bot-change-side={picture.side}>
       <button
         type="button"
-        className="block overflow-hidden rounded-xl bg-white text-left shadow-[0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900"
+        className="block overflow-hidden rounded-xl bg-white text-start shadow-[0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900"
         style={{ aspectRatio: '4 / 5' }}
         aria-label={t('messages:botCards.gallery.openEmail', { subject: picture.caption })}
         onClick={() => setOpen(true)}

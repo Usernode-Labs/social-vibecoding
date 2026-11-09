@@ -25,5 +25,5 @@ CREATE INDEX IF NOT EXISTS change_pictures_session_idx ON change_pictures (sessi
 ALTER TABLE bot_cards DROP CONSTRAINT IF EXISTS bot_cards_kind_check;
 ALTER TABLE bot_cards ADD CONSTRAINT bot_cards_kind_check
   CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request', 'post_reply',
-                  'post_design', 'copy_request', 'file_many', 'withdraw_change', 'try_again',
+                  'post_design', 'copy_request', 'file_many', 'withdraw_change', 'try_again', 'overlap',
                   'run_shots', 'post_pictures_plan'));

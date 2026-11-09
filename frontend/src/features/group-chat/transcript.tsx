@@ -930,8 +930,6 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
           {/* Task 2020 follow-up: Homeroom bot's reply laid out, in place of its words (./long-body.tsx). */}
           <Body html={msg.bodyHtml} rich={msg.botHtml} />
-          {/* #6533: what a change looks like under Homeroom bot's reply. */}
-          {msg.botGallery ? <ChangePictures card={msg.botGallery} /> : null}
           {/*
               #6268: a message posted for somebody by their own coding agent
               that Homeroom bot will not answer says so under it, quietly, so
@@ -960,6 +958,8 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           {msg.voteRef ? (seeVote
             ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} />
             : <VoteCard msg={msg} />) : null}
+          {/* #6533: what a change looks like under Homeroom bot's reply. */}
+          {msg.botGallery ? <ChangePictures card={msg.botGallery} /> : null}
           {/* #4238: Homeroom bot's first-version line opens the app. */}
           {msg.openApp ? (
             <Button
