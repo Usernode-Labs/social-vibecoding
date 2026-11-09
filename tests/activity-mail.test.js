@@ -131,10 +131,15 @@ test('activity mail has its own hourly budget, apart from sign-in codes', () => 
   // A vote digest notice is not one the notice-mail clock sends (#5794).
   assert.equal(activityMail.NOTICE_MAIL_KINDS.has('vote_digest'), false);
   assert.equal(activityMail.NOTICE_MAIL_KINDS.has('project_opened'), true, 'the one-off emails stay');
-  // …and the mailer counts each budget on its own, choosing the cap by kind.
+  // …and the mailer counts each budget on its own, choosing the cap by kind
+  // (the waitlist reminders have one of their own too).
   const index = read('src/services/mail/index.js');
   assert.match(index, /AND \(kind = ANY\(\$1::text\[\]\)\) = \$2/);
-  assert.match(index, /rateLimit\.ACTIVITY_KINDS\.has\(kind\) \? rateLimit\.ACTIVITY_MAX_PER_HOUR : maxPerHour\(config\)/);
+  assert.match(index, /\[budget \? budget\.kinds : \[\.\.\.rateLimit\.OWN_BUDGET_KINDS\], !!budget\]/);
+  assert.match(index, /maxPerHour: budget \? budget\.maxPerHour : maxPerHour\(config\)/);
+  for (const kind of rateLimit.ACTIVITY_KINDS) {
+    assert.deepEqual(rateLimit.budgetOf(kind), { kinds: [...rateLimit.ACTIVITY_KINDS], maxPerHour: rateLimit.ACTIVITY_MAX_PER_HOUR });
+  }
 });
 
 test('the unsubscribe route is mounted before sign-in, and the column defaults on', () => {

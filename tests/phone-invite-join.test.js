@@ -86,13 +86,15 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   assert.match(phone, /id="sign-in-sheet-phone"[^>]*type="tel"[^>]*autoComplete="tel"|id="sign-in-sheet-phone"[^>]*type="tel"/);
   assert.match(phone, />Text me a code</);
   // Under the phone step, past an "or", Apple and Google as the first step
-  // draws them, then the email way for an account made before (#4377).
-  assert.match(phone, /Already on Homeroom\? <a href="#login" data-sign-in-sheet-to-email=""[^>]*>Sign in with email<\/a>/);
+  // draws them, then the email for a new account and the way in for an
+  // account made before (#4377; the bring-a-friend Join, Nov 2026).
+  assert.match(phone, /<div data-sign-in-sheet-ways=""[^>]*><button type="button" data-sign-in-sheet-to-email-signup=""[^>]*>Sign up with email instead<\/button><p[^>]*>Already on Homeroom\? <a href="#login" data-sign-in-sheet-to-email=""[^>]*>Sign in<\/a><\/p><\/div>/);
+  assert.doesNotMatch(phone, /Sign in with email/, 'the old single line is gone from the invite');
   assert.match(phone, /<div data-sign-in-sheet-or=""[^>]*class="[^"]*text-\[13px\][^"]*text-zinc-500[^"]*"><span aria-hidden="true" class="h-px flex-1 bg-\[color:var\(--app-sheet-line\)\]"><\/span>or<span aria-hidden="true" class="h-px flex-1 bg-\[color:var\(--app-sheet-line\)\]"><\/span><\/div>/);
   assert.match(phone, /<button type="button" data-sign-in-provider="apple"[^>]*class="[^"]*rounded-full bg-black[^"]*text-white[^"]*"><svg[\s\S]*?<\/svg>Continue with Apple<\/button>/);
   assert.match(phone, /<button type="button" data-sign-in-provider="google"[^>]*class="[^"]*rounded-full bg-white[^"]*shadow-\[inset_0_0_0_1px_rgba\(0,0,0,0\.15\)\][^"]*"><svg[\s\S]*?<\/svg>Continue with Google<\/button>/);
   const at = (needle) => { const i = phone.indexOf(needle); assert.ok(i >= 0, needle); return i; };
-  const order = ['>Text me a code<', 'data-sign-in-sheet-or=', '>Continue with Apple<', '>Continue with Google<', '>Sign in with email<', 'data-terms-notice=', 'data-recaptcha-line='];
+  const order = ['>Text me a code<', 'data-sign-in-sheet-or=', '>Continue with Apple<', '>Continue with Google<', '>Sign up with email instead<', '>Sign in</a>', 'data-terms-notice=', 'data-recaptcha-line='];
   for (let i = 1; i < order.length; i += 1) assert.ok(at(order[i - 1]) < at(order[i]), `${order[i - 1]} before ${order[i]}`);
   assert.doesNotMatch(phone, /Continue with email|Sign in another way/);
   // Inside the app the list is the app's own, and only Google may be on.
@@ -100,10 +102,11 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   assert.match(googleOnly, /data-sign-in-sheet-or=""/);
   assert.match(googleOnly, />Continue with Google</);
   assert.doesNotMatch(googleOnly, /Continue with Apple/);
-  // With none set up (production today, previews): no "or", no buttons, the link.
+  // With none set up (production today, previews): no "or", no buttons, the two links.
   const bare = render({ phone: true, providers: [] });
   assert.match(bare, /data-sign-in-sheet="phone"/);
-  assert.match(bare, /Already on Homeroom\? <a href="#login" data-sign-in-sheet-to-email=""[^>]*>Sign in with email<\/a>/);
+  assert.match(bare, /data-sign-in-sheet-to-email-signup=""[^>]*>Sign up with email instead<\/button>/);
+  assert.match(bare, /Already on Homeroom\? <a href="#login" data-sign-in-sheet-to-email=""[^>]*>Sign in<\/a>/);
   assert.doesNotMatch(bare, /data-sign-in-sheet-or|data-sign-in-sheet-providers|data-sign-in-provider=|Continue with/);
   assert.match(bare, /data-recaptcha-line=""/);
   // Google's notice, for the badge the sheet hides, is its own quieter line
@@ -130,7 +133,9 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
 test('the sheet\'s phone steps: the code, then the username on the phone\'s own route', () => {
   const src = read(SHEET);
   assert.match(src, /const firstStep: Step = phone \? 'phone' : otherWays;/);
-  assert.match(src, /data-sign-in-sheet-to-email=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('email'\); \}\}/,
+  // "Already on Homeroom? Sign in": the email way, which leads on to the
+  // password, whatever is set up (tests/invite-join-sheet.test.js).
+  assert.match(src, /data-sign-in-sheet-to-email=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); onTake\('sign-in'\); \}\}/,
     'the email way, which leads on to the password, whatever is set up');
   assert.match(src, /const \{ res, data \} = await postPhoneCodeRequest\('\/api\/auth\/phone\/request', value\);/);
   // The token and the body are the shared helper's (./recaptcha.ts), which

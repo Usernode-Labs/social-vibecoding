@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 
 // Engagement and delivery reports are opt-in. Codes and recovery links
 // must never acquire pixels or redirects when new templates are added.
-const TRACKED_KINDS = new Set(['build_ready', 'invite_activity', 'waitlist_released', 'project_invite']);
+const TRACKED_KINDS = new Set(['build_ready', 'invite_activity', 'waitlist_released', 'project_invite', 'waitlist_reminder', 'waitlist_reminder_last']);
 function isTracked(kind) { return TRACKED_KINDS.has(kind); }
 function messageId() { return crypto.randomBytes(24).toString('hex'); }
 

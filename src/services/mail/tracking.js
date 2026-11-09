@@ -6,6 +6,9 @@ const ID_RE = /^[a-f0-9]{48}$/;
 // The query parameter a mailed sign-in credential travels in. decorate()
 // never rewrites a link that carries one.
 const CREDENTIAL_PARAM = 'key';
+// Links that stop mail. decorate() never rewrites one: a one-click POST must
+// reach the address in the List-Unsubscribe header as it is.
+const STOP_PATHS = new Set(['/mail/unsubscribe', '/mail/reminders/stop']);
 function secret() { return process.env.PLATFORM_MAIL_TRACKING_SECRET || ''; }
 function sign(purpose, id, key = secret()) {
   return key ? crypto.createHmac('sha256', key).update(`mail:${purpose}:${id}`).digest('base64url') : null;
@@ -42,7 +45,9 @@ function decorate(kind, message, payload) {
     if (!url) return match;
     // RFC 8058 must POST to the original endpoint, and a GET still only
     // asks for confirmation. Neither clients nor scanners unsubscribe by click.
-    if (new URL(url).pathname === '/mail/unsubscribe') return match;
+    // The waitlist reminders' stop link (routes/waitlist-reminders.js) is the
+    // same kind of link, and its token stays out of the tracking record.
+    if (STOP_PATHS.has(new URL(url).pathname)) return match;
     // A link that carries a sign-in credential (#4594, the release mail's
     // one-time link) is left as it is: tracking would store its URL,
     // credential and all, in mail_deliveries and mail_events.

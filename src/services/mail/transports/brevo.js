@@ -55,6 +55,9 @@ function buildPayload(sender, to, kind, message) {
     htmlContent: message.html || `<pre>${escapeHtml(message.text)}</pre>`,
     textContent: message.text,
     tags: [String(kind)],
+    // Where a reply goes, on a kind that names one (the last waitlist
+    // reminder): Brevo's { email, name? }.
+    ...(message.replyTo && parseSender(message.replyTo) ? { replyTo: parseSender(message.replyTo) } : {}),
     // A kind's own headers (activity mail's List-Unsubscribe).
     ...(message.headers ? { headers: { ...message.headers } } : {}),
   };
