@@ -41,14 +41,18 @@ export function joinOrder(apps: readonly GuestApp[]): GuestApp[] {
   return [...featured, ...sortApps(apps, 'trending').filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin }: {
+export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onJoin, onRetry }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
+  /** The directory could not be read: say so, with a way to try again. */
+  failed?: boolean;
   /** Communities already on this Home (joined or pinned), left out of the list. */
   exclude: ReadonlySet<string>;
   signedIn: boolean;
   query: string;
   onJoin: (app: GuestApp) => void;
+  /** Read the directory again, from the line that says it could not be. */
+  onRetry?: () => void;
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
@@ -141,7 +145,19 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin }: {
           </div>
         </div>
       ) : null}
-      {!apps ? (
+      {failed ? (
+        // #6354 review: a request that failed must say so and offer to try
+        // again, rather than leaving the loading placeholders up forever.
+        <div className="flex flex-col items-center gap-3 px-2 py-6" data-home-join-failed="">
+          <p className="text-center text-[14px] text-zinc-500 dark:text-zinc-400">{t('home:join.failed')}</p>
+          {onRetry ? (
+            <Button type="button" variant="pill" size="sm" className="min-h-11 px-5 py-0 un-touch-target"
+              data-home-join-retry="" onClick={onRetry}>
+              {t('home:join.retry')}
+            </Button>
+          ) : null}
+        </div>
+      ) : !apps ? (
         <div className={`${CARD_GRID} px-1`} aria-label={ta('auth:guest.loading')}>
           {[0, 1, 2, 3].map((i) => <span key={i} className="aspect-[16/10] rounded-[20px] bg-black/5 dark:bg-white/10" />)}
         </div>
@@ -164,7 +180,9 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin }: {
         </div>
         </>
       ) : featured.length ? null : (
-        <p className="px-2 py-4 text-[14px] text-zinc-500 dark:text-zinc-400">{t('home:join.allJoined')}</p>
+        <p className="px-2 py-4 text-[14px] text-zinc-500 dark:text-zinc-400">
+          {!pool.length && !kind && !query ? t('home:join.empty') : t('home:join.allJoined')}
+        </p>
       )}
       {more ? (
         <>
@@ -195,7 +213,8 @@ export function scrollParent(el: Element | null): Element | null {
 
 /** The public directory, read once per page load (GET /api/public/apps). */
 let directory: Promise<GuestApp[] | null> | null = null;
-export function readDirectory(): Promise<GuestApp[] | null> {
+export function readDirectory(refresh = false): Promise<GuestApp[] | null> {
+  if (refresh) directory = null;
   if (!directory) {
     directory = fetch('/api/public/apps?include_wallets=0', { credentials: 'same-origin' })
       .then((res) => (res.ok ? res.json() : null))
