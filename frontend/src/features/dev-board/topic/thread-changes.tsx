@@ -140,19 +140,25 @@ function changeBotAtWork(item: ThreadItem, view: ChangeView | null): boolean {
  * being built is read too, for its ⋯ (its page's rows, the Build door among
  * them); it draws its cards once it is up for a vote.
  */
-function useChangeViews(items: ThreadItem[]): Array<ChangeView | null> {
+function useChangeViews(items: ThreadItem[], tick = 0): Array<ChangeView | null> {
   const [rows, setRows] = useState<Record<number, any>>({});
   const [revision, setRevision] = useState(0);
+  // #6477: a caller's own bump (the ballot, after it picks) is a re-read after
+  // a vote moved the figures, so it skips the cached copy the first read
+  // painted.
+  const seenTick = useRef(tick);
   const key = items.map((i) => `${i.id}:${i.status}`).join(',');
   useEffect(() => {
     if (!items.length) return undefined;
+    const bumped = seenTick.current !== tick;
+    seenTick.current = tick;
     const abort = new AbortController();
     // #6441: a change's page is the request's page now, so a change drawn
     // here has been seen: its "ready to try" leaves the bell. The call is a
     // no-op while nothing is unread.
     for (const item of items) window.Notifications?.markProposalSeen?.(item.id);
     for (const item of items) {
-      readChangeDetail({ id: item.id, status: item.status }, false, abort.signal)
+      readChangeDetail({ id: item.id, status: item.status }, false, abort.signal, bumped ? { fresh: true } : undefined)
         .then((row) => { if (!abort.signal.aborted && row) setRows((was) => ({ ...was, [item.id]: row })); })
         .catch(() => {});
     }
@@ -168,7 +174,7 @@ function useChangeViews(items: ThreadItem[]): Array<ChangeView | null> {
     };
     window.addEventListener('change-detail-refresh', refresh);
     return () => { abort.abort(); window.removeEventListener('change-detail-refresh', refresh); };
-  }, [key, revision]);
+  }, [key, revision, tick]);
   return useMemo(() => items.map((item) => {
     const av = appView();
     const row = rows[item.id];
@@ -785,7 +791,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
   // D5: which changes are open under the ballot; each starts folded.
   const [open, setOpen] = useState<ReadonlySet<number>>(() => new Set());
   const box = useRef<HTMLDivElement>(null);
-  const views = useChangeViews(options);
+  const views = useChangeViews(options, revision);
   const closeRow = useCloseRow(slug, close, revision);
   // A door to one of these changes (./votes-in-view.ts) lands on the ballot,
   // where it is voted on.

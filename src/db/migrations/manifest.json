@@ -220,6 +220,11 @@
       "id": "homeroom-bot-overlap-offers",
       "sha256": "2426b42ac74e1b2cf8b3a04ab1f84f53f7e59898fe6e131411e5951b26a04f2f",
       "schemaSha256": "79aa7fdde06ea699fd1eda4a58de8ab7b5ed4bedd3ac065a953e885d1215e2ca"
+    },
+    {
+      "id": "author-yes-withdrawn",
+      "sha256": "b0e7d4100f335f44ba319a86ee0e8dd36c7369f7db8c4c33e6d2de66f9fafec6",
+      "schemaSha256": "e2faeed5434c81271b6e2cffe5b54592ca060fae1e4e779cbbb1564913a2897a"
     }
   ]
 }
