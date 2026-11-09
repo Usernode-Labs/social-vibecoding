@@ -1531,9 +1531,9 @@
     {
       "source": "src/services/issue-proposal-ref.js",
       "kind": "structural-template",
-      "fingerprint": "0b14fc3a04841591f8ea",
+      "fingerprint": "09db12702bf6d7fe74b1",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.status, cs.user_id, cs.shared_at, cs.pr_number, cs.pr_url, cs.linked_issues, cs.created_from_issue_number, cs.last_activity_at, cs.created_at,"
+      "preview": "`SELECT cs.id, cs.status, cs.user_id, cs.shared_at, cs.promoted_at, cs.pr_number, cs.pr_url, cs.linked_issues, cs.created_from_issue_number, cs.last_activity_at"
     },
     {
       "source": "src/services/leaderboard-users.js",

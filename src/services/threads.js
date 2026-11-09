@@ -455,8 +455,13 @@ async function followMerges(db, thread) {
 // `viewer` may read, by issue-proposal-ref.js isNavigable's rule: proposed
 // work is public, a live chat only its owner's until they share it. A
 // request's page reads its changes' replies with this.
+//
+// #6488: `promoted_at` (set when the change went up for a vote, never
+// cleared) keeps that work readable once it is closed or reopened: a
+// proposal's discussion was public, and a close or a reopen does not make
+// it history only its author may read. Status alone missed both.
 const visibleChangeSql = (s, viewer) => `(${s}.status IN ('promoted', 'merging', 'merged')
-       OR ${s}.shared_at IS NOT NULL OR ${s}.user_id = ${viewer})`;
+       OR ${s}.promoted_at IS NOT NULL OR ${s}.shared_at IS NOT NULL OR ${s}.user_id = ${viewer})`;
 
 // #6139: a change not yet up for a vote that has finished building (an SQL
 // expression over chat_sessions as `cs`): its checks passed on its current
@@ -490,7 +495,7 @@ const CHANGE_READY_SQL = `(cs.status IN ('active', 'paused')
 // its page is where they are read.
 const ITEMS_SQL = `
 SELECT 'request' AS type, r.id::bigint AS id, r.number, r.title, r.state AS status,
-       NULL::int AS user_id, NULL::timestamptz AS shared_at, r.created_at,
+       NULL::int AS user_id, NULL::timestamptz AS shared_at, NULL::timestamptz AS promoted_at, r.created_at,
        ((SELECT COUNT(*) FROM chat_messages m
          WHERE m.thread_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = r.number
            AND m.msg_type = 'message' AND m.deleted_at IS NULL)
@@ -514,7 +519,7 @@ SELECT 'request' AS type, r.id::bigint AS id, r.number, r.title, r.state AS stat
 UNION ALL
 SELECT 'change', cs.id::bigint, cs.pr_number,
        COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, ''), NULLIF(cs.branch_name, '')),
-       cs.status, cs.user_id, cs.shared_at, cs.created_at,
+       cs.status, cs.user_id, cs.shared_at, cs.promoted_at, cs.created_at,
        (SELECT COUNT(*) FROM chat_messages m
          WHERE m.thread_id = $1 AND m.thread_type = 'session' AND m.thread_ref = cs.id
            AND m.msg_type = 'message' AND m.deleted_at IS NULL)::int,
@@ -552,7 +557,7 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
    AND NOT ${planRecordSql('cs')}
 UNION ALL
 SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::bigint, NULL::int,
-       i.title, i.status, i.created_by, NULL::timestamptz, i.created_at,
+       i.title, i.status, i.created_by, NULL::timestamptz, NULL::timestamptz, i.created_at,
        (SELECT COUNT(*) FROM chat_messages m
          WHERE m.thread_id = $1 AND m.thread_type = 'governance' AND m.thread_ref = i.id
            AND m.msg_type = 'message' AND m.deleted_at IS NULL)::int,
@@ -830,7 +835,7 @@ async function requestHome(db, { appId, sessionId, viewerId = null }) {
   const id = Number(sessionId);
   if (!appId || !Number.isSafeInteger(id) || id <= 0) return null;
   const { rows } = await db.query(
-    `SELECT id, status, user_id, shared_at, thread_id FROM chat_sessions
+    `SELECT id, status, user_id, shared_at, promoted_at, thread_id FROM chat_sessions
       WHERE id = $1 AND app_id = $2 AND is_headless = FALSE AND thread_id IS NOT NULL`,
     [id, appId]
   );
