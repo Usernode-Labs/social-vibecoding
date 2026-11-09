@@ -32,6 +32,9 @@ function mediaOf(deps) { return deps.mediaStore || require('./media-store'); }
 
 function sideText(value) { return typeof value === 'string' ? value : ''; }
 
+/** The 7 characters a caption and the reply name a commit by. */
+function short(sha) { return String(sha || '').slice(0, 7); }
+
 /** Pure: a drawn email at one side, or null when it cannot be drawn. */
 function drawSide(kind, template, layout, sample, running) {
   try {
@@ -102,7 +105,15 @@ async function emailPictures(pool, config, { app, change, deps = {} }) {
     sideAt(pool, { app, repo: parsed, sha: refs.base, deps }),
     sideAt(pool, { app, repo: parsed, sha: refs.head, deps }),
   ]);
-  if (!before || !after) return { error: 'That change\'s code could not be read just now.' };
+  if (!after) {
+    // #6541: never quietly fall back to a version that is not the newest.
+    return {
+      error: refs.headSource === 'newest'
+        ? `The newest version of this change (${short(refs.head)}) could not be read just now, so its emails are not drawn.`
+        : `The version of this change (${short(refs.head)}) could not be read just now, so its emails are not drawn.`,
+    };
+  }
+  if (!before) return { error: 'That change\'s code could not be read just now.' };
 
   const kinds = [...new Set([
     ...Object.keys(before.templates), ...Object.keys(after.templates),
@@ -135,17 +146,22 @@ async function emailPictures(pool, config, { app, change, deps = {} }) {
     if (!isNew && !changed(sides.find((s) => s.side === 'before')?.drawn, sides.find((s) => s.side === 'after')?.drawn)) continue;
     if (images.length + sides.length > MAX_PICTURES) { capped += sides.length; continue; }
     for (const { side, drawn } of sides) {
+      const sideSha = side === 'before' ? refs.base : refs.head;
       const stored = await storePicture(pool, config, {
-        app, change, kind, side, isNew, sha: side === 'before' ? refs.base : refs.head, drawn, deps,
+        app, change, kind, side, isNew, sha: sideSha, drawn, deps,
       });
       if (!stored) continue;
-      images.push(stored);
+      // The caption names the version it was drawn from, after its subject.
+      images.push({ ...stored, subject: drawn.subject, caption: `${String(drawn.subject).slice(0, 190)} · ${short(sideSha)}` });
       subjects.push(drawn.subject);
     }
   }
   return {
     images,
     subjects: [...new Set(subjects)].slice(0, MAX_PICTURES),
+    drawnFrom: short(refs.head),
+    headSource: refs.headSource,
+    base: short(refs.base),
     unreadable: unreadable.filter((kind) => !images.some((i) => i.kind === kind)),
     unnamed,
     capped,
@@ -335,13 +351,19 @@ async function showChange(pool, config, ctx, args = {}) {
     ok: true,
     images: images.length,
     subjects: (emails.subjects || []).slice(0, MAX_PICTURES),
-    newEmails: (emails.images || []).filter((im) => im.isNew).map((im) => im.caption),
+    newEmails: (emails.images || []).filter((im) => im.isNew).map((im) => im.subject),
     unreadable: emails.unreadable || [],
     unnamed: emails.unnamed || [],
     ...(emails.capped ? { notShown: `${emails.capped} more email picture${emails.capped === 1 ? '' : 's'} did not fit.` } : {}),
     screens: screens.none ? { none: true, canRun: !!screens.canRun } : { images: (screens.images || []).length },
     request,
-    shown: 'Under your reply they see the pictures, each labelled Today or With this change, captioned with its subject or screen. Say what they show in one sentence; do not describe a screen the pictures do not carry.',
+    ...((emails.images || []).length ? { drawnFrom: emails.drawnFrom, headSource: emails.headSource } : {}),
+    shown: 'Under your reply they see the pictures, each labelled Today or With this change, captioned with its subject or screen. Say what they show in one sentence; do not describe a screen the pictures do not carry.'
+      + ((emails.images || []).length
+        ? (emails.headSource === 'newest'
+          ? ` Say they are drawn from ${emails.drawnFrom}, the change's newest version.`
+          : ` Say they are drawn from ${emails.drawnFrom}, the last version checked; a newer push may not be drawn.`)
+        : ''),
     ...(request ? { note: `The offer under your reply posts these as a plan on request #${request}.` }
       : { note: 'This change answers no request, so a plan cannot go on it: the pictures stay in this thread. Say a plan goes on a request.' }),
     ...(screens.none ? { screensNote: screens.canRun ? 'It has no before/after shots yet; the offer under your reply takes them.' : 'It has no before/after shots yet, and you may not take them.' } : {}),

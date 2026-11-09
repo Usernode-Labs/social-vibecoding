@@ -286,6 +286,7 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
             AND s.shots_run_id = r.id
             AND s.shots_state = 'verified' AND r.state = 'verified'
             AND r.head_sha = COALESCE(
+                  s.shots_detail->>'headSha',
                   CASE WHEN s.source = 'imported'
                     THEN s.imported_pr_head_sha
                     ELSE s.reviewed_head_sha
