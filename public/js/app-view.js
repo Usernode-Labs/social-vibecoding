@@ -65,10 +65,11 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, stale: false, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
-  // #396: per-issue cache of the GitHub comment thread fetched lazily when
-  // an issue topic opens, so _renderTopicHead's live-refreshes (WS-driven)
-  // reuse it instead of refetching. Each entry is `{ comments, truncated }`;
-  // absent means "not loaded yet".
+  // #396: per-issue cache of the GitHub comment thread. #6497: a request's
+  // first page now brings it (`_takeIssueComments`), and the feed's lazy
+  // previews fill the same cache, so _renderTopicHead's live-refreshes
+  // (WS-driven) reuse it instead of refetching. Each entry is
+  // `{ comments, truncated }`; absent means "not loaded yet".
   //
   // #4178: keyed by `_ghCommentsKey(slug, number)`, never by the number
   // alone. Every app has its own repository, so issue numbers repeat across
@@ -78,6 +79,20 @@ const AppView = {
 
   _ghCommentsKey(slug, number) {
     return `${slug}/${number}`;
+  },
+
+  // #6497: a request's first page carries its GitHub comments
+  // (`request_comments`, routes/chat.js), so the page paints the whole
+  // discussion once instead of fetching the comments after paint. This is
+  // that answer's one writer; `GroupChat` calls it before the render that
+  // merges the comments into the thread (`_requestThreadRows`). The feed's
+  // own lazy preview (`_wireFeedComments`) still fills the same cache.
+  _takeIssueComments(slug, ref, payload) {
+    if (!slug || ref == null || !payload) return;
+    AppView._ghComments.set(AppView._ghCommentsKey(slug, Number(ref)), {
+      comments: Array.isArray(payload.comments) ? payload.comments : [],
+      truncated: !!payload.truncated,
+    });
   },
 
   // Scroll-position memory for the Dev card list, keyed by app slug
@@ -6118,7 +6133,6 @@ const AppView = {
     // to dim them per paint is gone; this refreshes the one fact they read.
     AppView._refreshAiAvailability();
     AppView._fillKudosHosts(head);
-    if (t.kind === 'issue') AppView._loadIssueComments(item);
     if (t.kind === 'proposal' && ['promoted', 'merging'].includes(item.status)) AppView._loadVoteRoster(item.id);
     // #2603: the governance twin — loaded for settled rows too, because a
     // close proposal's page is read after the fact as much as before it.
@@ -6159,8 +6173,9 @@ const AppView = {
     if (t.kind === 'issue') {
       card = AppView._issueCardModel(item, { noNav: true });
       const closedBand = AppView._issueClosedBandView(item);
-      // #396: the issue body. Its GitHub comments are fetched lazily (after
-      // paint, `_loadIssueComments`) into the thread's stream (#4453).
+      // #396: the issue body. Its GitHub comments ride the thread's own
+      // first page since #6497 (`request_comments`), so they are in hand
+      // before the stream paints (#4453).
       body = {
         actions: AppView._detailActionsView('issue', item),
         // (#2431) The mirror of a proposal's issue chips: which change is
@@ -17349,7 +17364,8 @@ const AppView = {
   // GitHub is drawn as the same named row as one written here, in the order
   // they were written: `GroupChat.renderThread` merges these into the
   // thread's own rows by time (features/group-chat/transcript.tsx
-  // `RequestRows`). Null until `_loadIssueComments` has the comments.
+  // `RequestRows`). Null until the request's first page (or a feed preview)
+  // has put the comments in hand.
   //
   // What #396 and #1808 decided stays here: which authors are bots, and the
   // SANITIZER — a comment body is arbitrary GitHub markdown, run through
@@ -17544,9 +17560,9 @@ const AppView = {
   },
 
   // Fetch (or repaint from cache) one session's sanitised transcript.
-  // Best-effort in the same style as _loadIssueComments: a failure leaves a
-  // short note rather than breaking the page, and we re-resolve the slot
-  // after the await in case a repaint replaced it.
+  // Best-effort: a failure leaves a short note rather than breaking the
+  // page, and we re-resolve the slot after the await in case a repaint
+  // replaced it.
   async _loadSessionTranscript(sessionId) {
     if (!sessionId) return;
     const paint = (data) => {
@@ -17610,41 +17626,6 @@ const AppView = {
       const after = document.querySelector(`[data-transcript-body="${sessionId}"]`);
       if (after) after.innerHTML = `<div class="st-error">${PlatformI18n.htmlText('changes:transcript.loadFailedWith', { error: err.message })}</div>`;
     }
-  },
-
-  // #396: lazily fetch an issue's GitHub comments for its page's stream
-  // (`_requestThreadRows`). Cached per app and issue in _ghComments, so the
-  // WS-driven `_renderTopicHead` refreshes cost no refetch. Best-effort: a
-  // failed fetch leaves the stream with the thread's own rows. Re-checks the
-  // topic after the await, and bails if the reader has left this issue.
-  async _loadIssueComments(item) {
-    if (!item || item.number == null) return;
-    const number = item.number;
-
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    const key = AppView._ghCommentsKey(slug, number);
-    // In hand already: the stream drew it when the thread rendered.
-    if (AppView._ghComments.get(key)) return;
-
-    try {
-      const res = await fetch(
-        `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
-      );
-      if (!res.ok) return;
-      const data = await res.json();
-      AppView._ghComments.set(key, {
-        comments: Array.isArray(data.comments) ? data.comments : [],
-        truncated: !!data.truncated,
-      });
-      const t = AppView._devTopic;
-      if (!t || t.kind !== 'issue' || t.id !== number) return;
-      // Issue numbers repeat across apps: the same number open in another
-      // app is not this issue (#4178).
-      if ((AppView.appData && AppView.appData.slug) !== slug) return;
-      const a = typeof GroupChat !== 'undefined' ? GroupChat.activeThread : null;
-      if (a && a.type === 'issue' && Number(a.ref) === number) GroupChat.renderThread({ keepScroll: true });
-    } catch (_) { /* best-effort: the thread's own rows stand */ }
   },
 
   // The proposal's plain-language summary (pr_summary_md), rendered at the
