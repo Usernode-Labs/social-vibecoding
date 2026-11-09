@@ -8853,7 +8853,16 @@ const DevChat = {
             // Markdown image renderer, and rebuild controlled markup. Width,
             // event handlers, styles and every other supplied attribute are
             // deliberately discarded before DOMPurify sees the result.
-            const tag = String(text || '').trim();
+            // HTML comments are dropped as GitHub drops them: Homeroom's own
+            // GitHub comments end with an invisible governance marker that
+            // must not print as text. Only a whole-comment token is dropped;
+            // anything else stays escaped.
+            const raw = String(text || '');
+            if (/^\s*<!--[\s\S]*?-->\s*$/.test(raw)
+                && raw.indexOf('<!--', raw.indexOf('<!--') + 4) === -1) {
+              return '';
+            }
+            const tag = raw.trim();
             if (DevChat._renderImagesInline && /^<img\b[^>]*\/?>$/i.test(tag)) {
               const srcMatch = /\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
               const altMatch = /\salt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
