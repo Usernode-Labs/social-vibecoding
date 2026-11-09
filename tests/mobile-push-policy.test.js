@@ -442,6 +442,31 @@ test('app health alerts say what happened and what to do (#2253, #2273)', () => 
   });
 });
 
+test('storage notices carry the figures, early and nearly full (#6494)', () => {
+  const early = buildMessage({
+    ...INPUT, kind: 'app_health', context: { ...CONTEXT, detail: 'storage_early:1638:3072' },
+  });
+  assert.deepEqual(early.notification, {
+    title: 'Storage is over half full · MyPage',
+    body: 'MyPage has used 1.6 GB of 3 GB. Clean up old data or ask an admin to raise the limit before it fills',
+  });
+  const warn = buildMessage({
+    ...INPUT, kind: 'app_health', context: { ...CONTEXT, detail: 'storage_warn:2560:3072' },
+  });
+  assert.deepEqual(warn.notification, {
+    title: 'Storage is nearly full · MyPage',
+    body: 'MyPage has used 2.5 GB of 3 GB. Clean up old data or ask an admin to raise the limit',
+  });
+  // No app name, and a size under 1 GB reads in MB.
+  const plain = buildMessage({
+    ...INPUT, kind: 'app_health', context: { ...CONTEXT, appName: null, detail: 'storage_early:614:3072' },
+  });
+  assert.deepEqual(plain.notification, {
+    title: 'Storage is over half full',
+    body: 'Your app has used 614 MB of 3 GB. Clean up old data or ask an admin to raise the limit before it fills',
+  });
+});
+
 test('unexpected events alerts say how many of what, with no app (#4296)', () => {
   const copy = (detail) => buildMessage({
     ...INPUT, kind: 'platform_incident', context: { detail },

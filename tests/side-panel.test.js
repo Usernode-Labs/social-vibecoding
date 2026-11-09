@@ -1406,6 +1406,30 @@ test('beside the bot page on an iPhone Duo held sideways: the list\'s floor, and
   assert.equal(probeLayout(win).neighbourMin, 480);
 });
 
+test('a list floor written in rem is read in pixels, against the root font size (#6495)', () => {
+  // `--ai-list-min` now resolves from the shared `--list-pane-w` (22rem), and
+  // getComputedStyle hands a custom property back as the substituted token
+  // stream, not pixels: read as a bare number it was 22, so the drag's floor
+  // was 22px. At the normal 16px root, 22rem is the inbox's 352px.
+  const { probeLayout } = api.resize;
+  const vars = { '--ai-list-min': '22rem' };
+  const ai = { getBoundingClientRect: () => ({ left: 0, width: 868 }), classList: { contains: () => false } };
+  const win = {
+    innerWidth: 1280,
+    getComputedStyle: () => ({ getPropertyValue: (name) => vars[name] || '', fontSize: '16px' }),
+    document: {
+      body: {},
+      documentElement: { getAttribute: () => null },
+      getElementById: (id) => (id === 'ai-screen' ? ai : null),
+    },
+  };
+  assert.equal(probeLayout(win).neighbourMin, 352, '22rem at a 16px root is 352px');
+  // A root with larger text gives the rem more pixels, as it does on screen.
+  assert.equal(probeLayout({ ...win, getComputedStyle: () => ({ getPropertyValue: (name) => vars[name] || '', fontSize: '20px' }) }).neighbourMin, 440);
+  // A px floor still parses as it always has, root size and all.
+  assert.equal(probeLayout({ ...win, getComputedStyle: () => ({ getPropertyValue: () => '280px', fontSize: '20px' }) }).neighbourMin, 280);
+});
+
 test('the width\'s rules: 320px of panel and 480px of app at the least, whatever the window', () => {
   const { bounds, clampWidth, MIN_PANEL_W, MIN_APP_W } = api.resize;
   assert.equal(MIN_PANEL_W, 320);

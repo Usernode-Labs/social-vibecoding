@@ -359,9 +359,13 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   assert.doesNotMatch(read(JOIN), /snap-x|overflow-x-auto|w-\[min\(17rem/, 'nothing in the section scrolls sideways');
   assert.equal(message('home:join.featured'), 'Featured');
   assert.equal(message('home:join.more'), 'More communities');
-  const rest = html.indexOf('data-home-join-rest=""');
-  assert.ok(rest > html.indexOf('data-guest-featured="game-corner"') && rest < html.indexOf('<article data-guest-card="fresh-one"'), 'More communities sits between Featured and the rest');
-  assert.match(html, /<h3 class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*" data-home-join-rest="">More communities<\/h3>/);
+  // #6470: All is chosen by default, so the rest follow Featured with no
+  // "More communities" heading between them.
+  assert.doesNotMatch(html, /data-home-join-rest/, 'All chosen: the rest follow Featured with no heading (#6470)');
+  assert.ok(html.indexOf('data-guest-card="fresh-one"') > html.indexOf('data-guest-featured="game-corner"'), 'the rest still come after Featured');
+  // A chosen kind keeps the heading over its rest. The kind is internal state
+  // a chip click sets, so the static renderer cannot reach it: pin the source.
+  assert.match(read(JOIN), /\{kind && featured\.length \? <h3 className=\{`\$\{SMALL_CAPS_LABEL\} px-1 pb-2`\} data-home-join-rest="">\{t\('home:join\.more'\)\}<\/h3> : null\}/, 'a chosen kind keeps the heading over its rest');
   // Each featured card keeps what a card can do: Join, signed in.
   assert.match(cardOf(html, 'game-corner'), /data-home-join="game-corner"/);
   // A community already on this Home is in neither.

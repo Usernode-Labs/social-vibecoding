@@ -614,23 +614,26 @@ test('an answer that lands after another app opened is cached, not painted', asy
   assert.ok(!AppView._ghComments.has(AppView._ghCommentsKey('other-app', 12)));
 });
 
-test('an opened issue does not show another app\'s comments for the same number', async () => {
-  let renders = 0;
-  const AppView = makeAppView({
-    fetch: async (url) => commentsFor(url.includes('/apps/other-app/') ? 'from other-app' : 'from demo-app'),
-    // #4453: the comments are rows of the request page's thread, which the
-    // loader redraws once they are in hand.
-    GroupChat: { activeThread: { type: 'issue', ref: 12 }, renderThread: () => { renders += 1; } },
+test('an opened issue does not show another app\'s comments for the same number', () => {
+  const AppView = makeAppView();
+  AppView._ghIssues = [{ number: 12, htmlUrl: null }];
+  const bodies = () => (AppView._requestThreadRows(12)?.rows || []).map((r) => r.text);
+  // #6497: the request's first page brings its comments; the cache is keyed
+  // by app and issue, so project B's #12 never shows project A's (#4178).
+  AppView._takeIssueComments('demo-app', 12, {
+    comments: [{ id: 1, author: 'a', body: 'from demo-app', createdAt: '2026-03-04T15:30:00Z' }],
   });
-  AppView._devTopic = { kind: 'issue', id: 12 };
-  const bodies = () => [...(AppView._requestThreadRows(12)?.rows || []).map((r) => r.text)];
-  await AppView._loadIssueComments({ number: 12, htmlUrl: null });
   assert.deepEqual(bodies(), ['from demo-app']);
 
   AppView.appData = { slug: 'other-app', can_collaborate: true };
-  await AppView._loadIssueComments({ number: 12, htmlUrl: null });
+  assert.equal(AppView._requestThreadRows(12), null, 'the other app has nothing for #12 yet');
+  AppView._takeIssueComments('other-app', 12, {
+    comments: [{ id: 2, author: 'a', body: 'from other-app', createdAt: '2026-03-04T15:31:00Z' }],
+  });
   assert.deepEqual(bodies(), ['from other-app']);
-  assert.equal(renders, 2, 'each answer redraws the open request\'s stream');
+
+  AppView.appData = { slug: 'demo-app', can_collaborate: true };
+  assert.deepEqual(bodies(), ['from demo-app'], 'each answer is kept for its own app');
 });
 
 test('a row\'s own thread under the card is keyed by app too', () => {
