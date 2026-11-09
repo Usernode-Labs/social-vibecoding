@@ -307,15 +307,15 @@ const names = (tools) => tools.map((t) => t.function.name);
 
 test('each place gets the tools that fit it, and nothing that acts without a tap', () => {
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: true })),
-    ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'let_try_again', 'offer_withdraw', 'tell_me_when', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'update_change', 'update_change_description', 'let_try_again', 'offer_withdraw', 'tell_me_when', 'request_detail', 'read_message', 'list_source', 'read_source', 'show_change', 'list_change_files']);
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false })),
-    ['reply', 'stay_quiet', 'request_detail', 'read_message', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
+    ['reply', 'stay_quiet', 'request_detail', 'read_message', 'list_source', 'read_source', 'show_change', 'list_change_files'], 'somebody else\'s change: answer only, and show it');
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
-    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'show_change', 'list_change_files']);
   // Papote #3: under its plan waiting for Build it, a change to the plan is asked for here.
   const planned = voice.toolsFor({ type: 'issue', ref: 1 }, { planWaiting: true });
   assert.deepEqual(names(planned),
-    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'change_plan', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source']);
+    ['reply', 'stay_quiet', 'tell_me_when', 'start_request', 'change_plan', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'show_change', 'list_change_files']);
   // #6264: a request's change may not exist yet, and the promise is about
   // the request then, so it is offered on the request too.
   assert.ok(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })).includes('tell_me_when'));

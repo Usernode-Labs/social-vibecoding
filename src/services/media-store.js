@@ -153,6 +153,7 @@ async function removeOrphan(pool, store, key, cutoff) {
       UNION ALL SELECT 1 FROM session_visuals WHERE object_key = $1
       UNION ALL SELECT 1 FROM check_run_media WHERE object_key = $1
       UNION ALL SELECT 1 FROM homeroom_bot_picture_images WHERE object_key = $1
+      UNION ALL SELECT 1 FROM change_pictures WHERE object_key = $1
     ) AS present`, [key]);
     if (references.present) {
       await tx.query('COMMIT');

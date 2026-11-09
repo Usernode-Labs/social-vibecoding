@@ -97,7 +97,8 @@ async function migrate(config) {
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
-  // #6420's shots: a change on one request's page that names another request
+  // #6533: a change's thread whose bot reply already holds its email pictures.
+  await seedStagingChangePictures(pool);  // #6420's shots: a change on one request's page that names another request
   // as one it closes, so that request's page shows "Change #N says it closes
   // this" and the requester can answer it. Obviously fake, staging only.
   await seedStagingChangeClaim(pool);
@@ -2078,6 +2079,89 @@ async function seedStagingChangeClaim(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging change-claim seeding failed', { message: err.message });
+  }
+}
+
+// #6533: the before & after shots show a change's thread whose Homeroom bot
+// reply already carries its email pictures. A fresh staging copy has no model
+// to answer in a change's thread, so the two pictures (the same admit email,
+// as it is today and with the change) and the reply under them are stored
+// here. Rows for the shots' member fixture (usernode-capture) on the
+// self-hosted Homeroom project only; nothing here is a signal the code reads
+// to decide anything. Idempotent by change number and picture id; strictly a
+// no-op outside staging.
+async function seedStagingChangePictures(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id, name, slug FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query(
+      "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')",
+    );
+    const app = apps.rows[0];
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!app || !member || !bot) return;
+    const changeNumber = 9653;
+    await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, pr_number, pr_title, session_title, status, source, created_at, last_activity_at)
+       SELECT $1, $2, 'staging/demo-change-pictures', $3,
+              'Staging demo: what a change looks like', 'Staging demo: what a change looks like',
+              'promoted', 'native', NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1 AND pr_number = $3)`,
+      [app.id, member.id, changeNumber],
+    );
+    const { rows: [change] } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND pr_number = $2 LIMIT 1', [app.id, changeNumber],
+    );
+    if (!change) return;
+    const { renderMessage } = require('../services/mail/render');
+    const { actionFor } = require('../services/mail/actions');
+    const { englishTemplate, seededLayout } = require('./email-template-seeds');
+    const kind = 'waitlist_released';
+    const template = englishTemplate(kind);
+    const layout = seededLayout(template.layout);
+    const drawn = renderMessage(kind, { template, layout }, actionFor(kind).sample);
+    const pictures = [
+      { id: 'a1'.repeat(16), side: 'before', subject: "You're in. Welcome to Homeroom", preheader: drawn.preheader },
+      // The after side is the same email with words a change could give it.
+      { id: 'b2'.repeat(16), side: 'after', subject: "You're in. Bring your people", preheader: 'Invite up to three friends.' },
+    ];
+    for (const picture of pictures) {
+      const body = {
+        kind, side: picture.side, subject: picture.subject, preheader: picture.preheader,
+        html: drawn.html.replace(/You&#39;re in[\s\S]*?(?=<table role="presentation" cellpadding="0")/, ''),
+        text: drawn.text,
+      };
+      const data = Buffer.from(JSON.stringify(body), 'utf8');
+      await withStagingMedia(pool, data, 'application/json', (tx, m) => tx.query(
+        `INSERT INTO change_pictures (id, app_id, session_id, mail_kind, side, is_new, subject, preheader, sha, object_key, created_at)
+         VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7, $8, $9, NOW() - INTERVAL '2 days')
+         ON CONFLICT DO NOTHING`,
+        [picture.id, app.id, change.id, kind, picture.side, picture.subject, picture.preheader,
+          (picture.side === 'before' ? 'a' : 'b').repeat(40), m.key],
+      ));
+    }
+    const gallery = {
+      type: 'gallery', v: 1, purpose: 'change',
+      project: { slug: app.slug, name: app.name || app.slug },
+      change: { sessionId: Number(change.id), number: changeNumber },
+      images: pictures.map((picture) => ({
+        id: picture.id, source: 'email', side: picture.side, isNew: false, caption: picture.subject,
+      })),
+    };
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+       SELECT $1, $2, 'Here is what this change looks like: the admit email as it is today and with this change.',
+              'message', 'session', $3, $4, NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                           WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $3
+                             AND metadata->>'stagingDemo' = 'change-pictures')`,
+      [app.id, bot.id, Number(change.id), JSON.stringify({
+        stagingDemo: 'change-pictures', homeroomBot: { kind: 'voice', gallery },
+      })],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging change pictures seeding failed', { message: err.message });
   }
 }
 

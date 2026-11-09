@@ -1390,7 +1390,17 @@ const GroupChat = {
       // 3 Nov 2026: the suggested replies under the bot's message in a
       // request's or a change's discussion, for the people it names.
       botSuggest: GroupChat._botSuggestView(kind === 'message' && !deleted ? meta : null),
+      // #6533: what a change looks like, under Homeroom bot's reply in its thread.
+      botGallery: GroupChat._botGalleryView(kind === 'message' && !deleted ? meta : null),
     };
+  },
+
+  /** #6533: the pictures under a reply (homeroom-bot-voice.js say), or null. */
+  _botGalleryView(meta) {
+    const bot = meta && meta.homeroomBot;
+    const gallery = bot && bot.gallery;
+    return gallery && gallery.purpose === 'change' && Array.isArray(gallery.images) && gallery.images.length
+      ? gallery : null;
   },
 
   // Task 2020 follow-up: the laid-out copy of a reply of Homeroom bot's in a
