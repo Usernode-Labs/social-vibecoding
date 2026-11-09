@@ -17,7 +17,8 @@ function excepted(name, version, ids, now = Date.now(), entries = exceptions, co
 function split(findings, baseline) {
   const blocking = [];
   const preexisting = [];
-  for (const f of findings) (baseline && baseline.has(`${f.name}@${f.version}`) ? preexisting : blocking).push(f.text);
+  for (const f of findings) (baseline && f.baselineKey !== null
+    && baseline.has(f.baselineKey || `${f.name}@${f.version}`) ? preexisting : blocking).push(f.text);
   return { blocking: [...new Set(blocking)], preexisting: [...new Set(preexisting)] };
 }
 
@@ -31,10 +32,26 @@ function lockPackages(lock) {
   return set;
 }
 
-// Every package@version an SPDX SBOM (BuildKit's attestation) lists.
+// Syft records go1.23.12, while Trivy reports 1.23.12 or v1.23.12.
+// Normalize only a confirmed Go stdlib identity, never an npm namesake.
+function goStdlibKey(name, version, purl) {
+  if (name !== 'stdlib' || typeof version !== 'string') return null;
+  const bare = version.replace(/^(?:go|v)(?=\d)/, '');
+  if (!/^\d[0-9A-Za-z.+-]*$/.test(bare)
+    || (purl !== `pkg:golang/stdlib@${version}` && purl !== `pkg:golang/stdlib@${bare}`)) return null;
+  return `pkg:golang/stdlib@${bare}`;
+}
+
+// Every package identity an SPDX SBOM (BuildKit's attestation) lists.
 function sbomPackages(sbom) {
   if (!sbom?.spdxVersion || !Array.isArray(sbom.packages) || !sbom.packages.length) throw new Error('Missing or empty baseline SPDX SBOM');
-  return new Set(sbom.packages.filter((p) => p.name && p.versionInfo).map((p) => `${p.name}@${p.versionInfo}`));
+  return new Set(sbom.packages.filter((p) => p.name && p.versionInfo).map((p) => {
+    const goKey = (Array.isArray(p.externalRefs) ? p.externalRefs : [])
+      .filter((ref) => ref.referenceType === 'purl')
+      .map((ref) => goStdlibKey(p.name, p.versionInfo, ref.referenceLocator)).find(Boolean);
+    // Do not also keep an unqualified key: it could match a different ecosystem.
+    return goKey || `${p.name}@${p.versionInfo}`;
+  }));
 }
 
 function npmGate(audit, lock, { now, baseline = null } = {}) {
@@ -60,7 +77,11 @@ function imageGate(report, { now, component, baseline = null } = {}) {
   const findings = report.Results.flatMap((r) => (r.Vulnerabilities || [])
     .filter((v) => /^(HIGH|CRITICAL)$/.test(v.Severity) && v.FixedVersion
       && !excepted(v.PkgName, v.InstalledVersion, [v.VulnerabilityID, ...(v.References || []).map((u) => u.split('/').pop())], now, exceptions, component))
-    .map((v) => ({ name: v.PkgName, version: v.InstalledVersion, text: `${r.Target}: ${v.PkgName}@${v.InstalledVersion}: ${v.VulnerabilityID} (fix ${v.FixedVersion})` })));
+    .map((v) => ({ name: v.PkgName, version: v.InstalledVersion,
+      // null means unconfirmed Go identity: never fall back to a raw npm key.
+      baselineKey: v.PkgName === 'stdlib' && ['gobinary', 'gomod'].includes(r.Type)
+        ? goStdlibKey(v.PkgName, v.InstalledVersion, v.PkgIdentifier?.PURL) : undefined,
+      text: `${r.Target}: ${v.PkgName}@${v.InstalledVersion}: ${v.VulnerabilityID} (fix ${v.FixedVersion})` })));
   return split(findings, baseline);
 }
 function imageFindings(report, now, component) {
