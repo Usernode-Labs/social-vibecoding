@@ -2152,6 +2152,7 @@
 "tests/thread-page-menu.test.js":[1.5,0.4],
 "tests/thread-page.test.js":[1.4,0.4],
 "tests/thread-reads-postgres.test.js":[1.3,1],
+"tests/thread-reopen-postgres.test.js":[1.3,1],
 "tests/thread-shared-number-postgres.test.js":[4.9,0.1],
 "tests/thread-shared-number.test.js":[0.6,0.5],
 "tests/threads-postgres.test.js":[1.3,0.4],
