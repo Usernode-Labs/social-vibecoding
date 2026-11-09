@@ -169,19 +169,16 @@ test('artifact download validates destination, redirect behavior and compressed 
 });
 
 test('ZIP reader reads only the bounded expected report and cleans up on invalid input', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-zip-fixture-'));
+  // Fixed one-report archives avoid requiring a ZIP writer in the test
+  // image. The oversized fixture expands to MAX_BYTES + 1 plain x bytes.
+  const fixture = (name) => fs.readFileSync(path.join(__dirname, 'fixtures/security-audit', name));
   const before = fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('homeroom-security-'));
-  try {
-    const json = JSON.stringify(report());
-    fs.writeFileSync(path.join(dir, 'security-audit-report.json'), json);
-    execFileSync('/usr/bin/zip', ['-q', 'report.zip', 'security-audit-report.json'], { cwd: dir });
-    assert.equal(observer.unzipReport(fs.readFileSync(path.join(dir, 'report.zip'))), json);
-    assert.throws(() => observer.unzipReport(Buffer.from('invalid zip')));
-    fs.writeFileSync(path.join(dir, 'security-audit-report.json'), 'x'.repeat(contract.MAX_BYTES + 1));
-    execFileSync('/usr/bin/zip', ['-q', 'large.zip', 'security-audit-report.json'], { cwd: dir });
-    assert.throws(() => observer.unzipReport(fs.readFileSync(path.join(dir, 'large.zip'))));
-    assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('homeroom-security-')), before);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  assert.equal(observer.unzipReport(fixture('report.zip')), '{"fixture":"homeroom-security-audit"}\n');
+  assert.throws(() => observer.unzipReport(Buffer.from('invalid zip')));
+  const large = fixture('oversized-report.zip');
+  assert.ok(large.length < contract.MAX_BYTES, 'tests the expanded-size limit, not the compressed-size limit');
+  assert.throws(() => observer.unzipReport(large), { code: 'ENOBUFS' });
+  assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('homeroom-security-')), before);
 });
 
 test('one advisory aggregates all components, retains its target and updates only for semantic changes', () => {
