@@ -1710,6 +1710,16 @@ const CLAIMS = Object.freeze([
     instead: 'I haven\'t posted that anywhere yet.',
   },
   {
+    // #6534: a reply that says pictures, shots or a design are posted, when
+    // nothing was stored under it. In a project's thread only what was stored
+    // as an attachment counts; in the bot's own chat the gallery card does.
+    kind: 'posted_pictures',
+    re: /\bhere (?:are|is) the (?:pictures|shots|stills|designs?)\b|\bI(?:'ve| have)(?: just| now)? (?:attached|posted|added|put up) (?:the |your |two |three |four )?(?:pictures?|shots?|stills|designs?|before and after)\b|\battached below\b/i,
+    backed: (ctx) => !!(ctx.attached?.length || (!ctx.place && ctx.pictures?.made)),
+    said: 'says pictures or a design were posted',
+    instead: 'I haven\'t attached any pictures.',
+  },
+  {
     kind: 'started',
     re: /\bI(?:'m| am)\s+(?:now\s+)?(?:starting|working on (?:it|that|this|#\d+)|building (?:it|that|this|#\d+)|on it)\b|\bI(?:'ve| have)\s+started\b|\bI(?:'ll| will) (?:start(?: on)?|look at|pick up) (?:it|that|this|#\d+) (?:now|right away|right now)\b/i,
     // Homeroom bot parity (P4): reads a batch queued this turn (work_through).
