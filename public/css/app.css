@@ -2366,11 +2366,11 @@ form.agent-session-composer:focus-within {
    around its shoulders. Below that exactly one pane is rendered at a time
    (the list until a row is picked, the thread after, the header bar's back
    arrow between them) and both stay full width. */
-/* ONE LIST MEASURE (#6495, 9 Nov 2026): a list with something open beside it
-   is the same page here and on the Homeroom bot tab, so both columns read
-   this: `.messages-list-pane` below, and the bot tab's `.ai-screen-body`
-   (THE AI TAB'S MAIN VIEW). 22rem is the width the inbox's list has always
-   had, so the inbox is unchanged. */
+/* ONE LIST MEASURE (#6495, 9 Nov 2026): 22rem is the width the inbox's list
+   has always had, read by `.messages-list-pane` below. On the Homeroom bot
+   tab (#6520) the list fills the room beside the open column instead, and
+   this width is only its floor, through `--ai-list-min` (THE AI TAB'S MAIN
+   VIEW). */
 :root { --list-pane-w: 22rem; }
 @media (min-width: 768px) {
   .messages-list-pane {
@@ -18289,17 +18289,20 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    16px from Main. Without it they sit 16px from both, and the list centres
    between them. */
 #ai-screen[data-ai-docked] { padding-inline-start: var(--platform-rail-w, 0px); }
-/* THE BOT TAB'S LIST IS THE INBOX'S LIST (#6495, 9 Nov 2026). With something
-   open beside it the page is the Messages inbox's: a list the shared width
-   against the rail, and the open column filling the rest. The body gives up
-   its centred 672px column for that measure, and the room it lets go is
-   Main's (the `--ai-main-w` above). With nothing open beside the lists it
-   keeps `max-w-2xl mx-auto` (features/ai/index.tsx), a single centred page
-   as Home and Needs you are. */
+/* THE BOT TAB'S LIST FILLS THE ROOM BESIDE THE OPEN COLUMN (#6520, 9 Nov
+   2026). With something open beside it the body has the room between the
+   rail and the open column (the `--ai-main-w` above) to itself, and it
+   takes all of that room, up to the page's own 672px single column
+   (`max-w-2xl` in features/ai/index.tsx) and centred in it, rather than
+   staying the inbox's 22rem against the rail and leaving the rest bare.
+   `--list-pane-w` remains the list's floor through `--ai-list-min`, so
+   dragging the column wider still stops where it did. With nothing open
+   beside the lists the rule does not match and the body keeps
+   `max-w-2xl mx-auto`, a single centred page as Home and Needs you are. */
 #ai-screen[data-ai-docked][data-ai-open] .ai-screen-body {
   width: 100%;
-  max-width: var(--list-pane-w);
-  margin-inline: 0;
+  max-width: 42rem;
+  margin-inline: auto;
 }
 /* The aside stays mounted, because a thread is opened from the place it is
    handed (`at`); with nothing open beside the lists it is not drawn. */
