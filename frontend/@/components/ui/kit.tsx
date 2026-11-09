@@ -79,10 +79,9 @@ export function Tile({ size = 40, src, emoji, color, name = '' }: {
   name?: string;
 }) {
   const style: Custom = { '--fr-ts': `${size}px` };
-  // A picture with no colour of its own sits on white, as the launcher's
-  // tiles do: many icons are drawn on transparency.
-  if (color) style['--fr-tc'] = color;
-  else if (src) style['--fr-tc'] = '#fff';
+  // A picture or an emoji with no colour of its own sits on white, as the
+  // launcher's tiles do: many icons are drawn on transparency.
+  style['--fr-tc'] = color || '#fff';
   return (
     <span className={k('tile')} style={style} aria-hidden="true">
       {src
@@ -192,15 +191,15 @@ export function Row({ lead, title, line, right, go, on, sm, wrap, href, onClick,
     <>
       {lead}
       <span className={k('tx')}>
-        <span className={k('t')} style={{ display: 'block' }}>{title}</span>
-        {line ? <span className={k('s')} style={{ display: 'block' }}>{line}</span> : null}
+        <span className={k('t')}>{title}</span>
+        {line ? <span className={k('s')}>{line}</span> : null}
       </span>
       {right}
       {go ? <Icon name="cr" size={18} className="go" /> : null}
     </>
   );
   if (href) return <a className={cls} href={href} onClick={onClick} aria-label={label} aria-current={on ? 'page' : undefined}>{body}</a>;
-  if (onClick) return <button type="button" className={cls} onClick={onClick} aria-label={label} style={{ width: '100%', textAlign: 'start' }}>{body}</button>;
+  if (onClick) return <button type="button" className={cls} onClick={onClick} aria-label={label}>{body}</button>;
   return <div className={cls}>{body}</div>;
 }
 

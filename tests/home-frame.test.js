@@ -112,7 +112,7 @@ test('Pinned apps are tiles, the only tiles on the page, with a tile for the res
   const group = few.slice(few.indexOf('id="home-frame-apps"'), few.indexOf('</section>', few.indexOf('id="home-frame-apps"')));
   assert.match(group, /<h2 class="fr-cap">Pinned apps<\/h2><button type="button" class="fr-link">Edit<\/button>/);
   assert.match(group, /<div class="fr-card"><div class="fr-tiles"><a class="fr-at" href="\/app\/game-corner">/);
-  assert.match(group, /<span class="fr-tile" style="--fr-ts:52px" aria-hidden="true">G<\/span><span class="fr-nm">Game Corner<\/span>/);
+  assert.match(group, /<span class="fr-tile" style="--fr-ts:52px;--fr-tc:#fff" aria-hidden="true">G<\/span><span class="fr-nm">Game Corner<\/span>/);
   assert.equal((group.match(/class="fr-at"/g) || []).length, 2);
   const many = render({ initialFeed: [], initialQuestions: [] }, homeStubs({ apps: Array.from({ length: 14 }, (_, i) => app(`a${i}`, `App ${i}`)) }));
   assert.equal((many.match(/class="fr-at"/g) || []).length, 12, 'eleven apps and one tile for all of them');
@@ -128,7 +128,7 @@ test('Pinned communities are rows that say what is new there', () => {
   const group = html.slice(html.indexOf('id="home-frame-communities"'), html.indexOf('</section>', html.indexOf('id="home-frame-communities"')));
   assert.match(group, /<h2 class="fr-cap">Pinned communities<\/h2>/);
   assert.match(group, /<a class="fr-row" href="\/app\/pourover\/workshop\?ws=status">/, 'a row is the door to the hub');
-  assert.match(group, /<span class="fr-s"[^>]*>1 to vote · 2 in progress<\/span>/);
+  assert.match(group, /<span class="fr-s">1 to vote · 2 in progress<\/span>/);
   assert.match(group, /<span class="fr-pill fr-act" data-kind="act">1 to vote<\/span>/, 'what waits for the viewer is the row\'s one pill, in blue');
   assert.match(group, /<a class="fr-row fr-sm" href="\/app\/quiet\/workshop\?ws=status">/, 'a community with nothing to say is the single-line row');
   assert.doesNotMatch(group, /0 to vote|0 in progress/, 'a zero says nothing');
@@ -159,7 +159,7 @@ test('what went live this week sits in the side column, newest first, with how l
   assert.match(html, /<div class="fr-cols"><div class="fr-stack">/, 'two columns once there is context');
   const side = html.slice(html.indexOf('id="home-frame-live"'));
   assert.match(side, /<h2 class="fr-cap">Live this week<\/h2>/);
-  assert.match(side, /Penalty shoot-out mode<\/span><span class="fr-s"[^>]*>GOAL! · Bruno<\/span><\/span><span class="fr-meta">2h<\/span>/);
+  assert.match(side, /Penalty shoot-out mode<\/span><span class="fr-s">GOAL! · Bruno<\/span><\/span><span class="fr-meta">2h<\/span>/);
   assert.match(side, /<span class="fr-meta">3d<\/span>/);
 });
 
