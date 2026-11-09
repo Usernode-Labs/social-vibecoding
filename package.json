@@ -8,9 +8,9 @@
     "social-vibecoding": "tools/social-vibecoding"
   },
   "scripts": {
-    "prestart": "node scripts/ensure-dependencies.js && node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --runtime",
+    "prestart": "node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --runtime",
     "start": "node server.js",
-    "predev": "node scripts/ensure-dependencies.js && node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --runtime",
+    "predev": "node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --runtime",
     "dev": "node --watch server.js",
     "pretest": "node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --html-only",
     "test": "node --require ./tests/lib/test-net.js --test --test-force-exit --test-timeout=180000 tests/*.test.js",
@@ -22,7 +22,6 @@
     "shots:pair": "node scripts/shots-dry-run-pair.js",
     "test:shell-upgrade:browser": "node scripts/verify-shell-upgrade.js",
     "ensure:shell": "node scripts/ensure-shell-artifacts.js --runtime",
-    "build": "node scripts/ensure-dependencies.js && node scripts/ensure-shell-artifacts.js --runtime",
     "migrate:kubernetes": "node scripts/migrate-kubernetes.js",
     "cutover:native-delegation": "node scripts/cutover-native-delegation.js",
     "build:css": "node scripts/build-tailwind.js",
