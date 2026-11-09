@@ -80,10 +80,13 @@ const EVENT_TYPES = Object.freeze({
   WEEKLY_DIGEST: 'weekly_digest',
   // Invite links (services/community-invites.js): made, turned off, and
   // followed, with { inviteId, ... }. The redemption rows are the record of
-  // who followed whose link; these are the analytics trail.
+  // who followed whose link; these are the analytics trail. A link the
+  // leaked-link guard paused is a platform incident (invite_link_paused);
+  // opening it again is this.
   INVITE_LINK_CREATED: 'invite_link_created',
   INVITE_LINK_REVOKED: 'invite_link_revoked',
   INVITE_LINK_REDEEMED: 'invite_link_redeemed',
+  INVITE_LINK_REOPENED: 'invite_link_reopened',
   // Sync-with-main completed (issue: make sync emit session activity).
   // Attributed to the session owner (sync bills the owner), recorded on
   // the terminal path with { syncResult, behind, sha, pushOk, trigger }.

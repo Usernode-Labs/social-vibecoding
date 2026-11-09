@@ -68,9 +68,16 @@
  *
  * Under the phone step, past an "or", Continue with Apple and Continue with
  * Google when an admin has set them up (the same buttons as the first step's
- * otherwise), then "Already on Homeroom? Sign in with email", for an account
- * made before; one made by email from here is not a private member and
- * waits in the queue. That step still leads on to "Use a password".
+ * otherwise), then "Sign up with email instead", the email step making an
+ * account (its terms under it), and "Already on Homeroom? Sign in", the
+ * email step with the Email code | Password switch, for an account made
+ * before (`inviteWays`, `inviteWayTarget`).
+ *
+ * That is on a touch screen. On a computer the Join opens on the email
+ * instead (`opensOn`, decided as the sheet opens): Apple, Google and the
+ * email when they are set up, else the email step, then "Use a phone
+ * number instead" and "Already on Homeroom? Sign in". Signing in, the email
+ * ways offer "New to Homeroom? Sign up", back to the step it opened on.
  *
  * "Use a password" is a step of its own here too:
  *
@@ -461,22 +468,74 @@ export { phoneE164 } from './phone-input';
  * has, it is "Use a password", and no terms under the email, since sending a
  * code makes nothing (#5257; the code step says them): Sign in, the story's
  * Continue (#5251: one button for new and returning people, so the password
- * way in is here now that the story has no Sign in of its own), and the
- * other ways after an invite's phone step.
+ * way in is here now that the story has no Sign in of its own), and an
+ * invite's Join once "Already on Homeroom? Sign in" was pressed (`signIn`).
  */
-export function firstStepLine(from: 'invite' | 'story' | 'signin', phone = false): 'terms' | 'password' {
-  return from === 'invite' && !phone ? 'terms' : 'password';
+export function firstStepLine(from: 'invite' | 'story' | 'signin', signIn = false): 'terms' | 'password' {
+  return from === 'invite' && !signIn ? 'terms' : 'password';
 }
 
 /**
  * Whether a step carries the Email code | Password switch (#5258): the email
  * and password steps, wherever the sheet may be for an account somebody has.
- * An invite's Join only makes an account, so it has no switch; a right code
- * for a password account still takes it to the password step, with the old
- * link back.
+ * An invite's Join makes an account, so it has no switch until "Already on
+ * Homeroom? Sign in" is pressed (`signIn`); a right code for a password
+ * account still takes it to the password step, with the old link back.
  */
-export function hasMethodSwitch(step: string, from: 'invite' | 'story' | 'signin', phone = false): boolean {
-  return (step === 'email' || step === 'password') && firstStepLine(from, phone) === 'password';
+export function hasMethodSwitch(step: string, from: 'invite' | 'story' | 'signin', signIn = false): boolean {
+  return (step === 'email' || step === 'password') && firstStepLine(from, signIn) === 'password';
+}
+
+/** The steps an invite's Join can open on. */
+export type OpeningStep = 'phone' | 'choose' | 'email';
+
+/**
+ * The step a sheet opens on. An invite's Join with phone sign-in offered
+ * (`phone`) opens on the phone number on a touch screen, where the code
+ * comes to the same phone; on a computer it opens on the email, with Apple
+ * and Google when they are set up (`otherWays`: the choose step, else the
+ * email step), and the phone a link away. Every other sheet opens on its
+ * other ways. Asked as the sheet opens (`touch` is touchScreen() then),
+ * never in the first render, so the prerendered document is unchanged.
+ */
+export function opensOn({ phone, touch, otherWays }: { phone: boolean; touch: boolean; otherWays: 'choose' | 'email' }): OpeningStep {
+  return phone && touch ? 'phone' : otherWays;
+}
+
+/**
+ * A link under an invite's Join steps, with phone sign-in offered:
+ *   email-signup  "Sign up with email instead", under the phone step;
+ *   phone         "Use a phone number instead", under the email ways;
+ *   sign-in       "Already on Homeroom? Sign in", for an account made before;
+ *   sign-up       "New to Homeroom? Sign up", back from signing in.
+ */
+export type InviteWay = 'email-signup' | 'phone' | 'sign-in' | 'sign-up';
+
+/**
+ * The links under step `step` of an invite's Join, in order, with phone
+ * sign-in offered. `signIn`: "Already on Homeroom? Sign in" was pressed.
+ * The phone step offers the email for a new account and the way in for an
+ * account made before; the email ways (choose, email) offer the phone and
+ * that way in while making an account, and the way back to making one
+ * while signing in. No other step has any.
+ */
+export function inviteWays(step: string, signIn: boolean): InviteWay[] {
+  if (step === 'phone') return ['email-signup', 'sign-in'];
+  if (step !== 'choose' && step !== 'email') return [];
+  return signIn ? ['sign-up'] : ['phone', 'sign-in'];
+}
+
+/**
+ * Where an invite way goes: the step, and whether the sheet is then signing
+ * an account in. Signing in is the email step with the Email code | Password
+ * switch (`hasMethodSwitch`), where "Other ways to continue" still leads to
+ * Apple and Google; signing up again is the step the sheet opened on.
+ */
+export function inviteWayTarget(way: InviteWay, openedOn: OpeningStep): { step: OpeningStep; signIn: boolean } {
+  if (way === 'email-signup') return { step: 'email', signIn: false };
+  if (way === 'phone') return { step: 'phone', signIn: false };
+  if (way === 'sign-in') return { step: 'email', signIn: true };
+  return { step: openedOn, signIn: false };
 }
 
 /** Whether a step's foot says the terms: not the password or reset steps, which make no account (#5258). */
@@ -739,6 +798,49 @@ const SWITCH_ON = 'h-9 rounded-full bg-white text-[15px] font-semibold text-zinc
 const MAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-violet-50 text-[17px] font-[650] text-violet-700 dark:bg-violet-950/50 dark:text-violet-300';
 const SWITCH_OFF = 'h-9 rounded-full text-[15px] font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
 
+/**
+ * One of an invite's links (`inviteWays`). "Sign up with email instead" and
+ * "Use a phone number instead" are the sheet's quiet buttons; "Already on
+ * Homeroom? Sign in" and "New to Homeroom? Sign up" are a line of their own,
+ * centred under the step, as the way to a password is. `onTake` goes there
+ * (`inviteWayTarget`).
+ */
+export function InviteWayLink({ way, onTake }: { way: InviteWay; onTake: (way: InviteWay) => void }) {
+  const t = useMessages('auth');
+  if (way === 'email-signup') {
+    return <button type="button" data-sign-in-sheet-to-email-signup="" className={QUIET} onClick={() => onTake(way)}>{t('auth:signInSheet.invite.signUpWithEmail')}</button>;
+  }
+  if (way === 'phone') {
+    return <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => onTake(way)}>{t('auth:signInSheet.toPhoneLink')}</button>;
+  }
+  if (way === 'sign-in') {
+    return (
+      <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+        <RichMessage id="auth:signInSheet.invite.haveAccount" components={[
+        <a
+          href="#login"
+          data-sign-in-sheet-to-email=""
+          onClick={(e) => { e.preventDefault(); onTake('sign-in'); }}
+          className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+        />,
+        ]} />
+      </p>
+    );
+  }
+  return (
+    <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+      <RichMessage id="auth:signInSheet.invite.newHere" components={[
+      <button
+        type="button"
+        data-sign-in-sheet-to-signup=""
+        onClick={() => onTake('sign-up')}
+        className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+      />,
+      ]} />
+    </p>
+  );
+}
+
 export type SignInSheetProps = {
   open: boolean;
   /** "Join Sunday Run Club", "Make your account", "Sign in" */
@@ -844,6 +946,13 @@ export function SignInSheet({
   const otherWays: Step = providers.length ? 'choose' : 'email';
   const firstStep: Step = phone ? 'phone' : otherWays;
   const [step, setStep] = useState<Step>(firstStep);
+  // The step it opened on (`opensOn`), decided as it opens; until then, and
+  // in the prerender, `firstStep`.
+  const [openedOn, setOpenedOn] = useState<OpeningStep | null>(null);
+  const startStep = openedOn ?? (firstStep as OpeningStep);
+  // An invite's Join, once "Already on Homeroom? Sign in" was pressed: its
+  // email ways sign an account in (`firstStepLine`), not make one.
+  const [signIn, setSignIn] = useState(false);
   // Google's check runs on the two phone steps, and the line under them is
   // dropped while Brevo sends the texts and no check is used (#5840).
   const recaptchaInUse = useRecaptchaLine(step === 'phone' || step === 'phone-code');
@@ -904,9 +1013,10 @@ export function SignInSheet({
   useKeyboardSurface(panelRef, { ride: true });
   // Read when it opens, not followed while it is open: the options that
   // name the providers can land after a release link has opened the sheet,
-  // and must not send it back from the code to the first step.
-  const firstStepRef = useRef(firstStep);
-  firstStepRef.current = firstStep;
+  // and must not send it back from the code to the first step. An invite's
+  // Join also asks there whether this is a touch screen (`opensOn`).
+  const firstStepRef = useRef({ phone, otherWays: otherWays as 'choose' | 'email' });
+  firstStepRef.current = { phone, otherWays: otherWays as 'choose' | 'email' };
   // Read when they are needed, like the first step: the link's state when
   // the sheet opens, and the account's hand-off when a step gets there.
   const linkUsedRef = useRef(linkUsed);
@@ -958,10 +1068,16 @@ export function SignInSheet({
   }, []);
 
   // A fresh start each time it opens: the address stays, the rest goes. Back
-  // from a provider, it opens where that left off.
+  // from a provider, it opens where that left off. The step it opens on is
+  // decided here, as it opens, and never in the first render: an invite's
+  // Join opens on the phone on a touch screen and on the email elsewhere
+  // (`opensOn`), and the prerendered document is the same on both.
   useEffect(() => {
     if (!open) return;
-    setStep(resume === 'username' ? 'username' : firstStepRef.current);
+    const opening = opensOn({ ...firstStepRef.current, touch: touchScreen() });
+    setOpenedOn(opening);
+    setSignIn(false);
+    setStep(resume === 'username' ? 'username' : opening);
     setWelcome(null);
     setLinkRefused(linkUsedRef.current);
     if (resume === 'username') setUsernameVia('oauth');
@@ -1496,7 +1612,7 @@ export function SignInSheet({
           return;
         }
         // The continuation is gone: start over from the first step.
-        setStep(firstStep);
+        setStep(startStep);
         setError(errorText(data) || translate('auth:signInSheet.username.expired'));
         return;
       }
@@ -1506,16 +1622,24 @@ export function SignInSheet({
     } finally {
       setBusy(false);
     }
-  }, [finish, firstStep, usernameVia, newsByText, newsByEmail]);
+  }, [finish, startStep, usernameVia, newsByText, newsByEmail]);
 
   if (!open) return null;
 
-  const methodSwitch = hasMethodSwitch(step, from, phone);
+  const methodSwitch = hasMethodSwitch(step, from, signIn);
   const toStep = (next: Step) => { setError(null); setDetails(null); setResetSent(false); setStep(next); };
+  // An invite's links (`inviteWays`), each to its step and to signing in or not.
+  const takeWay = (way: InviteWay) => {
+    const to = inviteWayTarget(way, startStep);
+    setSignIn(to.signIn);
+    toStep(to.step);
+  };
+  const ways = phone ? inviteWays(step, signIn) : [];
+  const wayLine = (way: InviteWay) => <InviteWayLink key={way} way={way} onTake={takeWay} />;
 
   // The way to a password, where the sheet may be for an account somebody
   // has: under the first step's email, and nothing else under it (#5257).
-  const passwordLink = firstStepLine(from, phone) === 'password' ? (
+  const passwordLink = firstStepLine(from, signIn) === 'password' ? (
     <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
       <a
         href="#login"
@@ -1530,7 +1654,7 @@ export function SignInSheet({
   // Under the email step's button: the terms only where the sheet only makes
   // an account (an invite's Join). Elsewhere sending a code makes nothing;
   // the code step, whose right code can, says them (#5257).
-  const emailFoot = firstStepLine(from, phone) === 'terms' ? <TermsNotice /> : null;
+  const emailFoot = firstStepLine(from, signIn) === 'terms' ? <TermsNotice /> : null;
 
   // Apple and Google, in the order the server lists them: the first step's
   // own, or under the invite's phone step past an "or".
@@ -1562,12 +1686,13 @@ export function SignInSheet({
               : welcome ? t('auth:signInSheet.account.welcome', { email: welcome }) : t('auth:signInSheet.account.title');
   // The first step says nothing under its title unless it is given a line:
   // "Make your account", "Join Sunday Run Club" and "Sign in" already say
-  // it, and the field or the providers come next (#4037). With the phone
-  // first, the other ways are for an account made before.
-  const sub = step === firstStep
+  // it, and the field or the providers come next (#4037). An invite's other
+  // ways say they are for an account made before only once "Already on
+  // Homeroom? Sign in" was pressed: making one, they say nothing either.
+  const sub = step === startStep
     ? intro
     : step === 'choose'
-      ? t('auth:signInSheet.choose.lead')
+      ? (signIn ? t('auth:signInSheet.choose.lead') : '')
       : step === 'email'
       ? t('auth:signInSheet.email.lead')
       : step === 'phone-code'
@@ -1674,10 +1799,12 @@ export function SignInSheet({
                 {busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.continueWithEmail')}
               </button>
             </form>
-            {phone || phoneLink ? (
-              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{phone ? t('auth:signInSheet.toPhone') : t('auth:signInSheet.toPhoneLink')}</button>
+            {phoneLink && !phone ? (
+              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:signInSheet.toPhoneLink')}</button>
             ) : null}
             {passwordLink}
+            {/* An invite's Join: the phone, and the way in for an account made before (`inviteWays`). */}
+            {ways.map(wayLine)}
           </div>
         ) : null}
 
@@ -1694,9 +1821,10 @@ export function SignInSheet({
             {providers.length ? (
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>{t('auth:signInSheet.email.otherWays')}</button>
             ) : null}
-            {phone || phoneLink ? (
-              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{phone ? t('auth:signInSheet.toPhone') : t('auth:signInSheet.toPhoneLink')}</button>
+            {phoneLink && !phone ? (
+              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:signInSheet.toPhoneLink')}</button>
             ) : null}
+            {ways.map(wayLine)}
           </form>
         ) : null}
 
@@ -1898,7 +2026,15 @@ export function SignInSheet({
             {providerButtons}
           </div>
         ) : null}
-        {step === 'phone' ? (
+        {/* Under the phone and its "or": an invite's email for a new
+            account, and the way in for one made before (`inviteWays`). */}
+        {step === 'phone' && ways.length ? (
+          <div data-sign-in-sheet-ways="" className="mt-4 flex flex-col gap-1.5">
+            {ways.map(wayLine)}
+          </div>
+        ) : null}
+        {/* The landing's sheets, whose phone is a link away: back to the email. */}
+        {step === 'phone' && !phone ? (
           <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
             <RichMessage id="auth:signInSheet.phone.haveAccount" components={[
             <a

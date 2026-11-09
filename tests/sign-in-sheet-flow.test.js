@@ -496,6 +496,7 @@ test('each way into the sheet says only what is true for it', () => {
   assert.equal(firstStepLine('invite'), 'terms');
   assert.equal(firstStepLine('story'), 'password');
   assert.equal(firstStepLine('signin'), 'password');
+  // An invite's Join once "Already on Homeroom? Sign in" was pressed.
   assert.equal(firstStepLine('invite', true), 'password');
   const render = (from, title) => renderToHtml(createElement(SignInSheet, {
     open: true, title, from, onClose() {}, primaryClass: 'pill',
@@ -571,7 +572,7 @@ test('Email code | Password is one switch, and the password and reset steps say 
     assert.equal(hasMethodSwitch('password', from), true);
     for (const step of ['choose', 'code', 'forgot', 'account', 'phone']) assert.equal(hasMethodSwitch(step, from), false);
   }
-  assert.equal(hasMethodSwitch('email', 'invite', true), true, 'the other ways after an invite\'s phone step');
+  assert.equal(hasMethodSwitch('email', 'invite', true), true, 'an invite\'s Join, signing an account in');
   // An invite's Join only makes an account: no password half to switch to.
   assert.equal(hasMethodSwitch('email', 'invite'), false);
   assert.equal(hasMethodSwitch('password', 'invite'), false);

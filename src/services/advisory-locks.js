@@ -146,9 +146,13 @@ const VOTED_DIGEST_LOCK = 991026;
 // A production app's activity admission and scale-to-zero claim. Workflows
 // perform wake/deploy work; one process lock connection serves all app keys.
 const APP_SLEEP_LOCK = 991027;
+// One person's bring-a-friend nudge claimed (services/invite-nudge.js): the
+// CLASSIFIER half of a transaction lock on the person, as VOTE_DIGEST_LOCK,
+// so two projects' claims for one person cannot both pass the one-a-week cap.
+const INVITE_NUDGE_LOCK = 991031;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK,
   VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
   CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK, SESSION_BRANCH_LOCK, CAPACITY_CLAIM_LOCKS, WORKER_EVICTION_LOCK,
-  PREVIEW_SLEEP_LOCK, VOTED_DIGEST_LOCK, APP_SLEEP_LOCK };
+  PREVIEW_SLEEP_LOCK, VOTED_DIGEST_LOCK, APP_SLEEP_LOCK, INVITE_NUDGE_LOCK };

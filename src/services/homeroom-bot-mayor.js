@@ -267,6 +267,11 @@ const NEW_REQUEST = 'New request';
 const ADD_TO_EXISTING = 'Add to an existing request…';
 // The answers under each kind of offer (bot_cards.kind), the
 // one that does it first.
+// The bring-a-friend nudge's card (homeroom-bot-dm.js INVITE_NUDGE_KIND,
+// invite-nudge.js): a card with one server choice, Not now, so it is no
+// offer here and has no words to type.
+const INVITE_NUDGE_KIND = 'invite_friends';
+
 const OFFER_ANSWERS = Object.freeze({
   file_request: Object.freeze([FILE_IT, NOT_NOW]),
   withdraw_proposal: Object.freeze([WITHDRAW_IT, KEEP_IT]),
@@ -5283,8 +5288,9 @@ async function decideTyped(pool, config, { bot, user, settings, conversationId, 
       WHERE a.user_id = $1 AND a.conversation_id = $2 AND a.status = 'open'
         AND a.created_at > NOW() - make_interval(mins => $3)
         -- B6: a plan is built by its own button (or a reply to it), never by
-        -- a "yes" typed under some other offer's words.
-        AND a.kind <> 'build_plan'
+        -- a "yes" typed under some other offer's words. The bring-a-friend
+        -- nudge is decided by its Not now alone (invite-nudge.js).
+        AND a.kind NOT IN ('build_plan', 'invite_friends')
       ORDER BY a.id DESC LIMIT 4`,
     [user.id, conversationId, OFFER_TYPED_MINUTES],
   );
@@ -5326,8 +5332,10 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
     );
     action = rows[0];
   }
-  // B6: a reply to a plan is the plan's (homeroom-bot-dm.js changePlan).
-  if (!action || action.kind === 'build_plan') return null;
+  // B6: a reply to a plan is the plan's (homeroom-bot-dm.js changePlan). A
+  // reply to the bring-a-friend nudge is read by the model: its Not now is a
+  // button (invite-nudge.js dismiss).
+  if (!action || action.kind === 'build_plan' || action.kind === INVITE_NUDGE_KIND) return null;
   const [yesWord, noWord] = answersFor(action);
   const yes = typed ? typed.yes : said(message.content, yesWord);
   const no = typed ? !typed.yes : said(message.content, noWord);
@@ -5355,8 +5363,12 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
   const { rows } = await pool.query('SELECT * FROM bot_cards WHERE id = $1 AND user_id = $2 AND place = \'dm\'', [id, user.id]);
   const action = rows[0];
   const plan = action?.kind === 'build_plan';
-  if (!action || (!plan && !OFFER_ANSWERS[action.kind])) return { ok: false, status: 404, error: 'No such choice' };
-  if (plan ? choice !== 'build' : choice === 'build') {
+  // The bring-a-friend nudge (invite-nudge.js): Not now is its one server
+  // choice, decided here at once; its Invite people is answered on the device.
+  const nudge = action?.kind === INVITE_NUDGE_KIND;
+  if (!action || (!plan && !nudge && !OFFER_ANSWERS[action.kind])) return { ok: false, status: 404, error: 'No such choice' };
+  if (nudge && choice !== 'no') return { ok: false, status: 400, error: 'choice must be no' };
+  if (!nudge && (plan ? choice !== 'build' : choice === 'build')) {
     return { ok: false, status: 400, error: plan ? 'choice must be build' : 'choice must be yes or no' };
   }
   if (action.status !== 'open') return { ok: false, status: 409, error: 'already_decided', decided: action.status };
@@ -5369,6 +5381,7 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
     }).catch(() => {});
     return { ok: false, status: 410, error: 'expired' };
   }
+  if (nudge) return (deps.inviteNudge || require('./invite-nudge')).dismiss(pool, { user, action, deps });
   const out = await (deps.replies || require('../workflow/platform.ts')).tapDmAction({
     userId: Number(user.id), actionId: id, choice, answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
   });

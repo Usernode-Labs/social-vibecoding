@@ -42,12 +42,12 @@ const HOSTILE_SOURCES = KINDS
 const MARKER = /\{\{\s*(#if|#unless|else|\/if|\/unless)\b[^}]*\}\}/g;
 const STRUCTURE_TAG = /<\/?(table|tbody|thead|tfoot|tr|td|th|p|div|h[1-6]|li|ul|ol|img)\b/i;
 
-test('there are 13 seeded kinds and every one has html', () => {
-  assert.equal(KINDS.length, 13);
+test('there are 15 seeded kinds and every one has html', () => {
+  assert.equal(KINDS.length, 15);
   for (const [name, html] of SOURCES) assert.equal(typeof html, 'string', name);
 });
 
-test('for all 13 seeds and the layout, replacing every block with itself is byte-identical', () => {
+test('for all 15 seeds and the layout, replacing every block with itself is byte-identical', () => {
   for (const [name, source] of [...SOURCES, ...HOSTILE_SOURCES]) {
     const blocks = editableBlocks(source);
     assert.ok(blocks.length > 0, `${name} has editable text`);
@@ -103,7 +103,7 @@ test('{{#if}} tags and table markup are outside every block', () => {
 test('waitlist_released chip text is editable', () => {
   const source = englishTemplate('waitlist_released').html;
   const texts = editableBlocks(source).map((block) => block.html);
-  for (const chip of ['Make an app for your group', 'Use and improve apps together', 'Suggest, preview and vote on changes']) {
+  for (const chip of ['Make an app with your friends', 'Build an app for your community', 'Join and help shape other community-owned apps']) {
     assert.ok(texts.includes(chip), chip);
   }
   // The chips' colour swatches hold only &nbsp;: nothing to retype.

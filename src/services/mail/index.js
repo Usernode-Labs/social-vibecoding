@@ -112,19 +112,22 @@ function maxPerHour(config) {
 // Returns the new row's id, or null when there was no pool or the insert
 // failed. send() ignores the return value entirely — the id exists so
 // sendTest() can point the admin console at the exact ledger row its
-// attempt produced.
-async function record(pool, { kind, to, provider, status, error, messageId = events.messageId(), providerMessageId = null, trackingLinks = [], engagementTracked = false }) {
+// attempt produced. `template` is which copy of the stored template the
+// mail was rendered from (templateUsed below), on a row that rendered one.
+async function record(pool, { kind, to, provider, status, error, messageId = events.messageId(), providerMessageId = null, trackingLinks = [], engagementTracked = false, template = null }) {
   if (!pool) return null;
   try {
     const { rows } = await pool.query(
-      `INSERT INTO mail_deliveries (kind, recipient, provider, status, error, message_id, provider_message_id, tracking_links, engagement_tracked)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+      `INSERT INTO mail_deliveries (kind, recipient, provider, status, error, message_id, provider_message_id, tracking_links, engagement_tracked, template_version, template_digest)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
        RETURNING id`,
       [String(kind || '').slice(0, 64), String(to || '').slice(0, 255),
         provider ? String(provider).slice(0, 32) : null,
         String(status).slice(0, 24),
         error ? String(error).slice(0, 500) : null, messageId,
-        providerMessageId ? String(providerMessageId).slice(0, 128) : null, JSON.stringify(trackingLinks), engagementTracked]
+        providerMessageId ? String(providerMessageId).slice(0, 128) : null, JSON.stringify(trackingLinks), engagementTracked,
+        template && Number.isInteger(template.version) ? template.version : null,
+        template && template.digest ? String(template.digest).slice(0, 64) : null]
     );
     return (rows[0] && rows[0].id) || null;
   } catch (err) {
@@ -136,6 +139,7 @@ async function record(pool, { kind, to, provider, status, error, messageId = eve
 
 async function readHistory(pool, { kind, to }) {
   if (!pool) return { recipientHistory: [], globalCount: 0 };
+  const budget = rateLimit.budgetOf(kind);
   try {
     const [recipient, global] = await Promise.all([
       pool.query(
@@ -146,14 +150,16 @@ async function readHistory(pool, { kind, to }) {
           LIMIT 50`,
         [to, kind]
       ),
-      // WP-E: activity mail and everything else are two budgets, each
-      // counted on its own (rate-limit.js ACTIVITY_KINDS).
+      // WP-E: activity mail, the waitlist reminders and everything else are
+      // budgets each counted on its own (rate-limit.js budgetOf): a kind with
+      // its own counts the kinds that share it, any other kind every kind
+      // without one.
       pool.query(
         `SELECT COUNT(*)::int AS n FROM mail_deliveries
           WHERE status IN ('sent', 'skipped_staging')
             AND created_at > NOW() - INTERVAL '1 hour'
             AND (kind = ANY($1::text[])) = $2`,
-        [[...rateLimit.ACTIVITY_KINDS], rateLimit.ACTIVITY_KINDS.has(kind)]
+        [budget ? budget.kinds : [...rateLimit.OWN_BUDGET_KINDS], !!budget]
       ),
     ]);
     return {
@@ -272,6 +278,24 @@ function unknownKind(kind) {
   return new Error(`unknown mail kind: ${kind}`);
 }
 
+// Which copy of the stored template a send rendered: the template row's
+// version, and a digest of the English words and layout (a row nobody edited
+// is refreshed from the seeds in place and keeps its version, so the version
+// alone cannot tell two of its copies apart). Null when no stored template
+// was rendered.
+const TEMPLATE_DIGEST_FIELDS = ['subject', 'preheader', 'why', 'html', 'text'];
+function templateUsed(resolved) {
+  const english = resolved && (resolved.english || resolved);
+  const template = english && english.template;
+  if (!template) return null;
+  const layout = english.layout || null;
+  const digest = require('crypto').createHash('sha256').update(JSON.stringify([
+    TEMPLATE_DIGEST_FIELDS.map((field) => (template[field] == null ? '' : String(template[field]))),
+    layout ? [layout.html == null ? '' : String(layout.html), layout.text == null ? '' : String(layout.text)] : null,
+  ])).digest('hex').slice(0, 16);
+  return { version: Number.isInteger(template.version) ? template.version : null, digest };
+}
+
 // ─── the send door ──────────────────────────────────────────────────────
 
 // send(config, { kind, to, locale, ...payload }) → always resolves undefined.
@@ -318,12 +342,13 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
       return;
     }
     const { recipientHistory, globalCount } = await readHistory(pool, { kind, to });
+    const budget = rateLimit.budgetOf(kind);
     const decision = rateLimit.decide({
       kind,
       now: Date.now(),
       recipientHistory,
       globalCount,
-      maxPerHour: rateLimit.ACTIVITY_KINDS.has(kind) ? rateLimit.ACTIVITY_MAX_PER_HOUR : maxPerHour(config),
+      maxPerHour: budget ? budget.maxPerHour : maxPerHour(config),
     });
     if (!decision.allowed) {
       await record(pool, {
@@ -357,11 +382,12 @@ async function send(config, { kind, to, locale, ...payload } = {}) {
       log.error('platform-mail', 'No email template could be used: sent a plain message with its code or link',
         { kind, reason: rendered.plainBecause });
     }
+    const template = rendered.plainBecause ? null : templateUsed(worded.resolved);
     const deliveryId = rendered.trackingLinks
-      ? await record(pool, { kind, to, messageId, provider, status: 'sending', trackingLinks: rendered.trackingLinks, engagementTracked: true })
+      ? await record(pool, { kind, to, messageId, provider, status: 'sending', trackingLinks: rendered.trackingLinks, engagementTracked: true, template })
       : null;
     const finish = async (status, error = null, providerMessageId = null) => {
-      if (!deliveryId) return record(pool, { kind, to, messageId, provider, status, error, providerMessageId });
+      if (!deliveryId) return record(pool, { kind, to, messageId, provider, status, error, providerMessageId, template });
       try {
         await pool.query(
           'UPDATE mail_deliveries SET status = $2, error = $3, provider_message_id = $4 WHERE id = $1',
@@ -658,8 +684,7 @@ async function sendPasswordResetMail(config, email, token, { locale = null } = {
  * link pointed. The fragment spelling still works for anything that already
  * has one.
  */
-async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null, signInToken = null, mobile = null, locale = null } = {}) {
-  const { CREDENTIAL_PARAM } = require('./tracking');
+async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null, signInToken = null, signInExpiresAt = null, mobile = null, locale = null } = {}) {
   await send(config, {
     kind: 'waitlist_released',
     to: email,
@@ -692,16 +717,55 @@ async function sendWaitlistReleaseMail(config, email, { hasAccount = false, more
     // link (a scanner's prefetch included) spends nothing, and the mail
     // leaves it out of click tracking (./tracking.js). `t` stays alongside
     // it as the prefill for when the key no longer works.
-    url: hasAccount
-      ? `${PRODUCTION_ORIGIN}/?login=1`
-      : `${PRODUCTION_ORIGIN}/?signup=1${moreToken ? `&t=${encodeURIComponent(moreToken)}` : ''}`
-        + (signInToken ? `&${CREDENTIAL_PARAM}=${encodeURIComponent(signInToken)}` : ''),
+    url: releaseUrl({ hasAccount, moreToken, signInToken }),
     hasAccount,
     // Which note goes under the button: the one-time link's, or the code's.
     signInLink: !hasAccount && !!signInToken,
+    // When that link stops working, for the line above the button
+    // (actions.js linkUntil).
+    ...(!hasAccount && signInToken && signInExpiresAt ? { signInExpiresAt: new Date(signInExpiresAt).toISOString() } : {}),
     // { ios, android } store listings from services/mobile-store-links.js; a
     // platform with no published link gets no install steps.
     mobile,
+  });
+}
+
+// Where the admit mail's button goes, and a reminder's: the sign-in form for
+// an address that has an account, else the signup screen with the prefill
+// token (#1548) and the one-time sign-in link (#4594, `key`).
+function releaseUrl({ hasAccount = false, moreToken = null, signInToken = null } = {}) {
+  const { CREDENTIAL_PARAM } = require('./tracking');
+  return hasAccount
+    ? `${PRODUCTION_ORIGIN}/?login=1`
+    : `${PRODUCTION_ORIGIN}/?signup=1${moreToken ? `&t=${encodeURIComponent(moreToken)}` : ''}`
+      + (signInToken ? `&${CREDENTIAL_PARAM}=${encodeURIComponent(signInToken)}` : '');
+}
+
+/**
+ * A reminder to somebody let in from the waitlist who has not signed in
+ * (services/waitlist-reminders.js): `last` is the second and final one. Its
+ * button is the admit mail's (releaseUrl), with a one-time sign-in link of its
+ * own for a new account. `stopUrl` is the row's "Stop these reminders" link,
+ * also its List-Unsubscribe header; `replyTo` the address a reply to the last
+ * one goes to. `releasedAt` and `now` word when they were let in
+ * (actions.js admittedDay).
+ */
+async function sendWaitlistReminderMail(config, email, {
+  last = false, hasAccount = false, moreToken = null, signInToken = null, signInExpiresAt = null,
+  releasedAt = null, stopUrl = null, replyTo = null, locale = null, now = null,
+} = {}) {
+  await send(config, {
+    kind: last ? 'waitlist_reminder_last' : 'waitlist_reminder',
+    to: email,
+    ...(locale ? { locale } : {}),
+    url: releaseUrl({ hasAccount, moreToken, signInToken }),
+    hasAccount,
+    signInLink: !hasAccount && !!signInToken,
+    ...(!hasAccount && signInToken && signInExpiresAt ? { signInExpiresAt: new Date(signInExpiresAt).toISOString() } : {}),
+    releasedAt: releasedAt ? new Date(releasedAt).toISOString() : null,
+    now: new Date(now == null ? Date.now() : now).toISOString(),
+    unsubscribeUrl: stopUrl,
+    ...(last && replyTo ? { replyTo } : {}),
   });
 }
 
@@ -724,6 +788,9 @@ module.exports = {
   sendWaitlistJoinMail,
   sendWaitlistCodeMail,
   sendWaitlistReleaseMail,
+  sendWaitlistReminderMail,
+  releaseUrl,
+  templateUsed,
   pruneDeliveries,
   PRUNE_SQL,
   buildMessage,

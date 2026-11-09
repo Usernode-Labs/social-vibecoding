@@ -31,11 +31,13 @@ function plainMessage(kind, payload) {
   const code = payload.code == null || payload.code === '' ? null : String(payload.code);
   const links = [payload.url, payload.confirmUrl, payload.statusUrl].map(tracking.destination).filter(Boolean);
   if (!code && !links.length) return null;
+  const replyTo = action.replyTo ? action.replyTo(payload) : null;
   return {
     subject: BRAND_NAME,
     text: [BRAND_NAME, ...(code ? [code] : []), ...links].join('\n\n'),
     html: [...(code ? [codeLine(code)] : []), ...links.map(linkLine)].join(''),
     headers: action.headers ? action.headers(payload) : null,
+    ...(replyTo ? { replyTo } : {}),
   };
 }
 

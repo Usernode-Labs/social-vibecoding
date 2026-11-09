@@ -99,6 +99,10 @@ const KINDS = Object.freeze([
   { kind: 'app_health', app: true, detail: 'deploy_failed' },
   { kind: 'invite_opened', app: true },
   { kind: 'member_joined', app: true, actor: true },
+  // The leaked-link guard's two. Link 0 is nobody's, so the row offers no
+  // button that would turn a real link off.
+  { kind: 'invite_link_busy', app: true, detail: '0:20' },
+  { kind: 'invite_link_paused', app: true, detail: '0:100' },
   { kind: 'project_opened', app: true },
   { kind: 'first_message', app: true, chat: 'any', actor: true },
   { kind: 'app_delete_attempted', app: true, actor: true },

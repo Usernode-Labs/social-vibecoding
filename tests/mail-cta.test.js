@@ -93,7 +93,7 @@ test('the status-code mail renders without a link at all', () => {
 test('the access-ready mail names its action too', () => {
   const create = templates.buildMessage('waitlist_released',
     { url: 'https://x.invalid/?signup=1', hasAccount: false });
-  assert.equal(anchors(create.html)[0].text, 'Create my account');
+  assert.equal(anchors(create.html)[0].text, 'Get started');
   const signIn = templates.buildMessage('waitlist_released',
     { url: 'https://x.invalid/?login=1', hasAccount: true });
   assert.equal(anchors(signIn.html)[0].text, 'Sign in');
