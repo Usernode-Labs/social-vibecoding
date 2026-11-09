@@ -131,13 +131,13 @@ export function FrameChrome() {
   const where = useStoreState(placeStore);
   const here = inCommunity && where.slug === inCommunity ? where.place : null;
   const project = inCommunity ? scope.info[inCommunity] : null;
+  const projectCrumb = { word: project?.name || title, lead: <Tile size={24} name={project?.name || title} src={project?.iconUrl} emoji={project?.iconEmoji} color={project?.iconColor} /> };
+  // A page that says its own trail inside a project (a request, a change)
+  // names what comes after the project; the project is still first.
   const crumbs: Array<{ word: string; lead?: ReactNode }> = page.crumb
-    ? page.crumb.map((word) => ({ word }))
+    ? [...(inCommunity ? [projectCrumb] : []), ...page.crumb.map((word) => ({ word }))]
     : inCommunity
-      ? [
-        { word: project?.name || title, lead: <Tile size={24} name={project?.name || title} src={project?.iconUrl} emoji={project?.iconEmoji} color={project?.iconColor} /> },
-        ...(here && here !== 'status' ? [{ word: placeName(here) }] : []),
-      ]
+      ? [projectCrumb, ...(here && here !== 'status' ? [{ word: placeName(here) }] : [])]
       : (title ? [{ word: title }] : []);
   const back = page.crumb ? !!page.onBack : inCommunity ? true : shellBack;
   const goBack = () => {

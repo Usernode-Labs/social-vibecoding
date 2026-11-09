@@ -6606,5 +6606,17 @@
   "frame.rule.afterChecks": {
     "text": "After the checks pass",
     "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, Line under the approval rule's row: a change is voted on once its automatic checks have passed."
+  },
+  "frame.topic.about": {
+    "text": "About",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who asked and under which topic."
+  },
+  "frame.topic.asked": {
+    "text": "Asked {{when}}",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under the asker's name in the context column; {{when}} is a short date or time, such as '28 Oct, 10:24'."
+  },
+  "frame.topic.topic": {
+    "text": "Topic",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under a topic's name in the context column, saying the row is the topic the request is filed under."
   }
 }

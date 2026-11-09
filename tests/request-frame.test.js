@@ -1,0 +1,67 @@
+// A request's page in the one frame, as the 2026-11-06 screen tour draws it
+// (s32, s33): the bar's trail is the project, the Workshop and the request;
+// the page's head is its title and one line; the request's words and its
+// status are the look's cards; status, progress and who asked sit in the
+// context column beside the words and the discussion. The page is still the
+// product's (features/dev-board/topic/request-head.tsx): what changes under
+// a look is added beside its own lines, which many suites hold as written.
+//
+// Run with: node --test tests/request-frame.test.js
+
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { renderComponent } = require('./lib/render-tsx');
+
+const ROOT = path.join(__dirname, '..');
+const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8');
+const FRAME = 'frontend/src/features/dev-board/topic/frame/topic-frame.tsx';
+const HEAD = 'frontend/src/features/dev-board/topic/request-head.tsx';
+
+test('the page\'s head is the kit\'s: the title, one line saying what it is, and the page\'s own menu', () => {
+  const html = renderComponent(FRAME, 'TopicFrameHead', { title: 'Simplify the admin console', purpose: 'Request #5998 · Admin console', menu: { key: 'request:5998', label: 'More' } }, { cache: false });
+  assert.equal(html.replace(/<svg.*?<\/svg>/s, '<svg/>'),
+    '<div class="fr" data-topic-frame-head=""><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">Simplify the admin console</h1><p class="fr-purpose">Request #5998 · Admin console</p></div><div class="fr-acts"><button type="button" class="fr-ib dev-card-menu-btn" data-card-menu="request:5998" aria-haspopup="true" aria-label="More" title="More"><svg/></button></div></div></div>');
+  assert.doesNotMatch(renderComponent(FRAME, 'TopicFrameHead', { title: 'A', purpose: null, menu: null }, { cache: false }), /fr-acts|fr-purpose/);
+});
+
+test('who asked, and under which topic, are rows of the context column', () => {
+  const html = renderComponent(FRAME, 'TopicFrameAbout', { label: 'About', asker: 'snait', color: '#5b7553', line: 'Asked 28 Oct, 10:24', topic: 'Admin console', topicLine: 'Topic' }, { cache: false });
+  assert.match(html, /^<aside class="fr fr-topicside" data-topic-side=""><section class="fr-sec"><div class="fr-sechead"><h2 class="fr-cap">About<\/h2><\/div><div class="fr-card"><div class="fr-row"><span class="fr-av" style="--fr-as:40px;--fr-ac:#5b7553" aria-hidden="true">s<\/span><span class="fr-tx"><span class="fr-t">snait<\/span><span class="fr-s">Asked 28 Oct, 10:24<\/span><\/span><\/div><div class="fr-row"><span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Admin console<\/span><span class="fr-s">Topic<\/span><\/span><\/div><\/div><\/section><\/aside>$/s);
+  assert.doesNotMatch(renderComponent(FRAME, 'TopicFrameAbout', { label: 'About', asker: 'snait', color: null, line: null, topic: null, topicLine: 'Topic' }, { cache: false }), />Topic</);
+});
+
+test('under a look the request\'s page says its trail to the bar, wears the kit\'s head, and adds the context column', () => {
+  const src = read(HEAD);
+  assert.match(src, /const frame = isFrameSkin\(useLiveSkin\(\)\);/);
+  assert.match(src, /useFramePage\(frame \? \[placeName\('workshop'\), kicker\] : null, topicBack\);/, 'the Workshop, then the request; the arrow is the page\'s own way back');
+  assert.match(src, /if \(frame\) return <TopicFrameHead /, 'in the bar\'s place');
+  assert.match(src, /\{frame \? \(\s*<TopicFrameAbout/);
+  assert.match(src, /useSideStack\(frame, `\[data-request-root="\$\{r\.number\}"\] > \[data-image-viewer-scope\]`/, 'status, progress and About are stacked beside the words by their measured heights');
+  // The page's own lines stay as written.
+  assert.match(src, /<div className="dev-request-track" data-request-track=\{r\.trackPending \? 'pending' : track\.work\.stage\} inert=\{!!r\.trackPending\}>/);
+  assert.match(src, /<header className="messages-thread-header">/);
+});
+
+test('the bar puts the project first on a page that says its own trail inside a project', () => {
+  const src = read('frontend', 'src', 'features', 'frame', 'frame-app.tsx');
+  assert.match(src, /\? \[\.\.\.\(inCommunity \? \[projectCrumb\] : \[\]\), \.\.\.page\.crumb\.map\(\(word\) => \(\{ word \}\)\)\]/);
+});
+
+test('the side column is laid beside the words from measured heights, a look\'s cards dress the words and the status', () => {
+  const stack = read('frontend/src/features/dev-board/topic/frame/side-stack.ts');
+  assert.match(stack, /new ResizeObserver\(place\)/);
+  assert.match(stack, /el\.style\.setProperty\('--fr-side-top', `\$\{top\}px`\)/);
+  assert.match(stack, /host\.style\.setProperty\('--fr-side-h', /);
+  assert.match(stack, /scroller\?\.style\.setProperty\('--fr-side-pull', `\$\{Math\.max\(0, sideH - wordsH\)\}px`\)/, 'the discussion is drawn up beside the column by what it stands taller than the words');
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request \{[^}]*max-width: 1136px;/);
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-status, \.dev-request-track, \.fr-topicside\) \{[^}]*position: absolute; top: var\(--fr-side-top, 0px\); inset-inline-end: 0; width: 320px;/);
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) #gc-thread-back \{ display: none; \}/, 'the bar has the way back');
+  const looks = JSON.parse(read('frontend/looks/looks.json'));
+  assert.equal(looks.wear.roots.card.to, ':is(.dev-request-ask,.dev-request-status)');
+});

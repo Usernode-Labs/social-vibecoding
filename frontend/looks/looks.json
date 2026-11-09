@@ -328,6 +328,9 @@
       },
       "ib": {
         "to": ":is(.messages-thread-action,.messages-composer-action)"
+      },
+      "card": {
+        "to": ":is(.dev-request-ask,.dev-request-status)"
       }
     }
   }

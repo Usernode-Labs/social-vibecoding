@@ -67,6 +67,11 @@ import { saveIssueBody } from './topic-head';
 import { OwnAgentLink } from './own-agent-link';
 import { requestMenuKey, useThreadMenu } from './thread-menu';
 import { usePanelHead } from '../../side-panel/head-store';
+import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
+import { useFramePage } from '../../frame/frame-page-store';
+import { placeName } from '../workshop/places';
+import { TopicFrameAbout, TopicFrameHead } from './frame/topic-frame';
+import { useSideStack } from './frame/side-stack';
 
 function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -124,6 +129,11 @@ export function RequestBar({ r, pill = null, threadMenu = false }: {
   // them is all this does there; nowhere else does it publish anything.
   const menuKey = r.menuKey || threadMenu ? requestMenuKey(r.menuKey, r.number) : null;
   usePanelHead({ kind: 'request', pill, menuKey });
+  // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
+  // s32): the title and one line saying what it is, with this menu. The
+  // bar above it carries the trail and the way back (RequestHead below).
+  const frame = isFrameSkin(useLiveSkin());
+  if (frame) return <TopicFrameHead title={r.title} purpose={sentencesDot([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
@@ -489,7 +499,26 @@ export function plansByChange(
   return { plans, unbuilt };
 }
 
+/** The page's own way back: the chip the standard look draws over the sheet. */
+function topicBack(): void {
+  document.querySelector<HTMLElement>('#gc-thread-back a')?.click();
+}
+
+/** Short facts on one line, joined as the language on screen joins them. */
+function sentencesDot(parts: readonly (string | null | undefined | false)[]): string {
+  const said = parts.filter((part): part is string => typeof part === 'string' && part !== '');
+  return said.length ? said.reduce((first, second) => translate('project:workRow.facts.pair', { first, second })) : '';
+}
+
 export function RequestHead({ r }: { r: RequestView }): ReactNode {
+  // Under one of the frame's looks the page tells the bar its trail (the
+  // Workshop, then this request) and lays its status, progress and About
+  // beside its words (./frame/side-stack.ts says why by measuring).
+  const frame = isFrameSkin(useLiveSkin());
+  const tFrame = useMessages('project');
+  const kicker = tFrame('project:topic.request.bar.title', { number: r.number });
+  useFramePage(frame ? [placeName('workshop'), kicker] : null, topicBack);
+  useSideStack(frame, `[data-request-root="${r.number}"] > [data-image-viewer-scope]`, ['.dev-request-status', '.dev-request-track', '.fr-topicside']);
   const thread = useStoreState(requestThreadStore);
   const specs = thread.number === r.number ? thread.specs : [];
   const [editing, setEditing] = useState(false);
@@ -672,6 +701,16 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             <ChangeSectionSkeleton />
           ) : null}
           <ThreadItems slug={slug} number={r.number} here={here} payload={threadRead.data} items={layout.listed} onChanged={threadRead.reread} menuKey={menuKey} />
+          {frame ? (
+            <TopicFrameAbout
+              label={t('project:frame.topic.about')}
+              asker={r.asker}
+              color={swatchFor(r.asker)}
+              line={r.askedTime ? t('project:frame.topic.asked', { when: r.askedTime }) : null}
+              topic={r.category}
+              topicLine={t('project:frame.topic.topic')}
+            />
+          ) : null}
         </div>
       </article>
     </>
