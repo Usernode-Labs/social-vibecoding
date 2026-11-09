@@ -26,36 +26,47 @@ and builds standalone/starter from the workflow's main commit. Reports identify
 the immutable image, commit and run. This workflow is independent of release
 approval; existing findings cannot stop unrelated releases.
 
-The publisher maintains one `security-audit` GitHub issue per HIGH/CRITICAL
-advisory, aggregating affected components. Unfixable findings and reviewed
-exceptions remain visible. Each issue records first/last seen, evidence,
-ownership and a remediation target: one day for CRITICAL, seven for HIGH,
-or an earlier exception expiry. The first-seen date and target do not move
-forward on daily updates. Escalation can shorten the target. Assess urgent
-exposure as an incident; a deployment freeze is an explicit operator decision.
+The workflow uploads a compact `homeroom-security-audit-<run attempt>` artifact.
+It has no issue-write permission or production credentials. Homeroom's existing
+five-minute platform-signals observer reads only the latest trusted main-branch
+audit, verifies its repository, commit, run and attempt, and files **native
+requests in Homeroom**, not GitHub issues. This covers Homeroom's five components
+only; other projects are outside this rollout.
 
-Set repository variable `SECURITY_ALERT_ASSIGNEE` to the GitHub username owning
-triage. Without it, issues name repository maintainers and ask for assignment.
-Existing assignees and investigation notes outside the managed block are kept.
-There is no repeated comment notification on each scan. An existing CVE issue
-reopens on recurrence; a severity downgrade alone is not proof of remediation.
+One request per HIGH/CRITICAL advisory groups all affected components. Findings
+with a published fix enter the existing Homeroom bot queue, subject to its slots,
+budget and hold rules. Findings without a fix, and audit failures, wait for a
+person. Unfixable findings and reviewed exceptions remain visible. Targets are
+one day for CRITICAL and seven for HIGH, shortened by an earlier exception expiry;
+they never move forward during an episode. Assess urgent exposure as an incident;
+a deployment freeze remains an explicit operator decision.
 
-Only complete successful reports for all five components, from the current
-audit run, attempt and revision, can close an issue. Partial/unavailable scans can add
-discoveries but never claim resolution. A stale main revision cannot publish.
-PR jobs have read-only tokens; only the trusted main-branch audit publisher
-has issue-write permission. No production credentials are used by these jobs.
+Unchanged findings do not rewrite or requeue requests. Changes to dependency
+versions, severity, fixes or affected components update the request. A newly
+available fix can hand a previously unfixable request to the bot. Recent recurrence
+reopens the same request, using the existing seven-day signal window.
 
-For a local preview of issue updates without network calls or a write token:
+Only a complete, successful audit of all five components, at both current main
+and Homeroom's recorded main revision, can confirm resolution. A severity downgrade
+updates an existing request without closing it. Partial, failed or stale audits
+retain known findings, including requests already waiting out the 30-minute quiet
+window. They raise a separate audit-health request. Reports expire after 36 hours;
+a missing first audit gets 36 hours' grace, and a running audit gets one hour.
+An open proposal or recent human discussion still holds a request open.
+A healthy daily audit can report findings from an earlier main commit; ordinary
+main movement does not raise an audit-failure request, but holds CVE resolution
+until a fresh audit matches it.
 
-```sh
-node scripts/security-alerts.js /path/to/downloaded/audit-reports --dry-run
-```
+The chart enables only these two signal kinds with
+`config.platformSignals.securityAudit: "on"` (`PLATFORM_SIGNALS_SECURITY_AUDIT`).
+Other signal kinds remain in their existing mode. Global `PLATFORM_SIGNALS=off`,
+the staging default, the kind allowlist and `PLATFORM_SIGNALS_BOT=off` retain their
+meaning. No Discord routing change is included.
 
 Complete reports, including lower severities, are retained as workflow artifacts
 for 30 days. An assessment failure requires rerunning the audit; it is not an
 empty vulnerability list.
 
 Rerun all jobs, or dispatch a new audit, to obtain a complete fresh assessment.
-Artifacts are scoped to the run attempt; retrying only the publisher cannot
+Artifacts are scoped to the run attempt; retrying only the aggregator cannot
 reuse old clean reports to close a finding.

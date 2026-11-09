@@ -98,14 +98,13 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  alerts:
-    name: Update tracked security findings
+  report:
+    name: Publish audit data for Homeroom
     needs: [plan, scan]
     if: ${{ always() && !cancelled() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: write
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -115,8 +114,11 @@ jobs:
         with:
           pattern: security-audit-${{ github.run_attempt }}-*
           path: security-audit-reports
-      - name: Maintain security issues
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SECURITY_ALERT_ASSIGNEE: ${{ vars.SECURITY_ALERT_ASSIGNEE }}
-        run: node scripts/security-alerts.js security-audit-reports
+      - name: Aggregate the verified assessments
+        run: node scripts/security-audit-report.js security-audit-reports security-audit-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: homeroom-security-audit-${{ github.run_attempt }}
+          path: security-audit-report.json
+          if-no-files-found: error
+          retention-days: 30

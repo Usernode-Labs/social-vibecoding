@@ -158,7 +158,7 @@ function workflowExpression(value, context) {
   return vm.runInNewContext(value.trim().replace(/^\$\{\{\s*|\s*\}\}$/g, ''), context, { timeout: 500 });
 }
 
-test('independent daily audits cover every image and keep issue writes away from builds', () => {
+test('independent daily audits cover every image and publish data without issue-write permission', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/security-audit.yml'), 'utf8'));
   assert.equal(workflow.on.pull_request, undefined);
   assert.ok(workflow.on.schedule.length);
@@ -166,9 +166,13 @@ test('independent daily audits cover every image and keep issue writes away from
   assert.deepEqual(workflow.jobs.scan.strategy.matrix.include.map((item) => item.component), ['platform', 'standalone', 'worker', 'capture', 'starter']);
   for (const job of Object.values(workflow.jobs)) assert.match(job.if, /github.ref == 'refs\/heads\/main'/);
   assert.equal(workflow.jobs.scan.permissions.issues, undefined);
-  assert.equal(workflow.jobs.alerts.permissions.issues, 'write');
-  assert.deepEqual(workflow.jobs.alerts.needs, ['plan', 'scan']);
-  assert.match(workflow.jobs.alerts.if, /always\(\).*!cancelled\(\)/, 'partial scans still publish discoveries, without resolving existing findings');
+  assert.deepEqual(workflow.jobs.report.permissions, { contents: 'read' });
+  assert.deepEqual(workflow.jobs.report.needs, ['plan', 'scan']);
+  assert.match(workflow.jobs.report.if, /always\(\).*!cancelled\(\)/, 'partial scans still publish discoveries, without resolving existing findings');
+  for (const job of Object.values(workflow.jobs)) assert.equal(job.permissions?.issues, undefined);
+  assert.doesNotMatch(JSON.stringify(workflow), /GH_TOKEN|SECURITY_ALERT_ASSIGNEE|security-alerts/);
+  assert.equal(workflow.jobs.report.steps.find((s) => s.uses === 'actions/upload-artifact@v4').with.name,
+    'homeroom-security-audit-${{ github.run_attempt }}');
   const scan = workflow.jobs.scan.steps.find((s) => s.name === 'Scan the complete image');
   assert.equal(scan.env.SECURITY_AUDIT_ONLY, '1');
   assert.equal(scan.env.LIVE_DIGEST, '${{ needs.plan.outputs[matrix.component] }}', 'all jobs share one release snapshot');
@@ -176,7 +180,7 @@ test('independent daily audits cover every image and keep issue writes away from
   assert.match(scan.run, /sh scripts\/check-image-security\.sh/);
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
   const upload = workflow.jobs.scan.steps.find((s) => s.uses === 'actions/upload-artifact@v4');
-  const download = workflow.jobs.alerts.steps.find((s) => s.uses === 'actions/download-artifact@v4');
+  const download = workflow.jobs.report.steps.find((s) => s.uses === 'actions/download-artifact@v4');
   assert.match(upload.with.name, /github\.run_attempt/);
   assert.match(download.with.pattern, /github\.run_attempt/, 'a retry cannot consume older clean artifacts');
 });
@@ -186,7 +190,8 @@ test('publishing requires candidate gates while full daily audits cannot block u
   const release = workflow.jobs.release;
   const regressions = workflow.jobs['security-regressions'].steps.find((s) => s.run?.includes('tests/build-stop-hook.test.js'));
   assert.match(regressions.run, /tests\/security-gate-baseline\.test\.js/);
-  assert.match(regressions.run, /tests\/security-alerts\.test\.js/);
+  assert.match(regressions.run, /tests\/security-audit-report\.test\.js/);
+  assert.match(JSON.stringify(workflow.jobs['preview-schema-compatibility'].steps), /tests\/platform-signals-postgres\.test\.js/);
   assert.deepEqual(release.needs, ['build', ...GATES]);
   assert.equal(workflow.jobs['scheduled-image-audit'], undefined);
   assert.match(release.if, /!cancelled\(\)/);

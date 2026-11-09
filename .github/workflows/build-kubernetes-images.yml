@@ -113,7 +113,7 @@ jobs:
           mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
       - run: npm ci
       # Deliberately no --test-force-exit: open handles must fail the check.
-      - run: node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/build-stop-hook.test.js tests/inloop-launch.test.js tests/security-update.test.js tests/security-gate-baseline.test.js tests/security-alerts.test.js tests/web-fetch.test.js tests/web-fetch-dns-pinning.test.js
+      - run: node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/build-stop-hook.test.js tests/inloop-launch.test.js tests/security-update.test.js tests/security-gate-baseline.test.js tests/security-audit-report.test.js tests/web-fetch.test.js tests/web-fetch-dns-pinning.test.js
         timeout-minutes: 6
 
       - run: node --require ./tests/lib/test-net.js --test --test-timeout=60000 tests/private-streams.test.js
@@ -161,6 +161,7 @@ jobs:
           node --test --test-timeout=60000 tests/workflow-event-authority-postgres.test.js tests/turn-publication-postgres.test.js tests/worker-release-workflow-postgres.test.js
           node --test --test-timeout=60000 tests/worker-eviction-postgres.test.js
           node --test --test-timeout=60000 tests/worker-stop-workflow-postgres.test.js tests/platform-preview-startup-postgres.test.js
+          node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/platform-signals.test.js tests/platform-signals-postgres.test.js
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
           TEST_PREVIEW_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres
