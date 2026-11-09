@@ -43,6 +43,7 @@ import { communityScopeStore, goToCommunity } from '../workshop/community-scope'
 import { swatchFor } from '../messages/format';
 import { framePageStore } from './frame-page-store';
 import { FrameSheets, openFrameSheet } from './frame-sheets';
+import { LookPicker } from './look-picker';
 
 const MARK = '/brand/homeroom-mark.png';
 
@@ -280,6 +281,8 @@ export function FrameChrome() {
             <button type="button" className={k('ib d')} aria-label={t('core:rail.search')} onClick={() => goToCommunity(null)}>
               <Icon name="search" />
             </button>
+            {/* An admin's look picker (./look-picker.tsx), beside the bell. */}
+            <LookPicker variant="frame" />
             <button type="button" className={k('ib')} aria-label={t('core:header.notifications')} onClick={() => openFrameSheet('notifications')}>
               <Icon name="bell" />
               {unread ? <span className={k('dot')} /> : null}

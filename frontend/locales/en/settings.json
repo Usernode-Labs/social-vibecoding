@@ -1388,7 +1388,7 @@
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (chunky rounded blocks and heavy friendly type). A proper name; translate it as a short name, not a sentence."
   },
   "experimental.look.description": {
-    "text": "Try one of nine looks for Homeroom, in light and dark. Each has its own typeface, colours and shapes. Only Home is drawn in them so far; admins see this menu while the rest is drawn. Kept for this browser.",
+    "text": "Try one of nine looks for Homeroom, in light and dark. Each has its own typeface, colours and shapes. Not every screen is drawn in them yet; admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
     "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
   },
   "experimental.localAgents.title": {
