@@ -159,7 +159,7 @@ test('declared checks follow the agent rows to Messages and keep a collapsed row
   const messageChecks = dapp.tests.filter((t) => (t.expectSelector || '').includes('[data-notif-id="990207"]'));
   assert.ok(messageChecks.length >= 2);
   for (const check of messageChecks) assert.equal(check.path, '/?shot=notifications-all&demo=1', check.name);
-  assert.match(FE_SRC, /shot !== 'notifications-all'\) return false;/, 'the All link opens the sheet');
+  assert.match(FE_SRC, /shot !== 'notifications-all'\) return;/, 'the All link opens the sheet');
   assert.match(SHEET_SRC, /if \(shot === 'notifications-all'\) setTab\('all'\);/, 'and the sheet lands on All');
   assert.ok(has('#messages-screen:not(.hidden) [data-improve-row="task"][href$="/dev/issues/900002"]'),
     'the work-order row is checked where it lives now');

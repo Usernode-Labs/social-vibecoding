@@ -63,25 +63,6 @@ const listText = (parts) => PlatformI18n.listText(parts);
 const NATIVE_INVALIDATION_TIMEOUT_MS = 10000;
 const NATIVE_INVALIDATION_REFRESH_VERSION = 1;
 
-// The `?shot=` addresses that present this sheet as a CAPTURE rather than as
-// somebody opening the bell: `/?shot=notifications&demo=1`, plus the two older
-// tab links #5289 kept (`?shot=notifications-messages` and
-// `?shot=notifications-all`; the sheet reads the parameter for the tab).
-//
-// A capture marks nothing read (#6498): a read row draws its subject
-// regular-weight (#6506), and the shot exists to show the UNREAD list, which
-// is what dapp.json's "unread rows read source, bold subject" check selects
-// on. Reading the parameter in ONE place is what makes that reliable —
-// init() decides it before the first refresh, so no open of the sheet can
-// mark a capture read, whichever refresh wins the race to land (see
-// _maybeShotOpen and markReadOnOpen).
-function isNotificationsShotPage() {
-  let shot = null;
-  try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* opaque origin */ }
-  if (shot !== 'notifications' && shot !== 'notifications-messages' && shot !== 'notifications-all') return false;
-  return true;
-}
-
 const Notifications = {
   // #1191 slice 6: the drawer's two innerHTML hosts are React now. This module
   // still owns the fetches, the mark-read discipline, the click routing and
@@ -173,18 +154,6 @@ const Notifications = {
   _networkFreshnessFloor: false,
 
   init() {
-    // A CAPTURE PAGE MARKS NOTHING READ, and this is where that is decided:
-    // before the first refresh, because refresh() is what presents the sheet
-    // and the sheet controller marks read as soon as an open's refresh
-    // lands. Setting the flag only when _maybeShotOpen() presents used to
-    // leave a window in which an open that won the race to present ran with
-    // it still false — every row flipped read, its subject dropped to
-    // regular weight (#6506), and dapp.json's "unread rows read source, bold
-    // subject" check failed on changes that never touched notifications.
-    // markReadOnOpen() refuses on this flag itself, so no caller can mark a
-    // capture read.
-    Notifications._shotOpened = isNotificationsShotPage();
-
     // THE UI OVERHAUL merged the bell into the hamburger, so #notifications-btn
     // is gone and so is the outside-click dismissal that used to live here:
     // opening, closing and dismissing this list are all the drawer's business
@@ -601,7 +570,8 @@ const Notifications = {
   // behind a click on the hamburger, so the capture pipeline and any dapp.json
   // test would otherwise never see it — and #1280's saved section lives
   // nowhere else. Pair it with ?demo=1 in staging so the pinned sections have
-  // mock rows to render.
+  // mock rows to render. Once per page load — reopening after a manual
+  // dismiss would fight the user, and refresh() runs again on live events.
   //
   // #5289: `?shot=notifications-messages` opened it on the Messages tab.
   // That tab is gone (the Messages screen, one tab away in the bar, is where
@@ -609,17 +579,13 @@ const Notifications = {
   // on Unread like any other opening. `?shot=notifications-all` opens it on
   // All (the sheet reads the parameter for the tab; this only opens it).
   //
-  // `_shotOpened` means THIS PAGE IS A CAPTURE: init() sets it for the three
-  // addresses above, before the first refresh, and markReadOnOpen() refuses
-  // while it is set. `_shotPresented` is the separate once-only flag for the
-  // open itself — reopening after a manual dismiss would fight the user, and
-  // refresh() runs again on live events.
   _shotOpened: false,
-  _shotPresented: false,
   _maybeShotOpen() {
-    if (Notifications._shotPresented || Notifications.open) return;
-    if (!Notifications._shotOpened) return;
-    Notifications._shotPresented = true;
+    if (Notifications._shotOpened || Notifications.open) return;
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
+    if (shot !== 'notifications' && shot !== 'notifications-messages' && shot !== 'notifications-all') return;
+    Notifications._shotOpened = true;
     // The list is the Notifications SHEET now (Streamlined Concept), so the
     // deep link resolves a screen underneath and presents over it rather
     // than opening the drawer.

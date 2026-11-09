@@ -162,86 +162,43 @@ test('the frontend no longer defines markReadOnOpen or sends keep_plain_messages
     'nothing in the app sends the narrow clear; the server option remains');
 });
 
-// ── 5. the capture page marks nothing read ──────────────────────────────
+// ── 5. the capture page draws the named unread row bold (#6526) ─────────
 //
 // #6526: the shot page (`/?shot=notifications&demo=1`) is a picture of an
-// unread list, not somebody reading their notifications. When its rows were
-// marked read, #6506 drew their subjects regular-weight and dapp.json's
-// "unread rows read source, bold subject, muted preview" check failed on
-// changes that never touched notifications. The flag is decided in init(),
-// before the refresh that can present the sheet, and markReadOnOpen refuses
-// on it itself, so no refresh race can flip the shot's rows.
+// unread list, not somebody reading their notifications. It failed on changes
+// that never touched notifications because opening the sheet used to mark
+// every unread row read (#6498); #6506 then drew a read subject
+// regular-weight, so dapp.json's bold-subject selector went missing. #6527
+// removed the automatic clear, so opening the sheet only refreshes and a
+// capture's rows stay unread. The check is tightened here to insist on the
+// bold subject of the row it already names: "any row's bold subject" let a
+// different unread row satisfy a row that had gone read.
 
-test('the shot helper accepts the three capture names and refuses others', () => {
-  const src = FE_SRC.match(/function isNotificationsShotPage\(\) \{[\s\S]*?\n\}/);
-  assert.ok(src, 'isNotificationsShotPage() found in notifications.js');
-  // `location` is the building function's parameter, so each call builds the
-  // helper around the search string it is given.
-  const isShot = (search) => new Function('location', `return (${src[0]});`)({ search })();
-  for (const name of ['notifications', 'notifications-messages', 'notifications-all']) {
-    assert.equal(isShot(`?demo=1&shot=${name}`), true, name);
-  }
-  for (const name of ['dark', 'anon', 'notify', 'notifications-old']) {
-    assert.equal(isShot(`?shot=${name}`), false, name);
-  }
-  assert.equal(isShot(''), false, 'no shot parameter is an ordinary page');
+const DAPP = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'));
+
+test('the notification shot check needs the named unread row itself to be bold', () => {
+  const check = DAPP.tests.find((t) => t.name === 'Unread notification rows read source, bold subject, muted preview');
+  assert.ok(check, 'the declared check still exists');
+  assert.equal(check.path, '/?shot=notifications&demo=1');
+  assert.ok(check.expectSelector.includes(
+    '.notifications-row-slot > [data-notif-id="990211"] + button[data-notification-clear="990211"]'
+  ), 'the check still requires the unread row and its clear control');
+  assert.ok(check.expectSelector.includes(
+    '[data-notif-id="990211"] .text-xs + .text-sm.font-semibold'
+  ), "and the bold subject has to be that row's, not any row's");
 });
 
-// The shipped init(), extracted and run against stubs, so the ORDER is
-// exercised rather than only its text: the capture flag has to be decided
-// before the refresh that can present the sheet (and be marked read).
-function runInit(shotPage) {
-  const body = methodBody('init');
-  const calls = { refresh: 0, flagAtFirstRefresh: null };
-  const N = {
-    _shotOpened: false,
-    refresh() {
-      calls.refresh += 1;
-      if (calls.flagAtFirstRefresh === null) calls.flagAtFirstRefresh = N._shotOpened;
-    },
-    _setShowOlder() {},
-    _renderSaved() {},
-    _renderInvites() {},
-    _renderList() {},
-  };
-  const listeners = [];
-  const documentStub = {
-    getElementById: () => null,
-    addEventListener: (name) => listeners.push(name),
-  };
-  const App = { user: { username: 'bell_reader' } };
-  const run = new Function(
-    'Notifications', 'isNotificationsShotPage', 'location', 'document', 'window', 'App',
-    `(function () {${body}})();`
-  );
-  run(N, () => shotPage, { search: '' }, documentStub, { App }, App);
-  return { N, calls, listeners };
-}
-
-test('init() sets the capture flag before the first refresh, so no open can mark it read', () => {
-  const { N, calls, listeners } = runInit(true);
-  assert.equal(N._shotOpened, true, 'a capture page is known before the sheet can open');
-  assert.equal(calls.refresh, 1, 'the initial fetch still happens');
-  assert.equal(calls.flagAtFirstRefresh, true, 'the flag was already set when refresh ran');
-  assert.ok(listeners.includes('sv:drawer-open'), 'and the rest of init still wired the drawer');
-});
-
-test('init() leaves an ordinary page marking read on open', () => {
-  const { N, calls } = runInit(false);
-  assert.equal(N._shotOpened, false);
-  assert.equal(calls.refresh, 1);
-  assert.equal(calls.flagAtFirstRefresh, false, 'the flag is not set where there is no shot');
-});
-
-test('markReadOnOpen sends nothing on a capture page, even with unread rows and the sheet open', async () => {
-  const f = fixture({ _shotOpened: true });
-  okFetch.calls.length = 0;
-  const markReadOnOpen = buildMarkReadOnOpen(methodBody('async markReadOnOpen'));
-  const ok = await markReadOnOpen(f.N, okFetch({ unread: 0 }), f.windowStub, f.consoleStub);
-  assert.equal(ok, false, 'a capture is not reading');
-  assert.equal(okFetch.calls.length, 0, 'not even a request');
-  assert.equal(f.N.items[0].readAt, null, 'its unread rows stay unread');
-  assert.equal(f.rendered.badge + f.rendered.list + f.rendered.title, 0, 'nothing repainted');
+test('the demo fixture leaves the checked row unread', () => {
+  // The unread rendering, and so the bold subject the check selects, depends
+  // on this row having no readAt. A fixture that quietly stamped one would
+  // turn the check red for every change again.
+  const base = ROUTE_SRC.match(/const base = \{[\s\S]*?\n  \};/);
+  assert.ok(base, 'the demo base row is defined');
+  assert.match(base[0], /readAt: null/, 'every demo row starts unread');
+  const at = ROUTE_SRC.indexOf('id: 990211,');
+  assert.ok(at > 0, 'the checked row is in the demo fixture');
+  const entry = ROUTE_SRC.slice(at, ROUTE_SRC.indexOf('\n    },', at));
+  assert.doesNotMatch(entry, /readAt/, '990211 does not override its read state');
 });
 
 // ── 6. the query itself, against a real PostgreSQL ──────────────────────
