@@ -26995,6 +26995,13 @@ html[data-skin] #ai-screen[data-frame-list] .ai-askbar-gap { display: none; }
   html[data-skin] #ai-screen[data-frame-list] { --ai-main-w: max(360px, calc(var(--platform-usable-w) - 520px)); }
   html[data-skin] #ai-screen[data-frame-list] .ai-main-pane { top: var(--fr-shell-top); background: none; border-top: 0; border-inline-start: 1px solid var(--fr-line); border-radius: 0; }
   html[data-skin] #ai-screen[data-frame-list] #ai-main-divider { display: none; }
+  /* A request or a decision opened from the list stands in the column
+     through the shell's side panel, which is in <body> and reads the
+     column's width there: the same width, so it ends where the list ends,
+     and the same one line between the two panes. */
+  html[data-skin] body:has(#ai-screen[data-frame-list]:not(.hidden)) { --ai-main-w: max(360px, calc(var(--platform-usable-w) - 520px)); }
+  html[data-skin] body:has(#ai-screen[data-frame-list]:not(.hidden)) .side-panel { top: var(--fr-shell-top); border-radius: 0; background: none; box-shadow: none; border-inline-start: 1px solid var(--fr-line); }
+  html[data-skin] body:has(#ai-screen[data-frame-list]:not(.hidden)) .side-panel-head { background: none; border-bottom: 1px solid var(--fr-line); }
 }
 
 /* …and Messages, whose layout already has the two panes: the list pane

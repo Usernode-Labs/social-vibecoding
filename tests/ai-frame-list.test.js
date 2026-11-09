@@ -107,6 +107,11 @@ test('the two panes sit as the tour draws them: the list 520px, the open item th
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] \{ --ai-main-w: max\(360px, calc\(var\(--platform-usable-w\) - 520px\)\); \}/);
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] \.ai-main-pane \{ top: var\(--fr-shell-top\); background: none;[^}]*border-inline-start: 1px solid var\(--fr-line\);/);
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] #ai-main-divider \{ display: none; \}/, 'the width is the frame\'s, so the handle steps aside');
+  // A request opened from a row stands in the column through the shell's
+  // side panel (the tour's s11), which is in <body>: it takes the column's
+  // width and line there, so it ends where the list ends.
+  assert.match(css, /html\[data-skin\] body:has\(#ai-screen\[data-frame-list\]:not\(\.hidden\)\) \{ --ai-main-w: max\(360px, calc\(var\(--platform-usable-w\) - 520px\)\); \}/);
+  assert.match(css, /html\[data-skin\] body:has\(#ai-screen\[data-frame-list\]:not\(\.hidden\)\) \.side-panel \{ top: var\(--fr-shell-top\); border-radius: 0; background: none; box-shadow: none; border-inline-start: 1px solid var\(--fr-line\); \}/);
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] \.ai-askbar,\s*html\[data-skin\] #ai-screen\[data-frame-list\] \.ai-askbar-gap \{ display: none; \}/);
 });
 
@@ -115,4 +120,12 @@ test('the list\'s words are catalog text', () => {
   for (const k of ['frame.bot.new', 'frame.bot.all', 'frame.bot.search', 'frame.bot.mainLine', 'frame.bot.groupNeeds', 'frame.bot.needs', 'frame.bot.groupProgress', 'frame.bot.progress', 'frame.bot.onlyYou', 'frame.bot.quiet', 'frame.bot.newCount']) {
     assert.ok(en[k] && typeof en[k].text === 'string' && en[k].description, k);
   }
+});
+
+test('the list\'s New thread starts the blank thread, as the standard "+" does', () => {
+  // The kit's button is not the standard NewThreadButton, so it must do
+  // both halves itself: bring the column into view, then start the thread.
+  const src = read('frontend', 'src', 'features', 'ai', 'index.tsx');
+  assert.match(src, /onNew=\{\(\) => \{ openBlank\(\); if \(botId\) startNewThread\(botId\); \}\}/);
+  assert.match(read('frontend', 'src', 'features', 'messages', 'new-thread.tsx'), /onClick=\{\(\) => \{ onOpen\?\.\(\); startNewThread\(conversationId\); \}\}/, 'the same two halves, in the same order');
 });

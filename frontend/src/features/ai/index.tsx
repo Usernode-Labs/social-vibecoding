@@ -78,7 +78,7 @@ import { FRESH } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { EmbeddedConversation } from '../messages';
-import { closeNewThread, NewThreadButton, useNewThread } from '../messages/new-thread';
+import { closeNewThread, NewThreadButton, startNewThread, useNewThread } from '../messages/new-thread';
 import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
 import { closeThread, embed, loadConversations, useMessagesSnapshot } from '../messages/store';
@@ -920,7 +920,7 @@ export function AiScreen(): ReactNode {
           picked={picked}
           onPick={pick}
           appFor={appFor}
-          onNew={openBlank}
+          onNew={() => { openBlank(); if (botId) startNewThread(botId); }}
           query={query}
           onQuery={setQuery}
         />
