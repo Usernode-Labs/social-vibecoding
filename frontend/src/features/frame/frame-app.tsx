@@ -25,9 +25,9 @@
  * drew the chrome. A second, inert copy behind the screens paints what a
  * look gives the page column itself (Paper's white sheet).
  *
- * Nothing renders on the first render (lib/skin.ts says why), and nothing
- * for a visitor who is not signed in: the signed-out frame is its own
- * milestone.
+ * Nothing renders on the first render (lib/skin.ts says why). A visitor who
+ * is not signed in gets the guest's chrome instead (./guest-chrome.tsx): one
+ * bar, no sidebar, no tab bar.
  */
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -45,6 +45,7 @@ import { communityScopeStore, goToCommunity } from '../workshop/community-scope'
 import { swatchFor } from '../messages/format';
 import { framePageStore } from './frame-page-store';
 import { FrameSheets, openFrameSheet } from './frame-sheets';
+import { GuestFrame } from './guest-chrome';
 import { LookPicker } from './look-picker';
 
 const MARK = '/brand/homeroom-mark.png';
@@ -105,7 +106,8 @@ export function FrameApp() {
   // chromeless shots) take this one away with it.
   const routed = useVisibility('platform-tabs', true);
   const on = isFrameSkin(skin) && viewer && routed;
-  return on ? <FrameChrome /> : null;
+  // A visitor has a frame of their own (./guest-chrome.tsx), up only while an anonymous screen is.
+  return on ? <FrameChrome /> : <GuestFrame />;
 }
 
 /** The chrome itself; FrameApp decides when it is up. Exported for its suite. */

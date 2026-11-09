@@ -195,12 +195,27 @@ test('the section sits just before the New look\'s block, which stays last', () 
 const WORN = new Set(Object.values(looks.config.wear.roots).flatMap((root) => [root.to, ...Object.values(root.parts || {})])
   .flatMap((sel) => sel.match(/\.[a-zA-Z][\w-]*/g) || []));
 
+// A rule's selectors: split at the commas outside every bracket (a worn
+// selector nests :is() in :is()).
+function topLevel(head) {
+  const out = [];
+  let depth = 0;
+  let at = 0;
+  for (let i = 0; i < head.length; i += 1) {
+    if (head[i] === '(') depth += 1;
+    else if (head[i] === ')') depth -= 1;
+    else if (head[i] === ',' && depth === 0) { out.push(head.slice(at, i).trim()); at = i + 1; }
+  }
+  out.push(head.slice(at).trim());
+  return out;
+}
+
 test('every rule of the section starts from a look, and every class and token is the frame\'s', () => {
   const body = section().replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = [...body.matchAll(/(?:^|\n)([^@{}\n][^{}]*)\{([^{}]*)\}/g)];
   assert.ok(rules.length > 900, `the kit and nine looks are all there (${rules.length} rules)`);
   for (const [, head, decls] of rules) {
-    for (const sel of head.split(/,(?![^()]*\))/).map((s) => s.trim())) {
+    for (const sel of topLevel(head)) {
       assert.match(sel, /^html\[data-skin/, `"${sel}" must start from a look`);
       const classes = sel.replace(/^html\[data-skin(?:="[a-z]+")?\](?:\[data-skin\])?(?:\.dark)?(?::not\(\.dark\))?(?::not\(\[data-app-tone="(?:dark|light)"\]\))?(?::where\([^)]*\)\))?/, '').match(/\.[a-zA-Z][\w-]*/g) || [];
       for (const c of classes) assert.ok(/^\.fr(-|$)/.test(c) || WORN.has(c), `${c} in "${sel}" is neither a frame class nor one the product's markup wears`);
@@ -265,4 +280,21 @@ test('a solid sheet is solid under a see-through look: a dialog, a menu and a pi
       assert.ok(!light.includes('--fr-solid'), `${id}: its surface is already solid, so it needs none`);
     }
   }
+});
+
+test('a worn rule that could match nothing is left out', () => {
+  // .btn.sm, .card.pad: a state the kit writes as a class on the component
+  // itself. The product's node never carries a kit class, so unless the map
+  // names that state as a part the rule is dead weight in every look.
+  const text = section();
+  let seen = 0;
+  for (const root of Object.values(looks.config.wear.roots)) {
+    for (let at = text.indexOf(root.to); at > -1; at = text.indexOf(root.to, at + 1)) {
+      seen += 1;
+      const after = text.slice(at + root.to.length, at + root.to.length + 40);
+      assert.doesNotMatch(after, /^\.fr-/, `"${root.to}${after}" hangs a kit state on the product's own node`);
+    }
+  }
+  assert.ok(seen > 100, `the worn rules are there (${seen})`);
+  assert.match(text, /:not\(\[data-auth-back\]\):is\(\.bg-white,\.bg-zinc-100\)\{background:var\(--fr-sunk\)/, 'a state the map names is kept: the quiet button');
 });

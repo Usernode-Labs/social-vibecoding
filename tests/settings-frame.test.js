@@ -33,7 +33,7 @@ test('the section\'s sheet is put away so its groups sit on the page, and its ti
   assert.match(hand, new RegExp(`${ANY} #settings-section-content\\.settings-sheet \\{[^}]*background: none; box-shadow: none;`));
   const looks = JSON.parse(read('frontend/looks/looks.json'));
   assert.match(looks.wear.roots.title.to, /\.settings-page-title/, 'each look\'s own title rule reaches it');
-  assert.match(css, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) :is\(\.settings-page-title,#first-session-make-title\)\{font-size:28px;/);
+  assert.match(css, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) :is\(\.settings-page-title,#first-session-make-title,[^{]*\)\{font-size:28px;/);
 });
 
 test('the screen\'s own markup is untouched: the same ids the standard look and the declared checks read', () => {

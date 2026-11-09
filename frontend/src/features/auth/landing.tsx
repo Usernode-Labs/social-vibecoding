@@ -45,6 +45,7 @@ import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { Message, RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
+import { isFrameSkin, useSkin } from '../../lib/skin';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
@@ -80,6 +81,7 @@ import { Story } from './story';
 import { cardCover, morph, projectHero } from '../guest/card-morph';
 import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../guest/device-pins';
 import { GuestDiscover } from '../guest/guest-discover';
+import { LandingFrame } from '../guest/frame/landing-frame';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
 import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, projectHash } from '../guest/guest-data';
 import { noteSignUpFrom } from './sign-up-from';
@@ -823,6 +825,10 @@ export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.landing, false);
   const t = useMessages('auth');
+  // Under one of the frame's looks the guest Discover is the kit's page
+  // (../guest/frame/landing-frame.tsx). Standard until mount: this screen
+  // is in the prerendered document.
+  const frame = isFrameSkin(useSkin());
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -2255,6 +2261,19 @@ export function LandingScreen() {
               onIntent={askFor}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onShare={shareProject}
+            />
+          ) : null}
+          {/* The same page in the one frame, ahead of the standard one, which
+              app.css puts away while this is up. Not in the waiting room,
+              whose page is its own milestone. */}
+          {frame && guestPages && !guestProject && !linkPending && !waitingGuest ? (
+            <LandingFrame
+              apps={apps}
+              failed={appsFailed && !apps}
+              waitlist={NEW_ACCOUNTS_WAIT}
+              onStart={() => setSheet('start')}
+              onOpenInside={(app) => { void live.current.openLandingApp(app); }}
+              onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
             />
           ) : null}
           {guestPages && !guestProject && !linkPending ? (

@@ -104,6 +104,11 @@ function wornSelector(mapped, raw = null) {
   const plain = raw == null ? sel.trim().replace(/\.fr-/g, '.') : raw.trim().replace(/\s+/g, ' ').replace(/^\.(hr|phone|dark) /, '');
   if ((root.skip || []).includes(plain)) return null;
   const to = { [key]: root.to, ...(root.parts || {}) };
+  // A state the kit writes as a class on the component itself (.btn.sm,
+  // .card.pad) is one the product's node never carries unless the map
+  // names it as a part: such a rule could match nothing, so it is left out.
+  const dead = new RegExp(`\\.fr-${key}((?:\\.fr-[\\w-]+)+)`).exec(sel);
+  if (dead && dead[1].split('.fr-').filter(Boolean).some((name) => !Object.prototype.hasOwnProperty.call(to, name))) return null;
   sel = sel.replace(/\.fr-([\w-]+)/g, (m, name) => (Object.prototype.hasOwnProperty.call(to, name) ? to[name] : m));
   return head + sel;
 }

@@ -296,7 +296,7 @@
     }
   },
   "wear": {
-    "note": "What the product's own markup wears. A conversation is drawn by the product's renderer, not by kit components, so for each kit component named here (roots) every kit rule that mentions it is repeated for the product's class (to), with the component's inner classes swapped for the product's (parts: a kit class, or a state the kit writes as a class, to a product selector). skip lists tour selectors left out. A part only counts inside a rule that names its root. The composer's field is not worn: the kit draws a placeholder's words, not a field (app.css, THE FRAME IN THE SHELL).",
+    "note": "What the product's own markup wears. A conversation is drawn by the product's renderer, not by kit components, so for each kit component named here (roots) every kit rule that mentions it is repeated for the product's class (to), with the component's inner classes swapped for the product's (parts: a kit class, or a state the kit writes as a class, to a product selector). skip lists tour selectors left out. A part only counts inside a rule that names its root. The composer's field is not worn: the kit draws a placeholder's words, not a field (app.css, THE FRAME IN THE SHELL). The stand-alone pages a visitor signs in on (features/auth: sign-in, register, the waitlist form, more ways) are the product's own forms and wear the title, the card and the button; their one accent-filled control is the primary button, a white or grey pill a quiet one.",
     "roots": {
       "post": {
         "to": ".messages-message",
@@ -330,10 +330,16 @@
         "to": ":is(.messages-thread-action,.messages-composer-action)"
       },
       "card": {
-        "to": ":is(.dev-request-ask,.dev-request-status)"
+        "to": ":is(.dev-request-ask,.dev-request-status,:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) .rounded-2xl.overflow-hidden)"
       },
       "title": {
-        "to": ":is(.settings-page-title,#first-session-make-title)"
+        "to": ":is(.settings-page-title,#first-session-make-title,:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) h1)"
+      },
+      "btn": {
+        "to": ":is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back])",
+        "parts": {
+          "quiet": ":is(.bg-white,.bg-zinc-100)"
+        }
       }
     }
   }
