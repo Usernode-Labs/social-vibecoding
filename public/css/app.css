@@ -27033,8 +27033,8 @@ html[data-skin][data-project-frame] #app-view { padding-inline-start: var(--plat
 html[data-skin][data-project-frame] #dev-body { padding: 0; }
 html[data-skin][data-project-frame] #dev-workshop { max-width: none; margin: 0; }
 html[data-skin] .dev-ws > [data-project-frame] ~ .dev-ws-placebar { display: none; }
-html[data-skin] .dev-ws > :is([data-project-frame="status"], [data-project-frame="topics"]) ~ .dev-ws-tabbody { display: none; }
-html[data-skin] [data-project-frame]:not([data-project-frame="status"], [data-project-frame="topics"]) > .fr-inner { padding-bottom: 16px; }
+html[data-skin] .dev-ws > :is([data-project-frame="status"], [data-project-frame="topics"], [data-project-frame="workshop-kit"]) ~ .dev-ws-tabbody { display: none; }
+html[data-skin] [data-project-frame]:not([data-project-frame="status"], [data-project-frame="topics"], [data-project-frame="workshop-kit"]) > .fr-inner { padding-bottom: 16px; }
 html[data-skin] .dev-ws > [data-project-frame] ~ .dev-ws-tabbody { max-width: 1136px; margin: 0 auto; padding: 0 32px 48px; }
 html[data-skin] .dev-ws > [data-project-frame] ~ .dev-ws-tabbody > * { max-width: 720px; }
 @media (max-width: 767.98px) {

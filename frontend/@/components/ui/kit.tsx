@@ -266,6 +266,55 @@ export function Facts({ items }: { items: Array<{ value: React.ReactNode; label:
   );
 }
 
+/**
+ * A vote, as the tour's ballot: what is asked, the tally as one bar with
+ * the line it must reach, the count in words, then how to cast it. The
+ * caller says the words (it knows the language and the rule).
+ */
+export function Ballot({ pill, id, title, line, yes, no, of, need, words, voters, actions, note }: {
+  /** The one status over the title, such as a "Your vote" pill. */
+  pill?: React.ReactNode;
+  id?: string | null;
+  title?: React.ReactNode;
+  line?: React.ReactNode;
+  yes: number;
+  no: number;
+  /** How many may vote, and how many yeses pass it. */
+  of: number;
+  need: number;
+  words: { yes: string; rest: string; needed: string };
+  voters?: React.ReactNode;
+  actions?: React.ReactNode;
+  note?: React.ReactNode;
+}) {
+  const pct = (n: number) => `${Math.max(0, Math.min(100, (n / Math.max(of, 1)) * 100))}%`;
+  return (
+    <Card>
+      <div className={k('ballot')}>
+        {title ? (
+          <div>
+            <div className={k('btnrow')}>{pill}{id ? <span className={k('mono')}>{id}</span> : null}</div>
+            <div className={k('sub17')} style={{ marginTop: 8 }}>{title}</div>
+            {line ? <div className={k('s')} style={{ fontSize: 13, color: 'var(--fr-mut)', marginTop: 4 }}>{line}</div> : null}
+          </div>
+        ) : null}
+        <div className={k('bar2')} role="img" aria-label={`${words.yes} · ${words.rest}`}>
+          <i className={k('y')} style={{ width: pct(yes) }} />
+          <i className={k('no')} style={{ width: pct(no) }} />
+          <span className={k('need')} data-l={words.needed} style={{ insetInlineStart: pct(need) }} />
+        </div>
+        <div className={k('line1')}><b>{words.yes}</b><span>{words.rest}</span><span style={{ flex: 1 }} />{voters}</div>
+        {actions || note ? (
+          <div className={k('btnrow')}>
+            {actions}
+            {note ? <span className={k('meta')} style={{ fontSize: 13, color: 'var(--fr-mut)' }}>{note}</span> : null}
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
 /** One sentence the page wants read: plain (navy), or toned. */
 export function Note({ tone = '', icon = 'info', children }: { tone?: '' | 'wait' | 'ok' | 'bad'; icon?: string; children: React.ReactNode }) {
   return <div className={k('note', tone)}><Icon name={icon} size={17} /><div>{children}</div></div>;

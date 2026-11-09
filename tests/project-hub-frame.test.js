@@ -139,11 +139,11 @@ test('under a look the project\'s page has the frame\'s page area, and the stand
   assert.match(hand, /html\[data-skin\]\[data-project-frame\] #app-view \{ padding-inline-start: var\(--platform-rail-w, 0px\) !important; padding-inline-end: 0 !important; \}/);
   assert.match(hand, /html\[data-skin\]\[data-project-frame\] #dev-workshop \{ max-width: none; margin: 0; \}/, 'not the standard look\'s 760px column');
   assert.match(hand, /html\[data-skin\] \.dev-ws > \[data-project-frame\] ~ \.dev-ws-placebar \{ display: none; \}/, 'the places are the kit\'s tabs');
-  assert.match(hand, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="status"\], \[data-project-frame="topics"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'where the kit draws the whole place');
+  assert.match(hand, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="status"\], \[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'where the kit draws the whole place');
   const frame = read(FRAME);
   assert.match(frame, /document\.documentElement\.setAttribute\('data-project-frame', ''\)/, 'the page says it is up, so no rule looks inside the board\'s hosts');
-  assert.equal((frame.match(/^  useProjectFrameFlag\(\);$/gm) || []).length, 3, 'each of the three kit pages');
+  assert.equal((frame.match(/^  useProjectFrameFlag\(\);$/gm) || []).length, 4, 'each of the kit\'s pages');
   // The page's own lines stay as written: the kit's page is drawn ahead of them.
   const page = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(page, /\{frame && !frameTopics && tab === 'status' && !pending \? frameHub\(\) : null\}\s+\{frame && !frameTopics && tab !== 'status' \? <ProjectFrameHead [^\n]+\n\s+\{band\}\n\s+\{tray\}/);
+  assert.match(page, /\{frame && !frameTopics && tab === 'status' && !pending \? frameHub\(\) : null\}\s+\{frameWorkshopUp \? frameWorkshop\(\) : null\}\s+\{frame && !frameTopics && tab !== 'status' && !frameWorkshopUp \? <ProjectFrameHead [^\n]+\n\s+\{band\}\n\s+\{tray\}/);
 });
