@@ -79,6 +79,8 @@ if [ -z "$live" ]; then
     aquasec/trivy:0.76.1 image --skip-db-update --offline-scan --cache-backend memory \
     --input /image.tar --scanners vuln --format json --output /output/image-vulnerabilities.json
   test -s "$out/image-vulnerabilities.json"
+  rm -rf "$archive_dir"
+  archive_dir=
 fi
 
 baseline=
