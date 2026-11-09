@@ -887,9 +887,9 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "157017d7b5984923ede2",
+      "fingerprint": "06cdc1594753c76a99bd",
       "count": 1,
-      "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.status = 'merged' ${prCursorSql} ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, cs.id DESC LIMIT $${prPa"
+      "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.status = 'merged' ${noNewerMergedTwin()} ${prCursorSql} ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, c"
     },
     {
       "source": "src/routes/votes.js",
@@ -897,6 +897,13 @@
       "fingerprint": "3474bc02c4800e84c12b",
       "count": 1,
       "preview": "`SELECT pv.vote, pv.reason, u.username, pv.user_id, ${currentVotePredicateSql('pv', 'cs')} AS current FROM pr_votes pv JOIN users u ON pv.user_id = u.id JOIN ch"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "402438732ad2edec704f",
+      "count": 1,
+      "preview": "`SELECT COUNT(*) FILTER (WHERE t >= $2::timestamptz)::int AS shipped_week, COUNT(*) FILTER (WHERE t < $2::timestamptz AND t >= $2::timestamptz - interval '7 day"
     },
     {
       "source": "src/routes/votes.js",
@@ -939,6 +946,13 @@
       "fingerprint": "ed2a6965e24f99bc2d8f",
       "count": 1,
       "preview": "`WITH current_session AS ( SELECT id, approval_epoch FROM chat_sessions WHERE id = $1 AND status IN ('promoted', 'merging') FOR UPDATE ), v AS ( INSERT INTO pr_"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "f86a7ee8733fdfb03c37",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS total FROM chat_sessions cs WHERE cs.app_id = $1 AND cs.status = 'merged' ${noNewerMergedTwin()}`"
     },
     {
       "source": "src/routes/workshop-overview.js",

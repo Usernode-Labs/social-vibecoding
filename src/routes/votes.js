@@ -2755,6 +2755,21 @@ function mergedRowSelect() {
          LEFT JOIN chat_sessions inc ON inc.id = cs.included_in_session_id`;
 }
 
+// #6482: several chat_sessions rows can name one pull request (a rebuilt or
+// re-submitted change), and more than one can be marked merged. The Completed
+// list is one entry per change, chosen by the same rule GET
+// /api/apps/:slug/changes/:number uses: the row that reached a vote, then the
+// newest. Every row this fragment is applied to is already merged, so that
+// reduces to the highest id. Written once so the page, its Done total and the
+// shipped-week count can never disagree. A NULL pr_number never equals
+// anything, so rows with no pull request number are all kept.
+function noNewerMergedTwin(alias = 'cs') {
+  return `AND NOT EXISTS (
+    SELECT 1 FROM chat_sessions twin
+     WHERE twin.app_id = ${alias}.app_id AND twin.status = 'merged'
+       AND twin.pr_number = ${alias}.pr_number AND twin.id > ${alias}.id)`;
+}
+
 // #3893: whether a promote was sent by the owner's own agent with a bearer
 // token: the local Homeroom CLI's proposal_promote, or a connector's
 // promote_change and submit_work `propose: true`. cli-auth.js sets
@@ -4759,6 +4774,7 @@ function voteRoutes(config) {
       const { rows: prRows } = await pool.query(
         `${mergedRowSelect()}
          WHERE cs.app_id = $1 AND cs.status = 'merged'
+           ${noNewerMergedTwin()}
            ${prCursorSql}
          ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, cs.id DESC
          LIMIT $${prParams.length}`,
@@ -4832,8 +4848,9 @@ function voteRoutes(config) {
       // status), so this is far lighter than the per-row subqueries above.
       const { rows: totalRows } = await pool.query(
         `SELECT COUNT(*)::int AS total
-           FROM chat_sessions
-          WHERE app_id = $1 AND status = 'merged'`,
+           FROM chat_sessions cs
+          WHERE cs.app_id = $1 AND cs.status = 'merged'
+            ${noNewerMergedTwin()}`,
         [appRows[0].id]
       );
       // Applied close-issue proposals count toward the same Done total —
@@ -4871,9 +4888,10 @@ function voteRoutes(config) {
                   COUNT(*) FILTER (WHERE t < $2::timestamptz
                                      AND t >= $2::timestamptz - interval '7 days')::int AS shipped_prev_week
              FROM (
-               SELECT COALESCE(merged_at, created_at) AS t
-                 FROM chat_sessions
-                WHERE app_id = $1 AND status = 'merged' AND live_at IS NOT NULL
+               SELECT COALESCE(cs.merged_at, cs.created_at) AS t
+                 FROM chat_sessions cs
+                WHERE cs.app_id = $1 AND cs.status = 'merged' AND cs.live_at IS NOT NULL
+                  ${noNewerMergedTwin()}
                UNION ALL
                SELECT created_at AS t
                  FROM issues
