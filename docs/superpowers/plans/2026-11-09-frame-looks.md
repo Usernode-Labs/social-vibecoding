@@ -131,3 +131,65 @@ looks' section: Brand kit names Geist by design).
       `258689653`; one fix pass; notes.
 
 ## Notes
+
+### Execution (2026-11-09, native, one fresh reviewer at the end)
+
+All seven tasks ran in order; commits `ecfb236ef..` on `redesign/one-frame-glass`
+(based on canonical main `3c365c436`).
+
+Rulings:
+
+- **Depth.** The eight looks are drawn as far as glass is: tokens, typeface, and Home in the
+  frame with each look's signature. The tour's theme files are mostly chrome (sidebar, bar,
+  tabs, tab bar, sheets), which no plan has drawn in the frame yet, so a look's chrome
+  signature (Sunrise's ink sidebar, Pastel's capsule, Mosaic's picture rail, Paper's
+  navigation off the sheet) waits for the chrome plan.
+- **"A First draft" is not a look.** It is another kit, not a theme over the frame.
+- **One menu, not nine switches**, admin-only as the Glass switch was. A device left in a look
+  keeps the menu whoever is signed in (review finding), so a stored look can always be cleared.
+- **Geometry by rules on hook classes (`fr-*`), colours by tokens.** The primitives carry the
+  kit's neutral sizes; glass's own moved into its block. Glass on Home is pixel-identical in
+  light; in dark and in rows it now takes the look's inks where `SectionHeader` and `ListRow`
+  drew zinc (a correction, not a regression: the tokens were always meant to reach them).
+- **`HomeGlass` → `HomeFrame`**, `home:glass.*` → `home:frame.*`, `tests/home-glass` → `home-frame`.
+- **Brand kit moves the ground** the way New look moves its plate (rules on `<body>` with
+  `--home-ground` following); no other look touches the wallpaper.
+- **`--accent-tint` is a literal rgba per look and mode** (dev-chat-ground holds its alpha), so
+  for the five looks whose design tint is an opaque hex the product's tint is the accent at
+  0.12 to 0.2 instead; the frame's own `--fr-acc-t` keeps the design's value.
+- **IBM Plex Mono ships at 500 only** (latin + latin-ext); every rule set in it asks for 500.
+- **`tests/new-look.test.js`**: its "nothing else names Geist" guard now sets the Brand kit
+  block aside, which names Geist by design and reuses New look's `@font-face`.
+
+Review (one fresh reviewer over `258689653..HEAD`): 1 Critical, 2 Important, 11 Minor.
+
+- Critical: a blanket `git add tests` had committed someone's untracked
+  `tests/username-code-invite-postgres.test.js`. Taken back out in `c016e44fe` (still on disk).
+- Important, fixed with a test each: More contrast lost to the shared rule under every look;
+  Brand kit dark left `--home-ground` navy.
+- Minor, fixed: Today's single-line picture (36px), the mono's weight, Pastel's dark soft
+  shadow, 19 stale catalog descriptions, Source Serif 4's copyright line, the hidden way back
+  to Standard.
+
+Deferred minors:
+
+- `--dc-sheet-solid` is translucent under glass, workbench and mosaic, so a sticky surface that
+  reads it lets content show through (`.dev-change-pair[data-stuck]`, the side panel's body).
+  Needs an opaque per-look value; glass has had this since the foundation plan.
+- The hairline between rows uses `--fr-line`; the kit uses a lighter second line (`--line2`,
+  about 60% of it). Most visible on Playground's 2px dividers.
+- Text on the accent fails AA at small sizes under Playground (white on #4c97ff, 2.9:1) and
+  Today (white on #0a7aff, 4.0:1), and Playground's state pills on their tints (about 3:1).
+  These are the design's values; they now reach every primary button under those looks.
+- Brand kit keeps the wallpaper on the screens that paint it themselves (sign-in, Make), as
+  New look does.
+- `frame-looks.test.js` reads the stylesheet as text. The cascade itself (contrast over a
+  look, the ground, token resolution under all nine looks and both modes) was read in a real
+  browser for this plan (`cascade-check.mjs` in the session scratchpad) but is not a suite.
+- Workbench's "wider column" is bounded by `#home-body.home-column`; whether it should break
+  out of that column is a chrome-plan question.
+
+Seen: Home under standard and the nine looks, desktop and phone, light and dark (40 images,
+no console errors); Messages, a hub and Needs you under four looks; the Look menu driven in
+the running stack on a copy of production.
+
