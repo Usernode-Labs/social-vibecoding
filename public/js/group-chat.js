@@ -1388,7 +1388,7 @@ const GroupChat = {
         && (msg.userId === App.user?.id || msg.user_id === App.user?.id)
         // A message an older chip names (its metadata) is a request already.
         && !(meta.botRequest) && !GroupChat._botCards.has(Number(msg.id))
-        && !/(^|[^\w])@(homeroom_bot\b|homeroom\s+bot\b)/i.test(String(msg.content || '')),
+        && !/(^|[^\w])@(homeroom_bot\b|homeroombot\b|homeroom\s+bot\b)/i.test(String(msg.content || '')),
       // Only the message knows WHICH change it is about, so the pair rides
       // on the view model: the row renders it as data-vote-session /
       // data-vote-pr, which refreshVoteControls reads back to resolve the
@@ -5471,7 +5471,7 @@ function channelRefLink(handle) {
 // its mention ("@Homeroom bot", or its handle) stays text.
 function isBotMention(name) {
   const key = String(name || '').toLowerCase();
-  return key === 'homeroom bot' || key === 'homeroom_bot';
+  return key === 'homeroom bot' || key === 'homeroom_bot' || key === 'homeroombot';
 }
 
 function mentionHref(name) {
