@@ -60,10 +60,16 @@ test('CLI aggregation emits the contract without needing any token or issue API'
       fs.writeFileSync(path.join(dir, a.component, 'assessment.json'), JSON.stringify(a));
     }
     const output = path.join(dir, 'report.json');
-    execFileSync(process.execPath, [path.join(__dirname, '../scripts/security-audit-report.js'), dir, output], {
-      env: { PATH: process.env.PATH, GITHUB_REPOSITORY: context.repository, GITHUB_SHA: context.revision,
-        GITHUB_RUN_ID: context.runId, GITHUB_RUN_ATTEMPT: context.runAttempt },
-    });
+    try {
+      execFileSync(process.execPath, [path.join(__dirname, '../scripts/security-audit-report.js'), dir, output], {
+        env: { PATH: process.env.PATH, GITHUB_REPOSITORY: context.repository, GITHUB_SHA: context.revision,
+          GITHUB_RUN_ID: context.runId, GITHUB_RUN_ATTEMPT: context.runAttempt },
+        timeout: 30000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024, encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (err) {
+      throw new Error(`security-audit-report.js CLI failed (${err.code || err.signal || err.status}): ${err.stderr || err.message}`);
+    }
     assert.equal(contract.readReport(fs.readFileSync(output, 'utf8'), context).complete, true);
     fs.writeFileSync(path.join(dir, 'platform/assessment.json'), '{broken');
     const { collect } = require('../scripts/security-audit-report');
@@ -168,17 +174,29 @@ test('artifact download validates destination, redirect behavior and compressed 
   }), /Oversized/);
 });
 
-test('ZIP reader reads only the bounded expected report and cleans up on invalid input', () => {
+test('ZIP reader reads only the bounded expected report and cleans up on invalid input', (t) => {
   // Fixed one-report archives avoid requiring a ZIP writer in the test
   // image. The oversized fixture expands to MAX_BYTES + 1 plain x bytes.
   const fixture = (name) => fs.readFileSync(path.join(__dirname, 'fixtures/security-audit', name));
-  const before = fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('homeroom-security-'));
+  // Only the directories this test's own calls create are inspected: the
+  // shared temp root is written by other test processes running in parallel.
+  const created = [];
+  const original = fs.mkdtempSync;
+  t.mock.method(fs, 'mkdtempSync', (...args) => {
+    const dir = original.apply(fs, args);
+    created.push(dir);
+    return dir;
+  });
   assert.equal(observer.unzipReport(fixture('report.zip')), '{"fixture":"homeroom-security-audit"}\n');
   assert.throws(() => observer.unzipReport(Buffer.from('invalid zip')));
   const large = fixture('oversized-report.zip');
   assert.ok(large.length < contract.MAX_BYTES, 'tests the expanded-size limit, not the compressed-size limit');
   assert.throws(() => observer.unzipReport(large), { code: 'ENOBUFS' });
-  assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('homeroom-security-')), before);
+  assert.equal(created.length, 3, 'one temp directory per call that gets past the size guard');
+  for (const dir of created) {
+    assert.ok(path.basename(dir).startsWith('homeroom-security-'));
+    assert.equal(fs.existsSync(dir), false, 'each temp directory is removed');
+  }
 });
 
 test('one advisory aggregates all components, retains its target and updates only for semantic changes', () => {
