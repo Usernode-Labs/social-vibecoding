@@ -35,6 +35,15 @@ function demoWork() {
   const puzzle = { slug: 'staging-demo-featured-3', name: 'Staging demo featured 3', icon_url: null, icon_emoji: '🧩' };
   const now = Date.now();
   const at = (hours) => new Date(now - hours * 3600000).toISOString();
+  // #6401 splits each project's card by the reader's day, and #6160's check
+  // reads the main demo project's rows in order, in one container. Rows aged
+  // by the hour cross midnight depending on when the page loads, so these
+  // share one anchor instead: the most recent 12:00 UTC, always at least an
+  // hour in the past. 11:10-11:50 UTC is one day from UTC-11 to UTC+11.
+  const noon = new Date(now);
+  const todayNoon = Date.UTC(noon.getUTCFullYear(), noon.getUTCMonth(), noon.getUTCDate(), 12);
+  const anchor = now >= todayNoon + 3600000 ? todayNoon : todayNoon - 86400000;
+  const day = (minutes) => new Date(anchor - minutes * 60000).toISOString();
   const issue = (a, n) => `#app/${a.slug}/dev/issues/${n}`;
   return {
     private: [
@@ -58,14 +67,14 @@ function demoWork() {
       { threadId: -9227, number: 9227, kind: 'work', title: 'Staging demo: your change whose checks failed', app, change: { id: -9227, number: 9228 }, href: issue(app, 9227), group: 'needs', work: { stage: 'checking', line: { code: 'checks_failing' } }, fixYours: true, at: at(12) },
     ],
     next: [
-      { threadId: -9201, number: 9201, kind: 'work', title: 'Staging demo: dark mode', app, change: { id: -9201, number: 9202 }, href: issue(app, 9201), group: 'next', work: { stage: 'going_live' }, at: at(1), unread: 1 },
-      { threadId: -9208, number: 9208, kind: 'work', title: 'Staging demo: tag filter', app, change: { id: -9208, number: 9209 }, href: issue(app, 9208), group: 'next', work: { stage: 'building' }, at: at(3), by: 'bot' },
+      { threadId: -9201, number: 9201, kind: 'work', title: 'Staging demo: dark mode', app, change: { id: -9201, number: 9202 }, href: issue(app, 9201), group: 'next', work: { stage: 'going_live' }, at: day(10), unread: 1 },
+      { threadId: -9208, number: 9208, kind: 'work', title: 'Staging demo: tag filter', app, change: { id: -9208, number: 9209 }, href: issue(app, 9208), group: 'next', work: { stage: 'building' }, at: day(20), by: 'bot' },
       { threadId: -9216, number: 9216, kind: 'work', title: 'Staging demo: a sound toggle', app: game, change: null, href: issue(game, 9216), group: 'next', work: { stage: 'building', line: { code: 'claimed', by: 'staging-demo-partner' } }, at: at(5), by: 'someone' },
     ],
     waiting: [
-      { threadId: -9203, number: 9203, kind: 'work', title: 'Staging demo: search the board', app, change: { id: -9203, number: 9204 }, href: issue(app, 9203), group: 'waiting', work: { stage: 'up_for_vote' }, at: at(20), myVote: 'yes' },
-      { threadId: -9212, number: null, kind: 'decision', title: 'Staging demo: a new card picture', app, change: null, href: `#app/${app.slug}/dev/governance/9212`, group: 'waiting', work: { stage: 'up_for_vote' }, at: at(8), myVote: null },
-      { threadId: -9211, number: 9211, kind: 'work', title: 'Staging demo: export to a spreadsheet', app, change: null, href: issue(app, 9211), group: 'waiting', work: { stage: 'building', line: { code: 'held_waiting' } }, at: at(6) },
+      { threadId: -9203, number: 9203, kind: 'work', title: 'Staging demo: search the board', app, change: { id: -9203, number: 9204 }, href: issue(app, 9203), group: 'waiting', work: { stage: 'up_for_vote' }, at: day(30), myVote: 'yes' },
+      { threadId: -9212, number: null, kind: 'decision', title: 'Staging demo: a new card picture', app, change: null, href: `#app/${app.slug}/dev/governance/9212`, group: 'waiting', work: { stage: 'up_for_vote' }, at: day(40), myVote: null },
+      { threadId: -9211, number: 9211, kind: 'work', title: 'Staging demo: export to a spreadsheet', app, change: null, href: issue(app, 9211), group: 'waiting', work: { stage: 'building', line: { code: 'held_waiting' } }, at: day(50) },
       { threadId: -9217, number: 9217, kind: 'work', title: 'Staging demo: two-player mode', app: game, change: null, href: issue(game, 9217), group: 'waiting', work: { stage: 'building', line: { code: 'queued' } }, at: at(2) },
       { threadId: -9205, number: 9205, kind: 'work', title: 'Staging demo: print view', app, change: null, href: issue(app, 9205), group: 'waiting', work: { stage: 'reading', line: { code: 'waiting' } }, at: at(240), quietDays: 10 },
       { threadId: -9220, number: 9220, kind: 'work', title: 'Staging demo: a page for each month', app: album, change: null, href: issue(album, 9220), group: 'waiting', work: { stage: 'building', line: { code: 'queued' } }, at: at(4) },
