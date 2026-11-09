@@ -3,6 +3,9 @@
 // the device under 'homeroom:skin' and sets data-skin="glass" on <html>
 // before first paint; `?skin=` pins a look for one load, for the capture
 // runner; app.css draws the look from the attribute in light AND dark.
+// Glass was the first of the nine looks of the one frame; this suite holds
+// the Skin module, the hook and the Settings picker for all of them, and
+// tests/frame-looks.test.js the stylesheet.
 //
 // Run with: node --test tests/glass-skin.test.js
 
@@ -173,108 +176,8 @@ test('the glass switch copy is English source with descriptions', () => {
   assert.match(en['experimental.glassLook.description'].text, /Albert Sans/);
 });
 
-// ── The stylesheet ───────────────────────────────────────────────────────
-//
-// The glass block sits BEFORE the brand block (which stays last, as its own
-// tests pin) and after a small unscoped section of token defaults, so a
-// primitive that reads --surface or --acc renders sanely under every look.
-
-const appCss = () => read('public', 'css', 'app.css');
-const GLASS_MARK = '/* ── THE GLASS LOOK';
-const BRAND_MARK = '/* ── THE NEW LOOK, AN EXPERIMENT';
-const DEFAULTS_MARK = '/* ── SKIN TOKEN DEFAULTS';
-
-function glassBlock() {
-  const css = appCss();
-  const at = css.indexOf(GLASS_MARK);
-  const end = css.indexOf(BRAND_MARK);
-  assert.ok(at > 0, 'app.css carries the glass block');
-  assert.ok(end > at, 'the glass block ends where the brand block begins');
-  return css.slice(at, end);
-}
-
-// Every selector of a block, with comments and the @media / @supports
-// wrappers (which only narrow where a rule applies) stripped.
-function selectorsOf(block) {
-  const flat = block.replace(/\/\*[\s\S]*?\*\//g, '').replace(/@(media|supports)[^{]*\{/g, '');
-  const out = [];
-  for (const rule of flat.split('}').map((r) => r.trim()).filter(Boolean)) {
-    const head = rule.slice(0, rule.indexOf('{')).trim();
-    if (!head) continue;
-    for (const sel of head.split(',').map((s) => s.trim())) out.push(sel);
-  }
-  return out;
-}
-
-test('Albert Sans is served from our own origin with its licence and provenance beside it', () => {
-  for (const f of ['AlbertSans-Variable.woff2', 'AlbertSans-Variable-latin-ext.woff2', 'LICENSE.txt', 'README.md']) {
-    assert.ok(fs.existsSync(path.join(ROOT, 'public', 'fonts', 'albert-sans', f)), `public/fonts/albert-sans/${f}`);
-  }
-  const block = glassBlock();
-  assert.match(block, /url\('\/fonts\/albert-sans\/AlbertSans-Variable\.woff2'\) format\('woff2'\)/);
-  assert.match(block, /url\('\/fonts\/albert-sans\/AlbertSans-Variable-latin-ext\.woff2'\) format\('woff2'\)/);
-  assert.match(read('public', 'fonts', 'albert-sans', 'README.md'), /sha384/);
-  assert.match(read('public', 'fonts', 'albert-sans', 'LICENSE.txt'), /SIL Open Font License/);
-});
-
-test('every rule of the glass block is scoped to html[data-skin="glass"]', () => {
-  const sels = selectorsOf(glassBlock());
-  assert.ok(sels.length > 4, 'the block is read whole');
-  for (const sel of sels) {
-    assert.ok(sel === '@font-face' || sel.startsWith('html[data-skin="glass"]'), `"${sel}" must start from the flag`);
-  }
-});
-
-test('the glass block draws dark too', () => {
-  assert.match(glassBlock(), /html\[data-skin="glass"\]\.dark\s*\{/);
-});
-
-test('the glass block redeclares none of the counted wallpaper or frost tokens', () => {
-  const block = glassBlock();
-  for (const token of ['--home-ground:', '--home-wallpaper:', '--home-washes:', '--home-star:', '--home-grain:', '--dc-sheet-fill:', '--dc-frost:']) {
-    assert.ok(!block.includes(token), `${token} is counted elsewhere and must not be redeclared here`);
-  }
-});
-
-test('without backdrop-filter the surface is opaque', () => {
-  const block = glassBlock();
-  const at = block.indexOf('@supports not (backdrop-filter: blur(1px))');
-  assert.ok(at > 0, 'a fallback for browsers without backdrop-filter');
-  const fallback = block.slice(at);
-  assert.match(fallback, /html\[data-skin="glass"\]\s*\{[^}]*--fr-surface:\s*#fbfbfd/);
-  assert.match(fallback, /html\[data-skin="glass"\]\.dark\s*\{[^}]*--fr-surface:\s*#171a2b/);
-});
-
-test('the token defaults come first, then the glass block, then the brand block last', () => {
-  const css = appCss();
-  const d = css.indexOf(DEFAULTS_MARK);
-  const g = css.indexOf(GLASS_MARK);
-  const b = css.indexOf(BRAND_MARK);
-  assert.ok(d > 0 && d < g && g < b, 'defaults < glass < brand');
-  const defaults = css.slice(d, g);
-  for (const token of ['--fr-surface:', '--fr-ink:', '--fr-mut:', '--fr-acc:', '--fr-acc-ink:', '--fr-lit:', '--fr-lit-t:', '--fr-ok:', '--fr-ok-t:', '--fr-wait:', '--fr-wait-t:', '--fr-bad:', '--fr-bad-t:', '--fr-ring:', '--fr-glow:', '--fr-blur:']) {
-    assert.ok(defaults.includes(token), `${token} has a default for the standard look`);
-  }
-  assert.match(defaults, /\n\.dark\s*\{/, 'and dark defaults');
-  assert.match(defaults, /--fr-glow: 0 0 #0000;/, 'a no-op shadow, not `none`: `none` inside a comma list voids the whole box-shadow');
-});
-
-test('glass says its own geometry as rules on the frame\'s hooks', () => {
-  // The primitives carry the kit's neutral sizes; what glass draws
-  // differently (a 36px title, sentence-case labels, 24px panes, the glow
-  // under its button) is said here, so the other looks can say theirs.
-  const block = glassBlock().replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.match(block, /html\[data-skin="glass"\] \.fr-title \{[^}]*font-size: 28px;[^}]*letter-spacing: -0\.035em;/);
-  assert.match(block, /@media \(min-width: 768px\) \{\s*html\[data-skin="glass"\] \.fr-title \{ font-size: 36px; \}/);
-  assert.match(block, /html\[data-skin="glass"\] \.fr-label \{[^}]*font-size: 13px;[^}]*font-weight: 650;[^}]*text-transform: none;/);
-  assert.match(block, /html\[data-skin="glass"\] \.fr-card \{ border-radius: 24px; \}/);
-  assert.match(block, /html\[data-skin="glass"\] \.fr-btn \{[^}]*box-shadow: 0 12px 24px -12px var\(--fr-acc\);/);
-  assert.match(block, /html\[data-skin="glass"\] \.fr-btn-quiet \{[^}]*box-shadow: inset 0 0 0 1px var\(--fr-ring\);/);
-});
-
-test('the glass look sets the typeface on the root, with a system fallback', () => {
-  assert.match(glassBlock(), /html\[data-skin="glass"\]\s*\{[^}]*font-family:\s*'Albert Sans',\s*system-ui/);
-});
+// The stylesheet's side (each look's block, tokens, typeface and rules) is
+// held as a table over the nine in tests/frame-looks.test.js.
 
 // ── useSkin(): the look, read by an island after it mounts ─────────────
 //
@@ -306,27 +209,4 @@ test('useSkin subscribes through window.Skin.onChange after mount', () => {
   assert.match(src, /useEffect\(/);
   assert.match(src, /window\.Skin\?\.onChange\?\.\(/);
   assert.match(src, /useState<Skin>\('standard'\)/);
-});
-
-test('the frame tokens are namespaced, so no existing var(--x, fallback) changes meaning', () => {
-  // `--ring` was read as `var(--ring, currentColor)` by .platform-tab-ring:
-  // a bare name on :root would have silently replaced that fallback. Every
-  // token the frame declares carries the --fr- prefix, nothing else in the
-  // sheet declares one, and nothing reads one with a fallback.
-  const css = appCss();
-  const d = css.indexOf(DEFAULTS_MARK);
-  const b = css.indexOf(BRAND_MARK);
-  const mine = css.slice(d, b);
-  const declared = [...mine.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gm)].map((m) => m[1]);
-  const newOnes = declared.filter((t) => !/^--(text-|border|accent|lit-|dc-|app-sheet)/.test(t));
-  assert.ok(newOnes.length >= 16, 'the frame declares its tokens here');
-  for (const token of newOnes) assert.match(token, /^--fr-/, `${token} must be namespaced`);
-  const elsewhere = css.slice(0, d) + css.slice(b);
-  assert.doesNotMatch(elsewhere, /^\s*--fr-[a-z-]+\s*:/m, 'no --fr- token is declared outside the frame\'s own sections');
-  assert.doesNotMatch(css, /var\(--fr-[a-z-]+\s*,/, 'no reader relies on a fallback for a frame token');
-  for (const f of ['frontend/@/components/ui/frame.tsx', 'frontend/@/components/ui/status.tsx', 'frontend/src/features/home/frame/home-frame.tsx']) {
-    const src = read(...f.split('/'));
-    const bare = src.match(/var\(--(surface|sunk|ink|mut|faint|line|acc|acc-ink|acc-t|lit|lit-t|ok|ok-t|wait|wait-t|bad|bad-t|ring|glow|glass-blur)\)/g);
-    assert.equal(bare, null, `${f} reads an un-namespaced token: ${bare}`);
-  }
 });

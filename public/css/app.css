@@ -26931,7 +26931,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
    The tokens the frame primitives (frontend/@/components/ui/frame.tsx and
    status.tsx) draw with. Under the standard look they point at the
    product's own tokens, so a primitive renders sanely whatever the skin;
-   a look (THE GLASS LOOK below) redefines them. --fr-ok/--fr-wait/--fr-bad are the
+   a look (THE FRAME'S LOOKS below) redefines them. --fr-ok/--fr-wait/--fr-bad are the
    three state inks of spec rule 5 (done, waiting on others, a problem),
    kept apart from --state-* which other screens already count. Every name
    carries the --fr- prefix: bare names on :root change the meaning of any
@@ -26959,6 +26959,10 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
      box-shadow, so the ring would vanish under the standard look. */
   --fr-glow: 0 0 #0000;
   --fr-blur: none;
+  /* The hairline a look gives the product's own sheets (--app-sheet-line
+     follows it under a look). The look's line, not var(--app-sheet-line):
+     that would be a cycle there. */
+  --fr-sheet-line: var(--fr-line);
 }
 .dark {
   --fr-ok: #4fd08a;
@@ -26969,7 +26973,61 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   --fr-bad-t: #3a1815;
 }
 
-/* ── THE GLASS LOOK (Settings › Experimental, off by default) ───────────
+/* ── THE FRAME'S LOOKS (Settings › Experimental, an admin's preview) ─────
+   Nine looks draw the one frame (frontend/src/lib/skin.ts FRAME_SKINS, the
+   directions the 2026-11-06 screen tour kept): glass, brandkit, workbench,
+   paper, pastel, mosaic, sunrise, today, playground. The head's window.Skin
+   sets the chosen one as data-skin on <html> (or a ?skin= pin does, for one
+   load); without the attribute not one rule below matches. Every look
+   draws light AND dark.
+
+   A look is three things, in its own block below, each rule starting from
+   its own flag:
+   - tokens: the --fr-* set the frame's primitives read (surface, inks,
+     the one blue that means "this waits for you", the state colours), plus
+     --accent-tint as a literal (tests/dev-chat-ground.test.js reads every
+     declaration of it and holds its alpha at or under 0.2);
+   - a typeface, from our own origin (public/fonts/), named only by rules
+     scoped to the look, so a browser with the look off never fetches it;
+   - a few rules on the frame's hooks (.fr-title, .fr-card, .fr-row and the
+     rest, see frame.tsx) for what a token cannot say: sizes, corners, and
+     the one thing that makes the look itself (Mosaic's tiles, Pastel's
+     tints, Paper's sheet).
+   A look's dark block sets again every token its light block sets: the
+   flag outranks .dark, so a light value would otherwise show in dark.
+
+   What they share is said here once, for any data-skin but the New look's
+   ("brand", the last block of this sheet, which is not a look of the
+   frame). The product's own tokens follow the look's, so the screens not
+   yet drawn in the frame take its ink, accent and surfaces wherever they
+   read a token; those drawn with literal zinc/violet utilities stay as
+   they are until their own plan. The wallpaper tokens are not touched:
+   the room stays the room (the Brand kit's cream page is the one
+   exception, in its block). */
+html[data-skin]:not([data-skin="brand"]) {
+  --text-primary: var(--fr-ink);
+  --text-secondary: var(--fr-mut);
+  --text-muted: var(--fr-faint);
+  --border: var(--fr-line);
+  --border-light: var(--fr-line);
+  --accent: var(--fr-acc);
+  --accent-ink: var(--fr-acc-ink);
+  --accent-tint-ink: var(--fr-acc);
+  --lit-ink: var(--fr-lit);
+  --lit-tint: var(--fr-lit-t);
+  --lit-line: var(--fr-line);
+  --dc-sheet: var(--fr-surface);
+  --dc-sheet-solid: var(--fr-surface);
+  --dc-sheet-raise: var(--fr-surface);
+  --app-sheet-line: var(--fr-sheet-line);
+}
+/* A row's name and line are the look's inks, and the hairline between two
+   rows its line, over ListRow's own zinc (which no token reaches). */
+html[data-skin]:not([data-skin="brand"]) .fr-row-t { color: var(--fr-ink); }
+html[data-skin]:not([data-skin="brand"]) .fr-row-s { color: var(--fr-mut); }
+html[data-skin]:not([data-skin="brand"]) .fr-card .fr-row::after { background: var(--fr-line); }
+
+/* ── THE GLASS LOOK (data-skin="glass") ─────────────────────────────────
    Every rule here is scoped to html[data-skin="glass"], which the head's
    window.Skin sets from the device's stored choice (or a ?skin=glass pin)
    before this sheet applies; without it not one rule below matches. Light
@@ -26988,8 +27046,9 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
    Where backdrop-filter is unavailable the surface is opaque instead, so
    text never sits on the washes directly.
 
-   Placed BEFORE the new look's block, which stays last as its own tests
-   pin; the two looks never apply together (one data-skin on <html>). */
+   The first of the frame's nine looks; the New look's block stays last in
+   this sheet, as its own tests pin, and no two looks apply together (one
+   data-skin on <html>). */
 @font-face {
   font-family: 'Albert Sans';
   /* Absolute: the build-scoped copy of this sheet (/b/<sha>/css/app.css)
@@ -27033,28 +27092,12 @@ html[data-skin="glass"] {
   --fr-ring: rgba(255, 255, 255, 0.8);
   --fr-glow: 0 22px 44px -30px rgba(55, 71, 123, 0.55);
   --fr-blur: blur(22px) saturate(1.4);
-  /* The product's own tokens, retargeted, so the screens not yet drawn in
-     the frame take the look's ink, accent and surfaces where they read a
-     token. Those drawn with literal zinc/violet utilities stay as they are
-     until their own plan. */
-  --text-primary: var(--fr-ink);
-  --text-secondary: var(--fr-mut);
-  --text-muted: var(--fr-faint);
-  --border: var(--fr-line);
-  --border-light: var(--fr-line);
-  --accent: var(--fr-acc);
-  --accent-ink: var(--fr-acc-ink);
+  /* The product's own sheets take the bright ring too, not the look's
+     line: under glass an edge is light, never a darker hairline. */
+  --fr-sheet-line: var(--fr-ring);
   /* A literal, not var(--fr-acc-t): tests/dev-chat-ground.test.js reads every
      --accent-tint declaration and holds its alpha at or under 0.2. */
   --accent-tint: rgba(59, 85, 230, 0.12);
-  --accent-tint-ink: var(--fr-acc);
-  --lit-ink: var(--fr-lit);
-  --lit-tint: var(--fr-lit-t);
-  --lit-line: var(--fr-line);
-  --dc-sheet: var(--fr-surface);
-  --dc-sheet-solid: var(--fr-surface);
-  --dc-sheet-raise: var(--fr-surface);
-  --app-sheet-line: var(--fr-ring);
 }
 html[data-skin="glass"].dark {
   --fr-surface: rgba(255, 255, 255, 0.065);
@@ -27098,6 +27141,659 @@ html[data-skin="glass"] .fr-btn-quiet { background: var(--fr-surface); box-shado
   html[data-skin="glass"].dark {
     --fr-surface: #171a2b;
   }
+}
+
+/* ── THE BRAND KIT LOOK (data-skin="brandkit") ──────────────────────────
+   Direction D of the screen tour: Homeroom's Brand Kit 2026 used with
+   restraint. Cream and black carry the page, the serif carries the voice,
+   and yellow appears once on a page: the main button. Blue still means
+   "this waits for you"; green means done.
+   - The page is the brand's cream (black in dark), moved the way the New
+     look moves its plate: on <body>, with --home-ground following.
+   - Geist for what is used (its @font-face is the New look's, below),
+     Source Serif 4 for what is said (a stand-in for the licensed STK
+     Bureau Serif, as the guide itself uses), Geist Mono for labels.
+   - Hairlines, no shadows; only the button carries the kit's black edge.
+*/
+@font-face {
+  font-family: 'Source Serif 4';
+  src: url('/fonts/source-serif-4/SourceSerif4-Variable.woff2') format('woff2');
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Source Serif 4';
+  src: url('/fonts/source-serif-4/SourceSerif4-Variable-latin-ext.woff2') format('woff2');
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+html[data-skin="brandkit"] {
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --fr-surface: #ffffff;
+  --fr-sunk: #f5f3da;
+  --fr-ink: #0d0d0b;
+  --fr-mut: #57564b;
+  --fr-faint: #908f82;
+  --fr-line: rgba(13, 13, 11, 0.13);
+  --fr-acc: #3090e1;
+  --fr-acc-ink: #000000;
+  --fr-acc-t: rgba(48, 144, 225, 0.14);
+  --fr-lit: #0d0d0b;
+  --fr-lit-t: #fcfab3;
+  --fr-ok: #2f6b22;
+  --fr-ok-t: #e4f0dd;
+  --fr-wait: #6f5600;
+  --fr-wait-t: #fcfab3;
+  --accent-tint: rgba(48, 144, 225, 0.14);
+}
+html[data-skin="brandkit"].dark {
+  --fr-surface: #0f0f0c;
+  --fr-sunk: #1b1b15;
+  --fr-ink: #fffeea;
+  --fr-mut: #b9b9b9;
+  --fr-faint: #78776c;
+  --fr-line: rgba(255, 254, 234, 0.17);
+  --fr-acc: #3090e1;
+  --fr-acc-ink: #000000;
+  --fr-acc-t: rgba(48, 144, 225, 0.2);
+  --fr-lit: #ffee6f;
+  --fr-lit-t: rgba(255, 238, 111, 0.13);
+  --fr-ok: #a9cf97;
+  --fr-ok-t: rgba(169, 207, 151, 0.16);
+  --fr-wait: #ffee6f;
+  --fr-wait-t: rgba(255, 238, 111, 0.13);
+  --accent-tint: rgba(48, 144, 225, 0.2);
+}
+/* The cream page. `:has(#platform-tabs)` is always true in the shell and
+   makes each rule one id deep, like the route rule that draws the
+   wallpaper, so it wins by its classes (the New look's plate says more). */
+html[data-skin="brandkit"]:not(.dark):not([data-app-tone="dark"]) body:has(#platform-tabs) {
+  --home-ground: #fffeea;
+  --un-zoom-bg: #fffeea;
+  background: #fffeea;
+}
+html[data-skin="brandkit"]:not(.dark):not([data-app-tone="dark"]) body::before {
+  background: #fffeea;
+}
+html[data-skin="brandkit"].dark body:has(#platform-tabs) {
+  --home-ground: #000000;
+  --un-zoom-bg: #000000;
+  background: #000000;
+}
+html[data-skin="brandkit"].dark body::before {
+  background: #000000;
+}
+html[data-skin="brandkit"] .fr-page { padding-top: 40px; padding-bottom: 56px; }
+html[data-skin="brandkit"] .fr-title { font-family: 'Source Serif 4', 'Iowan Old Style', Georgia, serif; font-size: 31px; font-weight: 460; letter-spacing: -0.028em; line-height: 1.06; }
+html[data-skin="brandkit"] .fr-purpose { font-size: 16px; margin-top: 12px; }
+html[data-skin="brandkit"] .fr-label { font-family: 'Geist Mono', ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 400; letter-spacing: 0.01em; text-transform: none; }
+html[data-skin="brandkit"] .fr-card { border-radius: 14px; }
+html[data-skin="brandkit"] .fr-row-t { font-weight: 600; }
+html[data-skin="brandkit"] .fr-lead:not(.fr-lead-pic) { border-radius: 50%; font-family: 'Geist Mono', ui-monospace, Menlo, monospace; font-weight: 500; }
+html[data-skin="brandkit"] .fr-pill { font-weight: 500; }
+html[data-skin="brandkit"] .fr-btn { background: #ffee6f; color: #000000; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.82); font-family: 'Source Serif 4', 'Iowan Old Style', Georgia, serif; font-size: 15.5px; font-weight: 500; }
+html[data-skin="brandkit"] .fr-btn-quiet { background: var(--fr-surface); color: var(--fr-ink); box-shadow: inset 0 0 0 1px var(--fr-line); }
+@media (min-width: 768px) {
+  html[data-skin="brandkit"] .fr-title { font-size: 44px; }
+}
+
+/* ── THE WORKBENCH LOOK (data-skin="workbench") ─────────────────────────
+   Direction F: a tool for people who live in it all day. Dense rows of one
+   line from 768px, labels and numbers in a fixed-width face, small
+   square-ish controls, a wider content column, and panels frosted lightly
+   enough that the wallpaper stays present without costing contrast.
+   IBM Plex Sans, and IBM Plex Mono at its one shipped weight (500).
+*/
+@font-face {
+  font-family: 'IBM Plex Sans';
+  src: url('/fonts/ibm-plex-sans/IBMPlexSans-Variable.woff2') format('woff2');
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  src: url('/fonts/ibm-plex-sans/IBMPlexSans-Variable-latin-ext.woff2') format('woff2');
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/fonts/ibm-plex-mono/IBMPlexMono-500.woff2') format('woff2');
+  font-weight: 400 600;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/fonts/ibm-plex-mono/IBMPlexMono-500-latin-ext.woff2') format('woff2');
+  font-weight: 400 600;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+html[data-skin="workbench"] {
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --fr-surface: rgba(255, 255, 255, 0.74);
+  --fr-sunk: rgba(28, 32, 60, 0.07);
+  --fr-ink: #12152b;
+  --fr-mut: #565b78;
+  --fr-faint: #8a8ea8;
+  --fr-line: rgba(28, 32, 60, 0.14);
+  --fr-acc: #1d5fe0;
+  --fr-acc-ink: #ffffff;
+  --fr-acc-t: rgba(29, 95, 224, 0.11);
+  --fr-lit: #22306b;
+  --fr-lit-t: rgba(46, 61, 122, 0.13);
+  --fr-blur: blur(18px);
+  --accent-tint: rgba(29, 95, 224, 0.11);
+}
+html[data-skin="workbench"].dark {
+  --fr-surface: rgba(22, 24, 44, 0.72);
+  --fr-sunk: rgba(255, 255, 255, 0.08);
+  --fr-ink: #eceefa;
+  --fr-mut: #a5a9c6;
+  --fr-faint: #70748f;
+  --fr-line: rgba(255, 255, 255, 0.13);
+  --fr-acc: #7fa6ff;
+  --fr-acc-ink: #07102a;
+  --fr-acc-t: rgba(127, 166, 255, 0.15);
+  --fr-lit: #d3dafc;
+  --fr-lit-t: rgba(160, 176, 245, 0.16);
+  --accent-tint: rgba(127, 166, 255, 0.15);
+}
+html[data-skin="workbench"] .fr-title { font-size: 20px; font-weight: 650; letter-spacing: -0.015em; }
+html[data-skin="workbench"] .fr-purpose { font-size: 13.5px; margin-top: 4px; }
+html[data-skin="workbench"] .fr-label { font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace; font-size: 11px; font-weight: 500; letter-spacing: 0.05em; }
+html[data-skin="workbench"] .fr-card { border-radius: 10px; }
+html[data-skin="workbench"] .fr-row { min-height: 50px; padding: 6px 12px; gap: 10px; }
+html[data-skin="workbench"] .fr-row-sm { min-height: 40px; }
+html[data-skin="workbench"] .fr-card .fr-row::after { inset-inline-start: 48px; }
+html[data-skin="workbench"] .fr-row-t { font-size: 14px; font-weight: 600; }
+html[data-skin="workbench"] .fr-row-s { font-size: 13px; }
+html[data-skin="workbench"] .fr-lead { width: 26px; height: 26px; border-radius: 7px; font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 600; }
+html[data-skin="workbench"] .fr-pill { height: 20px; border-radius: 5px; font-size: 11.5px; font-weight: 600; }
+html[data-skin="workbench"] .fr-btn { height: 32px; padding-inline: 14px; border-radius: 8px; font-size: 13.5px; font-weight: 600; }
+@media (min-width: 768px) {
+  html[data-skin="workbench"] .fr-title { font-size: 22px; }
+  html[data-skin="workbench"] .fr-cols { grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; }
+  html[data-skin="workbench"] .fr-row { min-height: 42px; }
+  html[data-skin="workbench"] .fr-row-sm { min-height: 34px; }
+  /* One line per row: the name, then its line beside it. The side column
+     is too narrow for that and keeps two. */
+  html[data-skin="workbench"] .fr-main .fr-row-tx { display: flex; align-items: baseline; gap: 10px; }
+  html[data-skin="workbench"] .fr-main .fr-row-t { flex: 0 1 auto; min-width: 0; }
+  html[data-skin="workbench"] .fr-main .fr-row-s { flex: 1 1 0; min-width: 0; margin-top: 0; }
+}
+@supports not (backdrop-filter: blur(1px)) {
+  html[data-skin="workbench"] {
+    --fr-surface: #fafafc;
+  }
+  html[data-skin="workbench"].dark {
+    --fr-surface: #16182c;
+  }
+}
+
+/* ── THE PAPER LOOK (data-skin="paper") ─────────────────────────────────
+   Direction H: the work sits on one white sheet laid on the wallpaper.
+   From 768px the page is that sheet, rounded, the wallpaper framing it; on
+   a phone the sheet is the whole screen. Groups are quiet grey panels and
+   nothing is outlined: the calm of a document. Instrument Sans.
+*/
+@font-face {
+  font-family: 'Instrument Sans';
+  src: url('/fonts/instrument-sans/InstrumentSans-Variable.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Instrument Sans';
+  src: url('/fonts/instrument-sans/InstrumentSans-Variable-latin-ext.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+html[data-skin="paper"] {
+  font-family: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --fr-surface: #ffffff;
+  --fr-sunk: #f3f3f7;
+  --fr-ink: #14151f;
+  --fr-mut: #5d5f72;
+  --fr-faint: #9092a4;
+  --fr-line: rgba(20, 21, 31, 0.1);
+  --fr-acc: #2563eb;
+  --fr-acc-ink: #ffffff;
+  --fr-acc-t: #e0eaff;
+  --fr-lit: #14151f;
+  --fr-lit-t: rgba(20, 21, 31, 0.07);
+  --fr-ring: transparent;
+  --accent-tint: rgba(37, 99, 235, 0.14);
+}
+html[data-skin="paper"].dark {
+  --fr-surface: #14151f;
+  --fr-sunk: #1f2130;
+  --fr-ink: #eff0f6;
+  --fr-mut: #a7a9bd;
+  --fr-faint: #73758a;
+  --fr-line: rgba(255, 255, 255, 0.11);
+  --fr-acc: #7aa5ff;
+  --fr-acc-ink: #06112b;
+  --fr-acc-t: #182a52;
+  --fr-lit: #eff0f6;
+  --fr-lit-t: rgba(255, 255, 255, 0.09);
+  --fr-ring: transparent;
+  --accent-tint: rgba(122, 165, 255, 0.2);
+}
+html[data-skin="paper"] .fr-page { background: var(--fr-surface); padding: 16px 16px 32px; }
+html[data-skin="paper"] .fr-title { font-size: 26px; letter-spacing: -0.03em; }
+html[data-skin="paper"] .fr-purpose { font-size: 16px; }
+html[data-skin="paper"] .fr-label { font-size: 13px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+html[data-skin="paper"] .fr-card { background: var(--fr-sunk); border-radius: 16px; }
+html[data-skin="paper"] .fr-lead:not(.fr-lead-pic) { background: var(--fr-surface); border-radius: 11px; box-shadow: none; }
+@media (min-width: 768px) {
+  html[data-skin="paper"] .fr-title { font-size: 34px; }
+  html[data-skin="paper"] .fr-page { margin: 10px; padding: 36px 40px 48px; border-radius: 22px; box-shadow: 0 0 0 1px var(--fr-line), 0 30px 60px -44px rgba(20, 21, 31, 0.6); }
+}
+
+/* ── THE PASTEL LOOK (data-skin="pastel") ───────────────────────────────
+   Direction I: the wallpaper's three washes become the cards. Each group
+   takes lavender, pink or peach in a fixed order (--fr-t1, -t2, -t3), so a
+   page has rhythm without decoration; what sits inside a tinted group is
+   white glass (--fr-in), so it reads on any tint. Everything is round.
+   Ink marks where you are; indigo the main button and what waits for you.
+   DM Sans.
+*/
+@font-face {
+  font-family: 'DM Sans';
+  src: url('/fonts/dm-sans/DMSans-Variable.woff2') format('woff2');
+  font-weight: 100 1000;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'DM Sans';
+  src: url('/fonts/dm-sans/DMSans-Variable-latin-ext.woff2') format('woff2');
+  font-weight: 100 1000;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+html[data-skin="pastel"] {
+  font-family: 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --fr-surface: #ffffff;
+  --fr-sunk: rgba(40, 33, 74, 0.07);
+  --fr-ink: #231d45;
+  --fr-mut: #625c84;
+  --fr-faint: #9590b3;
+  --fr-line: rgba(35, 29, 69, 0.1);
+  --fr-acc: #4f46e5;
+  --fr-acc-ink: #ffffff;
+  --fr-acc-t: #e4e2ff;
+  --fr-lit: #231d45;
+  --fr-lit-t: rgba(35, 29, 69, 0.08);
+  --fr-ring: transparent;
+  --fr-t1: #ece3f6;
+  --fr-t2: #fbe2ec;
+  --fr-t3: #fde6de;
+  --fr-in: rgba(255, 255, 255, 0.72);
+  --accent-tint: rgba(79, 70, 229, 0.14);
+}
+html[data-skin="pastel"].dark {
+  --fr-surface: #1c1a35;
+  --fr-sunk: rgba(255, 255, 255, 0.08);
+  --fr-ink: #f2f0fb;
+  --fr-mut: #b1add0;
+  --fr-faint: #7a769b;
+  --fr-line: rgba(255, 255, 255, 0.12);
+  --fr-acc: #9a93ff;
+  --fr-acc-ink: #0d0a2e;
+  --fr-acc-t: #2a2760;
+  --fr-lit: #f2f0fb;
+  --fr-lit-t: rgba(255, 255, 255, 0.1);
+  --fr-ring: transparent;
+  --fr-t1: #2b2346;
+  --fr-t2: #3a1f33;
+  --fr-t3: #3b241d;
+  --fr-in: rgba(255, 255, 255, 0.1);
+  --accent-tint: rgba(154, 147, 255, 0.2);
+}
+html[data-skin="pastel"] .fr-title { font-size: 30px; letter-spacing: -0.035em; line-height: 1.05; }
+html[data-skin="pastel"] .fr-purpose { font-size: 17px; margin-top: 10px; }
+html[data-skin="pastel"] .fr-label { font-size: 15px; font-weight: 700; letter-spacing: -0.005em; line-height: 1.3; text-transform: none; color: var(--fr-ink); }
+html[data-skin="pastel"] .fr-card { border-radius: 26px; }
+/* The tints, counted among the groups of one column only (`of .fr-group`),
+   so a hidden section between two groups does not shift the order. */
+html[data-skin="pastel"] .fr-group:nth-child(3n+1 of .fr-group) > .fr-card { background: var(--fr-t1); }
+html[data-skin="pastel"] .fr-group:nth-child(3n+2 of .fr-group) > .fr-card { background: var(--fr-t2); }
+html[data-skin="pastel"] .fr-group:nth-child(3n of .fr-group) > .fr-card { background: var(--fr-t3); }
+html[data-skin="pastel"] .fr-lead:not(.fr-lead-pic) { background: var(--fr-in); border-radius: 50%; box-shadow: none; }
+html[data-skin="pastel"] .fr-btn { font-weight: 700; }
+html[data-skin="pastel"] .fr-btn-quiet { background: var(--fr-surface); box-shadow: 0 10px 30px -18px rgba(35, 29, 69, 0.45); }
+@media (min-width: 768px) {
+  html[data-skin="pastel"] .fr-title { font-size: 42px; }
+}
+
+/* ── THE MOSAIC LOOK (data-skin="mosaic") ───────────────────────────────
+   Direction J: lists become tiles. In the main column every item is its own
+   glass card, two across from 768px and one on a phone, so a page reads at
+   a glance instead of top to bottom. A tile keeps the row's order (picture,
+   name, one line, one status) and its name may take two lines. The side
+   column stays a plain list, so tiles always mean "the things on this
+   page". Urbanist.
+*/
+@font-face {
+  font-family: 'Urbanist';
+  src: url('/fonts/urbanist/Urbanist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Urbanist';
+  src: url('/fonts/urbanist/Urbanist-Variable-latin-ext.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+html[data-skin="mosaic"] {
+  font-family: 'Urbanist', system-ui, -apple-system, 'Segoe UI', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --fr-surface: rgba(255, 255, 255, 0.7);
+  --fr-sunk: rgba(30, 34, 70, 0.07);
+  --fr-ink: #191c38;
+  --fr-mut: #5a5e82;
+  --fr-faint: #8f93b2;
+  --fr-line: rgba(30, 34, 70, 0.11);
+  --fr-acc: #2f66f0;
+  --fr-acc-ink: #ffffff;
+  --fr-acc-t: rgba(47, 102, 240, 0.13);
+  --fr-lit: #191c38;
+  --fr-lit-t: rgba(30, 34, 70, 0.09);
+  --fr-ring: rgba(255, 255, 255, 0.85);
+  --fr-glow: 0 14px 30px -22px rgba(30, 34, 70, 0.5);
+  --fr-blur: blur(20px) saturate(1.3);
+  --accent-tint: rgba(47, 102, 240, 0.13);
+}
+html[data-skin="mosaic"].dark {
+  --fr-surface: rgba(255, 255, 255, 0.07);
+  --fr-sunk: rgba(255, 255, 255, 0.08);
+  --fr-ink: #f1f1fa;
+  --fr-mut: #adb0d0;
+  --fr-faint: #787b9d;
+  --fr-line: rgba(255, 255, 255, 0.12);
+  --fr-acc: #86a6ff;
+  --fr-acc-ink: #08112c;
+  --fr-acc-t: rgba(134, 166, 255, 0.16);
+  --fr-lit: #f1f1fa;
+  --fr-lit-t: rgba(255, 255, 255, 0.11);
+  --fr-ring: rgba(255, 255, 255, 0.12);
+  --fr-glow: 0 14px 30px -22px rgba(0, 0, 0, 0.9);
+  --accent-tint: rgba(134, 166, 255, 0.16);
+}
+html[data-skin="mosaic"] .fr-title { font-size: 30px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; }
+html[data-skin="mosaic"] .fr-purpose { font-size: 17px; margin-top: 10px; }
+html[data-skin="mosaic"] .fr-label { font-size: 15px; font-weight: 800; letter-spacing: -0.005em; line-height: 1.3; text-transform: none; color: var(--fr-ink); }
+html[data-skin="mosaic"] .fr-card { border-radius: 22px; }
+html[data-skin="mosaic"] .fr-row-t { font-size: 15.5px; font-weight: 750; }
+html[data-skin="mosaic"] .fr-lead { border-radius: 13px; }
+html[data-skin="mosaic"] .fr-btn { border-radius: 14px; font-weight: 800; }
+/* The mosaic: a group of rows in the main column is a grid of tiles. The
+   group gives up its own surface and each row takes it. */
+html[data-skin="mosaic"] .fr-main .fr-card:has(> .fr-row) { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; overflow: visible; border-radius: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
+html[data-skin="mosaic"] .fr-main .fr-card:has(> .fr-row) > .fr-row { min-height: 78px; padding: 12px 14px; border-radius: 20px; background: var(--fr-surface); -webkit-backdrop-filter: var(--fr-blur); backdrop-filter: var(--fr-blur); box-shadow: inset 0 0 0 1px var(--fr-ring), var(--fr-glow); }
+html[data-skin="mosaic"] .fr-main .fr-card:has(> .fr-row) > .fr-row-sm { min-height: 56px; }
+html[data-skin="mosaic"] .fr-main .fr-card:has(> .fr-row) > .fr-row::after { content: none; }
+html[data-skin="mosaic"] .fr-main .fr-card:has(> .fr-row) > .fr-row .fr-row-t { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; line-height: 1.25; }
+@media (min-width: 768px) {
+  html[data-skin="mosaic"] .fr-title { font-size: 40px; }
+  html[data-skin="mosaic"] .fr-main .fr-card:has(> .fr-row) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@supports not (backdrop-filter: blur(1px)) {
+  html[data-skin="mosaic"] {
+    --fr-surface: #fbfbfd;
+  }
+  html[data-skin="mosaic"].dark {
+    --fr-surface: #1b1d38;
+  }
+}
+
+/* ── THE SUNRISE LOOK (data-skin="sunrise") ─────────────────────────────
+   Direction K: the wallpaper's peach, pink and lavender become the accent.
+   One gradient (--fr-grad), used on a page for exactly one thing: the main
+   button. Blue still means "this waits for you"; the gradient never does.
+   White cards with soft shadows and no outlines, heavy tight titles.
+   Plus Jakarta Sans.
+*/
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('/fonts/plus-jakarta-sans/PlusJakartaSans-Variable.woff2') format('woff2');
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('/fonts/plus-jakarta-sans/PlusJakartaSans-Variable-latin-ext.woff2') format('woff2');
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+html[data-skin="sunrise"] {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --fr-surface: #ffffff;
+  --fr-sunk: #f1eff5;
+  --fr-ink: #17182f;
+  --fr-mut: #5c5d7c;
+  --fr-faint: #9192ad;
+  --fr-line: rgba(23, 24, 47, 0.1);
+  --fr-acc: #2563eb;
+  --fr-acc-ink: #ffffff;
+  --fr-acc-t: #e0eaff;
+  --fr-lit: #17182f;
+  --fr-lit-t: #fbe6ea;
+  --fr-ring: transparent;
+  --fr-glow: 0 1px 0 rgba(23, 24, 47, 0.04), 0 16px 32px -24px rgba(23, 24, 47, 0.45);
+  --fr-grad: linear-gradient(100deg, #ffb59c 0%, #ff93bb 52%, #bda2ff 100%);
+  --accent-tint: rgba(37, 99, 235, 0.14);
+}
+html[data-skin="sunrise"].dark {
+  --fr-surface: #1a1b36;
+  --fr-sunk: #25274a;
+  --fr-ink: #f2f2fb;
+  --fr-mut: #adafcf;
+  --fr-faint: #787a9c;
+  --fr-line: rgba(255, 255, 255, 0.11);
+  --fr-acc: #7fa8ff;
+  --fr-acc-ink: #07112c;
+  --fr-acc-t: #182a55;
+  --fr-lit: #f2f2fb;
+  --fr-lit-t: #3a2238;
+  --fr-ring: transparent;
+  --fr-glow: 0 16px 32px -24px rgba(0, 0, 0, 0.9);
+  --accent-tint: rgba(127, 168, 255, 0.2);
+}
+html[data-skin="sunrise"] .fr-title { font-size: 28px; font-weight: 800; letter-spacing: -0.035em; line-height: 1.08; }
+html[data-skin="sunrise"] .fr-purpose { font-size: 16px; margin-top: 10px; }
+html[data-skin="sunrise"] .fr-label { font-size: 13px; font-weight: 700; letter-spacing: 0; line-height: 1.3; text-transform: none; }
+html[data-skin="sunrise"] .fr-row-t { font-weight: 700; }
+html[data-skin="sunrise"] .fr-btn { background: var(--fr-grad); color: #17182f; font-weight: 700; box-shadow: 0 12px 22px -14px rgba(255, 120, 160, 0.9); }
+html[data-skin="sunrise"] .fr-btn-quiet { background: var(--fr-sunk); color: var(--fr-ink); box-shadow: none; }
+@media (min-width: 768px) {
+  html[data-skin="sunrise"] .fr-title { font-size: 36px; }
+}
+
+/* ── THE TODAY LOOK (data-skin="today") ─────────────────────────────────
+   Direction L: in the manner of an app store's editorial front page.
+   Headings are the biggest thing on screen (a 44px title, 22px group
+   names), groups are large white cards with soft shadows, rows are 72px
+   with 48px pictures. One blue, for the main button and what waits for
+   you. Figtree. ("Today" is the direction's name; the product's standard
+   look is "standard".)
+*/
+@font-face {
+  font-family: 'Figtree';
+  src: url('/fonts/figtree/Figtree-Variable.woff2') format('woff2');
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Figtree';
+  src: url('/fonts/figtree/Figtree-Variable-latin-ext.woff2') format('woff2');
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+html[data-skin="today"] {
+  font-family: 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --fr-surface: #ffffff;
+  --fr-sunk: #f2f2f7;
+  --fr-ink: #111111;
+  --fr-mut: #6e6e73;
+  --fr-faint: #aeaeb2;
+  --fr-line: rgba(0, 0, 0, 0.1);
+  --fr-acc: #0a7aff;
+  --fr-acc-ink: #ffffff;
+  --fr-acc-t: #e5f1ff;
+  --fr-lit: #111111;
+  --fr-lit-t: #ececf1;
+  --fr-ring: transparent;
+  --fr-glow: 0 2px 12px rgba(0, 0, 0, 0.06), 0 20px 44px -30px rgba(0, 0, 0, 0.35);
+  --accent-tint: rgba(10, 122, 255, 0.12);
+}
+html[data-skin="today"].dark {
+  --fr-surface: #1c1c1e;
+  --fr-sunk: #2c2c2e;
+  --fr-ink: #f5f5f7;
+  --fr-mut: #a1a1a6;
+  --fr-faint: #636366;
+  --fr-line: rgba(255, 255, 255, 0.12);
+  --fr-acc: #409cff;
+  --fr-acc-ink: #061225;
+  --fr-acc-t: #16304f;
+  --fr-lit: #f5f5f7;
+  --fr-lit-t: #2c2c2e;
+  --fr-ring: transparent;
+  --fr-glow: 0 20px 44px -30px rgba(0, 0, 0, 0.9);
+  --accent-tint: rgba(64, 156, 255, 0.2);
+}
+html[data-skin="today"] .fr-title { font-size: 34px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.02; }
+html[data-skin="today"] .fr-purpose { font-size: 17px; margin-top: 10px; }
+html[data-skin="today"] .fr-label { font-size: 22px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.2; text-transform: none; color: var(--fr-ink); }
+html[data-skin="today"] .fr-card { border-radius: 24px; }
+html[data-skin="today"] .fr-row { min-height: 72px; padding: 12px 20px; gap: 16px; }
+html[data-skin="today"] .fr-row-sm { min-height: 54px; }
+html[data-skin="today"] .fr-card .fr-row::after { inset-inline-start: 84px; }
+html[data-skin="today"] .fr-row-t { font-size: 16px; font-weight: 700; }
+html[data-skin="today"] .fr-row-s { font-size: 14px; }
+html[data-skin="today"] .fr-lead { width: 48px; height: 48px; border-radius: 14px; }
+html[data-skin="today"] .fr-pill { height: 28px; font-size: 13px; }
+html[data-skin="today"] .fr-btn { height: 44px; font-size: 16px; font-weight: 700; }
+@media (min-width: 768px) {
+  html[data-skin="today"] .fr-title { font-size: 44px; }
+}
+
+/* ── THE PLAYGROUND LOOK (data-skin="playground") ───────────────────────
+   Direction S: in the manner of the places children build in. Everything
+   is a block with a solid 3px bottom edge (--fr-edge; a card's is in
+   --fr-glow with its 2px outline), type is heavy and rounded, dividers are
+   2px and never hairlines. Bright colours with fixed jobs: blue acts,
+   yellow is where you are, green is done. Nunito.
+*/
+@font-face {
+  font-family: 'Nunito';
+  src: url('/fonts/nunito/Nunito-Variable.woff2') format('woff2');
+  font-weight: 200 1000;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Nunito';
+  src: url('/fonts/nunito/Nunito-Variable-latin-ext.woff2') format('woff2');
+  font-weight: 200 1000;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+html[data-skin="playground"] {
+  font-family: 'Nunito', system-ui, -apple-system, 'Segoe UI', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --fr-surface: #ffffff;
+  --fr-sunk: #f0f4fb;
+  --fr-ink: #1f2a44;
+  --fr-mut: #5f6b8a;
+  --fr-faint: #98a2bd;
+  --fr-line: rgba(31, 42, 68, 0.12);
+  --fr-acc: #4c97ff;
+  --fr-acc-ink: #ffffff;
+  --fr-acc-t: #e2eeff;
+  --fr-lit: #1f2a44;
+  --fr-lit-t: #ffe6a7;
+  --fr-ok: #2f9e5b;
+  --fr-ok-t: #dff5e7;
+  --fr-wait: #b77400;
+  --fr-wait-t: #fff1c9;
+  --fr-bad: #e0453a;
+  --fr-bad-t: #ffe3e0;
+  --fr-ring: transparent;
+  --fr-glow: 0 0 0 2px rgba(31, 42, 68, 0.08), 0 3px 0 rgba(31, 42, 68, 0.14);
+  --fr-edge: 0 3px 0 rgba(31, 42, 68, 0.14);
+  --accent-tint: rgba(76, 151, 255, 0.16);
+}
+html[data-skin="playground"].dark {
+  --fr-surface: #232a44;
+  --fr-sunk: #2c3453;
+  --fr-ink: #f3f5fb;
+  --fr-mut: #aeb6cf;
+  --fr-faint: #7a84a3;
+  --fr-line: rgba(255, 255, 255, 0.12);
+  --fr-acc: #6fabff;
+  --fr-acc-ink: #071530;
+  --fr-acc-t: #233a63;
+  --fr-lit: #f3f5fb;
+  --fr-lit-t: #4a3f1c;
+  --fr-ok: #5fd486;
+  --fr-ok-t: #1a3d28;
+  --fr-wait: #ffcf5a;
+  --fr-wait-t: #3f3212;
+  --fr-bad: #ff8c80;
+  --fr-bad-t: #3a1815;
+  --fr-ring: transparent;
+  --fr-glow: 0 0 0 2px rgba(255, 255, 255, 0.08), 0 3px 0 rgba(0, 0, 0, 0.35);
+  --fr-edge: 0 3px 0 rgba(0, 0, 0, 0.35);
+  --accent-tint: rgba(111, 171, 255, 0.2);
+}
+html[data-skin="playground"] .fr-page { font-weight: 600; }
+html[data-skin="playground"] .fr-title { font-size: 30px; font-weight: 900; letter-spacing: -0.02em; }
+html[data-skin="playground"] .fr-purpose { font-size: 16px; font-weight: 600; }
+html[data-skin="playground"] .fr-label { font-size: 17px; font-weight: 900; letter-spacing: 0; line-height: 1.3; text-transform: none; color: var(--fr-ink); }
+html[data-skin="playground"] .fr-row { min-height: 68px; padding: 10px 16px; gap: 14px; }
+html[data-skin="playground"] .fr-row-sm { min-height: 50px; }
+html[data-skin="playground"] .fr-card .fr-row::after { height: 2px; inset-inline-start: 0; }
+html[data-skin="playground"] .fr-row-t { font-size: 15.5px; font-weight: 800; }
+html[data-skin="playground"] .fr-row-s { font-weight: 600; }
+html[data-skin="playground"] .fr-lead { border-radius: 14px; }
+html[data-skin="playground"] .fr-pill { height: 26px; font-size: 12.5px; font-weight: 900; }
+html[data-skin="playground"] .fr-btn { height: 46px; font-size: 16px; font-weight: 900; box-shadow: var(--fr-edge); }
+@media (min-width: 768px) {
+  html[data-skin="playground"] .fr-title { font-size: 38px; }
 }
 
 /* ── THE NEW LOOK, AN EXPERIMENT (Settings › Experimental, off by default) ──
