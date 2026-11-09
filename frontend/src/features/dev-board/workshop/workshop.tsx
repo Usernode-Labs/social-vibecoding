@@ -855,10 +855,10 @@ const SORTS: { key: SortKey; label: string }[] = [
 
 type Dash = NonNullable<DevWorkshopView['dashboard']>;
 
-/** The rate, as a sentence: this week's merges against last week's. */
+/** The rate, as a sentence: this week's merges against the same point last week. */
 function pace(d: Dash): string {
   const n = d.shippedWeek;
-  const p = d.shippedPrevWeek;
+  const p = d.shippedPrevWeekToDate;
   // ── Why a partial history states no rate ──────────────────────────
   //
   // Both weeks are counted from the SAME page of merged history, and when
@@ -908,8 +908,9 @@ function pace(d: Dash): string {
  *
  * ── AND A LINE UNDER TWO OF THEM (After-Workshop-B) ──
  * Waiting on votes says how many of those wait on YOU ("4 on you", the
- * place bar's own count, `owed`), and live this week what last week came to
- * ("from 382"), the rate `pace()` words in full on hover. Each is left out
+ * place bar's own count, `owed`), and live this week what last week had come
+ * to by this same point ("from 382 by this time last week"), the rate `pace()`
+ * words in full on hover. Each is left out
  * when it would say zero, and the rate is left out of a paged history,
  * where the earlier week is a floor and the comparison would lie. Open and
  * unclaimed have no line: nothing stores what they were last week.
@@ -933,7 +934,7 @@ type DashStage = 'open' | 'unclaimed' | 'shipped';
 
 function DashTiles({ d, owed, onVotes, onStage }: { d: Dash; owed: number; onVotes?: () => void; onStage?: (stage: DashStage) => void }): ReactNode {
   const t = useMessages('project');
-  const rate = !d.partial && d.shippedPrevWeek > 0 ? (d.shippedWeek > d.shippedPrevWeek ? 'up' : d.shippedWeek < d.shippedPrevWeek ? 'down' : 'same') : null;
+  const rate = !d.partial && d.shippedPrevWeekToDate > 0 ? (d.shippedWeek > d.shippedPrevWeekToDate ? 'up' : d.shippedWeek < d.shippedPrevWeekToDate ? 'down' : 'same') : null;
   const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode }[] = [
     { key: 'open', n: d.open, label: t('project:workshop.dash.open', { count: d.open }) },
     { key: 'unclaimed', n: d.unclaimed, label: t('project:workshop.dash.unclaimed') },
@@ -957,7 +958,7 @@ function DashTiles({ d, owed, onVotes, onStage }: { d: Dash; owed: number; onVot
       sub: rate ? (
         <span className="dev-ws-dash-sub" data-ws-dash-sub="rate" data-dir={rate} title={pace(d)}>
           {rate === 'same' ? null : <ArrowUpIcon className="dev-ws-dash-trend" aria-hidden="true" />}
-          {t('project:workshop.dash.fromLastWeek', { count: d.shippedPrevWeek })}
+          {t('project:workshop.dash.fromLastWeek', { count: d.shippedPrevWeekToDate })}
         </span>
       ) : null,
     },
