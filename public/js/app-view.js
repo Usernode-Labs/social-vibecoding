@@ -28472,6 +28472,15 @@ const AppView = {
       // at a newer epoch asks again.
       AppView._noteOwnVote(sessionId, vote);
       AppView._publishVoteSaved(sessionId, vote, epoch);
+      // #6496: the pill above the change's chat is drawn from
+      // `DevChat.currentSession`, which only the best-effort `vote_update`
+      // frame used to refresh — a dropped frame left the pill a vote behind
+      // the card on the same screen until a reload. The vote is saved now, so
+      // ask the open session for its new tally directly. Same guard as
+      // `App.handleVoteUpdate`; a no-op unless this session is the open one.
+      if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
+        DevChat.refreshCurrentSessionStatus(sessionId);
+      }
       // The overlay stays until the post-vote read has landed: a load queued
       // ahead of it still publishes the pre-vote row first. The read joins
       // the burst the vote's own broadcast (vote_update) opens, so a vote
@@ -28690,6 +28699,11 @@ const AppView = {
       window.UsernodeReact?.actionOutbox?.drop?.(`vote:${sessionId}`);
       AppView._noteOwnVote(sessionId, null);
       AppView._publishVoteSaved(sessionId, null, epoch);
+      // #6496: an undo is saved too, so the pill above the change's chat
+      // re-reads the open session at once, exactly as a cast vote does.
+      if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
+        DevChat.refreshCurrentSessionStatus(sessionId);
+      }
       // #6109: the burst reads the chat's snapshot for this vote wherever it
       // is mounted (chatSlug), so the undo does not read it a second time.
       const refresh = typeof App !== 'undefined' && App._liveRefresh
