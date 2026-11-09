@@ -240,6 +240,11 @@
       "id": "change-pictures",
       "sha256": "c4f1e64b18ce3d64e931d1f7416f77c9616854d07f4de17938488f82e71096a8",
       "schemaSha256": "5291751cc4cff86d4b8a549c189baa255ae220b747bb79a81bf0b0610ce8e7cb"
+    },
+    {
+      "id": "record-arrival-sources",
+      "sha256": "dcb5e3ba999a2d76370dc6c521fb90b6ca1d0ac79ea471ee8ef213da6e583b07",
+      "schemaSha256": "08b796a8c821e579de7e6bf18c517bd8041507be87e39f921b0412b010ea68ac"
     }
   ]
 }
