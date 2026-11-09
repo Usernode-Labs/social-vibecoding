@@ -82,13 +82,13 @@ import { gridStore } from '../../home/grid-store';
 import { homePinsStore, setHomePin } from '../../home/home-pins-store';
 import { useSidebarRows } from '../../nav/sidebar-rows';
 import type { StagedObject } from '../../messages/types';
-import { devWorkshopStore, voteSavedStore } from '../card/cards-store';
+import { devKanbanStore, devWorkshopStore, voteSavedStore } from '../card/cards-store';
 import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
 import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
 import { callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
-import type { ActionRef, DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
+import type { ActionRef, DevCardModel, DevKanbanView, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
 import { composeNoReason, VotePicker } from '../card/dev-card';
 import type { NoChoice } from '../../review-flow/vote-sheet';
@@ -114,7 +114,7 @@ import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
 import {
-  ProjectFrameHead, ProjectHubFrame, ProjectTopicsFrame, ProjectWorkshopFrame, type ProjectTab,
+  ProjectAllItemsFrame, ProjectFrameHead, ProjectHubFrame, ProjectTopicsFrame, ProjectWorkshopFrame, type AllItemRow, type ProjectTab,
 } from './frame/project-frame';
 import { slotCounts, useBotSlots } from './bot-slots';
 import { weekName, weekRange } from './week-pages';
@@ -3123,6 +3123,13 @@ export function DevWorkshop(): ReactNode {
   // #4457: the item whose page is open in the panel beside the list (wide
   // windows only; ./side-panel.tsx), as the kind and id AppView opens.
   const [sideItem, setSideItem] = useState<TopicRef | null>(null);
+  // All items in the kit reads the board's own columns (frameAll, below);
+  // its stage, Show and search box are this page's own state. Here with the
+  // other hooks: the kit's branch sits after the page's early returns.
+  const kanban = useStoreState(devKanbanStore);
+  const [frameStage, setFrameStage] = useState('');
+  const [frameMine, setFrameMine] = useState(false);
+  const [frameQuery, setFrameQuery] = useState('');
   const sideWide = useMediaFlag(WORKSHOP_SIDE_QUERY);
   // Whether the Workshop tab's Your work shows every row or its first
   // WORKSHOP_WORK_FIRST.
@@ -3148,6 +3155,14 @@ export function DevWorkshop(): ReactNode {
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
+  // The board's columns are published only while its "By stage" pane is up
+  // (app-view.js _rerenderWorkshop). The kit's All items asks for them
+  // itself, from the same bucketing, whenever the Workshop view is republished.
+  const [frameKanban, setFrameKanban] = useState<DevKanbanView | null>(null);
+  useEffect(() => {
+    if (!frame || tab !== 'all') return;
+    try { setFrameKanban(((window as any).AppView?._kanbanView?.() as DevKanbanView | undefined) || null); } catch { setFrameKanban(null); }
+  }, [frame, tab, v]);
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
   // from a door lower down should start at its own head — in the element
@@ -3840,6 +3855,52 @@ export function DevWorkshop(): ReactNode {
     };
   };
   const frameWorkshopUp = frame && !frameTopics && tab === 'workshop' && !weekUp;
+  // ALL ITEMS IN THE KIT (the tour's s29): the board's own columns as rows,
+  // from the same view model the board renders; the stage, Show and the
+  // search box are this page's own state, as the board's filters are its.
+  const frameAllUp = frame && !frameTopics && tab === 'all';
+  const frameAll = (): ReactNode => {
+    const board = kanban.cols.length ? kanban : frameKanban || kanban;
+    const cols = board.cols.map((col) => ({
+      key: col.key,
+      title: col.title,
+      items: col.rows.flatMap((row): AllItemRow[] => {
+        if (row.t !== 'card') return [];
+        const b = row.brief;
+        const pill = row.card.pill?.state || null;
+        const asks = pill && /^(vote|reply|decide|question|needs)/i.test(pill.key);
+        return [{
+          key: row.key,
+          title: row.card.title.text || row.card.title.title || '',
+          line: factsLine([b && b.n ? `#${b.n}` : null, b?.category || null]) || null,
+          href: openHref(slug, row.card),
+          mine: !!b?.mine,
+          word: pill && !asks ? pill.label : null,
+          pill: pill && asks ? { kind: pill.tone === 'ok' || pill.tone === 'done' ? 'ok' : pill.tone === 'bad' || pill.tone === 'blocked' || pill.tone === 'error' ? 'bad' : /wait|on votes/i.test(pill.label) ? 'wait' : 'act', label: pill.label } : null,
+        }];
+      }),
+    }));
+    return (
+      <ProjectAllItemsFrame
+        {...frameHead}
+        project={projectName}
+        cols={cols}
+        loading={!!board.loading && !board.cols.length}
+        stage={frameStage}
+        onStage={setFrameStage}
+        mine={frameMine}
+        onMine={setFrameMine}
+        query={frameQuery}
+        onQuery={setFrameQuery}
+        openKey={sideKey}
+        onOpen={(event, row) => {
+          const ref = board.cols.flatMap((col) => col.rows).find((r) => r.key === row.key);
+          const topic = ref && ref.t === 'card' ? topicRef(ref.card) : null;
+          if (topic) openItem(event, topic);
+        }}
+      />
+    );
+  };
   const frameWorkshop = (): ReactNode => {
     const d = v.dashboard;
     const first = owedRows.find((row) => row.t === 'card') || null;
@@ -4017,7 +4078,8 @@ export function DevWorkshop(): ReactNode {
       ) : null}
       {frame && !frameTopics && tab === 'status' && !pending ? frameHub() : null}
       {frameWorkshopUp ? frameWorkshop() : null}
-      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp ? <ProjectFrameHead {...frameHead} title={pageTitle(tab)} purpose={framePurpose} /> : null}
+      {frameAllUp ? frameAll() : null}
+      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp ? <ProjectFrameHead {...frameHead} title={pageTitle(tab)} purpose={framePurpose} /> : null}
       {band}
       {tray}
       {/* Everything but the bar lives in here. It is what carries the

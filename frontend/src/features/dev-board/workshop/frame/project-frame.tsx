@@ -12,7 +12,7 @@
  */
 import { useEffect, type ReactNode } from 'react';
 
-import { Ballot, Btn, Card, Facts, Frame, GroupLink, Head, Lead, Meta, PageBody, Pill, Row, Sec, Tabs, Tile, k } from '@/components/ui/kit';
+import { Ballot, Btn, Card, Facts, Frame, GroupLink, Head, Lead, Meta, PageBody, Pill, type PillKind, Row, Search, Sec, Tabs, Tile, Track, k } from '@/components/ui/kit';
 import { useMessages } from '../../../../lib/i18n/react';
 
 export interface ProjectTab { key: string; label: string; count?: number }
@@ -410,6 +410,120 @@ export function ProjectWorkshopFrame({
           </Card>
         </Sec>
       ) : null}
+    </PageBody>
+  );
+}
+
+/** One of All items' rows: an open request or change, as the page says it. */
+export interface AllItemRow {
+  key: string;
+  title: string;
+  /** "#6204 · Onboarding": the number and the topic. */
+  line: string | null;
+  href: string | null;
+  mine: boolean;
+  /** The word that says where it stands ("Building"), when no pill does. */
+  word?: string | null;
+  /** The one pill: Vote, Reply, On votes. */
+  pill?: { kind: PillKind; label: string } | null;
+}
+
+/** A stage of the board: its name, and the items in it, newest first. */
+export interface AllItemsCol { key: string; title: string; items: AllItemRow[] }
+
+/** The five-stop line's stop for each of the board's columns. */
+const COL_STOP: Record<string, [number, 'now' | 'wait']> = {
+  issues: [0, 'now'], inprogress: [1, 'now'], inreview: [3, 'wait'], done: [5, 'now'],
+};
+
+/**
+ * All items (the tour's s29): the Workshop's own page of every open request
+ * and change. The board's columns are the page's tabs; one row per item,
+ * with the five-stop line and the word that says where it stands; Show
+ * beside them narrows the list to yours.
+ */
+export function ProjectAllItemsFrame({
+  project, cols, loading, stage, onStage, mine, onMine, query, onQuery, openKey, onOpen, ...head
+}: HeadProps & {
+  project: string;
+  cols: AllItemsCol[];
+  loading: boolean;
+  /** The column shown, or '' for all. */
+  stage: string;
+  onStage: (key: string) => void;
+  mine: boolean;
+  onMine: (mine: boolean) => void;
+  query: string;
+  onQuery: (next: string) => void;
+  /** The item open beside the list, as `kind:id`. */
+  openKey: string | null;
+  onOpen: (event: React.MouseEvent<HTMLAnchorElement>, row: AllItemRow) => void;
+}) {
+  useProjectFrameFlag();
+  const t = useMessages('project');
+  const tc = useMessages('changes');
+  const acts = useActs(head);
+  const stops = [tc('changes:track.plan'), tc('changes:track.build'), tc('changes:track.checks'), tc('changes:track.vote'), tc('changes:track.live')] as const;
+  // Done is on the board for what went live; the page counts what is open.
+  const total = cols.filter((col) => col.key !== 'done').reduce((n, col) => n + col.items.length, 0);
+  const q = query.trim().toLowerCase();
+  // All is what is open; what went live is its own tab, as the tour's "Live this week".
+  const shown = cols
+    .filter((col) => (stage ? col.key === stage : col.key !== 'done'))
+    .flatMap((col) => col.items.map((row) => ({ col, row })))
+    .filter(({ row }) => !mine || row.mine)
+    .filter(({ row }) => !q || row.title.toLowerCase().includes(q) || (row.line || '').toLowerCase().includes(q));
+  return (
+    <PageBody
+      data-project-frame="all-kit"
+      title={t('project:workshop.allItems.title')}
+      purpose={t('project:frame.allItems.purpose', { count: total, project })}
+      acts={acts}
+      tabs={(
+        <Tabs
+          tabs={[{ key: '', label: t('project:frame.allItems.all') }, ...cols.map((col) => ({ key: col.key, label: col.title, count: col.items.length }))]}
+          current={stage}
+          onPick={(key) => onStage(key)}
+        />
+      )}
+      side={(
+        <Sec label={t('project:frame.allItems.show')}>
+          <Card>
+            <Row lead={<Lead icon={mine ? '' : 'check'} />} title={t('project:frame.allItems.everyone')} on={!mine} pressed={!mine} onClick={() => onMine(false)} sm />
+            <Row lead={<Lead icon={mine ? 'check' : ''} />} title={t('project:frame.allItems.mine')} on={mine} pressed={mine} onClick={() => onMine(true)} sm />
+          </Card>
+        </Sec>
+      )}
+    >
+      <Search value={query} onChange={onQuery} placeholder={t('project:frame.allItems.search')} />
+      <Sec label={t('project:frame.allItems.open', { count: shown.length })}>
+        {loading && !cols.length ? <Card pad>{t('project:frame.allItems.loading')}</Card>
+          : !shown.length ? <Card pad>{t('project:frame.allItems.none')}</Card>
+            : (
+              <Card>
+                {shown.map(({ col, row }) => {
+                  const [at, state] = COL_STOP[col.key] || [0, 'now'];
+                  return (
+                    <Row
+                      key={row.key}
+                      href={row.href || undefined}
+                      onClick={row.href ? (event) => onOpen(event as React.MouseEvent<HTMLAnchorElement>, row) : undefined}
+                      title={row.title}
+                      line={row.line || undefined}
+                      right={(
+                        <>
+                          <Track mini at={at} state={state} words={stops} />
+                          {row.pill ? <Pill kind={row.pill.kind}>{row.pill.label}</Pill> : <Meta>{row.word || col.title}</Meta>}
+                        </>
+                      )}
+                      on={!!openKey && openKey === row.key}
+                      go
+                    />
+                  );
+                })}
+              </Card>
+            )}
+      </Sec>
     </PageBody>
   );
 }

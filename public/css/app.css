@@ -27040,7 +27040,7 @@ html[data-skin][data-project-frame] #app-view { padding-inline-start: var(--plat
 html[data-skin][data-project-frame] #dev-body { padding: 0; }
 html[data-skin][data-project-frame] #dev-workshop { max-width: none; margin: 0; }
 html[data-skin] .dev-ws > [data-project-frame] ~ .dev-ws-placebar { display: none; }
-html[data-skin] .dev-ws > :is([data-project-frame="topics"], [data-project-frame="workshop-kit"]) ~ .dev-ws-tabbody { display: none; }
+html[data-skin] .dev-ws > :is([data-project-frame="topics"], [data-project-frame="workshop-kit"], [data-project-frame="all-kit"]) ~ .dev-ws-tabbody { display: none; }
 /* Under the kit's Hub the standard Hub is put away part by part, not
    whole: the cards that ask something of you once and that the kit has no
    form for yet stay, in the kit's content column under it. They are what a
@@ -27077,7 +27077,7 @@ html[data-skin] .dev-ws > [data-project-frame="status"] .fr-head > .fr-acts { ma
   html[data-skin] .dev-ws > [data-project-frame="status"] .fr-head > .fr-tx { padding-inline-end: 44px; }
 }
 html[data-skin] .dev-ws > [data-project-frame="status"]:has(~ .dev-ws-tabbody > :is([data-ws-first-version], [data-ws-update], [data-ws-share], [data-ws-start-here], [data-ws-hub-versions], [data-notify-ask="community"])) > .fr-inner { padding-bottom: 16px; }
-html[data-skin] [data-project-frame]:not([data-project-frame="status"], [data-project-frame="topics"], [data-project-frame="workshop-kit"]) > .fr-inner { padding-bottom: 16px; }
+html[data-skin] [data-project-frame]:not([data-project-frame="status"], [data-project-frame="topics"], [data-project-frame="workshop-kit"], [data-project-frame="all-kit"]) > .fr-inner { padding-bottom: 16px; }
 html[data-skin] .dev-ws > [data-project-frame] ~ .dev-ws-tabbody { box-sizing: border-box; width: 100%; max-width: 1136px; margin: 0 auto; padding: 0 32px 48px; }
 html[data-skin] .dev-ws:not([data-ws-tab="needs"]) > [data-project-frame] ~ .dev-ws-tabbody > * { max-width: 720px; margin-inline: 0; }
 /* Needs you is the review stage, which takes the window; the standard look
