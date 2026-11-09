@@ -17,7 +17,8 @@
 //
 //   .js .mjs .cjs   node --check
 //   .ts .tsx .jsx   esbuild.transformSync (the frontend's own esbuild first,
-//                   then the image's global install)
+//                   then the worker image's esbuild binary, run as a command:
+//                   worker/Dockerfile builds it from source with a patched Go)
 //   .json           JSON.parse
 //
 // A TypeScript or JSX file is checked by a transform, not a type check:
@@ -35,29 +36,78 @@ const LOADERS = { '.ts': 'ts', '.tsx': 'tsx', '.jsx': 'jsx' };
 let esbuild;
 let esbuildTried = false;
 
+// The worker image's esbuild binary (worker/Dockerfile). SYNC_PARSE_ESBUILD_BIN
+// names another one, for tests.
+const IMAGE_ESBUILD = '/usr/local/bin/esbuild';
+
 // The frontend's pinned esbuild first (its lockfile's version), then the
-// worker image's global install. `undefined` means "not looked for yet";
-// null means "not available".
+// worker image's binary. Null means "not available".
 function loadEsbuild() {
   if (esbuildTried) return esbuild;
   esbuildTried = true;
   const candidates = [
     path.join(process.cwd(), 'frontend', 'node_modules', 'esbuild'),
     path.join(__dirname, '..', 'frontend', 'node_modules', 'esbuild'),
-    'esbuild',
-    '/usr/local/lib/node_modules/esbuild',
-    '/usr/lib/node_modules/esbuild',
   ];
   esbuild = null;
   for (const candidate of candidates) {
     try {
       esbuild = require(candidate);
-      break;
+      return esbuild;
     } catch {
       // next
     }
   }
+  const bin = process.env.SYNC_PARSE_ESBUILD_BIN || IMAGE_ESBUILD;
+  try {
+    fs.accessSync(bin, fs.constants.X_OK);
+    esbuild = binaryEsbuild(bin);
+  } catch {
+    // not there
+  }
   return esbuild;
+}
+
+// esbuild's command line prints a parse error as
+//   ✘ [ERROR] Unexpected "*"
+//
+//       frontend/src/x.tsx:2:0:
+//         2 │ *
+//           ╵ ^
+// with the same text and 0-based column as the module's error.
+function cliError(stderr) {
+  const out = String(stderr || '');
+  const text = (out.match(/\[ERROR\]\s*(.+)/) || [])[1];
+  const at = out.match(/^\s*\S.*?:(\d+):(\d+):\s*$/m);
+  const error = new Error(text ? text.trim() : 'does not parse');
+  error.errors = [{
+    text: text ? text.trim() : 'does not parse',
+    location: at ? { line: Number(at[1]), column: Number(at[2]) } : null,
+  }];
+  return error;
+}
+
+// The image's esbuild binary in the module's shape: transformSync throws an
+// error carrying `errors` when the source does not parse.
+function binaryEsbuild(bin) {
+  return {
+    transformSync(source, { loader, sourcefile }) {
+      try {
+        execFileSync(bin, [`--loader=${loader}`, `--sourcefile=${sourcefile}`, '--log-level=error', '--color=false'], {
+          input: source,
+          stdio: ['pipe', 'ignore', 'pipe'],
+          maxBuffer: 16 * 1024 * 1024,
+        });
+      } catch (err) {
+        // It ran and refused the source: a parse error. It did not run (gone,
+        // not executable, killed): nothing was checked, which is not a failure.
+        if (typeof err.status === 'number') throw cliError(err.stderr);
+        const unavailable = new Error(`esbuild could not run (${err.code || err.signal || err.message})`);
+        unavailable.unavailable = true;
+        throw unavailable;
+      }
+    },
+  };
 }
 
 function clean(value) {
@@ -122,6 +172,10 @@ function transformCheck(file, source) {
     builder.transformSync(source, { loader: LOADERS[ext], sourcefile: file });
     return null;
   } catch (err) {
+    if (err && err.unavailable) {
+      process.stderr.write(`sync-parse-check: ${err.message}; ${file} was not checked\n`);
+      return null;
+    }
     const first = (err && Array.isArray(err.errors) && err.errors[0]) || {};
     const location = first.location || {};
     const line = Number(location.line) || 1;
