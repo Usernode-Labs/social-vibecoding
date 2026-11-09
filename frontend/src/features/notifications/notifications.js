@@ -2892,6 +2892,15 @@ function botMomentLine(detail, message) {
   return { label, subject, meta, needsYou, ...(noteId ? { note: t(noteId) } : {}) };
 }
 
+// #6494: a storage token carries MiB used and MiB of cap. MB below 1 GiB,
+// else GB with at most one decimal ("1.6 GB", "3 GB").
+function storageSizeText(mib) {
+  const n = Number(mib);
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n < 1024) return `${Math.round(n)} MB`;
+  return `${(n / 1024).toFixed(1).replace(/\.0$/, '')} GB`;
+}
+
 // A whole message with one emphasised part, as a row's segments: the catalog
 // text is "<0>12 of 50 apps in use.</0> New apps are refused…", and what is
 // inside the tag is the strong segment. A parameter is filled in after the
@@ -2986,12 +2995,14 @@ function rowView(n) {
 }
 
 function rowWords(n) {
-  // #103: keep the violet left line on every row, read or unread, so a
-  // notification never "loses its line" when read. Only the background
-  // tint stays unread-conditional (the unread dot below is the other cue).
+  // #6506: the subject line's weight and ink. An unread notice is bold in the
+  // strong ink; a read one is regular and softer, so a list holding both
+  // tells them apart at a glance. The unread dot in ./notifications-sheet.tsx
+  // is the other cue; the sheet chooses by `unread` so a story card, whose
+  // view is rebuilt, reads its own state.
   const unreadCls = n.readAt
-    ? 'border-s-2 border-violet-500'
-    : 'bg-violet-500/5 border-s-2 border-violet-500';
+    ? 'font-normal text-zinc-700 dark:text-zinc-300'
+    : 'font-semibold text-zinc-900 dark:text-zinc-100';
   // WHERE this came from, for the meta line — and EMPTY when there is no
   // app, not the literal string 'app'. Plenty of kinds have no app at all (a
   // conversation, an account-level key, an agent question the platform cannot
@@ -3592,6 +3603,23 @@ function rowWords(n) {
     // the app. The app name leads the line on purpose: this row is only
     // ever about one app, and "has used most of its storage" with nothing
     // in front of it reads as the platform talking about itself.
+    // #6494: the early and warning tokens carry the figures, so the row says
+    // how full the database is ("1.6 GB of 3 GB") instead of only "most of".
+    // A bare token from a row written before this change keeps its old words.
+    const storage = /^storage_(early|warn):(\d{1,9}):(\d{1,9})$/.exec(String(n.detail || ''));
+    if (storage) {
+      const key = storage[1] === 'early' ? 'early' : 'warnSized';
+      const values = { used: storageSizeText(Number(storage[2])), limit: storageSizeText(Number(storage[3])) };
+      return {
+        ...base,
+        wrap: true,
+        icon: '\u{1F4BE}',
+        label: t('notifications:row.health.storage.label'),
+        segments: n.appName
+          ? messageSegments(`notifications:row.health.storage.${key}`, { ...values, app: n.appName })
+          : messageSegments(`notifications:row.health.storage.${key}Unnamed`, values),
+      };
+    }
     if (n.detail === 'storage_warn') {
       return {
         ...base,
