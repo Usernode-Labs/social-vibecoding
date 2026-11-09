@@ -595,7 +595,8 @@ test('the facts tell the author the bot can update their change, and anybody els
     app: APP, place: { type: 'session', ref: 13112 }, bot: BOT, settings: LIVE, speaker, deps: gateDeps(),
   });
   const own = await facts(EVAN);
-  assert.match(own, /built by @evan in Claude Code \(made outside Homeroom: it has no Fix it button\)/);
+  // #6514's line, less the "you cannot edit it" this change makes untrue for its author.
+  assert.match(own, /built by @evan in Claude Code \(made outside Homeroom: it has no Fix it button; you can read it and show what it looks like\)/);
   assert.doesNotMatch(own, /you cannot edit it/);
   assert.match(own, /You can update this change for them, on this same change \(update_change\), paid from @evan's week/);
   assert.match(own, /0 of 10 updates people asked for/);

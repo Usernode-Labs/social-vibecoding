@@ -1167,15 +1167,16 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
     const counts = await followup.revisionCounts(pool, change.id);
     const asks = await askState(pool, change.id);
     const busy = await changeBusy(pool, change.id);
-    // #6389: a change somebody else made, and where they made it. The bot
-    // cannot edit one made outside Homeroom, and there is no Fix it button
-    // on it: the facts say both, so the model names the tool rather than
-    // inventing a button.
+    // #6389: a change somebody else made, and where they made it. There is
+    // no Fix it button on one made outside Homeroom: the facts say so, so the
+    // model names the tool rather than inventing a button. Whether the bot may
+    // update it is said per speaker below (#6537: its author or an admin may
+    // ask, on that same change).
     const author = change.author_username ? `@${change.author_username}` : 'somebody';
     const tool = change.external_agent ? externalAgentLabel(change.external_agent) : null;
     const built = own ? 'built by you'
       : tool
-        ? `built by ${author} in ${tool} (made outside Homeroom: it has no Fix it button; you cannot edit it, but you can read it and show what it looks like)`
+        ? `built by ${author} in ${tool} (made outside Homeroom: it has no Fix it button; you can read it and show what it looks like)`
         : `built by ${author} on Homeroom`;
     // #6406: name it the way the screen does; the id is only for tools.
     lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: `
