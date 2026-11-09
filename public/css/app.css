@@ -27040,7 +27040,35 @@ html[data-skin] .dev-ws > :is([data-project-frame="topics"], [data-project-frame
    new project's Hub is for: its first version being built, an update from
    the project it was made from, Share it, the start-here prompt, the
    versions made from it, and the ask to be notified. */
-html[data-skin] .dev-ws > [data-project-frame="status"] ~ .dev-ws-tabbody > :not(:is([data-ws-first-version], [data-ws-update], [data-ws-share], [data-ws-start-here], [data-ws-hub-versions], [data-notify-ask="community"])) { display: none; }
+html[data-skin] .dev-ws > [data-project-frame="status"] ~ .dev-ws-tabbody > :not(:is([data-ws-community], [data-ws-first-version], [data-ws-update], [data-ws-share], [data-ws-start-here], [data-ws-hub-versions], [data-notify-ask="community"])) { display: none; }
+/* THE PROJECT'S ⋯ (leave, pin, members and approvals, rules, …) is one
+   node, drawn in the standard Hub's hero and nowhere else (its menu's
+   wiring counts on that). Under the kit's Hub the hero is put away but
+   kept in the page, with no size and nothing of it seen, so that its ⋯
+   alone can stand at the end of the kit's head, whose buttons make room
+   for it. Everything between the hero and the ⋯ is unpositioned, so the
+   ⋯ is placed against the page. */
+html[data-skin] .dev-ws:has(> [data-project-frame="status"]) { position: relative; }
+html[data-skin] .dev-ws > [data-project-frame="status"] ~ .dev-ws-tabbody { position: static; }
+html[data-skin] .dev-ws > [data-project-frame="status"] ~ .dev-ws-tabbody > section[data-ws-community] {
+  display: block; visibility: hidden; position: static !important; overflow: visible;
+  height: 0; min-height: 0; margin: 0; padding: 0; border: 0; background: none; box-shadow: none;
+}
+html[data-skin] .dev-ws > [data-project-frame="status"] ~ .dev-ws-tabbody > section[data-ws-community] :not(.dev-ws-plus, .dev-ws-plus *) { position: static; }
+html[data-skin] .dev-ws > [data-project-frame="status"] ~ .dev-ws-tabbody > section[data-ws-community] .dev-ws-plus {
+  visibility: visible; position: absolute; z-index: 5;
+  top: 30px; inset-inline-end: max(32px, calc((100% - 1136px) / 2 + 32px));
+}
+/* The ⋯ stands at the page's end at every width here, so its menu opens
+   towards the start (the standard hero's opens the other way on a phone,
+   where its ⋯ leads the row). */
+html[data-skin] .dev-ws > [data-project-frame="status"] ~ .dev-ws-tabbody #dev-plus-menu { inset-inline-start: auto; inset-inline-end: 0; }
+html[data-skin] .dev-ws > [data-project-frame="status"] .fr-head > .fr-acts { margin-inline-end: 48px; }
+@media (max-width: 767.98px) {
+  html[data-skin] .dev-ws > [data-project-frame="status"] ~ .dev-ws-tabbody > section[data-ws-community] .dev-ws-plus { top: 12px; inset-inline-end: 12px; }
+  html[data-skin] .dev-ws > [data-project-frame="status"] .fr-head > .fr-acts { margin-inline-end: 0; }
+  html[data-skin] .dev-ws > [data-project-frame="status"] .fr-head > .fr-tx { padding-inline-end: 44px; }
+}
 html[data-skin] .dev-ws > [data-project-frame="status"]:has(~ .dev-ws-tabbody > :is([data-ws-first-version], [data-ws-update], [data-ws-share], [data-ws-start-here], [data-ws-hub-versions], [data-notify-ask="community"])) > .fr-inner { padding-bottom: 16px; }
 html[data-skin] [data-project-frame]:not([data-project-frame="status"], [data-project-frame="topics"], [data-project-frame="workshop-kit"]) > .fr-inner { padding-bottom: 16px; }
 html[data-skin] .dev-ws > [data-project-frame] ~ .dev-ws-tabbody { box-sizing: border-box; width: 100%; max-width: 1136px; margin: 0 auto; padding: 0 32px 48px; }

@@ -159,3 +159,21 @@ test('under a look the project\'s page has the frame\'s page area, and the stand
   const page = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(page, /\{frame && !frameTopics && tab === 'status' && !pending \? frameHub\(\) : null\}\s+\{frameWorkshopUp \? frameWorkshop\(\) : null\}\s+\{frame && !frameTopics && tab !== 'status' && !frameWorkshopUp \? <ProjectFrameHead [^\n]+\n\s+\{band\}\n\s+\{tray\}/);
 });
+
+test('the project\'s ⋯ stands at the end of the kit\'s head: the one node the hero draws, with the hero put away around it', () => {
+  // Leave, pin, members and approvals, rules: the menu is one node, in the
+  // standard Hub's hero (tests/dev-workshop.test.js counts it), so the kit's
+  // Hub cannot draw a second. The hero stays in the page with no size and
+  // nothing of it seen, and its ⋯ alone is placed against the page.
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
+  const hero = hand.match(/html\[data-skin\] \.dev-ws > \[data-project-frame="status"\] ~ \.dev-ws-tabbody > section\[data-ws-community\] \{([^}]*)\}/);
+  assert.ok(hero);
+  assert.match(hero[1], /visibility: hidden; position: static !important; overflow: visible;\s+height: 0;/, 'unpositioned even while its menu is open, which the standard look answers by positioning it');
+  const plus = hand.match(/section\[data-ws-community\] \.dev-ws-plus \{([^}]*)\}/);
+  assert.match(plus[1], /visibility: visible; position: absolute;/);
+  assert.match(plus[1], /inset-inline-end: max\(32px, calc\(\(100% - 1136px\) \/ 2 \+ 32px\)\);/, 'at the kit column\'s end');
+  assert.match(hand, /html\[data-skin\] \.dev-ws > \[data-project-frame="status"\] \.fr-head > \.fr-acts \{ margin-inline-end: 48px; \}/, 'the head\'s buttons make room for it');
+  assert.match(hand, /html\[data-skin\] \.dev-ws > \[data-project-frame="status"\] ~ \.dev-ws-tabbody #dev-plus-menu \{ inset-inline-start: auto; inset-inline-end: 0; \}/, 'and its menu opens towards the start');
+  assert.equal((read('frontend/src/features/dev-board/workshop/workshop.tsx').match(/<DevPlusMenu\b/g) || []).length, 1);
+});
