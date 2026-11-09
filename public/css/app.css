@@ -27324,7 +27324,12 @@ body.has-install-strip .fr.fr-app.fr-shell.fr-shell-under { top: calc(var(--plat
    stays mounted and is put away. The kit's page brings its own margins and
    its own width, so the landing's column gives up its own. */
 html[data-skin] [data-landing-frame] ~ [data-guest-discover] { display: none; }
-html[data-skin] #auth-landing-scroll > div:has(> [data-landing-frame]) { max-width: none; padding-bottom: 0; }
+/* A members' page opened by a visitor has a page of its own too
+   (features/guest/frame/gated-frame.tsx): no blurred stand-in behind a
+   sheet, the page is there. */
+html[data-skin] [data-gated-frame] ~ [data-guest-discover] { display: none; }
+html[data-skin] #auth-landing-screen:has([data-gated-frame]) [data-deep-link-backdrop] { display: none; }
+html[data-skin] #auth-landing-scroll > div:has(> :is([data-landing-frame], [data-gated-frame])) { max-width: none; padding-bottom: 0; }
 
 /* In a phone browser the document is what scrolls, and the anonymous
    screen is in its flow (data-browser-scroller): it starts under the bar
