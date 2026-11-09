@@ -112,7 +112,10 @@ const MAX_SOURCE_READS_PER_TURN = CHAT_LIMITS.readsPerTurn;
 const SOURCE_READ_TOOLS = Object.freeze(['list_source', 'read_source']);
 // What the last round offers: a tool that ends the turn, never a lookup. An
 // offer alone is the turn's answer, as it is today.
-const CHAT_LAST_ROUND = (name) => name === 'reply' || name === 'draw_screen' || name.startsWith('offer_');
+// #6523: offer_new_project sets a flag for the reply rather than ending the
+// turn, so it is never one of the last round's ending tools.
+const CHAT_LAST_ROUND = (name) => name === 'reply' || name === 'draw_screen'
+  || (name.startsWith('offer_') && name !== 'offer_new_project');
 const CHAT_LAST_ROUND_NOTE = lastRoundNote('offer the draft they asked for');
 const CHAT_STAND_IN_NOTE = standInNote('offer the draft they asked for');
 const CHAT_READING_DONE = readingDoneNote('offer the draft they asked for');
@@ -504,6 +507,8 @@ function otherThreadLines(thread) {
       '- It is the private thread you opened for a NEW project, which does not exist yet. Help them shape what it is',
       '  for, then draw its first screen with draw_screen and design it with them here; from a design they like, you',
       '  offer to make the project. Nothing is made, filed or posted until they tap.',
+      // #6523: its foot already has the door, so the flag is not needed here.
+      '- New project is already at the foot of this thread, so do not call offer_new_project here.',
     );
   } else if (d?.kind === 'ask') {
     // #6071 follow-up: started from your "+", with what its welcome block picked.
@@ -516,11 +521,19 @@ function otherThreadLines(thread) {
       '  Help them say what they want. Once it is clear enough to build, offer it as a request with offer_request:',
       '  File it shows only under that offer, so make it then, without waiting to be asked. When they want to see how a',
       '  screen could look, call draw_screen: it is drawn here, in this thread, and changed at their word.',
+      // #6523: New project is offered, never guessed from the kind of thread.
+      '  When, and only when, this thread is an idea for a project of its own with no project yet, call',
+      '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
+      '  project that exists.',
     );
   } else if (!d) {
     lines.push(
       '- Nothing in this thread is filed until you offer it. Once what they want is clear enough to build, offer it as',
       '  a request with offer_request: File it shows only under that offer.',
+      // #6523: New project is offered, never guessed from the kind of thread.
+      '  When, and only when, this thread is an idea for a project of its own with no project yet, call',
+      '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
+      '  project that exists.',
     );
   } else if (d?.appSlug) {
     const name = d.appName || d.appSlug;
@@ -1063,6 +1076,16 @@ const TOOLS = [
         required: ['idea'],
         additionalProperties: false,
       },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'offer_new_project',
+      description: 'In a private thread that is an idea for a NEW project of its own (an app that does not exist yet) '
+        + 'and not a question, a report, or a change to a project that exists: put the New project button under your '
+        + 'reply. One per turn.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
   {
@@ -2165,6 +2188,11 @@ function doingFor(name, args = {}, { project = null } = {}) {
     case 'draw_screen':
     case 'write_screen':
       return { kind: 'drawing' };
+    // #6354: opening one of Homeroom's own pages to copy it for a design.
+    case 'capture_page': {
+      const page = typeof args?.page === 'string' ? clip(args.page, 60) : '';
+      return page ? { kind: 'capturing', page } : { kind: 'capturing' };
+    }
     case 'edit_design':
       return { kind: 'designing' };
     case 'offer_request':
@@ -3409,6 +3437,13 @@ async function runTool(pool, ctx, name, args) {
       case 'close_thread': return await closeThread(pool, ctx);
       case 'start_request': return await startRequest(pool, ctx, args);
       case 'start_project_thread': return await startProjectThread(pool, ctx, args);
+      case 'offer_new_project': {
+        // #6523: the New project button is the bot's to offer, in a private
+        // thread that is an idea for a project of its own. Never in Main.
+        if (!ctx.deps.threadRootId && !ctx.projectThread) return { ok: false, error: 'Only in a private thread with no project.' };
+        ctx.newProjectOffer = true;
+        return { ok: true, note: 'New project shows under your reply.' };
+      }
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
       case 'list_source':
       case 'read_source':
@@ -3957,6 +3992,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     sourceReads: 0, standIns: 0, gaveUp: false,
     // The turn's failures, for a stand-in refused by its reply tool.
     failures: [],
+    // 9 Nov 2026 (#6523): the bot offered to make this idea a project, so the
+    // reply carries `newProject` and the thread's foot shows New project.
+    newProjectOffer: false,
   };
   // B01, B07 (audit 2 Nov 2026): once start_project_thread opened a new
   // project's thread, everything this turn says goes in it, whichever way
@@ -4317,7 +4355,11 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // Homeroom bot parity (P1-P9): a card a thread tool put under the reply
   // (homeroom-bot-cards/, frontend features/messages/bot-cards/).
   const toolCard = ctx.card && typeof ctx.card === 'object' && typeof ctx.card.type === 'string' ? ctx.card : null;
-  const extra = { ...(looked ? { looked } : {}), ...(toolCard ? { card: toolCard } : {}) };
+  const extra = {
+    ...(looked ? { looked } : {}), ...(toolCard ? { card: toolCard } : {}),
+    // #6523: the thread's foot reads this to show New project.
+    ...(ctx.newProjectOffer ? { newProject: true } : {}),
+  };
   // 2 Nov 2026: a reply that ends in an offer keeps both. Up to two more
   // offers follow it as cards of their own (MAX_OFFERS), each said once.
   if (ctx.offer) {

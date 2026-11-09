@@ -260,7 +260,7 @@
       "key": "APP_DB_STORAGE_WARN_PERCENT",
       "group": "Scaling",
       "default": "80",
-      "description": "Percentage of the storage cap at which an app's admins are warned that it is nearly full. One warning per crossing: it re-arms once the database drops back under the line."
+      "description": "Percentage of the storage cap at which an app's admins are warned that it is nearly full. A first heads-up goes out at 50% when this line is above it. Each line is told once per crossing and re-arms once the database drops back under it, and the notices give the space used and the limit."
     },
     {
       "key": "APP_DB_STORAGE_SWEEP_INTERVAL_MS",
@@ -1483,9 +1483,9 @@
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"] ~ [data-standings-tab=\"topochain\"]) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
-      "name": "New community is the last tile of Home's Pinned communities, the one way Home makes a project now (One Home, #6361; it was the launcher grid's last tile)",
+      "name": "New project is the last tile of Home's My apps again, and New community stays the last of Pinned communities (#6522; both were One Home's, #6361)",
       "path": "/?demo=1&shot=create-enabled",
-      "expectSelector": "#home-body #home-apps-section:not(:has(#home-create-tile)) ~ #home-communities-section:not([hidden]) #home-new-community[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
+      "expectSelector": "#home-body #home-apps-section:not([hidden]):has(#home-create-tile[data-panel-slot=\"create\"][data-create-enabled=\"true\"]) ~ #home-communities-section:not([hidden]) #home-new-community[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
       "expectText": "New community"
     },
     {
@@ -4405,7 +4405,7 @@
     {
       "name": "Unread notification rows read source, bold subject, muted preview",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open]:has(.notifications-row-slot > [data-notif-id=\"990211\"] + button[data-notification-clear=\"990211\"][aria-label=\"Clear notification\"]) .notifications-row .text-xs + .text-sm.font-semibold"
+      "expectSelector": "#notifications-sheet[data-open]:has(.notifications-row-slot > [data-notif-id=\"990211\"] + button[data-notification-clear=\"990211\"][aria-label=\"Clear notification\"]) [data-notif-id=\"990211\"] .text-xs + .text-sm.font-semibold"
     },
     {
       "name": "The sign-in screen stands on the wallpaper as a card form with a filled Log in pill",
@@ -5079,6 +5079,19 @@
         "frontend/src/features/ai/model.ts",
         "frontend/src/features/ai/lists.tsx",
         "frontend/locales/en/messages.json"
+      ]
+    },
+    {
+      "name": "#6371: This week lists each project's week the weekly digest opens",
+      "path": "/?demo=1#week",
+      "expectSelector": "#weekly-digest-screen:not(.hidden) [data-weekly-digest-pane]",
+      "expectText": "Staging demo app",
+      "id": "weekly-digest-page",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/weekly-digest/index.tsx",
+        "frontend/locales/en/weekly-digest.json",
+        "src/routes/weekly-digest.js"
       ]
     }
   ],

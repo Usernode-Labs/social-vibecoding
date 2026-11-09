@@ -13,8 +13,10 @@
  * featured, in their order (featured_order), in the same wrapping grid as
  * the rest (#6434): the first group of the section, of the chosen kind, and
  * left out while a search is typed (its matches are the grid, featured
- * first). Then the rest under "More communities", the most used first; more load as the reader reaches the
- * end (an IntersectionObserver on the last card's
+ * first). Then the rest under "More communities" when a kind other than All
+ * is chosen; with All chosen the rest simply follow Featured, no heading
+ * between them (#6470). The most used first; more load as the reader reaches
+ * the end (an IntersectionObserver on the last card's
  * sentinel, inside Home's own scroller), with two placeholder cards while
  * they come. The directory is GET /api/public/apps, which answers every
  * public project at once today, so "more" pages through it here.
@@ -39,14 +41,18 @@ export function joinOrder(apps: readonly GuestApp[]): GuestApp[] {
   return [...featured, ...sortApps(apps, 'trending').filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin }: {
+export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onJoin, onRetry }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
+  /** The directory could not be read: say so, with a way to try again. */
+  failed?: boolean;
   /** Communities already on this Home (joined or pinned), left out of the list. */
   exclude: ReadonlySet<string>;
   signedIn: boolean;
   query: string;
   onJoin: (app: GuestApp) => void;
+  /** Read the directory again, from the line that says it could not be. */
+  onRetry?: () => void;
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
@@ -139,16 +145,29 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin }: {
           </div>
         </div>
       ) : null}
-      {!apps ? (
+      {failed ? (
+        // #6354 review: a request that failed must say so and offer to try
+        // again, rather than leaving the loading placeholders up forever.
+        <div className="flex flex-col items-center gap-3 px-2 py-6" data-home-join-failed="">
+          <p className="text-center text-[14px] text-zinc-500 dark:text-zinc-400">{t('home:join.failed')}</p>
+          {onRetry ? (
+            <Button type="button" variant="pill" size="sm" className="min-h-11 px-5 py-0 un-touch-target"
+              data-home-join-retry="" onClick={onRetry}>
+              {t('home:join.retry')}
+            </Button>
+          ) : null}
+        </div>
+      ) : !apps ? (
         <div className={`${CARD_GRID} px-1`} aria-label={ta('auth:guest.loading')}>
           {[0, 1, 2, 3].map((i) => <span key={i} className="aspect-[16/10] rounded-[20px] bg-black/5 dark:bg-white/10" />)}
         </div>
       ) : list.length ? (
         <>
-        {/* Featured above, so the rest get a heading of their own: without
-            it they read as more of Featured (#6434). A search leaves
-            Featured out, and then there is one grid and no second heading. */}
-        {featured.length ? <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`} data-home-join-rest="">{t('home:join.more')}</h3> : null}
+        {/* Featured above, so a chosen kind's rest get a heading of their
+            own: without it they read as more of Featured (#6434). With All
+            chosen every card follows Featured with no heading (#6470). A
+            search leaves Featured out, and then there is one grid too. */}
+        {kind && featured.length ? <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`} data-home-join-rest="">{t('home:join.more')}</h3> : null}
         <div className={`${CARD_GRID} px-1`}>
           {list.slice(0, shown).map((app, i) => (
             <Card
@@ -161,7 +180,9 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin }: {
         </div>
         </>
       ) : featured.length ? null : (
-        <p className="px-2 py-4 text-[14px] text-zinc-500 dark:text-zinc-400">{t('home:join.allJoined')}</p>
+        <p className="px-2 py-4 text-[14px] text-zinc-500 dark:text-zinc-400">
+          {!pool.length && !kind && !query ? t('home:join.empty') : t('home:join.allJoined')}
+        </p>
       )}
       {more ? (
         <>
@@ -192,7 +213,8 @@ export function scrollParent(el: Element | null): Element | null {
 
 /** The public directory, read once per page load (GET /api/public/apps). */
 let directory: Promise<GuestApp[] | null> | null = null;
-export function readDirectory(): Promise<GuestApp[] | null> {
+export function readDirectory(refresh = false): Promise<GuestApp[] | null> {
+  if (refresh) directory = null;
   if (!directory) {
     directory = fetch('/api/public/apps?include_wallets=0', { credentials: 'same-origin' })
       .then((res) => (res.ok ? res.json() : null))

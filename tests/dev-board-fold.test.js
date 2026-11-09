@@ -1759,7 +1759,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // counts, the audience chips) with it. Its page check now follows
   // #communities to Home and finds the Needs you tile there; the two Needs
   // you checks follow the page to #needs. 729 leaves 151 slots.
-  checkCap.assertPinned(DAPP.tests.length, 729);
+  // 729 → 730: +1 (#6371) the This week page the weekly digest's Friday row
+  // opens is an address of its own (/?demo=1#week), so it has no check to
+  // fold into. 730 leaves 150 slots.
+  checkCap.assertPinned(DAPP.tests.length, 730);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

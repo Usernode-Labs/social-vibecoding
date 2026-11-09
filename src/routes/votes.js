@@ -38,7 +38,7 @@ const summaryFreshness = require('../services/summary-freshness');
 const homeroomCommits = require('../services/homeroom-commits');
 const proposalDelivery = require('../services/proposal-delivery');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
-const { updateComingSql } = require('../services/homeroom-bot-progress');
+const { updateComingSql, sessionChecksOnHead } = require('../services/homeroom-bot-progress');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql, isFirstVersion } = require('../services/first-version-rule');
@@ -655,7 +655,7 @@ function stagingMockProposals(viewer) {
           index: -3,
           name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',
           advisory: false, consoleErrors: [],
-          failureReason: 'tests/kudos-totals.test.js (1): kudos totals survive a rename | # tests 20913 | # pass 20912 | # fail 1 | # cancelled 0',
+          failureReason: 'tests/kudos-totals.test.js (3): kudos totals survive a rename | # tests 20913 | # pass 20910 | # fail 3 | # cancelled 0',
           failureDetails: [
             {
               file: 'tests/kudos-totals.test.js',
@@ -672,6 +672,26 @@ function stagingMockProposals(viewer) {
                 '  — stdout just before the failure —',
                 'renaming @mara → @mara-renamed: kudos rows moved 3',
                 'recount after rename: total=42 (expected 41)',
+              ].join('\n'),
+            }, {
+              file: 'tests/kudos-totals.test.js',
+              test: 'the kudos figure hides when a rename removes every row',
+              excerpt: [
+                "  location: '/tmp/tmp.fixture/tests/kudos-totals.test.js:104:1'",
+                "  error: 'expected 0 to equal null',",
+                "  code: 'ERR_ASSERTION',",
+                '  stack: |',
+                '      AssertionError [ERR_ASSERTION]: expected 0 to equal null',
+              ].join('\n'),
+            }, {
+              file: 'tests/kudos-totals.test.js',
+              test: 'a rename keeps the leaderboard order',
+              excerpt: [
+                "  location: '/tmp/tmp.fixture/tests/kudos-totals.test.js:141:1'",
+                "  error: 'expected [ 3, 2, 1 ] to deeply equal [ 3, 1, 2 ]',",
+                "  code: 'ERR_ASSERTION',",
+                '  stack: |',
+                '      AssertionError [ERR_ASSERTION]: expected [ 3, 2, 1 ] to deeply equal [ 3, 1, 2 ]',
               ].join('\n'),
             },
           ],
@@ -2633,6 +2653,10 @@ function mergedRowSelect() {
            -- GitHub-maintained note (kept visible on merged rows too).
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            cs.reviewed_head_sha,
+           -- #6521: which commit the last verdict describes, so the page can
+           -- tell a pass on an older version from a pass on this one
+           -- (services/homeroom-bot-progress.js sessionChecksOnHead).
+           cs.checks_commit_sha,
            -- Where it merges, and the change it waits for (src/workflow/
            -- rules/pr-base.ts): the change page reads its row from here, so
            -- its "Waits for #N" follows a retarget without the board's list.
@@ -4593,6 +4617,9 @@ function voteRoutes(config) {
         const requirementsSvc = require('../services/merge-requirements');
         for (const row of rows) {
           row.freshness = freshnessSvc.readFreshness(row);
+          // #6521: whether the last verdict describes this version, the same
+          // rule the thread list and the merge gate use.
+          row.checks_on_head = sessionChecksOnHead(row);
           // #2038: the one answer the card actually renders, carrying its own
           // measuredAt so it can say how old it is instead of implying it is
           // live. `blockReason` rides along so the card stops re-deriving a
@@ -5267,6 +5294,9 @@ function voteRoutes(config) {
         // which a vote does not supersede — withLiveApprovals reconciles
         // its waiting approvals step against the columns just attached.
         const mainCheck = await require('../services/main-watch').mergePause(pool, gatedApp.id);
+        // #6521: always written: the board merges this response into its
+        // held row key by key, and the page reads it on its Tested card.
+        proposal.checks_on_head = sessionChecksOnHead(proposal);
         proposal.freshness = require('../services/proposal-freshness').readFreshness(proposal);
         proposal.integration = require('../services/integration').readIntegration(proposal);
         proposal.shotsEnforced = !!config.shots?.enforce

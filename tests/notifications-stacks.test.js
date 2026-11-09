@@ -569,6 +569,14 @@ test('on a desk the card lends its surface to a layer under its contents while i
   }
 });
 
+// #6506: a story's history tells an unread notification from a read one the
+// same way the rows above it do: the accent dot, a bold line until it is read.
+test('a history line is bold while its notification is unread, plain once read', () => {
+  assert.match(STACKS_SRC, /rounded-full bg-violet-600 dark:bg-violet-400/);
+  assert.match(STACKS_SRC, /line\.notification\?\.unread\s*\n\s*\? 'font-semibold text-zinc-900 dark:text-zinc-100'\s*\n\s*: 'font-normal text-zinc-700 dark:text-zinc-300'/,
+    'a read notification\'s line is regular, a softer ink than an unread one\'s');
+});
+
 test('CardHistory opens, lands and folds through moveHistory, and a card that goes leaves nothing moved', () => {
   assert.doesNotMatch(STACKS_SRC, /\{ height: `/, 'no height keyframes are left to stall');
   assert.match(STACKS_SRC, /moveHistory\(box, motion, true, 360\);/);

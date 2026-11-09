@@ -2347,6 +2347,10 @@
     "text": "Explain the problem and what this change does. Markdown is supported.",
     "description": "Help line under the heading of the edit-description dialog of a change. Markdown is the name of a text formatting syntax; do not translate it."
   },
+  "topic.editor.restored": {
+    "text": "Your unsaved text was brought back from this device.",
+    "description": "Status line in the edit-description dialog of a change, shown when text the person typed before their sign-in ran out has been put back in the field from this device."
+  },
   "topic.editor.loading": {
     "text": "Loading description…",
     "description": "Status line in the edit-description dialog of a change while the current description is being fetched."
@@ -2494,6 +2498,18 @@
   "topic.check.unit.showOutput": {
     "text": "Show the test output",
     "description": "Link-like label that unfolds the raw output the app's failing tests printed, in a change's list of checks. It is technical text for whoever fixes the tests."
+  },
+  "topic.check.showFullOutput": {
+    "text": "Show the full output",
+    "description": "Link-like label that unfolds everything a failed automated check recorded besides its error line (console messages and test printouts), in a change's list of checks. The error line itself is already shown above it."
+  },
+  "topic.check.unit.showMore_one": {
+    "text": "Show {{count}} more failing test",
+    "description": "Link-like label that unfolds the other failing tests in the \"The app's own tests\" row of a change's list of checks, when exactly one more test failed. {{count}} is that number, always 1."
+  },
+  "topic.check.unit.showMore_other": {
+    "text": "Show {{count}} more failing tests",
+    "description": "Link-like label that unfolds the other failing tests in the \"The app's own tests\" row of a change's list of checks. {{count}} is how many tests are folded away; the first failing test is already shown above it."
   },
   "topic.checks.explain.title": {
     "text": "What went wrong",

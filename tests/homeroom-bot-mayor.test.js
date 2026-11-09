@@ -92,7 +92,7 @@ test('the tools: sixteen lookups and actions and a reply, every one closed to ex
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
     ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
       'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'offer_copy_request', 'offer_close_request', 'withdraw_proposal',
-      'draw_screen', 'close_thread', 'report_problem', 'start_project_thread', 'reply']);
+      'draw_screen', 'close_thread', 'report_problem', 'start_project_thread', 'offer_new_project', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -1095,6 +1095,46 @@ test('#6346: a chat turn stops reading source after eight and still answers', as
   assert.ok(seen.slice(1, 9).every((req) => !req.messages.some((m) => m.role === 'tool' && /Your reading for this turn is done\./.test(String(m.content)))),
     'the first eight reads are answered');
   assert.equal(turn.sent[0].content, 'It saves each set in src/db.js.');
+});
+
+test('#6523: offer_new_project is the bot\'s to offer, in a private thread, and rides its reply', async () => {
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  // The tool itself: no arguments, and it says when it applies.
+  const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_new_project').function;
+  assert.match(tool.description, /an idea for a NEW project of its own/);
+  assert.deepEqual(tool.parameters, { type: 'object', properties: {}, additionalProperties: false });
+  // Outside a thread it is refused and sets nothing.
+  const mainCtx = { user: { id: 9 }, settings: {}, deps: {} };
+  assert.equal((await mayor.runTool(null, mainCtx, 'offer_new_project', {})).ok, false);
+  assert.equal(mainCtx.newProjectOffer, undefined);
+  // In a private thread it sets the flag, and in a thread opened this turn.
+  const threadCtx = { user: { id: 9 }, settings: {}, deps: { threadRootId: 5 }, newProjectOffer: false };
+  assert.equal((await mayor.runTool(null, threadCtx, 'offer_new_project', {})).ok, true);
+  assert.equal(threadCtx.newProjectOffer, true);
+  const openedCtx = { user: { id: 9 }, settings: {}, deps: {}, projectThread: { rootId: 8 }, newProjectOffer: false };
+  assert.equal((await mayor.runTool(null, openedCtx, 'offer_new_project', {})).ok, true);
+  // Its reply carries it; the main chat's does not.
+  const offering = saying((i) => (i === 0
+    ? { content: '', calls: [callOf('o0', 'offer_new_project', {})] }
+    : { content: '', calls: [callOf(`o${i}`, 'reply', { text: 'That sounds like a project of its own. Want to start it?' })] }));
+  const inThread = chatTurn(offering, { extra: { threadRootId: 5 }, message: { content: 'I want an app where my flatmates and I split chores each week' } });
+  await inThread.run;
+  assert.equal(inThread.sent.length, 1);
+  assert.equal(inThread.sent[0].metadata.newProject, true, 'New project shows under the reply');
+  const refused = saying((i) => (i === 0
+    ? { content: '', calls: [callOf('m0', 'offer_new_project', {})] }
+    : { content: '', calls: [callOf(`m${i}`, 'reply', { text: 'Here is what I found.' })] }));
+  const inMain = chatTurn(refused, { message: { content: 'What are all the verbs in Needs you?' } });
+  await inMain.run;
+  assert.equal(inMain.sent.length, 1);
+  assert.equal(inMain.sent[0].metadata.newProject, undefined, 'never in the main chat');
+  // The private prompt tells it when to offer one, and never for a question or a report.
+  const plus = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'fix', appSlug: 'notes', appName: 'Notes' } } });
+  assert.match(plus, /When, and only when, this thread is an idea for a project of its own with no project yet, call\n  offer_new_project so New project shows under your reply\. Never for a question, a report, or a request about a\n  project that exists\./);
+  const idea = mayor.systemPrompt({ username: 'ada', thread: { draft: null } });
+  assert.match(idea, /only when, this thread is an idea for a project of its own with no project yet/);
+  const project = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'project' } } });
+  assert.match(project, /New project is already at the foot of this thread, so do not call offer_new_project here\./);
 });
 
 test('#6346: an offer on the chat\'s last round is the answer, with no fallback', async () => {

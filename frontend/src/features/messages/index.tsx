@@ -39,7 +39,8 @@ import {
 } from './bot-shared';
 import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, useWorkChanged } from './bot-work';
 import {
-  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, privateThreadTitle, privateThreadWords, usePrivateThread,
+  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadTitle, privateThreadWords,
+  usePrivateThread,
 } from './private-thread-bar';
 import { requestPageOf } from './request-page';
 import { RequestTag, stripGroups, summaryParts } from './bot-strip';
@@ -2935,6 +2936,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
             text={privateThreadWords(root, replies, meId)}
             where={privateWhere}
             botReplied={replies.some((message) => message.sender.bot)}
+            invited={newProjectInvited(root, replies)}
             working={!!threadWorking}
           />
         ) : null}

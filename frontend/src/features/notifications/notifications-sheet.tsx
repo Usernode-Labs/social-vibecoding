@@ -112,7 +112,7 @@ import { Chip, ChipRail } from '@/components/ui/chip';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import {
-  BookmarkIcon, BookmarkSolidIcon, ChevronDownIcon, ChevronUpIcon, SearchIcon, XIcon,
+  BookmarkIcon, BookmarkSolidIcon, ChevronDownIcon, ChevronUpIcon, NewspaperIcon, SearchIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { UserAvatar, swatchFor } from '../messages/format';
@@ -184,6 +184,8 @@ type ScreenRowView = NotificationRowView & {
   needsYou?: boolean;
   /** #5929: where an unread row stands (rowView): its label is drawn as this tone's chip. */
   tone?: RowTone;
+  /** #6371: a row whose tile is a shell line icon rather than a glyph. */
+  lineIcon?: 'newspaper';
   /** #5877: that project's icon, so its bot row wears the project's tile. */
   appIconUrl?: string | null;
   appIconEmoji?: string | null;
@@ -280,7 +282,9 @@ export function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
   }
   return (
     <IconTile size="sm" aria-hidden="true" className="text-base">
-      {view.icon || initial}
+      {view.lineIcon === 'newspaper'
+        ? <NewspaperIcon className="h-5 w-5" />
+        : (view.icon || initial)}
     </IconTile>
   );
 }
@@ -951,11 +955,13 @@ type ScreenRowProps = {
  */
 function ScreenRow({ view, touch, removes, held = false, onRelease, card = null }: ScreenRowProps): ReactNode {
   const t = useMessages('notifications');
-  // #6498: a row the sheet was showing unread when it opened stays exactly as
-  // it was, dimmed, until the sheet closes — clearing the bell on open must
-  // not take the row's own controls out from under the pointer. A held row is
-  // already read, so its clear is the no-op the code already handles for "a
-  // refresh got there first" (clearNotification re-renders and answers true).
+  // #6498: a row the sheet was showing unread when it opened, and that the
+  // server now answers as read (cleared in another tab or on another device),
+  // stays listed as it was, dimmed, until the sheet closes — a background
+  // clear must not take the row's own controls out from under the pointer. A
+  // held row is already read, so its clear is the no-op the code already
+  // handles for "a refresh got there first" (clearNotification re-renders and
+  // answers true).
   const clearable = view.unread || held;
   // #6441: several requests that went live together: one row, each listed
   // under its words. It takes the row shape a card with its own buttons
@@ -1044,7 +1050,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       <span className="relative flex shrink-0">
         {view.unread ? (
           <span
-            className="absolute -start-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100"
+            className="absolute -start-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-violet-600 dark:bg-violet-400"
             aria-label={t('notifications:row.unreadDot')}
           >
           </span>
@@ -1068,23 +1074,14 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
         ) : null}
         {/* WHICH ONE — the PR's title, the conversation, the message. The
             row's own content, and the only line whose text differs between
-            two notifications of the same kind, so it carries the strong ink.
+            two notifications of the same kind.
             #5289: two lines before it is cut, not one: a title cut to one
-            line on a phone was rarely enough to tell two changes apart. */}
-        <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words">
-          {view.segments.length ? view.segments.map((segment, index) => (
-            // eslint-disable-next-line react/no-array-index-key
-            <span
-              key={index}
-              className={segment.t === 'who'
-                ? 'font-bold'
-                : segment.t === 'strong'
-                  ? 'font-semibold'
-                  : 'font-normal text-zinc-700 dark:text-zinc-300'}
-            >
-              {(index > 0 ? ' ' : '') + (segment.t === 'who' ? `@${segment.v}` : segment.v)}
-            </span>
-          )) : view.label}
+            line on a phone was rarely enough to tell two changes apart.
+            #6506: unread is bold in the strong ink, read is regular and
+            softer (subjectClass), so the list tells the two apart at a
+            glance. */}
+        <span className={subjectClass(view)}>
+          {subjectOf(view)}
         </span>
         {/* #3227: what this kind of row means, for the one kind that needs
             saying (kudos). It wraps: a truncated explanation explains nothing. */}
@@ -1446,7 +1443,7 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
       <span className="relative flex shrink-0 self-start mt-0.5">
         {view.unread ? (
           <span
-            className="absolute -start-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100"
+            className="absolute -start-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-violet-600 dark:bg-violet-400"
             aria-label={t('notifications:row.unreadDot')}
           >
           </span>
@@ -1470,7 +1467,7 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
             </time>
           ) : null}
         </span>
-        <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words">
+        <span className={subjectClass(view)}>
           {story && view.storyRef && view.storyRef.title ? view.storyRef.title : subjectOf(view)}
         </span>
         {view.note ? (
@@ -1502,17 +1499,35 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
   );
 }
 
+/**
+ * #6506: the subject line's weight and ink. An unread notice is bold in the
+ * strong ink; a read one is regular and softer, so a list holding both tells
+ * them apart at a glance. The two class strings are complete literals (never
+ * built up) so Tailwind extracts both, and the choice is made from the view's
+ * own `unread` — the same state the dot follows, including on a story card
+ * whose view was rebuilt by foldStories.
+ */
+export function subjectClass(view: { unread?: boolean }): string {
+  return view.unread
+    ? 'block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words'
+    : 'block text-sm font-normal text-zinc-700 dark:text-zinc-300 line-clamp-2 break-words';
+}
+
 /** The subject line's words: the row's segments, else its label (a kind with no subject). */
 function subjectOf(view: ScreenRowView): ReactNode {
   return view.segments.length ? view.segments.map((segment, index) => (
     // eslint-disable-next-line react/no-array-index-key
     <span
       key={index}
-      className={segment.t === 'who'
-        ? 'font-bold'
-        : segment.t === 'strong'
-          ? 'font-semibold'
-          : 'font-normal text-zinc-700 dark:text-zinc-300'}
+      // #6506: a read row is plain throughout, so names and titles in it drop
+      // their extra bold; an unread row keeps the map it always had.
+      className={!view.unread
+        ? 'font-normal'
+        : segment.t === 'who'
+          ? 'font-bold'
+          : segment.t === 'strong'
+            ? 'font-semibold'
+            : 'font-normal text-zinc-700 dark:text-zinc-300'}
     >
       {(index > 0 ? ' ' : '') + (segment.t === 'who' ? `@${segment.v}` : segment.v)}
     </span>
@@ -1621,10 +1636,10 @@ export function NotificationsSheetView() {
   // a query wiped on close was lost on every round trip to a proposal.
   const [query, setQuery] = useState('');
   // #5460: every write to the query goes through this one helper. A
-  // non-empty query is remembered for the browser tab's session — the scope
-  // AppView.KANBAN_FILTERS_KEY uses for the board's filters: it survives
-  // leaving the screen and a reload, and goes away when the tab closes —
-  // and an empty one forgets it, so a cleared field stays cleared. Storage
+  // non-empty query is remembered for the browser tab's session: it
+  // survives leaving the screen and a reload, and goes away when the tab
+  // closes; an empty one forgets it, so a cleared field stays cleared.
+  // Storage
   // that is unavailable (private mode, blocked) changes nothing: the search
   // then just behaves as it did before, within the page.
   const rememberQuery = useCallback((next: string) => {

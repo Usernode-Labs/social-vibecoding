@@ -114,9 +114,16 @@ async function migrate(config) {
   // #6441's shots: three requests gone live within an hour, so the bell's
   // Unread shows them folded into one row that lists each.
   await seedStagingFoldedLiveNotifications(pool);
+  // #6494's shots: the bell's two storage notices, one at half full and one
+  // nearly full, each saying how much is used and what the limit is. Staging
+  // runs no sweep against a growing database, so they are seeded.
+  await seedStagingStorageNotices(pool);
   // #6261's shots: a design thread with a version in the capture member's
   // chat, for the comment picture's design frames.
   await seedStagingDesignThread(pool);
+  // #6354's shots: a design that started from a copy of the Homeroom bot
+  // page, an obviously fake one, with the bot's change as version 2.
+  await seedStagingCapturedPageThread(pool);
   await seedStagingBotPlanWaiting(pool);
   // #6264: a request whose bot kept its word, for the before & after shots
   // of "tell me when it's done" (the promise, then the line it posted).
@@ -250,6 +257,9 @@ async function migrate(config) {
   // #5877: the bot's "Ready to try" row about a project, for the bell's
   // leading tile. Needs the capture member (seedCaptureAdminUser).
   await seedStagingBotProjectNotification(pool);
+  // #6371: the one weekly digest row in the bell, which opens This week.
+  // Needs the capture member (seedCaptureUser).
+  await seedStagingWeeklyDigestRow(pool);
   // #6133's shots: the quiet "close to this week's building time" line in a
   // request's thread. Needs the capture member (seedCaptureUser).
   await seedStagingBotAllowanceWarning(pool);
@@ -2182,6 +2192,79 @@ async function seedStagingFoldedLiveNotifications(pool) {
   }
 }
 
+// #6494's shots: the two storage notices the sweep now writes, "over half
+// full" and "nearly full", each carrying the space used and the limit. A
+// fresh staging copy has no project whose database grew, and staging runs no
+// sweep against one, so both rows are seeded for the shots' member fixture
+// (usernode-capture), on obviously fake projects of its own. Nothing here is
+// a signal the code reads to decide anything. Idempotent by app and detail
+// token; strictly a no-op outside staging.
+//
+// Two projects, not one: a newer storage notice replaces an unread older one
+// for the same project, so a real bell holds one per project. The one at
+// half full has only the early notice, and the one nearly full has only the
+// warning (a sweep that jumped past both lines sends the highest alone).
+async function seedStagingStorageNotices(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!people.rows.length) return;
+    const memberId = people.rows[0].id;
+    const projects = [
+      {
+        id: 900096, name: 'Staging demo: recipe box', slug: 'staging-demo-recipe-box',
+        bytes: 2684354560, warnLevel: 2, detail: 'storage_warn:2560:3072', minutesAgo: 8,
+      },
+      {
+        id: 900095, name: 'Staging demo: spice shelf', slug: 'staging-demo-spice-shelf',
+        bytes: 1717567488, warnLevel: 1, detail: 'storage_early:1638:3072', minutesAgo: 3 * 24 * 60,
+      },
+    ];
+    for (const project of projects) {
+      const app = await pool.query(
+        `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by,
+                           db_size_bytes, db_size_measured_at, db_storage_warned_at, db_storage_warn_level)
+         VALUES ($1::int, $2::text, $3::text, 'running', 'members', 'private', $4::int,
+                 $5::bigint, NOW() - make_interval(mins => $6::int),
+                 CASE WHEN $7::int >= 2 THEN NOW() - make_interval(mins => $6::int) END, $7::int)
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id`,
+        [project.id, project.name, project.slug, memberId, project.bytes, project.minutesAgo, project.warnLevel],
+      );
+      const appId = app.rows[0]?.id || (await pool.query(
+        'SELECT id FROM apps WHERE id = $1', [project.id],
+      )).rows[0]?.id;
+      if (!appId) continue;
+      // The bell lists a private project's row only for someone who can still
+      // open that project (services/notifications.js APP_ACCESS_SQL: public,
+      // an admin, or an app_collaborators member). A project's INSERT mints
+      // its community but joins nobody to it, and a community membership is
+      // not what this check reads, so the creator's own collaborator row is
+      // written here, which also puts them in that community by trigger.
+      await pool.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+         VALUES ($1::int, $2::int, 'member', NOW())
+         ON CONFLICT (app_id, user_id) DO NOTHING`,
+        [appId, memberId],
+      );
+      await pool.query(
+        `INSERT INTO notifications
+           (user_id, app_id, source_user_id, kind, detail, read_at, created_at)
+         SELECT $1::int, $2::int, NULL, 'app_health', $3::varchar, NULL,
+                NOW() - make_interval(mins => $4::int)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM notifications n
+             WHERE n.user_id = $1 AND n.app_id = $2
+               AND n.kind = 'app_health' AND n.detail = $3::varchar
+          )`,
+        [memberId, appId, project.detail, project.minutesAgo],
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging storage notice seeding failed', { message: err.message });
+  }
+}
+
 // #6271 (4 Nov 2026): a private thread marked done now stays under Live this
 // week for a week. A fresh staging copy has no private thread with the bot,
 // and staging has no model to make one, so this seeds one already closed,
@@ -3601,6 +3684,10 @@ async function seedStagingGeneralChannel(pool) {
       [902783, 'staging-general-1', 'Staging demo: welcome to #general, the room everybody is in.', '3 hours'],
       [902783, 'staging-general-2', 'Staging demo: consecutive lines from one person group under one name.', '2 hours 59 minutes'],
       [902784, 'staging-general-3', 'Staging demo: and a reference to issue #1 still reads as an issue.', '2 hours'],
+      // #6525: one line in another language, so a fresh preview of #general
+      // has the row auto-translate puts its line under. Its English is seeded
+      // with the other translation fixtures, below.
+      [902784, 'staging-general-translate-1', 'Pagi semua ☕ hari ini mau aku push update kecil di tryconnect, semoga lancar. Ada yang lagi main game seru di sini rekomendasi dong', '1 hour'],
     ];
     for (const [sender, key, content, ago] of lines) {
       await pool.query(
@@ -3769,6 +3856,18 @@ async function seedStagingUserContentTranslations(pool) {
        VALUES ($1, 'en', $2, 'es', FALSE, 'staging-fixture', NOW())
        ON CONFLICT (source_digest, language) DO NOTHING`,
       [digest(spanishMessage), englishMessage]
+    );
+
+    // #6525: the line in another language that `seedStagingGeneralChannel`
+    // puts in #general, with the English auto-translate shows under it.
+    const indonesianMessage = 'Pagi semua ☕ hari ini mau aku push update kecil di tryconnect, semoga lancar. Ada yang lagi main game seru di sini rekomendasi dong';
+    const englishIndonesian = "Morning everyone ☕ today I'm pushing a small update to tryconnect, hope it goes smoothly. Is anyone playing a fun game here? Recommendations please";
+    await pool.query(
+      `INSERT INTO user_content_translations
+         (source_digest, language, text, source_language, same_language, model, attempted_at)
+       VALUES ($1, 'en', $2, 'id', FALSE, 'staging-fixture', NOW())
+       ON CONFLICT (source_digest, language) DO NOTHING`,
+      [digest(indonesianMessage), englishIndonesian]
     );
 
     // A request on a demo app, written by one of the fake people, with its
@@ -9345,6 +9444,35 @@ async function seedStagingBotProjectNotification(pool) {
   }
 }
 
+// #6371's before/after shots: the one weekly digest row in the bell, whose
+// tap opens This week. A staging copy has no such row for the shots' member
+// fixture, and the page's own read is the demo week (`#week?demo=1`).
+async function seedStagingWeeklyDigestRow(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const viewer = await pool.query(
+      `SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1`
+    );
+    const member = viewer.rows[0];
+    if (!member) {
+      log.warn('db', 'Staging weekly digest row skipped: fixture member missing');
+      return;
+    }
+    await pool.query(
+      `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+       SELECT $1, NULL, NULL, 'weekly_digest', 'w:3:12:3'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM notifications n
+           WHERE n.user_id = $1 AND n.kind = 'weekly_digest' AND n.detail = 'w:3:12:3'
+        )`,
+      [member.id]
+    );
+    log.info('db', 'Staging weekly digest row fixture seeded');
+  } catch (err) {
+    log.warn('db', 'Staging weekly digest row seeding failed', { message: err.message });
+  }
+}
+
 // #6133's before/after shots: the quiet line the bot says in a request's
 // thread when it begins reading again and the person paying has under a
 // fifth of the week's building time left. Only the live loop says it, and a
@@ -9647,6 +9775,114 @@ async function seedStagingDesignThread(pool) {
     log.info('db', 'Staging design thread fixture seeded', { threadId: thread.id });
   } catch (err) {
     log.warn('db', 'Staging design thread seeding failed', { message: err.message });
+  }
+}
+
+// #6354: a design started from Homeroom's own copy of a page. A clean
+// staging copy has no bot turn to run (there is no model), so this stores
+// what a capture_page turn leaves in the capture member's chat: version 1
+// the page "as it is now", and version 2 the bot's change to it. Obviously
+// fake, idempotent by its title, and a strict no-op outside staging.
+async function seedStagingCapturedPageThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const named = 'Staging demo: the Homeroom bot page';
+    const had = await pool.query('SELECT 1 FROM design_threads WHERE title = $1 LIMIT 1', [named]);
+    if (had.rows.length) return;
+    const member = (await pool.query(
+      'SELECT id FROM users WHERE username = \'usernode-capture\' AND is_synthetic = FALSE LIMIT 1'
+    )).rows[0];
+    if (!member) return;
+    const app = (await pool.query(
+      'SELECT id, slug, name FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1'
+    )).rows[0];
+    if (!app) return;
+    const bot = (await pool.query(
+      'SELECT id FROM users WHERE username = \'homeroom_bot\' AND is_synthetic = TRUE LIMIT 1'
+    )).rows[0];
+    if (!bot) return;
+    const dm = require('../services/homeroom-bot-dm');
+    const opened = await dm.sendDm(pool, {
+      bot,
+      userId: member.id,
+      content: `Staging demo: I opened a design thread for ${named.replace('Staging demo: ', '')}, in a thread only you can see. `
+        + 'Tell me what to change there, and I\'ll make the next version.',
+      threadRootId: false,
+      moment: null,
+      metadata: { kind: 'opened_design', appSlug: app.slug, appName: app.name || app.slug, designTitle: named },
+    });
+    if (!opened?.messageId) return;
+    const thread = (await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+       VALUES ($1, $2, $3, $4, 'design', 'open')
+       ON CONFLICT (root_message_id) DO NOTHING
+       RETURNING id`,
+      [member.id, opened.conversationId, opened.messageId, app.id]
+    )).rows[0];
+    if (!thread) return;
+    await pool.query(
+      `INSERT INTO design_threads (private_thread_id, title, surface, route, width, height)
+       VALUES ($1, $2, 'platform', '/?demo=1#homeroom-bot', 1280, 800)
+       ON CONFLICT (private_thread_id) DO NOTHING`,
+      [thread.id, named]
+    );
+    // A small, obviously fake Homeroom bot page with demo rows: the shape a
+    // real copy keeps, at its real columns (rail 212, list 668, Main 400).
+    const rows = ['A request to review its plan', 'A change waiting for votes', 'A flaky check to fix']
+      .map((say) => `<div style="padding:10px 14px;border-radius:12px;box-shadow:inset 0 0 0 1px #e4e4e7;margin-top:8px">`
+        + `<strong style="font-size:14px">${say}</strong>`
+        + '<div style="font-size:12px;color:#71717a;margin-top:2px">Staging demo row</div></div>')
+      .join('');
+    const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+      + '<body style="margin:0;font-family:system-ui,sans-serif;background:#f4f4f5;color:#18181b;display:flex;width:1280px;height:800px">'
+      + '<nav style="width:212px;box-sizing:border-box;background:#fff;box-shadow:inset -1px 0 0 #e4e4e7;padding:16px 12px">'
+      + '<div style="font-weight:700;font-size:17px;padding:4px 8px 16px">Homeroom</div>'
+      + '<div style="padding:8px;font-size:15px;border-radius:10px;background:#eef2ff;color:#1d4ed8;font-weight:650">AI</div>'
+      + '</nav>'
+      + '<main style="flex:1;padding:24px;box-sizing:border-box">'
+      + '<div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#71717a">Needs you</div>'
+      + rows + '</main>'
+      + '<aside style="width:400px;background:#fff;box-shadow:inset 1px 0 0 #e4e4e7;padding:18px">'
+      + '<div style="font-size:15px;font-weight:650">Main Chat</div>'
+      + '<div style="font-size:13px;color:#71717a;margin-top:4px">Only you can see this thread</div>'
+      + '<p style="font-size:14px;color:#52525b;margin-top:16px">Staging demo: the Homeroom bot page as it is now.</p>'
+      + '</aside></body></html>';
+    await pool.query(
+      `INSERT INTO design_versions (private_thread_id, version, html, author, note)
+       VALUES ($1, 1, $2, 'capture', 'As it is now')
+       ON CONFLICT (private_thread_id, version) DO NOTHING`,
+      [thread.id, html]
+    );
+    const change = html.replace(
+      '<div style="font-size:15px;font-weight:650">Main Chat</div>',
+      '<input placeholder="Search threads" style="box-sizing:border-box;width:100%;height:34px;border-radius:10px;'
+        + 'border:1px solid #d4d4d8;padding:0 10px;font-size:14px;margin-bottom:10px">'
+        + '<div style="font-size:15px;font-weight:650">Main Chat</div>'
+    );
+    await pool.query(
+      `INSERT INTO design_versions (private_thread_id, version, html, author, note)
+       VALUES ($1, 2, $2, 'bot', 'a search box over the list')
+       ON CONFLICT (private_thread_id, version) DO NOTHING`,
+      [thread.id, change]
+    );
+    const first = await dm.sendDm(pool, {
+      bot,
+      userId: member.id,
+      content: 'Version 1: As it is now.\n\nVersion 2: a search box over the list.',
+      threadRootId: opened.messageId,
+      moment: null,
+      idempotencyKey: `staging-captured-page-${thread.id}`,
+      metadata: { kind: 'design_version', appSlug: app.slug, appName: app.name || app.slug, designVersion: 2 },
+    }).catch(() => null);
+    if (first?.messageId) {
+      await pool.query(
+        'UPDATE design_versions SET message_id = $2 WHERE private_thread_id = $1 AND version IN (1, 2)',
+        [thread.id, first.messageId]
+      );
+    }
+    log.info('db', 'Staging captured design thread seeded', { threadId: thread.id });
+  } catch (err) {
+    log.warn('db', 'Staging captured design thread seeding failed', { message: err.message });
   }
 }
 
@@ -18428,6 +18664,7 @@ module.exports = {
   // #6441: the folded "went live" rows the bell's Unread shows.
   seedStagingFoldedLiveNotifications,
   seedStagingDesignThread,
+  seedStagingCapturedPageThread,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   followPlatformDefaultModel,
