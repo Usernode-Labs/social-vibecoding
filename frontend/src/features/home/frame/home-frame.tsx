@@ -27,7 +27,8 @@
  *   Pinned communities   the pins store (../home-pins-store), with what is
  *                        owed and under way from GET /api/workshop/counts
  *   Communities to join  the public directory (../communities-to-join)
- *   Live this week       GET /api/leaderboard/prs?window=week
+ *   Live this week       GET /api/workshop/live-feed (what went live in the
+ *                        viewer's communities in the last seven days)
  *
  * Every row is a door (pinned-communities.tsx's rule): a plain click lands
  * on the place through AppView, a cmd-click or middle-click keeps the href.
@@ -63,8 +64,15 @@ export type FeedRow = {
 /** A row of GET /api/workshop/bot-questions. */
 export type BotQuestion = { messageId: number; appSlug: string; appName: string; issueNumber: number; question: string; at?: string };
 
-/** A row of GET /api/leaderboard/prs. */
-export type LivePr = { session_id: number; pr_title: string; app_slug: string; app_name: string; author_username: string; session_created_at?: string };
+/** A row of GET /api/workshop/live-feed (shapeLiveFeed in src/routes/workshop-overview.js). */
+export type LiveRow = {
+  id: number;
+  number: number | null;
+  title: string | null;
+  at: string | null;
+  author: string | null;
+  app: { slug: string; name: string; icon_url: string | null; icon_emoji: string | null };
+};
 
 type DirectoryApp = {
   slug: string;
@@ -133,7 +141,7 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
   initialQuestions?: BotQuestion[] | null;
   initialDirectory?: DirectoryApp[] | null;
   initialCounts?: Counts | null;
-  initialLive?: LivePr[] | null;
+  initialLive?: LiveRow[] | null;
   now?: number;
 }) {
   const t = useMessages('home');
@@ -143,7 +151,7 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
   const [questions, setQuestions] = useState<BotQuestion[] | null>(initialQuestions);
   const [directory, setDirectory] = useState<DirectoryApp[] | null>(initialDirectory);
   const [counts, setCounts] = useState<Counts | null>(initialCounts);
-  const [live, setLive] = useState<LivePr[] | null>(initialLive);
+  const [live, setLive] = useState<LiveRow[] | null>(initialLive);
 
   useEffect(() => {
     let on = true;
@@ -152,7 +160,7 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
     readJson('/api/workshop/needs-feed').then((b) => (Array.isArray(b?.items) ? b.items : [])).catch(() => []).then(set(setFeed, [] as FeedRow[]));
     readJson('/api/workshop/bot-questions').then((b) => (Array.isArray(b?.questions) ? b.questions : [])).catch(() => []).then(set(setQuestions, [] as BotQuestion[]));
     readJson('/api/workshop/counts').then((b) => b?.counts || {}).catch(() => ({})).then(set(setCounts, {} as Counts));
-    readJson('/api/leaderboard/prs?window=week&limit=8').then((b) => (Array.isArray(b?.items) ? b.items : [])).catch(() => []).then(set(setLive, [] as LivePr[]));
+    readJson('/api/workshop/live-feed').then((b) => (Array.isArray(b?.items) ? b.items : [])).catch(() => []).then(set(setLive, [] as LiveRow[]));
     readDirectory().then((apps) => { if (on) setDirectory((apps || []) as DirectoryApp[]); });
     return () => { on = false; };
   }, []);
@@ -233,7 +241,7 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
   };
 
   // ── Live this week.
-  const ago = (iso?: string): string => {
+  const ago = (iso?: string | null): string => {
     const ms = iso ? now - new Date(iso).getTime() : NaN;
     if (!Number.isFinite(ms) || ms < 0) return '';
     const minutes = Math.floor(ms / 60000);
@@ -243,25 +251,21 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
     return t('home:frame.ago.days', { count: Math.floor(hours / 24) });
   };
   const went = (live || []).slice(0, LIVE_SHOWN);
-  const faceOf = (slug: string) => mine.find((m) => m.slug === slug) || null;
 
   const side = went.length > 0 ? (
     <Sec label={t('home:frame.liveThisWeek')} id="home-frame-live">
       <Card>
-        {went.map((pr) => {
-          const face = faceOf(pr.app_slug);
-          return (
-            <Row
-              key={pr.session_id}
-              href={hubHref(pr.app_slug)}
-              onClick={(event) => openHub(event, pr.app_slug)}
-              lead={<Tile name={pr.app_name} src={face?.iconUrl} emoji={face?.iconEmoji} color={face?.iconColor} />}
-              title={pr.pr_title}
-              line={`${pr.app_name} · ${pr.author_username}`}
-              right={<Meta>{ago(pr.session_created_at)}</Meta>}
-            />
-          );
-        })}
+        {went.map((row) => (
+          <Row
+            key={row.id}
+            href={hubHref(row.app.slug)}
+            onClick={(event) => openHub(event, row.app.slug)}
+            lead={<Tile name={row.app.name} src={row.app.icon_url} emoji={row.app.icon_emoji} />}
+            title={row.title || row.app.name}
+            line={row.author ? `${row.app.name} · ${row.author}` : row.app.name}
+            right={<Meta>{ago(row.at)}</Meta>}
+          />
+        ))}
       </Card>
     </Sec>
   ) : null;

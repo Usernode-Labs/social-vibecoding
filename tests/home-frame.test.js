@@ -152,8 +152,8 @@ test('what went live this week sits in the side column, newest first, with how l
   const html = render({
     initialFeed: [], initialQuestions: [],
     initialLive: [
-      { session_id: 1, pr_title: 'Penalty shoot-out mode', app_slug: 'goal', app_name: 'GOAL!', author_username: 'Bruno', session_created_at: '2026-11-09T10:00:00Z' },
-      { session_id: 2, pr_title: 'Daily puzzle streaks', app_slug: 'game-corner', app_name: 'Game Corner', author_username: 'maragung', session_created_at: '2026-11-06T11:00:00Z' },
+      { id: 1, number: 6412, title: 'Penalty shoot-out mode', at: '2026-11-09T10:00:00Z', author: 'Bruno', app: { slug: 'goal', name: 'GOAL!', icon_url: null, icon_emoji: null } },
+      { id: 2, number: 6410, title: 'Daily puzzle streaks', at: '2026-11-06T11:00:00Z', author: 'maragung', app: { slug: 'game-corner', name: 'Game Corner', icon_url: null, icon_emoji: '🎮' } },
     ],
   });
   assert.match(html, /<div class="fr-cols"><div class="fr-stack">/, 'two columns once there is context');

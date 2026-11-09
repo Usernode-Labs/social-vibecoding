@@ -438,6 +438,51 @@ const BOT_QUESTIONS_SQL = `
    LIMIT $2
 `;
 
+// GET /api/workshop/live-feed
+//      → { items: [{ id, number, title, at, author, app: { slug, name, icon_url, icon_emoji } }] }
+//
+// What went live in the last seven days in the communities the viewer is a
+// member of, newest first. Home's side column in the one frame reads it
+// ("Live this week", features/home/frame/home-frame.tsx): context beside
+// what needs you, not a feed to page through, so it is bounded to
+// LIVE_FEED_MAX and has no cursor. `$1` is the viewer, `$2` "may see
+// self-hosted rows" (the Needs you feed's rule), `$3` the bound.
+// merged_at was added by a later ALTER TABLE and is null on old rows, which
+// fall back to created_at, as GET /api/apps/:slug/merged does.
+const LIVE_FEED_MAX = 8;
+const LIVE_FEED_SQL = `
+  SELECT cs.id, cs.pr_number, cs.pr_title,
+         COALESCE(cs.merged_at, cs.created_at) AS at,
+         u.username AS author,
+         a.slug, a.name, a.icon_image_id, a.icon_emoji
+    FROM chat_sessions cs
+    JOIN apps a ON a.id = cs.app_id AND a.moderation_suspended_at IS NULL
+    LEFT JOIN users u ON u.id = cs.user_id
+   WHERE cs.status = 'merged'
+     AND COALESCE(cs.merged_at, cs.created_at) > NOW() - INTERVAL '7 days'
+     AND (NOT a.self_hosted OR $2::boolean)
+     AND EXISTS (SELECT 1 FROM community_members cm
+                  WHERE cm.community_id = a.community_id AND cm.user_id = $1)
+   ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, cs.id DESC
+   LIMIT $3
+`;
+
+function shapeLiveFeed(rows) {
+  return rows.map((row) => ({
+    id: row.id,
+    number: row.pr_number || null,
+    title: row.pr_title || null,
+    at: row.at ? new Date(row.at).toISOString() : null,
+    author: row.author || null,
+    app: {
+      slug: row.slug,
+      name: row.name,
+      icon_url: row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null,
+      icon_emoji: row.icon_emoji || null,
+    },
+  }));
+}
+
 // GET /api/workshop/needs-feed (#3270)
 //      → { items: FeedItem[] }
 //   FeedItem = { kind: 'proposal'|'governance', id, title, summary, author,
@@ -1377,10 +1422,22 @@ function workshopOverviewRoutes(config) {
     }
   });
 
+  router.get('/api/workshop/live-feed', async (req, res) => {
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      const { rows } = await pool.query(LIVE_FEED_SQL, [req.user.id, !!req.user.isAdmin || !!config.selfAppPublicVoting, LIVE_FEED_MAX]);
+      return res.json({ items: shapeLiveFeed(rows) });
+    } catch (err) {
+      log.error('workshop-overview', 'Failed to read the live feed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }
 
 module.exports = {
+  LIVE_FEED_SQL, LIVE_FEED_MAX, shapeLiveFeed,
   workshopOverviewRoutes, demoNeedsVoteRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
   NEEDS_FEED_SQL, NEEDS_FEED_IN_THREADS_SQL, NEEDS_FEED_MAX, needsFeedFor, BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX, shapeNeedsFeed, withVotesRequired, waitingOnFix, authorAgentGateMet, withViewerDecides, decidingFirst,
