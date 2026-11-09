@@ -75,6 +75,8 @@ export interface ThreadItem {
   outcome?: 'closed' | 'kept' | 'elsewhere' | null;
   /** A change: the requests it closes when it merges (its linked_issues). */
   closes?: number[];
+  /** #6420: among `closes`, the requests whose requester answered "This doesn't close it". */
+  notConfirmed?: number[];
   /** #6225: the same requests with their titles and filers, for the Votes card. */
   closesRequests?: ClosesRequest[];
   /**
@@ -126,8 +128,16 @@ export interface ThreadElsewhere {
   id: number;
   number: number | null;
   title: string | null;
+  /** #6420: the first sentence of the change's summary, or null for none. */
+  summary?: string | null;
   on: number;
   request: number;
+  /** #6420: the requester answered "This doesn't close it". */
+  disputed?: boolean;
+  /** #6420: the viewer is this request's requester, so "This doesn't close it" is theirs to press. */
+  ask?: boolean;
+  /** #6420: the viewer asked for this request, so the after-press line is theirs to read. */
+  mine?: boolean;
 }
 
 /** D4: the changes for request `number` that live on another request's page. Pure. */
