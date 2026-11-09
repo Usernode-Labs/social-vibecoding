@@ -1659,10 +1659,13 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // 9 Nov 2026 (#6495): the bot tab's list is the Messages inbox's list while
   // something is open beside it, so the two pages share one measure and the
   // open column gets the room the list lets go. Defined once, read by both.
+  // #6520: the bot tab's list then fills the room beside the open column, up
+  // to the page's own 672px and centred in it, rather than staying the
+  // inbox's 22rem against the rail with bare background beside it.
   assert.match(css, /:root \{ --list-pane-w: 22rem; \}/, 'one list width, defined once');
   assert.match(css, /\.messages-list-pane \{\s+flex: 0 0 var\(--list-pane-w\);\s+width: var\(--list-pane-w\);/, 'the inbox reads it');
-  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\] \.ai-screen-body \{\s+width: 100%;\s+max-width: var\(--list-pane-w\);\s+margin-inline: 0;\s+\}/,
-    'and so does the bot tab\'s list, against the rail, only while something is open');
+  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\] \.ai-screen-body \{\s+width: 100%;\s+max-width: 42rem;\s+margin-inline: auto;\s+\}/,
+    'and the bot tab\'s list fills the room beside the open column, up to 672px, centred in it');
   assert.doesNotMatch(css, /--side-panel-chosen-w/, 'one width no longer sizes both columns');
   // A wider Main holds its words to the 720px it used to be, so plan cards
   // and replies keep a readable line; below that the gutter is the part's own.
