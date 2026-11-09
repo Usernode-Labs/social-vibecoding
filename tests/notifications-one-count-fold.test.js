@@ -244,7 +244,10 @@ test('clearing a folded row clears every member', async () => {
 // ── two lines, and the whole phone ──────────────────────────────────────
 
 test('a subject runs to two lines before it is cut', () => {
-  assert.match(SHEET_SRC, /<span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words">/);
+  // #6506: the unread subject is the strong one; a read subject is the same
+  // shape in regular weight and the softer ink.
+  assert.match(SHEET_SRC, /'block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words'/);
+  assert.match(SHEET_SRC, /'block text-sm font-normal text-zinc-700 dark:text-zinc-300 line-clamp-2 break-words'/);
 });
 
 test('on a phone the sheet is the screen\'s height, not two thirds', () => {

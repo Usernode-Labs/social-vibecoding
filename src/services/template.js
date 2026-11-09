@@ -1404,7 +1404,15 @@ app.get('*', (req, res) => {
   ${server.sendPage}
 });
 
-${server.start}start().catch(err => { console.error(err); process.exit(1); });
+${server.start}start().catch((err) => {
+  // Say why before stopping: a crash that printed nothing is a deploy whose
+  // log only ever reads "exited 1". Write the error, close the pool, and
+  // keep a timer as the backstop in case a listener holds the process open.
+  console.error(err);
+  process.exitCode = 1;
+  pool.end().catch(() => {});
+  setTimeout(() => process.exit(1), 1000).unref();
+});
 `,
     },
     {
