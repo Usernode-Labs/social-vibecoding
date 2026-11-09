@@ -233,6 +233,47 @@ test('the transcript draws the row only for the person it is for', () => {
   assert.match(gc, /botSuggest: view\.botSuggest/);
 });
 
+test('#6519: suggestions show only under the newest comment', () => {
+  const { loadTsx } = require('./lib/render-tsx');
+  const { newestComment } = loadTsx('frontend/src/features/group-chat/transcript.tsx');
+  const row = (kind, over = {}) => ({ kind, id: over.id ?? 1, ...over });
+
+  assert.equal(newestComment([], true), null, 'an empty stream has no newest comment');
+  assert.equal(newestComment([], false), null);
+
+  const first = row('message', { id: 1 });
+  const second = row('message', { id: 2 });
+  assert.equal(newestComment([first, second], true), second, 'a later message wins');
+  assert.equal(newestComment([first, second], false), second);
+
+  // A status line is not a comment: the message under it stays newest.
+  for (const kind of ['system', 'vote', 'spec_share']) {
+    assert.equal(newestComment([first, row(kind, { id: 9 })], false), first, `${kind} is skipped`);
+    assert.equal(newestComment([first, row(kind, { id: 9 })], true), first, `${kind} is skipped with GitHub rows`);
+  }
+
+  // GitHub comments count on a request's page only, and a plan's mirror is not one.
+  const github = row('github', { id: 10, key: 'gh-1' });
+  assert.equal(newestComment([first, github], true), github, 'a GitHub comment wins');
+  assert.equal(newestComment([first, github], false), first, 'a change page has none');
+  assert.equal(newestComment([first, row('github', { id: 11, key: 'gh-2', githubSpec: { title: null, markdown: '', html: '' } })], true), first,
+    'a plan mirrored from GitHub is not a comment');
+
+  // A deleted message is not a comment either, so the one before it stays newest.
+  assert.equal(newestComment([first, row('message', { id: 3, deleted: true })], true), first);
+  assert.equal(newestComment([row('message', { id: 3, deleted: true })], true), null);
+
+  const tx = read('frontend/src/features/group-chat/transcript.tsx');
+  assert.match(tx, /\{latest && msg\.botSuggest && msg\.botSuggest\.forMe && msg\.botSuggest\.status === 'open' && msg\.botSuggest\.actions\.length \? \(/);
+  assert.match(tx, /const newest = newestComment\(stream\.rows, true\)/);
+  assert.match(tx, /const newest = newestComment\(rows, false\)/);
+  assert.equal((tx.match(/const newest = newestComment\(rows, false\)/g) || []).length, 2,
+    'both the change and the transcript rows find it');
+  const calls = tx.match(/<MessageRow\b[^>]*?\/>/gs) || [];
+  assert.ok(calls.length >= 4, 'the transcript draws the row in several places');
+  for (const call of calls) assert.match(call, /\blatest=/, 'every row is told whether it is the newest comment');
+});
+
 test('#6272: a request-page reply whose text list was lifted shows buttons to the person it answered', async () => {
   const voice = require('../src/services/homeroom-bot-voice');
   const sent = [];
