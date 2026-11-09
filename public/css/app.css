@@ -15579,6 +15579,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-unit-where { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
 .dev-ledger-unit-reason { margin: 6px 0 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .dev-ledger-unit-output { margin-top: 8px; }
+/* The rest of a failed check's output (#6491): the console errors and test
+   printouts fold under the reason, and the app's own tests fold every failing
+   test but the first. Same fold, one step in from the one that opened it. */
+.dev-ledger-why-full, .dev-ledger-unit-more { margin-top: 6px; }
 /* A failed run's "What went wrong", over its failures. It spans the run's
    grid, as the failures' list and its note do. */
 .dev-ledger-explain { grid-column: 1 / -1; margin: 2px 0 8px; font-size: 12.5px; }

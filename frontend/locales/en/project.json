@@ -2499,6 +2499,18 @@
     "text": "Show the test output",
     "description": "Link-like label that unfolds the raw output the app's failing tests printed, in a change's list of checks. It is technical text for whoever fixes the tests."
   },
+  "topic.check.showFullOutput": {
+    "text": "Show the full output",
+    "description": "Link-like label that unfolds everything a failed automated check recorded besides its error line (console messages and test printouts), in a change's list of checks. The error line itself is already shown above it."
+  },
+  "topic.check.unit.showMore_one": {
+    "text": "Show {{count}} more failing test",
+    "description": "Link-like label that unfolds the other failing tests in the \"The app's own tests\" row of a change's list of checks, when exactly one more test failed. {{count}} is that number, always 1."
+  },
+  "topic.check.unit.showMore_other": {
+    "text": "Show {{count}} more failing tests",
+    "description": "Link-like label that unfolds the other failing tests in the \"The app's own tests\" row of a change's list of checks. {{count}} is how many tests are folded away; the first failing test is already shown above it."
+  },
   "topic.checks.explain.title": {
     "text": "What went wrong",
     "description": "Small heading over a plain explanation of why a change's automated checks failed, in its list of checks."
