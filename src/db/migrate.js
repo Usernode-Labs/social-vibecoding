@@ -2123,9 +2123,9 @@ async function seedStagingChangePictures(pool) {
     const layout = seededLayout(template.layout);
     const drawn = renderMessage(kind, { template, layout }, actionFor(kind).sample);
     const pictures = [
-      { id: 'a1'.repeat(16), side: 'before', subject: "You're in. Welcome to Homeroom", preheader: drawn.preheader },
+      { id: 'a1'.repeat(16), side: 'before', subject: "You're in. Welcome to Homeroom", preheader: drawn.preheader, sha: 'a'.repeat(40) },
       // The after side is the same email with words a change could give it.
-      { id: 'b2'.repeat(16), side: 'after', subject: "You're in. Bring your people", preheader: 'Invite up to three friends.' },
+      { id: 'b2'.repeat(16), side: 'after', subject: "You're in. Bring your people", preheader: 'Invite up to three friends.', sha: 'b'.repeat(40) },
     ];
     for (const picture of pictures) {
       const body = {
@@ -2139,7 +2139,7 @@ async function seedStagingChangePictures(pool) {
          VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7, $8, $9, NOW() - INTERVAL '2 days')
          ON CONFLICT DO NOTHING`,
         [picture.id, app.id, change.id, kind, picture.side, picture.subject, picture.preheader,
-          (picture.side === 'before' ? 'a' : 'b').repeat(40), m.key],
+          picture.sha, m.key],
       ));
     }
     const gallery = {
@@ -2147,12 +2147,14 @@ async function seedStagingChangePictures(pool) {
       project: { slug: app.slug, name: app.name || app.slug },
       change: { sessionId: Number(change.id), number: changeNumber },
       images: pictures.map((picture) => ({
-        id: picture.id, source: 'email', side: picture.side, isNew: false, caption: picture.subject,
+        id: picture.id, source: 'email', side: picture.side, isNew: false,
+        // #6541: a caption names the version it was drawn from.
+        caption: `${picture.subject} · ${picture.sha.slice(0, 7)}`,
       })),
     };
     await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
-       SELECT $1, $2, 'Here is what this change looks like: the admit email as it is today and with this change.',
+       SELECT $1, $2, 'Here is what this change looks like, drawn from bbbbbbb, its newest version: the admit email as it is today and with this change.',
               'message', 'session', $3, $4, NOW() - INTERVAL '1 day'
         WHERE NOT EXISTS (SELECT 1 FROM chat_messages
                            WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $3

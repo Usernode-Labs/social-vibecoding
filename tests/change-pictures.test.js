@@ -11,6 +11,8 @@ const { memoryMediaStore } = require('./lib/media-store');
 
 const BASE_SHA = 'a'.repeat(40);
 const HEAD_SHA = 'b'.repeat(40);
+// #6541: a commit pushed after the last checked one, with no checks on it.
+const NEWER_SHA = 'c'.repeat(40);
 const APP = { id: 9, slug: 'demo', name: 'Demo', repo_url: 'https://github.com/acme/demo' };
 
 const LAYOUTS = "{ layouts: [{ name: 'Standard', html: '<div>{{content}}</div>', text: '{{content}}' }], templates: {";
@@ -46,13 +48,13 @@ function mediaDeps() {
   };
 }
 
-function fakeGithub({ base, head, changed = [] }) {
+function fakeGithub({ base, head, newer, changed = [] }) {
   const calls = [];
   return {
     calls,
     async getFileContent(owner, repo, filePath, sha) {
       calls.push({ filePath, sha });
-      const text = sha === BASE_SHA ? base : sha === HEAD_SHA ? head : null;
+      const text = sha === BASE_SHA ? base : sha === NEWER_SHA ? newer : sha === HEAD_SHA ? head : null;
       if (filePath === 'src/db/email-template-seeds.js') return text?.seeds ?? null;
       if (filePath === 'src/services/mail/actions.js') return text?.actions ?? null;
       return null;
@@ -65,14 +67,19 @@ function fakeGithub({ base, head, changed = [] }) {
   };
 }
 
-function fakePool({ linkedIssues = [], authorId = 5 } = {}) {
+function fakePool({ linkedIssues = [], authorId = 5, newestHead = null, headSha = HEAD_SHA, baseSha = BASE_SHA } = {}) {
   const client = { query: async () => ({ rows: [] }), release() {} };
   return {
     client,
     async query(sql) {
       const text = String(sql);
       if (text.includes('AS head_sha')) {
-        return { rows: [{ id: 77, app_id: 9, pr_number: 6508, handoff_base_sha: BASE_SHA, head_sha: HEAD_SHA, linked_issues: linkedIssues }] };
+        return {
+          rows: [{
+            id: 77, app_id: 9, pr_number: 6508, handoff_base_sha: baseSha,
+            newest_head_sha: newestHead, head_sha: headSha, linked_issues: linkedIssues,
+          }],
+        };
       }
       if (text.includes('FROM change_pictures')) return { rows: [] };
       if (text.includes('SELECT * FROM chat_sessions')) {
@@ -89,12 +96,13 @@ function fakePool({ linkedIssues = [], authorId = 5 } = {}) {
 const CHANGE = { id: 77, app_id: 9, user_id: 5, pr_number: 6508, linked_issues: [], title: 'Get more people in' };
 
 function setup(over = {}) {
+  const { github: githubOver, ...rest } = over;
   const github = fakeGithub({
     base: { seeds: seeds(RELEASE_BEFORE), actions: ACTIONS_TEXT },
     head: { seeds: seeds(RELEASE_BEFORE + RELEASE_AFTER + REMINDER + REMINDER_LAST), actions: ACTIONS_TEXT },
-    ...over.github,
+    ...githubOver,
   });
-  return { github, ...mediaDeps(), ...over };
+  return { github, ...mediaDeps(), ...rest };
 }
 
 test('a change that rewords the admit email and adds two reminders shows before and after, and each new one once', async () => {
@@ -111,6 +119,65 @@ test('a change that rewords the admit email and adds two reminders shows before 
   // Each email is drawn with its action's own sample, and nothing is written.
   assert.deepEqual(deps.github.calls.filter((c) => c.sha).map((c) => c.sha).sort(), [BASE_SHA, BASE_SHA, HEAD_SHA, HEAD_SHA].sort());
   assert.equal(deps.github.calls.some((c) => c.pushFiles), false);
+});
+
+test('#6541: emails are drawn from the newest pushed commit even when checks last ran on an older one, and each caption names its commit', async () => {
+  const deps = setup({
+    github: { newer: { seeds: seeds(RELEASE_BEFORE + RELEASE_AFTER + REMINDER + REMINDER_LAST), actions: ACTIONS_TEXT } },
+  });
+  const out = await emailPictures(fakePool({ newestHead: NEWER_SHA }), {}, { app: APP, change: CHANGE, deps });
+  assert.equal(out.error, undefined);
+  assert.equal(out.drawnFrom, 'ccccccc');
+  assert.equal(out.headSource, 'newest');
+  assert.equal(out.base, 'aaaaaaa');
+  const shaReads = deps.github.calls.filter((c) => c.sha).map((c) => c.sha);
+  assert.equal(shaReads.includes(HEAD_SHA), false, 'the last checked commit is never read');
+  assert.deepEqual([...new Set(shaReads)].sort(), [BASE_SHA, NEWER_SHA].sort());
+  const after = out.images.filter((im) => im.side === 'after');
+  assert.equal(after.length, 3);
+  for (const im of after) assert.match(im.caption, /^.+ · ccccccc$/);
+  for (const im of out.images.filter((im) => im.side === 'before')) assert.match(im.caption, /^.+ · aaaaaaa$/);
+  // New emails are named by their subject, never by the caption's commit code.
+  assert.ok(out.subjects.includes("You're in: bring your people"));
+});
+
+test('#6541: a newest commit that cannot be read is named, never swapped for the last checked one', async () => {
+  const deps = setup();
+  const out = await emailPictures(fakePool({ newestHead: NEWER_SHA }), {}, { app: APP, change: CHANGE, deps });
+  assert.match(out.error, /newest version of this change \(ccccccc\) could not be read/);
+  assert.equal(out.images, undefined);
+  assert.equal(deps.github.calls.some((c) => c.sha === HEAD_SHA), false);
+});
+
+test('#6541: a change with no recorded newest head draws its last checked version and says so', async () => {
+  const deps = setup();
+  const out = await emailPictures(fakePool(), {}, { app: APP, change: CHANGE, deps });
+  assert.equal(out.error, undefined);
+  assert.equal(out.headSource, 'last_checked');
+  assert.equal(out.drawnFrom, 'bbbbbbb');
+  assert.equal(out.images.length, 4);
+  assert.ok(out.images.filter((im) => im.side === 'after').every((im) => / · bbbbbbb$/.test(im.caption)));
+});
+
+test('#6541: the show_change reply names the version the pictures were drawn from', async () => {
+  const deps = {
+    ...setup({
+      github: { newer: { seeds: seeds(RELEASE_BEFORE + RELEASE_AFTER + REMINDER + REMINDER_LAST), actions: ACTIONS_TEXT } },
+    }),
+    shotsView: { async getForSession() { return { state: 'planned', claims: [], artifacts: [] }; } },
+  };
+  const pool = fakePool({ newestHead: NEWER_SHA });
+  const ctx = {
+    app: APP, user: { id: 5 }, change: { ...CHANGE, linked_issues: [] }, place: { type: 'session', ref: 77 },
+    deps, config: {},
+  };
+  const out = await showChange(pool, {}, ctx, { what: 'emails' });
+  assert.equal(out.ok, true);
+  assert.equal(out.drawnFrom, 'ccccccc');
+  assert.equal(out.headSource, 'newest');
+  assert.match(out.shown, /drawn from ccccccc, the change's newest version/);
+  assert.ok(ctx.gallery.images.every((im) => im.source !== 'email' || / · (ccccccc|aaaaaaa)$/.test(im.caption)));
+  assert.deepEqual(out.newEmails.sort(), ['Your invite is still waiting', 'Last reminder about your invite'].sort());
 });
 
 test('a change built in Claude Code is shown the same way; who built it is no reason not to show it', async () => {
@@ -164,6 +231,9 @@ test('no request: the pictures stay in the thread and the answer says a plan goe
   assert.equal(ctx.gallery.purpose, 'change');
   assert.equal(ctx.gallery.images.length, 4);
   assert.equal(ctx.offer, undefined);
+  // #6541: no recorded newest head, so the reply admits it may not be the latest.
+  assert.equal(out.headSource, 'last_checked');
+  assert.match(out.shown, /drawn from bbbbbbb, the last version checked; a newer push may not be drawn/);
 });
 
 test('a request: the offer posts those very pictures as a plan there', async () => {
