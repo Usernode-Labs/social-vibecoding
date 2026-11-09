@@ -72,6 +72,7 @@ import { useFramePage } from '../../frame/frame-page-store';
 import { placeName } from '../workshop/places';
 import { TopicFrameAbout, TopicFrameHead } from './frame/topic-frame';
 import { useSideStack } from './frame/side-stack';
+import { dotLine, topicBack } from './frame/topic-page';
 
 function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -133,7 +134,7 @@ export function RequestBar({ r, pill = null, threadMenu = false }: {
   // s32): the title and one line saying what it is, with this menu. The
   // bar above it carries the trail and the way back (RequestHead below).
   const frame = isFrameSkin(useLiveSkin());
-  if (frame) return <TopicFrameHead title={r.title} purpose={sentencesDot([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
+  if (frame) return <TopicFrameHead title={r.title} purpose={dotLine([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
@@ -497,17 +498,6 @@ export function plansByChange(
     } else unbuilt.push(card);
   }
   return { plans, unbuilt };
-}
-
-/** The page's own way back: the chip the standard look draws over the sheet. */
-function topicBack(): void {
-  document.querySelector<HTMLElement>('#gc-thread-back a')?.click();
-}
-
-/** Short facts on one line, joined as the language on screen joins them. */
-function sentencesDot(parts: readonly (string | null | undefined | false)[]): string {
-  const said = parts.filter((part): part is string => typeof part === 'string' && part !== '');
-  return said.length ? said.reduce((first, second) => translate('project:workRow.facts.pair', { first, second })) : '';
 }
 
 export function RequestHead({ r }: { r: RequestView }): ReactNode {

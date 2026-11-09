@@ -60,8 +60,17 @@ test('the side column is laid beside the words from measured heights, a look\'s 
   const css = read('public/css/app.css');
   const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request \{[^}]*max-width: 1136px;/);
-  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-status, \.dev-request-track, \.fr-topicside\) \{[^}]*position: absolute; top: var\(--fr-side-top, 0px\); inset-inline-end: 0; width: 320px;/);
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-status, \.dev-request-track, \.dev-change-pair, \.fr-topicside\) \{[^}]*position: absolute; top: var\(--fr-side-top, 0px\); inset-inline-end: 0; width: 320px;/);
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) #gc-thread-back \{ display: none; \}/, 'the bar has the way back');
   const looks = JSON.parse(read('frontend/looks/looks.json'));
   assert.equal(looks.wear.roots.card.to, ':is(.dev-request-ask,.dev-request-status)');
+});
+
+test('a change\'s page does the same: its title in the kit\'s head, its trail, its votes and checks in the context column', () => {
+  const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  assert.match(src, /if \(frame\) return <TopicFrameHead title=\{name \|\| title\} purpose=\{dotLine\(\[title, v\.category\]\)\}/);
+  assert.match(src, /useFramePage\(frame \? \[placeName\('workshop'\), trail\] : null, topicBack\);/);
+  assert.match(src, /useSideStack\(frame, `\[data-change-root="\$\{id \?\? ''\}"\] > \[data-image-viewer-scope\]`, \['\.dev-change-pair', '\.fr-topicside'\]\);/);
+  assert.match(src, /name=\{card\.title\.text \|\| card\.title\.title \|\| null\}/, 'the bar is handed the change\'s own title');
+  assert.match(src, /<header className="messages-thread-header">/, 'the standard head stays as written');
 });

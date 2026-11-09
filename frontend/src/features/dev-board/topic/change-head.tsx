@@ -68,6 +68,12 @@ import { TopicBack } from './topic-back';
 import { WorkWithBotButton } from './work-with-bot';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topic-head';
+import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
+import { useFramePage } from '../../frame/frame-page-store';
+import { placeName } from '../workshop/places';
+import { TopicFrameAbout, TopicFrameHead } from './frame/topic-frame';
+import { useSideStack } from './frame/side-stack';
+import { dotLine, topicBack } from './frame/topic-page';
 
 function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
@@ -79,13 +85,23 @@ function host(id: string): Element | null {
  * gate the ⋯ Details row uses), the title itself opens the Details sheet
  * (#5329): it looks as it always did, and underlines on hover.
  */
-export function ChangeBar({ v, menuKey, detailsId = null }: { v: ChangeThreadView; menuKey: string; detailsId?: number | null }): ReactNode {
+export function ChangeBar({ v, menuKey, detailsId = null, name = null }: {
+  v: ChangeThreadView;
+  menuKey: string;
+  detailsId?: number | null;
+  /** The change's own title, for the kit's head under one of the frame's looks. */
+  name?: string | null;
+}): ReactNode {
   const t = useMessages('project');
   const title = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
   // #6431: beside the Homeroom bot page this bar is not drawn at all (app.css),
   // and the column's heading carries its pill and its rows instead. Publishing
   // them is all this does there; nowhere else does it publish anything.
   usePanelHead({ kind: 'change', pill: v.status || null, menuKey: menuKey || null });
+  // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
+  // s34): the change's title and one line saying what it is, with this menu.
+  const frame = isFrameSkin(useLiveSkin());
+  if (frame) return <TopicFrameHead title={name || title} purpose={dotLine([title, v.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.change.bar.more') } : null} />;
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
@@ -592,6 +608,13 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   threadAsChange?: boolean;
 }): ReactNode {
   const t = useMessages('project');
+  // Under one of the frame's looks the page tells the bar its trail (the
+  // Workshop, then this change) and stands its votes and checks, and About,
+  // in the context column beside its words (./frame/side-stack.ts).
+  const frame = isFrameSkin(useLiveSkin());
+  const trail = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
+  useFramePage(frame ? [placeName('workshop'), trail] : null, topicBack);
+  useSideStack(frame, `[data-change-root="${id ?? ''}"] > [data-image-viewer-scope]`, ['.dev-change-pair', '.fr-topicside']);
   const images = useInlineImageViewer();
   const thanks = v.thanks && id ? <span className="contents" data-kudos-host={id} data-kudos-face="thread"></span> : null;
   const issues = body.issues || [];
@@ -620,7 +643,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
-      {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} />, bar) : null}
+      {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} name={card.title.text || card.title.title || null} />, bar) : null}
       {images.viewer}
       <article className="messages-message dev-request-root dev-change-root" data-change-root={id ?? ''}>
         <Avatar shape="square" size="sm" color={swatchFor(v.author)} aria-hidden="true">
@@ -678,6 +701,16 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
             voting={!!v.votes.facts?.length}
             botAtWork={v.testing.botFix === 'fixing' || v.testing.botFix === 'queued'}
           />
+          {frame ? (
+            <TopicFrameAbout
+              label={t('project:frame.topic.about')}
+              asker={v.author}
+              color={swatchFor(v.author)}
+              line={dotLine([v.time, v.via])}
+              topic={v.category}
+              topicLine={t('project:frame.topic.topic')}
+            />
+          ) : null}
         </div>
       </article>
     </>
