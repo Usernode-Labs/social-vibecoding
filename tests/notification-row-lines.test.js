@@ -97,6 +97,22 @@ test('allowance notifications explain the change, request or review outcome', as
   assert.equal(declined.subject, 'Your app allowance is unchanged.');
 });
 
+// #6494: the storage rows say how full the database is, in sizes, so the
+// reader can judge how much room is left. A bare token written before this
+// change keeps its old words.
+test('storage rows say how much is used and what the limit is', async () => {
+  const oneLine = (s) => s.replace(/\s+/g, ' ').trim();
+  const early = await lines({ kind: 'app_health', detail: 'storage_early:1638:3072' });
+  assert.equal(early.label, 'App storage');
+  assert.equal(oneLine(early.subject), 'Notes has used over half its storage: 1.6 GB of 3 GB');
+  const warn = await lines({ kind: 'app_health', detail: 'storage_warn:2560:3072' });
+  assert.equal(oneLine(warn.subject), 'Notes has used most of its storage: 2.5 GB of 3 GB');
+  const bare = await lines({ kind: 'app_health', detail: 'storage_warn' });
+  assert.equal(bare.subject, 'Notes has used most of its storage');
+  const unnamed = await lines({ kind: 'app_health', appName: null, detail: 'storage_early:614:3072' });
+  assert.equal(unnamed.subject, 'Your app has used over half its storage: 614 MB of 3 GB');
+});
+
 /** The row's two copy lines, as plain strings. */
 async function lines(n) {
   const view = (await load())({ ...ROW, ...n });

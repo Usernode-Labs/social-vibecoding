@@ -1010,6 +1010,24 @@ async function createAppHealthNotification(pool, { appId, detail }) {
   });
   if (!allowed.length) return [];
 
+  const token = (detail || '').slice(0, 32) || null;
+  // Storage notices supersede each other: a newer one replaces an unread
+  // older one for the same project, and is not blocked by some OTHER kind's
+  // unread row (a failed deploy used to swallow the storage warning and even
+  // the freeze notice). Any other token keeps the any-unread guard, so a
+  // deploy failure still does not repeat itself.
+  const storage = typeof token === 'string' && token.startsWith('storage_');
+  if (storage) {
+    await pool.query(
+      `UPDATE notifications
+          SET read_at = NOW()
+        WHERE app_id = $1 AND kind = 'app_health' AND read_at IS NULL
+          AND user_id = ANY($2::int[])
+          AND LEFT(detail, 8) = 'storage_'`,
+      [appId, allowed]
+    );
+  }
+
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
      SELECT u, $2, NULL, 'app_health', $3
@@ -1018,11 +1036,12 @@ async function createAppHealthNotification(pool, { appId, detail }) {
         SELECT 1 FROM notifications n
         WHERE n.user_id = u AND n.app_id = $2
           AND n.kind = 'app_health' AND n.read_at IS NULL
+          ${storage ? "AND LEFT(n.detail, 8) = 'storage_'" : ''}
       )
      RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
     // VARCHAR(32). See the note above the function: this is a short token,
     // not a reason line.
-    [allowed, appId, (detail || '').slice(0, 32) || null]
+    [allowed, appId, token]
   );
   return rows;
 }
