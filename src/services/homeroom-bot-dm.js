@@ -726,10 +726,7 @@ async function sendDm(pool, {
       ? { ...input, objects: withCards }
       : { ...input, ...(cards.length && withoutCards ? { content: clip(withoutCards, conversations.MAX_MESSAGE_LENGTH || 8000) } : {}) },
     {
-      // #6371: a change going live says so in the request's thread and in
-      // this chat, but no longer rings a bell or a phone row of its own:
-      // the week's news arrives once, as the This week digest.
-      metadata: stored ? { [META]: stored } : null, notify: !!story && !muted && story !== 'live', notificationDetail: detail,
+      metadata: stored ? { [META]: stored } : null, notify: !!story && !muted, notificationDetail: detail,
       notificationKind: (story && BUILD_KINDS[story]) || null, notificationAppId, ...hooks,
       // B09: the cards are the person's to see, and the bot is no member of
       // their private project: judged as the bot, every card was refused.
