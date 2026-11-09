@@ -3948,6 +3948,14 @@ const App = {
         });
       }
     }
+    // #6490: a merge that arrives as a plain session update patches the same
+    // caches the vote_update path does, so the card's pill flips whichever
+    // event carried the news. No server sends one today; the guard keeps
+    // every merge path patching the same way.
+    if ((data.merged === true || data.status === 'merged')
+        && typeof AppView !== 'undefined' && AppView.noteSessionMerged) {
+      AppView.noteSessionMerged(data.sessionId, data.appSlug, { live: data.live === true });
+    }
     // Refresh proposals / inline chat vote state on the other dev sub-tabs,
     // and the drawer and Home, once for the whole burst (see _liveRefresh).
     App._liveRefresh('session', data.sessionId, { appSlug: data.appSlug, home: true });
@@ -4618,7 +4626,7 @@ const App = {
     // belong to, so it is called whatever is showing here; the burst below
     // covers the board showing live.
     if (data.merged && typeof AppView !== 'undefined' && AppView.noteSessionMerged) {
-      AppView.noteSessionMerged(data.sessionId, data.appSlug);
+      AppView.noteSessionMerged(data.sessionId, data.appSlug, { live: !!data.live });
     }
     // Refresh the proposals tab / inline chat vote state if we're in this
     // app's Dev view, and the work drawer and Home, which track tallies:
