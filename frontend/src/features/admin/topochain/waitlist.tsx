@@ -377,7 +377,7 @@ function RemindNow({ row, onSent }: { row: WaitlistRow; onSent: () => void }) {
     if (!canWrite() || busy) return;
     const okd = await topo()._confirm({
       title: `Send ${next} to ${signupLabel(row)} now?`,
-      message: 'It goes now, whatever the usual spacing, even with the Reminders switch off. '
+      message: 'It goes now, whatever the usual spacing, even when reminders are off or in dry run. '
         + 'Nobody gets more than two.',
       confirmLabel: 'Send now',
     });
@@ -1094,13 +1094,41 @@ function ReleaseEmailPanel() {
 
 // ── The reminders: two emails to admitted people who have not signed in ──
 //
-// On (the default), the waitlist-reminders clock emails each admitted person
-// who has not signed in twice: two days after the admit, then once more
-// (services/waitlist-reminders.js). Off, it sends none; "Send a reminder now"
-// on a row still does. Independent of the release email above.
+// The waitlist-reminders clock emails each admitted person who has not signed
+// in twice: two days after the admit, then once more
+// (services/waitlist-reminders.js). Its mode is On, Dry run or Off, and it
+// starts at Dry run: nothing is sent, and the list under it shows who would
+// get which reminder now, exactly what On would send. Off sends none either.
+// "Send a reminder now" on a row sends in every mode. Independent of the
+// release email above.
+
+type ReminderMode = 'on' | 'dry_run' | 'off';
+type ReminderDue = { id: number; email?: string | null; released_at?: string | null; reminder: number };
+type ReminderSetting = {
+  mode: ReminderMode;
+  enabled: boolean;
+  updated_at?: string | null;
+  updated_by?: string | null;
+  due?: { first: number; last: number; rows: ReminderDue[] } | null;
+};
+
+const REMINDER_MODE_LABELS: Record<ReminderMode, string> = {
+  on: 'On: send them',
+  dry_run: 'Dry run: send nothing, list who would get one',
+  off: 'Off: send nothing',
+};
+
+// What the list's heading says in each mode.
+function dueHeading(mode: ReminderMode, total: number): string {
+  if (!total) return 'Nobody is owed a reminder right now.';
+  const people = `${total} ${total === 1 ? 'person' : 'people'}`;
+  if (mode === 'on') return `${people} owed a reminder now. The clock sends 8 every 10 minutes.`;
+  if (mode === 'dry_run') return `Dry run: ${people} would get a reminder now. Nothing is sent.`;
+  return `Off: ${people} would be owed a reminder. Nothing is sent.`;
+}
 
 function ReminderEmailPanel() {
-  const [setting, setSetting] = useState<ReleaseEmail | null>(null);
+  const [setting, setSetting] = useState<ReminderSetting | null>(null);
   const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
   const saving = useRef(false);
 
@@ -1112,18 +1140,31 @@ function ReminderEmailPanel() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const toggle = useCallback(async (next: boolean) => {
+  const choose = useCallback(async (mode: ReminderMode) => {
     if (!canWrite() || saving.current) return;
+    if (mode === 'on') {
+      const total = (setting?.due?.first || 0) + (setting?.due?.last || 0);
+      const okd = await topo()._confirm({
+        title: 'Turn reminders on?',
+        message: total
+          ? `${total} ${total === 1 ? 'person is' : 'people are'} owed a reminder now, and the clock starts sending them in the next 10 minutes, 8 at a time.`
+          : 'The clock sends each reminder as it falls due.',
+        confirmLabel: 'Turn on',
+      });
+      if (!okd) return;
+    }
     saving.current = true;
-    const { ok, data } = await send('PUT', '/api/v4/admin/reminder-email', { enabled: next });
+    const { ok, data } = await send('PUT', '/api/v4/admin/reminder-email', { mode });
     saving.current = false;
     if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not save the reminders setting.'); return; }
     setSetting(data.data);
-  }, []);
+  }, [setting]);
 
   const help = 'Admitted people who have not signed in get two reminder emails: the first two days '
     + 'after they were let in, the last four days after that. Each has a link to stop them. '
-    + 'Off, none are sent; "Send a reminder now" on a row still sends one.';
+    + '"Send a reminder now" on a row sends one in every mode.';
+  const due = setting?.due || null;
+  const total = due ? due.first + due.last : 0;
   return (
     <div id="admin-topo-wl-reminder-email">
       <Panel title="Reminders">
@@ -1133,18 +1174,48 @@ function ReminderEmailPanel() {
         {!error && !setting ? <Skeleton rows={1} /> : null}
         {!error && setting ? (
           canWrite() ? (
-            <CheckField id="admin-topo-wl-reminder-email-enabled" label="Remind admitted people who have not signed in" help={help} checked={setting.enabled} onChange={toggle} />
+            <Field label="Reminder emails" htmlFor="admin-topo-wl-reminder-email-mode" help={help}>
+              <Select
+                id="admin-topo-wl-reminder-email-mode"
+                value={setting.mode}
+                onChange={(e) => choose(e.target.value as ReminderMode)}
+              >
+                {(['on', 'dry_run', 'off'] as ReminderMode[]).map((m) => (
+                  <option key={m} value={m}>{REMINDER_MODE_LABELS[m]}</option>
+                ))}
+              </Select>
+            </Field>
           ) : (
             <p className="text-xs text-zinc-600 dark:text-zinc-400">
-              <span className="font-medium">{setting.enabled ? 'Reminders are sent.' : 'Reminders are not sent.'}</span>
+              <span className="font-medium">{REMINDER_MODE_LABELS[setting.mode] || setting.mode}.</span>
               {` ${help}`}
             </p>
           )
         ) : null}
         {setting?.updated_at ? (
           <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-            {`Last switched ${fmt(setting.updated_at)}${setting.updated_by ? ` by ${setting.updated_by}` : ''}.`}
+            {`Last set ${fmt(setting.updated_at)}${setting.updated_by ? ` by ${setting.updated_by}` : ''}.`}
           </p>
+        ) : null}
+        {!error && setting && due ? (
+          <div id="admin-topo-wl-reminder-due" className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">
+            <p className="font-medium">{dueHeading(setting.mode, total)}</p>
+            {total ? (
+              <>
+                <p className="mt-0.5">{`First reminder: ${due.first}. Last reminder: ${due.last}.`}</p>
+                <ul className="mt-2 space-y-0.5">
+                  {due.rows.map((r) => (
+                    <li key={`${r.id}:${r.reminder}`} data-reminder-due={r.id}>
+                      {`${r.email || `signup #${r.id}`}: ${r.reminder === 2 ? 'last reminder' : 'first reminder'}, let in ${fmt(r.released_at)}`}
+                    </li>
+                  ))}
+                </ul>
+                {total > due.rows.length ? (
+                  <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{`The ${due.rows.length} let in longest ago are shown.`}</p>
+                ) : null}
+              </>
+            ) : null}
+          </div>
         ) : null}
       </Panel>
     </div>

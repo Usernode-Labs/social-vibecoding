@@ -90,20 +90,31 @@ test('the clock sends fewer an hour than the reminders\' own budget, which sign-
   assert.equal(reminders.EVERY_MS, 10 * 60 * 1000);
 });
 
-test('the clock lists nothing while the Reminders switch is off', async () => {
+test('the clock sends only when the Reminders setting is On; Dry run, the default, counts and sends none', async () => {
   const queries = [];
   const pool = {
     async query(sql, params) {
       queries.push(sql);
-      if (/FROM platform_settings s/.test(sql)) return { rows: [{ value: 'false' }] };
+      if (/FROM platform_settings s/.test(sql)) return { rows: [{ value: 'off' }] };
       throw new Error(`unexpected: ${sql}`);
     },
   };
   assert.deepEqual(await reminders.owedTargets(CONFIG, pool), { off: 'switched_off', items: [] });
   assert.deepEqual(await reminders.owedTargets({}, pool), { off: 'no_secret', items: [] });
+  // No row is Dry run: it counts who is owed one and lists none to send.
+  for (const rows of [[], [{ value: 'dry_run' }], [{ value: 'true' }]]) {
+    const dry = {
+      async query(sql) {
+        if (/FROM platform_settings s/.test(sql)) return { rows };
+        if (sql === reminders.DUE_COUNT_SQL) return { rows: [{ first: 3, last: 2 }] };
+        throw new Error(`unexpected: ${sql}`);
+      },
+    };
+    assert.deepEqual(await reminders.owedTargets(CONFIG, dry), { off: 'dry_run', owed: 5, items: [] }, JSON.stringify(rows));
+  }
   const on = {
     async query(sql, params) {
-      if (/FROM platform_settings s/.test(sql)) return { rows: [] };
+      if (/FROM platform_settings s/.test(sql)) return { rows: [{ value: 'on' }] };
       if (sql === reminders.OWED_SQL) {
         assert.deepEqual(params, [reminders.PER_RUN]);
         return { rows: [{ id: '4', reminder: 1 }, { id: '9', reminder: 2 }] };
@@ -127,7 +138,7 @@ function rowPool({ row, claimable = true, deliveryStatus = 'sent', deliveryError
   const pool = {
     state,
     async query(sql, params) {
-      if (/FROM platform_settings s/.test(sql)) return { rows: switchedOff ? [{ value: 'false' }] : [] };
+      if (/FROM platform_settings s/.test(sql)) return { rows: [{ value: switchedOff ? 'off' : 'on' }] };
       if (sql === reminders.CLAIM_FIRST_SQL || sql === reminders.CLAIM_LAST_SQL) {
         state.claims += 1;
         if (!claimable || state.claims > 1) return { rows: [] };
@@ -214,7 +225,7 @@ test('a send the mailer refused before any provider gives its claim back; one th
   assert.equal(unread.state.unclaims.length, 0);
 });
 
-test('the item does nothing with the switch off, and its steps keep the claim and the send', async (t) => {
+test('the item does nothing unless reminders are On, and its steps keep the claim and the send', async (t) => {
   const sent = capture(t);
   const off = rowPool({ row: NEW_ROW, switchedOff: true });
   assert.deepEqual(await reminders.remindItem(CONFIG, off, { signupId: 5, reminder: 1 }), { said: 'off' });
@@ -328,7 +339,8 @@ test('the stop link: GET asks, POST stops, and a wrong token changes nothing', a
     const html = await page.text();
     assert.match(html, /<form method="post" action="\/mail\/reminders\/stop\?w=5&t=[A-Za-z0-9_-]{32}">/);
     assert.match(html, /Stop these reminders<\/button>/);
-    assert.match(html, /<a href="\/\?login=1"[^>]*>Sign in instead<\/a>/);
+    assert.match(html, /<a href="\/\?login=1" style="color:#0a6ee0;font-size:15px">Sign in instead<\/a>/, 'signing in is a plain link');
+    assert.equal((html.match(/background:#0a6ee0/g) || []).length, 1, 'one button on the page: Stop');
     assert.equal(pool.writes.length, 0, 'opening the link stops nothing');
 
     const stopped = await fetch(`${base}/mail/reminders/stop?w=5&t=${token}`, { method: 'POST' });
@@ -336,7 +348,8 @@ test('the stop link: GET asks, POST stops, and a wrong token changes nothing', a
     const done = await stopped.text();
     assert.match(done, /<title>No more reminders<\/title>/);
     assert.match(done, /We won't email you about your spot again\. It stays open: sign in any time with the email address we wrote to\./);
-    assert.match(done, />Sign in instead<\/a>/);
+    assert.match(done, /<a href="\/\?login=1" style="color:#0a6ee0;font-size:15px">Sign in<\/a>/);
+    assert.doesNotMatch(done, /background:#0a6ee0/, 'no button once stopped');
     assert.match(done, /This stops reminders for this address only\. Sign-in codes you ask for still arrive\./);
     assert.deepEqual(pool.writes, [[5]]);
 
@@ -439,71 +452,95 @@ test('the reminder dates: a weekday within six days, else a short date; the link
 
 const EM_DASH = String.fromCharCode(0x2014);
 
-test('reminder 1\'s copy', () => {
+test('reminder 1\'s copy: a short note, no date, no "still want in"', () => {
   const seed = englishTemplate('waitlist_reminder');
-  assert.equal(seed.subject, 'Your Homeroom spot is waiting');
-  assert.equal(seed.preheader, 'You were let in on {{admittedDay}}. Your spot is ready.');
+  assert.equal(seed.subject, 'You\'re in! Come see what we\'re building.');
+  assert.equal(seed.preheader, 'Start an app, invite your friends, or jump into something already made.');
   const fresh = buildMessage('waitlist_reminder', ACTIONS.waitlist_reminder.sample);
-  assert.match(fresh.html, />Still want in\?</);
-  assert.match(fresh.html, /We let you in from the waitlist on Friday\. Your spot is ready whenever you are, and the button below works until 13 Nov\./);
+  for (const line of [
+    'Hey!',
+    'Just a quick reminder that you\'re off the Homeroom waitlist!',
+    'You can start an app with AI, invite your friends to help shape it, or jump into something someone else has already made.',
+    'No big project needed. Start with something small and see where it goes.',
+  ]) {
+    assert.ok(fresh.html.includes(`>${line.replace(/'/g, '&#39;')}</p>`) || fresh.html.includes(`>${line}</p>`), line);
+    assert.ok(fresh.text.includes(`${line}\n\n`), line);
+  }
   assert.match(fresh.html, />Get started<\/a>/);
-  assert.match(fresh.html, /Once you're in, tell Homeroom what you'd like to make, or look around what other people have made first\./);
-  assert.match(fresh.html, /<p>Evan<\/p>/);
+  assert.match(fresh.html, /See you in there,<br>Evan<\/p>/);
+  assert.match(fresh.text, /Get started:\n\S+\n\nSee you in there,\nEvan/);
+  assert.doesNotMatch(JSON.stringify(fresh), /Still want in|We let you in|works until|13 Nov/, 'no date, nothing pointed');
   assert.match(fresh.html, /You are receiving this because you were let in from the waitlist and haven't signed in yet\. We send one more reminder, then stop\. <a href="https:\/\/app\.onhomeroom\.com\/mail\/reminders\/stop\?w=1&amp;t=sample"[^>]*>Stop these reminders<\/a>/);
   assert.match(fresh.text, /Stop these reminders: https:\/\/app\.onhomeroom\.com\/mail\/reminders\/stop\?w=1&t=sample/);
   const account = buildMessage('waitlist_reminder', { ...ACTIONS.waitlist_reminder.sample, hasAccount: true, signInLink: false });
-  assert.match(account.html, /We let you in from the waitlist on Friday\. Sign in with the email this was sent to\./);
+  assert.match(account.html, />Sign in with the email this was sent to\.<\/p>/);
   assert.match(account.html, />Sign in<\/a>/);
-  const old = buildMessage('waitlist_reminder', { ...ACTIONS.waitlist_reminder.sample, releasedAt: '2026-11-01T09:00:00Z' });
-  assert.match(old.html, /on 1 Nov\./);
-  const noLink = buildMessage('waitlist_reminder', { ...ACTIONS.waitlist_reminder.sample, signInLink: false });
-  assert.match(noLink.html, /Your spot is ready whenever you are\.<\/p>/);
-  for (const m of [fresh, account, old, noLink]) assert.ok(!JSON.stringify(m).includes(EM_DASH));
+  assert.doesNotMatch(fresh.html, /Sign in with the email/, 'only an account is told to sign in');
+  for (const m of [fresh, account]) assert.ok(!JSON.stringify(m).includes(EM_DASH));
 });
 
-test('the last reminder\'s copy', () => {
+test('the last reminder\'s copy: one last nudge, the date under the button, no reply line', () => {
   const seed = englishTemplate('waitlist_reminder_last');
-  assert.equal(seed.subject, 'Last reminder: your Homeroom spot');
-  assert.equal(seed.preheader, 'This is the last email about it. Your spot stays open.');
+  assert.equal(seed.subject, 'One last nudge 👋');
+  assert.equal(seed.preheader, 'Your Homeroom invite is ready whenever you are.');
   const fresh = buildMessage('waitlist_reminder_last', ACTIONS.waitlist_reminder_last.sample);
-  assert.match(fresh.html, />One last nudge</);
-  assert.match(fresh.html, /We won't email you about this again\. Your spot doesn't go away: the button below works until 13 Nov, and after that you can sign in any time with this email address\./);
-  assert.match(fresh.html, /Not for you right now\? That's fine\. If something put you off, I'd like to know: reply and tell me\./);
+  for (const line of [
+    'Hey!',
+    'Just wanted to send one last reminder that your Homeroom invite is ready.',
+    'We\'re building Homeroom around a simple idea: apps shouldn\'t just be made for people. The people using them should be able to help make them better, too.',
+    'And we\'d love for you to be part of that.',
+    'And if now\'s not the right time, no worries. We won\'t keep sending reminders.',
+  ]) {
+    assert.ok(fresh.html.includes(`>${line.replace(/'/g, '&#39;')}</p>`) || fresh.html.includes(`>${line}</p>`), line);
+    assert.ok(fresh.text.includes(line), line);
+  }
+  // The date sits under the button, with the way in after it.
+  assert.match(fresh.html, />Get started<\/a><\/p><\/td><\/tr><\/table><p [^>]*>This button works until 13 Nov, but you can still sign in with this email anytime afterward\.<\/p>/);
+  assert.match(fresh.text, /This link works until 13 Nov, but you can still sign in with this email anytime afterward\./);
+  assert.match(fresh.html, /Hope to see you around,<br>Evan<\/p>/);
+  assert.doesNotMatch(JSON.stringify(fresh), /reply and tell me|We won't email you about this again|invite link/, 'no reply line, and no "invite link"');
   assert.match(fresh.html, /You are receiving this because you were let in from the waitlist and haven't signed in yet\. This is the last reminder\./);
   assert.doesNotMatch(fresh.html, /Stop these reminders/, 'nothing more to stop');
   assert.equal(fresh.headers['List-Unsubscribe'], `<${ACTIONS.waitlist_reminder_last.sample.unsubscribeUrl}>`);
   const account = buildMessage('waitlist_reminder_last', { ...ACTIONS.waitlist_reminder_last.sample, hasAccount: true });
-  assert.match(account.html, /Your spot doesn't go away: sign in any time with the email this was sent to\./);
+  assert.match(account.html, />You can sign in any time with the email this was sent to\.<\/p>/);
   assert.match(account.html, />Sign in<\/a>/);
-  for (const m of [fresh, account]) assert.ok(!JSON.stringify(m).includes(EM_DASH));
+  const noLink = buildMessage('waitlist_reminder_last', { ...ACTIONS.waitlist_reminder_last.sample, signInLink: false });
+  assert.match(noLink.html, />You can sign in any time with this email\.<\/p>/);
+  for (const m of [fresh, account, noLink]) assert.ok(!JSON.stringify(m).includes(EM_DASH));
 });
 
-test('the admit email\'s new copy: subject, smaller photo, the link\'s line, Get started and the three tiles', () => {
+test('the admit email\'s copy: subject, smaller photo, Drea\'s line and no date, Get started, the tiles, the store links', () => {
   const seed = englishTemplate('waitlist_released');
   assert.equal(seed.subject, 'You\'re in. Make your first app on Homeroom');
   assert.equal(seed.preheader, 'Make and share apps with groups and friends. Here\'s how to get started.');
   const linked = buildMessage('waitlist_released', {
     url: 'https://app.onhomeroom.com/?signup=1&key=k', signInLink: true, signInExpiresAt: '2026-11-13T10:00:00Z',
+    mobile: { ios: 'https://apps.apple.com/app/id6814786047', android: 'https://play.google.com/store/apps/details?id=com.onhomeroom.app' },
   });
   assert.match(linked.html, /width="200" height="150"/);
   assert.match(linked.html, /You're in<\/p>/);
-  assert.match(linked.html, />Make and share apps with groups and friends\.<\/p>/);
-  assert.match(linked.html, /Make and share apps with groups and friends\.<\/p><p style="margin:10px 0 0;font-size:15px;line-height:22px;color:#1c1c1e">Jump in with the button below\. It works until 13 Nov\.<\/p><p style="margin:20px 0 0"><a /);
+  assert.match(linked.html, />Make and share apps with groups and friends\.<\/p><p style="margin:10px 0 0;font-size:15px;line-height:22px;color:#1c1c1e">Start building, invite your people, or explore what others are making\.<\/p><p style="margin:20px 0 0"><a /);
   assert.match(linked.html, />Get started<\/a>/);
-  assert.match(linked.text, /Jump in with the link below\. It works until 13 Nov\.\n\nGet started:\nhttps:/);
+  assert.match(linked.text, /Start building, invite your people, or explore what others are making\.\n\nGet started:\nhttps:/);
+  assert.doesNotMatch(JSON.stringify(linked), /Jump in|works until|13 Nov/, 'no date in the admit email');
   for (const tile of ['Make an app with your friends', 'Build an app for your community', 'Join and help shape other community-owned apps']) {
     assert.ok(linked.html.includes(`>${tile}</td>`), tile);
     assert.ok(linked.text.includes(`- ${tile}`), tile);
   }
+  assert.match(linked.html, />Get Homeroom on the App Store<\/a>/);
+  assert.match(linked.html, />Get Homeroom on Google Play<\/a>\.<\/p>/);
+  assert.match(linked.text, /Android: Get Homeroom on Google Play \(https:\/\/play\.google\.com\/store\/apps\/details\?id=com\.onhomeroom\.app\)\./);
+  assert.doesNotMatch(JSON.stringify(linked), /testing link|TestFlight/);
   assert.match(linked.html, /See you there,<br>Evan from Homeroom/);
-  // No link: no line. An account: Sign in and its account line, unchanged.
-  const plain = buildMessage('waitlist_released', { url: 'https://app.onhomeroom.com/?signup=1' });
-  assert.doesNotMatch(plain.html, /Jump in/);
-  assert.match(plain.html, /Opening it emails you a 6-digit code/);
+  // An account: Sign in and its account line instead of Drea's.
   const account = buildMessage('waitlist_released', { url: 'https://app.onhomeroom.com/?login=1', hasAccount: true, signInLink: true, signInExpiresAt: '2026-11-13T10:00:00Z' });
-  assert.doesNotMatch(account.html, /Jump in/);
+  assert.doesNotMatch(account.html, /Start building/);
   assert.match(account.html, /Your account now has access\. Sign in with your waitlist email\./);
   assert.match(account.html, />Sign in<\/a>/);
+  const plain = buildMessage('waitlist_released', { url: 'https://app.onhomeroom.com/?signup=1' });
+  assert.match(plain.html, /Start building, invite your people/);
+  assert.match(plain.html, /Opening it emails you a 6-digit code/);
   assert.doesNotMatch(JSON.stringify([linked, plain, account]), /Create my account|Welcome to Homeroom|272|Use and improve/);
 });
 

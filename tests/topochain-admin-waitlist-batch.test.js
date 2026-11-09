@@ -49,6 +49,7 @@ const screenSource = fs.readFileSync(path.join(ROOT, SCREEN), 'utf8');
 let signupRows;
 let accountRows;
 let settings;
+let dueRows = [];
 const seen = [];
 
 function resetFixtures() {
@@ -62,6 +63,7 @@ function resetFixtures() {
     { email: 'stuck@example.invalid', username: 'stuck', has_platform_access: false },
   ];
   settings = {};
+  dueRows = [];
 }
 
 function collapse(sql) {
@@ -89,6 +91,13 @@ function handleQuery(rawSql, params = []) {
   if (sql.startsWith('INSERT INTO platform_settings')) {
     settings[params[0]] = params[1];
     return { rows: [] };
+  }
+  // The reminders' due list (services/waitlist-reminders.js dueNow).
+  if (sql.startsWith('SELECT COUNT(*) FILTER (WHERE w.reminder_1_sent_at IS NULL)::int AS first')) {
+    return { rows: [{ first: dueRows.filter((r) => r.reminder === 1).length, last: dueRows.filter((r) => r.reminder === 2).length }] };
+  }
+  if (sql.startsWith('SELECT w.id, w.email, w.released_at, CASE WHEN w.reminder_1_sent_at IS NULL THEN 1 ELSE 2 END AS reminder')) {
+    return { rows: dueRows.slice(0, params[0]) };
   }
   throw new Error(`Unhandled mock query: ${sql}`);
 }
@@ -422,23 +431,42 @@ test('the Release email panel sits beside Landing, and Admit says when nobody is
 // The waitlist reminders' switch (services/release-mail-setting.js) and an
 // admitted row's "Send a reminder now" (services/waitlist-reminders.js; its
 // rules against the real schema: tests/waitlist-reminders-postgres.test.js).
-test('the Reminders switch reads on by default, is saved by a write admin only, and is not the release email\'s', async () => {
+test('the Reminders setting reads Dry run by default, takes three modes from a write admin only, and is not the release email\'s', async () => {
+  const at = new Date('2026-11-01T09:00:00Z');
+  dueRows = [
+    { id: 3, email: 'first@example.invalid', released_at: at, reminder: 1 },
+    { id: 4, email: 'last@example.invalid', released_at: at, reminder: 2 },
+  ];
   const read = await call('GET', '/api/v4/admin/reminder-email', undefined, 'readonly');
   assert.equal(read.status, 200);
-  assert.equal(read.body.data.enabled, true);
-  assert.equal((await call('PUT', '/api/v4/admin/reminder-email', { enabled: false }, 'readonly')).status, 403);
+  assert.equal(read.body.data.mode, 'dry_run');
+  assert.equal(read.body.data.enabled, false, 'Dry run sends nothing');
+  // Who is owed one now, by the clock's rules: what On would send.
+  assert.deepEqual(read.body.data.due, {
+    first: 1, last: 1,
+    rows: [
+      { id: 3, email: 'first@example.invalid', released_at: '2026-11-01T09:00:00.000+00:00', reminder: 1 },
+      { id: 4, email: 'last@example.invalid', released_at: '2026-11-01T09:00:00.000+00:00', reminder: 2 },
+    ],
+  });
+  assert.equal((await call('PUT', '/api/v4/admin/reminder-email', { mode: 'on' }, 'readonly')).status, 403);
   assert.equal(settings.waitlist_reminder_email, undefined);
-  assert.equal((await call('PUT', '/api/v4/admin/reminder-email', { enabled: 'off' })).status, 422);
-  const saved = await call('PUT', '/api/v4/admin/reminder-email', { enabled: false });
-  assert.equal(saved.status, 200);
-  assert.equal(saved.body.data.enabled, false);
-  assert.equal(saved.body.data.updated_by, 'full');
-  assert.equal(settings.waitlist_reminder_email, 'false');
-  // Independent: the release email is still on, and switching it touches only its own key.
+  assert.equal((await call('PUT', '/api/v4/admin/reminder-email', { enabled: true })).status, 422, 'the old boolean is refused');
+  assert.equal((await call('PUT', '/api/v4/admin/reminder-email', { mode: 'sometimes' })).status, 422);
+  const on = await call('PUT', '/api/v4/admin/reminder-email', { mode: 'on' });
+  assert.equal(on.status, 200);
+  assert.equal(on.body.data.mode, 'on');
+  assert.equal(on.body.data.enabled, true);
+  assert.equal(on.body.data.updated_by, 'full');
+  assert.equal(settings.waitlist_reminder_email, 'on');
+  const off = await call('PUT', '/api/v4/admin/reminder-email', { mode: 'off' });
+  assert.equal(off.body.data.mode, 'off');
+  assert.equal(off.body.data.enabled, false);
+  // Independent: the release email is still on, and setting it touches only its own key.
   assert.equal((await call('GET', '/api/v4/admin/release-email')).body.data.enabled, true);
   await call('PUT', '/api/v4/admin/release-email', { enabled: false });
-  await call('PUT', '/api/v4/admin/reminder-email', { enabled: true });
-  assert.deepEqual(settings, { waitlist_release_email: 'false', waitlist_reminder_email: 'true' });
+  await call('PUT', '/api/v4/admin/reminder-email', { mode: 'dry_run' });
+  assert.deepEqual(settings, { waitlist_release_email: 'false', waitlist_reminder_email: 'dry_run' });
 });
 
 test('Send a reminder now: a write admin only, and a refusal is the sentence the screen shows', async (t) => {
@@ -465,7 +493,9 @@ test('Send a reminder now: a write admin only, and a refusal is the sentence the
 
 test('the Reminders panel sits beside Release email, and a row\'s details show the admit email, both reminders and the stop', () => {
   assert.match(screenSource, /<ReleaseEmailPanel \/>\s+<ReminderEmailPanel \/>/);
-  assert.match(screenSource, /id="admin-topo-wl-reminder-email-enabled"/);
+  assert.match(screenSource, /id="admin-topo-wl-reminder-email-mode"/);
+  assert.match(screenSource, /id="admin-topo-wl-reminder-due"/);
+  assert.match(screenSource, /Dry run: send nothing, list who would get one/);
   assert.match(screenSource, /fetchJson\('\/api\/v4\/admin\/reminder-email'\)/);
   assert.match(screenSource, /send\('POST', `\/api\/v4\/admin\/waitlist\/\$\{row\.id\}\/remind`\)/);
   const at = (iso) => new Date(iso).toISOString();

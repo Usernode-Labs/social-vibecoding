@@ -49,10 +49,12 @@ const STANDARD_LAYOUT_HTML = `<!doctype html><html><body style="${BODY_STYLE}">`
 
 // ── The seeds ──────────────────────────────────────────────────────────
 
-// The waitlist reminders' shared parts: their centred head, and the admit
-// mail's button, which signs in an account or starts a new one.
-const REMINDER_OPEN = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center">';
-const REMINDER_BUTTON = '<p style="margin:20px 0 0"><a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;background:#0a6ee0;color:#ffffff;font-size:16px;font-weight:650;text-decoration:none">'
+// The waitlist reminders' shared parts. Each reads as a short note from Evan:
+// left-aligned paragraphs (REMINDER_P), and the admit mail's button centred
+// in a table of its own, which signs in an account or starts a new one.
+const REMINDER_P = '<p style="margin:0 0 12px;font-size:16px;line-height:24px;color:#1c1c1e">';
+const REMINDER_BUTTON = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center">'
+  + '<p style="margin:8px 0 20px"><a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;background:#0a6ee0;color:#ffffff;font-size:16px;font-weight:650;text-decoration:none">'
   + '{{#if hasAccount}}Sign in{{else}}Get started{{/if}}</a></p></td></tr></table>';
 const REMINDER_TEXT_BUTTON = '{{#if hasAccount}}Sign in:{{else}}Get started:{{/if}}\n{{url}}\n\n';
 
@@ -169,8 +171,8 @@ const SEEDS = {
       why: `You are receiving this because of activity on your account or your place on the waitlist. We only send mail you asked for.`,
       html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center"><img src="${PRODUCTION_ORIGIN}/brand/people.png" width="200" height="150" alt="" style="display:block;margin:0 auto;border:0;max-width:100%;height:auto"><p style="margin:20px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#68686c">You're in</p>`
         + `<p style="margin:10px 0 0;font-size:28px;line-height:32px;font-weight:800;color:#1c1c1e">Make and share apps with groups and friends.</p>`
-        + `{{#if hasAccount}}<p style="margin:10px 0 0;font-size:16px;line-height:22px;color:#68686c">Your account now has access. Sign in with your waitlist email.</p>{{/if}}`
-        + `{{#if hasLinkUntil}}<p style="margin:10px 0 0;font-size:15px;line-height:22px;color:#1c1c1e">Jump in with the button below. It works until {{linkUntil}}.</p>{{/if}}`
+        + `{{#if hasAccount}}<p style="margin:10px 0 0;font-size:16px;line-height:22px;color:#68686c">Your account now has access. Sign in with your waitlist email.</p>{{else}}`
+        + `<p style="margin:10px 0 0;font-size:15px;line-height:22px;color:#1c1c1e">Start building, invite your people, or explore what others are making.</p>{{/if}}`
         + `<p style="margin:20px 0 0"><a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;background:#0a6ee0;color:#ffffff;font-size:16px;font-weight:650;text-decoration:none">`
         + `{{#if hasAccount}}Sign in{{else}}`
         + `Get started{{/if}}</a></p>`
@@ -180,11 +182,11 @@ const SEEDS = {
         + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:0px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)"><tr><td width="34" height="34" bgcolor="#fc5750" style="width:34px;height:34px;background:#fc5750">&nbsp;</td><td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Join and help shape other community-owned apps</td></tr></table>`
         + `{{#if hasMobile}}<p style="margin:24px 0 8px;font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#68686c">Try it on mobile</p>`
         + `{{#if hasIos}}<p style="margin:0 0 8px"><strong>iPhone</strong>: <a href="{{iosLink}}" style="color:#0a6ee0">Get Homeroom on the App Store</a>.</p>{{/if}}`
-        + `{{#if hasAndroid}}<p style="margin:0 0 8px"><strong>Android</strong>: <a href="{{androidLink}}" style="color:#0a6ee0">Open the Homeroom testing link</a> while signed into Google Play with your waitlist email.</p>{{/if}}{{/if}}`
+        + `{{#if hasAndroid}}<p style="margin:0 0 8px"><strong>Android</strong>: <a href="{{androidLink}}" style="color:#0a6ee0">Get Homeroom on Google Play</a>.</p>{{/if}}{{/if}}`
         + `<p>See you there,<br>Evan from Homeroom</p>`,
       text: `You're in.\nMake and share apps with groups and friends.\n\n`
         + `{{#if hasAccount}}Your account now has access. Sign in with your waitlist email.{{else}}`
-        + `{{#if hasLinkUntil}}Jump in with the link below. It works until {{linkUntil}}.\n\n{{/if}}`
+        + `Start building, invite your people, or explore what others are making.\n\n`
         + `Get started:{{/if}}\n{{url}}`
         + `{{#if needsCodeNote}}\n\n`
         + `Opening it emails you a 6-digit code to sign in with. The code expires in 10 minutes.{{/if}}\n\n`
@@ -192,7 +194,7 @@ const SEEDS = {
         + `{{#if hasMobile}}\n\n`
         + `Try it on mobile`
         + `{{#if hasIos}}\niPhone: Get Homeroom on the App Store ({{iosLink}}).{{/if}}`
-        + `{{#if hasAndroid}}\nAndroid: Open the Homeroom testing link ({{androidLink}}) while signed into Google Play with your waitlist email.{{/if}}{{/if}}\n\n`
+        + `{{#if hasAndroid}}\nAndroid: Get Homeroom on Google Play ({{androidLink}}).{{/if}}{{/if}}\n\n`
         + `See you there,\nEvan from Homeroom`,
     },
 
@@ -201,49 +203,53 @@ const SEEDS = {
     waitlist_reminder: {
       name: ACTIONS.waitlist_reminder.label,
       layout: STANDARD_LAYOUT,
-      subject: `Your Homeroom spot is waiting`,
-      preheader: `You were let in on {{admittedDay}}. Your spot is ready.`,
+      subject: `You're in! Come see what we're building.`,
+      preheader: `Start an app, invite your friends, or jump into something already made.`,
       why: `You are receiving this because you were let in from the waitlist and haven't signed in yet. We send one more reminder, then stop.`
         + `{{#if hasUnsubscribeUrl}} <a href="{{unsubscribeUrl}}" style="color:#68686c">Stop these reminders</a>{{/if}}`,
-      html: `${REMINDER_OPEN}<p style="margin:0px 0 0;font-size:28px;line-height:32px;font-weight:800;color:#1c1c1e">Still want in?</p>`
-        + `<p style="margin:10px 0 0;font-size:15px;line-height:22px;color:#1c1c1e">We let you in from the waitlist on {{admittedDay}}. `
-        + `{{#if hasAccount}}Sign in with the email this was sent to.{{else}}`
-        + `Your spot is ready whenever you are{{#if hasLinkUntil}}, and the button below works until {{linkUntil}}{{/if}}.{{/if}}</p>`
+      html: `${REMINDER_P}Hey!</p>`
+        + `${REMINDER_P}Just a quick reminder that you're off the Homeroom waitlist!</p>`
+        + `${REMINDER_P}You can start an app with AI, invite your friends to help shape it, or jump into something someone else has already made.</p>`
+        + `${REMINDER_P}No big project needed. Start with something small and see where it goes.</p>`
+        + `{{#if hasAccount}}${REMINDER_P}Sign in with the email this was sent to.</p>{{/if}}`
         + REMINDER_BUTTON
-        + `<p style="margin:24px 0 0">Once you're in, tell Homeroom what you'd like to make, or look around what other people have made first.</p>`
-        + `<p>Evan</p>`,
-      text: `Still want in?\n\n`
-        + `We let you in from the waitlist on {{admittedDay}}. `
-        + `{{#if hasAccount}}Sign in with the email this was sent to.{{else}}`
-        + `Your spot is ready whenever you are{{#if hasLinkUntil}}, and the link below works until {{linkUntil}}{{/if}}.{{/if}}\n\n`
+        + `${REMINDER_P}See you in there,<br>Evan</p>`,
+      text: `Hey!\n\n`
+        + `Just a quick reminder that you're off the Homeroom waitlist!\n\n`
+        + `You can start an app with AI, invite your friends to help shape it, or jump into something someone else has already made.\n\n`
+        + `No big project needed. Start with something small and see where it goes.\n\n`
+        + `{{#if hasAccount}}Sign in with the email this was sent to.\n\n{{/if}}`
         + REMINDER_TEXT_BUTTON
-        + `Once you're in, tell Homeroom what you'd like to make, or look around what other people have made first.\n\n`
-        + `Evan`
+        + `See you in there,\nEvan`
         + `{{#if hasUnsubscribeUrl}}\n\nStop these reminders: {{unsubscribeUrl}}{{/if}}`,
     },
 
     waitlist_reminder_last: {
       name: ACTIONS.waitlist_reminder_last.label,
       layout: STANDARD_LAYOUT,
-      subject: `Last reminder: your Homeroom spot`,
-      preheader: `This is the last email about it. Your spot stays open.`,
+      subject: `One last nudge 👋`,
+      preheader: `Your Homeroom invite is ready whenever you are.`,
       why: `You are receiving this because you were let in from the waitlist and haven't signed in yet. This is the last reminder.`,
-      html: `${REMINDER_OPEN}<p style="margin:0px 0 0;font-size:28px;line-height:32px;font-weight:800;color:#1c1c1e">One last nudge</p>`
-        + `<p style="margin:10px 0 0;font-size:15px;line-height:22px;color:#1c1c1e">We won't email you about this again. Your spot doesn't go away: `
-        + `{{#if hasAccount}}sign in any time with the email this was sent to.{{else}}`
-        + `{{#if hasLinkUntil}}the button below works until {{linkUntil}}, and after that you can sign in any time with this email address.{{else}}`
-        + `sign in any time with this email address.{{/if}}{{/if}}</p>`
+      html: `${REMINDER_P}Hey!</p>`
+        + `${REMINDER_P}Just wanted to send one last reminder that your Homeroom invite is ready.</p>`
+        + `${REMINDER_P}We're building Homeroom around a simple idea: apps shouldn't just be made for people. The people using them should be able to help make them better, too.</p>`
+        + `${REMINDER_P}And we'd love for you to be part of that.</p>`
         + REMINDER_BUTTON
-        + `<p style="margin:24px 0 0">Not for you right now? That's fine. If something put you off, I'd like to know: reply and tell me.</p>`
-        + `<p>Evan</p>`,
-      text: `One last nudge\n\n`
-        + `We won't email you about this again. Your spot doesn't go away: `
-        + `{{#if hasAccount}}sign in any time with the email this was sent to.{{else}}`
-        + `{{#if hasLinkUntil}}the link below works until {{linkUntil}}, and after that you can sign in any time with this email address.{{else}}`
-        + `sign in any time with this email address.{{/if}}{{/if}}\n\n`
+        + `${REMINDER_P}{{#if hasAccount}}You can sign in any time with the email this was sent to.{{else}}`
+        + `{{#if hasLinkUntil}}This button works until {{linkUntil}}, but you can still sign in with this email anytime afterward.{{else}}`
+        + `You can sign in any time with this email.{{/if}}{{/if}}</p>`
+        + `${REMINDER_P}And if now's not the right time, no worries. We won't keep sending reminders.</p>`
+        + `${REMINDER_P}Hope to see you around,<br>Evan</p>`,
+      text: `Hey!\n\n`
+        + `Just wanted to send one last reminder that your Homeroom invite is ready.\n\n`
+        + `We're building Homeroom around a simple idea: apps shouldn't just be made for people. The people using them should be able to help make them better, too.\n\n`
+        + `And we'd love for you to be part of that.\n\n`
         + REMINDER_TEXT_BUTTON
-        + `Not for you right now? That's fine. If something put you off, I'd like to know: reply and tell me.\n\n`
-        + `Evan`,
+        + `{{#if hasAccount}}You can sign in any time with the email this was sent to.{{else}}`
+        + `{{#if hasLinkUntil}}This link works until {{linkUntil}}, but you can still sign in with this email anytime afterward.{{else}}`
+        + `You can sign in any time with this email.{{/if}}{{/if}}\n\n`
+        + `And if now's not the right time, no worries. We won't keep sending reminders.\n\n`
+        + `Hope to see you around,\nEvan`,
     },
 
     password_reset: {

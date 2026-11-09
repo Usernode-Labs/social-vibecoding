@@ -571,12 +571,15 @@ test('the release mail with a one-time sign-in link explains nothing, and tracki
   assert.match(linked.html, />Get started<\/a>/);
   // The text part has no button, so it names the action over the link.
   assert.ok(linked.text.includes('Get started:\nhttps://x.invalid/?signup=1&t=tok&key=k'));
-  // Told when the link stops working, the mail says so above the button.
+  // Told when the link stops working, the admit mail still names no date:
+  // that is the last reminder's to say (6508's review, 9 Nov). The line
+  // above the button says what they can do.
   const dated = templates.buildMessage('waitlist_released', {
     url: 'https://x.invalid/?signup=1&t=tok&key=k', hasAccount: false, signInLink: true, signInExpiresAt: '2026-11-13T09:00:00Z',
   });
-  assert.match(dated.html, />Jump in with the button below\. It works until 13 Nov\.<\/p>/);
-  assert.ok(dated.text.includes('Jump in with the link below. It works until 13 Nov.\n\nGet started:\n'));
+  assert.match(dated.html, />Start building, invite your people, or explore what others are making\.<\/p>/);
+  assert.ok(dated.text.includes('Start building, invite your people, or explore what others are making.\n\nGet started:\n'));
+  assert.doesNotMatch(JSON.stringify(dated), /13 Nov|works until/);
 
   // Click tracking stores each destination URL; one carrying a sign-in
   // credential is never rewritten, so its token is never stored.
@@ -644,7 +647,8 @@ test('the release mail offers mobile steps only for a published store link', () 
   assert.match(both.text, /Try it on mobile/);
   assert.match(both.html, /Try it on mobile/);
   assert.ok(both.text.includes(`Get Homeroom on the App Store (${IOS}).`));
-  assert.ok(both.text.includes(`Open the Homeroom testing link (${ANDROID}) while signed into Google Play`));
+  assert.ok(both.text.includes(`Android: Get Homeroom on Google Play (${ANDROID}).`));
+  assert.doesNotMatch(both.text + both.html, /testing link/);
   assert.ok(both.html.includes(`<a href="${IOS}"`));
   assert.ok(both.html.includes(`<a href="${ANDROID.replace(/&/g, '&amp;')}"`));
 

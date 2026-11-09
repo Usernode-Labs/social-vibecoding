@@ -26,6 +26,7 @@ const PAGE_STYLE = 'font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sa
 const BUTTON_STYLE = 'display:inline-block;padding:10px 18px;border-radius:8px;border:0;'
   + 'background:#0a6ee0;color:#fff;font-size:15px;text-decoration:none';
 const SMALL_STYLE = 'font-size:13px;color:#68686c';
+const LINK_STYLE = 'color:#0a6ee0;font-size:15px';
 
 // Where "Sign in instead" goes: the sign-in form, as the reminders' own
 // button does for an address with an account.
@@ -39,7 +40,9 @@ function page(title, body) {
 }
 
 const SMALL_PRINT = `<p style="${SMALL_STYLE}">This stops reminders for this address only. Sign-in codes you ask for still arrive.</p>`;
-const SIGN_IN_BUTTON = `<p><a href="${SIGN_IN_PATH}" style="${BUTTON_STYLE}">Sign in instead</a></p>`;
+// One button on a page: stopping is what the page is for, so it is the button,
+// and signing in is a plain link under it.
+const SIGN_IN_LINK = `<p><a href="${SIGN_IN_PATH}" style="${LINK_STYLE}">Sign in instead</a></p>`;
 
 const BROKEN_GET = page('This link does not work',
   '<p>It may have been copied only in part. Open it again from the email.</p>');
@@ -49,7 +52,7 @@ const BROKEN_POST = page('This link does not work',
 // The page the POST answers, once the row is stamped.
 const STOPPED = page('No more reminders',
   '<p>We won\'t email you about your spot again. It stays open: sign in any time with the email address we wrote to.</p>'
-  + SIGN_IN_BUTTON
+  + `<p><a href="${SIGN_IN_PATH}" style="${LINK_STYLE}">Sign in</a></p>`
   + SMALL_PRINT);
 
 function readQuery(req) {
@@ -80,7 +83,7 @@ function waitlistReminderRoutes(config) {
       return res.type('html').send(page('Stop these reminders?',
         `<form method="post" action="${action}"><button type="submit" style="${BUTTON_STYLE}">`
         + 'Stop these reminders</button></form>'
-        + SIGN_IN_BUTTON
+        + SIGN_IN_LINK
         + SMALL_PRINT));
     } catch (err) {
       log.error('waitlist-reminders', 'Stop page failed', { err: err.message });

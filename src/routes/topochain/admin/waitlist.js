@@ -889,13 +889,31 @@ function waitlistAdminRoutes(config) {
   });
 
   // ── GET / PUT /api/v4/admin/reminder-email ───────────────────────────
-  // Whether people admitted who have not signed in get the two reminder
-  // emails (services/waitlist-reminders.js, switched in
-  // services/release-mail-setting.js). On unless switched off here, and
-  // independent of the release email: either can be off with the other on.
+  // The reminders to people admitted who have not signed in
+  // (services/waitlist-reminders.js, set in services/release-mail-setting.js):
+  // `mode` On, Dry run (the default: nothing sent) or Off, and `due`, who is
+  // owed one now by the clock's own rules (how many of each, and the oldest
+  // admits among them), which Dry run shows before anything goes. Independent
+  // of the release email.
+  const formatReminders = (s, due) => ({
+    mode: s.mode,
+    enabled: s.enabled,
+    updated_at: iso(s.updatedAt),
+    updated_by: s.updatedBy,
+    due: due ? {
+      first: due.first,
+      last: due.last,
+      rows: due.rows.map((r) => ({ id: r.id, email: r.email, released_at: iso(r.released_at), reminder: r.reminder })),
+    } : null,
+  });
+  const readReminders = async () => formatReminders(
+    await releaseMailSetting.readReminderMailSetting(pool),
+    await waitlistReminders.dueNow(pool),
+  );
+
   router.get('/api/v4/admin/reminder-email', async (req, res) => {
     try {
-      return ok(res, { data: formatReleaseMail(await releaseMailSetting.readReminderMailSetting(pool)) });
+      return ok(res, { data: await readReminders() });
     } catch (err) {
       log.error('topochain-admin', 'GET /admin/reminder-email failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
@@ -903,12 +921,12 @@ function waitlistAdminRoutes(config) {
   });
 
   router.put('/api/v4/admin/reminder-email', adminWriteGate, async (req, res) => {
-    const enabled = req.body?.enabled;
-    if (typeof enabled !== 'boolean') return fail(res, 422, 'Provide enabled: true or false.');
+    const mode = req.body?.mode;
+    if (!releaseMailSetting.REMINDER_MODES.includes(mode)) return fail(res, 422, 'Provide mode: on, dry_run or off.');
     try {
-      await releaseMailSetting.setReminderMail(pool, { enabled, actorId: req.user?.id ?? null });
-      log.info('topochain-admin', 'Reminder email switched', { enabled, adminId: req.user?.id });
-      return ok(res, { data: formatReleaseMail(await releaseMailSetting.readReminderMailSetting(pool)) });
+      await releaseMailSetting.setReminderMail(pool, { mode, actorId: req.user?.id ?? null });
+      log.info('topochain-admin', 'Reminder email mode set', { mode, adminId: req.user?.id });
+      return ok(res, { data: await readReminders() });
     } catch (err) {
       log.error('topochain-admin', 'PUT /admin/reminder-email failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');

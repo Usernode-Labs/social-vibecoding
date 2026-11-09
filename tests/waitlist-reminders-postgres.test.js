@@ -130,6 +130,22 @@ test('who is owed a reminder, the claim, the stop link and the template version,
     ]) assert.ok(!by.has(Number(id)), why);
     assert.deepEqual(owed.rows.map((r) => Number(r.id)).slice(0, 2), [ancient, lastOld], 'oldest admit first');
 
+    // ── Dry run, the default: the clock counts them and sends none, and the
+    // list shows exactly what On would send. Then On. ──
+    const reminderSetting = require('../src/services/release-mail-setting');
+    assert.equal(await reminderSetting.reminderMode(pool), 'dry_run', 'no row: dry run');
+    const dry = await reminders.owedTargets(config, pool);
+    assert.equal(dry.off, 'dry_run');
+    assert.deepEqual(dry.items, []);
+    assert.equal(dry.owed, by.size);
+    const due = await reminders.dueNow(pool);
+    assert.equal(due.first + due.last, by.size, 'the list counts what the clock owes');
+    assert.equal(due.last, [...by.values()].filter((r) => r === 2).length);
+    assert.deepEqual(due.rows.slice(0, 2).map((r) => [r.id, r.reminder]), [[ancient, 1], [lastOld, 2]], 'oldest admit first, as the clock');
+    assert.ok(due.rows.every((r) => typeof r.email === 'string' && r.released_at), 'each row says who and when');
+    assert.deepEqual(await reminders.remindItem(config, pool, { signupId: ancient, reminder: 1 }), { said: 'off' }, 'a dry run item sends nothing');
+    await reminderSetting.setReminderMail(pool, { mode: 'on' });
+
     const listed = await reminders.owedTargets(config, pool);
     assert.equal(listed.items.length, Math.min(reminders.PER_RUN, by.size));
     assert.equal(listed.items[0].target, `waitlist-reminder:${ancient}:1`);
@@ -218,8 +234,10 @@ test('who is owed a reminder, the claim, the stop link and the template version,
     await pool.query("UPDATE waitlist_signups SET email = 'moved@example.test' WHERE id = $1", [codedBefore]);
     assert.equal(await reminders.stopLinkWorks(config, pool, { signupId: codedBefore, token }), false, 'bound to the address');
 
-    // ── The switch stops the clock, and only the clock ──
-    await require('../src/services/release-mail-setting').setReminderMail(pool, { enabled: false });
+    // ── Off and Dry run stop the clock, and only the clock ──
+    await require('../src/services/release-mail-setting').setReminderMail(pool, { mode: 'off' });
     assert.deepEqual(await reminders.owedTargets(config, pool), { off: 'switched_off', items: [] });
+    await require('../src/services/release-mail-setting').setReminderMail(pool, { mode: 'dry_run' });
+    assert.deepEqual((await reminders.owedTargets(config, pool)).items, []);
     assert.equal(await require('../src/services/release-mail-setting').releaseMailEnabled(pool), true, 'the release email is its own switch');
   });

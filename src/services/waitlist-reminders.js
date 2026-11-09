@@ -51,10 +51,13 @@
 // (routes/waitlist-reminders.js). A row whose address changed has a link
 // that no longer matches.
 //
-// Admin → Waitlist's Reminders switch (services/release-mail-setting.js) turns
-// the clock off and on; it is independent of the Release email switch. An
+// Admin → Waitlist's Reminders setting (services/release-mail-setting.js) is
+// On, Dry run or Off, and starts at Dry run: the clock sends only when it is
+// On. In Dry run it logs how many are owed, and the screen lists who would
+// get which reminder now (dueNow, the same rules as the clock's): exactly
+// what On would send. It is independent of the Release email switch. An
 // admin's "Send a reminder now" (POST /api/v4/admin/waitlist/:id/remind,
-// remindNow) sends a row's next reminder whatever the spacing or the switch,
+// remindNow) sends a row's next reminder whatever the spacing or the mode,
 // and refuses a row that signed in, stopped reminders, or had both.
 
 const crypto = require('crypto');
@@ -123,6 +126,25 @@ const OWED_SQL = `SELECT w.id, CASE WHEN w.reminder_1_sent_at IS NULL THEN 1 ELS
      AND (${FIRST_DUE_SQL} OR ${LAST_DUE_SQL})
    ORDER BY w.released_at, w.id
    LIMIT $1`;
+
+// The same rows for Admin → Waitlist's list of who is owed one now, with what
+// it shows, and how many of each reminder there are in all. Read in every
+// mode, so Dry run shows exactly what On would send.
+const DUE_LIST_SQL = `SELECT w.id, w.email, w.released_at,
+         CASE WHEN w.reminder_1_sent_at IS NULL THEN 1 ELSE 2 END AS reminder
+    FROM waitlist_signups w
+   WHERE ${REACHABLE_SQL}
+     AND NOT ${SIGNED_IN_SQL}
+     AND (${FIRST_DUE_SQL} OR ${LAST_DUE_SQL})
+   ORDER BY w.released_at, w.id
+   LIMIT $1`;
+const DUE_COUNT_SQL = `SELECT COUNT(*) FILTER (WHERE w.reminder_1_sent_at IS NULL)::int AS first,
+         COUNT(*) FILTER (WHERE w.reminder_1_sent_at IS NOT NULL)::int AS last
+    FROM waitlist_signups w
+   WHERE ${REACHABLE_SQL}
+     AND NOT ${SIGNED_IN_SQL}
+     AND (${FIRST_DUE_SQL} OR ${LAST_DUE_SQL})`;
+const DUE_LIST_LIMIT = 50;
 
 // What a claim hands the send: the address, whether it has an account, its
 // prefill token and its language.
@@ -306,13 +328,37 @@ async function deliver(config, pool, claimed, reminder) {
 // ── The clock ──────────────────────────────────────────────────────────
 
 /**
+ * Who is owed a reminder now, for Admin → Waitlist: how many of each
+ * (`first`, `last`), and the oldest admits among them (at most `limit`),
+ * each `{ id, email, released_at, reminder }`. The clock's own rules.
+ */
+async function dueNow(pool, { limit = DUE_LIST_LIMIT } = {}) {
+  const { rows: [counts] } = await pool.query(DUE_COUNT_SQL);
+  const { rows } = await pool.query(DUE_LIST_SQL, [Math.max(1, Math.min(DUE_LIST_LIMIT, Number(limit) || DUE_LIST_LIMIT))]);
+  return {
+    first: Number(counts?.first) || 0,
+    last: Number(counts?.last) || 0,
+    rows: rows.map((r) => ({ id: Number(r.id), email: r.email, released_at: r.released_at, reminder: Number(r.reminder) })),
+  };
+}
+
+/**
  * The waitlist-reminders clock's run: each row owed a reminder now, a target
- * of its own (`waitlist-reminder:<row>:<1|2>`). Nothing while the Reminders
- * switch is off, or with no secret to sign stop links with.
+ * of its own (`waitlist-reminder:<row>:<1|2>`). Nothing unless the Reminders
+ * setting is On, or with no secret to sign stop links with. In Dry run it
+ * counts who is owed one and logs it, and sends nothing.
  */
 async function owedTargets(config, pool, { limit = PER_RUN } = {}) {
   if (!secretOf(config)) return { off: 'no_secret', items: [] };
-  if (!(await settings.reminderMailEnabled(pool))) return { off: 'switched_off', items: [] };
+  const mode = await settings.reminderMode(pool);
+  if (mode === 'dry_run') {
+    const { rows: [counts] } = await pool.query(DUE_COUNT_SQL);
+    const first = Number(counts?.first) || 0;
+    const last = Number(counts?.last) || 0;
+    log.info('waitlist-reminders', 'Dry run: reminders owed now, none sent', { first, last });
+    return { off: 'dry_run', owed: first + last, items: [] };
+  }
+  if (mode !== 'on') return { off: 'switched_off', items: [] };
   const { rows } = await pool.query(OWED_SQL, [Math.max(1, Math.min(PER_RUN, Number(limit) || PER_RUN))]);
   return {
     owed: rows.length,
@@ -331,7 +377,7 @@ async function owedTargets(config, pool, { limit = PER_RUN } = {}) {
 async function remindItem(config, pool, { signupId, reminder }, steps = null) {
   const once = steps && typeof steps.once === 'function' ? (key, fn) => steps.once(key, fn) : (_key, fn) => fn();
   if (!KINDS[reminder] || !validId(signupId)) return { said: 'settled' };
-  if (!secretOf(config) || !(await settings.reminderMailEnabled(pool))) return { said: 'off' };
+  if (!secretOf(config) || (await settings.reminderMode(pool)) !== 'on') return { said: 'off' };
   const claimed = await once('claim', () => claim(pool, signupId, reminder));
   if (!claimed) return { said: 'settled' };
   const sent = await once('sent', () => deliver(config, pool, claimed, reminder));
@@ -350,7 +396,7 @@ class ReminderRefused extends Error {
 
 /**
  * Send row `signupId`'s next reminder now, whatever the spacing or the
- * Reminders switch. Throws ReminderRefused with a sentence for the admin when
+ * Reminders mode. Throws ReminderRefused with a sentence for the admin when
  * it cannot go; resolves `{ reminder, kind, status, error, owed_again }`
  * otherwise: what the mailer recorded, and whether a send it refused before
  * any provider left the reminder owed again.
@@ -390,6 +436,9 @@ module.exports = {
   FIRST_DUE_SQL,
   LAST_DUE_SQL,
   OWED_SQL,
+  DUE_LIST_SQL,
+  DUE_COUNT_SQL,
+  DUE_LIST_LIMIT,
   CLAIM_FIRST_SQL,
   CLAIM_LAST_SQL,
   STATE_SQL,
@@ -400,6 +449,7 @@ module.exports = {
   stopLinkWorks,
   claim,
   deliver,
+  dueNow,
   owedTargets,
   remindItem,
   remindNow,
