@@ -854,10 +854,6 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   latest?: boolean;
 }) {
   const t = useMessages('chat');
-  // #6519: the row is the newest comment in its stream if its caller said
-  // so, or if the stream published it through the context above.
-  const publishedNewest = useContext(NewestCommentContext);
-  const isNewest = latest || (publishedNewest != null && publishedNewest === msg);
   const [sheet, setSheet] = useState(false);
   const recents = useRecentReactions();
   const chat = controller();
@@ -980,9 +976,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           ) : null}
           {/* 3 Nov 2026: suggested replies under Homeroom bot's message in a
               thread — only while it is the newest comment (#6519). */}
-          {isNewest && msg.botSuggest && msg.botSuggest.forMe && msg.botSuggest.status === 'open' && msg.botSuggest.actions.length ? (
-            <BotSuggestButtons id={msg.id} suggest={msg.botSuggest} />
-          ) : null}
+          <BotSuggestGate msg={msg} latest={latest} />
           {grouped && msg.editedTitle ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>{t('chat:group.row.edited')}</span>
           ) : null}
@@ -1035,6 +1029,22 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       ) : null}
     </ChatMessageRow>
   );
+});
+
+/**
+ * #6519: Homeroom bot's suggested replies, drawn under its message only
+ * while that message is the newest comment in its stream. A stream that can
+ * hand the answer down as a prop does (`latest`); a request's rows are pinned
+ * by a check that reads their call, so that stream publishes its newest
+ * through the context above instead, and a row under no publisher is never
+ * the newest.
+ */
+const BotSuggestGate = memo(function BotSuggestGate({ msg, latest }: { msg: TranscriptMessage; latest?: boolean }) {
+  const publishedNewest = useContext(NewestCommentContext);
+  const newest = latest || (publishedNewest != null && publishedNewest === msg);
+  return newest && msg.botSuggest && msg.botSuggest.forMe && msg.botSuggest.status === 'open' && msg.botSuggest.actions.length
+    ? <BotSuggestButtons id={msg.id} suggest={msg.botSuggest} />
+    : null;
 });
 
 /**

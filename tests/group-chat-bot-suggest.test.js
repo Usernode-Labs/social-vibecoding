@@ -264,23 +264,25 @@ test('#6519: suggestions show only under the newest comment', () => {
   assert.equal(newestComment([row('message', { id: 3, deleted: true })], true), null);
 
   const tx = read('frontend/src/features/group-chat/transcript.tsx');
-  assert.match(tx, /\{isNewest && msg\.botSuggest && msg\.botSuggest\.forMe && msg\.botSuggest\.status === 'open' && msg\.botSuggest\.actions\.length \? \(/);
+  // The row draws a gate; the gate keeps the buttons only under the newest
+  // comment, told by its `latest` prop or by the stream's published context.
+  assert.match(tx, /<BotSuggestGate msg=\{msg\} latest=\{latest\} \/>/);
+  const gate = tx.slice(tx.indexOf('const BotSuggestGate'), tx.indexOf('const BotSuggestGate') + 700);
+  assert.match(gate, /const publishedNewest = useContext\(NewestCommentContext\);/);
+  assert.match(gate, /const newest = latest \|\| \(publishedNewest != null && publishedNewest === msg\);/);
+  assert.match(gate, /newest && msg\.botSuggest && msg\.botSuggest\.forMe && msg\.botSuggest\.status === 'open' && msg\.botSuggest\.actions\.length/);
+  assert.match(tx, /<NewestCommentContext\.Provider value=\{newest\}>/);
   assert.match(tx, /const newest = newestComment\(stream\.rows, true\)/);
   assert.match(tx, /const newest = newestComment\(rows, false\)/);
   assert.equal((tx.match(/const newest = newestComment\(rows, false\)/g) || []).length, 2,
     'both the change and the transcript rows find it');
-  // A request's rows are pinned by their props elsewhere, so that stream
-  // publishes its newest through the context; every other row is told
-  // directly, and a row reads either.
-  assert.match(tx, /const publishedNewest = useContext\(NewestCommentContext\);/);
-  assert.match(tx, /<NewestCommentContext\.Provider value=\{newest\}>/);
   const calls = tx.match(/<MessageRow\b[^>]*?\/>/gs) || [];
   assert.ok(calls.length >= 4, 'the transcript draws the row in several places');
+  // A request's row call is pinned by tests/vote-row-card.test.js, so that
+  // stream answers through the context; every other row is told directly.
   const direct = calls.filter((call) => !call.includes('seeVote={seeVoteOf(msg)}'));
-  assert.equal(direct.length, calls.length - 1, 'only the request stream leaves the prop off');
+  assert.equal(direct.length, calls.length - 1, 'only the request stream answers through the context');
   for (const call of direct) assert.match(call, /\blatest=/, 'every other row is told whether it is the newest comment');
-  assert.match(tx, /<MessageRow key=\{key\} msg=\{msg\} grouped=\{grouped\} surface="thread" tag=\{tagOf\(msg\)\} seeVote=\{seeVoteOf\(msg\)\} \/>/,
-    'the request stream\'s row props stay as they were');
 });
 
 test('#6519: a request\'s stream draws the suggestions under its newest comment only', () => {
