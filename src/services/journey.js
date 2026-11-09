@@ -456,7 +456,8 @@ const PERSON_FACTS = `
     a.release_page_opened_at AS mail_page_at, a.release_page_outcome AS mail_page_outcome,
     (SELECT MIN(w2.release_page_opened_at) FROM waitlist_signups w2) AS mail_page_since,
     (SELECT COUNT(*)::int FROM mail_deliveries d
-      WHERE a.email IS NOT NULL AND d.recipient = a.email AND d.kind = 'waitlist_released'
+      WHERE a.email IS NOT NULL AND d.recipient = a.email
+        AND d.kind IN ('waitlist_released', 'waitlist_reminder', 'waitlist_reminder_last')
         AND d.created_at <= COALESCE(LEAST(a.release_link_followed_at, a.release_code_asked_at,
           (SELECT MIN(d2.created_at) FROM mail_deliveries d2
             WHERE d2.recipient = a.email AND d2.kind = 'otp' AND d2.created_at >= a.released_at)), NOW())) AS mail_sends_before_follow,
@@ -837,8 +838,8 @@ function firstMilePerson(row, now) {
 /**
  * Pure: how a person came in, from a facts row (PERSON_FACTS): how the
  * account signed up, the waitlist row's facts, the mail's own page and which
- * admit mail led to the sign-in (1 is the first send). Each is null when
- * nothing says. `invite` only for somebody who came by an invite link.
+ * mail led to the sign-in, counting the admit mail and its reminders (1 is
+ * the first send). Each is null when nothing says. `invite` only for somebody who came by an invite link.
  */
 function cameInFacts(row) {
   const t = (v) => (v ? new Date(v) : null);
@@ -1759,7 +1760,7 @@ async function person(pool, { userId, now = new Date() } = {}) {
     name: row.username,
     cohort: row.released_at ? isoDay(row.released_at) : (invitedOnly ? 'invited' : null),
     // How they came in (cameInFacts): the door, the waitlist row, the mail's
-    // own page, which admit mail led in, how the account signed up, and the
+    // own page, which mail (admit or reminder) led in, how the account signed up, and the
     // invite link when one brought them.
     cameIn: {
       door: row.invite_id != null ? 'invite_link' : (row.released_at ? 'admitted' : null),

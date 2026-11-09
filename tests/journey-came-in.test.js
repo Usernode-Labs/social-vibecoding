@@ -126,7 +126,7 @@ test('the facts come from records that exist: identities, the mail log, the wait
     /FROM user_phone_identities ph WHERE ph\.user_id = u\.id AND ph\.created_at <= u\.created_at \+ INTERVAL '10 minutes'\) THEN 'phone'/,
     /oi\.provider = 'apple'/, /oi\.provider = 'google'/,
     /THEN 'mail_link'/, /d\.kind = 'otp'[^)]*\) THEN 'email_code'/, /WHEN u\.password_set THEN 'password'/,
-    /d\.kind = 'waitlist_released' AND d\.created_at <= COALESCE\(LEAST\(a\.release_link_followed_at, a\.release_code_asked_at, \(SELECT MIN\(d2\.created_at\) FROM mail_deliveries d2 WHERE d2\.recipient = a\.email AND d2\.kind = 'otp' AND d2\.created_at >= a\.released_at\)\), NOW\(\)\)\) AS mail_sends_before_follow/,
+    /d\.kind IN \('waitlist_released', 'waitlist_reminder', 'waitlist_reminder_last'\) AND d\.created_at <= COALESCE\(LEAST\(a\.release_link_followed_at, a\.release_code_asked_at, \(SELECT MIN\(d2\.created_at\) FROM mail_deliveries d2 WHERE d2\.recipient = a\.email AND d2\.kind = 'otp' AND d2\.created_at >= a\.released_at\)\), NOW\(\)\)\) AS mail_sends_before_follow/,
     /\(SELECT MIN\(w2\.release_page_opened_at\) FROM waitlist_signups w2\) AS mail_page_since/,
   ]) assert.match(facts, piece);
 });
