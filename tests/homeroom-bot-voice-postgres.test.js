@@ -1276,6 +1276,102 @@ test('retireThreadSuggestions closes only older open sets in the same thread', {
   await voice.retireThreadSuggestions(pool, { appId: app.id, thread: { type: 'issue', ref: 7 }, keepMessageId: 0, deps: {} });
 });
 
+// #6535: a plan that starts building overtakes an overlap question asked in
+// the same request before it. The question keeps its words and loses its
+// buttons; other offers, a question asked later, and another request's
+// question keep theirs. A plan that is replaced instead closes nothing.
+test('#6535: a plan that starts building closes the overlap question before it', { timeout: 120000 }, async (t) => {
+  const pool = await openDatabase(t);
+  if (!pool) return;
+  const live = require('../src/services/homeroom-bot-live');
+  const { rows: [app] } = await pool.query(
+    "INSERT INTO apps (name, slug) VALUES ('Overlap plan demo', 'overlap-plan-demo') RETURNING id",
+  );
+  const insert = async (ref, meta, { msgType = 'message', content = 'the bot said something' } = {}) => (await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata)
+     VALUES ($1, NULL, $2, $3, 'issue', $4, $5) RETURNING id`,
+    [app.id, content, msgType, ref, JSON.stringify(meta)],
+  )).rows[0].id;
+  const card = async (kind) => (await pool.query(
+    `INSERT INTO bot_cards (place, app_id, kind, args) VALUES ('thread', $1, $2, '{}') RETURNING id`,
+    [app.id, kind],
+  )).rows[0].id;
+  const overlapMeta = (id, status = 'open') => ({
+    homeroomBot: {
+      kind: 'voice',
+      offer: { id, kind: 'overlap', status },
+      actions: [
+        { id: 'yes', label: 'Build #6533 first', style: 'primary', type: 'prompt' },
+        { id: 'first', label: 'Build this one first', style: 'secondary', type: 'prompt' },
+        { id: 'no', label: 'Keep separate', style: 'secondary', type: 'prompt' },
+      ],
+    },
+  });
+  const fileItMeta = (id) => ({
+    homeroomBot: {
+      kind: 'voice',
+      offer: { id, kind: 'file_request', status: 'open' },
+      actions: [{ id: 'yes', label: 'File it', style: 'primary', type: 'prompt' }],
+    },
+  });
+  const plan = async (ref) => {
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, $2, 'live', 'ready') RETURNING id`,
+      [app.id, ref],
+    );
+    const row = await insert(ref, { specShare: { sessionId: 1, version: 1, botNote: 'waiting' } }, {
+      msgType: 'spec_share', content: '📋 Plan v1. Nothing is built yet. Waiting for @evan to say Build it.',
+    });
+    await pool.query(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind, thread_message_id)
+       VALUES ($1, $2, $3, 'plan', $4)`,
+      [app.id, ref, run.id, row],
+    );
+    return { runId: Number(run.id), row: Number(row) };
+  };
+  const metaOf = async (id) => (await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [id])).rows[0].metadata;
+  const statusOf = async (id) => (await pool.query('SELECT status FROM bot_cards WHERE id = $1', [id])).rows[0].status;
+
+  const oldCard = await card('overlap');
+  const old = await insert(7, overlapMeta(oldCard));
+  const fileCard = await card('file_request');
+  const file = await insert(7, fileItMeta(fileCard));
+  const planned = await plan(7);
+  // Asked after the plan row (higher id): it is not overtaken.
+  const newCard = await card('overlap');
+  const newer = await insert(7, overlapMeta(newCard));
+  // Another request's question, older than this plan's row: untouched.
+  const otherCard = await card('overlap');
+  const elsewhere = await insert(12, overlapMeta(otherCard));
+
+  const frames = [];
+  const ws = { broadcast(appId, frame) { frames.push({ appId, frame }); } };
+  assert.equal(await live.notePlanRows(pool, [planned.runId], 'building', { ws }), 1);
+
+  const closed = await metaOf(old);
+  assert.deepEqual(closed.homeroomBot.actions, [], 'the three buttons go');
+  assert.deepEqual(closed.homeroomBot.othersActions, []);
+  assert.equal(closed.homeroomBot.offer.status, 'expired');
+  assert.equal(await statusOf(oldCard), 'expired', 'a tap from a screen that has not drawn again does nothing');
+  assert.deepEqual((await metaOf(file)).homeroomBot.actions.map((a) => a.id), ['yes'], 'File it keeps its button');
+  assert.equal(await statusOf(fileCard), 'open');
+  assert.equal((await metaOf(newer)).homeroomBot.offer.status, 'open', 'asked after the plan row');
+  assert.deepEqual((await metaOf(newer)).homeroomBot.actions.length, 3);
+  assert.equal((await metaOf(elsewhere)).homeroomBot.offer.status, 'open', 'another request is untouched');
+  assert.equal(await statusOf(otherCard), 'open');
+  assert.deepEqual(frames.filter((f) => f.frame.type === 'chat_message_updated' && f.frame.id === old)
+    .map((f) => f.frame.thread), [{ type: 'issue', ref: 7 }], 'everybody reading hears it once');
+
+  // A plan replaced instead of built leaves the question open.
+  const replacedCard = await card('overlap');
+  const replaced = await insert(7, overlapMeta(replacedCard));
+  const again = await plan(7);
+  assert.equal(await live.notePlanRows(pool, [again.runId], 'replaced', { ws }), 1);
+  assert.equal((await metaOf(replaced)).homeroomBot.offer.status, 'open');
+  assert.equal(await statusOf(replacedCard), 'open');
+  assert.equal((await metaOf(replaced)).homeroomBot.actions.length, 3);
+});
+
 // #6391: the queries say() runs for a thread's two button sets, on the real
 // schema: the Go ahead a waiting note leaves behind (its newest open set is
 // found, its people join the reply's) and the older sets' retirement, which
