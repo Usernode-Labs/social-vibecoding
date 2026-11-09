@@ -1106,7 +1106,7 @@ function stagingMockProposals(viewer) {
     {
       ...mk(9000043, 900143,
         '[Mock] Imported-preview test: preview failed to build — unavailable chip + retry',
-        2, 1, 0, 1, { required: 2 }),
+        2, 1, 0, 1, { required: 3 }),
       source: 'imported',
       imported_pr_author: 'octo-contributor',
       staging_url: null,
