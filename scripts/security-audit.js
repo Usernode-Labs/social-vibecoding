@@ -26,6 +26,8 @@ function main() {
   const baselineName = process.env.SECURITY_BASELINE_NAME || (revision ? revision.slice(0, 9) : 'the baseline');
   fs.mkdirSync(out, { recursive: true });
   for (const [name, dir] of [['root', '.'], ['frontend', 'frontend'], ['starter', 'src/templates/node-app']]) {
+    const assessmentFile = path.join(out, `${name}-gate.json`);
+    fs.rmSync(assessmentFile, { force: true });
     try {
       const cwd = path.join(root, dir);
       const result = spawnSync('npm', ['audit', '--package-lock-only', '--include=dev', '--json'], {
@@ -35,13 +37,21 @@ function main() {
       fs.writeFileSync(path.join(out, `${name}-npm-audit.json`), result.stdout);
       const audit = JSON.parse(result.stdout);
       const baseline = baselineLock(root, revision, dir);
-      if (revision && !baseline) console.log(`::warning title=${name} lockfile::No baseline lockfile at ${baselineName}; every finding blocks.`);
       const gate = npmGate(audit, JSON.parse(fs.readFileSync(path.join(cwd, 'package-lock.json'), 'utf8')), { baseline });
-      fs.writeFileSync(path.join(out, `${name}-gate.json`), JSON.stringify({ baseline: baseline ? revision : null, ...gate }, null, 2));
+      if (!baseline && gate.blocking.length) throw new Error(`Baseline comparison unavailable at ${baselineName}; retry or review`);
+      fs.writeFileSync(assessmentFile, JSON.stringify({ baseline: baseline ? revision : null,
+        status: gate.blocking.length ? 'regression' : gate.preexisting.length ? 'existing_findings' : 'clean', ...gate }, null, 2));
       console.log(`${name}: ${JSON.stringify(audit.metadata.vulnerabilities)}`);
       report(`${name} lockfile`, gate, { baselineName });
       if (gate.blocking.length) throw new Error(gate.blocking.join('\n'));
-    } catch (err) { console.error(`${name}: ${err.message}`); process.exitCode = 1; }
+    } catch (err) {
+      if (!fs.existsSync(assessmentFile)) {
+        fs.writeFileSync(assessmentFile, JSON.stringify({ status: 'unavailable', reason: err.message, blocking: [], preexisting: [] }, null, 2));
+        console.error(`::error title=Security assessment unavailable: ${name} lockfile::Scan or baseline comparison failed; retry or review`);
+      }
+      console.error(`${name}: ${err.message}`);
+      process.exitCode = 1;
+    }
   }
 }
 if (require.main === module) main();

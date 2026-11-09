@@ -655,7 +655,7 @@ function stagingMockProposals(viewer) {
           index: -3,
           name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',
           advisory: false, consoleErrors: [],
-          failureReason: 'tests/kudos-totals.test.js (1): kudos totals survive a rename | # tests 20913 | # pass 20912 | # fail 1 | # cancelled 0',
+          failureReason: 'tests/kudos-totals.test.js (3): kudos totals survive a rename | # tests 20913 | # pass 20910 | # fail 3 | # cancelled 0',
           failureDetails: [
             {
               file: 'tests/kudos-totals.test.js',
@@ -672,6 +672,26 @@ function stagingMockProposals(viewer) {
                 '  — stdout just before the failure —',
                 'renaming @mara → @mara-renamed: kudos rows moved 3',
                 'recount after rename: total=42 (expected 41)',
+              ].join('\n'),
+            }, {
+              file: 'tests/kudos-totals.test.js',
+              test: 'the kudos figure hides when a rename removes every row',
+              excerpt: [
+                "  location: '/tmp/tmp.fixture/tests/kudos-totals.test.js:104:1'",
+                "  error: 'expected 0 to equal null',",
+                "  code: 'ERR_ASSERTION',",
+                '  stack: |',
+                '      AssertionError [ERR_ASSERTION]: expected 0 to equal null',
+              ].join('\n'),
+            }, {
+              file: 'tests/kudos-totals.test.js',
+              test: 'a rename keeps the leaderboard order',
+              excerpt: [
+                "  location: '/tmp/tmp.fixture/tests/kudos-totals.test.js:141:1'",
+                "  error: 'expected [ 3, 2, 1 ] to deeply equal [ 3, 1, 2 ]',",
+                "  code: 'ERR_ASSERTION',",
+                '  stack: |',
+                '      AssertionError [ERR_ASSERTION]: expected [ 3, 2, 1 ] to deeply equal [ 3, 1, 2 ]',
               ].join('\n'),
             },
           ],
@@ -1106,7 +1126,7 @@ function stagingMockProposals(viewer) {
     {
       ...mk(9000043, 900143,
         '[Mock] Imported-preview test: preview failed to build — unavailable chip + retry',
-        2, 1, 0, 1, { required: 2 }),
+        2, 1, 0, 1, { required: 3 }),
       source: 'imported',
       imported_pr_author: 'octo-contributor',
       staging_url: null,
