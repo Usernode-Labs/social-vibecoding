@@ -991,9 +991,81 @@
     "text": "Home",
     "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The page title."
   },
-  "frame.purpose": {
-    "text": "What needs you, then your places.",
-    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The one sentence under the title saying what the page is for."
+  "frame.purposeNeeds_one": {
+    "text": "{{count}} thing needs you today, across {{communities}} communities.",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The one sentence under the title when decisions wait for the viewer in more than one community: how many, and in how many communities. Singular of the count of things."
+  },
+  "frame.purposeNeeds_other": {
+    "text": "{{count}} things need you today, across {{communities}} communities.",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The one sentence under the title when decisions wait for the viewer in more than one community. Plural of the count of things."
+  },
+  "frame.purposeNeedsIn_one": {
+    "text": "{{count}} thing needs you today, in {{community}}.",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The one sentence under the title when every decision that waits for the viewer is in one community, named. Singular."
+  },
+  "frame.purposeNeedsIn_other": {
+    "text": "{{count}} things need you today, in {{community}}.",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The one sentence under the title when every decision that waits for the viewer is in one community, named. Plural."
+  },
+  "frame.purposeQuiet": {
+    "text": "Nothing needs you right now.",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The one sentence under the title when no decision waits for the viewer."
+  },
+  "frame.all": {
+    "text": "All {{count}}",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Link at the end of a group's label that opens the whole list, with how many it holds: All 18."
+  },
+  "frame.edit": {
+    "text": "Edit",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Link at the end of the Pinned apps label: starts arranging the pinned apps."
+  },
+  "frame.browseAll": {
+    "text": "Browse all",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Link at the end of the Communities to join label: opens the whole public directory."
+  },
+  "frame.pinnedCommunities": {
+    "text": "Pinned communities",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Label of the group of the communities the viewer pinned or joined, each a row."
+  },
+  "frame.reply": {
+    "text": "Reply",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Status word on a Needs you row where Homeroom bot asked the viewer a question and waits for the answer."
+  },
+  "frame.voteLine_one": {
+    "text": "{{community}} · {{count}} yes vote so far",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Line under a Needs you row that waits for the viewer's vote: the community's name, then how many yes votes it has. Singular."
+  },
+  "frame.voteLine_other": {
+    "text": "{{community}} · {{count}} yes votes so far",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Line under a Needs you row that waits for the viewer's vote: the community's name, then how many yes votes it has. Plural, and zero."
+  },
+  "frame.askedLine": {
+    "text": "{{community}} · Homeroom bot asked on request #{{number}}",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Line under a Needs you row where Homeroom bot waits for the viewer's answer: the community's name and the request's number. Homeroom bot is a name."
+  },
+  "frame.inProgress_one": {
+    "text": "{{count}} in progress",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Part of the line under a community's row: how many changes are being built there now. Singular."
+  },
+  "frame.inProgress_other": {
+    "text": "{{count}} in progress",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Part of the line under a community's row: how many changes are being built there now. Plural."
+  },
+  "frame.liveThisWeek": {
+    "text": "Live this week",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Label of the side column's group: changes that went live this week in any community."
+  },
+  "frame.ago.minutes": {
+    "text": "{{count}}m",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). How long ago, at the end of a row, in minutes, abbreviated: 12m."
+  },
+  "frame.ago.hours": {
+    "text": "{{count}}h",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). How long ago, at the end of a row, in hours, abbreviated: 5h."
+  },
+  "frame.ago.days": {
+    "text": "{{count}}d",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). How long ago, at the end of a row, in days, abbreviated: 3d."
   },
   "frame.make": {
     "text": "Make a project",
@@ -1006,10 +1078,6 @@
   "frame.pinnedApps": {
     "text": "Pinned apps",
     "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Label of the group holding the launcher grid of pinned apps."
-  },
-  "frame.yourCommunities": {
-    "text": "Your communities",
-    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Label of the group listing the communities the viewer pinned or joined."
   },
   "frame.toJoin": {
     "text": "Communities to join",
@@ -1030,26 +1098,6 @@
   "frame.toVote_other": {
     "text": "{{count}} to vote",
     "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Status on a community row: how many of its votes wait for the viewer. Plural."
-  },
-  "frame.thisWeek": {
-    "text": "This week",
-    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Label of the side column's group of two facts."
-  },
-  "frame.decisions_one": {
-    "text": "{{count}} decision waits for you",
-    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Fact in the side column: the number of decisions in Needs you. Singular."
-  },
-  "frame.decisions_other": {
-    "text": "{{count}} decisions wait for you",
-    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Fact in the side column: the number of decisions in Needs you. Plural."
-  },
-  "frame.communities_one": {
-    "text": "{{count}} community",
-    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Fact in the side column: how many communities the viewer is in. Singular."
-  },
-  "frame.communities_other": {
-    "text": "{{count}} communities",
-    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Fact in the side column: how many communities the viewer is in. Plural."
   },
   "frame.approve": {
     "text": "Approve",

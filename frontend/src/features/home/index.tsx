@@ -135,6 +135,7 @@ export function HomeScreen() {
   // member-only read from either is a console error).
   const [viewer, setViewer] = useState(false);
   useEffect(() => whenPlatformViewer(() => setViewer(true)), []);
+  const frame = isFrameSkin(skin) && viewer;
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
   // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
@@ -150,7 +151,12 @@ export function HomeScreen() {
     && grid.items.length === 0 && !grid.create;
 
   return (
-    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
+    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined}>
+      {/* A look of the one frame draws this page with the kit
+          (./frame/home-frame.tsx), as the scroller's first child. The
+          standard Home below stays mounted, so what home.js writes still
+          lands; app.css hides it while data-frame-page is set. */}
+      {frame ? <HomeFrame /> : null}
       {/*
           Hidden-until-pulled search bar (iOS idiom). Deliberately the FIRST
           child of the scroller and NOT sticky: it occupies real scroll space
@@ -231,9 +237,6 @@ export function HomeScreen() {
           in the grid now, so nothing below the grid is anchored any more.)
       */}
       <div id="home-body" className="home-column home-body-fill">
-        {isFrameSkin(skin) && viewer ? (
-          <HomeFrame />
-        ) : (<>
         {/*
             #1561's once-per-account explainer stood here, above everything,
             because it was the thing a first-time viewer needed before the
@@ -462,7 +465,6 @@ export function HomeScreen() {
             sections above are outside #app-list and never re-rendered by a
             search keystroke, so there is nothing left to catch.
         */}
-        </>)}
       </div>
     </main>
   );

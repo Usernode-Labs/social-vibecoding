@@ -1,0 +1,340 @@
+/**
+ * The frame's kit: the components every page of the one frame is drawn with.
+ *
+ * These are the 2026-11-06 screen tour's own components (its kit.mjs:
+ * page(), s(), list(), r(), tiles(), pill(), btn() …) as React, emitting
+ * the same markup under the same class names with an `fr-` prefix. Their
+ * styles are the tour's own stylesheets, compiled into app.css between the
+ * `looks:begin` and `looks:end` marks (scripts/build-looks-css.js, from
+ * frontend/looks/): the kit's rules for any look, then one block per look.
+ * So a screen drawn here is the screen the tour drew, under each of the
+ * nine looks, and a look is changed in its file there, never here.
+ *
+ * NO TAILWIND AND NO VALUES HERE. A kit element carries kit classes only;
+ * a utility class would sit beside a look's rule and one of the nine would
+ * stop matching the tour. The one inline style is a size or a colour the
+ * data gives (a tile's size, a community's own colour), passed as the
+ * custom property the kit reads.
+ *
+ * Kit markup exists only under a look (lib/skin.ts isFrameSkin) and only
+ * inside an element with class `fr`, the frame root, where the kit's reset
+ * and type apply (`Frame` below). Rules of the frame the components keep
+ * for their callers (docs/superpowers/specs/2026-11-08-one-frame-glass-
+ * spec.md): one row for everything listed (picture, name, one line, one
+ * status), at most one pill on it, a zero says nothing.
+ */
+import * as React from 'react';
+
+import { KIT_ICONS } from './kit-icons';
+
+/** `k('row sm on')` → `fr-row fr-sm fr-on`. Falsy parts are dropped. */
+export function k(...names: Array<string | false | null | undefined>): string {
+  return names
+    .flatMap((n) => (n ? n.split(/\s+/) : []))
+    .filter(Boolean)
+    .map((n) => `fr-${n}`)
+    .join(' ');
+}
+
+type Custom = React.CSSProperties & Record<`--fr-${string}`, string | number>;
+
+/** The frame root: where the kit's reset, ink and type begin. */
+export function Frame({ as: Tag = 'div', className, children, ...props }: {
+  as?: 'div' | 'section' | 'main';
+  className?: string;
+  children?: React.ReactNode;
+} & React.HTMLAttributes<HTMLElement>) {
+  return <Tag className={`fr${className ? ` ${className}` : ''}`} {...props}>{children}</Tag>;
+}
+
+/** One of the kit's 24px stroked glyphs (./kit-icons.ts), decorative. */
+export function Icon({ name, size = 20, className }: { name: string; size?: number; className?: string }) {
+  return (
+    <svg
+      className={k('ic', className)}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      // Our own static path strings, never a person's text.
+      dangerouslySetInnerHTML={{ __html: KIT_ICONS[name] || KIT_ICONS.info }}
+    />
+  );
+}
+
+/**
+ * A project's picture: the one tile on the product. Its own image when it
+ * has one, else its emoji or first letter on its colour.
+ */
+export function Tile({ size = 40, src, emoji, color, name = '' }: {
+  size?: number;
+  src?: string | null;
+  emoji?: string | null;
+  color?: string | null;
+  name?: string;
+}) {
+  const style: Custom = { '--fr-ts': `${size}px` };
+  // A picture with no colour of its own sits on white, as the launcher's
+  // tiles do: many icons are drawn on transparency.
+  if (color) style['--fr-tc'] = color;
+  else if (src) style['--fr-tc'] = '#fff';
+  return (
+    <span className={k('tile')} style={style} aria-hidden="true">
+      {src
+        ? <img src={src} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        : (emoji || name.slice(0, 1).toUpperCase())}
+    </span>
+  );
+}
+
+/** A person: their picture, else their first letter on their colour. */
+export function Av({ size = 32, name, src, color }: { size?: number; name: string; src?: string | null; color?: string | null }) {
+  const style: Custom = { '--fr-as': `${size}px` };
+  if (color) style['--fr-ac'] = color;
+  return (
+    <span className={k('av')} style={style} aria-hidden="true">
+      {src
+        ? <img src={src} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+        : name.replace('@', '').slice(0, 1)}
+    </span>
+  );
+}
+
+/** A glyph or a number in the picture's place. */
+export function Lead({ icon, tone, size, children }: { icon?: string; tone?: 'acc' | 'ok' | 'wait' | 'bad'; size?: number; children?: React.ReactNode }) {
+  // A lead in a grid of tiles is the tiles' size, with their corner.
+  const style = size ? { width: size, height: size, borderRadius: Math.round(size * 0.29) } : undefined;
+  return <span className={k('lead', tone)} style={style} aria-hidden={icon ? 'true' : undefined}>{icon ? <Icon name={icon} size={size ? Math.round(size * 0.42) : 20} /> : children}</span>;
+}
+
+export type PillKind = 'act' | 'wait' | 'ok' | 'bad' | '';
+
+function saysNothing(children: React.ReactNode): boolean {
+  return children === null || children === undefined || children === false
+    || children === 0 || children === '' || (typeof children === 'string' && children.trim() === '');
+}
+
+/**
+ * One word of status, coloured by what it means: `act` blue (this waits
+ * for you), `wait` amber (on others), `ok` green (done), `bad` red, none
+ * grey. Zero or empty renders nothing.
+ */
+export function Pill({ kind = '', children }: { kind?: PillKind; children?: React.ReactNode }) {
+  if (saysNothing(children)) return null;
+  return <span className={k('pill', kind)} data-kind={kind || 'none'}>{children}</span>;
+}
+
+/** A count that asks for you. Zero renders nothing. */
+export function Count({ children, label }: { children?: React.ReactNode; label?: string }) {
+  if (saysNothing(children)) return null;
+  return <span className={k('n')} aria-label={label}>{children}</span>;
+}
+
+type BtnOwn = {
+  /** '' the page's one primary · quiet · line · ok · bad */
+  kind?: '' | 'quiet' | 'line' | 'ok' | 'bad';
+  icon?: string;
+  small?: boolean;
+  block?: boolean;
+};
+
+export function Btn({ kind = '', icon, small, block, className, type = 'button', children, ...props }:
+  BtnOwn & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button type={type} className={k('btn', kind, small && 'sm', block && 'block', props.disabled && 'off', className)} {...props}>
+      {icon ? <Icon name={icon} size={17} /> : null}
+      {children}
+    </button>
+  );
+}
+
+/** Grey words at the end of a row: a time, an amount. */
+export function Meta({ children }: { children?: React.ReactNode }) {
+  if (saysNothing(children)) return null;
+  return <span className={k('meta')}>{children}</span>;
+}
+
+export interface RowProps {
+  /** The picture: a <Tile/>, an <Av/> or a <Lead/>. */
+  lead?: React.ReactNode;
+  title: React.ReactNode;
+  /** The one line under the name. Without it the row is the single-line kind unless `sm` says otherwise. */
+  line?: React.ReactNode;
+  /** The one status: a <Pill/>, a <Meta/>, a small <Btn/>. */
+  right?: React.ReactNode;
+  /** A chevron: the row opens something. */
+  go?: boolean;
+  /** You are here. */
+  on?: boolean;
+  /** 48px, for a single line. Defaults to "no line". */
+  sm?: boolean;
+  /** The name and line may wrap to two lines. */
+  wrap?: boolean;
+  href?: string;
+  onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+  /** Said to a screen reader where the visible row would be ambiguous. */
+  label?: string;
+}
+
+/**
+ * THE row. Anything listed is this: picture, name, one line, one status,
+ * in that order. A row with an `href` is a link (a door: cmd-click keeps
+ * the address); with only `onClick` a button; else plain.
+ */
+export function Row({ lead, title, line, right, go, on, sm, wrap, href, onClick, label }: RowProps) {
+  const cls = k('row', (sm ?? !line) && 'sm', on && 'on', wrap && 'wrap');
+  const body = (
+    <>
+      {lead}
+      <span className={k('tx')}>
+        <span className={k('t')} style={{ display: 'block' }}>{title}</span>
+        {line ? <span className={k('s')} style={{ display: 'block' }}>{line}</span> : null}
+      </span>
+      {right}
+      {go ? <Icon name="cr" size={18} className="go" /> : null}
+    </>
+  );
+  if (href) return <a className={cls} href={href} onClick={onClick} aria-label={label} aria-current={on ? 'page' : undefined}>{body}</a>;
+  if (onClick) return <button type="button" className={cls} onClick={onClick} aria-label={label} style={{ width: '100%', textAlign: 'start' }}>{body}</button>;
+  return <div className={cls}>{body}</div>;
+}
+
+/** A group's surface: rows, or any one block. */
+export function Card({ pad, className, children }: { pad?: boolean; className?: string; children?: React.ReactNode }) {
+  return <div className={k('card', pad && 'pad', className)}>{children}</div>;
+}
+
+/** A group's link, at the end of its label: "All 18", "Edit". */
+export function GroupLink({ href, onClick, children }: { href?: string; onClick?: (event: React.MouseEvent<HTMLElement>) => void; children: React.ReactNode }) {
+  if (href) return <a className={k('link')} href={href} onClick={onClick}>{children}</a>;
+  return <button type="button" className={k('link')} onClick={onClick}>{children}</button>;
+}
+
+/** A labelled group: the label, at most one link, then one block. */
+export function Sec({ label, action, id, children }: { label?: React.ReactNode; action?: React.ReactNode; id?: string; children?: React.ReactNode }) {
+  return (
+    <section className={k('sec')} id={id}>
+      {label ? (
+        <div className={k('sechead')}>
+          <h2 className={k('cap')}>{label}</h2>
+          {action}
+        </div>
+      ) : null}
+      {children}
+    </section>
+  );
+}
+
+/** Things you open, as a grid of tiles: apps, and only apps. */
+export function Tiles({ children }: { children?: React.ReactNode }) {
+  return <Card><div className={k('tiles')}>{children}</div></Card>;
+}
+
+/** One tile of the grid, with its name under it and a count if it asks for you. */
+export function TileItem({ tile, name, count, href, onClick }: {
+  tile: React.ReactNode;
+  name: React.ReactNode;
+  count?: number;
+  href?: string;
+  onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+}) {
+  const body = (<>{tile}<Count>{count}</Count><span className={k('nm')}>{name}</span></>);
+  if (href) return <a className={k('at')} href={href} onClick={onClick}>{body}</a>;
+  return <button type="button" className={k('at')} onClick={onClick}>{body}</button>;
+}
+
+/** Up to five numbers said in words. */
+export function Facts({ items }: { items: Array<{ value: React.ReactNode; label: React.ReactNode; tone?: 'acc' | 'ok' | 'wait' }> }) {
+  return (
+    <Card>
+      <div className={k('facts', `f${items.length}`)}>
+        {items.map((f, i) => (
+          <div className={k('fact')} key={i}>
+            <div className={k('v', f.tone)}>{f.value}</div>
+            <div className={k('l')}>{f.label}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/** One sentence the page wants read: plain (navy), or toned. */
+export function Note({ tone = '', icon = 'info', children }: { tone?: '' | 'wait' | 'ok' | 'bad'; icon?: string; children: React.ReactNode }) {
+  return <div className={k('note', tone)}><Icon name={icon} size={17} /><div>{children}</div></div>;
+}
+
+/** The page's head: its title, one sentence saying what it is for, at most one primary action. */
+export function Head({ title, purpose, acts }: { title: React.ReactNode; purpose?: React.ReactNode; acts?: React.ReactNode }) {
+  return (
+    <div className={k('head')}>
+      <div className={k('tx')}>
+        <h1 className={k('title')}>{title}</h1>
+        {purpose ? <p className={k('purpose')}>{purpose}</p> : null}
+      </div>
+      {acts ? <div className={k('acts')}>{acts}</div> : null}
+    </div>
+  );
+}
+
+/** The page's views, as tabs. */
+export function Tabs({ tabs, current, onPick }: {
+  tabs: Array<{ key: string; label: React.ReactNode; count?: number; href?: string }>;
+  current: string;
+  onPick?: (key: string, event: React.MouseEvent<HTMLElement>) => void;
+}) {
+  return (
+    <nav className={k('tabs')}>
+      {tabs.map((tab) => {
+        const cls = k('tab', tab.key === current && 'on');
+        const body = (<>{tab.label}<Count>{tab.count}</Count></>);
+        return tab.href
+          ? <a key={tab.key} className={cls} href={tab.href} aria-current={tab.key === current ? 'page' : undefined} onClick={(e) => onPick?.(tab.key, e)}>{body}</a>
+          : <button key={tab.key} type="button" className={cls} aria-pressed={tab.key === current} onClick={(e) => onPick?.(tab.key, e)}>{body}</button>;
+      })}
+    </nav>
+  );
+}
+
+/**
+ * The page's body: work in the 720px column, context in the 320px column
+ * beside it, which goes below on a phone (above with `sideFirst`).
+ */
+export function Cols({ side, sideFirst, children }: { side?: React.ReactNode; sideFirst?: boolean; children?: React.ReactNode }) {
+  return (
+    <div className={k('cols', !side && 'one')}>
+      <div className={k('stack')}>{children}</div>
+      {side ? <div className={k('stack', sideFirst && 'first')}>{side}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * A page of the frame, inside the page area: the head, its tabs, then the
+ * columns. The sidebar, bar and tab bar around it are the shell's
+ * (features/frame/frame-app.tsx).
+ */
+export function PageBody({ title, purpose, acts, tabs, side, sideFirst, children, ...props }: {
+  title: React.ReactNode;
+  purpose?: React.ReactNode;
+  acts?: React.ReactNode;
+  tabs?: React.ReactNode;
+  side?: React.ReactNode;
+  sideFirst?: boolean;
+  children?: React.ReactNode;
+} & Omit<React.HTMLAttributes<HTMLElement>, 'title'>) {
+  return (
+    <Frame {...props}>
+      <div className={k('inner')}>
+        <Head title={title} purpose={purpose} acts={acts} />
+        {tabs}
+        <Cols side={side} sideFirst={sideFirst}>{children}</Cols>
+      </div>
+    </Frame>
+  );
+}

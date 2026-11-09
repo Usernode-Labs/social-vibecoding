@@ -1,59 +1,70 @@
 /**
- * Home in the one frame, under any of its nine looks.
+ * Home in the one frame, as the 2026-11-06 screen tour draws it (its step
+ * s01-home, `home()` in the tour's screens/in1.mjs), under any of the nine
+ * looks.
  *
- * The first screen drawn with the frame primitives (frontend/@/components/
- * ui/frame.tsx, status.tsx), as proposal C of the 2026-11-06 screen tour
- * draws it: a title, the sentence "What needs you, then your places.", one
+ * Drawn with the frame's kit (frontend/@/components/ui/kit.tsx), whose
+ * styles are the tour's own (app.css between the looks marks), so the page
+ * is the tour's page: the title, one sentence saying what needs you, one
  * primary action (Make a project), then four groups in the 720px column —
- * what waits for the viewer (rows ending in the one word that says what to
- * do), the launcher grid of pinned apps (the one tile on the product: an app
- * is the one thing you launch), the viewer's communities, and the public
- * ones they are not in — with two facts in the 320px column beside it.
+ * Needs you (three rows, each ending in the one word that says what to do),
+ * Pinned apps (tiles: an app is the one thing you launch), Pinned
+ * communities (rows that say what is new there) and Communities to join —
+ * with what went live this week in the 320px column beside it.
  *
- * HomeScreen (../index.tsx) mounts this instead of the standard body only
- * after mount, when lib/skin.ts says the device's look is one of the frame's and the
- * member APIs will answer (lib/platform-viewer.ts), so the prerendered
- * document is never contradicted and the signed-out landing keeps today's
- * body. The standard Home is not touched. Three nodes the legacy home.js
- * still writes into stay in the DOM, hidden, so its writes land somewhere
- * harmless.
+ * HomeScreen (../index.tsx) mounts this after mount only, when lib/skin.ts
+ * says the device's look is one of the frame's and the member APIs will
+ * answer (lib/platform-viewer.ts), as the first child of #home-screen; the
+ * standard Home stays mounted beside it, hidden by app.css, so what
+ * home.js writes still lands and nothing of the standard look changes.
  *
- * Data: the pins store the standard Home already keeps (../home-pins-store),
- * the launcher's grid store (../grid-store), the same public directory read
- * (../communities-to-join), and the Needs you feed (GET /api/workshop/
- * needs-feed, shaped by src/routes/workshop-overview.js shapeNeedsFeed).
+ * Data, all of it the product's own:
+ *   Needs you            GET /api/workshop/needs-feed (votes owed, shaped by
+ *                        src/routes/workshop-overview.js shapeNeedsFeed) and
+ *                        GET /api/workshop/bot-questions (Homeroom bot waits
+ *                        for an answer)
+ *   Pinned apps          the launcher's grid store (../grid-store)
+ *   Pinned communities   the pins store (../home-pins-store), with what is
+ *                        owed and under way from GET /api/workshop/counts
+ *   Communities to join  the public directory (../communities-to-join)
+ *   Live this week       GET /api/leaderboard/prs?window=week
  *
  * Every row is a door (pinned-communities.tsx's rule): a plain click lands
- * on the community's page through AppView, a cmd-click or middle-click keeps
- * the href the browser gives it.
+ * on the place through AppView, a cmd-click or middle-click keeps the href.
  */
 import { useEffect, useState } from 'react';
 
-import { Group, PageFrame, PrimaryButton } from '@/components/ui/frame';
-import { StatusRow, type Tone } from '@/components/ui/status';
+import { Btn, GroupLink, Meta, PageBody, Pill, Row, Sec, Card, Tile, TileItem, Tiles, Lead, type PillKind } from '@/components/ui/kit';
 import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
-import { AppGrid } from '../app-grid';
 import { readDirectory } from '../communities-to-join';
-import { gridStore } from '../grid-store';
+import { gridStore, type IconView } from '../grid-store';
 import { homePinsStore, loadHomePins, type HomePin, type JoinedCommunity } from '../home-pins-store';
 
-/**
- * A row of GET /api/workshop/needs-feed, the fields this screen reads, as
- * shapeNeedsFeed emits them: every row is a decision the viewer owes;
- * `approve` marks a change on their own just-you project whose Yes is the
- * one it needs; `waitingOn` names what a change still waits on before it
- * can be voted on ('checks', 'conflict').
- */
+/** How many rows a group shows before its link opens the rest (the tour's Home). */
+const NEEDS_SHOWN = 3;
+const APPS_SHOWN = 11;
+const COMMUNITIES_SHOWN = 6;
+const JOIN_SHOWN = 4;
+const LIVE_SHOWN = 4;
+
+/** A row of GET /api/workshop/needs-feed, the fields this screen reads. */
 export type FeedRow = {
   id: number;
   kind: string;
   title: string | null;
   number?: number | null;
+  yes?: number | null;
   app?: { slug?: string; name?: string; icon_url?: string | null; icon_emoji?: string | null } | null;
   approve?: boolean;
   waitingOn?: string[] | null;
 };
+
+/** A row of GET /api/workshop/bot-questions. */
+export type BotQuestion = { messageId: number; appSlug: string; appName: string; issueNumber: number; question: string; at?: string };
+
+/** A row of GET /api/leaderboard/prs. */
+export type LivePr = { session_id: number; pr_title: string; app_slug: string; app_name: string; author_username: string; session_created_at?: string };
 
 type DirectoryApp = {
   slug: string;
@@ -64,28 +75,7 @@ type DirectoryApp = {
   member_count?: number | null;
 };
 
-/**
- * The 40px picture that leads every row (spec rule 2). fr-lead is the hook
- * a look sizes and shapes it by; fr-lead-pic says it holds a community's
- * own picture, which keeps its corners where a look rounds a plain lead.
- */
-function Lead({ name, iconUrl, iconEmoji, iconColor }: {
-  name: string;
-  iconUrl?: string | null;
-  iconEmoji?: string | null;
-  iconColor?: string | null;
-}) {
-  const style = iconColor ? { backgroundColor: iconColor } : undefined;
-  return (
-    <span
-      className={`fr-lead ${iconUrl ? 'fr-lead-pic ' : ''}flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[12px] bg-[color:var(--fr-sunk)] text-[15px] font-bold text-[color:var(--fr-ink)] [box-shadow:inset_0_0_0_1px_var(--fr-line)]`}
-      style={style}
-      aria-hidden="true"
-    >
-      {iconUrl ? <img src={iconUrl} alt="" className="h-full w-full object-cover" /> : (iconEmoji || name.slice(0, 1).toUpperCase())}
-    </span>
-  );
-}
+type Counts = Record<string, { working?: number; needs?: number }>;
 
 function joinedAsPin(c: JoinedCommunity): HomePin {
   return {
@@ -98,183 +88,285 @@ function joinedAsPin(c: JoinedCommunity): HomePin {
   };
 }
 
+const iconProps = (icon: IconView) => (icon.kind === 'image' ? { src: icon.src } : icon.kind === 'emoji' ? { emoji: icon.emoji } : { emoji: icon.letter });
+
 const hubHref = (slug: string) => `/app/${encodeURIComponent(slug)}/workshop?ws=status`;
 const needsHref = (slug: string) => `/app/${encodeURIComponent(slug)}/workshop?ws=needs`;
+const appHref = (slug: string) => `/app/${encodeURIComponent(slug)}`;
+
+const native = (event: React.MouseEvent<HTMLElement>) => !!(window as any).NavLink?.isNativeClick?.(event);
 
 /** Open a community's hub, as the standard Home's tile does (the door rule). */
 function openHub(event: React.MouseEvent<HTMLElement>, slug: string) {
-  const win = window as any;
-  if (win.NavLink?.isNativeClick?.(event)) return;
+  if (native(event)) return;
   event.preventDefault();
+  const win = window as any;
   try { win.AppView?._landOnHub?.(slug); } catch { /* the page opens on what it remembers */ }
   win.App?.navigateToApp?.(slug, 'dev');
 }
 
 /** Open a community's Needs you place, where the decision is taken. */
 function openNeeds(event: React.MouseEvent<HTMLElement>, slug: string) {
-  const win = window as any;
-  if (win.NavLink?.isNativeClick?.(event)) return;
+  if (native(event)) return;
   event.preventDefault();
+  const win = window as any;
   try { win.AppView?._landOnTab?.(slug, 'needs'); } catch { /* as above */ }
   win.App?.navigateToApp?.(slug, 'dev');
 }
 
-/** `initialFeed` and `initialDirectory` seed the state a render test cannot reach through effects. */
-export function HomeFrame({ initialFeed = null, initialDirectory = null }: { initialFeed?: FeedRow[] | null; initialDirectory?: DirectoryApp[] | null }) {
+/** Launch an app. */
+function openApp(event: React.MouseEvent<HTMLElement>, slug: string) {
+  if (native(event)) return;
+  event.preventDefault();
+  (window as any).App?.navigateToApp?.(slug);
+}
+
+async function readJson(url: string): Promise<any> {
+  const res = await fetch(url, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/** `initial*` seed the state a render test cannot reach through effects. */
+export function HomeFrame({ initialFeed = null, initialQuestions = null, initialDirectory = null, initialCounts = null, initialLive = null, now = Date.now() }: {
+  initialFeed?: FeedRow[] | null;
+  initialQuestions?: BotQuestion[] | null;
+  initialDirectory?: DirectoryApp[] | null;
+  initialCounts?: Counts | null;
+  initialLive?: LivePr[] | null;
+  now?: number;
+}) {
   const t = useMessages('home');
   const pins = useStoreState(homePinsStore);
   const grid = useStoreState(gridStore);
   const [feed, setFeed] = useState<FeedRow[] | null>(initialFeed);
+  const [questions, setQuestions] = useState<BotQuestion[] | null>(initialQuestions);
   const [directory, setDirectory] = useState<DirectoryApp[] | null>(initialDirectory);
+  const [counts, setCounts] = useState<Counts | null>(initialCounts);
+  const [live, setLive] = useState<LivePr[] | null>(initialLive);
 
   useEffect(() => {
     let on = true;
+    const set = <T,>(setter: (v: T) => void, empty: T) => (v: T) => { if (on) setter(v ?? empty); };
     loadHomePins().catch(() => {});
-    fetch('/api/workshop/needs-feed', { credentials: 'same-origin' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => { if (on) setFeed(Array.isArray(body?.items) ? body.items as FeedRow[] : []); })
-      .catch(() => { if (on) setFeed([]); });
+    readJson('/api/workshop/needs-feed').then((b) => (Array.isArray(b?.items) ? b.items : [])).catch(() => []).then(set(setFeed, [] as FeedRow[]));
+    readJson('/api/workshop/bot-questions').then((b) => (Array.isArray(b?.questions) ? b.questions : [])).catch(() => []).then(set(setQuestions, [] as BotQuestion[]));
+    readJson('/api/workshop/counts').then((b) => b?.counts || {}).catch(() => ({})).then(set(setCounts, {} as Counts));
+    readJson('/api/leaderboard/prs?window=week&limit=8').then((b) => (Array.isArray(b?.items) ? b.items : [])).catch(() => []).then(set(setLive, [] as LivePr[]));
     readDirectory().then((apps) => { if (on) setDirectory((apps || []) as DirectoryApp[]); });
     return () => { on = false; };
   }, []);
 
-  // Today's Home hides the launcher when a settled grid holds nothing; so
-  // does this one (a zero says nothing), keeping the section the declared
-  // checks select on in the DOM.
-  const noApps = grid.ready && grid.view === 'grid' && !grid.editing && grid.items.length === 0;
+  // ── Needs you: what the bot asked first (an answer unblocks a build),
+  //    then the votes owed.
+  const asked = questions || [];
+  const votes = feed || [];
+  const waiting = asked.length + votes.length;
+  const where = new Set([...asked.map((q) => q.appSlug), ...votes.map((v) => v.app?.slug || '')].filter(Boolean));
+  const firstName = asked[0]?.appName || votes[0]?.app?.name || '';
+  const purpose = waiting === 0
+    ? t('home:frame.purposeQuiet')
+    : where.size > 1
+      ? t('home:frame.purposeNeeds', { count: waiting, communities: where.size })
+      : t('home:frame.purposeNeedsIn', { count: waiting, community: firstName });
 
-  // Your communities: the pinned ones first, then the joined ones not pinned.
+  const voteWord = (row: FeedRow): { word: string; kind: PillKind } => {
+    const on = Array.isArray(row.waitingOn) && row.waitingOn.length ? String(row.waitingOn[0]) : null;
+    if (on === 'checks') return { word: t('home:frame.waiting.checks'), kind: 'wait' };
+    if (on === 'conflict') return { word: t('home:frame.waiting.conflict'), kind: 'wait' };
+    if (row.approve) return { word: t('home:frame.approve'), kind: 'act' };
+    return { word: t('home:frame.vote'), kind: 'act' };
+  };
+
+  const needRows: React.ReactNode[] = [];
+  for (const q of asked) {
+    if (needRows.length >= NEEDS_SHOWN) break;
+    const face = votes.find((v) => v.app?.slug === q.appSlug)?.app;
+    needRows.push(
+      <Row
+        key={`q:${q.messageId}`}
+        href={`/app/${encodeURIComponent(q.appSlug)}/dev/issues/${q.issueNumber}`}
+        onClick={(event) => openNeeds(event, q.appSlug)}
+        lead={<Tile name={q.appName} src={face?.icon_url} emoji={face?.icon_emoji} />}
+        title={q.question}
+        line={t('home:frame.askedLine', { community: q.appName, number: q.issueNumber })}
+        right={<Pill kind="act">{t('home:frame.reply')}</Pill>}
+        go
+      />,
+    );
+  }
+  for (const row of votes) {
+    if (needRows.length >= NEEDS_SHOWN) break;
+    const slug = row.app?.slug || '';
+    const name = row.app?.name || slug;
+    const { word, kind } = voteWord(row);
+    needRows.push(
+      <Row
+        key={`${row.kind}:${row.id}`}
+        href={slug ? needsHref(slug) : '#needs'}
+        onClick={slug ? (event) => openNeeds(event, slug) : undefined}
+        lead={<Tile name={name} src={row.app?.icon_url} emoji={row.app?.icon_emoji} />}
+        title={row.title || name}
+        line={t('home:frame.voteLine', { community: name, count: Number(row.yes) || 0 })}
+        right={<Pill kind={kind}>{word}</Pill>}
+        go
+      />,
+    );
+  }
+
+  // ── Pinned apps: the launcher's own tiles.
+  const apps = grid.ready ? grid.items.filter((i) => i.kind === 'card').map((i) => i.app) : [];
+
+  // ── Pinned communities: the pinned ones first, then the joined ones not pinned.
   const pinned = new Set(pins.pins.map((p) => p.slug));
   const mine: HomePin[] = [...pins.pins, ...pins.joined.filter((c) => !pinned.has(c.slug)).map(joinedAsPin)];
   const inMine = new Set(mine.map((p) => p.slug));
   const toJoin = (directory || []).filter((a) => a && a.slug && !inMine.has(a.slug));
 
-  const decisions = feed ? feed.length : 0;
-  const communities = mine.length;
-
-  // The one word at the end of a Needs you row (spec rules 5 and 8): what
-  // still waits on something else is amber and says what; everything else
-  // waits for the viewer and is blue.
-  const statusOf = (row: FeedRow): { word: string; tone: Tone } => {
-    const waiting = Array.isArray(row.waitingOn) && row.waitingOn.length ? String(row.waitingOn[0]) : null;
-    if (waiting === 'checks') return { word: t('home:frame.waiting.checks'), tone: 'waiting' };
-    if (waiting === 'conflict') return { word: t('home:frame.waiting.conflict'), tone: 'waiting' };
-    if (row.approve) return { word: t('home:frame.approve'), tone: 'you' };
-    return { word: t('home:frame.vote'), tone: 'you' };
+  const communityLine = (slug: string): string => {
+    const owed = pins.owed[slug] || 0;
+    const working = Number(counts?.[slug]?.working) || 0;
+    return [
+      owed > 0 ? t('home:frame.toVote', { count: owed }) : '',
+      working > 0 ? t('home:frame.inProgress', { count: working }) : '',
+    ].filter(Boolean).join(' · ');
   };
 
-  const side = (decisions > 0 || communities > 0) ? (
-    <Group label={t('home:frame.thisWeek')}>
-      {decisions > 0 ? (
-        <div className="fr-fact px-4 py-3 text-[15px] leading-5 text-[color:var(--fr-ink)]">
-          {t('home:frame.decisions', { count: decisions })}
-        </div>
-      ) : null}
-      {communities > 0 ? (
-        <div className="fr-fact px-4 py-3 text-[15px] leading-5 text-[color:var(--fr-ink)]">
-          {t('home:frame.communities', { count: communities })}
-        </div>
-      ) : null}
-    </Group>
+  // ── Live this week.
+  const ago = (iso?: string): string => {
+    const ms = iso ? now - new Date(iso).getTime() : NaN;
+    if (!Number.isFinite(ms) || ms < 0) return '';
+    const minutes = Math.floor(ms / 60000);
+    if (minutes < 60) return t('home:frame.ago.minutes', { count: Math.max(1, minutes) });
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return t('home:frame.ago.hours', { count: hours });
+    return t('home:frame.ago.days', { count: Math.floor(hours / 24) });
+  };
+  const went = (live || []).slice(0, LIVE_SHOWN);
+  const faceOf = (slug: string) => mine.find((m) => m.slug === slug) || null;
+
+  const side = went.length > 0 ? (
+    <Sec label={t('home:frame.liveThisWeek')} id="home-frame-live">
+      <Card>
+        {went.map((pr) => {
+          const face = faceOf(pr.app_slug);
+          return (
+            <Row
+              key={pr.session_id}
+              href={hubHref(pr.app_slug)}
+              onClick={(event) => openHub(event, pr.app_slug)}
+              lead={<Tile name={pr.app_name} src={face?.iconUrl} emoji={face?.iconEmoji} color={face?.iconColor} />}
+              title={pr.pr_title}
+              line={`${pr.app_name} · ${pr.author_username}`}
+              right={<Meta>{ago(pr.session_created_at)}</Meta>}
+            />
+          );
+        })}
+      </Card>
+    </Sec>
   ) : null;
 
   return (
-    <div data-home-frame="">
-      {/* The nodes features/home/home.js still writes into (its communities
-          section, the featured list, the join card). Kept so its writes have
-          a target; hidden, and inside a hidden parent, so what it writes
-          never shows beside the frame. */}
-      <div hidden aria-hidden="true">
-        <section id="home-communities-section" hidden />
-        <div id="home-featured-list" hidden />
-        <section id="home-join-section" hidden />
-      </div>
-      <PageFrame
-        title={t('home:frame.title')}
-        purpose={t('home:frame.purpose')}
-        primary={(
-          <PrimaryButton onClick={() => { (window as any).App?.showCreateModal?.(); }}>
-            {t('home:frame.make')}
-          </PrimaryButton>
-        )}
-        side={side}
-      >
-        <div className="fr-stack flex flex-col gap-2">
-          {feed && feed.length > 0 ? (
-            <Group label={t('home:frame.needs')} id="home-frame-needs">
-              {feed.map((row) => {
-                const slug = row.app?.slug || '';
-                const name = row.app?.name || slug;
-                const { word, tone } = statusOf(row);
-                return (
-                  <StatusRow
-                    key={`${row.kind}:${row.id}`}
-                    as="a"
-                    href={slug ? needsHref(slug) : '#needs'}
-                    onClick={slug ? (event) => openNeeds(event, slug) : undefined}
-                    leading={<Lead name={name} iconUrl={row.app?.icon_url} iconEmoji={row.app?.icon_emoji} />}
-                    title={row.title || name}
-                    subtitle={row.number ? `${name} · #${row.number}` : name}
-                    status={word}
-                    tone={tone}
-                  />
-                );
-              })}
-            </Group>
-          ) : null}
+    <PageBody
+      data-home-frame=""
+      title={t('home:frame.title')}
+      purpose={purpose}
+      acts={<Btn icon="plus" onClick={() => { (window as any).App?.showCreateModal?.(); }}>{t('home:frame.make')}</Btn>}
+      side={side}
+    >
+      {needRows.length > 0 ? (
+        <Sec
+          label={t('home:frame.needs')}
+          id="home-frame-needs"
+          action={waiting > needRows.length
+            ? <GroupLink href="#needs">{t('home:frame.all', { count: waiting })}</GroupLink>
+            : null}
+        >
+          <Card>{needRows}</Card>
+        </Sec>
+      ) : null}
 
-          {noApps ? (
-            <section id="home-apps-section" hidden><AppGrid /></section>
-          ) : (
-            <Group label={t('home:frame.pinnedApps')} id="home-apps-section">
-              <div className="px-2 py-3">
-                <AppGrid />
-              </div>
-            </Group>
-          )}
+      {apps.length > 0 ? (
+        <Sec
+          label={t('home:frame.pinnedApps')}
+          id="home-frame-apps"
+          action={<GroupLink onClick={() => { (window as any).Home?.setEditing?.(true); }}>{t('home:frame.edit')}</GroupLink>}
+        >
+          <Tiles>
+            {apps.slice(0, APPS_SHOWN).map((app) => (
+              <TileItem
+                key={app.slug}
+                href={appHref(app.slug)}
+                onClick={(event) => openApp(event, app.slug)}
+                tile={<Tile size={52} name={app.name} {...iconProps(app.icon)} />}
+                name={app.name}
+              />
+            ))}
+            {apps.length > APPS_SHOWN ? (
+              <TileItem
+                onClick={() => { (window as any).Home?.setEditing?.(true); }}
+                tile={<Lead icon="grid" size={52} />}
+                name={t('home:frame.all', { count: apps.length })}
+              />
+            ) : null}
+          </Tiles>
+        </Sec>
+      ) : null}
 
-          {mine.length > 0 ? (
-            <Group label={t('home:frame.yourCommunities')} id="home-frame-communities">
-              {mine.map((c) => {
-                const owed = pins.owed[c.slug] || 0;
-                return (
-                  <StatusRow
-                    key={c.slug}
-                    as="a"
-                    href={hubHref(c.slug)}
-                    onClick={(event) => openHub(event, c.slug)}
-                    leading={<Lead name={c.name} iconUrl={c.iconUrl} iconEmoji={c.iconEmoji} iconColor={c.iconColor} />}
-                    title={c.name}
-                    status={owed > 0 ? t('home:frame.toVote', { count: owed }) : null}
-                    tone="you"
-                  />
-                );
-              })}
-            </Group>
-          ) : null}
-
-          {toJoin.length > 0 ? (
-            <Group label={t('home:frame.toJoin')} id="home-frame-to-join">
-              {/* The row's word is Join and its door is the hub, where Join
-                  lives with what the community is about: an act, not a
-                  wait, so it is not blue, and not a button inside a link. */}
-              {toJoin.map((a) => (
-                <StatusRow
-                  key={a.slug}
-                  as="a"
-                  href={hubHref(a.slug)}
-                  onClick={(event) => openHub(event, a.slug)}
-                  leading={<Lead name={a.name || a.slug} iconUrl={a.icon_url} iconEmoji={a.icon_emoji} iconColor={a.icon_color} />}
-                  title={a.name || a.slug}
-                  subtitle={a.member_count ? t('home:join.members', { count: a.member_count }) : undefined}
-                  status={t('home:frame.join')}
-                  tone="none"
+      {mine.length > 0 ? (
+        <Sec
+          label={t('home:frame.pinnedCommunities')}
+          id="home-frame-communities"
+          action={mine.length > COMMUNITIES_SHOWN
+            ? <GroupLink onClick={() => { (window as any).Home?.showCommunities?.({ all: true }); }}>{t('home:frame.all', { count: mine.length })}</GroupLink>
+            : null}
+        >
+          <Card>
+            {mine.slice(0, COMMUNITIES_SHOWN).map((c) => {
+              const owed = pins.owed[c.slug] || 0;
+              return (
+                <Row
+                  key={c.slug}
+                  href={hubHref(c.slug)}
+                  onClick={(event) => openHub(event, c.slug)}
+                  lead={<Tile name={c.name} src={c.iconUrl} emoji={c.iconEmoji} color={c.iconColor} />}
+                  title={c.name}
+                  line={communityLine(c.slug) || undefined}
+                  right={owed > 0 ? <Pill kind="act">{t('home:frame.toVote', { count: owed })}</Pill> : null}
+                  go
                 />
-              ))}
-            </Group>
-          ) : null}
-        </div>
-      </PageFrame>
-    </div>
+              );
+            })}
+          </Card>
+        </Sec>
+      ) : null}
+
+      {toJoin.length > 0 ? (
+        <Sec
+          label={t('home:frame.toJoin')}
+          id="home-frame-to-join"
+          action={toJoin.length > JOIN_SHOWN
+            ? <GroupLink onClick={() => { (window as any).Home?.showCommunitiesToJoin?.(); }}>{t('home:frame.browseAll')}</GroupLink>
+            : null}
+        >
+          <Card>
+            {/* The row is the door to the hub, where Join lives with what the
+                community is about; its word is Join, not a button inside the
+                link. */}
+            {toJoin.slice(0, JOIN_SHOWN).map((a) => (
+              <Row
+                key={a.slug}
+                href={hubHref(a.slug)}
+                onClick={(event) => openHub(event, a.slug)}
+                lead={<Tile name={a.name || a.slug} src={a.icon_url} emoji={a.icon_emoji} color={a.icon_color} />}
+                title={a.name || a.slug}
+                line={a.member_count ? t('home:join.members', { count: a.member_count }) : undefined}
+                right={<span className="fr-btn fr-sm">{t('home:frame.join')}</span>}
+              />
+            ))}
+          </Card>
+        </Sec>
+      ) : null}
+    </PageBody>
   );
 }
