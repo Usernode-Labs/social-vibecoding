@@ -423,8 +423,9 @@ const ADDED_IDS = {
   'platform-side-strip-back': 'iPhone Duo: #back-btn\'s copy in the side strip, rendered from the same useBackSlot hook and handing its press to #back-btn. Ships hidden with no href, as #back-btn does.',
   // ── New look (an experiment) ───────────────────────────────────────
   'new-look-enabled': 'New look: the switch in Settings, Experimental (off by default, kept on the device by the head\'s window.Skin) that sets data-skin="brand" on <html>, which app.css draws the new look from in light mode. settings.js paints and saves it through window.Skin.',
-  'glass-look-enabled': 'Glass look: the second switch under New look in Settings, Experimental (off by default, kept on the device by the head\'s window.Skin) that sets data-skin="glass" on <html>, which app.css draws the glass look from in light and dark. The two looks are exclusive; settings.js paints and saves both through window.Skin.',
-  'settings-glass-look-section': 'Glass look: the switch\'s own wrapper, shipped hidden. settings.js _renderAdminSection lifts the class only for a real admin (App._realIsAdmin): the look is an admin\'s preview while it is drawn screen by screen.',
+  // ── The frame's looks (an admin's preview) ─────────────────────────
+  'settings-look-section': 'Look: the menu\'s own wrapper under New look in Settings, Experimental, shipped hidden. settings.js _renderAdminSection lifts the class only for a real admin (App._realIsAdmin): the looks are an admin\'s preview while they are drawn screen by screen.',
+  'settings-look': 'Look: the menu of the one frame\'s nine looks (Standard, then glass, brandkit, workbench, paper, pastel, mosaic, sunrise, today, playground). Kept on the device by the head\'s window.Skin, which sets the chosen id as data-skin on <html> for app.css to draw from, light and dark. Exclusive with New look; settings.js paints and saves both through window.Skin.',
   // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────
   // ── #5097: Settings > Privacy, usage data ──────────────
   'settings-usage-analytics-section': '#5097: the usage data block, the last of Settings > Privacy under #5104\'s contact settings (features/settings/sections/usage-analytics.tsx): what Homeroom keeps, and the address to write to be left out of screen usage data.',

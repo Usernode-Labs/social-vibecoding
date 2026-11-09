@@ -1343,13 +1343,53 @@
     "text": "Try Homeroom's new look: white cards on a light grey background, the Geist typeface with a serif for titles, and colours that each have a job: yellow for what needs you, black for where you are. Light mode only. On for this browser.",
     "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name. Yellow and black name the colours of the highlights on screen."
   },
-  "experimental.glassLook.label": {
-    "text": "Glass look",
-    "description": "Label of a switch in Settings, Experimental. When on, Homeroom is drawn as frosted glass panels floating on its wallpaper, with the Albert Sans typeface."
+  "experimental.look.label": {
+    "text": "Look",
+    "description": "Label of a menu in Settings, Experimental, which only admins see. It chooses the visual style Homeroom is drawn in on this browser."
   },
-  "experimental.glassLook.description": {
-    "text": "Try the glass look: translucent panels on Homeroom's wallpaper, the Albert Sans typeface, and one blue that only marks what waits for you. Light and dark. On for this browser. Only Home is drawn in it so far; admins see this switch while the rest is drawn.",
-    "description": "Explanation under the Glass look switch in Settings, Experimental, which only admins see while the look is being drawn. Albert Sans is the name of a typeface; keep it as is. Homeroom is the product name."
+  "experimental.look.standard": {
+    "text": "Standard",
+    "description": "First option of the Look menu in Settings, Experimental: Homeroom's usual visual style, with no experimental look applied."
+  },
+  "experimental.look.glass": {
+    "text": "Glass",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (frosted glass panels floating on the wallpaper). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.brandkit": {
+    "text": "Brand kit",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (the brand's cream page, a serif for titles and one yellow button). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.workbench": {
+    "text": "Workbench",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (dense one-line rows for people who work in it all day). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.paper": {
+    "text": "Paper",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (one white sheet on the wallpaper with quiet grey panels). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.pastel": {
+    "text": "Pastel",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (groups tinted lavender, pink and peach in turn). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.mosaic": {
+    "text": "Mosaic",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (lists drawn as tiles, two across). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.sunrise": {
+    "text": "Sunrise",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (white cards and a peach-to-lavender main button). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.today": {
+    "text": "Today",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (large headings and big cards, like an app store's front page). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.playground": {
+    "text": "Playground",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (chunky rounded blocks and heavy friendly type). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.description": {
+    "text": "Try one of nine looks for Homeroom, in light and dark. Each has its own typeface, colours and shapes. Only Home is drawn in them so far; admins see this menu while the rest is drawn. Kept for this browser.",
+    "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
   },
   "experimental.localAgents.title": {
     "text": "Local coding agent",

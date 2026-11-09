@@ -129,51 +129,95 @@ test('the head and the hook list the same looks, the frame\'s nine after brand',
 
 // ── The settings switch ──────────────────────────────────────────────────
 
-test('Settings › Experimental carries the Glass look switch under New look', () => {
-  const src = experimentalSrc();
-  assert.match(src, /<SwitchRow id="glass-look-enabled">/);
-  assert.ok(src.indexOf('id="new-look-enabled"') < src.indexOf('id="glass-look-enabled"'));
-  assert.ok(src.indexOf('id="glass-look-enabled"') < src.indexOf('id="settings-local-agents-section"'));
-  assert.match(src, /settings:experimental\.glassLook\.label/);
-  assert.match(src, /settings:experimental\.glassLook\.description/);
+// The picker is an admin's preview while the looks are drawn screen by
+// screen: one select under New look, shipped hidden, which settings.js
+// shows only to a REAL admin (the same reading of App._realIsAdmin that
+// shows "view as non-admin").
+
+const LOOK_NAMES = {
+  glass: 'Glass', brandkit: 'Brand kit', workbench: 'Workbench', paper: 'Paper', pastel: 'Pastel',
+  mosaic: 'Mosaic', sunrise: 'Sunrise', today: 'Today', playground: 'Playground',
+};
+
+test('Settings › Experimental offers the nine looks in one menu, shipped hidden under New look', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/settings/sections/experimental.tsx', 'ExperimentalSection', {});
+  const section = html.match(/<div id="settings-look-section" class="([^"]*)">([\s\S]*?)<\/select>/);
+  assert.ok(section, 'the menu has its own gated wrapper');
+  assert.match(section[1], /^hidden /, 'hidden until the admin gate lifts it');
+  assert.match(section[2], /<label[^>]*for="settings-look"[^>]*>Look<\/label>/);
+  const options = [...section[2].matchAll(/<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(options, [['', 'Standard'], ...FRAME_LOOKS.map((id) => [id, LOOK_NAMES[id]])],
+    'Standard, then the nine in the tour\'s order, each by its name');
+  assert.ok(html.indexOf('id="new-look-enabled"') < html.indexOf('id="settings-look-section"'));
+  assert.ok(html.indexOf('id="settings-look"') < html.indexOf('id="settings-local-agents-section"'));
+  assert.doesNotMatch(html, /glass-look-enabled/, 'the one-look switch is gone');
 });
 
-// An admin's preview while the look is drawn screen by screen: the row
-// ships hidden and settings.js lifts the class only for a REAL admin, from
-// the same reading of App._realIsAdmin that shows "view as non-admin".
-test('the Glass look row ships hidden, for the admin gate to lift', () => {
-  const src = experimentalSrc();
-  const row = src.match(/<div id="settings-glass-look-section"[^>]*>/);
-  assert.ok(row, 'the glass switch has its own gated wrapper');
-  assert.match(row[0], /className="hidden /);
-  assert.ok(src.indexOf('settings-glass-look-section') < src.indexOf('id="glass-look-enabled"'), 'the wrapper holds the switch');
-});
-
-test('settings.js shows the Glass look row only to a real admin', () => {
+test('settings.js shows the Look menu only to a real admin', () => {
   const src = settingsJs();
   const start = src.indexOf('_renderAdminSection() {');
   assert.ok(start > 0);
   const body = src.slice(start, src.indexOf('\n    },', start));
-  assert.match(body, /getElementById\('settings-glass-look-section'\)/);
+  assert.match(body, /getElementById\('settings-look-section'\)/);
   assert.match(body, /App\._realIsAdmin/, 'the un-masked value, as the admin preview reads it');
   assert.match(body, /classList\.toggle\('hidden', !realAdmin\)/, 'hidden unless the viewer is really an admin');
 });
 
-test('settings.js saves and paints the glass switch through window.Skin', () => {
+// The wiring, run: settings.js's own block for the two controls, against
+// stub elements and a stub window.Skin.
+function runLooksWiring({ skin = 'standard' } = {}) {
   const src = settingsJs();
-  assert.match(src, /getElementById\('glass-look-enabled'\)/);
-  assert.match(src, /window\.Skin\?\.set\?\.\(e\.target\.checked \? 'glass' : 'standard'\)/, 'the change is the save');
-  assert.match(src, /window\.Skin\?\.get\?\.\(\) === 'glass'/, 'the pane paints the stored choice');
+  const start = src.indexOf("const lookToggle = document.getElementById('new-look-enabled');");
+  const end = src.indexOf('// Platform-level language preference', start);
+  assert.ok(start > 0 && end > start, 'the looks wiring is one block before the language preference');
+  const el = (extra) => ({ listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }, ...extra });
+  const toggle = el({ checked: false });
+  const select = el({ value: '', options: [{ value: '' }, ...FRAME_LOOKS.map((value) => ({ value }))] });
+  const state = { skin, onChange: null };
+  const window = { Skin: { get: () => state.skin, set: (v) => { state.skin = v; }, onChange: (fn) => { state.onChange = fn; } } };
+  const document = { getElementById: (id) => ({ 'new-look-enabled': toggle, 'settings-look': select })[id] || null };
+  vm.runInNewContext(`${src.slice(start, end)}\npaintLooks();`, { window, document });
+  return { toggle, select, state };
+}
+
+test('the Look menu sets the look through window.Skin, and Standard clears it', () => {
+  const { select, state } = runLooksWiring();
+  select.listeners.change({ target: { value: 'mosaic' } });
+  assert.equal(state.skin, 'mosaic');
+  assert.equal(select.value, 'mosaic');
+  select.listeners.change({ target: { value: '' } });
+  assert.equal(state.skin, 'standard');
 });
 
-test('the glass switch copy is English source with descriptions', () => {
+test('New look and the Look menu are exclusive, and both paint what is stored', () => {
+  const on = runLooksWiring({ skin: 'pastel' });
+  assert.equal(on.select.value, 'pastel', 'the stored look is selected');
+  assert.equal(on.toggle.checked, false);
+  on.toggle.listeners.change({ target: { checked: true } });
+  assert.equal(on.state.skin, 'brand');
+  assert.equal(on.select.value, '', 'New look is not one of the menu\'s looks: the menu reads Standard');
+  assert.equal(on.toggle.checked, true);
+  on.select.listeners.change({ target: { value: 'today' } });
+  assert.equal(on.toggle.checked, false, 'choosing a look turns New look off');
+  // Another tab changes the look: this pane repaints.
+  on.state.skin = 'glass';
+  on.state.onChange();
+  assert.equal(on.select.value, 'glass');
+});
+
+test('the Look menu\'s words are English source with descriptions', () => {
   const en = JSON.parse(read('frontend', 'locales', 'en', 'settings.json'));
-  for (const key of ['experimental.glassLook.label', 'experimental.glassLook.description']) {
+  for (const key of ['experimental.look.label', 'experimental.look.description', 'experimental.look.standard',
+    ...FRAME_LOOKS.map((id) => `experimental.look.${id}`)]) {
     assert.ok(en[key], `${key} exists`);
     assert.equal(typeof en[key].text, 'string');
     assert.ok(en[key].description.length > 20, `${key} says where it appears`);
   }
-  assert.match(en['experimental.glassLook.description'].text, /Albert Sans/);
+  for (const id of FRAME_LOOKS) assert.equal(en[`experimental.look.${id}`].text, LOOK_NAMES[id]);
+  assert.equal(en['experimental.glassLook.label'], undefined, 'the one-look switch\'s words are gone');
+  const src = experimentalSrc();
+  for (const id of FRAME_LOOKS) assert.ok(src.includes(`t('settings:experimental.look.${id}')`), `${id}'s name is read by a whole literal id`);
 });
 
 // The stylesheet's side (each look's block, tokens, typeface and rules) is

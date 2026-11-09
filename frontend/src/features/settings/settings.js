@@ -786,16 +786,20 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // New look (an experiment), kept on the device by the head's
+      // New look (an experiment) and the Look menu (the frame's nine looks,
+      // an admin's preview), both kept on the device by the head's
       // window.Skin: the change is the save, and the look applies at once.
-      // The two looks are exclusive (one data-skin on <html>), so turning
-      // one on turns the other's switch off through the same listener.
+      // They are exclusive (one data-skin on <html>), so each change
+      // repaints both controls. The menu's options are the frame's looks;
+      // anything else stored (New look, nothing) reads as Standard there.
       const lookToggle = document.getElementById('new-look-enabled');
-      const glassToggle = document.getElementById('glass-look-enabled');
+      const lookSelect = document.getElementById('settings-look');
       const paintLooks = () => {
         const skin = window.Skin?.get?.();
         if (lookToggle) lookToggle.checked = skin === 'brand';
-        if (glassToggle) glassToggle.checked = skin === 'glass';
+        if (lookSelect) {
+          lookSelect.value = Array.from(lookSelect.options).some((o) => o.value === skin) ? skin : '';
+        }
       };
       if (lookToggle) {
         lookToggle.addEventListener('change', (e) => {
@@ -803,18 +807,15 @@
           paintLooks();
         });
       }
-      if (glassToggle) {
-        glassToggle.addEventListener('change', (e) => {
-          window.Skin?.set?.(e.target.checked ? 'glass' : 'standard');
+      if (lookSelect) {
+        lookSelect.addEventListener('change', (e) => {
+          window.Skin?.set?.(e.target.value || 'standard');
           paintLooks();
         });
       }
-      if (lookToggle || glassToggle) {
-        // Another tab flipping it re-paints the switches here too.
-        window.Skin?.onChange?.(() => {
-          lookToggle && (lookToggle.checked = window.Skin?.get?.() === 'brand');
-          glassToggle && (glassToggle.checked = window.Skin?.get?.() === 'glass');
-        });
+      if (lookToggle || lookSelect) {
+        // Another tab changing it repaints the controls here too.
+        window.Skin?.onChange?.(paintLooks);
       }
 
       // Platform-level language preference (issue #757). Server-side
@@ -1932,8 +1933,11 @@
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
       const look = document.getElementById('new-look-enabled');
       if (look) look.checked = window.Skin?.get?.() === 'brand';
-      const glass = document.getElementById('glass-look-enabled');
-      if (glass) glass.checked = window.Skin?.get?.() === 'glass';
+      const lookMenu = document.getElementById('settings-look');
+      if (lookMenu) {
+        const stored = window.Skin?.get?.();
+        lookMenu.value = Array.from(lookMenu.options).some((o) => o.value === stored) ? stored : '';
+      }
       this._renderLocalAgentsSection();
     },
 
@@ -3547,9 +3551,9 @@
     // server truth. `??` (not `||`) so an explicit `false` from a
     // current-cache app.js wins over the fallback.
     //
-    // The Glass look row in Experimental is gated the same way: an admin's
-    // preview of a look drawn screen by screen, hidden from everyone else
-    // until it is whole (the `?skin=glass` pin in the address stays open).
+    // The Look menu in Experimental is gated the same way: an admin's
+    // preview of looks drawn screen by screen, hidden from everyone else
+    // until they are whole (a `?skin=<look>` pin in the address stays open).
     _renderAdminSection() {
       const section = document.getElementById('settings-admin-section');
       const toggle = document.getElementById('view-as-non-admin');
@@ -3565,8 +3569,8 @@
       // app.js wins over the fallback.
       const realAdmin = (typeof App !== 'undefined' ? App._realIsAdmin : undefined)
         ?? (typeof App !== 'undefined' && !!App.user?.isAdmin);
-      const glassRow = document.getElementById('settings-glass-look-section');
-      if (glassRow) glassRow.classList.toggle('hidden', !realAdmin);
+      const lookSection = document.getElementById('settings-look-section');
+      if (lookSection) lookSection.classList.toggle('hidden', !realAdmin);
       if (!section || !toggle) return;
       if (!realAdmin) {
         section.classList.add('hidden');

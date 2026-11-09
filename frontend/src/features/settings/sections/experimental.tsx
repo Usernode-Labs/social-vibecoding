@@ -1,4 +1,6 @@
 import { SectionHeading, StatusLine } from '@/components/ui/field';
+import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { SwitchRow } from '@/components/ui/switch';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
@@ -47,12 +49,18 @@ import { LocalAgentsList } from '../local-agents-list';
  * The look is "Baseplate" (request #6278): white cards on a light warm grey
  * plate, sun yellow for what needs you, ink for where you are.
  *
- * Glass look (default OFF, the same device store, data-skin="glass") is an
- * admin's preview while the look is drawn screen by screen: its row
- * #settings-glass-look-section ships hidden and settings.js
- * _renderAdminSection lifts the class only for a REAL admin
- * (App._realIsAdmin), as it does for the admin-preview section. The
- * `?skin=glass` pin in the address still works for anyone who knows it.
+ * Look (default Standard, the same device store) offers the nine looks of
+ * the one frame (lib/skin.ts FRAME_SKINS, the directions the 2026-11-06
+ * screen tour kept): each sets its id as data-skin and app.css draws it,
+ * light and dark. It is an admin's preview while the looks are drawn screen
+ * by screen (Home so far): #settings-look-section ships hidden and
+ * settings.js _renderAdminSection lifts the class only for a REAL admin
+ * (App._realIsAdmin), as it does for the admin-preview section. A
+ * `?skin=<look>` pin in the address still works for anyone who knows it.
+ * New look and a look of the menu are exclusive (one data-skin on <html>);
+ * settings.js paints and saves both through window.Skin. The option values
+ * are FRAME_SKINS, in its order (tests/glass-skin.test.js holds the two
+ * together); each name is read by a whole literal id.
  *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
@@ -98,12 +106,22 @@ export function ExperimentalSection() {
             {t('settings:experimental.newLook.description')}
           </p>
         </div>
-        <div id="settings-glass-look-section" className="hidden mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-          <SwitchRow id="glass-look-enabled">
-            {t('settings:experimental.glassLook.label')}
-          </SwitchRow>
+        <div id="settings-look-section" className="hidden mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+          <Label className="mb-1" htmlFor="settings-look">{t('settings:experimental.look.label')}</Label>
+          <Select id="settings-look" variant="plain">
+            <option value="">{t('settings:experimental.look.standard')}</option>
+            <option value="glass">{t('settings:experimental.look.glass')}</option>
+            <option value="brandkit">{t('settings:experimental.look.brandkit')}</option>
+            <option value="workbench">{t('settings:experimental.look.workbench')}</option>
+            <option value="paper">{t('settings:experimental.look.paper')}</option>
+            <option value="pastel">{t('settings:experimental.look.pastel')}</option>
+            <option value="mosaic">{t('settings:experimental.look.mosaic')}</option>
+            <option value="sunrise">{t('settings:experimental.look.sunrise')}</option>
+            <option value="today">{t('settings:experimental.look.today')}</option>
+            <option value="playground">{t('settings:experimental.look.playground')}</option>
+          </Select>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            {t('settings:experimental.glassLook.description')}
+            {t('settings:experimental.look.description')}
           </p>
         </div>
       </div>
