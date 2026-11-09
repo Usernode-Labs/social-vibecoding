@@ -596,6 +596,26 @@ test('GitHub comments become stream rows; Homeroom bot\'s spec rides as githubSp
   assert.equal(av._requestThreadRows(1), null, 'nothing until the comments are in hand');
 });
 
+// #6497: the request's first page brings its GitHub comments with it
+// (`request_comments`), so the page's one render draws the whole discussion.
+test('#6497: a request\'s first-page comments fill the cache the stream draws from', () => {
+  const av = appView();
+  av._ghIssues = [issue({ number: 6497, htmlUrl: 'https://github.com/o/r/issues/6497' })];
+  assert.equal(av._requestThreadRows(6497), null, 'nothing until the first page lands');
+  av._takeIssueComments('example', 6497, {
+    truncated: false,
+    comments: [{ id: 21, author: 'maztrilover', body: 'in dribs', createdAt: '2026-11-09T10:00:00Z' }],
+  });
+  const out = av._requestThreadRows(6497);
+  assert.equal(out.rows.length, 1, 'the comments are in hand for the same render');
+  assert.equal(out.rows[0].username, 'maztrilover');
+  assert.equal(out.rows[0].key, '21');
+  assert.equal(out.truncated, false);
+  // Keyed by app, never by number alone (#4178): another app's copy is its own.
+  av._takeIssueComments('other', 6497, { comments: [{ id: 22, author: 'x', body: 'y' }] });
+  assert.equal(av._requestThreadRows(6497).rows[0].key, '21');
+});
+
 // #6020 / #6021: on a native request Homeroom writes its comments as
 // `homeroom`, and a plan posted on the request used to be copied into one
 // whole, under a <details> fold. The page drew that as a person's comment:
@@ -739,6 +759,56 @@ test('GitHub comments are slotted into the thread by time, and the thread\'s own
   const gh = [{ key: 'b', at: '2026-10-08T12:00:00Z' }, { key: 'a', at: '2026-10-08T10:00:00Z' }];
   const merged = JSON.parse(JSON.stringify(GroupChat._mergeByTime(hr, gh).map((r) => r.id || r.key)));
   assert.deepEqual(merged, [1, 'a', 2, 3, 4, 'b']);
+});
+
+// #6497: a request's first page is read whole (the server's 500 ceiling) and
+// carries its comments, which are taken before the one render — no separate
+// comments fetch after paint.
+test('#6497: a request\'s first page takes its comments in the same read', async () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'group-chat.js'), 'utf8');
+  const taken = [];
+  const urls = [];
+  const payload = {
+    truncated: false,
+    comments: [{ id: 7, author: 'maztrilover', body: 'in dribs', createdAt: '2026-11-09T10:00:00Z' }],
+  };
+  const sandbox = {
+    location: { search: '', protocol: 'http:', host: 'localhost' }, URLSearchParams,
+    document: {
+      getElementById: () => null, querySelector: () => null, querySelectorAll: () => [],
+      addEventListener() {}, createElement: () => ({ style: {} }), visibilityState: 'visible',
+    },
+    window: { matchMedia: () => ({ matches: false }) }, navigator: {},
+    localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
+    App: { user: { id: 1, username: 'alice' } },
+    AppView: { _takeIssueComments: (slug, ref, data) => taken.push([slug, ref, data]) },
+    fetch: async (url) => {
+      urls.push(url);
+      return {
+        ok: true, headers: { get: () => null }, text: async () => '',
+        json: async () => ({
+          messages: [{ id: 1, content: 'hi', msg_type: 'message', at: '2026-11-09T10:00:00Z' }],
+          has_more_before: false,
+          has_more_after: false,
+          request_comments: payload,
+        }),
+      };
+    },
+    console, setTimeout, clearTimeout, setInterval, clearInterval, Date, Math, JSON,
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`${src}\nglobalThis.__M = { GroupChat };`, sandbox);
+  const GroupChat = sandbox.__M.GroupChat;
+  GroupChat.appSlug = 'homeroom';
+  await GroupChat.loadThreadHistory('issue', 6497);
+  const page = urls.find((u) => u.includes('/messages?'));
+  assert.equal(page, '/api/apps/homeroom/messages?thread_type=issue&thread_ref=6497&limit=500',
+    'one read asks for the whole discussion');
+  assert.deepEqual(taken, [['homeroom', 6497, payload]],
+    'the comments are in hand before the render, from that same answer');
+  assert.equal(urls.filter((u) => u.includes('/github-issues/')).length, 0,
+    'no separate comments request');
 });
 
 // ── F18 (#5683): the bar names the request, and the plan card wraps ────
