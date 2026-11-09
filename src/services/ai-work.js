@@ -168,7 +168,10 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
             OR cs.merge_conflict_state = 'failed'
             -- #6531: a conflict only its author (or the bot) can now move,
             -- after the conflict lane's free resolution was spent.
-            OR cs.integration_block_reasons ?| array['unresolvable','fork_head','checks_failing','checks_error']) AS needs_fix,
+            OR cs.integration_block_reasons ?| array['unresolvable','fork_head','checks_failing','checks_error']
+            -- #6546: GitHub's required checks failed again after Homeroom ran
+            -- them on today's main.
+            OR cs.integration_block_reasons ? 'github_checks_failing') AS needs_fix,
            -- #6282: 'running' while a turn updates it, 'queued' while an
            -- ask waits its turn, and what was asked, for the row's words.
            ${updateComingSql('cs')} AS update_coming,
