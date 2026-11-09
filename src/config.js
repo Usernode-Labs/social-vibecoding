@@ -824,7 +824,8 @@ function load() {
     // set to 0 to switch sleep off.
     previewSleepAfterMs: parseInt(process.env.PREVIEW_SLEEP_AFTER_MS || String(60 * 60 * 1000), 10),
     // Opt-in, reviewed request-driven production apps only. Zero wakes the
-    // pilot and prevents new sleeps; all background/scheduled apps stay on.
+    // assignments and prevents new sleeps. Review durable state and any
+    // commitments; optional polling or recoverable work may pause while idle.
     appSleepAppIds: process.env.APP_SLEEP_APP_IDS || '',
     appSleepReviewedRevisions: process.env.APP_SLEEP_REVIEWED_REVISIONS || '{}',
     appSleepAfterMs: Number(process.env.APP_SLEEP_AFTER_MS || '3600000'),

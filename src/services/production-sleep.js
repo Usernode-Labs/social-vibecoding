@@ -51,13 +51,14 @@ async function requestWake(appId, asleepAt, { deps = {}, now = Date.now() } = {}
 // Called only after the edge has authorized the actual request. The lock is
 // shared with the sleep claim: an access either prevents the claim or sees
 // the completed sleep and waits for a wake. Health probes never wake an app.
-async function access(pool, appId, uri, { config = null, deps = {} } = {}) {
+async function access(pool, appId, uri, { config = null, deps = {}, request = {} } = {}) {
   const p = policy(config);
   if (!p.supported || !p.ids.includes(Number(appId))) return { eligible: false, ready: true };
+  const health = isHealth(uri, request);
   const locks = deps.locks || require('../db/session-locks');
   let row;
   await locks.withSessionLock(pool, [APP_SLEEP_LOCK, Number(appId)], async () => {
-    if (isHealth(uri)) {
+    if (health) {
       ({ rows: [row] } = await pool.query('SELECT asleep_at FROM app_runtime_sleep WHERE app_id = $1', [appId]));
     } else {
       ({ rows: [row] } = await pool.query(
@@ -68,8 +69,8 @@ async function access(pool, appId, uri, { config = null, deps = {} } = {}) {
          RETURNING asleep_at`, [appId]));
     }
   });
-  if (row?.asleep_at && !isHealth(uri)) await requestWake(Number(appId), row.asleep_at, { deps });
-  return { eligible: true, ready: !row?.asleep_at, waking: !isHealth(uri) };
+  if (row?.asleep_at && !health) await requestWake(Number(appId), row.asleep_at, { deps });
+  return { eligible: true, ready: !row?.asleep_at, waking: !health };
 }
 
 function idleAt(snapshots, runtimeName, now, afterMs) {

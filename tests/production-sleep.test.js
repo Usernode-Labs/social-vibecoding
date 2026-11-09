@@ -46,6 +46,25 @@ test('activity retains long requests and sockets until they end, without countin
   assert.equal(overflow.snapshot().overflow, true, 'lost observations prevent sleeping');
 });
 
+test('only exact read-only homepage health probes are ignored; writes and upgrades stay active', () => {
+  const userAgent = 'usernode-dapp-homepage-healthcheck/1';
+  for (const request of [
+    { method: 'HEAD', userAgent }, { method: 'GET', userAgent },
+    { method: 'POST', userAgent }, { method: 'GET', userAgent: userAgent + '-other' },
+    { method: 'HEAD' }, { method: 'GET', userAgent, upgrade: true },
+  ]) {
+    const activity = createActivity();
+    const end = activity.begin('app', '/', request);
+    const ignored = !request.upgrade && request.userAgent === userAgent && request.method !== 'POST';
+    assert.equal(activity.snapshot().upstreams.app?.active || 0, ignored ? 0 : 1, JSON.stringify(request));
+    end();
+  }
+  const activity = createActivity();
+  const end = activity.begin('app', '/health', { upgrade: true });
+  assert.equal(activity.snapshot().upstreams.app.active, 1);
+  end();
+});
+
 test('production sleep uses real SQL claims and session locks', { timeout: 120000 }, async (t) => {
   const dsn = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
   const admin = new Pool({ connectionString: dsn, connectionTimeoutMillis: 2000 });
@@ -117,6 +136,41 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
     fx.active = 0; fx.lastRequestAt = Date.now();
     await sleep.sweep(fx.config, pool, { deps: fx.deps });
     assert.equal(fx.scales.length, 0);
+  });
+
+  await t.test('seven-day inactivity requires both durable access and gateway activity to age', async () => {
+    const fx = await fixture();
+    const week = 7 * 24 * 60 * 60 * 1000;
+    fx.config.appSleepAfterMs = week;
+    fx.lastRequestAt = Date.now() - week - 60000;
+    const aged = await pool.query(`UPDATE app_runtime_sleep SET last_request_at = now() - interval '6 days 23 hours'
+      WHERE app_id = $1`, [fx.app.id]);
+    assert.equal(aged.rowCount, 1);
+    assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
+    await pool.query(`UPDATE app_runtime_sleep SET last_request_at = now() - interval '8 days'
+      WHERE app_id = $1`, [fx.app.id]);
+    const before = (await fx.row()).last_request_at.getTime();
+    for (const method of ['HEAD', 'GET']) {
+      await sleep.access(pool, fx.app.id, '/', { config: fx.config, deps: fx.deps,
+        request: { method, userAgent: 'usernode-dapp-homepage-healthcheck/1' } });
+    }
+    assert.equal((await fx.row()).last_request_at.getTime(), before, 'directory probes do not reset durable idle time');
+    fx.lastRequestAt = Date.now() - week + 60000;
+    assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
+    fx.lastRequestAt = Date.now() - week - 60000;
+    assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 1);
+    for (const method of ['HEAD', 'GET']) {
+      const probe = await sleep.access(pool, fx.app.id, '/', { config: fx.config, deps: fx.deps,
+        request: { method, userAgent: 'usernode-dapp-homepage-healthcheck/1' } });
+      assert.equal(probe.waking, false); assert.equal(probe.ready, false);
+    }
+    assert.equal(fx.wakes.length, 0, 'directory probes do not wake sleeping apps');
+    await sleep.access(pool, fx.app.id, '/api/write', { config: fx.config, deps: fx.deps,
+      request: { method: 'POST', userAgent: 'usernode-dapp-homepage-healthcheck/1' } });
+    assert.equal(fx.wakes.length, 1, 'writes still wake apps even with the probe user agent');
+    await sleep.access(pool, fx.app.id, '/', { config: fx.config, deps: fx.deps,
+      request: { method: 'GET', userAgent: 'usernode-dapp-homepage-healthcheck/1', upgrade: true } });
+    assert.equal(fx.wakes.length, 2, 'WebSocket upgrades still wake apps');
   });
 
   await t.test('active lower IDs do not starve an idle app beyond the first twenty assignments', async () => {

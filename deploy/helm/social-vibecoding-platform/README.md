@@ -417,15 +417,21 @@ new unreviewed versions keep an app awake; an already-sleeping app whose
 recorded version becomes unreviewed is woken even without gateway telemetry.
 Wake requests remain available regardless of revision eligibility. Deploy
 this support before the infrastructure pins: legacy ID-only assignments wake
-and stay awake until their reviewed SHAs are configured. Select only
-request-driven apps with durable external state and no independent scheduled
-work, outbound subscriptions or background queues. Timers tied to live
-requests/streams, or work guaranteed to finish within the idle window, are
-compatible. Homeroom, previews and deployments
+and stay awake until their reviewed SHAs are configured. Select apps with
+durable state and safe restart behavior. Optional polling, disposable work,
+and durable catch-up queues may pause while idle; outstanding payments,
+time-sensitive monitoring and unrecoverable accepted jobs require a worker
+or a guard before sleeping. Timers tied to live requests/streams, or work
+that finishes within the idle window, are compatible. The production rollout
+uses a minimum seven-day inactivity threshold. Homeroom, previews and deployments
 in progress are excluded. All live gateway Pods must supply fresh activity
 data over private port 3001: active HTTP requests, streams and WebSockets
 prevent sleep; missing telemetry keeps apps awake. The database records
 authorized access, and health probes neither count as activity nor wake apps.
+This includes GET/HEAD homepage probes with the directory's exact
+`usernode-dapp-homepage-healthcheck/1` user agent. Writes and WebSocket
+upgrades still count, including when they carry that user agent. Ordinary
+non-health HTTP traffic counts as use; server-side work does not reset it.
 
 An authorized visit schedules a conductor wake, bounded to two apps globally.
 The gateway holds the original request for up to 45 seconds and forwards it
