@@ -140,6 +140,8 @@ test('under a look the project\'s page has the frame\'s page area, and the stand
   assert.match(hand, /html\[data-skin\]\[data-project-frame\] #dev-workshop \{ max-width: none; margin: 0; \}/, 'not the standard look\'s 760px column');
   assert.match(hand, /html\[data-skin\] \.dev-ws > \[data-project-frame\] ~ \.dev-ws-placebar \{ display: none; \}/, 'the places are the kit\'s tabs');
   assert.match(hand, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="status"\], \[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'where the kit draws the whole place');
+  assert.match(hand, /html\[data-skin\] \.dev-ws:not\(\[data-ws-tab="needs"\]\) > \[data-project-frame\] ~ \.dev-ws-tabbody > \* \{ max-width: 720px; margin-inline: 0; \}/, 'an undrawn place sits in the kit\'s content column');
+  assert.match(hand, /html\[data-skin\] #dev-workshop\.dev-ws-on-needs > \.dev-ws\[data-ws-tab="needs"\] > \[data-project-frame\] \{ max-width: none; margin-inline: 0; \}/, 'the kit\'s head is not held to the review stage\'s 760px');
   const frame = read(FRAME);
   assert.match(frame, /document\.documentElement\.setAttribute\('data-project-frame', ''\)/, 'the page says it is up, so no rule looks inside the board\'s hosts');
   assert.equal((frame.match(/^  useProjectFrameFlag\(\);$/gm) || []).length, 4, 'each of the kit\'s pages');
