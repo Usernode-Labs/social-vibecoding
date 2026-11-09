@@ -317,7 +317,7 @@ test('on touch there is no × at all: the swipe is the way to clear', () => {
   // show it), so the card draws no bookmark of its own.
   assert.doesNotMatch(html, /data-notification-save="10"/);
   assert.match(SHEET_SRC, /const swipe = ui\.swipeActions\(el, \{ actions: !clearable \? \[save\] : cardSave \? \[save, clear\] : \[clear\] \}\);/);
-  // A read card (one Unread held, or one of the older rows' stacks) still
+  // A read card that is not held (one of the older rows' stacks) still
   // saves: the swipe is its only Save on a phone, with nothing to clear.
   assert.match(SHEET_SRC, /if \(!\(clearable \|\| cardSave\) \|\| !touch \|\| !el \|\| !ui\?\.swipeActions\) return undefined;/);
   assert.match(SHEET_SRC, /label: t\(view\.saved \? 'notifications:row\.swipeUnsave' : 'notifications:row\.swipeSave'\)/);
@@ -325,8 +325,13 @@ test('on touch there is no × at all: the swipe is the way to clear', () => {
     'no hover on a phone, and an invisible target on a tile corner would clear by accident');
 });
 
-test('only an unread row offers a clear', () => {
-  assert.match(SHEET_SRC, /const clearable = view\.unread;/);
+test('an unread row, or one held from the open, offers a clear', () => {
+  // #6498: opening the sheet marks the bell's rows read, and a row that was
+  // unread then stays listed (held, dim) until the sheet closes. Its clear
+  // must stay with it: the open happening must not take the control out from
+  // under the pointer. The clear on a held row is the no-op the code already
+  // handles for "a refresh got there first".
+  assert.match(SHEET_SRC, /const clearable = view\.unread \|\| held;/);
   assert.match(SHEET_SRC, /\{clearable && !touch \? \(\s*<button\s+type="button"\s+data-notification-clear=\{view\.id\}/);
   // The swipe is attached for a read card too, but only to save (above).
   assert.match(SHEET_SRC, /if \(!\(clearable \|\| cardSave\) \|\| !touch \|\| !el \|\| !ui\?\.swipeActions\) return undefined;/);
