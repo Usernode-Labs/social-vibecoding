@@ -153,3 +153,41 @@ Things learned:
   leaves it out with `:where(:not([data-skin="brand"]))`, at no weight.
 - The whole-suite runner can stall on one file when hundreds run together; each passes alone.
   Run suites in bounded chunks (scratchpad `tour/run-suites.sh`).
+
+### M5, under way (9 Nov)
+
+Done (`d4287f667`): a project's page in the kit. Its places are the page's tabs; the **Hub**
+(s23, s24, s36) and **Topics** (s25) are drawn in the kit from what the page's own Hub reads;
+Join is the primary button for someone signed in who is not a member. `features/dev-board/
+workshop/frame/project-frame.tsx` is presentational; `workshop.tsx` computes its props just
+before its return and draws it ahead of `{band}{tray}`, which stay as written.
+
+Left in M5:
+
+- **The Workshop (s27, s28, s37), Needs you (s26), All items (s29), votes waiting (s30)** still
+  draw their standard body under the kit's head and tabs. The Workshop's blueprint: Where things
+  are (facts), Needs your vote (the ballot card with Yes / No), Your work (rows with the progress
+  line), Live this week; beside it Homeroom bot's slots, Who decides, Nobody is on these.
+- **#general (s31)** is the product's channel under the kit's head; it should wear the kit the way
+  a conversation does (the wear map), with its composer.
+- **All communities (s21, s22)** is still Home's kit page of M1, without the audience tabs.
+- **The bar on a project's page** says the project's name but not its tile, and a phone has no
+  back arrow there; the tour's bar has both.
+- What the standard Hub also carries and the kit's does not yet: the first-version card, the
+  update card, Share it, the start-here prompt and the notification ask. They stay mounted
+  behind the kit's Hub, unseen; each needs a kit form (a note or a row) or a ruling to drop it.
+
+Rulings:
+
+- The approval rule is said in its short words on the Hub's row, with the wait as its line.
+- The Hub shows three topics and "All N"; the tour shows three of six.
+- Topics is a page of the kit only: it has no address of its own, and a topic's channel is lit
+  as Topics.
+
+Learned:
+
+- `workshop.tsx` is pinned line by line by a dozen suites (`{band}\n{tray}`, the hub-cards
+  import, `{tab === 'status' ? (pending ? null : (`). Add, never rewrite; hide with CSS.
+- app.css may not look inside the board's hosts with `:has()`; say the state on `<html>` instead.
+- The tour's CSS is left-to-right only. The compiler writes logical sides
+  (`mapDeclarations`); hand rules in app.css must too (`tests/rtl-logical-css.test.js`).
