@@ -135,6 +135,13 @@ RUN install -d -m 700 /var/lib/usernode-codex-bootstrap \
   && chmod 444 /usr/local/share/usernode-codex-bundled-models.json \
   && rm -rf /var/lib/usernode-codex-bootstrap
 
+# #6536: the sync parse gate transforms .ts/.tsx/.jsx with the same esbuild
+# the frontend pins, so it works even when the checkout's own packages are
+# not installed. worker/sync-parse-check.js looks in frontend/node_modules
+# first, then at this global install.
+ARG ESBUILD_VERSION=0.25.12
+RUN npm install -g esbuild@${ESBUILD_VERSION}
+
 # ── Optional in-loop browser (build-mode turns only) ───────────────────
 # The Playwright MCP server + a matching Chromium give the build-mode
 # agent first-class browser_navigate / browser_console / screenshot
@@ -190,6 +197,9 @@ COPY claude-openrouter-request.js /usr/local/bin/claude-openrouter-request.js
 # run-cc.sh asks it whether a Homeroom bot turn failed although claude
 # exited 0 (DISCARD_FAILED_TURN); the platform reads the same definition.
 COPY agent-api-failure.js /usr/local/bin/agent-api-failure.js
+# #6536: run-cc.sh's sync mode runs this over a Claude-resolved merge before
+# it commits, so no tree that does not parse is ever pushed.
+COPY sync-parse-check.js /usr/local/bin/sync-parse-check.js
 # The Homeroom bot's build turns (STOP_GUARD=1): run-cc.sh installs it as a
 # Claude Code Stop hook that sends the agent back to work when it tries to end
 # a turn that has changed nothing.

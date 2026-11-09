@@ -158,31 +158,43 @@ function workflowExpression(value, context) {
   return vm.runInNewContext(value.trim().replace(/^\$\{\{\s*|\s*\}\}$/g, ''), context, { timeout: 500 });
 }
 
-test('scheduled audits resolve every reused component with its supported resolver mode', () => {
-  const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/build-kubernetes-images.yml'), 'utf8'));
-  const job = workflow.jobs['scheduled-image-audit'];
-  const step = job.steps.find((s) => s.id === 'reuse');
-  const { resolveImage } = require('../scripts/resolve-kubernetes-image');
-  const digest = `sha256:${'a'.repeat(64)}`;
-  assert.deepEqual(job.strategy.matrix.component, ['platform', 'worker', 'capture']);
-  for (const component of job.strategy.matrix.component) {
-    const reuse = workflowExpression(step.env.REUSE_CURRENT_PLATFORM, { matrix: { component } });
-    const result = resolveImage({
-      component, reuseCurrentPlatform: String(reuse) === 'true', forceRebuild: step.env.FORCE_REBUILD,
-      owner: 'Usernode-Labs', revision: 'b'.repeat(40), ref: 'refs/heads/main', claudeCodeVersion: '2.1.309',
-    }, { run: (file) => file === 'git' ? 'c'.repeat(40) : JSON.stringify({ digest,
-      manifests: [{ platform: { os: 'linux', architecture: 'amd64' } }],
-    }) });
-    assert.equal(result.digest, digest, component);
-    assert.equal(result.reason, component === 'platform' ? 'current-source-release' : 'matching-build-inputs');
-  }
+test('independent daily audits cover every image and publish data without issue-write permission', () => {
+  const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/security-audit.yml'), 'utf8'));
+  assert.equal(workflow.on.pull_request, undefined);
+  assert.ok(workflow.on.schedule.length);
+  assert.deepEqual(workflow.permissions, { contents: 'read' });
+  assert.deepEqual(workflow.jobs.scan.strategy.matrix.include.map((item) => item.component), ['platform', 'standalone', 'worker', 'capture', 'starter']);
+  for (const job of Object.values(workflow.jobs)) assert.match(job.if, /github.ref == 'refs\/heads\/main'/);
+  assert.equal(workflow.jobs.scan.permissions.issues, undefined);
+  assert.deepEqual(workflow.jobs.report.permissions, { contents: 'read' });
+  assert.deepEqual(workflow.jobs.report.needs, ['plan', 'scan']);
+  assert.match(workflow.jobs.report.if, /always\(\).*!cancelled\(\)/, 'partial scans still publish discoveries, without resolving existing findings');
+  for (const job of Object.values(workflow.jobs)) assert.equal(job.permissions?.issues, undefined);
+  assert.doesNotMatch(JSON.stringify(workflow), /GH_TOKEN|SECURITY_ALERT_ASSIGNEE|security-alerts/);
+  assert.equal(workflow.jobs.report.steps.find((s) => s.uses === 'actions/upload-artifact@v4').with.name,
+    'homeroom-security-audit-${{ github.run_attempt }}');
+  const scan = workflow.jobs.scan.steps.find((s) => s.name === 'Scan the complete image');
+  assert.equal(scan.env.SECURITY_AUDIT_ONLY, '1');
+  assert.equal(scan.env.LIVE_DIGEST, '${{ needs.plan.outputs[matrix.component] }}', 'all jobs share one release snapshot');
+  assert.match(scan.run, /sh scripts\/check-published-image\.sh/);
+  assert.match(scan.run, /sh scripts\/check-image-security\.sh/);
+  assert.equal(workflow.concurrency['cancel-in-progress'], false);
+  const upload = workflow.jobs.scan.steps.find((s) => s.uses === 'actions/upload-artifact@v4');
+  const download = workflow.jobs.report.steps.find((s) => s.uses === 'actions/download-artifact@v4');
+  assert.match(upload.with.name, /github\.run_attempt/);
+  assert.match(download.with.pattern, /github\.run_attempt/, 'a retry cannot consume older clean artifacts');
 });
 
-test('scheduled release waits for successful reused-image scans and normal releases handle skipped audits', () => {
+test('publishing requires candidate gates while full daily audits cannot block unrelated releases', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/build-kubernetes-images.yml'), 'utf8'));
   const release = workflow.jobs.release;
-  assert.deepEqual(release.needs, ['build', 'scheduled-image-audit', ...GATES]);
-  assert.match(release.if, /!cancelled\(\)/, 'override the default success() when the schedule-only dependency skips');
+  const regressions = workflow.jobs['security-regressions'].steps.find((s) => s.run?.includes('tests/build-stop-hook.test.js'));
+  assert.match(regressions.run, /tests\/security-gate-baseline\.test\.js/);
+  assert.match(regressions.run, /tests\/security-audit-report\.test\.js/);
+  assert.match(JSON.stringify(workflow.jobs['preview-schema-compatibility'].steps), /tests\/platform-signals-postgres\.test\.js/);
+  assert.deepEqual(release.needs, ['build', ...GATES]);
+  assert.equal(workflow.jobs['scheduled-image-audit'], undefined);
+  assert.match(release.if, /!cancelled\(\)/);
   const allowed = (event, build, audit, cancelled = false, gates = 'success') => workflowExpression(release.if, {
     github: { event_name: event }, cancelled: () => cancelled,
     needs: { build: { result: build }, 'scheduled-image-audit': { result: audit },
@@ -190,7 +202,7 @@ test('scheduled release waits for successful reused-image scans and normal relea
   });
   assert.equal(allowed('schedule', 'success', 'success'), true);
   for (const status of ['failure', 'cancelled', 'skipped']) {
-    assert.equal(allowed('schedule', 'success', status), false, `schedule audit ${status}`);
+    assert.equal(allowed('schedule', 'success', status), true, `independent audit ${status} does not gate publishing`);
   }
   for (const event of ['push', 'workflow_dispatch']) {
     assert.equal(allowed(event, 'success', 'skipped'), true, event);

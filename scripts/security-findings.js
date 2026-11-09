@@ -67,6 +67,53 @@ function imageFindings(report, now, component) {
   return imageGate(report, { now, component }).blocking;
 }
 
+// Keep a machine-readable assessment alongside the complete scanner reports.
+// Daily audits retain accepted/unfixable findings too; exceptions waive a gate,
+// not the obligation to track a dependency that is still affected.
+function imageAssessment(reports, { component, baseline = null, baselineName = null, audit = false, now = Date.now() }) {
+  const blocking = new Set();
+  const preexisting = new Set();
+  const findings = new Map();
+  for (const scan of reports) {
+    const gate = imageGate(scan, { component, baseline, now });
+    for (const text of gate.blocking) blocking.add(text);
+    for (const text of gate.preexisting) preexisting.add(text);
+    for (const result of scan.Results) for (const v of result.Vulnerabilities || []) {
+      if (!v.VulnerabilityID || !v.PkgName || !v.InstalledVersion
+        || !['UNKNOWN', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(v.Severity)) throw new Error('Incomplete vulnerability record');
+      const exception = exceptions.find((e) => excepted(v.PkgName, v.InstalledVersion,
+        [v.VulnerabilityID, ...(v.References || []).map((u) => u.split('/').pop())], now, [e], component));
+      const item = { id: v.VulnerabilityID, package: v.PkgName, version: v.InstalledVersion,
+        severity: v.Severity, fixedVersion: v.FixedVersion || null,
+        ...(exception ? { acceptedUntil: exception.expires, acceptanceReason: exception.reason } : {}) };
+      const key = `${item.id}:${item.package}:${item.version}`;
+      const previous = findings.get(key);
+      const levels = ['UNKNOWN', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+      if (previous && levels.indexOf(previous.severity) > levels.indexOf(item.severity)) item.severity = previous.severity;
+      item.fixedVersion ||= previous?.fixedVersion || null;
+      findings.set(key, item);
+    }
+  }
+  return { version: 1, component, complete: true, checkedAt: new Date(now).toISOString(),
+    mode: audit ? 'audit' : 'regression', baseline: baselineName,
+    status: audit ? (findings.size ? 'findings' : 'clean')
+      : blocking.size ? 'regression' : preexisting.size ? 'existing_findings' : 'clean',
+    blocking: audit ? [] : [...blocking], preexisting: [...preexisting], findings: [...findings.values()] };
+}
+
+function readImageReports(dir) {
+  const path = require('node:path');
+  return ['vulnerabilities.json', 'image-vulnerabilities.json']
+    .filter((name) => fs.existsSync(path.join(dir, name)))
+    .map((name) => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')));
+}
+
+function writeAssessment(dir, assessment) {
+  const path = require('node:path');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'assessment.json'), JSON.stringify(assessment, null, 2));
+}
+
 // GitHub Actions annotations. The platform reads the first error annotation of
 // a failed release job to say why a merged change has not gone live, so an
 // error's message names the finding itself.
@@ -87,11 +134,36 @@ function report(label, { blocking, preexisting }, { log = console.log, baselineN
 if (require.main === module) {
   // usage: security-findings.js <trivy-report.json> <component> [<baseline-spdx.json>]
   try {
-    const [file, component, baselineFile] = process.argv.slice(2);
-    const baseline = baselineFile ? sbomPackages(JSON.parse(fs.readFileSync(baselineFile, 'utf8'))) : null;
-    const result = imageGate(JSON.parse(fs.readFileSync(file, 'utf8')), { component, baseline });
-    report(`${component} image`, result, { baselineName: baseline ? 'the live image' : 'the baseline' });
-    if (result.blocking.length) { console.error(result.blocking.join('\n')); process.exitCode = 1; }
+    const [operation, dir, component, baselineFile, baselineName] = process.argv.slice(2);
+    if (operation === '--unavailable') {
+      writeAssessment(dir, { version: 1, component, complete: false, status: 'unavailable',
+        checkedAt: new Date().toISOString(), reason: baselineFile || 'Scan or comparison unavailable', findings: [] });
+      console.error(`::error title=${escape(`Security assessment unavailable: ${component}`)}::${escape(baselineFile || 'Scan or comparison unavailable')}`);
+    } else if (operation === '--potential') {
+      const reports = readImageReports(dir);
+      if (!reports.length) throw new Error('No image scan reports');
+      console.log(reports.reduce((count, scan) => count + imageFindings(scan, Date.now(), component).length, 0));
+    } else if (operation === '--assess') {
+      const reports = readImageReports(dir);
+      if (!reports.length) throw new Error('No image scan reports');
+      const baseline = baselineFile ? sbomPackages(JSON.parse(fs.readFileSync(baselineFile, 'utf8'))) : null;
+      const audit = process.env.SECURITY_AUDIT_ONLY === '1';
+      const assessment = imageAssessment(reports, { component, baseline, baselineName, audit });
+      assessment.revision = process.env.GITHUB_SHA || null;
+      assessment.runId = process.env.GITHUB_RUN_ID || null;
+      assessment.runAttempt = process.env.GITHUB_RUN_ATTEMPT || null;
+      const reference = require('node:path').join(dir, 'image-reference.txt');
+      assessment.image = fs.existsSync(reference) ? fs.readFileSync(reference, 'utf8').trim() : null;
+      writeAssessment(dir, assessment);
+      report(`${component} image`, assessment, { baselineName: baselineName || 'the baseline' });
+      if (assessment.blocking.length) process.exitCode = 1;
+    } else {
+      const [file, component, baselineFile] = process.argv.slice(2);
+      const baseline = baselineFile ? sbomPackages(JSON.parse(fs.readFileSync(baselineFile, 'utf8'))) : null;
+      const result = imageGate(JSON.parse(fs.readFileSync(file, 'utf8')), { component, baseline });
+      report(`${component} image`, result, { baselineName: baseline ? 'the live image' : 'the baseline' });
+      if (result.blocking.length) { console.error(result.blocking.join('\n')); process.exitCode = 1; }
+    }
   } catch (err) { console.error(err.message); process.exitCode = 1; }
 }
-module.exports = { excepted, npmFindings, imageFindings, npmGate, imageGate, lockPackages, sbomPackages, report };
+module.exports = { excepted, npmFindings, imageFindings, npmGate, imageGate, lockPackages, sbomPackages, report, imageAssessment };
