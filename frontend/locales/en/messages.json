@@ -4075,11 +4075,42 @@
     "text": "{{letter}} · dark",
     "description": "Caption under a picture in the bot's picture grid when it comes in a light and a dark version: this is the dark one. {{letter}} is A to D."
   },
+  "botCards.gallery.changeGroup": {
+    "text": "What this change looks like",
+    "description": "Accessible name of the grid of pictures under Homeroom bot's reply in a change's thread: its emails, today and with the change, and its before and after screens."
+  },
+  "botCards.gallery.today": {
+    "text": "Today",
+    "description": "Label under a picture of an email as it is today, before the change."
+  },
+  "botCards.gallery.withChange": {
+    "text": "With this change",
+    "description": "Label under a picture of an email as the change will make it."
+  },
+  "botCards.gallery.newMark": {
+    "text": "New",
+    "description": "Added to the label under a picture of an email the change adds, which has no today version."
+  },
+  "botCards.gallery.openEmail": {
+    "text": "Open the email: {{subject}}",
+    "description": "Accessible name of one email picture under Homeroom bot's reply: tapping it opens the whole email. {{subject}} is its subject line."
+  },
+  "botCards.gallery.openScreen": {
+    "text": "Open the screen: {{caption}}",
+    "description": "Accessible name of one before or after screen picture under Homeroom bot's reply: tapping it opens it full size. {{caption}} is what the screen shows."
+  },
+  "botCards.gallery.emailFrame": {
+    "text": "The email, {{subject}}",
+    "description": "What screen readers call the frame that draws an email's body. {{subject}} is its subject line."
+  },
+  "botCards.gallery.subjectLine": {
+    "text": "Subject: {{subject}}",
+    "description": "The subject line shown above an opened email picture. {{subject}} is the email's subject."
+  },
   "botCards.gallery.pickGroup": {
     "text": "Which picture",
     "description": "Accessible name of the row of letters (A, B, C, D) under the bot's picture grid that chooses which picture the buttons below act on."
-  },
-  "botCards.gallery.pick": {
+  },  "botCards.gallery.pick": {
     "text": "Picture {{letter}}",
     "description": "Accessible name of one letter button under the bot's picture grid: chooses picture {{letter}} for the buttons below."
   },
