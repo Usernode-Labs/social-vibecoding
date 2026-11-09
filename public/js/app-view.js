@@ -8036,6 +8036,13 @@ const AppView = {
     // #6531: a conflicting promoted change says what its conflict means for
     // the vote, in the same words as the Homeroom bot tab's row. A conflict
     // only its author can move keeps the integration line's own wording.
+    // #6546: approved, and GitHub's required checks are what hold its merge.
+    {
+      const held = item.status === 'promoted' && item.integration && Array.isArray(item.integration.blockReasons)
+        ? item.integration.blockReasons : [];
+      if (held.indexOf('github_checks') !== -1) note.push(PlatformI18n.t('changes:page.votes.note.githubChecks'));
+      else if (held.indexOf('github_checks_failing') !== -1) note.push(PlatformI18n.t('changes:page.votes.note.githubChecksFailing'));
+    }
     if (!updateComing && item.status === 'promoted' && item.integration_merges_clean === false) {
       const blocked = item.integration && Array.isArray(item.integration.blockReasons) ? item.integration.blockReasons : [];
       const authors = ['unresolvable', 'fork_head', 'checks_failing', 'checks_error'];
@@ -25485,6 +25492,26 @@ const AppView = {
           ? PlatformI18n.t('changes:badge.reason.githubRefused.detailSoon')
           : PlatformI18n.t('changes:badge.reason.githubRefused.detail', { time: heldTime }),
         waiting: true,
+      });
+    }
+    // #6546: GitHub's required checks held it back: still running, or failed
+    // and being run again on today's main (amber, Homeroom acts), or failed
+    // again after that (its author's to fix).
+    if (served.includes('github_checks')) {
+      out.push({
+        key: 'github_checks',
+        label: PlatformI18n.t('changes:badge.reason.githubChecks.label'),
+        detail: heldSoon
+          ? PlatformI18n.t('changes:badge.reason.githubChecks.detailSoon')
+          : PlatformI18n.t('changes:badge.reason.githubChecks.detail', { time: heldTime }),
+        waiting: true,
+      });
+    }
+    if (served.includes('github_checks_failing')) {
+      out.push({
+        key: 'github_checks_failing',
+        label: PlatformI18n.t('changes:badge.reason.githubChecksFailing.label'),
+        detail: PlatformI18n.t('changes:badge.reason.githubChecksFailing.detail'),
       });
     }
     // The APP's merges are paused by a red main (services/main-watch.js).

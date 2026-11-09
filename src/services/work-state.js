@@ -150,6 +150,22 @@ function checkingState(row, since, now) {
 }
 
 /**
+ * Pure (#6546): an approved change whose merge GitHub is holding, from the
+ * proposal machine's mergeHeld reasons, or null. Only an approved (or
+ * forced) change is ever handed to GitHub to merge, so one GitHub held is
+ * going live, and its line says on what: GitHub's required checks (still
+ * running, or being run again on today's main), or GitHub itself. One whose
+ * required checks failed again after that is its author's (or the bot's).
+ */
+function githubHold(row) {
+  const reasons = (Array.isArray(row?.integration_block_reasons) ? row.integration_block_reasons : []).map(String);
+  if (reasons.includes('github_checks_failing')) return { stage: 'checking', code: 'github_checks_failing' };
+  if (reasons.includes('github_checks')) return { stage: 'going_live', code: 'github_checks' };
+  if (reasons.includes('github_refused') || reasons.includes('github_busy')) return { stage: 'going_live', code: 'github_wait' };
+  return null;
+}
+
+/**
  * Pure: a request's work state from one stage of homeroom-bot-progress.js
  * stageOf (the bot's own step), mapped to the ten (the plan's table).
  */
@@ -226,6 +242,11 @@ function fromStage(s, row, now = new Date()) {
         if (stand === 'vote') return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
         if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
         if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
+      }
+      {
+        // #6546: approved, and GitHub is holding its merge.
+        const hold = githubHold(row);
+        if (hold) return state(hold.stage, { since, line: { code: hold.code } });
       }
       return state('up_for_vote', { since });
     case 'merging':
@@ -371,6 +392,9 @@ function deriveChange(row, { now = new Date() } = {}) {
     // A passing change that has since stopped merging cleanly moves back to
     // Waiting to sync with main: its verdict no longer describes what lands.
     if (syncWaits(row)) return state('checking', { since: row.checks_at || row.promoted_at, line: { code: 'sync_wait' } });
+    // #6546: approved, and GitHub is holding its merge.
+    const hold = githubHold(row);
+    if (hold) return state(hold.stage, { since: row.promoted_at, line: { code: hold.code } });
     return state('up_for_vote', { since: row.promoted_at });
   }
   void now;
@@ -488,6 +512,9 @@ const WORDS = Object.freeze({
   'work.line.checksRunning_other': 'About {{count}} min left',
   'work.line.syncWait': 'Waiting to sync with main',
   'work.line.conflictOnYes': 'Conflicts with main: Homeroom resolves it once you approve',
+  'work.line.githubChecks': "Waiting for GitHub's checks",
+  'work.line.githubChecksFailing': "GitHub's checks are failing",
+  'work.line.githubWait': 'Waiting on GitHub',
   'work.line.firstVersion': 'First version: it goes live without a vote',
   'work.line.claimed': '{{username}} is building it',
   'work.line.planningWithYou': 'Planning it with you in a private thread',

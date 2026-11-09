@@ -5543,6 +5543,26 @@
     "text": "GitHub refused the merge. Homeroom tries again in a few minutes.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page, when GitHub refused the merge for a reason nobody has to act on, and the next try's time has passed or was not recorded. \"Homeroom\" is the name of the platform and stays as it is."
   },
+  "badge.reason.githubChecks.label": {
+    "text": "Waiting on GitHub's checks",
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: the proposal passed its vote and Homeroom's checks, but GitHub has not merged it because the required checks GitHub runs on it are still running, or failed and are being run again on today's main. The platform tries again by itself, so nobody has to act. \"GitHub\" is a product name and stays as it is."
+  },
+  "badge.reason.githubChecks.detail": {
+    "text": "GitHub's required checks on this change are still running, or are being run again on today's main. Homeroom tries again at {{time}}.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page. {{time}} is a clock time such as 10:45, shown in the viewer's own time zone. \"Homeroom\" is the name of the platform and stays as it is. \"GitHub\" is a product name and stays as it is."
+  },
+  "badge.reason.githubChecks.detailSoon": {
+    "text": "GitHub's required checks on this change are still running, or are being run again on today's main. Homeroom tries again in a few minutes.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page, when the next try's time has passed or was not recorded. \"Homeroom\" is the name of the platform and stays as it is. \"GitHub\" is a product name and stays as it is."
+  },
+  "badge.reason.githubChecksFailing.label": {
+    "text": "GitHub's checks are failing",
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: the proposal passed its vote, but the required checks GitHub runs on it failed again after Homeroom brought it up to date with main, so its author has to fix them. \"GitHub\" is a product name and stays as it is."
+  },
+  "badge.reason.githubChecksFailing.detail": {
+    "text": "The required checks GitHub runs on this change failed again after Homeroom brought it up to date with main. They have to pass before it can merge.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page. \"Homeroom\" is the name of the platform and stays as it is. \"GitHub\" is a product name and stays as it is."
+  },
   "badge.reason.mainPaused.label": {
     "text": "Going live is paused",
     "description": "Status tag on a proposal's card and row label in the ledger on its page: no change of this app can go live for now, because the tests of the app's main line of code are failing."
@@ -8842,6 +8862,14 @@
   "page.votes.note.syncing": {
     "text": "Syncing with main: Homeroom asks for votes when it is caught up and its checks pass.",
     "description": "A change page's Votes card: the change conflicts with main and Homeroom is resolving that now, so nobody is asked to vote yet."
+  },
+  "page.votes.note.githubChecks": {
+    "text": "Approved. It merges once GitHub's required checks pass.",
+    "description": "A change page's Votes card: the change has the yes it needs, and its merge waits for the required checks GitHub runs on it (still running, or being run again on today's main). \"GitHub\" is a product name and stays as it is."
+  },
+  "page.votes.note.githubChecksFailing": {
+    "text": "Approved, but GitHub's required checks failed again. It merges once they pass.",
+    "description": "A change page's Votes card: the change has the yes it needs, but the required checks GitHub runs on it failed again after Homeroom brought it up to date with main. \"GitHub\" is a product name and stays as it is."
   },
   "page.votes.note.goingLive": {
     "text": "It’s going live.",
