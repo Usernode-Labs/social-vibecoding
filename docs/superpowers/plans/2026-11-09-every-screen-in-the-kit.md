@@ -329,3 +329,32 @@ Left, as before: Needs you as a kit page (kept as the review stage by ruling), A
 votes waiting (s29, s30), a reply thread as the kit's sheet (s19), the bot's panes (s10 to
 s13), Settings' index on a desktop (s56) and each section's own rows, You's sub-screens (s46 to
 s52), Standings as kit rows, and the request page's leftovers above.
+
+### Leftovers taken up (10 Nov, night)
+
+Done (`6111fe6bb` to the commit after `29048a3f1`):
+
+- **The bot's column (s11 to s13).** A request opened from the kit list stands in the shell's
+  side panel, which now takes the kit column's width and line; New thread starts the blank
+  thread, as the standard "+" does. The blank thread stays the product's column pane, not the
+  tour's sheet (ruling: it is the product's own design, and every start it offers is there).
+- **All items (s29).** `ProjectAllItemsFrame`: the board's columns as the page's tabs, one row
+  per item with the five-stop line and its word or pill, Show beside them. The board buckets
+  its columns only while its own By stage pane is up, so the kit page asks
+  `AppView._kanbanView()` itself whenever the Workshop view is republished. Votes waiting (s30)
+  is the In review tab of this page, not a page of its own.
+- **History in the kit's bot list (s46 to s48):** your changes, requests and votes, by month,
+  with the kinds as small buttons; `#homeroom-bot/history?kind=change` lands on it.
+- **A public profile (s51, o26)** as the kit's page. **Edit profile (s50)** keeps the product's
+  dialog, now solid: `--dc-sheet` follows `--fr-solid` as `--dc-sheet-solid` does.
+- **The reply thread (s19)** needed nothing more: under a look it is the side pane beside the
+  conversation, a full page on a phone whose bar names it and whose arrow returns to the chat.
+
+Learned: a hook added to the Workshop page must sit with the others at its top; a hook after
+the page's early returns is React error #310 (rendered more hooks than before) on the first
+render that reaches it.
+
+Still left: Needs you as a kit page (kept as the review stage by ruling), Settings' index on a
+desktop (s56: the product has no index there, by ruling) and each section's own rows, Friends
+as a page (s49: the product's dialog, solid), Standings as kit rows, and the request page's
+leftovers.
