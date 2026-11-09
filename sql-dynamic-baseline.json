@@ -1445,6 +1445,20 @@
       "preview": "REQUEST_ROWS_SQL"
     },
     {
+      "source": "src/services/homeroom-bot-reply-status.js",
+      "kind": "runtime-expression",
+      "fingerprint": "9f8cd532c33acde0b9cc",
+      "count": 1,
+      "preview": "place.type === 'chat' ? `SELECT 1 FROM chat_messages m JOIN users u ON u.id = m.user_id WHERE m.app_id = $1 AND m.thread_type = 'message' AND m.thread_ref = $2 "
+    },
+    {
+      "source": "src/services/homeroom-bot-reply-status.js",
+      "kind": "structural-template",
+      "fingerprint": "9a2d59403af9f4f9adaf",
+      "count": 1,
+      "preview": "`SELECT m.id, m.user_id, m.created_at FROM chat_messages m JOIN users u ON u.id = m.user_id WHERE m.app_id = $1 AND ${where} AND m.msg_type = 'message' AND m.de"
+    },
+    {
       "source": "src/services/homeroom-bot-thread-tools/look-into.js",
       "kind": "structural-template",
       "fingerprint": "a45efc3039b9f36e409a",

@@ -1605,17 +1605,27 @@ async function handleMessage(pool, client, msg) {
           chatMessageId: rows[0].id, content, createdAt: rows[0].created_at,
         }).catch((err) => log.warn('ws', 'Homeroom bot request-reply note failed', { err: err.message }));
       }
-      // #6228: a person's reply on a request is what the bot's thread line
-      // says next. Published after the insert committed, so the reply is
-      // visible to the read. Never throws, never awaited.
-      if (thread && thread.type === 'issue' && postedVia !== 'agent' && !client.viaBotDm
-        && client.user?.is_synthetic !== true) {
-        const replyStatus = require('./homeroom-bot-reply-status');
-        void replyStatus.wouldAnswer(pool, {
-          appId: client.appId, issueNumber: thread.ref, messageId: rows[0].id,
-        }).then((owed) => replyStatus.publish(pool, {
-          appId: client.appId, issueNumber: thread.ref, voiceOwed: owed,
-        })).catch((err) => log.warn('ws', 'Homeroom bot reply status failed', { err: err.message }));
+      // #6228/#6538: a person's message is what the bot's thread line says
+      // next, in any place the voice answers in. Published after the insert
+      // committed, so the message is visible to the read. Never throws, never
+      // awaited. Outside a request, only a message the bot would answer sends
+      // a frame.
+      if (postedVia !== 'agent' && !client.viaBotDm && client.user?.is_synthetic !== true) {
+        const statusPlace = require('./homeroom-bot-voice').placeOf(thread || null);
+        if (statusPlace) {
+          const replyStatus = require('./homeroom-bot-reply-status');
+          void replyStatus.wouldAnswer(pool, {
+            appId: client.appId, place: statusPlace, messageId: rows[0].id,
+          }).then((owed) => {
+            if (!owed && statusPlace.type !== 'issue') return null;
+            return replyStatus.publish(pool, {
+              appId: client.appId,
+              place: statusPlace,
+              voiceOwed: owed,
+              ...(statusPlace.type === 'issue' ? {} : { answerable: owed }),
+            });
+          }).catch((err) => log.warn('ws', 'Homeroom bot reply status failed', { err: err.message }));
+        }
       }
       // #3264: a reply in the discussion of the bot's own proposal.
       if (thread && thread.type === 'session') noteProposalActivityForBot(pool, client.appId, thread.ref);
