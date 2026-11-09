@@ -1723,7 +1723,11 @@
       // me-scoped fetch and is throttled inside AiCredit, so refreshing it on
       // every section change is cheap and keeps it honest. This is where the
       // hamburger's open-time refresh went when the row moved here.
-      if (window.AiCredit?.refreshAll) window.AiCredit.refreshAll();
+      // #6493: the AI usage page is the page people open to CHECK the figure,
+      // so it fetches fresh rather than waiting out the three-minute throttle.
+      if (Settings._section === 'ai' && window.AiCredit?.Budget?.refresh) {
+        window.AiCredit.Budget.refresh({ force: true });
+      } else if (window.AiCredit?.refreshAll) window.AiCredit.refreshAll();
       // Announce which section is showing. The one listener today is the
       // Theme pane (features/settings/sections/theme.tsx), which re-reads
       // Theme.get() so a mode changed in another tab — or an explicit value
@@ -3697,22 +3701,30 @@
     // fresh on every modal open; the block stays hidden while loading,
     // on fetch failure, or when no key is saved, so it never shows
     // stale or irrelevant figures.
+    //
+    // #6493: the platform line is the ONE shared allowance
+    // (features/header/ai-credit.js `AiCredit.Budget`), so it cannot
+    // disagree with the AI credit row above it. /api/budget is still fetched
+    // for the BYOK figure and the reset boundary only it carries; its
+    // snapshot half is adopted into the shared state, and the platform line
+    // reads that.
     async _refreshSpend() {
       const block = document.getElementById('settings-spend');
       if (!block) return;
       block.classList.add('hidden');
       if (!this.state.hasApiKey) return;
       try {
+        const AiCredit = window.AiCredit;
+        const seq = AiCredit?.Budget?._takeTicket ? AiCredit.Budget._takeTicket() : null;
         const r = await fetch('/api/budget', { credentials: 'same-origin' });
         if (!r.ok) return;
         const b = await r.json();
+        if (AiCredit?.Budget?.adopt) {
+          AiCredit.Budget.adopt(b, seq == null ? undefined : { seq });
+        }
         document.getElementById('settings-spend-byok').textContent =
           '$' + ((b.byokSpentCents || 0) / 100).toFixed(2);
-        document.getElementById('settings-spend-platform').textContent =
-          tr('settings:usage.spend.platformOfLimit', {
-            spent: '$' + ((b.spentCents || 0) / 100).toFixed(2),
-            limit: '$' + ((b.limitCents || 0) / 100).toFixed(2),
-          });
+        Settings._paintSpendPlatform(b);
         // #3230: the weekly reset in the viewer's own clock, UTC on hover.
         const reset = document.getElementById('settings-spend-reset');
         const RT = window.ResetTime;
@@ -3723,6 +3735,21 @@
         }
         block.classList.remove('hidden');
       } catch {}
+    },
+
+    // #6493: the spend card's platform line, spelled from the shared
+    // allowance so it always adds up to the AI credit row's figure.
+    // `fallback` is the /api/budget answer on the fetch path; on a live
+    // update there is no answer in hand and the shared state is the source.
+    _paintSpendPlatform(fallback) {
+      const el = document.getElementById('settings-spend-platform');
+      if (!el) return;
+      const state = window.AiCredit?.Budget?.current?.() || fallback || null;
+      if (!state) return;
+      el.textContent = tr('settings:usage.spend.platformOfLimit', {
+        spent: '$' + ((state.spentCents || 0) / 100).toFixed(2),
+        limit: '$' + ((state.limitCents || 0) / 100).toFixed(2),
+      });
     },
 
     _setStatus(text, kind) {
@@ -7387,6 +7414,17 @@
     document.addEventListener('homeroom:languages-changed', () => {
       if (!Settings._open) return;
       try { Settings._renderLanguageSection(); } catch { /* a pane that is not mounted */ }
+    });
+  }
+
+  // #6493: the one shared allowance moved (a fetch anywhere, or a live
+  // push). While the spend card is on screen, its platform line follows it —
+  // the same figure the AI credit row shows.
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('homeroom:ai-budget-changed', () => {
+      const block = document.getElementById('settings-spend');
+      if (!block || block.classList.contains('hidden')) return;
+      Settings._paintSpendPlatform();
     });
   }
 
