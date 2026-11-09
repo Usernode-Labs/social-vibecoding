@@ -336,7 +336,7 @@
         "to": ":is(.settings-page-title,#first-session-make-title,:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen,#auth-waiting-screen) h1)"
       },
       "btn": {
-        "to": ":is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back]),[data-sign-in-sheet] [role=\"dialog\"] button.bg-violet-600)",
+        "to": ":is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back]),[data-sign-in-sheet] [role=\"dialog\"] button.bg-violet-600,[data-public-profile-frame] button:is(.bg-violet-600,.bg-zinc-100))",
         "parts": {
           "quiet": ":is(.bg-white,.bg-zinc-100)"
         }

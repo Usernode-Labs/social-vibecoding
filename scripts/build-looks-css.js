@@ -301,9 +301,10 @@ function build() {
    class in the tour, so the cascade is the tour's own. */
 /* What every look shares. The product's own tokens follow the look's, so a
    screen not yet drawn in the kit takes its ink, accent and surfaces
-   wherever it reads a token. A solid sheet (--dc-sheet-solid: a dialog's
-   card, a menu, a pinned head) takes the look's opaque surface where the
-   look's own is see-through (--fr-solid, from looks.json "opaque"). The exception for the New look ("brand", the
+   wherever it reads a token. A solid sheet (--dc-sheet, the dialog's own
+   card; --dc-sheet-solid: a menu, a pinned head) takes the look's opaque
+   surface where the look's own is see-through (--fr-solid, from
+   looks.json "opaque"): both float over other text with no blur behind. The exception for the New look ("brand", the
    last block of this sheet, which is not a look of the frame) sits inside
    :where(), so the rule weighs one attribute and More contrast
    (html…[data-contrast="more"], two) still sets its inks over any look.
@@ -313,7 +314,7 @@ function build() {
     ['--border', 'var(--fr-line)'], ['--border-light', 'var(--fr-line)'],
     ['--accent', 'var(--fr-acc)'], ['--accent-ink', 'var(--fr-acc-ink)'], ['--accent-tint-ink', 'var(--fr-acc)'],
     ['--lit-ink', 'var(--fr-lit)'], ['--lit-tint', 'var(--fr-lit-t)'], ['--lit-line', 'var(--fr-line)'],
-    ['--dc-sheet', 'var(--fr-surface)'], ['--dc-sheet-solid', 'var(--fr-solid,var(--fr-surface))'], ['--dc-sheet-raise', 'var(--fr-surface)'],
+    ['--dc-sheet', 'var(--fr-solid,var(--fr-surface))'], ['--dc-sheet-solid', 'var(--fr-solid,var(--fr-surface))'], ['--dc-sheet-raise', 'var(--fr-surface)'],
     ['--app-sheet-line', 'var(--fr-line)'],
   ]);
   const kit = compile(fs.readFileSync(path.join(SRC, 'kit.css'), 'utf8'), null);

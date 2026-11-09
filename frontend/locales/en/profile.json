@@ -1034,5 +1034,21 @@
   "frame.week.apps": {
     "text": "{{count}} {{label}}",
     "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row under This week: how many apps the person opened in the last seven days; {{label}} is already the counted words, such as 'apps opened'."
+  },
+  "frame.public.about": {
+    "text": "About",
+    "description": "Someone's public profile when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card with the person's picture, name, handle and bio."
+  },
+  "frame.public.verified": {
+    "text": "Verified",
+    "description": "Someone's public profile when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the side column's rows of accounts the person has verified (GitHub, X)."
+  },
+  "frame.public.github": {
+    "text": "GitHub",
+    "description": "Someone's public profile when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row in the Verified group: the person's GitHub account, which opens it."
+  },
+  "frame.public.x": {
+    "text": "X",
+    "description": "Someone's public profile when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row in the Verified group: the person's X account, which opens it."
   }
 }
