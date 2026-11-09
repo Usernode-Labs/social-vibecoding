@@ -1150,8 +1150,12 @@ function shapeChecks(session) {
       reason: untrusted(failureReasonOf(t), unitSuiteRow.isUnitSuiteRow(t)
         ? unitSuiteRow.FAILURE_DETAIL_MAX : MAX_FAILURE_REASON_CHARS) || null,
       // The repo unit suite's row previews its first failing tests' excerpts
-      // here; a declared check's reason IS its diagnosis and stays alone.
-      details: unitSuiteRow.isUnitSuiteRow(t) ? inlineDetails(t) : [],
+      // here; #6536's failed-build row carries the build's own log excerpt;
+      // a declared check's reason IS its diagnosis and stays alone.
+      details: unitSuiteRow.isUnitSuiteRow(t) ? inlineDetails(t)
+        : (t.previewBuild && t.buildExcerpt
+          ? [{ file: null, test: '', excerpt: untrusted(String(t.buildExcerpt), unitSuiteRow.MAX_TEST_EXCERPT_CHARS) }]
+          : []),
       // #6037: always present, never conditional (#2137): true when this row
       // does not gate the merge.
       advisory: !!t.advisory,
@@ -4881,6 +4885,11 @@ function registerTools(server, ctx) {
     const isUnit = unitSuiteRow.isUnitSuiteRow(row);
     const stored = Array.isArray(row.failureDetails) ? row.failureDetails : [];
     const errors = Array.isArray(row.consoleErrors) ? row.consoleErrors : [];
+    // #6536: a failed preview build's row stores the build's own log excerpt.
+    const buildExcerpt = row.previewBuild && row.buildExcerpt ? String(row.buildExcerpt) : null;
+    const buildTests = buildExcerpt
+      ? [{ file: null, test: 'Preview build', excerpt: untrusted(buildExcerpt, unitSuiteRow.MAX_TEST_EXCERPT_CHARS) }]
+      : [];
     return readResult('get_check_output', {
       proposalId: Number(session.id),
       prNumber: Number(session.pr_number) > 0 ? Number(session.pr_number) : null,
@@ -4891,11 +4900,11 @@ function registerTools(server, ctx) {
         advisory: !!row.advisory,
       },
       reason: untrusted(failureReasonOf(row), isUnit ? unitSuiteRow.FAILURE_DETAIL_MAX : MAX_FAILURE_REASON_CHARS) || null,
-      tests: (isUnit ? stored : []).slice(0, unitSuiteRow.MAX_UNIT_EXCERPTS).map((d) => ({
+      tests: (isUnit ? stored.slice(0, unitSuiteRow.MAX_UNIT_EXCERPTS).map((d) => ({
         file: (d && d.file) ? untrusted(String(d.file), MAX_TITLE_CHARS) : null,
         test: (d && d.test) ? untrusted(String(d.test), MAX_TITLE_CHARS) : null,
         excerpt: (d && d.excerpt) ? untrusted(String(d.excerpt), unitSuiteRow.MAX_TEST_EXCERPT_CHARS) : null,
-      })),
+      })) : buildTests),
       testsTruncated: !!row.failureDetailsTruncated,
       consoleErrors: (isUnit ? [] : errors).slice(0, MAX_LIST_ITEMS).map((e) => ({
         kind: (e && typeof e.kind === 'string') ? e.kind : 'console',

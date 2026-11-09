@@ -360,7 +360,7 @@ test('#6139: a change that finished building reads as ready, with no spinner, an
 
 test('the request\'s changes are drawn from their own pages\' reads, and the ballot lives with them', () => {
   const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
-  assert.match(src, /readChangeDetail\(\{ id: item\.id, status: item\.status \}, false, abort\.signal\)/, 'read as its own page reads it');
+  assert.match(src, /readChangeDetail\(\{ id: item\.id, status: item\.status \}, false, abort\.signal, \{ fresh \}\)/, 'read as its own page reads it, past the cache when its status moved');
   assert.match(src, /const built = av\._topicViewFor\('proposal', row\);/);
   // 1 Nov 2026: folded under a ballot, without its own Vote (thread-one-page.test.js).
   assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>/, 'its own page\'s two cards');
