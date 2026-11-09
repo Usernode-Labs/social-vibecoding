@@ -491,6 +491,10 @@ export function requestPill(
   if (underway.some((c) => !c.ready) || stand === 'building') {
     return { ...base, key: 'building', label: say('project:topic.thread.pill.building'), tone: 'progress', spinner: true };
   }
+  // #6532: a build that is ready and waits its turn is not being built yet.
+  if (stand === 'ready_to_build') {
+    return { ...base, key: 'ready_to_build', label: say('project:topic.thread.pill.readyToBuild'), tone: 'neutral' };
+  }
   // #6139: every change underway has finished; only putting one up is left.
   if (underway.length) return { ...base, key: 'ready', label: say('project:topic.thread.pill.ready'), tone: 'neutral' };
   // Merged is live only once production runs it, the fact each change's own

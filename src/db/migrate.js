@@ -1768,10 +1768,11 @@ async function seedStagingPrivateRequest(pool) {
 // records, so the before & after shots get a small, obviously fake mix on the
 // self-hosted Homeroom project, filed by the shots' member fixture
 // (usernode-capture): one in the bot's queue, one held for a slot, one it
-// handed back to a person, one it never read, and one operator task. Rows
-// for that fixture account only; nothing here is a signal the bot reads to
-// decide anything, and a staging copy never acts on its queue. Idempotent by
-// request number; strictly a no-op outside staging.
+// handed back to a person, one it never read, one operator task, and (#6532)
+// one whose ready build still waits its turn. Rows for that fixture account
+// only; nothing here is a signal the bot reads to decide anything, and a
+// staging copy never acts on its queue. Idempotent by request number; strictly
+// a no-op outside staging.
 async function seedStagingBotWaitingRows(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
@@ -1795,6 +1796,11 @@ async function seedStagingBotWaitingRows(pool) {
       },
       { number: 9104, title: 'Staging demo: a request the bot has not read' },
       { number: 9105, title: 'Operator: staging demo, rotate the demo mail key' },
+      // #6532: the state the report found: `issue.bot` already says building
+      // while the stored track still waits its turn (`live_build_waiting_at`
+      // set, no build session). Says Ready to build and "will build this
+      // next", never "is building this".
+      { number: 9106, title: 'Staging demo: a request the bot is ready to build', buildQueued: true },
     ];
     for (const d of demo) {
       await pool.query(
@@ -1820,6 +1826,23 @@ async function seedStagingBotWaitingRows(pool) {
                                WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = $3)`,
           [appId, d.number, d.verdict || 'ready', d.reason || null, d.held || null,
             d.cannot ? false : null, d.firstStep || null],
+        );
+      }
+      if (d.buildQueued) {
+        // The capture member's own track, so the row is in their Homeroom bot
+        // tab's Waiting & in progress list as well as its page.
+        await pool.query(
+          `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+           VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+          [appId, d.number, userId, d.title],
+        );
+        await pool.query(
+          `INSERT INTO homeroom_bot_runs
+             (app_id, issue_number, mode, verdict, live_build_waiting_at, created_at)
+           SELECT $1, $2, 'live', 'ready', NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour'
+            WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                               WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = 'ready')`,
+          [appId, d.number],
         );
       }
     }

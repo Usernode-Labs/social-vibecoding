@@ -6259,6 +6259,10 @@
     "text": "Being built",
     "description": "Status pill beside a request's number in its page's header: a change for it is being built."
   },
+  "topic.thread.pill.readyToBuild": {
+    "text": "Ready to build",
+    "description": "Status pill beside a request's number in its page's header: Homeroom bot is ready to build the change for it and the build waits its turn, so nothing is being built yet."
+  },
   "topic.thread.pill.live": {
     "text": "Live",
     "description": "Status pill beside a request's number in its page's header: a change built for it went live."
