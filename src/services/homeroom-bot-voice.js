@@ -913,14 +913,22 @@ async function goAheadCannotReply(pool, { app, place, row, speaker, deps = {} })
 async function runTurn(pool, config, { appId, place, through = 0, sorry = false, turnKey, deps = {} }) {
   const turnId = await claim(pool, { appId, place, turnKey });
   if (!turnId) throw new PlaceBusy();
-  // #6228: on a request, the thread's status line follows this turn: reading
-  // once it starts, and its answer (or silence) once it ends. Best-effort.
-  const noteStatus = () => {
-    if (!place || place.type !== 'issue' || place.ref == null) return;
+  // #6228/#6538: the thread's status line follows this turn, in every place
+  // the voice answers in: reading once it starts, and its answer (or
+  // silence) once it ends. Best-effort, never awaited. Outside a request a
+  // status is broadcast only when there is one to say, so a turn that showed
+  // nothing sends nothing; a line that was shown is always cleared.
+  let announced = false;
+  let pending = Promise.resolve();
+  const noteStatus = (final = false) => {
+    if (!place) return;
     try {
-      void require('./homeroom-bot-reply-status')
-        .publish(pool, { appId: Number(appId), issueNumber: Number(place.ref) })
-        .catch(() => {});
+      const replyStatus = require('./homeroom-bot-reply-status');
+      pending = pending.then(() => replyStatus.publish(pool, {
+        appId: Number(appId),
+        place,
+        ...(place.type === 'issue' ? {} : { skipEmpty: final ? !announced : true }),
+      })).then((sent) => { if (sent) announced = true; }).catch(() => {});
     } catch { /* best effort */ }
   };
   noteStatus();
@@ -928,7 +936,7 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   const finishWith = async (outcome) => {
     record.outcome = outcome;
     await finishTurn(pool, turnId, record);
-    noteStatus();
+    noteStatus(true);
     return { outcome, throughId: record.throughId || null, replyId: record.replyId || null };
   };
   const cfg = configOf(config);

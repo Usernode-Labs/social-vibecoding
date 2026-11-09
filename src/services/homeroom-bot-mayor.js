@@ -1483,9 +1483,14 @@ async function readSource(pool, { user, project, path: rawPath, fromLine, ref, a
 }
 
 /**
- * #6533: the two versions of a change's code. Its saved starting point
- * (`base_sha`) and its newest version, the same expression routes/shots.js
- * uses. Resolves `{ base, head, number }` or `{ error }`.
+ * #6533, #6541: the two versions of a change's code. Its saved starting
+ * point (`base_sha`) and its NEWEST version: the head the before/after shots
+ * recorded when the proposal last moved (`shots_detail->>'headSha'`,
+ * shots-state.js markStaleForHead, the same one get_proposal reports as
+ * `shots.headSha`), ahead of the reviewed and last-checked pins, so a commit
+ * pushed with no checks or review on it still wins. The old expression stays
+ * as the fallback for a change whose newest head was never recorded.
+ * Resolves `{ base, head, headSource, number }` or `{ error }`.
  */
 async function changeRefs(pool, sessionId, appId, { deps = {} } = {}) {
   const id = Number(sessionId);
@@ -1494,6 +1499,7 @@ async function changeRefs(pool, sessionId, appId, { deps = {} } = {}) {
   const { rows: [row] } = await pool.query(
     `SELECT id, app_id, pr_number, source, handoff_base_sha,
             imported_pr_head_sha, reviewed_head_sha, checks_commit_sha, handoff_head_sha,
+            shots_detail->>'headSha' AS newest_head_sha,
             COALESCE(CASE WHEN source = 'imported' THEN imported_pr_head_sha ELSE reviewed_head_sha END,
                      checks_commit_sha, handoff_head_sha) AS head_sha
        FROM chat_sessions WHERE id = $1`,
@@ -1503,7 +1509,9 @@ async function changeRefs(pool, sessionId, appId, { deps = {} } = {}) {
     return { error: 'That change\'s code cannot be read yet.' };
   }
   const exact = (value) => (/^[0-9a-f]{40}$/i.test(String(value || '')) ? String(value).toLowerCase() : null);
-  const head = exact(row.head_sha);
+  const newest = exact(row.newest_head_sha);
+  const head = newest || exact(row.head_sha);
+  const headSource = newest ? 'newest' : 'last_checked';
   if (!head) return { error: 'That change\'s code cannot be read yet.' };
   // The starting point is the handoff base when the change has one, else the
   // merge base with main, exactly as the before/after shots resolve theirs.
@@ -1521,7 +1529,7 @@ async function changeRefs(pool, sessionId, appId, { deps = {} } = {}) {
       log.warn('homeroom-bot-mayor', 'A change\'s starting point could not be read', { sessionId: id, err: err.message });
     }
   }
-  return { base, head, number: row.pr_number || null };
+  return { base, head, headSource, number: row.pr_number || null };
 }
 
 /** The paths a change alters, between its base and its head, secrets left out. */
