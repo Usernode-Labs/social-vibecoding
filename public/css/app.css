@@ -2371,10 +2371,16 @@ form.agent-session-composer:focus-within {
    around its shoulders. Below that exactly one pane is rendered at a time
    (the list until a row is picked, the thread after, the header bar's back
    arrow between them) and both stay full width. */
+/* ONE LIST MEASURE (#6495, 9 Nov 2026): a list with something open beside it
+   is the same page here and on the Homeroom bot tab, so both columns read
+   this: `.messages-list-pane` below, and the bot tab's `.ai-screen-body`
+   (THE AI TAB'S MAIN VIEW). 22rem is the width the inbox's list has always
+   had, so the inbox is unchanged. */
+:root { --list-pane-w: 22rem; }
 @media (min-width: 768px) {
   .messages-list-pane {
-    flex: 0 0 22rem;
-    width: 22rem;
+    flex: 0 0 var(--list-pane-w);
+    width: var(--list-pane-w);
     padding-inline-end: 8px;
   }
   .messages-thread-pane {
@@ -18212,10 +18218,14 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    it) takes the same width in Main's place.
    UNTIL A WIDTH IS CHOSEN (30 Oct 2026), Main takes the room the list does
    not need. Since 3 Nov 2026 that is ALL of it, with no 720px upper limit:
-   the list is 672px (max-w-2xl) and a gutter each side, so Main is the rest
-   of the window, and only the list's own margins separate them. With the
-   old cap at 720px a 1720px window left a band of empty background between
-   the two and a narrow, tall column for plan cards. The 400px floor stays.
+   Main is the rest of the window, and only the list's own margins separate
+   them. With the old cap at 720px a 1720px window left a band of empty
+   background between the two and a narrow, tall column for plan cards. The
+   400px floor stays. THE LIST GIVES WHAT IT TAKES (#6495, 9 Nov 2026): while
+   something is open beside it the list is the inbox's own measure
+   (`--list-pane-w`), so the two list-and-open pages share one layout; with
+   nothing open it stays the centred 672px single column (`max-w-2xl`,
+   features/ai/index.tsx), as Home and Needs you are.
    A width dragged on Main's edge is Main's own (`--ai-main-chosen-w` and its
    own device key, features/side-panel/resize.ts), so a width chosen for the
    side panel beside an app no longer sizes Main, and the reverse.
@@ -18240,8 +18250,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    short. A design's preview pads the column, as its ✕ is at its top. */
 body:has(#ai-screen:not(.hidden)) {
   --ai-room: var(--platform-usable-w);
-  --ai-list-min: 480px;
-  --ai-main-auto: max(400px, calc(var(--ai-room) - 720px));
+  --ai-list-min: var(--list-pane-w);
+  --ai-main-auto: max(400px, calc(var(--ai-room) - var(--list-pane-w)));
   --ai-main-w: max(320px, min(var(--ai-main-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
 }
 html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
@@ -18284,6 +18294,18 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    16px from Main. Without it they sit 16px from both, and the list centres
    between them. */
 #ai-screen[data-ai-docked] { padding-inline-start: var(--platform-rail-w, 0px); }
+/* THE BOT TAB'S LIST IS THE INBOX'S LIST (#6495, 9 Nov 2026). With something
+   open beside it the page is the Messages inbox's: a list the shared width
+   against the rail, and the open column filling the rest. The body gives up
+   its centred 672px column for that measure, and the room it lets go is
+   Main's (the `--ai-main-w` above). With nothing open beside the lists it
+   keeps `max-w-2xl mx-auto` (features/ai/index.tsx), a single centred page
+   as Home and Needs you are. */
+#ai-screen[data-ai-docked][data-ai-open] .ai-screen-body {
+  width: 100%;
+  max-width: var(--list-pane-w);
+  margin-inline: 0;
+}
 /* The aside stays mounted, because a thread is opened from the place it is
    handed (`at`); with nothing open beside the lists it is not drawn. */
 #ai-screen:not([data-ai-open]) .ai-main-pane { display: none; }

@@ -2054,6 +2054,7 @@ module.exports = {
   fetchPublicIssue,
   fetchIssueComments,
   clipIssueComments,
+  ISSUE_COMMENTS_MAX,
   refreshPublicIssues,
   truncateIssueBodies,
   listActionsSecrets,

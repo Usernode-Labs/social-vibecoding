@@ -260,7 +260,7 @@
       "key": "APP_DB_STORAGE_WARN_PERCENT",
       "group": "Scaling",
       "default": "80",
-      "description": "Percentage of the storage cap at which an app's admins are warned that it is nearly full. One warning per crossing: it re-arms once the database drops back under the line."
+      "description": "Percentage of the storage cap at which an app's admins are warned that it is nearly full. A first heads-up goes out at 50% when this line is above it. Each line is told once per crossing and re-arms once the database drops back under it, and the notices give the space used and the limit."
     },
     {
       "key": "APP_DB_STORAGE_SWEEP_INTERVAL_MS",
