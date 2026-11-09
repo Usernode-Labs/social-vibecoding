@@ -127,8 +127,14 @@ export function HomeScreen() {
   // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
   // member meets their communities first, and the second kind of pin when
   // they choose it (the app's Pin to Home, the hub's ⋯, "Pin its app too").
-  // Never hidden before the grid's first paint, so the prerender agrees.
-  const noApps = grid.ready && grid.view === 'grid' && !grid.editing && grid.items.length === 0;
+  // My apps is hidden only when the loaded grid has nothing at all to show:
+  // an account at rest with no apps still draws the trailing New project tile
+  // (#6522), so an empty grid whose create view Home.render() hands it keeps
+  // the section — a private member, who gets no create view, is the case that
+  // hides it. Never hidden before the grid's first paint, so the prerender
+  // agrees.
+  const noApps = grid.ready && grid.view === 'grid' && !grid.editing
+    && grid.items.length === 0 && !grid.create;
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">

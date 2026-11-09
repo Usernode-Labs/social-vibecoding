@@ -1483,9 +1483,9 @@
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"] ~ [data-standings-tab=\"topochain\"]) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
-      "name": "New community is the last tile of Home's Pinned communities, the one way Home makes a project now (One Home, #6361; it was the launcher grid's last tile)",
+      "name": "New project is the last tile of Home's My apps again, and New community stays the last of Pinned communities (#6522; both were One Home's, #6361)",
       "path": "/?demo=1&shot=create-enabled",
-      "expectSelector": "#home-body #home-apps-section:not(:has(#home-create-tile)) ~ #home-communities-section:not([hidden]) #home-new-community[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
+      "expectSelector": "#home-body #home-apps-section:not([hidden]):has(#home-create-tile[data-panel-slot=\"create\"][data-create-enabled=\"true\"]) ~ #home-communities-section:not([hidden]) #home-new-community[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
       "expectText": "New community"
     },
     {
