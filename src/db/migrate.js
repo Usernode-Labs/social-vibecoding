@@ -121,6 +121,9 @@ async function migrate(config) {
   // #6261's shots: a design thread with a version in the capture member's
   // chat, for the comment picture's design frames.
   await seedStagingDesignThread(pool);
+  // #6354's shots: a design that started from a copy of the Homeroom bot
+  // page, an obviously fake one, with the bot's change as version 2.
+  await seedStagingCapturedPageThread(pool);
   await seedStagingBotPlanWaiting(pool);
   // #6264: a request whose bot kept its word, for the before & after shots
   // of "tell me when it's done" (the promise, then the line it posted).
@@ -9727,6 +9730,114 @@ async function seedStagingDesignThread(pool) {
   }
 }
 
+// #6354: a design started from Homeroom's own copy of a page. A clean
+// staging copy has no bot turn to run (there is no model), so this stores
+// what a capture_page turn leaves in the capture member's chat: version 1
+// the page "as it is now", and version 2 the bot's change to it. Obviously
+// fake, idempotent by its title, and a strict no-op outside staging.
+async function seedStagingCapturedPageThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const named = 'Staging demo: the Homeroom bot page';
+    const had = await pool.query('SELECT 1 FROM design_threads WHERE title = $1 LIMIT 1', [named]);
+    if (had.rows.length) return;
+    const member = (await pool.query(
+      'SELECT id FROM users WHERE username = \'usernode-capture\' AND is_synthetic = FALSE LIMIT 1'
+    )).rows[0];
+    if (!member) return;
+    const app = (await pool.query(
+      'SELECT id, slug, name FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1'
+    )).rows[0];
+    if (!app) return;
+    const bot = (await pool.query(
+      'SELECT id FROM users WHERE username = \'homeroom_bot\' AND is_synthetic = TRUE LIMIT 1'
+    )).rows[0];
+    if (!bot) return;
+    const dm = require('../services/homeroom-bot-dm');
+    const opened = await dm.sendDm(pool, {
+      bot,
+      userId: member.id,
+      content: `Staging demo: I opened a design thread for ${named.replace('Staging demo: ', '')}, in a thread only you can see. `
+        + 'Tell me what to change there, and I\'ll make the next version.',
+      threadRootId: false,
+      moment: null,
+      metadata: { kind: 'opened_design', appSlug: app.slug, appName: app.name || app.slug, designTitle: named },
+    });
+    if (!opened?.messageId) return;
+    const thread = (await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+       VALUES ($1, $2, $3, $4, 'design', 'open')
+       ON CONFLICT (root_message_id) DO NOTHING
+       RETURNING id`,
+      [member.id, opened.conversationId, opened.messageId, app.id]
+    )).rows[0];
+    if (!thread) return;
+    await pool.query(
+      `INSERT INTO design_threads (private_thread_id, title, surface, route, width, height)
+       VALUES ($1, $2, 'platform', '/?demo=1#homeroom-bot', 1280, 800)
+       ON CONFLICT (private_thread_id) DO NOTHING`,
+      [thread.id, named]
+    );
+    // A small, obviously fake Homeroom bot page with demo rows: the shape a
+    // real copy keeps, at its real columns (rail 212, list 668, Main 400).
+    const rows = ['A request to review its plan', 'A change waiting for votes', 'A flaky check to fix']
+      .map((say) => `<div style="padding:10px 14px;border-radius:12px;box-shadow:inset 0 0 0 1px #e4e4e7;margin-top:8px">`
+        + `<strong style="font-size:14px">${say}</strong>`
+        + '<div style="font-size:12px;color:#71717a;margin-top:2px">Staging demo row</div></div>')
+      .join('');
+    const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+      + '<body style="margin:0;font-family:system-ui,sans-serif;background:#f4f4f5;color:#18181b;display:flex;width:1280px;height:800px">'
+      + '<nav style="width:212px;box-sizing:border-box;background:#fff;box-shadow:inset -1px 0 0 #e4e4e7;padding:16px 12px">'
+      + '<div style="font-weight:700;font-size:17px;padding:4px 8px 16px">Homeroom</div>'
+      + '<div style="padding:8px;font-size:15px;border-radius:10px;background:#eef2ff;color:#1d4ed8;font-weight:650">AI</div>'
+      + '</nav>'
+      + '<main style="flex:1;padding:24px;box-sizing:border-box">'
+      + '<div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#71717a">Needs you</div>'
+      + rows + '</main>'
+      + '<aside style="width:400px;background:#fff;box-shadow:inset 1px 0 0 #e4e4e7;padding:18px">'
+      + '<div style="font-size:15px;font-weight:650">Main Chat</div>'
+      + '<div style="font-size:13px;color:#71717a;margin-top:4px">Only you can see this thread</div>'
+      + '<p style="font-size:14px;color:#52525b;margin-top:16px">Staging demo: the Homeroom bot page as it is now.</p>'
+      + '</aside></body></html>';
+    await pool.query(
+      `INSERT INTO design_versions (private_thread_id, version, html, author, note)
+       VALUES ($1, 1, $2, 'capture', 'As it is now')
+       ON CONFLICT (private_thread_id, version) DO NOTHING`,
+      [thread.id, html]
+    );
+    const change = html.replace(
+      '<div style="font-size:15px;font-weight:650">Main Chat</div>',
+      '<input placeholder="Search threads" style="box-sizing:border-box;width:100%;height:34px;border-radius:10px;'
+        + 'border:1px solid #d4d4d8;padding:0 10px;font-size:14px;margin-bottom:10px">'
+        + '<div style="font-size:15px;font-weight:650">Main Chat</div>'
+    );
+    await pool.query(
+      `INSERT INTO design_versions (private_thread_id, version, html, author, note)
+       VALUES ($1, 2, $2, 'bot', 'a search box over the list')
+       ON CONFLICT (private_thread_id, version) DO NOTHING`,
+      [thread.id, change]
+    );
+    const first = await dm.sendDm(pool, {
+      bot,
+      userId: member.id,
+      content: 'Version 1: As it is now.\n\nVersion 2: a search box over the list.',
+      threadRootId: opened.messageId,
+      moment: null,
+      idempotencyKey: `staging-captured-page-${thread.id}`,
+      metadata: { kind: 'design_version', appSlug: app.slug, appName: app.name || app.slug, designVersion: 2 },
+    }).catch(() => null);
+    if (first?.messageId) {
+      await pool.query(
+        'UPDATE design_versions SET message_id = $2 WHERE private_thread_id = $1 AND version IN (1, 2)',
+        [thread.id, first.messageId]
+      );
+    }
+    log.info('db', 'Staging captured design thread seeded', { threadId: thread.id });
+  } catch (err) {
+    log.warn('db', 'Staging captured design thread seeding failed', { message: err.message });
+  }
+}
+
 // Fixtures for the home screen's "Your apps" section + search bar
 // (homepage restructure). The section is the union of membership
 // (app_collaborators status='member') and manual favorites
@@ -18505,6 +18616,7 @@ module.exports = {
   // #6441: the folded "went live" rows the bell's Unread shows.
   seedStagingFoldedLiveNotifications,
   seedStagingDesignThread,
+  seedStagingCapturedPageThread,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   followPlatformDefaultModel,

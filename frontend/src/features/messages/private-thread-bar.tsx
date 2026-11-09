@@ -34,6 +34,12 @@
  * thread has no door either. The routes the old doors wrote to stay
  * (routes/conversations.js, services/private-threads.js fileIt, postIt).
  *
+ * 9 Nov 2026 (#6523, Evan): New project is not guessed from the kind of
+ * thread either. It is the bot's to offer (offer_new_project), from a drawn
+ * design, or in a thread it opened for a new project. A question, a filed
+ * request or a change to a project that exists has no door, even when the
+ * thread is not tied to a project.
+ *
  * The first render is nothing: where the thread stands is read in an effect
  * (`usePrivateThread`, held by the thread's pane for its head and its foot).
  *
@@ -87,17 +93,18 @@ export type Door = 'new';
  * Pure: the doors a private thread offers at its foot. None until Homeroom
  * bot has answered in it (there is nothing shaped to take public yet), and
  * none once it went somewhere. File it and Post it are never here: they are
- * the bot's to offer, under its own reply, once something is ready. An idea
- * in no project (a thread they started, a "+" thread for any project) can
- * start one.
+ * the bot's to offer, under its own reply, once something is ready. New
+ * project is the bot's to offer too (#6523): `invited` is true when its
+ * newest reply offered one, or when the bot opened this thread for a new
+ * project. A screen drawn for no project yet keeps it regardless.
  */
-export function doorsFor(where: PrivateThreadState | null, botReplied: boolean): Door[] {
+export function doorsFor(where: PrivateThreadState | null, botReplied: boolean, invited = false): Door[] {
   if (!where || where.state !== 'open' || !botReplied || where.mine === false) return [];
   // B04: a screen drawn for no project yet is made into one, with its drawing.
   if (where.design && !where.app && where.kind !== 'draft_request' && where.kind !== 'draft_reply') return ['new'];
   // A design thread's bot offers the project itself (design-bot.js offer_project).
   if (where.kind === 'draft_request' || where.kind === 'draft_reply' || where.kind === 'design' || where.app) return [];
-  return ['new'];
+  return invited ? ['new'] : [];
 }
 
 interface ThreadMessage {
@@ -107,8 +114,29 @@ interface ThreadMessage {
     homeroomBot?: {
       kind?: string; designTitle?: string; projectIdea?: string; draftTitle?: string;
       aboutKind?: 'request' | 'change'; aboutNumber?: number; aboutTitle?: string;
+      /** #6523: the kind of thread the bot opened here; 'project' for a new one. */
+      changeKind?: string;
+      /** #6523: Homeroom bot offered to make this idea a project in this reply. */
+      newProject?: boolean;
     } | null;
   } | null;
+}
+
+/**
+ * Pure (#6523): whether Homeroom bot invited a new project in this thread.
+ * True when its newest reply carries `newProject`, or when the root is the
+ * line it opened for a new project (start_project_thread). An earlier
+ * offer alone does not count: only its latest reply.
+ */
+export function newProjectInvited(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[]): boolean {
+  const meta = root?.sender.bot ? root.metadata?.homeroomBot || null : null;
+  if (meta?.kind === 'opened_thread' && meta.changeKind === 'project') return true;
+  for (let i = replies.length - 1; i >= 0; i -= 1) {
+    const message = replies[i];
+    if (!message.sender.bot) continue;
+    return message.metadata?.homeroomBot?.newProject === true;
+  }
+  return false;
 }
 
 /**
@@ -280,13 +308,15 @@ export function PrivateThreadNote({ where, rootId = null, onChanged }: {
   return <div className="messages-bot-note px-4 py-2" data-private-thread="open">{t('messages:privateThread.label')}</div>;
 }
 
-/** The thread's foot: New project, for an idea in no project yet, and who it is for. */
-export function PrivateThreadDoors({ rootId, text, where, botReplied, working = false }: {
+/** The thread's foot: New project, when Homeroom bot offers one, and who it is for. */
+export function PrivateThreadDoors({ rootId, text, where, botReplied, invited = false, working = false }: {
   rootId: number;
   text: string;
   where: PrivateThreadState | null;
   /** Homeroom bot has answered in the thread. */
   botReplied: boolean;
+  /** #6523: Homeroom bot offered a new project in its newest reply, or opened this thread for one. */
+  invited?: boolean;
   /** Homeroom bot is working in the thread: its working card is its foot. */
   working?: boolean;
 }): ReactNode {
@@ -307,7 +337,7 @@ export function PrivateThreadDoors({ rootId, text, where, botReplied, working = 
   }
   // While the bot works, its working card is the thread's one thing at the foot.
   if (working) return null;
-  const doors = doorsFor(where, botReplied);
+  const doors = doorsFor(where, botReplied, invited);
   if (!where || !doors.length) return null;
   // B04 (audit 2 Nov 2026): a drawn screen is made into its project in
   // place, with its name and its drawing (the bot's own Make the project

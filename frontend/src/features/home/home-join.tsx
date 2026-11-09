@@ -17,13 +17,22 @@ export function HomeJoin() {
   const pins = useStoreState(homePinsStore);
   const query = useHomeQuery();
   const [apps, setApps] = useState<GuestApp[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!pins.ready) return;
     let live = true;
-    void readDirectory().then((list) => { if (live) setApps(list || []); });
+    setFailed(false);
+    void readDirectory(attempt > 0).then((list) => {
+      if (!live) return;
+      // #6354 review: null is a directory that could not be read, which is
+      // not the same as one with nothing in it: say so, and let them retry.
+      if (list) setApps(list);
+      else { setApps(null); setFailed(true); }
+    });
     return () => { live = false; };
-  }, [pins.ready]);
+  }, [pins.ready, attempt]);
 
   const exclude = useMemo(() => new Set([
     ...pins.joined.map((c) => c.slug),
@@ -34,10 +43,12 @@ export function HomeJoin() {
   return (
     <CommunitiesToJoin
       apps={apps}
+      failed={failed}
       exclude={exclude}
       signedIn
       query={query}
       onJoin={(app) => { void (window as any).Home?.setMembership?.(app.slug, true); }}
+      onRetry={() => { setApps(null); setAttempt((n) => n + 1); }}
     />
   );
 }

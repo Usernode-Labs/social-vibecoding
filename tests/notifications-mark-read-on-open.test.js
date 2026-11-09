@@ -108,8 +108,52 @@ test('controller refreshes, then marks read only when the refresh resolved true'
   const m = CONTROLLER_SRC.match(/onOpen: \(\) => Promise\.resolve\(([\s\S]*?)\),\n\}\);/);
   assert.ok(m, 'onOpen definition found');
   assert.match(m[0], /window\.Notifications\?\.refresh\?\.\(\)/, 'refreshes on open');
-  assert.match(m[0], /\.then\(\(ok\) => \{ if \(ok\) window\.Notifications\?\.markReadOnOpen\?\.\(\); \}\)/,
-    'clears only after a landed refresh');
+  assert.match(m[0], /if \(ok && !window\.Notifications\?\._shotOpened\) window\.Notifications\?\.markReadOnOpen\?\.\(\);/,
+    'clears only after a landed refresh, and not when the sheet was opened by the shot link');
+});
+
+// The shipped onOpen, extracted so the behaviour is exercised rather than
+// only its text. `window` is the building function's parameter, so the arrow
+// captures the stub it is built with.
+function controllerOnOpen(windowStub) {
+  const m = CONTROLLER_SRC.match(/onOpen: ([\s\S]*?),\n\}\);/);
+  assert.ok(m, 'onOpen definition found');
+  return new Function('window', `return (${m[1]});`)(windowStub);
+}
+
+function notificationsStub({ refreshResult, shotOpened }) {
+  const calls = { refresh: 0, markReadOnOpen: 0 };
+  return {
+    calls,
+    window: {
+      Notifications: {
+        _shotOpened: shotOpened,
+        refresh() { calls.refresh++; return Promise.resolve(refreshResult); },
+        markReadOnOpen() { calls.markReadOnOpen++; },
+      },
+    },
+  };
+}
+
+test('controller skips marking read when the sheet was opened by the shot link', async () => {
+  const { calls, window } = notificationsStub({ refreshResult: true, shotOpened: true });
+  await controllerOnOpen(window)();
+  assert.equal(calls.refresh, 1, 'still refreshes on open');
+  assert.equal(calls.markReadOnOpen, 0, 'a capture is not reading');
+});
+
+test('controller marks read once on an ordinary open after a landed refresh', async () => {
+  const { calls, window } = notificationsStub({ refreshResult: true, shotOpened: false });
+  await controllerOnOpen(window)();
+  assert.equal(calls.refresh, 1);
+  assert.equal(calls.markReadOnOpen, 1);
+});
+
+test('controller marks nothing when the refresh did not land', async () => {
+  const { calls, window } = notificationsStub({ refreshResult: false, shotOpened: false });
+  await controllerOnOpen(window)();
+  assert.equal(calls.refresh, 1);
+  assert.equal(calls.markReadOnOpen, 0, 'a failed or superseded refresh clears nothing');
 });
 
 // ── 4. markReadOnOpen, taken from the shipped source ────────────────────
