@@ -4,7 +4,7 @@
 // when it has to draw one from the code. A redraw that guesses its columns
 // comes out wider than the page it is a design of: asked to "render" the
 // Homeroom bot page, the bot drew it at a made-up width and it took another
-// round of reading to find the real 430px column (private thread 16876).
+// round of reading to find the real column (private thread 16876).
 //
 // Every number below is read off the stylesheet named beside it and off the
 // components' own classes. Phone is 390 wide, desktop 1280, the two sizes the
@@ -16,22 +16,26 @@ const DESKTOP = 1280;
 // THE RAIL); below that the rail is 0 and the tab bar is the way around.
 const RAIL_FULL = 212;
 // The AI page's own rules (public/css/app.css, `#ai-screen`):
-//   --ai-list-min: 480px
-//   --ai-main-auto: max(400px, calc(var(--ai-room) - 720px))
+//   :root --list-pane-w: 22rem (352px at the default text size)
+//   --ai-list-min: var(--list-pane-w)
+//   --ai-main-auto: max(400px, calc(var(--ai-room) - var(--list-pane-w)))
 //   --ai-main-w: max(320px, min(...))
-// the room is the window less the rail, and the list's content is capped at
-// 672px (`max-w-2xl`, frontend/src/features/ai/index.tsx). At 1280:
-// room 1068, Main 400 and the list 668.
+// The room is the window less the rail. While something is open beside the
+// list, the list is the inbox's measure (352px) and Main takes the rest;
+// with nothing open, the list is the centred 672px single column
+// (`max-w-2xl`, frontend/src/features/ai/index.tsx). At 1280: room 1068,
+// the list 352 and Main 716.
 const AI_ROOM = DESKTOP - RAIL_FULL;
 const AI_MAIN_MIN = 400;
-const AI_LIST_MIN = 480;
+const AI_LIST_MIN = 352;
 const AI_LIST_CONTENT_MAX = 672;
-const AI_MAIN_DESKTOP = Math.max(AI_MAIN_MIN, AI_ROOM - 720);
+const AI_MAIN_DESKTOP = Math.max(AI_MAIN_MIN, AI_ROOM - AI_LIST_MIN);
 const AI_LIST_DESKTOP = AI_ROOM - Math.min(AI_MAIN_DESKTOP, AI_ROOM - AI_LIST_MIN);
 
 // Messages: the list is a fixed pane and the thread takes the rest
-// (public/css/app.css `.messages-list-pane` and `.messages-layout`).
-const MESSAGES_LIST_DESKTOP = 360;
+// (public/css/app.css `.messages-list-pane` and `.messages-layout`). It is the
+// same measure as the AI tab's list beside Main (#6495, `--list-pane-w`).
+const MESSAGES_LIST_DESKTOP = 352;
 // The Workshop's places list and its side panel
 // (frontend/src/features/dev-board/workshop/project-places.tsx, `.dev-ws-side`).
 const WORKSHOP_PLACES_DESKTOP = 232;
@@ -58,15 +62,15 @@ const WIDTHS = Object.freeze({
     name: 'the Homeroom bot page',
     phone: Object.freeze({ list: PHONE_FULL, mainChat: PHONE_FULL, drawer: true }),
     desktop: Object.freeze({
-      list: AI_LIST_DESKTOP, listContent: AI_LIST_CONTENT_MAX, mainChat: AI_MAIN_DESKTOP, mainChatMin: 320,
+      list: AI_LIST_DESKTOP, mainChat: AI_MAIN_DESKTOP, mainChatMin: 320, singleColumn: AI_LIST_CONTENT_MAX,
     }),
-    source: '#ai-screen --ai-list-min (480px), --ai-main-auto (max 400px, room - 720px), max-w-2xl (672px)',
+    source: ':root --list-pane-w (22rem, 352px), #ai-screen --ai-list-min and --ai-main-auto, max-w-2xl (672px)',
   }),
   'main-chat': Object.freeze({
     name: 'Main Chat',
     phone: Object.freeze({ thread: PHONE_FULL, drawer: true }),
     desktop: Object.freeze({ thread: AI_MAIN_DESKTOP, besideList: AI_LIST_DESKTOP }),
-    source: '#ai-screen --ai-main-w (400px at 1280)',
+    source: '#ai-screen --ai-main-w (716px at 1280, the room less --list-pane-w)',
   }),
   messages: Object.freeze({
     name: 'Messages',

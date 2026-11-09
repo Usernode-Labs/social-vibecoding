@@ -16,16 +16,19 @@ const CSS = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css
 
 test('the bot page\'s numbers are the ones the stylesheet sets', () => {
   // The AI page's rules, as public/css/app.css writes them.
-  assert.match(CSS, /--ai-list-min: 480px;/);
-  assert.match(CSS, /--ai-main-auto: max\(400px, calc\(var\(--ai-room\) - 720px\)\);/);
+  assert.match(CSS, /--list-pane-w: 22rem;/);
+  assert.match(CSS, /--ai-list-min: var\(--list-pane-w\);/);
+  assert.match(CSS, /--ai-main-auto: max\(400px, calc\(var\(--ai-room\) - var\(--list-pane-w\)\)\);/);
   assert.match(CSS, /--platform-rail-full: 212px;/);
 
   const bot = layout.WIDTHS['homeroom-bot'];
   const room = layout.DESKTOP - layout.RAIL_FULL;
   assert.equal(layout.RAIL_FULL, 212, 'the desktop rail is --platform-rail-full');
-  assert.equal(bot.desktop.mainChat, 400, '--ai-main-auto at 1280: the 400px floor');
-  assert.equal(bot.desktop.list, room - bot.desktop.mainChat, 'the list takes the room Main does not');
-  assert.equal(bot.desktop.listContent, 672, 'the list content is capped at max-w-2xl');
+  assert.equal(bot.desktop.list, 352, 'the list is --list-pane-w, 22rem');
+  assert.equal(bot.desktop.mainChat, room - bot.desktop.list, 'Main takes the room the list does not');
+  assert.equal(bot.desktop.mainChat, 716, '--ai-main-auto at 1280: 1068 less the 352px list');
+  assert.equal(bot.desktop.singleColumn, 672, 'with nothing open the list is a centred max-w-2xl');
+  assert.equal(layout.WIDTHS.messages.desktop.list, 352, 'Messages shares --list-pane-w with the bot tab (#6495)');
   assert.equal(bot.phone.list, 390, 'a phone has no columns: the list is the screen');
 });
 
@@ -45,7 +48,7 @@ test('every page designPrompt lists has a phone and a desktop width', () => {
 test('layoutLines names each page, its widths and the rule', () => {
   const lines = layout.layoutLines();
   assert.match(lines[0], /^REAL SIZES/);
-  assert.match(lines.join('\n'), /the Homeroom bot page:[\s\S]*mainChat 400px/);
+  assert.match(lines.join('\n'), /the Homeroom bot page:[\s\S]*mainChat 716px/);
   assert.match(lines.join('\n'), /never make a column wider than the real one/);
   assert.doesNotMatch(lines.join('\n'), /—/);
 });
