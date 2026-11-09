@@ -22,10 +22,13 @@ queue records the refusal and retries after four minutes; a force vote does not
 bypass GitHub protection. An open proposal predating this job must sync with main
 before it can satisfy the new required check.
 
-Enable protection before merging the advisory release policy. Repo settings are
-separate from source control: verify the required check names, their GitHub
+Before merging the advisory release policy, require the six existing lockfile
+and image checks. Once this workflow is on main, also require `Security merge
+gate`, completing the checked-in list. Requiring the new job before its workflow
+lands would prevent older PRs, including the separate esbuild repair, from merging.
+Repo settings are separate from source control: verify the check names, GitHub
 Actions source and admin enforcement in Settings > Branches > main. The checked-in
-list is the contract, not a claim that a workflow can configure its own protection.
+list is the final contract, not a claim that a workflow configures its own protection.
 
 After merge, release scans use `SECURITY_AUDIT_ONLY=1`. Findings are warnings in
 the job log and summary, with full reports retained, and do not stop delivery.
