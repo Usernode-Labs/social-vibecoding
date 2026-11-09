@@ -41,6 +41,9 @@
 // follow-up waiting its turn showed as nothing while the bot said otherwise.
 
 const { changeHref } = require('./change-destination');
+// #6528: the ready rule the bot's own ready card uses (checks passed and the
+// before & after shots settled), one copy shared with the change machine.
+const { heldUntil } = require('../workflow/rules/bot-readiness.ts');
 
 // Lazy: the live module is large, and only the queue readers below need it.
 function live() { return require('./homeroom-bot-live'); }
@@ -695,9 +698,30 @@ function stageOf(input, { now = new Date() } = {}) {
     // waits on nobody's approval.
     const first = row.first_version === true;
     if (row.check_state === 'passing' || row.check_state === 'skipped') {
-      return first
-        ? { stage: 'vote', since: row.proposal_at, doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two' }
-        : { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
+      if (first) {
+        return { stage: 'vote', since: row.proposal_at, doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two' };
+      }
+      // #6528: its tests passed but its before & after shots are still being
+      // taken: it reads as checking, so the "Ready to try" bell (and the
+      // ready card) waits until the pictures are there. The rule is the
+      // bot's own readiness (bot-readiness.ts heldUntil), with its 45-minute
+      // lapse when no settle ever comes; a change with nothing visible to
+      // shoot is not held.
+      const head = (row.proposal_source === 'imported' ? row.imported_pr_head_sha : row.reviewed_head_sha) || row.checks_sha;
+      const held = heldUntil({
+        shots_state: row.shots_state,
+        shots_run_id: row.shots_run_id,
+        shots_detail: row.shots_detail,
+        shots_updated_at: row.shots_updated_at,
+        checks_checked_at: row.checks_at,
+      }, head, now.getTime());
+      if (held != null) {
+        return {
+          stage: 'checks', since: row.checks_at || row.proposal_at,
+          doing: 'it\'s waiting for approval, and its tests passed; its before and after shots are still being taken',
+        };
+      }
+      return { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
     }
     const waiting = first ? 'it goes live without a vote once its tests pass' : 'it\'s waiting for approval';
     // #6284: the bot stopped at its own limit on failing checks. Needs you
@@ -1136,6 +1160,9 @@ const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q
             -- Merged but not live yet (live_at) reads as merging: going live.
             CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
             cs.check_state, cs.check_phase,
+            -- #6528: the change's before & after shots, so a passing change
+            -- still being shot reads as checking rather than ready.
+            cs.shots_state, cs.shots_run_id, cs.shots_detail, cs.shots_updated_at,
             cs.merge_conflict_state, cs.integration_merges_clean,
             cs.checks_progress, cs.checks_checked_at AS checks_at, cs.test_results,
             -- N5: which commit the verdict is about, and the head up for
