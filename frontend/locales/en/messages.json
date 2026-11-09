@@ -5858,5 +5858,45 @@
   "frame.bot.newCount": {
     "text": "{{count}} new",
     "description": "Homeroom bot's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Pill at the end of the Main Chat row: how many new replies are in it."
+  },
+  "frame.inbox.purpose": {
+    "text": "People and groups you talk to.",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title."
+  },
+  "frame.inbox.new": {
+    "text": "New message",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's one primary button: starts a conversation."
+  },
+  "frame.inbox.tabPeople": {
+    "text": "People",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). First tab: conversations with people and groups."
+  },
+  "frame.inbox.tabAgents": {
+    "text": "Agents",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Second tab: chats with coding agents."
+  },
+  "frame.inbox.search": {
+    "text": "Search people and messages",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Placeholder of the search field under the tabs."
+  },
+  "frame.inbox.none": {
+    "text": "Nothing here yet.",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Said in place of the list when the chosen tab holds no conversation."
+  },
+  "frame.inbox.agentsPurpose": {
+    "text": "Older chats with coding agents. New work with the bot is in the Homeroom bot tab.",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title while the Agents tab is chosen. Homeroom bot is a name."
+  },
+  "frame.inbox.agentsSearch": {
+    "text": "Search agent chats",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Placeholder of the search field while the Agents tab is chosen."
+  },
+  "frame.inbox.agentsCount_one": {
+    "text": "{{count}} older chat",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label over the list on the Agents tab: how many chats with coding agents there are."
+  },
+  "frame.inbox.agentsCount_other": {
+    "text": "{{count}} older chats",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label over the list on the Agents tab: how many chats with coding agents there are."
   }
 }

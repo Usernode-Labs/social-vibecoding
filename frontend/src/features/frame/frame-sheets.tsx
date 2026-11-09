@@ -22,6 +22,7 @@ import { Av, Btn, Card, Lead, Meta, Pill, Row, Sec, Sheet, Tile, Tog } from '@/c
 import { useMessages } from '../../lib/i18n/react';
 import { createStore } from '../../lib/plain-store.js';
 import { useStoreState } from '../../lib/use-store-state';
+import { swatchFor } from '../messages/format';
 import { notificationsStore } from '../notifications/notifications-store.js';
 
 type Which = 'notifications' | 'menu' | null;
@@ -54,7 +55,7 @@ function NotificationRow({ view, asks, onDone }: { view: NotificationView; asks:
   const where = view.appLine || view.appName || '';
   const lead = view.appName
     ? <Tile name={view.appName} src={view.appIconUrl} emoji={view.appIconEmoji} />
-    : view.who ? <Av size={40} name={view.who} /> : <Lead icon="bell" />;
+    : view.who ? <Av size={40} name={view.who} color={swatchFor(view.who)} /> : <Lead icon="bell" />;
   return (
     <Row
       lead={lead}

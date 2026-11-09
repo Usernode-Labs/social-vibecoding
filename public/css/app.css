@@ -26997,6 +26997,17 @@ html[data-skin] #ai-screen[data-frame-list] .ai-askbar-gap { display: none; }
   html[data-skin] #ai-screen[data-frame-list] #ai-main-divider { display: none; }
 }
 
+/* …and Messages, whose layout already has the two panes: the list pane
+   holds the kit's list and is 520px, the conversation takes the rest and
+   gives up its own sheet (margins, corners, fill) for the one line between
+   two panes. The screen gives up its gutter, as a kit page's does. */
+html[data-skin] #messages-screen:has([data-messages-frame-list]) { padding-inline-start: var(--platform-rail-w, 0px) !important; padding-inline-end: 0 !important; }
+html[data-skin] .messages-list-pane[data-frame-list] { overflow-y: auto; padding: 0; }
+@media (min-width: 768px) {
+  html[data-skin] .messages-list-pane[data-frame-list] { flex: 0 0 520px; width: 520px; }
+  html[data-skin] .messages-layout:has(> [data-frame-list]) > .messages-thread-pane { margin: 0; border-radius: 0; background: none; box-shadow: none; border-inline-start: 1px solid var(--fr-line); }
+}
+
 /* A SHEET (kit.tsx Sheet) is drawn in <body>, in a host that covers the
    window above the chrome and the screens; the kit's own overlay fills the
    host as it filled the tour's mock. What a sheet holds scrolls inside it. */

@@ -40,6 +40,7 @@ import { useVisibility } from '../../lib/visibility-store';
 import { navStore } from '../nav/nav-store.js';
 import { useRailCommunities } from '../nav/rail-communities';
 import { communityScopeStore, goToCommunity } from '../workshop/community-scope';
+import { swatchFor } from '../messages/format';
 import { framePageStore } from './frame-page-store';
 import { FrameSheets, openFrameSheet } from './frame-sheets';
 
@@ -234,7 +235,7 @@ export function FrameChrome() {
                 handing(event, () => press('platform-tab-me'));
               }}
             >
-              <Av size={24} name={me || '?'} src={user?.avatar_url} />
+              <Av size={24} name={me || '?'} src={user?.avatar_url} color={swatchFor(me || '?')} />
               <span className={k('nm')}>{t('core:tabs.me')}</span>
               <span
                 data-frame-menu=""
@@ -284,7 +285,7 @@ export function FrameChrome() {
               {unread ? <span className={k('dot')} /> : null}
             </button>
             <button type="button" className={k('p')} aria-label={t('core:frame.menu.open')} onClick={() => openFrameSheet('menu')} style={{ background: 'none', border: 0 }}>
-              <Av size={28} name={me || '?'} src={user?.avatar_url} />
+              <Av size={28} name={me || '?'} src={user?.avatar_url} color={swatchFor(me || '?')} />
             </button>
           </header>
           <main className={k('pagearea')} ref={areaRef} />

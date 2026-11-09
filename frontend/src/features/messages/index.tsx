@@ -58,7 +58,7 @@ import { useMessagesDrawer } from './phone-drawer';
 import { messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
-import { fullTime, UserAvatar, senderName } from './format';
+import { fullTime, UserAvatar, senderName, swatchFor } from './format';
 import { DiscussionRow, MessageRow } from './message-row';
 import { OPEN_HOLD_MS, openHoldDone } from './open-hold';
 import { plainText } from './plain-text';
@@ -131,6 +131,9 @@ import {
 import { listArchivedSessions } from '../agent-session/api';
 import type { AgentSession as MayorSession } from '../agent-session/api';
 import { changeRowWords } from '../agent-session/transcript';
+import { isFrameSkin, useSkin } from '../../lib/skin';
+import { Av as KitAv, Lead as KitLead } from '@/components/ui/kit';
+import { MessagesFrameList, type FrameInboxRow, type FrameInboxTab } from './frame-list';
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
@@ -752,6 +755,12 @@ function ConversationList({ drawer = false }: {
 } = {}) {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
+  // A look of the one frame draws the list with the kit (./frame-list.tsx),
+  // from the same conversations and presses. Read after mount (lib/skin.ts
+  // says why). The agent catalog is the words a change in flight is said in.
+  const frame = isFrameSkin(useSkin());
+  const [frameTab, setFrameTab] = useState<FrameInboxTab>('people');
+  useMessages('agent');
   // The search: REMEMBERED PER DEVICE SINCE #5459, AND STILL NOT IN THE STORE. A daily
   // voter narrows the list to the changes waiting on them, leaves to vote,
   // and comes back: the query now survives that, kept in localStorage
@@ -1005,6 +1014,100 @@ function ConversationList({ drawer = false }: {
       {archivedOpen ? t('messages:inbox.archived.hide') : t('messages:inbox.archived.show')}
     </button>
   ) : null;
+
+  if (frame) {
+    const me = Number(window.App?.user?.id);
+    const rows: FrameInboxRow[] = [];
+    for (const entry of found) {
+      const active = isOpen(entry);
+      if (entry.kind === 'person') {
+        const c = byConversation.get(entry.key.slice('person:'.length));
+        if (!c) continue;
+        const peer = directPerson(c);
+        const invited = c.membershipStatus === 'invited';
+        const name = c.kind === 'direct' && peer ? senderName(peer, { bare: true }) : c.title;
+        const sender = c.kind === 'group' && !invited ? c.latestMessage?.sender || null : null;
+        const said = sender?.id && c.latestSummary
+          ? (Number(sender.id) === me
+            ? t('messages:inbox.previewYou', { message: ownDirection(c.latestSummary) })
+            : t('messages:inbox.previewBy', { username: sender.username, message: ownDirection(c.latestSummary) }))
+          : c.latestSummary || '';
+        const href = `#messages/${c.id}`;
+        rows.push({
+          key: entry.key,
+          section: entry.section,
+          lead: <KitAv size={40} name={name || '?'} src={peer?.avatarUrl} color={swatchFor(name || '?')} />,
+          title: name || '',
+          line: c.homeroomBot ? botLine || said : said,
+          time: agoStamp(c.lastActivityAt).text,
+          fresh: c.unreadCount > 0 ? t('messages:inbox.newCount', { count: c.unreadCount }) : null,
+          active,
+          href,
+          onClick: (event) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+            if (window.location.hash === href) { event.preventDefault(); selectConversation(c.id); }
+          },
+        });
+      } else if (entry.kind === 'mayor') {
+        const m = byMayor.get(entry.key.slice('mayor:'.length));
+        if (!m) continue;
+        const thread: MessagesAgentThread = { kind: 'agent', id: m.id };
+        const href = agentThreadAddress(thread);
+        // The tour's agent row (s20): where it was and when on the line, and
+        // where its change stands as the one word the row ends in.
+        const change = m.activeChange;
+        const at = m.lastActivityAt || m.createdAt || null;
+        const when = at ? agoStamp(at).text : null;
+        rows.push({
+          key: entry.key,
+          section: entry.section,
+          lead: <KitLead icon="wand" />,
+          title: m.title || t('messages:agent.row.newSession'),
+          line: dotText([m.focusApp?.name, when]),
+          time: when,
+          status: m.busy
+            ? { text: t('messages:agent.row.working'), kind: '' }
+            : change
+              ? { text: changeRowWords(change), kind: change.status === 'merged' ? 'ok' : change.status === 'promoted' ? 'wait' : '' }
+              : null,
+          active,
+          href,
+          onClick: (event) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+            if (window.location.hash === href) { event.preventDefault(); openAgentThread(thread); }
+          },
+        });
+      } else if (entry.kind === 'session') {
+        const sn = bySession.get(entry.key.slice('session:'.length));
+        if (!sn) continue;
+        rows.push({
+          key: entry.key,
+          section: entry.section,
+          lead: <KitLead icon="wand" />,
+          title: sn.title,
+          line: dotText([sn.appName, sn.lastActivityAt ? agoStamp(sn.lastActivityAt).text : null]),
+          time: sn.lastActivityAt ? agoStamp(sn.lastActivityAt).text : null,
+          status: sn.status ? { text: sn.status, kind: '' } : null,
+          active,
+          href: sn.href,
+          onClick: () => {},
+        });
+      }
+    }
+    return (
+      <section className={`messages-list-pane ${specBeside ? 'hidden' : drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label={t('core:tabs.messages')} data-frame-list="">
+        <MessagesFrameList
+          rows={rows}
+          tab={frameTab}
+          onTab={setFrameTab}
+          query={query}
+          onQuery={changeQuery}
+          onNew={() => startNew('direct')}
+          loaded={!!snap.listLoaded}
+        />
+      </section>
+    );
+  }
 
   return (
     <section className={`messages-list-pane ${specBeside ? 'hidden' : drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label={t('messages:inbox.listName')}>
