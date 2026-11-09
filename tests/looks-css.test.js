@@ -240,8 +240,29 @@ test('what every look shares: the product\'s tokens follow the look\'s, at a loo
   assert.ok(m, 'one rule for any look but New look, its exception inside :where() so More contrast still outweighs it');
   for (const [token, from] of [['--text-primary', '--fr-ink'], ['--text-secondary', '--fr-mut'], ['--text-muted', '--fr-faint'], ['--border', '--fr-line'],
     ['--border-light', '--fr-line'], ['--accent', '--fr-acc'], ['--accent-ink', '--fr-acc-ink'], ['--accent-tint-ink', '--fr-acc'], ['--lit-ink', '--fr-lit'],
-    ['--lit-tint', '--fr-lit-t'], ['--lit-line', '--fr-line'], ['--dc-sheet', '--fr-surface'], ['--dc-sheet-solid', '--fr-surface'], ['--dc-sheet-raise', '--fr-surface'],
+    ['--lit-tint', '--fr-lit-t'], ['--lit-line', '--fr-line'], ['--dc-sheet', '--fr-surface'], ['--dc-sheet-raise', '--fr-surface'],
     ['--app-sheet-line', '--fr-line']]) {
     assert.ok(m[1].includes(`${token}:var(${from})`), `${token} follows ${from}`);
+  }
+});
+
+test('a solid sheet is solid under a see-through look: a dialog, a menu and a pinned head are never read through', () => {
+  // Glass, Workbench and Mosaic draw their surface see-through, over a blur.
+  // What the product calls --dc-sheet-solid sits over other content with no
+  // blur behind it (a dialog's card, a menu, a head pinned over a scroller),
+  // so it takes the look's opaque surface (looks.json "opaque", the same
+  // value the no-backdrop-filter fallback uses) where the look has one.
+  const text = section();
+  const m = text.match(/html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\)\{([^}]*)\}/);
+  assert.ok(m[1].includes('--dc-sheet-solid:var(--fr-solid,var(--fr-surface))'));
+  for (const [id, look] of Object.entries(looks.config.looks)) {
+    const light = text.match(new RegExp(`html\\[data-skin="${id}"\\]\\{([^}]*)\\}`))[1];
+    const dark = text.match(new RegExp(`html\\[data-skin="${id}"\\]\\.dark\\{([^}]*)\\}`))[1];
+    if (look.opaque) {
+      assert.ok(light.includes(`--fr-solid:${look.opaque[0]}`), `${id}: an opaque surface in light`);
+      assert.ok(dark.includes(`--fr-solid:${look.opaque[1]}`), `${id}: and in dark`);
+    } else {
+      assert.ok(!light.includes('--fr-solid'), `${id}: its surface is already solid, so it needs none`);
+    }
   }
 });
