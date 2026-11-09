@@ -1,3 +1,16 @@
+# #6536's sync parse gate runs esbuild (worker/sync-parse-check.js). npm's
+# prebuilt esbuild binaries carry the Go they were built with (0.25.12, the
+# frontend's pin: Go 1.23.12), whose standard library the release's image
+# scan flags as new in this image, which blocked every release on 9 Nov 2026.
+# So the gate's esbuild is compiled here from the same version's source with
+# a patched Go, and only that one binary reaches the image below.
+ARG ESBUILD_VERSION=0.25.12
+FROM golang:1.27.3-bookworm AS esbuild-build
+ARG ESBUILD_VERSION
+RUN CGO_ENABLED=0 GOTOOLCHAIN=local GOBIN=/out \
+    go install -trimpath "github.com/evanw/esbuild/cmd/esbuild@v${ESBUILD_VERSION}" \
+  && test "$(/out/esbuild --version)" = "${ESBUILD_VERSION}"
+
 FROM node:22.23.4-bookworm-slim
 # Pin npm and replace its affected Undici bundle until npm ships the patch.
 RUN npm install --global npm@11.21.1 undici@6.29.1 \
@@ -135,12 +148,13 @@ RUN install -d -m 700 /var/lib/usernode-codex-bootstrap \
   && chmod 444 /usr/local/share/usernode-codex-bundled-models.json \
   && rm -rf /var/lib/usernode-codex-bootstrap
 
-# #6536: the sync parse gate transforms .ts/.tsx/.jsx with the same esbuild
-# the frontend pins, so it works even when the checkout's own packages are
-# not installed. worker/sync-parse-check.js looks in frontend/node_modules
-# first, then at this global install.
-ARG ESBUILD_VERSION=0.25.12
-RUN npm install -g esbuild@${ESBUILD_VERSION}
+# #6536: the sync parse gate transforms .ts/.tsx/.jsx with the esbuild the
+# frontend pins, so it works even when the checkout's own packages are not
+# installed. worker/sync-parse-check.js uses the checkout's
+# frontend/node_modules/esbuild first, then runs this binary as a command
+# (built from source in the esbuild-build stage above). No ESBUILD_BINARY_PATH:
+# every other esbuild in a turn keeps its own binary.
+COPY --from=esbuild-build /out/esbuild /usr/local/bin/esbuild
 
 # ── Optional in-loop browser (build-mode turns only) ───────────────────
 # The Playwright MCP server + a matching Chromium give the build-mode
