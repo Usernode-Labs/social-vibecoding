@@ -672,56 +672,11 @@ const Notifications = {
     }
   },
 
-  // #6498: OPENING THE BELL IS READING IT. Nothing used to write `read_at`
-  // on open, so the badge stayed lit however often the list was opened —
-  // read meant nothing. This clears exactly what the bell counts, after the
-  // refresh that loaded the latest rows: `keep_plain_messages` reuses the
-  // server's PLAIN_MESSAGE_SQL, so the Messages tab's grey count is left
-  // alone. Pending invites are not notifications rows, so `invites` keeps
-  // its count (an invite asks you to do something).
-  //
-  // The sheet holds the rows it was showing unread (useHeldUnread), so they
-  // stay in Unread, dimmed, until it closes; they never vanish under the
-  // eye. The route's `notifications_changed` fan-out drops the badge on the
-  // viewer's other tabs and devices.
-  //
-  // Quiet on failure: the person pressed nothing, so no toast pops up and
-  // the badge stays as it was; opening again retries. The body uses no
-  // module-scope bindings, because the harnesses rebuild methods with
-  // `new Function` (hence the spelled-out plain-message test).
-  async markReadOnOpen() {
-    if (!Notifications.open) return false;
-    if (Math.max(0, Notifications.unread - (Notifications.messageUnread || 0)) <= 0) return false;
-    try {
-      const res = await fetch('/api/notifications/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ all: true, keep_plain_messages: true }),
-      });
-      if (!res.ok) return false;
-      const data = await res.json();
-      Notifications.unread = data.unread || 0;
-      Notifications.messageUnread = Number(data.messageUnread) || 0;
-      const now = new Date().toISOString();
-      for (const n of Notifications.items) {
-        if (!n || n.readAt) continue;
-        // The plain messages countUnreadSplit leaves out of the bell's
-        // number: a channel message, or a conversation message with no app
-        // (an app's own conversation counts on the bell).
-        if (n.kind === 'channel_message'
-          || (n.kind === 'conversation_message' && !n.appId)) continue;
-        n.readAt = now;
-      }
-      Notifications._reconcileCompletionTitle();
-      Notifications._renderBadge();
-      Notifications._renderList();
-      window.GroupChat?.reconcileDotsFromNotifications?.();
-      return true;
-    } catch (err) {
-      console.warn('[notifications] markReadOnOpen failed', err);
-      return false;
-    }
-  },
+  // #6527: opening the bell no longer marks anything read. The sheet only
+  // refreshes on open; reading is explicit (markAllRead, clearNotification,
+  // markOlderRead, opening a row). The server's narrow-clear option that
+  // opening used to send (#6498) remains on the route, though nothing in the
+  // app sends it now.
 
   // #5929 (item 13): mark every unread notification older than `days` whole
   // days read — the Unread tab's "Mark everything older than a week as
@@ -1433,6 +1388,14 @@ const Notifications = {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) return App.openAppTab(item.appSlug, 'app');
       window.location.hash = `#app/${encodeURIComponent(item.appSlug)}`;
+      return;
+    }
+    // #6371: the one weekly digest covers every project and names none, so
+    // its row (no app) opens the This week page. An older per-project row
+    // still falls through with its app and opens that project's discussion.
+    if (item.kind === 'weekly_digest' && !item.appSlug && /^w:/.test(String(item.detail || ''))) {
+      Notifications._dismissSheetForNav();
+      window.location.hash = '#week';
       return;
     }
     if (item.kind === 'vote_digest' && !item.appSlug) {
@@ -2892,6 +2855,15 @@ function botMomentLine(detail, message) {
   return { label, subject, meta, needsYou, ...(noteId ? { note: t(noteId) } : {}) };
 }
 
+// #6494: a storage token carries MiB used and MiB of cap. MB below 1 GiB,
+// else GB with at most one decimal ("1.6 GB", "3 GB").
+function storageSizeText(mib) {
+  const n = Number(mib);
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n < 1024) return `${Math.round(n)} MB`;
+  return `${(n / 1024).toFixed(1).replace(/\.0$/, '')} GB`;
+}
+
 // A whole message with one emphasised part, as a row's segments: the catalog
 // text is "<0>12 of 50 apps in use.</0> New apps are refused…", and what is
 // inside the tag is the strong segment. A parameter is filled in after the
@@ -3533,7 +3505,34 @@ function rowWords(n) {
   // #1688: the Friday card. `detail` is "<merged>:<open>" — what went live
   // this week and what is waiting on votes. This is the whole card now: a
   // channel carries no activity (services/ws.js sendSystemMessage).
+  //
+  // #6371: one row now covers every project, with `w:<projects>:<merged>:<open>`
+  // (services/weekly-digest.js notifyPeople). Its label says the digest is
+  // ready and its subject adds up the week; tapping it opens This week. An
+  // older per-project row keeps its wording and still opens its project.
   if (n.kind === 'weekly_digest') {
+    const week = /^w:(\d+):(\d+):(\d+)$/.exec(String(n.detail || ''));
+    if (week) {
+      const merged = Number(week[2]);
+      const open = Number(week[3]);
+      const shipped = merged === 0
+        ? t('notifications:row.weekly.nothing')
+        : t('notifications:row.weekly.wentLive', { count: merged });
+      const waiting = open
+        ? t('notifications:row.weekly.waiting', { count: open })
+        : '';
+      return {
+        ...base,
+        // The shell's own newspaper glyph (components/ui/icons), drawn by
+        // the sheet's tile: an icon is a line icon, never an emoji.
+        icon: null,
+        lineIcon: 'newspaper',
+        ...headline(
+          t('notifications:row.weekly.ready'),
+          waiting ? t('notifications:row.factPair', { first: shipped, second: waiting }) : shipped,
+        ),
+      };
+    }
     const counts = /^(\d+):(\d+)$/.exec(String(n.detail || ''));
     const merged = counts ? Number(counts[1]) : 0;
     const open = counts ? Number(counts[2]) : 0;
@@ -3594,6 +3593,23 @@ function rowWords(n) {
     // the app. The app name leads the line on purpose: this row is only
     // ever about one app, and "has used most of its storage" with nothing
     // in front of it reads as the platform talking about itself.
+    // #6494: the early and warning tokens carry the figures, so the row says
+    // how full the database is ("1.6 GB of 3 GB") instead of only "most of".
+    // A bare token from a row written before this change keeps its old words.
+    const storage = /^storage_(early|warn):(\d{1,9}):(\d{1,9})$/.exec(String(n.detail || ''));
+    if (storage) {
+      const key = storage[1] === 'early' ? 'early' : 'warnSized';
+      const values = { used: storageSizeText(Number(storage[2])), limit: storageSizeText(Number(storage[3])) };
+      return {
+        ...base,
+        wrap: true,
+        icon: '\u{1F4BE}',
+        label: t('notifications:row.health.storage.label'),
+        segments: n.appName
+          ? messageSegments(`notifications:row.health.storage.${key}`, { ...values, app: n.appName })
+          : messageSegments(`notifications:row.health.storage.${key}Unnamed`, values),
+      };
+    }
     if (n.detail === 'storage_warn') {
       return {
         ...base,

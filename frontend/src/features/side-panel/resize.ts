@@ -25,9 +25,10 @@
  * ── Beside the Homeroom bot page, the list's floor and the Duo's column ─
  *
  * Main is the same column there, and its neighbour is the bot's list, not an
- * app: the list keeps what app.css gives it (`--ai-list-min`, 280px below
- * 1024px), read from the stylesheet so the two cannot disagree. The drag
- * stopped at the app's 480px while the stylesheet allowed 360.
+ * app: the list keeps what app.css gives it (`--ai-list-min`: the inbox's own
+ * `--list-pane-w` with something open beside it, 280px below 1024px), read
+ * from the stylesheet so the two cannot disagree. The drag stopped at the
+ * app's 480px while the stylesheet allowed 360.
  *
  * ── Two widths, two keys (3 Nov 2026) ─────────────────────────────────
  *
@@ -252,8 +253,18 @@ export function probeLayout(win: Window = window): LayoutProbe {
     const doc = win.document;
     const style = doc.body ? win.getComputedStyle(doc.body) : null;
     const px = (name: string): number => {
-      const n = parseFloat(style ? style.getPropertyValue(name) : '');
-      return Number.isFinite(n) && n > 0 ? n : 0;
+      const raw = style ? style.getPropertyValue(name).trim() : '';
+      const n = parseFloat(raw);
+      if (!Number.isFinite(n) || n <= 0) return 0;
+      // A floor can be written in rem: `--ai-list-min` resolves from the
+      // shared `--list-pane-w` (22rem, #6495), and getComputedStyle hands
+      // back the substituted token stream, not pixels. Read it against the
+      // root's own type size; a px value parses as it always has.
+      if (/^-?(?:\d+\.?\d*|\.\d+)rem$/.test(raw)) {
+        const root = parseFloat(win.getComputedStyle(doc.documentElement).fontSize);
+        return n * (Number.isFinite(root) && root > 0 ? root : 16);
+      }
+      return n;
     };
     const panelSide = doc.documentElement.dir === 'rtl' ? 'left' : 'right';
     if (doc.documentElement.getAttribute('data-side-strip') === panelSide) rightInset = px('--platform-strip-w');

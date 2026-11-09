@@ -18,7 +18,12 @@
 // every APP_DB_STORAGE_SWEEP_INTERVAL_MS, records the figure on the app row, and moves
 // each app through a small state machine:
 //
-//   ok --(>= warn%)--> warned --(>= cap)--> frozen --(< 95% of cap)--> ok
+//   ok --(>= 50%)--> early --(>= warn%)--> warned --(>= cap)--> frozen --(< 95% of cap)--> ok
+//
+// The early line is a heads-up, not a second warning: it tells the admins
+// while there is still room to clean up, so the first they hear of storage
+// is not "out of storage". A sweep that jumps past both lines sends only the
+// highest one, and each line re-arms when the database drops back under it.
 //
 // `decide()` below IS that machine, pure, so its transitions are pinned by
 // tests/app-storage-cap.test.js without a database. The hysteresis is the
@@ -30,8 +35,9 @@
 // (db-manager.setAppDatabaseWritable): reads keep working, writes fail.
 // It tells the app's creator and admins through the `app_health`
 // notification channel, the same one a failed deploy uses, with a short
-// token as the detail (`storage_warn` / `storage_full`) that the drawer
-// and the push copy render. Two admin levers undo a freeze without waiting
+// token as the detail (`storage_early` / `storage_warn`, with the used and
+// cap figures, or a bare `storage_full`) that the drawer and the push copy
+// render. Two admin levers undo a freeze without waiting
 // for the app to shrink: a per-app cap override (apps.db_storage_cap_bytes)
 // and a grace window (apps.db_storage_grace_until), during which the
 // database stays writable however big it is; the sweep re-freezes after
@@ -49,16 +55,37 @@ const dbManager = require('./db-manager');
 const log = require('./logger');
 
 const GIB = 1024 * 1024 * 1024;
+const MIB = 1024 * 1024;
 const DEFAULT_CAP_BYTES = 3 * GIB; // 3221225472
 const DEFAULT_WARN_PERCENT = 80;
+// The first heads-up, so cleaning up happens before the app is nearly full.
+// Fixed rather than a setting; skipped when an operator sets the warning line
+// at or below it.
+const EARLY_WARN_PERCENT = 50;
 const DEFAULT_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 // A frozen app thaws only once it is this far under its cap.
 const UNFREEZE_RATIO = 0.95;
 const MAX_GRACE_MINUTES = 24 * 60;
 
 // notifications.detail tokens (VARCHAR(32); rendered, never shown raw).
+// The warning tokens carry the figures (MiB used and MiB of cap) so the
+// drawer and the push copy can say how full the database is; the freeze token
+// says everything by itself. `storage_early:1638:3072` is 24 characters, and
+// the widest one ("storage_early:99999999:99999999") is 31, inside the
+// 32-character ceiling. Figures are clamped to eight digits for that reason.
 const DETAIL_WARN = 'storage_warn';
+const DETAIL_EARLY = 'storage_early';
 const DETAIL_FULL = 'storage_full';
+const MAX_DETAIL_FIGURE = 99999999;
+
+function storageFigure(bytes) {
+  const n = Number(bytes);
+  return Math.min(MAX_DETAIL_FIGURE, Math.max(0, Math.round((Number.isFinite(n) ? n : 0) / MIB)));
+}
+
+function storageDetail(kind, bytes, capBytes) {
+  return `storage_${kind}:${storageFigure(bytes)}:${storageFigure(capBytes)}`;
+}
 
 function isStaging() {
   return process.env.USERNODE_ENV === 'staging';
@@ -117,45 +144,59 @@ function effectiveCap(app, cfg = config()) {
  *                  stop and the admins are told
  *   unfreeze       frozen, and now under 95% of the cap or inside a grace
  *                  window
+ *   warn_early     crossed the half-full line (once, until it drops back
+ *                  under)
  *   warn           crossed the warning line (once, until it drops back
  *                  under)
- *   clear_warning  back under the warning line: the warning re-arms
+ *   clear_warning  back under a line: that line re-arms
  *
- * One transition per call keeps every step observable: an app that drops
- * from frozen to well under the warning line thaws on this sweep and
- * re-arms on the next.
+ * `warnLevel` is the HIGHEST line already told: 0 none, 1 early, 2 warning.
+ * An app warned before this column existed has `warnedAt` and no level, and
+ * counts as 2 so it is not told again. One transition per call keeps every
+ * step observable: an app that drops from frozen to well under both lines
+ * thaws on this sweep and clears the levels on the next.
+ *
+ * A jump past both lines sends only the highest, so nobody gets a pile of
+ * notices between two sweeps.
  */
-function decide({ bytes, capBytes, warnPercent, frozenAt, graceUntil, warnedAt, now }) {
+function decide({ bytes, capBytes, warnPercent, frozenAt, graceUntil, warnedAt, warnLevel, now }) {
   const nowMs = toMs(now) ?? Date.now();
   const size = toBytes(bytes) ?? 0;
   const cap = toBytes(capBytes) ?? DEFAULT_CAP_BYTES;
   const pct = Number.isFinite(warnPercent) ? warnPercent : DEFAULT_WARN_PERCENT;
   const warnBytes = Math.floor((cap * pct) / 100);
+  const earlyBytes = Math.floor((cap * EARLY_WARN_PERCENT) / 100);
+  const earlyEnabled = pct > EARLY_WARN_PERCENT;
   const thawBytes = Math.floor(cap * UNFREEZE_RATIO);
   const graceMs = toMs(graceUntil);
   const graceOpen = graceMs != null && graceMs > nowMs;
   const frozen = !!frozenAt;
-  const warned = !!warnedAt;
+  const level = warnLevel == null ? (warnedAt ? 2 : 0) : Number(warnLevel);
+  const warned = level >= 2;
 
   if (frozen) {
     if (graceOpen || size < thawBytes) {
-      return { transition: 'unfreeze', frozen: false, warned, graceOpen };
+      return { transition: 'unfreeze', frozen: false, warned, graceOpen, warnLevel: level };
     }
-    return { transition: 'none', frozen: true, warned, graceOpen };
+    return { transition: 'none', frozen: true, warned, graceOpen, warnLevel: level };
   }
   if (size >= cap && !graceOpen) {
-    // Full implies past the warning line, so the freeze also marks the
-    // warning as given: thawing later must not follow "out of storage"
-    // with "has used most of its storage" for the same growth.
-    return { transition: 'freeze', frozen: true, warned: true, graceOpen };
+    // Full implies past every line, so the freeze also marks them as given:
+    // thawing later must not follow "out of storage" with "has used most of
+    // its storage" for the same growth.
+    return { transition: 'freeze', frozen: true, warned: true, graceOpen, warnLevel: 2 };
   }
-  if (size >= warnBytes && !warned) {
-    return { transition: 'warn', frozen: false, warned: true, graceOpen };
+  const target = size >= warnBytes ? 2 : (earlyEnabled && size >= earlyBytes ? 1 : 0);
+  if (target > level) {
+    return {
+      transition: target === 2 ? 'warn' : 'warn_early',
+      frozen: false, warned: target >= 2, graceOpen, warnLevel: target,
+    };
   }
-  if (size < warnBytes && warned) {
-    return { transition: 'clear_warning', frozen: false, warned: false, graceOpen };
+  if (target < level) {
+    return { transition: 'clear_warning', frozen: false, warned: false, graceOpen, warnLevel: target || null };
   }
-  return { transition: 'none', frozen: false, warned, graceOpen };
+  return { transition: 'none', frozen: false, warned, graceOpen, warnLevel: level };
 }
 
 // ── Rows ──────────────────────────────────────────────────────────────
@@ -203,7 +244,7 @@ async function loadApps(pool) {
   const { rows } = await pool.query(
     `SELECT id, slug, name, self_hosted, db_size_bytes, db_size_measured_at,
             db_storage_cap_bytes, db_storage_frozen_at, db_storage_grace_until,
-            db_storage_warned_at
+            db_storage_warned_at, db_storage_warn_level
        FROM apps
       WHERE NOT self_hosted`
   );
@@ -214,7 +255,7 @@ async function readApp(pool, slug, { now } = {}) {
   const { rows } = await pool.query(
     `SELECT id, slug, name, self_hosted, db_size_bytes, db_size_measured_at,
             db_storage_cap_bytes, db_storage_frozen_at, db_storage_grace_until,
-            db_storage_warned_at
+            db_storage_warned_at, db_storage_warn_level
        FROM apps
       WHERE slug = $1 AND NOT self_hosted`,
     [slug]
@@ -281,7 +322,8 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
         await db.query(
           `UPDATE apps
               SET db_storage_frozen_at = $1,
-                  db_storage_warned_at = COALESCE(db_storage_warned_at, $1)
+                  db_storage_warned_at = COALESCE(db_storage_warned_at, $1),
+                  db_storage_warn_level = 2
             WHERE id = $2`,
           [now, app.id]
         );
@@ -312,16 +354,39 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
       log.info('app-storage-cap', 'App database writable again', { ...meta, grace: decision.graceOpen });
       return;
     }
-    case 'warn': {
-      // Told once: a sweep beside this one finds it already warned.
+    case 'warn_early': {
+      // Told once: a sweep beside this one finds the level already set.
       const { rowCount } = await pool.query(
-        'UPDATE apps SET db_storage_warned_at = $1 WHERE id = $2 AND db_storage_warned_at IS NULL', [now, app.id]);
+        `UPDATE apps SET db_storage_warn_level = 1
+          WHERE id = $1 AND COALESCE(db_storage_warn_level, 0) < 1`, [app.id]);
+      if (!rowCount) return;
+      summary.earlyWarned += 1;
+      log.info('app-storage-cap', 'App database past its early storage line', meta);
+      if (!staging) {
+        try {
+          await notify(pool, { appId: app.id, detail: storageDetail('early', bytes, capBytes) });
+        } catch (err) {
+          summary.errors.push(`${app.slug}: notify: ${err.message}`);
+          log.warn('app-storage-cap', 'Could not notify app admins of the early warning', { ...meta, err: err.message });
+        }
+      }
+      return;
+    }
+    case 'warn': {
+      // Told once: a sweep beside this one finds it already warned. The
+      // guard is the new level, not `warned_at`, so a legacy row (warned_at
+      // only) reads as level 2 and is not told again.
+      const { rowCount } = await pool.query(
+        `UPDATE apps
+            SET db_storage_warn_level = 2,
+                db_storage_warned_at = COALESCE(db_storage_warned_at, $1)
+          WHERE id = $2 AND COALESCE(db_storage_warn_level, 0) < 2`, [now, app.id]);
       if (!rowCount) return;
       summary.warned += 1;
       log.info('app-storage-cap', 'App database past its storage warning line', meta);
       if (!staging) {
         try {
-          await notify(pool, { appId: app.id, detail: DETAIL_WARN });
+          await notify(pool, { appId: app.id, detail: storageDetail('warn', bytes, capBytes) });
         } catch (err) {
           summary.errors.push(`${app.slug}: notify: ${err.message}`);
           log.warn('app-storage-cap', 'Could not notify app admins of the warning', { ...meta, err: err.message });
@@ -330,8 +395,16 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
       return;
     }
     case 'clear_warning': {
+      // The target is always under 2 here, so `warned_at` (which the admin
+      // console reads as "warning") is cleared with the level.
+      const next = decision.warnLevel == null ? null : decision.warnLevel;
       const { rowCount } = await pool.query(
-        'UPDATE apps SET db_storage_warned_at = NULL WHERE id = $1 AND db_storage_warned_at IS NOT NULL', [app.id]);
+        `UPDATE apps
+            SET db_storage_warn_level = $1,
+                db_storage_warned_at = NULL
+          WHERE id = $2
+            AND (db_storage_warn_level IS DISTINCT FROM $1 OR db_storage_warned_at IS NOT NULL)`,
+        [next, app.id]);
       if (!rowCount) return;
       summary.cleared += 1;
       return;
@@ -390,6 +463,7 @@ async function sweep(pool, deps = {}) {
     skipped: 0,
     frozen: 0,
     unfrozen: 0,
+    earlyWarned: 0,
     warned: 0,
     cleared: 0,
     enforced: 0,
@@ -461,6 +535,7 @@ async function sweep(pool, deps = {}) {
         frozenAt: app.db_storage_frozen_at,
         graceUntil: app.db_storage_grace_until,
         warnedAt: app.db_storage_warned_at,
+        warnLevel: app.db_storage_warn_level,
         now,
       });
       await applyTransition(pool, app, dbName, decision, {
@@ -600,7 +675,7 @@ function demoAdminPayload({ now } = {}) {
       startedAt: at(4), finishedAt: at(4), durationMs: 812, staging: true,
       capBytes: cfg.capBytes, warnPercent: cfg.warnPercent,
       databases: 6, measured: 4, skipped: 2,
-      frozen: 0, unfrozen: 0, warned: 0, cleared: 0, errors: [],
+      frozen: 0, unfrozen: 0, earlyWarned: 0, warned: 0, cleared: 0, errors: [],
     },
     demo: true,
   };
@@ -622,12 +697,15 @@ module.exports = {
   adminPayload,
   demoAdminPayload,
   isStaging,
+  storageDetail,
   DEFAULT_CAP_BYTES,
   DEFAULT_WARN_PERCENT,
+  EARLY_WARN_PERCENT,
   DEFAULT_SWEEP_INTERVAL_MS,
   UNFREEZE_RATIO,
   MAX_GRACE_MINUTES,
   DETAIL_WARN,
+  DETAIL_EARLY,
   DETAIL_FULL,
   _resetForTest,
 };

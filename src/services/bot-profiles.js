@@ -58,7 +58,13 @@ const DESIGN_LIMITS = Object.freeze({
   rounds: 12,
   drawByRound: 8,
   readUntilRound: 7,
-  outputTokens: 4096,
+  // #6358: a long screen (a recipe home) is drawn to the end. A step gets
+  // four times the room it had (4096), a draw cut off at its limit is asked
+  // again with twice that, and a step may take three minutes instead of a
+  // minute and a half. Room that is not written is not paid for.
+  outputTokens: 16000,
+  retryOutputTokens: 32000,
+  requestTimeoutMs: 180_000,
   history: 16,
   replyChars: 1500,
   editsPerCall: 16,
@@ -68,11 +74,11 @@ const CHAT_TOOLS = Object.freeze([
   'progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'get_spec', 'answer_question',
   'revise_proposal', 'comment_on_request', 'start_request', 'offer_request', 'offer_move_request',
   'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'draw_screen', 'close_thread',
-  'report_problem', 'start_project_thread', 'reply',
+  'report_problem', 'start_project_thread', 'offer_new_project', 'reply',
 ]);
 const DESIGN_TOOLS = Object.freeze([
   'write_screen', 'edit_design', 'list_source', 'read_source', 'reply', 'read_plan', 'compare_versions',
-  'make_pictures', 'close_thread', 'offer_plan', 'offer_project', 'list_requests', 'get_request',
+  'make_pictures', 'close_thread', 'offer_plan', 'offer_project', 'list_requests', 'get_request', 'capture_page',
 ]);
 // Every project thread offers these; each kind adds its own.
 const THREAD_TOOLS = Object.freeze([
