@@ -13,9 +13,12 @@
 {{- fail "config.appResourceProfiles must map positive app IDs to small or standard" }}
 {{- end }}
 {{- end }}
-{{- range $id := .Values.config.appSleepAppIds }}
-{{- if not (regexMatch "^[1-9][0-9]*$" (toString $id)) }}
-{{- fail "config.appSleepAppIds must contain positive app IDs" }}
+{{- if not (kindIs "map" .Values.config.appSleepExcludedApps) }}
+{{- fail "config.appSleepExcludedApps must map positive app IDs to nonempty reasons" }}
+{{- end }}
+{{- range $id, $reason := .Values.config.appSleepExcludedApps }}
+{{- if or (not (regexMatch "^[1-9][0-9]*$" (toString $id))) (not (kindIs "string" $reason)) (empty (trim (toString $reason))) }}
+{{- fail "config.appSleepExcludedApps must map positive app IDs to nonempty reasons" }}
 {{- end }}
 {{- end }}
 {{- range $window := list .Values.config.previewSleepAfterMs .Values.config.appSleepAfterMs }}

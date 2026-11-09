@@ -327,7 +327,7 @@ function createGate({
     }
     const applink = String(decision.headers['x-usernode-applink'] || '');
     const target = upstreamTarget(upstream);
-    const endActivity = activity.begin(upstream, req.url);
+    const endActivity = activity.begin(upstream, req.url, { method: req.method, userAgent: req.headers['user-agent'] });
     const proxied = http.request({
       hostname: target.host,
       port: target.port,
@@ -407,7 +407,7 @@ function createGate({
       return;
     }
     const target = upstreamTarget(upstream);
-    const endActivity = activity.begin(upstream, req.url);
+    const endActivity = activity.begin(upstream, req.url, { upgrade: true });
     const headers = upstreamHeaders(req, decision);
     // The handshake itself: these two are hop-by-hop everywhere else.
     headers.connection = 'Upgrade';
