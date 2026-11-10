@@ -356,9 +356,9 @@ export function Tabs({ tabs, current, onPick }: {
  * The page's body: work in the 720px column, context in the 320px column
  * beside it, which goes below on a phone (above with `sideFirst`).
  */
-export function Cols({ side, sideFirst, children }: { side?: React.ReactNode; sideFirst?: boolean; children?: React.ReactNode }) {
+export function Cols({ side, sideFirst, wide, children }: { side?: React.ReactNode; sideFirst?: boolean; wide?: boolean; children?: React.ReactNode }) {
   return (
-    <div className={k('cols', !side && 'one')}>
+    <div className={k('cols', !side && 'one', wide && 'wide')}>
       <div className={k('stack')}>{children}</div>
       {side ? <div className={k('stack', sideFirst && 'first')}>{side}</div> : null}
     </div>
@@ -370,13 +370,17 @@ export function Cols({ side, sideFirst, children }: { side?: React.ReactNode; si
  * columns. The sidebar, bar and tab bar around it are the shell's
  * (features/frame/frame-app.tsx).
  */
-export function PageBody({ title, purpose, acts, tabs, side, sideFirst, children, ...props }: {
+export function PageBody({ title, purpose, acts, tabs, side, sideFirst, wide, below, children, ...props }: {
   title: React.ReactNode;
   purpose?: React.ReactNode;
   acts?: React.ReactNode;
   tabs?: React.ReactNode;
   side?: React.ReactNode;
   sideFirst?: boolean;
+  /** The main column takes the width and the side column is 400px (Home), instead of the tour's 720 and 320. */
+  wide?: boolean;
+  /** Groups under both columns, the whole width: a sideways row of cards. */
+  below?: React.ReactNode;
   children?: React.ReactNode;
 } & Omit<React.HTMLAttributes<HTMLElement>, 'title'>) {
   return (
@@ -384,9 +388,84 @@ export function PageBody({ title, purpose, acts, tabs, side, sideFirst, children
       <div className={k('inner')}>
         <Head title={title} purpose={purpose} acts={acts} />
         {tabs}
-        <Cols side={side} sideFirst={sideFirst}>{children}</Cols>
+        <Cols side={side} sideFirst={sideFirst} wide={wide}>{children}</Cols>
+        {below ? <div className={k('stack', 'wide')}>{below}</div> : null}
       </div>
     </Frame>
+  );
+}
+
+/** Cards side by side in one row that scrolls sideways: challenges, featured communities. */
+export function HRow({ children }: { children?: React.ReactNode }) {
+  return <div className={k('hrow')}>{children}</div>;
+}
+
+/**
+ * A challenge, as the Challenges tab's card: its art on its tone (or its
+ * icon), the goal, the rail with its words and how far along, the reward.
+ */
+export function ChallengeCard({ href, onClick, art, icon, title, line, state, label, fill, reward }: {
+  href: string;
+  onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+  /** The illustration and the fill it sits on; `icon` is drawn when there is none. */
+  art?: { src: string; fill: string } | null;
+  icon?: string | null;
+  title: React.ReactNode;
+  line?: React.ReactNode;
+  state: 'new' | 'progress' | 'done';
+  /** The rail's words: "2 of 5", "Started", "Done". */
+  label: React.ReactNode;
+  /** 0..1, how much of the rail is filled; null draws no bar. */
+  fill?: number | null;
+  reward?: React.ReactNode;
+}) {
+  const pct = state === 'done' ? 100 : fill == null ? null : Math.max(0, Math.min(100, Math.round(fill * 100)));
+  return (
+    <a className={k('card', 'ccard')} href={href} onClick={onClick}>
+      {art
+        ? <span className={k('cart')} style={{ background: art.fill }} aria-hidden="true"><img src={art.src} alt="" loading="lazy" /></span>
+        : <span className={k('cart')} aria-hidden="true">{icon}</span>}
+      <span className={k('cbody')}>
+        <span className={k('t')}>{title}</span>
+        {line ? <span className={k('s')}>{line}</span> : null}
+        <span className={k('rail', state)} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct ?? undefined}>
+          {state !== 'done' && pct != null ? <i style={{ width: `${Math.max(pct, 6)}%` }} /> : null}
+          <span>{label}</span>
+        </span>
+        {reward ? <span className={k('bp')}>{reward}</span> : null}
+      </span>
+    </a>
+  );
+}
+
+/**
+ * A community as a picture card (Featured on Home): its illustration, or
+ * its tile large on the cover; its name, one sentence, who is there, and
+ * the row's one word.
+ */
+export function PicCard({ href, onClick, cover, darkCover, tile, title, line, meta, word }: {
+  href: string;
+  onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+  cover?: string | null;
+  darkCover?: string | null;
+  tile?: React.ReactNode;
+  title: React.ReactNode;
+  line?: React.ReactNode;
+  meta?: React.ReactNode;
+  word?: React.ReactNode;
+}) {
+  return (
+    <a className={k('card', 'fcard')} href={href} onClick={onClick}>
+      <span className={k('fcover')}>
+        {cover ? <img src={cover} alt="" loading="lazy" className={k('sun')} /> : tile}
+        {cover && darkCover ? <img src={darkCover} alt="" loading="lazy" className={k('moon')} /> : null}
+      </span>
+      <span className={k('fbody')}>
+        <span className={k('t')}>{title}</span>
+        {line ? <span className={k('s')}>{line}</span> : null}
+        {meta || word ? <span className={k('fm')}>{meta}{word ? <span className={k('btn', 'quiet', 'sm')}>{word}</span> : null}</span> : null}
+      </span>
+    </a>
   );
 }
 

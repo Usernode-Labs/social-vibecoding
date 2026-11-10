@@ -474,3 +474,35 @@ started with TERM ignored (`glass-local/ignore-term.cjs`, local only) saw no sig
 one-context run. Project pages take 8 to 12 s to render on this copy; captures need that
 settle. Phone shots from the parallel sweep often caught loading states; the Glass phone
 findings were re-shot one context at a time before being judged.
+
+### Home laid out as the 10 Nov proposal (10 Nov, evening)
+
+The Homeroom Home Mockups artifact (drawn with the kit's own stylesheet in
+Glass, Paper and Mosaic) settled Home's order, and the kit's Home
+(`features/home/frame/home-frame.tsx`) now draws it under every look; the
+standard look is untouched.
+
+- **Two columns, the main one the width and the side one 400px**
+  (`PageBody wide`, `.cols.wide` in kit.css), the side column first on a
+  phone (`sideFirst`), so what asks for you is the top of the page there.
+- **Main column:** Pinned apps · Pinned communities · Featured, one
+  sideways row of picture cards (`PicCard`: the directory's
+  `illustration_url` and its dark twin, else the tile large on the cover;
+  name, the app's sentence, members, Join) · Communities to join as rows.
+- **Side column:** Needs you · Live this week · Your week (`Facts`: rank,
+  points, challenges still open) · the Season row.
+- **Under both columns, the whole width** (`PageBody below`,
+  `.stack.wide`): the season's challenges as one sideways row of cards
+  (`ChallengeCard`: the art on its tone, `TONE_FILL` in
+  lib/challenge-illustrations.ts; the goal; the rail with its words and
+  its fill; the reward), the Challenges tab's own card in the kit.
+- **The kit gained** `HRow`, `ChallengeCard`, `PicCard`, and `.hrow`,
+  `.ccard`/`.cart`/`.cbody`/`.rail`/`.bp`, `.fcard`/`.fcover`/`.fbody`/
+  `.fm` in kit.css; the cover's two pictures are `.sun` and `.moon`
+  (`.dark` is the compiler's own flag, `.day` the thread divider).
+
+Left for later, as the proposal ruled: "Ask or find" (the search box that
+takes a sentence to the bot), "Since you last looked" as one feed of
+merges, replies and votes opened (the live feed is merges only), the
+Standings' top rows (no list endpoint on the client yet) and "builds left
+this week" (no per-member read).

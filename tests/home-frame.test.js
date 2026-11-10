@@ -69,7 +69,8 @@ test('the page is the kit\'s: a frame root, the head, one primary action, then t
   assert.match(html, /^<div class="fr" data-home-frame=""><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">Home<\/h1><p class="fr-purpose">/);
   assert.match(html, /<div class="fr-acts"><button type="button" class="fr-btn"><svg class="fr-ic"[^>]*>.*?<\/svg>Make a project<\/button><\/div>/s);
   assert.equal((html.match(/class="fr-btn"/g) || []).length, 1, 'one primary action on the page');
-  assert.match(html, /<div class="fr-cols fr-one"><div class="fr-stack">/, 'no side column when nothing went live');
+  assert.match(html, /<div class="fr-cols fr-wide"><div class="fr-stack">/, 'Home\'s columns: the main one takes the width, the side one is 400px (the 10 Nov Home proposal)');
+  assert.match(render({ initialFeed: [], initialQuestions: [] }), /<div class="fr-cols fr-one fr-wide"><div class="fr-stack">/, 'no side column when nothing needs you and nothing went live');
   // Kit classes only: a utility class beside a look's rule would break one of the nine.
   const classes = [...html.matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/)).filter(Boolean);
   assert.ok(classes.length > 10);
@@ -96,6 +97,8 @@ test('Needs you shows three rows, each ending in the one word that says what to 
   assert.equal((group.match(/<span class="fr-pill fr-act" data-kind="act">Vote<\/span>/g) || []).length, 2);
   assert.match(group, /Homeroom · 0 yes votes so far/);
   assert.match(group, /<svg class="fr-ic fr-go"/, 'a row that opens something ends in the chevron');
+  assert.ok(html.indexOf('<div class="fr-stack fr-first">') < html.indexOf('id="home-frame-needs"'), 'Needs you is the side column\'s first group, and the side column comes first on a phone');
+  assert.ok(html.indexOf('<div class="fr-stack fr-first">') > html.indexOf('id="home-frame-communities"') || html.indexOf('id="home-frame-communities"') < 0, 'the pins are the main column\'s');
 });
 
 test('a change still waiting on its checks says so in amber, and one whose Yes is the viewer\'s alone says Approve', () => {
@@ -161,8 +164,9 @@ test('what went live this week sits in the side column, newest first, with how l
       { id: 2, number: 6410, title: 'Daily puzzle streaks', at: '2026-11-06T11:00:00Z', author: 'maragung', app: { slug: 'game-corner', name: 'Game Corner', icon_url: null, icon_emoji: '🎮' } },
     ],
   });
-  assert.match(html, /<div class="fr-cols"><div class="fr-stack">/, 'two columns once there is context');
+  assert.match(html, /<div class="fr-cols fr-wide"><div class="fr-stack">/, 'two columns once there is context');
   const side = html.slice(html.indexOf('id="home-frame-live"'));
+  assert.ok(html.indexOf('<div class="fr-stack fr-first">') < html.indexOf('id="home-frame-live"'), 'in the side column');
   assert.match(side, /<h2 class="fr-cap">Live this week<\/h2>/);
   assert.match(side, /Penalty shoot-out mode<\/span><span class="fr-s">GOAL! · Bruno<\/span><\/span><span class="fr-meta">2h<\/span>/);
   assert.match(side, /<span class="fr-meta">3d<\/span>/);
@@ -248,32 +252,44 @@ test('the words are catalog text', () => {
   assert.doesNotMatch(read('frontend', 'src', 'features', 'home', 'frame', 'home-frame.tsx'), />[A-Z][a-z]+ [a-z]+</, 'no English literal in the component');
 });
 
-test('your season is one row of the side column, to Challenges, once the standings know you (the tour\'s s01)', () => {
-  const html = render({}, homeStubs({ standing: { rank: 15, people: 149, points: 16128 } }));
-  assert.match(html, /<h2 class="fr-cap">Season<\/h2><\/div><div class="fr-card"><a class="fr-row" href="#leaderboard\/challenges"><span class="fr-lead">15<\/span><span class="fr-tx"><span class="fr-t">Rank 15 of 149<\/span><span class="fr-s">16,128 points<\/span><\/span><svg class="fr-ic fr-go"/);
-  assert.doesNotMatch(render(), /Season/, 'nothing until the standing is known');
-  assert.match(read(HOME_FRAME), /useEffect\(\(\) => \{ void MyStanding\.load\(\); \}, \[\]\);/, 'asked for once, as Challenges asks');
-});
-
-test('the season\'s challenges are a group of rows under Needs you, as Home draws them (its Next challenges strip)', () => {
+test('your week is three figures over the season row, in the side column, once the standings know you', () => {
   const view = { key: 'next', title: 'Challenges', mode: 'next', heading: 'Next challenges', seeAll: true, note: null, rows: [
     { id: 'c1', eventId: 7, icon: null, illustration: null, illustrationTone: null, goal: 'Use apps for 10 minutes', done: false, reward: '1,000 pts', state: 'progress', stateLabel: 'Started', fill: 0.4 },
     { id: 'c2', eventId: 7, icon: null, illustration: null, illustrationTone: null, goal: 'Join a community', done: true, reward: '500 pts', state: 'done', stateLabel: 'Done', fill: 1 },
   ] };
+  const html = render({}, homeStubs({ standing: { rank: 15, people: 149, points: 16128 }, challenges: view }));
+  assert.match(html, /<h2 class="fr-cap">Your week<\/h2><\/div><div class="fr-card"><div class="fr-facts fr-f3"><div class="fr-fact"><div class="fr-v fr-acc">#15<\/div><div class="fr-l">this season<\/div><\/div><div class="fr-fact"><div class="fr-v">16,128<\/div><div class="fr-l">points<\/div><\/div><div class="fr-fact"><div class="fr-v fr-ok">1<\/div><div class="fr-l">still open<\/div><\/div><\/div><\/div>/, 'rank, points, and the challenges still open');
+  assert.match(html, /<h2 class="fr-cap">Season<\/h2><\/div><div class="fr-card"><a class="fr-row" href="#leaderboard\/challenges"><span class="fr-lead">15<\/span><span class="fr-tx"><span class="fr-t">Rank 15 of 149<\/span><span class="fr-s">16,128 points<\/span><\/span><svg class="fr-ic fr-go"/);
+  assert.ok(html.indexOf('<div class="fr-stack fr-first">') < html.indexOf('Your week'), 'in the side column');
+  assert.doesNotMatch(render(), /Season/, 'nothing until the standing is known');
+  assert.match(read(HOME_FRAME), /useEffect\(\(\) => \{ void MyStanding\.load\(\); \}, \[\]\);/, 'asked for once, as Challenges asks');
+});
+
+test('the season\'s challenges are picture cards in one sideways row below the columns, as Home draws them', () => {
+  const view = { key: 'next', title: 'Challenges', mode: 'next', heading: 'Next challenges', seeAll: true, note: null, rows: [
+    { id: 'c1', eventId: 7, icon: null, illustration: 'make-a-proposal', illustrationTone: null, goal: 'Use apps for 10 minutes', done: false, reward: '1,000 pts', state: 'progress', stateLabel: '2 of 5', fill: 0.4, counted: true },
+    { id: 'c2', eventId: 7, icon: '🏆', illustration: null, illustrationTone: null, goal: 'Join a community', done: true, reward: '500 pts', state: 'done', stateLabel: 'Done', fill: 1, counted: false },
+  ] };
   const html = render({}, homeStubs({ challenges: view }));
-  assert.match(html, /<h2 class="fr-cap">Next challenges<\/h2><a class="fr-link" href="#leaderboard\/challenges">See all<\/a><\/div><div class="fr-card"><a class="fr-row" href="#leaderboard\/challenges\/7"><span class="fr-lead fr-acc" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Use apps for 10 minutes<\/span><span class="fr-s">Started<\/span><\/span><span class="fr-meta">1,000 pts<\/span><svg class="fr-ic fr-go"/s);
-  assert.match(html, /<a class="fr-row" href="#leaderboard\/challenges\/7"><span class="fr-lead fr-ok" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Join a community<\/span><span class="fr-s">Done<\/span>/s, 'a done challenge is green');
-  const src = read(HOME_FRAME);
-  assert.ok(src.indexOf('id="home-frame-challenges"') < src.indexOf("label={t('home:frame.pinnedApps')}"), 'under Needs you, before the pins, as the standard page orders it');
+  assert.match(html, /<\/div><div class="fr-stack fr-wide"><section class="fr-sec" id="home-frame-challenges"><div class="fr-sechead"><h2 class="fr-cap">Next challenges<\/h2><a class="fr-link" href="#leaderboard\/challenges">See all<\/a><\/div><div class="fr-hrow">/, 'under both columns, the whole width');
+  assert.match(html, /<a class="fr-card fr-ccard" href="#leaderboard\/challenges\/7"><span class="fr-cart" style="background:#e2f2e8" aria-hidden="true"><img src="\/illustrations\/challenges\/make-a-proposal\.svg" alt="" loading="lazy"\/><\/span><span class="fr-cbody"><span class="fr-t">Use apps for 10 minutes<\/span><span class="fr-rail fr-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="40"><i style="width:40%"><\/i><span>2 of 5<\/span><\/span><span class="fr-bp">1,000 pts<\/span><\/span><\/a>/, 'the art on its tone, the goal, the rail with its words, the reward');
+  assert.match(html, /<a class="fr-card fr-ccard" href="#leaderboard\/challenges\/7"><span class="fr-cart" aria-hidden="true">🏆<\/span><span class="fr-cbody"><span class="fr-t">Join a community<\/span><span class="fr-rail fr-done" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><span>Done<\/span><\/span><span class="fr-bp">500 pts<\/span>/, 'a done challenge: its icon, a green rail, no bar');
   assert.doesNotMatch(render(), /Next challenges|fr-cap">Challenges/, 'nothing until the panel is known');
   const none = render({}, homeStubs({ challenges: { ...view, mode: 'none', heading: 'Challenges', seeAll: false, rows: [], note: { title: 'Nothing open', text: 'New ones on Monday.' } } }));
   assert.doesNotMatch(none, /fr-cap">Challenges/, 'a note with no challenge draws no group');
 });
 
-test('the communities the platform features lead Communities to join, under their own label', () => {
-  const dir = [{ slug: 'plain', name: 'Plain', member_count: 3 }, { slug: 'star', name: 'Star', member_count: 9, featured: true, featured_order: 1 }, { slug: 'moon', name: 'Moon', member_count: 4, featured: true, featured_order: 0 }];
+test('the communities the platform features are picture cards in one row, then the rest as rows', () => {
+  const dir = [
+    { slug: 'plain', name: 'Plain', member_count: 3, description: 'A plain one.' },
+    { slug: 'star', name: 'Star', member_count: 9, featured: true, featured_order: 1, illustration_url: '/app-illustrations/9', illustration_dark_url: '/app-illustrations/9d', description: 'Twelve small games.' },
+    { slug: 'moon', name: 'Moon', member_count: 4, featured: true, featured_order: 0, icon_emoji: '🌙' },
+  ];
   const html = render({ initialDirectory: dir });
-  assert.match(html, /<h2 class="fr-cap">Featured<\/h2><\/div><div class="fr-card"><a class="fr-row" href="[^"]*moon[^"]*">.*?<span class="fr-t">Moon<\/span>.*?<a class="fr-row" href="[^"]*star[^"]*">.*?<span class="fr-t">Star<\/span>/s, 'in their featured order');
+  assert.match(html, /<section class="fr-sec" id="home-frame-featured"><div class="fr-sechead"><h2 class="fr-cap">Featured<\/h2><\/div><div class="fr-hrow"><a class="fr-card fr-fcard" href="\/app\/moon\/workshop\?ws=status"><span class="fr-fcover"><span class="fr-tile" style="--fr-ts:56px;--fr-tc:#fff" aria-hidden="true">🌙<\/span><\/span><span class="fr-fbody"><span class="fr-t">Moon<\/span><span class="fr-fm">4 members<span class="fr-btn fr-quiet fr-sm">Join<\/span><\/span><\/span><\/a>/, 'in their featured order; no picture: the tile large on the cover; no sentence: no line');
+  assert.match(html, /<a class="fr-card fr-fcard" href="\/app\/star\/workshop\?ws=status"><span class="fr-fcover"><img src="\/app-illustrations\/9" alt="" loading="lazy" class="fr-sun"\/><img src="\/app-illustrations\/9d" alt="" loading="lazy" class="fr-moon"\/><\/span><span class="fr-fbody"><span class="fr-t">Star<\/span><span class="fr-s">Twelve small games\.<\/span><span class="fr-fm">9 members<span class="fr-btn fr-quiet fr-sm">Join<\/span><\/span><\/span><\/a>/, 'the picture, its dark twin, the name, the sentence, the people');
   assert.match(html, /<h2 class="fr-cap">Communities to join<\/h2>.*?<span class="fr-t">Plain<\/span>/s);
+  assert.ok(html.indexOf('id="home-frame-featured"') < html.indexOf('id="home-frame-to-join"'), 'Featured first, the directory next');
+  assert.ok(html.indexOf('id="home-frame-communities"') < html.indexOf('id="home-frame-featured"') || html.indexOf('id="home-frame-communities"') < 0);
   assert.doesNotMatch(html.slice(html.indexOf('Communities to join')), /<span class="fr-t">Moon<\/span>/, 'a featured community is not listed twice');
 });

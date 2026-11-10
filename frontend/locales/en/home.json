@@ -1242,5 +1242,25 @@
   "frame.seasonPoints_other": {
     "text": "{{points}} points",
     "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The season row's line: your points this season. {{points}} is the number formatted; {{count}} the same number for the plural."
+  },
+  "frame.yourWeek": {
+    "text": "Your week",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Label of the side column's group of three figures: your rank this season, your points, the challenges still open."
+  },
+  "frame.thisSeason": {
+    "text": "this season",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Under the rank figure in Your week (\"#15\")."
+  },
+  "frame.pointsLabel": {
+    "text": "points",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Under the points figure in Your week."
+  },
+  "frame.challengesGoing_one": {
+    "text": "still open",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Under the figure in Your week that counts the challenges you have not finished (\"3 still open\"). Singular."
+  },
+  "frame.challengesGoing_other": {
+    "text": "still open",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Plural of frame.challengesGoing_one."
   }
 }

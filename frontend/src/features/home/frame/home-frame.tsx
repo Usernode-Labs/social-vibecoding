@@ -4,13 +4,18 @@
  * looks.
  *
  * Drawn with the frame's kit (frontend/@/components/ui/kit.tsx), whose
- * styles are the tour's own (app.css between the looks marks), so the page
- * is the tour's page: the title, one sentence saying what needs you, one
- * primary action (Make a project), then four groups in the 720px column —
- * Needs you (three rows, each ending in the one word that says what to do),
- * Pinned apps (tiles: an app is the one thing you launch), Pinned
- * communities (rows that say what is new there) and Communities to join —
- * with what went live this week in the 320px column beside it.
+ * styles are the tour's own (app.css between the looks marks). The layout
+ * is the 10 Nov 2026 Home proposal (the Homeroom Home Mockups artifact),
+ * which puts what you launch on the left and what asks for you on the
+ * right: the title, one sentence saying what needs you, one primary action
+ * (Make a project); then the main column — Pinned apps (tiles: an app is
+ * the one thing you launch), Pinned communities (rows that say what is new
+ * there), Featured (one row of picture cards) and Communities to join
+ * (rows) — beside a 400px side column — Needs you (three rows, each ending
+ * in the one word that says what to do), Live this week, Your week (three
+ * figures) and the season row. Under both columns, the whole width, the
+ * season's challenges as one sideways row of cards. On a phone the side
+ * column comes first, so what needs you is the top of the page.
  *
  * HomeScreen (../index.tsx) mounts this after mount only, when lib/skin.ts
  * says the device's look is one of the frame's and the member APIs will
@@ -42,7 +47,8 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
-import { Btn, GroupLink, Meta, PageBody, Pill, Row, Sec, Card, Tile, TileItem, Tiles, Lead, type PillKind } from '@/components/ui/kit';
+import { Btn, ChallengeCard, Facts, GroupLink, HRow, Meta, PageBody, PicCard, Pill, Row, Sec, Card, Tile, TileItem, Tiles, Lead, type PillKind } from '@/components/ui/kit';
+import { TONE_FILL, resolveIllustration } from '../../../lib/challenge-illustrations';
 import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { readDirectory } from '../communities-to-join';
@@ -58,8 +64,9 @@ const NEEDS_SHOWN = 3;
 const APPS_SHOWN = 11;
 const COMMUNITIES_SHOWN = 6;
 const JOIN_SHOWN = 4;
+const FEATURED_SHOWN = 6;
 const LIVE_SHOWN = 4;
-const CHALLENGES_SHOWN = 4;
+const CHALLENGES_SHOWN = 6;
 
 /** A row of GET /api/workshop/needs-feed, the fields this screen reads. */
 export type FeedRow = {
@@ -89,9 +96,13 @@ export type LiveRow = {
 type DirectoryApp = {
   slug: string;
   name?: string;
+  description?: string | null;
   icon_url?: string | null;
   icon_emoji?: string | null;
   icon_color?: string | null;
+  /** The featured illustration, and its dark twin (src/services/public-app-directory.js). */
+  illustration_url?: string | null;
+  illustration_dark_url?: string | null;
   member_count?: number | null;
   /** The platform features it (an admin's pick), in `featured_order`. */
   featured?: boolean;
@@ -302,6 +313,16 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
   const went = (live || []).slice(0, LIVE_SHOWN);
 
   const seasonPoints = Math.round(Number(standingState.ranking?.total_points || 0));
+  const openChallenges = challenges ? challenges.rows.filter((row) => row.state !== 'done').length : 0;
+  const week = standing && standing.rank != null ? (
+    <Sec label={t('home:frame.yourWeek')} id="home-frame-week">
+      <Facts items={[
+        { value: `#${standing.rank}`, label: t('home:frame.thisSeason'), tone: 'acc' },
+        { value: seasonPoints.toLocaleString('en-US'), label: t('home:frame.pointsLabel') },
+        { value: openChallenges, label: t('home:frame.challengesGoing', { count: openChallenges }), tone: 'ok' },
+      ]} />
+    </Sec>
+  ) : null;
   const season = standing && standing.rank != null ? (
     <Sec label={t('home:frame.season')}>
       <Card>
@@ -332,7 +353,46 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
       </Card>
     </Sec>
   ) : null;
-  const side = liveSec || season ? <>{liveSec}{season}</> : null;
+  const needsSec = needRows.length > 0 ? (
+    <Sec
+      label={t('home:frame.needs')}
+      id="home-frame-needs"
+      action={waiting > needRows.length
+        ? <GroupLink href="#needs">{t('home:frame.all', { count: waiting })}</GroupLink>
+        : null}
+    >
+      <Card>{needRows}</Card>
+    </Sec>
+  ) : null;
+  const side = needsSec || liveSec || week ? <>{needsSec}{liveSec}{week}{season}</> : null;
+
+  // ── The season's challenges: one row of cards under both columns.
+  const challengesSec = challenges && challenges.rows.length > 0 ? (
+    <Sec
+      label={challenges.heading}
+      id="home-frame-challenges"
+      action={challenges.seeAll ? <GroupLink href="#leaderboard/challenges">{t('home:challenges.seeAll.text')}</GroupLink> : null}
+    >
+      <HRow>
+        {challenges.rows.slice(0, CHALLENGES_SHOWN).map((row) => {
+          const art = resolveIllustration(row.illustration, row.illustrationTone);
+          return (
+            <ChallengeCard
+              key={row.id}
+              href={row.eventId != null ? `#leaderboard/challenges/${row.eventId}` : '#leaderboard/challenges'}
+              art={art ? { src: art.src, fill: TONE_FILL[art.tone] } : null}
+              icon={row.icon}
+              title={row.goal}
+              state={row.state}
+              label={row.stateLabel}
+              fill={row.fill}
+              reward={row.earned || row.reward}
+            />
+          );
+        })}
+      </HRow>
+    </Sec>
+  ) : null;
 
   if (view === 'apps') return <HomeAllApps onBack={backHome} />;
   if (view === 'communities') {
@@ -350,41 +410,10 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
       purpose={purpose}
       acts={<Btn icon="plus" onClick={() => { (window as any).App?.showCreateModal?.(); }}>{t('home:frame.make')}</Btn>}
       side={side}
+      sideFirst
+      wide
+      below={challengesSec}
     >
-      {needRows.length > 0 ? (
-        <Sec
-          label={t('home:frame.needs')}
-          id="home-frame-needs"
-          action={waiting > needRows.length
-            ? <GroupLink href="#needs">{t('home:frame.all', { count: waiting })}</GroupLink>
-            : null}
-        >
-          <Card>{needRows}</Card>
-        </Sec>
-      ) : null}
-
-      {challenges && challenges.rows.length > 0 ? (
-        <Sec
-          label={challenges.heading}
-          id="home-frame-challenges"
-          action={challenges.seeAll ? <GroupLink href="#leaderboard/challenges">{t('home:challenges.seeAll.text')}</GroupLink> : null}
-        >
-          <Card>
-            {challenges.rows.slice(0, CHALLENGES_SHOWN).map((row) => (
-              <Row
-                key={row.id}
-                href={row.eventId != null ? `#leaderboard/challenges/${row.eventId}` : '#leaderboard/challenges'}
-                lead={<Lead icon="trophy" tone={row.state === 'done' ? 'ok' : 'acc'} />}
-                title={row.goal}
-                line={row.stateLabel || undefined}
-                right={row.reward ? <Meta>{row.reward}</Meta> : undefined}
-                go
-              />
-            ))}
-          </Card>
-        </Sec>
-      ) : null}
-
       {apps.length > 0 ? (
         <Sec
           label={t('home:frame.pinnedApps')}
@@ -442,19 +471,22 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
 
       {featured.length > 0 ? (
         <Sec label={t('home:join.featured')} id="home-frame-featured">
-          <Card>
-            {featured.slice(0, JOIN_SHOWN).map((a) => (
-              <Row
+          <HRow>
+            {featured.slice(0, FEATURED_SHOWN).map((a) => (
+              <PicCard
                 key={a.slug}
                 href={hubHref(a.slug)}
                 onClick={(event) => openHub(event, a.slug)}
-                lead={<Tile name={a.name || a.slug} src={a.icon_url} emoji={a.icon_emoji} color={a.icon_color} />}
+                cover={a.illustration_url}
+                darkCover={a.illustration_dark_url}
+                tile={<Tile size={56} name={a.name || a.slug} src={a.icon_url} emoji={a.icon_emoji} color={a.icon_color} />}
                 title={a.name || a.slug}
-                line={a.member_count ? t('home:join.members', { count: a.member_count }) : undefined}
-                right={<span className="fr-btn fr-sm">{t('home:frame.join')}</span>}
+                line={a.description || undefined}
+                meta={a.member_count ? t('home:join.members', { count: a.member_count }) : undefined}
+                word={t('home:frame.join')}
               />
             ))}
-          </Card>
+          </HRow>
         </Sec>
       ) : null}
 
