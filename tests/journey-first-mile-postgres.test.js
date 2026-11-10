@@ -226,8 +226,11 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
 
     const passed = Object.fromEntries(mile.steps.map((s) => [s.key, s.passed]));
     assert.deepEqual(passed, {
-      admitted: 4, mail_sent: 4, code_asked: 3, account: 2, access: 2, opened: 2, username: 2, join: 1, first_act: 1,
+      admitted: 4, mail_sent: 4, mail_page: 0, code_asked: 3, account: 2, access: 2, opened: 2, username: 2, join: 1, first_act: 1,
     });
+    assert.equal(mile.steps.find((s) => s.key === 'mail_page').unrecorded, 4,
+      'no page open was recorded yet, so the mail\'s page says nothing for anyone');
+    assert.deepEqual(mile.steps.find((s) => s.key === 'mail_page').stuck, [], 'and nobody stopped there');
     const stuckOn = Object.fromEntries(mile.steps.map((s) => [s.key, s.stuck.map((p) => p.name)]));
     assert.deepEqual(stuckOn.code_asked, ['ben@example.test']);
     assert.deepEqual(stuckOn.join, ['dee']);

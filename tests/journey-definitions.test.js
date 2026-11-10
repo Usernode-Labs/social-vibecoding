@@ -203,8 +203,10 @@ test('first-mile steps: expired mail proof reads unknown, and nothing counts pas
     access_at: '2026-10-01T10:00:00Z', opened_at: null, needs_username_choice: false,
     needs_communities_choice: false, first_act_at: null,
   }, now);
-  assert.deepEqual(old.steps.slice(0, 4).map((s) => s.state), ['done', 'unknown', 'unknown', 'done'],
-    'mail proof older than 30 days is unknown, never "not sent"');
+  assert.deepEqual(old.steps.slice(0, 5).map((s) => s.state), ['done', 'unknown', 'unknown', 'unknown', 'done'],
+    'mail proof older than 30 days is unknown, never "not sent", and its page was not recorded then');
+  assert.equal(old.steps[2].key, 'mail_page');
+  assert.equal(old.steps[2].unrecorded, true);
   assert.equal(old.stuckAt, 'opened');
   const started = journey.firstMileSteps({
     released_at: '2026-11-14T09:00:00Z', mail_status: 'sent', mail_at: '2026-11-14T09:00:01Z',
@@ -213,7 +215,7 @@ test('first-mile steps: expired mail proof reads unknown, and nothing counts pas
   }, now);
   assert.equal(started.stuckAt, 'account');
   assert.equal(started.furthest, 'code_asked', 'the row\'s defaults do not carry a started account past it');
-  assert.deepEqual(started.steps.slice(4).map((s) => s.state), ['not_yet', 'not_yet', 'not_yet', 'not_yet', 'not_yet']);
+  assert.deepEqual(started.steps.slice(5).map((s) => s.state), ['not_yet', 'not_yet', 'not_yet', 'not_yet', 'not_yet']);
   // #4595: the password is optional. An account that skipped it and chose
   // its username has finished its account step.
   const skipped = journey.firstMileSteps({
@@ -222,7 +224,8 @@ test('first-mile steps: expired mail proof reads unknown, and nothing counts pas
     has_platform_access: true, access_at: '2026-11-14T10:00:00Z', needs_username_choice: false,
     needs_communities_choice: true,
   }, now);
-  assert.equal(skipped.steps[3].state, 'done', 'signup counts as finished without a password');
+  assert.equal(skipped.steps[4].key, 'account');
+  assert.equal(skipped.steps[4].state, 'done', 'signup counts as finished without a password');
 });
 
 test('a change the Homeroom bot built is credited to the person who asked for it', () => {

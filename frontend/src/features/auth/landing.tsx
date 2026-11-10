@@ -915,7 +915,7 @@ export function LandingScreen() {
     const token = release.token;
     const run = straightRun.current;
     let live = true;
-    void Promise.all([releaseAccountFromToken(token), straightLink(link) ? waitlistOptions() : null]).then(async ([account, options]) => {
+    void Promise.all([releaseAccountFromToken(token, { fromAdmitMail: true }), straightLink(link) ? waitlistOptions() : null]).then(async ([account, options]) => {
       if (!live) return;
       setReleaseEmail(account?.email ?? null);
       if (run !== straightRun.current || !spendsOnLoad({ link, account, options })) {

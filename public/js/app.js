@@ -877,7 +877,6 @@ const App = {
     App.user = user;
     App._syncViewer();
     window.UsernodeReact?.appOpenings?.setUser?.(user.id, true);
-    window.UsernodeReact?.googleAnalytics?.setSession?.(user, true);
     App.saveSessionSnapshot(user);
     // The verified answer, for everyone who joined bootSession() rather
     // than reading /api/auth/me for themselves. Published HERE on an
@@ -988,7 +987,6 @@ const App = {
     App.user = null;
     App._syncViewer();
     window.UsernodeReact?.appOpenings?.setUser?.(null, true);
-    window.UsernodeReact?.googleAnalytics?.setSession?.(null);
     window.UITelemetry?.clearUser?.();
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
@@ -1212,7 +1210,6 @@ const App = {
     // the server's answer; a normal login publishes immediately.
     if (!App._sessionFromSnapshot) App._publishBootSession({ user });
     window.UsernodeReact?.appOpenings?.setUser?.(user.id, !App._sessionFromSnapshot);
-    window.UsernodeReact?.googleAnalytics?.setSession?.(user, !App._sessionFromSnapshot);
     // "View as non-admin" admin tool. We mask `App.user.isAdmin`
     // for client-side UI gating (admin buttons, retry, delete, lock,
     // app-secrets edit, etc. — see grep for App.user?.isAdmin) so

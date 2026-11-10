@@ -57,6 +57,14 @@ function parseEmailList(text) {
   return { entries, skipped, duplicates };
 }
 
+// Which form a signup came from, for Admin › Journey (waitlist_signups.source,
+// src/db/migrations/waitlist-first-mile-facts.sql): 'form', 'app', 'account',
+// 'test' or 'partner:<label>'. Anything else is not recorded.
+const SIGNUP_SOURCE_RE = /^(form|app|account|test|partner:[A-Za-z0-9 ._-]{1,48})$/;
+function signupSource(value) {
+  return typeof value === 'string' && SIGNUP_SOURCE_RE.test(value) ? value : null;
+}
+
 // Join the platform waitlist. Idempotent by email: re-joining is a
 // silent no-op at the DATABASE level (the original submitted_at is kept).
 // Returns { created, moreToken, submittedAt } — created=false means the
@@ -69,7 +77,9 @@ function parseEmailList(text) {
 // this flag plus the existing row's confirmed_at is what picks the
 // branch. The capability token is the part that did NOT widen: a
 // re-join still gets null, whatever else the response says.
-async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode = null, source = null }) {
+// `form` is which form the person used (waitlist_signups.source, signupSource);
+// `source` is where its page sent them (#6540: a host and short tags).
+async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode = null, source = null, form = null }) {
   const moreToken = crypto.randomBytes(24).toString('hex');
   const stored = answers
     ? { _version: ANSWERS_VERSION, ...answers }
@@ -111,17 +121,17 @@ async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode
   // block without a second round trip. ON CONFLICT DO NOTHING returns no
   // row, which is still exactly how a re-join is detected.
   const { rows } = await pool.query(
-    `INSERT INTO waitlist_signups (email, ip, answers, more_token, invited_by, project_invite_id,
+    `INSERT INTO waitlist_signups (email, ip, answers, more_token, invited_by, project_invite_id, source,
                                    referrer_host, utm_source, utm_campaign, ref)
      VALUES ($1, $2, $3, $4, $5,
        (SELECT id FROM app_email_invites
          WHERE email = $1::varchar AND claimed_at IS NULL
          ORDER BY created_at ASC, id ASC
          LIMIT 1),
-       $6, $7, $8, $9)
+       $6, $7, $8, $9, $10)
      ON CONFLICT (email) DO NOTHING
      RETURNING submitted_at`,
-    [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy,
+    [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy, signupSource(form),
       source?.referrerHost ?? null, source?.utmSource ?? null, source?.utmCampaign ?? null, ref]
   );
   const created = rows.length > 0;
@@ -485,8 +495,8 @@ async function ensureAccountSignup(pool, { userId }) {
     // No conflict target: both the address's UNIQUE (email) and the
     // case-folded index count, and either means the address has a row.
     await pool.query(
-      `INSERT INTO waitlist_signups (email, linked_user_id, confirmed_at, more_token)
-       SELECT LOWER(TRIM(u.email)), u.id, NOW(), $2
+      `INSERT INTO waitlist_signups (email, linked_user_id, confirmed_at, more_token, source)
+       SELECT LOWER(TRIM(u.email)), u.id, NOW(), $2, 'account'
          FROM users u
         WHERE u.id = $1
           AND u.has_platform_access = FALSE

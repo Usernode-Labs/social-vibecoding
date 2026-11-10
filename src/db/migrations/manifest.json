@@ -275,6 +275,11 @@
       "id": "invite-link-guard-push-kinds",
       "sha256": "91839debfd3e1a054920997a85b227f68571b8cf5ab6acd50a88f70f4136e591",
       "schemaSha256": "9fcb84cb3d7312f478856b39a01072be8dec914e95cb334113893d45fe27ead7"
+    },
+    {
+      "id": "waitlist-first-mile-facts",
+      "sha256": "4d02dd130e5b9b37ef95a982ad488f68131af64f31d28662f3a67d1a16863af2",
+      "schemaSha256": "a427050558fdb8b26d311e317df9886d88b058ef12ae22b5c470acbbb246d059"
     }
   ]
 }
