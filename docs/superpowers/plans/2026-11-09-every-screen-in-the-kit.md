@@ -431,6 +431,43 @@ Homeroom's own community is not in the public directory, so its visitor page gat
 says the handle alone (the "building since" line needs the profile's summary); Make keeps its
 form; Needs you keeps the review stage; the blank thread keeps the column pane.
 
+The visual pass (10 Nov 2026; every route under Glass, desktop and phone, light and dark, by a
+DOM probe for clipped, overflowing, overlapping and low-contrast text, stray hairlines and
+broken pictures, then by eye; Today, Workbench and Paper spot-checked), and what it fixed:
+- The product's frosted strip (the board, Messages' layout) rose under the header with its
+  hairline, 28px shoulders and shadow, which the tour's pages never show; and the sheets on it
+  (a request's, Settings', Messages' pane) kept their top hairline after their fill went: a line
+  across the page over every title. Bare under a look.
+- A change's Votes and Tested cards and Homeroom bot's track card were the product's white
+  beside the kit's status card: they wear the look's card; in the 320px column the two cards
+  lay out as on a phone (the figure on one line, the button on its own row).
+- The bot's Main Chat column ran its lines to the window's edge under 784px (Main's own
+  centring floors its gutter at 0): the look floors it at the kit's 32px.
+- The phone's install strip covered the signed-in chrome's bar (the guest's had the offset).
+  The chrome starts under the strip, the header placeholder and `--platform-header-h` are the
+  bar alone (the body's padding holds the strip; `--ws-area` takes it off by
+  `--browser-banner-h` already).
+- The shell's bar had no ground (the mock scrolls under its edge; the shell's page scrolls in
+  the document and passed behind it): the look's ground at 90%, no blur (the repo keeps live
+  blur out of the shell, tests/no-glass-one-scheme.test.js). A look with a bar ground of its own
+  keeps it.
+- On a phone the kit's tab bar is fixed over the page's foot and the standard screens reserved
+  only their own: a spacer the bar's height after a kit page's inner and a pane's scroll (not
+  after a project page's head where a channel's body follows), Settings' sheet's negative
+  margin put away, a channel's chat taking the room the head leaves (it held to its 320px floor
+  inside the fitted box and ran under the bar).
+- Messages' list could not scroll at all on a phone: the kit's own `.fr-pane .fr-scroll
+  { overflow: hidden }` outweighed the shell's rule, which now names the pane twice.
+- A visitor's Workshop shows a change's before and after; a picture that fails to load is
+  dropped, leaving the figure's ground and its caption.
+- The Workshop's Your work row repeated its heading: its title is what is next, its line the
+  counts.
+Left as they are: the Today look's faint day labels and times (its own token, as the mock);
+emoji app tiles on white in dark mode (the product's tiles); a request page shows Homeroom
+bot's sentence twice while it is building (the kit's status card and the bot's track card say
+the same, as the standard page does); the product's own dialogs (Edit profile, Who decides)
+over the chrome on a phone.
+
 Not settled: the local server (the production copy) ends itself with a graceful shutdown a
 few minutes into a parallel capture run (a SIGTERM from outside, sender unknown); a server
 started with TERM ignored (`glass-local/ignore-term.cjs`, local only) saw no signal in a
