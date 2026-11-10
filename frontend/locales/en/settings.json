@@ -4686,5 +4686,81 @@
   "experimental.interfaceMode.saveFailed": {
     "text": "Your choice could not be saved on this device. Try again.",
     "description": "Error below the mode switch when browser storage refuses a save."
+  },
+  "frame.purpose.account": {
+    "text": "Your profile and how you sign in.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Account."
+  },
+  "frame.purpose.linkedAccounts": {
+    "text": "A connected account helps check that one person is not making many, because Homeroom pays for your AI credit.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Linked accounts."
+  },
+  "frame.purpose.contactPrivacy": {
+    "text": "Who can reach you, who can find you, and what Homeroom may send you.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Privacy."
+  },
+  "frame.purpose.phones": {
+    "text": "The phones and browsers signed in to your account. Unlink any you no longer use or do not recognize.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Linked devices."
+  },
+  "frame.purpose.wallet": {
+    "text": "The wallet linked to your account for this season's challenges.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Homeroom Wallet."
+  },
+  "frame.purpose.ai": {
+    "text": "What is left of this week's allowance, where it went, and which model does the work.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: AI usage & models."
+  },
+  "frame.purpose.connectors": {
+    "text": "Work on your apps from a Claude or ChatGPT chat, or from your own terminal, without using your weekly credit.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Connectors & CLI."
+  },
+  "frame.purpose.agentFiles": {
+    "text": "Personal files the coding agent follows on every build or plan you start, in any app.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Agent instructions & skills."
+  },
+  "frame.purpose.theme": {
+    "text": "How Homeroom looks on this browser.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Appearance."
+  },
+  "frame.purpose.accessibility": {
+    "text": "Make Homeroom easier to read on this browser.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Accessibility."
+  },
+  "frame.purpose.language": {
+    "text": "The language of Homeroom's own screens. Apps use it as their default and may offer their own choice.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Language."
+  },
+  "frame.purpose.alerts": {
+    "text": "Choose what reaches your phone and this browser.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Notifications."
+  },
+  "frame.purpose.appPermissions": {
+    "text": "What apps on Homeroom may use on your behalf, and which apps you have blocked.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: App permissions."
+  },
+  "frame.purpose.developer": {
+    "text": "Tools for people building and testing apps.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Developer."
+  },
+  "frame.purpose.tour": {
+    "text": "Take the welcome tour again.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Welcome tour."
+  },
+  "frame.purpose.guide": {
+    "text": "The places of Homeroom, and how a change gets voted in.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: User guide."
+  },
+  "frame.purpose.usernode": {
+    "text": "The Homeroom app on this phone, and its diagnostics.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Homeroom app."
+  },
+  "frame.purpose.about": {
+    "text": "Which build of Homeroom this is, and what is being improved.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: About."
+  },
+  "frame.purpose.experimental": {
+    "text": "Features still being tried. Switch one on to see it; switch it off to go back.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Experimental."
   }
 }

@@ -72,20 +72,20 @@ test('tokens are namespaced where they are set and where they are read', () => {
 // ── A whole file ─────────────────────────────────────────────────────────
 
 test('a look\'s root rule becomes its tokens on <html> and its type on the frame root', () => {
-  const css = looks.compile('.hr{--surface:#fff;--f:"X",system-ui;font:14px/1.45 var(--f);background:var(--ground)}\n.hr.dark{--surface:#000}\n.row{min-height:42px}\n.phone .row{min-height:50px}\n.dark .row{color:red}', 'workbench');
+  const css = looks.compile('.hr{--surface:#fff;--f:"X",system-ui;font:14px/1.45 var(--f);background:var(--ground)}\n.hr.dark{--surface:#000}\n.tile{min-height:42px}\n.phone .tile{min-height:50px}\n.dark .tile{color:red}', 'workbench');
   assert.match(css, /html\[data-skin="workbench"\]\{--fr-surface:#fff;--fr-f:"X",system-ui\}/);
   assert.match(css, /html\[data-skin="workbench"\] \.fr\{font:14px\/1\.45 var\(--fr-f\)\}/, 'type goes on the frame root, never on <html> (rem sizes hang off it)');
   assert.doesNotMatch(css, /background:var\(--fr-ground\)/, 'the page ground is the product\'s wallpaper, not the mock\'s');
   assert.match(css, /html\[data-skin="workbench"\]\.dark\{--fr-surface:#000\}/);
-  assert.match(css, /html\[data-skin="workbench"\] \.fr-row\{min-height:42px\}/);
-  assert.match(css, /html\[data-skin="workbench"\]\.dark \.fr-row\{color:red\}/);
-  assert.match(css, /@media \(max-width: 767\.98px\)\{\nhtml\[data-skin="workbench"\]\[data-skin\] \.fr-row\{min-height:50px\}\n\}/);
+  assert.match(css, /html\[data-skin="workbench"\] \.fr-tile\{min-height:42px\}/);
+  assert.match(css, /html\[data-skin="workbench"\]\.dark \.fr-tile\{color:red\}/);
+  assert.match(css, /@media \(max-width: 767\.98px\)\{\nhtml\[data-skin="workbench"\]\[data-skin\] \.fr-tile\{min-height:50px\}\n\}/);
 });
 
 test('a selector list is split when its parts land in different places', () => {
-  const css = looks.compile('.row.wrap .tx,.phone .row .tx{display:block}', null);
-  assert.match(css, /html\[data-skin\] \.fr-row\.fr-wrap \.fr-tx\{display:block\}/);
-  assert.match(css, /@media \(max-width: 767\.98px\)\{\nhtml\[data-skin\]\[data-skin\] \.fr-row \.fr-tx\{display:block\}\n\}/);
+  const css = looks.compile('.tile.wrap .tx,.phone .tile .tx{display:block}', null);
+  assert.match(css, /html\[data-skin\] \.fr-tile\.fr-wrap \.fr-tx\{display:block\}/);
+  assert.match(css, /@media \(max-width: 767\.98px\)\{\nhtml\[data-skin\]\[data-skin\] \.fr-tile \.fr-tx\{display:block\}\n\}/);
 });
 
 test('the kit\'s root rule keeps colour and type for the frame root and drops the mock\'s box', () => {
@@ -157,16 +157,17 @@ test('a kit rule for a worn component also names the product\'s own markup for i
 
 test('a class the map does not name stays the kit\'s, and a rule for anything else is not repeated', () => {
   assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-post .fr-av'), 'html[data-skin="workbench"] .messages-message .fr-av', 'the avatar in a message is the kit\'s own');
-  assert.equal(looks.wornSelector('html[data-skin] .fr-row .fr-t'), null, 'a row is drawn by the kit: nothing to repeat');
+  assert.equal(looks.wornSelector('html[data-skin] .fr-tile .fr-t'), null, 'a tile is drawn by the kit: nothing to repeat');
+  assert.equal(looks.wornSelector('html[data-skin] .fr-row+.fr-row'), 'html[data-skin]:where(:not([data-skin="brand"])) .ui-lrow:where(#settings-section-content *)+.ui-lrow:where(#settings-section-content *)', 'Settings\' rows wear the row, the scope inside each compound');
   assert.equal(looks.wornSelector('html[data-skin] .fr-status .fr-txt'), null, 'a part only counts inside its own component');
   assert.equal(looks.wornSelector('html[data-skin] .fr-post .fr-txt b'), null, 'left out by name: a bold word a person wrote is not an accent');
 });
 
 test('compiled, the worn selector rides on the kit\'s own rule, in the same place', () => {
-  const css = looks.compile('.post .who{font-weight:650}.phone .dhead{padding:8px 16px}.row .t{font-weight:650}', null);
+  const css = looks.compile('.post .who{font-weight:650}.phone .dhead{padding:8px 16px}.tile .t{font-weight:650}', null);
   assert.match(css, /html\[data-skin\] \.fr-post \.fr-who,html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-message \.messages-message-author\{font-weight:650\}/);
   assert.match(css, /@media \(max-width: 767\.98px\)\{\nhtml\[data-skin\]\[data-skin\] \.fr-dhead,html\[data-skin\]\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-thread-header\{padding:8px 16px\}\n\}/);
-  assert.match(css, /html\[data-skin\] \.fr-row \.fr-t\{font-weight:650\}/);
+  assert.match(css, /html\[data-skin\] \.fr-tile \.fr-t\{font-weight:650\}/);
 });
 
 // ── The committed section ────────────────────────────────────────────────

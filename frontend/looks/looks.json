@@ -296,7 +296,7 @@
     }
   },
   "wear": {
-    "note": "What the product's own markup wears. A conversation is drawn by the product's renderer, not by kit components, so for each kit component named here (roots) every kit rule that mentions it is repeated for the product's class (to), with the component's inner classes swapped for the product's (parts: a kit class, or a state the kit writes as a class, to a product selector). skip lists tour selectors left out. A part only counts inside a rule that names its root. The composer's field is not worn: the kit draws a placeholder's words, not a field (app.css, THE FRAME IN THE SHELL). The stand-alone pages a visitor signs in on (features/auth: sign-in, register, the waitlist form, more ways) are the product's own forms and wear the title, the card and the button; their one accent-filled control is the primary button, a white or grey pill a quiet one.",
+    "note": "What the product's own markup wears. A conversation is drawn by the product's renderer, not by kit components, so for each kit component named here (roots) every kit rule that mentions it is repeated for the product's class (to), with the component's inner classes swapped for the product's (parts: a kit class, or a state the kit writes as a class, to a product selector). skip lists tour selectors left out. A part only counts inside a rule that names its root. The composer's field is not worn: the kit draws a placeholder's words, not a field (app.css, THE FRAME IN THE SHELL). The stand-alone pages a visitor signs in on (features/auth: sign-in, register, the waitlist form, more ways) are the product's own forms and wear the title, the card and the button; their one accent-filled control is the primary button, a white or grey pill a quiet one. Settings' own grouped lists (@/components/ui/grouped-list, named ui-glist and ui-lrow) wear the card and the row inside #settings-section-content, scoped with :where() inside the compound so a rule naming the row twice (.row+.row) stays one selector.",
     "roots": {
       "post": {
         "to": ".messages-message",
@@ -330,7 +330,7 @@
         "to": ":is(.messages-thread-action,.messages-composer-action)"
       },
       "card": {
-        "to": ":is(.dev-request-ask,:is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen),[data-sign-in-sheet]) .rounded-2xl.overflow-hidden,#auth-waiting-screen :is([data-waiting-queued],[data-waiting-invite]))"
+        "to": ":is(.dev-request-ask,.ui-glist:where(#settings-section-content *),:is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen),[data-sign-in-sheet]) .rounded-2xl.overflow-hidden,#auth-waiting-screen :is([data-waiting-queued],[data-waiting-invite]))"
       },
       "title": {
         "to": ":is(.settings-page-title,#first-session-make-title,:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen,#auth-waiting-screen) h1)"
@@ -339,6 +339,15 @@
         "to": ":is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back]),[data-sign-in-sheet] [role=\"dialog\"] button.bg-violet-600,[data-public-profile-frame] button:is(.bg-violet-600,.bg-zinc-100))",
         "parts": {
           "quiet": ":is(.bg-white,.bg-zinc-100)"
+        }
+      },
+      "row": {
+        "to": ".ui-lrow:where(#settings-section-content *)",
+        "parts": {
+          "tx": ".ui-lrow-tx",
+          "t": ".ui-lrow-t",
+          "s": ".ui-lrow-s",
+          "go": ".ui-lrow-go"
         }
       }
     }
