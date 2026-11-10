@@ -60,7 +60,7 @@ test('the side column is laid beside the words from measured heights, a look\'s 
   const css = read('public/css/app.css');
   const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request \{[^}]*max-width: 1136px;/);
-  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-status, \.dev-request-track, \.dev-change-pair, \.fr-topicside\) \{[^}]*position: absolute; top: var\(--fr-side-top, 0px\); inset-inline-end: 0; width: 320px;/);
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-status, \.dev-request-track, \.dev-change-status, \.dev-change-pair, \.fr-topicside\) \{[^}]*position: absolute; top: var\(--fr-side-top, 0px\); inset-inline-end: 0; width: 320px;/);
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) #gc-thread-back \{ display: none; \}/, 'the bar has the way back');
   const looks = JSON.parse(read('frontend/looks/looks.json'));
   assert.match(looks.wear.roots.card.to, /^:is\(\.dev-request-ask,/, 'with whatever else wears the card (a visitor\'s forms, tests/guest-chrome.test.js)');
@@ -70,7 +70,7 @@ test('a change\'s page does the same: its title in the kit\'s head, its trail, i
   const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
   assert.match(src, /if \(frame\) return <TopicFrameHead title=\{name \|\| title\} purpose=\{dotLine\(\[title, v\.category\]\)\}/);
   assert.match(src, /useFramePage\(frame \? \[placeName\('workshop'\), trail\] : null, topicBack\);/);
-  assert.match(src, /useSideStack\(frame, `\[data-change-root="\$\{id \?\? ''\}"\] > \[data-image-viewer-scope\]`, \['\.dev-change-pair', '\.fr-topicside'\]\);/);
+  assert.match(src, /useSideStack\(frame, `\[data-change-root="\$\{id \?\? ''\}"\] > \[data-image-viewer-scope\]`, \['\.dev-change-status', '\.dev-change-pair', '\.fr-topicside'\]\);/);
   assert.match(src, /name=\{card\.title\.text \|\| card\.title\.title \|\| null\}/, 'the bar is handed the change\'s own title');
   assert.match(src, /<header className="messages-thread-header">/, 'the standard head stays as written');
 });
@@ -118,4 +118,21 @@ test('Follow this request is a row of About under a look, its state a switch', (
   const hook = read('frontend/src/features/dev-board/topic/frame/topic-follow.ts');
   assert.match(hook, /fetch\(`\/api\/threads\/\$\{data\.thread\.id\}\/follow`, \{\s*method: 'PUT',/);
   assert.match(hook, /notify: state === 'following' \? false : state === 'muted' \? null : true/, 'on → mute; muted → back to the rule, as the ⋯ row does; else notify me');
+});
+
+test('a change\'s page stands the kit\'s status card over its votes and checks, the stop from where the change is', () => {
+  const { loadTsx } = require('./lib/render-tsx');
+  const { changeStop } = loadTsx('frontend/src/features/dev-board/topic/frame/topic-page.ts', { cache: false });
+  const gate = (done) => ({ done });
+  assert.deepEqual(changeStop({ key: 'live' }, gate(true), gate(true)), { at: 5, state: 'now' });
+  assert.deepEqual(changeStop({ key: 'going_live' }, gate(true), gate(true)), { at: 4, state: 'now' }, 'merged, not yet live: Vote done, Live next');
+  assert.deepEqual(changeStop({ key: 'vote' }, gate(false), gate(true)), { at: 3, state: 'now' }, 'checks passed: the vote is on');
+  assert.deepEqual(changeStop({ key: 'checking' }, gate(false), gate(false)), { at: 2, state: 'now' });
+  assert.deepEqual(changeStop({ key: 'building' }, gate(false), gate(false)), { at: 1, state: 'now' });
+  assert.deepEqual(changeStop(null, gate(false), gate(false)), { at: 2, state: 'now' }, 'nothing said: the checks are what a built change waits on');
+  const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  assert.match(src, /\{frame \? \(\s*<div className="dev-change-status">\s*<TopicFrameStatus\s+pill=\{v\.status \? \{ word: v\.status\.label, kind: pillKind\(v\.status, v\.votes\) \} : null\}/);
+  assert.match(src, /useSideStack\(frame, `\[data-change-root="\$\{id \?\? ''\}"\] > \[data-image-viewer-scope\]`, \['\.dev-change-status', '\.dev-change-pair', '\.fr-topicside'\]\);/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-status, \.dev-request-track, \.dev-change-status, \.dev-change-pair, \.fr-topicside\) \{[^}]*position: absolute;/);
 });

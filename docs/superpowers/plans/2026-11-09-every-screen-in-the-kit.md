@@ -399,3 +399,41 @@ tests/looks-css.test.js fails on the committed section.
 Nothing of the programme is left but what the rulings keep: Needs you as the review stage,
 Settings' index on a desktop, Friends as the dialog, the blank thread as the column pane,
 Discover and an app's page, and the waitlist's look around as a member.
+
+### The audit against the tour (11 Nov)
+
+Every screen of the tour the product has, under the nine looks, desktop and phone, light and
+dark: 3,276 shots (`scratchpad/tour/audit.mjs`, one browser context per look × mode × persona,
+walking `steps-audit.json`), judged two ways. By machine: no sideways overflow anywhere, no page
+errors (six network timeouts under the four-way parallel load), kit markup on every signed-in
+screen but the running app (its own frame). By eye, Glass against the tour's own drawings
+(`prop2/qa/<id>-big.png`, `-phone.png`; `audit-boards.mjs align`), and the nine looks on
+boards of four modes each (`audit-boards.mjs looks`).
+
+Fixed from it (`2ed187dab` and the commit after it):
+
+- The account menu lacked Suggest an improvement, the phone's Add Homeroom to your home screen
+  and the build beside About. A frame sheet stayed open across a move to another address. The
+  notifications sheet said "Nothing yet" while the bell's read was still on its way.
+- The bot's list spanned the whole width while nothing was open beside it (#6425 starts it
+  alone): capped at the kit's 720px.
+- A continuation's time gutter ran past a phone row's edge.
+- Challenges showed the standard standing card and skeletons under the kit's tabs while its
+  cards loaded: the kit page draws from the start, with a loading note.
+- Home's side column lacked the Season row (s01).
+- All items: an untaken request's row ended in its column's word; it says Nobody on it.
+- A change's page had no Status card over Votes and Tested (s34): the pill and the five-stop
+  line, from where the change is (`changeStop`).
+
+Rulings recorded in the audit's log (`scratchpad/audit-findings.md`): `#communities` stays
+Home's (One Home); a visitor's request or change page gates (a public read is a server change);
+Homeroom's own community is not in the public directory, so its visitor page gates; the menu
+says the handle alone (the "building since" line needs the profile's summary); Make keeps its
+form; Needs you keeps the review stage; the blank thread keeps the column pane.
+
+Not settled: the local server (the production copy) ends itself with a graceful shutdown a
+few minutes into a parallel capture run (a SIGTERM from outside, sender unknown); a server
+started with TERM ignored (`glass-local/ignore-term.cjs`, local only) saw no signal in a
+one-context run. Project pages take 8 to 12 s to render on this copy; captures need that
+settle. Phone shots from the parallel sweep often caught loading states; the Glass phone
+findings were re-shot one context at a time before being judged.

@@ -71,9 +71,9 @@ import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topi
 import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
 import { useFramePage } from '../../frame/frame-page-store';
 import { placeName } from '../workshop/places';
-import { TopicFrameAbout, TopicFrameHead } from './frame/topic-frame';
+import { TopicFrameAbout, TopicFrameHead, TopicFrameStatus } from './frame/topic-frame';
 import { useSideStack } from './frame/side-stack';
-import { dotLine, topicBack } from './frame/topic-page';
+import { changeStop, dotLine, pillKind, topicBack } from './frame/topic-page';
 
 function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
@@ -614,7 +614,8 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   const frame = isFrameSkin(useLiveSkin());
   const trail = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
   useFramePage(frame ? [placeName('workshop'), trail] : null, topicBack);
-  useSideStack(frame, `[data-change-root="${id ?? ''}"] > [data-image-viewer-scope]`, ['.dev-change-pair', '.fr-topicside']);
+  useSideStack(frame, `[data-change-root="${id ?? ''}"] > [data-image-viewer-scope]`, ['.dev-change-status', '.dev-change-pair', '.fr-topicside']);
+  const tc = useMessages('changes');
   const images = useInlineImageViewer();
   const thanks = v.thanks && id ? <span className="contents" data-kudos-host={id} data-kudos-face="thread"></span> : null;
   const issues = body.issues || [];
@@ -688,6 +689,16 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {/* #6019: the requests, other changes and votes in its thread. */}
           {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
+          {frame ? (
+            <div className="dev-change-status">
+              <TopicFrameStatus
+                pill={v.status ? { word: v.status.label, kind: pillKind(v.status, v.votes) } : null}
+                at={changeStop(v.status, v.votes, v.testing).at}
+                state={changeStop(v.status, v.votes, v.testing).state}
+                words={[tc('changes:track.plan'), tc('changes:track.build'), tc('changes:track.checks'), tc('changes:track.vote'), tc('changes:track.live')]}
+              />
+            </div>
+          ) : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
           <ChangeGates ref={pair} id={id} card={card} v={v} />

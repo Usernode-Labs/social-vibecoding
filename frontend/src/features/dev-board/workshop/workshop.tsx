@@ -3875,7 +3875,7 @@ export function DevWorkshop(): ReactNode {
           line: factsLine([b && b.n ? `#${b.n}` : null, b?.category || null]) || null,
           href: openHref(slug, row.card),
           mine: !!b?.mine,
-          word: pill && !asks ? pill.label : null,
+          word: pill && !asks ? pill.label : (b?.kind === 'request' && b.unclaimed ? t('project:frame.allItems.nobody') : null),
           pill: pill && asks ? { kind: pill.tone === 'ok' || pill.tone === 'done' ? 'ok' : pill.tone === 'bad' || pill.tone === 'blocked' || pill.tone === 'error' ? 'bad' : /wait|on votes/i.test(pill.label) ? 'wait' : 'act', label: pill.label } : null,
         }];
       }),

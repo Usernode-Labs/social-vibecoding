@@ -27215,7 +27215,7 @@ html[data-skin]:where(:not([data-skin="brand"])) .dev-request-ask { margin: 0; p
 html[data-skin]:where(:not([data-skin="brand"])) .dev-request-status { margin-top: 0; max-width: none; padding: 0; background: none; border-radius: 0; }
 @media (min-width: 768px) {
   html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] { position: relative; min-height: var(--fr-side-h, 0px); padding-inline-end: 352px; }
-  html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] > :is(.dev-request-status, .dev-request-track, .dev-change-pair, .fr-topicside) { position: absolute; top: var(--fr-side-top, 0px); inset-inline-end: 0; width: 320px; margin: 0; }
+  html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] > :is(.dev-request-status, .dev-request-track, .dev-change-status, .dev-change-pair, .fr-topicside) { position: absolute; top: var(--fr-side-top, 0px); inset-inline-end: 0; width: 320px; margin: 0; }
   /* The discussion follows the words in their column. It is the article's
      next sibling, not its child, so it is drawn up beside the context
      column by what that column stands taller than the words (--fr-side-
@@ -27235,6 +27235,7 @@ html[data-skin]:where(:not([data-skin="brand"])) .dev-request-status { margin-to
   html[data-skin][data-skin]:where(:not([data-skin="brand"])) [data-topic-frame-head] .fr-purpose { display: none; }
   html[data-skin]:where(:not([data-skin="brand"])) .dev-request { padding-inline: 16px; }
   html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] > .fr-topicside { margin-top: 16px; }
+  html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] > .dev-change-status { margin-top: 12px; }
 }
 
 /* A CONVERSATION WEARS THE KIT. The product's own renderer draws it (a

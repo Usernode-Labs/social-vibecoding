@@ -78,3 +78,10 @@ test('the Workshop page draws it for All items under a look, from the board\'s o
   const css = read('public/css/app.css');
   assert.match(css, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\], \[data-project-frame="all-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/);
 });
+
+test('a request nobody has taken ends in "Nobody on it", from the brief the board writes', () => {
+  const src = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(src, /word: pill && !asks \? pill\.label : \(b\?\.kind === 'request' && b\.unclaimed \? t\('project:frame\.allItems\.nobody'\) : null\),/);
+  assert.match(read('public/js/app-view.js'), /unclaimed: AppView\._issueUnclaimed\(it\),/);
+  assert.match(read('frontend/src/features/dev-board/card/model.ts'), /unclaimed\?: boolean;/);
+});
