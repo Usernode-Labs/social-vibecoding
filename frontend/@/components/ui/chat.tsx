@@ -4,6 +4,8 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { ChevronDownIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 import { useMessages } from '../../../src/lib/i18n/react';
+import { isFrameSkin, useLiveSkin } from '../../../src/lib/skin';
+import { Av as KitAv, Tile as KitTile } from './kit';
 
 /**
  * The conversation widgets: the day separator, the bubble, the named message
@@ -25,6 +27,10 @@ import { useMessages } from '../../../src/lib/i18n/react';
  */
 
 export function DaySeparator({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  // Under one of the frame's looks a day's label is the kit's (the small
+  // caps between two hairlines), so a look's own rule for it applies.
+  const frame = isFrameSkin(useLiveSkin());
+  if (frame) return <div className={cn('fr-day', className)} {...props} />;
   return (
     <div
       className={cn('py-3 text-center text-[0.9375rem] text-zinc-500 dark:text-zinc-500', className)}
@@ -56,6 +62,14 @@ export function MessageBubble({ className, from, ...props }: MessageBubbleProps)
       <div className={cn(bubble({ from }), className)} {...props} />
     </div>
   );
+}
+
+/** The caller's face as the kit's: a picture is the tile, a letter on a colour the avatar. */
+function kitFace(avatar: React.ReactNode): React.ReactNode {
+  if (!React.isValidElement(avatar)) return avatar;
+  const given = avatar.props as { src?: string; color?: string; children?: React.ReactNode };
+  if (given.src) return <KitTile size={32} src={given.src} />;
+  return <KitAv size={32} name={typeof given.children === 'string' ? given.children : '?'} color={given.color} />;
 }
 
 /**
@@ -97,6 +111,38 @@ export function ChatMessageRow({
   actions?: React.ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
   const me = from === 'me';
+  // UNDER ONE OF THE FRAME'S LOOKS THE ROW IS THE KIT'S POST (the tour's
+  // s31: a channel uses "the one message style shared by Messages and
+  // Homeroom bot"): a face, the name and the time on one line, the words;
+  // yours the same way round as anyone's. The caller's own face is redrawn
+  // as the kit's, from the colour and letter it was given, or as the kit's
+  // tile when it is a picture (Homeroom bot's). app.css gives the few
+  // classes the kit has no word for (THE FRAME IN THE SHELL).
+  const frame = isFrameSkin(useLiveSkin());
+  if (frame) {
+    if (grouped) {
+      return (
+        <div className={cn('fr-post fr-postmore', className)} data-grouped="" {...props}>
+          <span className="fr-postgut gc-msg-gutter">{gutter}</span>
+          <div className="fr-bd"><div className="fr-txt">{children}</div></div>
+          {actions ? <span className="fr-postacts">{actions}</span> : null}
+        </div>
+      );
+    }
+    return (
+      <div className={cn('fr-post', className)} {...props}>
+        {kitFace(avatar)}
+        <div className="fr-bd">
+          <div className="fr-posthead">
+            <span className="fr-who">{name}</span>
+            {timestamp ? <span className="fr-when">{timestamp}</span> : null}
+            {actions ? <span className="fr-postacts">{actions}</span> : null}
+          </div>
+          <div className="fr-txt">{children}</div>
+        </div>
+      </div>
+    );
+  }
   if (grouped) {
     return (
       <div className={cn('flex gap-3 px-4 py-0.5', className)} data-grouped="" {...props}>

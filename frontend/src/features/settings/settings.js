@@ -786,17 +786,36 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // New look (an experiment), kept on the device by the head's
+      // New look (an experiment) and the Look menu (the frame's nine looks,
+      // an admin's preview), both kept on the device by the head's
       // window.Skin: the change is the save, and the look applies at once.
+      // They are exclusive (one data-skin on <html>), so each change
+      // repaints both controls. The menu's options are the frame's looks;
+      // anything else stored (New look, nothing) reads as Standard there.
       const lookToggle = document.getElementById('new-look-enabled');
+      const lookSelect = document.getElementById('settings-look');
+      const paintLooks = () => {
+        const skin = window.Skin?.get?.();
+        if (lookToggle) lookToggle.checked = skin === 'brand';
+        if (lookSelect) {
+          lookSelect.value = Array.from(lookSelect.options).some((o) => o.value === skin) ? skin : '';
+        }
+      };
       if (lookToggle) {
         lookToggle.addEventListener('change', (e) => {
           window.Skin?.set?.(e.target.checked ? 'brand' : 'standard');
+          paintLooks();
         });
-        // Another tab flipping it re-paints the switch here too.
-        window.Skin?.onChange?.(() => {
-          lookToggle.checked = window.Skin?.get?.() === 'brand';
+      }
+      if (lookSelect) {
+        lookSelect.addEventListener('change', (e) => {
+          window.Skin?.set?.(e.target.value || 'standard');
+          paintLooks();
         });
+      }
+      if (lookToggle || lookSelect) {
+        // Another tab changing it repaints the controls here too.
+        window.Skin?.onChange?.(paintLooks);
       }
 
       // Platform-level language preference (issue #757). Server-side
@@ -1914,6 +1933,11 @@
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
       const look = document.getElementById('new-look-enabled');
       if (look) look.checked = window.Skin?.get?.() === 'brand';
+      const lookMenu = document.getElementById('settings-look');
+      if (lookMenu) {
+        const stored = window.Skin?.get?.();
+        lookMenu.value = Array.from(lookMenu.options).some((o) => o.value === stored) ? stored : '';
+      }
       this._renderLocalAgentsSection();
     },
 
@@ -3526,10 +3550,13 @@
     // applied the mask either, so the live value still reflects the
     // server truth. `??` (not `||`) so an explicit `false` from a
     // current-cache app.js wins over the fallback.
+    //
+    // The Look menu in Experimental is gated the same way: an admin's
+    // preview of looks drawn screen by screen, hidden from everyone else
+    // until they are whole (a `?skin=<look>` pin in the address stays open).
     _renderAdminSection() {
       const section = document.getElementById('settings-admin-section');
       const toggle = document.getElementById('view-as-non-admin');
-      if (!section || !toggle) return;
       // Read the bare `App` identifier rather than `window.App` —
       // app.js declares `App` with `const`, which does NOT write to
       // `window` in non-module browser scripts, so `window.App` is
@@ -3542,6 +3569,18 @@
       // app.js wins over the fallback.
       const realAdmin = (typeof App !== 'undefined' ? App._realIsAdmin : undefined)
         ?? (typeof App !== 'undefined' && !!App.user?.isAdmin);
+      // A device left in one of the menu's looks keeps the menu whoever is
+      // signed in (an admin's device in other hands, an admin who lost the
+      // role): the look is stored on the device and the menu is what
+      // clears it. New look has its own switch and does not count.
+      const lookSection = document.getElementById('settings-look-section');
+      if (lookSection) {
+        const lookMenu = document.getElementById('settings-look');
+        const stored = window.Skin?.get?.();
+        const inLook = !!lookMenu && Array.from(lookMenu.options).some((o) => o.value && o.value === stored);
+        lookSection.classList.toggle('hidden', !realAdmin && !inLook);
+      }
+      if (!section || !toggle) return;
       if (!realAdmin) {
         section.classList.add('hidden');
         return;

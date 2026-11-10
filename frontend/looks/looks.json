@@ -1,0 +1,355 @@
+{
+  "note": "Read by scripts/build-looks-css.js. order = FRAME_SKINS (frontend/src/lib/skin.ts). Per look: the tour direction it is, the family that leads the document font stack, the font directories under public/fonts whose @font-face it declares, --accent-tint in light and dark (a literal rgba at or under 0.2 alpha: tests/dev-chat-ground.test.js), the opaque --fr-surface for browsers without backdrop-filter (translucent looks only), and the page ground in light and dark when the look has its own page (Brand kit).",
+  "stack": "system-ui,-apple-system,'Segoe UI',sans-serif,'Apple Color Emoji','Segoe UI Emoji','Segoe UI Symbol','Noto Color Emoji'",
+  "order": [
+    "glass",
+    "brandkit",
+    "workbench",
+    "paper",
+    "pastel",
+    "mosaic",
+    "sunrise",
+    "today",
+    "playground"
+  ],
+  "looks": {
+    "glass": {
+      "letter": "C",
+      "name": "GLASS",
+      "family": "Albert Sans",
+      "faces": [
+        "albert-sans"
+      ],
+      "tint": [
+        "rgba(59,85,230,.12)",
+        "rgba(142,162,255,.16)"
+      ],
+      "opaque": [
+        "#fbfbfd",
+        "#171a2b"
+      ],
+      "ground": null
+    },
+    "brandkit": {
+      "letter": "D",
+      "name": "BRAND KIT",
+      "family": "Geist",
+      "faces": [
+        "source-serif-4"
+      ],
+      "tint": [
+        "rgba(48,144,225,.14)",
+        "rgba(48,144,225,.2)"
+      ],
+      "opaque": null,
+      "ground": [
+        "#fffeea",
+        "#000000"
+      ]
+    },
+    "workbench": {
+      "letter": "F",
+      "name": "WORKBENCH",
+      "family": "IBM Plex Sans",
+      "faces": [
+        "ibm-plex-sans",
+        "ibm-plex-mono"
+      ],
+      "tint": [
+        "rgba(29,95,224,.11)",
+        "rgba(127,166,255,.15)"
+      ],
+      "opaque": [
+        "#fafafc",
+        "#16182c"
+      ],
+      "ground": null
+    },
+    "paper": {
+      "letter": "H",
+      "name": "PAPER",
+      "family": "Instrument Sans",
+      "faces": [
+        "instrument-sans"
+      ],
+      "tint": [
+        "rgba(37,99,235,.14)",
+        "rgba(122,165,255,.2)"
+      ],
+      "opaque": null,
+      "ground": null
+    },
+    "pastel": {
+      "letter": "I",
+      "name": "PASTEL",
+      "family": "DM Sans",
+      "faces": [
+        "dm-sans"
+      ],
+      "tint": [
+        "rgba(79,70,229,.14)",
+        "rgba(154,147,255,.2)"
+      ],
+      "opaque": null,
+      "ground": null
+    },
+    "mosaic": {
+      "letter": "J",
+      "name": "MOSAIC",
+      "family": "Urbanist",
+      "faces": [
+        "urbanist"
+      ],
+      "tint": [
+        "rgba(47,102,240,.13)",
+        "rgba(134,166,255,.16)"
+      ],
+      "opaque": [
+        "#fbfbfd",
+        "#1b1d38"
+      ],
+      "ground": null
+    },
+    "sunrise": {
+      "letter": "K",
+      "name": "SUNRISE",
+      "family": "Plus Jakarta Sans",
+      "faces": [
+        "plus-jakarta-sans"
+      ],
+      "tint": [
+        "rgba(37,99,235,.14)",
+        "rgba(127,168,255,.2)"
+      ],
+      "opaque": null,
+      "ground": null
+    },
+    "today": {
+      "letter": "L",
+      "name": "TODAY",
+      "family": "Figtree",
+      "faces": [
+        "figtree"
+      ],
+      "tint": [
+        "rgba(10,122,255,.12)",
+        "rgba(64,156,255,.2)"
+      ],
+      "opaque": null,
+      "ground": null
+    },
+    "playground": {
+      "letter": "S",
+      "name": "PLAYGROUND",
+      "family": "Nunito",
+      "faces": [
+        "nunito"
+      ],
+      "tint": [
+        "rgba(76,151,255,.16)",
+        "rgba(111,171,255,.2)"
+      ],
+      "opaque": null,
+      "ground": null
+    }
+  },
+  "fonts": {
+    "albert-sans": {
+      "family": "Albert Sans",
+      "weight": "300 900",
+      "files": [
+        {
+          "file": "AlbertSans-Variable.woff2",
+          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
+        },
+        {
+          "file": "AlbertSans-Variable-latin-ext.woff2",
+          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
+        }
+      ]
+    },
+    "source-serif-4": {
+      "family": "Source Serif 4",
+      "weight": "200 900",
+      "files": [
+        {
+          "file": "SourceSerif4-Variable.woff2",
+          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
+        },
+        {
+          "file": "SourceSerif4-Variable-latin-ext.woff2",
+          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
+        }
+      ]
+    },
+    "ibm-plex-sans": {
+      "family": "IBM Plex Sans",
+      "weight": "100 700",
+      "files": [
+        {
+          "file": "IBMPlexSans-Variable.woff2",
+          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
+        },
+        {
+          "file": "IBMPlexSans-Variable-latin-ext.woff2",
+          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
+        }
+      ]
+    },
+    "ibm-plex-mono": {
+      "family": "IBM Plex Mono",
+      "weight": "500",
+      "files": [
+        {
+          "file": "IBMPlexMono-500.woff2",
+          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
+        },
+        {
+          "file": "IBMPlexMono-500-latin-ext.woff2",
+          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
+        }
+      ]
+    },
+    "instrument-sans": {
+      "family": "Instrument Sans",
+      "weight": "400 700",
+      "files": [
+        {
+          "file": "InstrumentSans-Variable.woff2",
+          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
+        },
+        {
+          "file": "InstrumentSans-Variable-latin-ext.woff2",
+          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
+        }
+      ]
+    },
+    "dm-sans": {
+      "family": "DM Sans",
+      "weight": "100 1000",
+      "files": [
+        {
+          "file": "DMSans-Variable.woff2",
+          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
+        },
+        {
+          "file": "DMSans-Variable-latin-ext.woff2",
+          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
+        }
+      ]
+    },
+    "urbanist": {
+      "family": "Urbanist",
+      "weight": "100 900",
+      "files": [
+        {
+          "file": "Urbanist-Variable.woff2",
+          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
+        },
+        {
+          "file": "Urbanist-Variable-latin-ext.woff2",
+          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
+        }
+      ]
+    },
+    "plus-jakarta-sans": {
+      "family": "Plus Jakarta Sans",
+      "weight": "200 800",
+      "files": [
+        {
+          "file": "PlusJakartaSans-Variable.woff2",
+          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
+        },
+        {
+          "file": "PlusJakartaSans-Variable-latin-ext.woff2",
+          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
+        }
+      ]
+    },
+    "figtree": {
+      "family": "Figtree",
+      "weight": "300 900",
+      "files": [
+        {
+          "file": "Figtree-Variable.woff2",
+          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
+        },
+        {
+          "file": "Figtree-Variable-latin-ext.woff2",
+          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
+        }
+      ]
+    },
+    "nunito": {
+      "family": "Nunito",
+      "weight": "200 1000",
+      "files": [
+        {
+          "file": "Nunito-Variable.woff2",
+          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
+        },
+        {
+          "file": "Nunito-Variable-latin-ext.woff2",
+          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
+        }
+      ]
+    }
+  },
+  "wear": {
+    "note": "What the product's own markup wears. A conversation is drawn by the product's renderer, not by kit components, so for each kit component named here (roots) every kit rule that mentions it is repeated for the product's class (to), with the component's inner classes swapped for the product's (parts: a kit class, or a state the kit writes as a class, to a product selector). skip lists tour selectors left out. A part only counts inside a rule that names its root. The composer's field is not worn: the kit draws a placeholder's words, not a field (app.css, THE FRAME IN THE SHELL). The stand-alone pages a visitor signs in on (features/auth: sign-in, register, the waitlist form, more ways) are the product's own forms and wear the title, the card and the button; their one accent-filled control is the primary button, a white or grey pill a quiet one. Settings' own grouped lists (@/components/ui/grouped-list, named ui-glist and ui-lrow) wear the card and the row inside #settings-section-content, scoped with :where() inside the compound so a rule naming the row twice (.row+.row) stays one selector.",
+    "roots": {
+      "post": {
+        "to": ".messages-message",
+        "parts": {
+          "who": ".messages-message-author",
+          "when": ".messages-message-head time",
+          "txt": ".messages-markdown"
+        },
+        "skip": [
+          ".post .txt b"
+        ]
+      },
+      "day": {
+        "to": ".messages-day"
+      },
+      "dhead": {
+        "to": ".messages-thread-header",
+        "parts": {
+          "t": ".messages-thread-name",
+          "s": ".messages-thread-sub"
+        }
+      },
+      "composer": {
+        "to": ".messages-composer-card",
+        "parts": {
+          "send": ".messages-send",
+          "go": ":not(:disabled)"
+        }
+      },
+      "ib": {
+        "to": ":is(.messages-thread-action,.messages-composer-action)"
+      },
+      "card": {
+        "to": ":is(.dev-request-ask,.dev-change-pair .dev-change-gate,.dev-request-track > [role=\"group\"],.ui-glist:where(#settings-section-content *),:is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen),[data-sign-in-sheet]) .rounded-2xl.overflow-hidden,#auth-waiting-screen :is([data-waiting-queued],[data-waiting-invite]),#app-menu-homeroom-card)"
+      },
+      "title": {
+        "to": ":is(.settings-page-title,#first-session-make-title,:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen,#auth-waiting-screen) h1)"
+      },
+      "btn": {
+        "to": ":is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back]),[data-sign-in-sheet] [role=\"dialog\"] button.bg-violet-600,[data-public-profile-frame] button:is(.bg-violet-600,.bg-zinc-100),#improve-row-feedback)",
+        "parts": {
+          "quiet": ":is(.bg-white,.bg-zinc-100)"
+        }
+      },
+      "row": {
+        "to": ".ui-lrow:where(#settings-section-content *)",
+        "parts": {
+          "tx": ".ui-lrow-tx",
+          "t": ".ui-lrow-t",
+          "s": ".ui-lrow-s",
+          "go": ".ui-lrow-go"
+        }
+      }
+    }
+  }
+}
