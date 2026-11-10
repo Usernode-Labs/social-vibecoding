@@ -7236,6 +7236,8 @@ const AppView = {
       detail: blocked || (release ? PlatformI18n.t('changes:page.steps.detail.release', { release }) : req ? (req.detail || null) : null),
       done: req ? req.done : null,
       total: req ? req.total : null,
+      // #6552: the change this sheet explains, so its "?" reads its votes.
+      changeId: Number(item.id) || null,
       rows: out,
     };
   },
@@ -7300,7 +7302,11 @@ const AppView = {
       }
       return step;
     });
-    return { headline: req.headline, detail: null, done: req.done, total: req.total, rows, simple: true };
+    return {
+      headline: req.headline, detail: null, done: req.done, total: req.total, rows, simple: true,
+      // #6552: the change these steps belong to, so each "?" reads its votes.
+      changeId: Number(item.id) || null,
+    };
   },
 
   // ── A draft's steps ──────────────────────────────────────────────
@@ -7949,7 +7955,7 @@ const AppView = {
       tone: 'muted',
       done: false,
       segments: [{ weight: 1, pct: 100, state: 'idle' }],
-      label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
+      label: PlatformI18n.t('changes:page.votes.label.tally', { count: yes, needed: maj }),
       note: [head
         ? PlatformI18n.t('changes:page.votes.note.adminMerge', { by, head })
         : PlatformI18n.t('changes:page.votes.note.adminMergeNoHead', { by })],
@@ -8070,7 +8076,7 @@ const AppView = {
     else if (yes >= maj && waitsOnMember) {
       figure = canVote && item.approval_policy !== 'invited' ? PlatformI18n.t('changes:page.votes.figure.needsYours') : PlatformI18n.t('changes:page.votes.figure.needsAnother');
       tone = canVote ? 'ask' : 'warn';
-    } else if (reached) { figure = PlatformI18n.t('changes:page.votes.figure.reached', { yes, needed: maj }); tone = 'done'; }
+    } else if (reached) { figure = PlatformI18n.t('changes:page.votes.figure.reached', { count: yes, needed: maj }); tone = 'done'; }
     else if (pill.key === 'needs_vote' && !updateComing && AppView._approveSolo(item)) { figure = PlatformI18n.t('changes:page.votes.figure.yourApproval'); tone = 'ask'; }
     else { figure = PlatformI18n.t('changes:page.votes.figure.needsMore', { count: maj - yes }); tone = canVote ? 'ask' : 'muted'; }
     if (updateComing) tone = 'muted';
@@ -8136,7 +8142,7 @@ const AppView = {
     return {
       name: PlatformI18n.t('changes:page.votes.name'), figure, tone, done: tone === 'done',
       segments: AppView._changeVoteSegments(fill, maj, tone === 'done' ? 'done' : 'moving'),
-      label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
+      label: PlatformI18n.t('changes:page.votes.label.tally', { count: yes, needed: maj }),
       note,
       // #6282: no Vote button while the update is on its way (change-head.tsx
       // gateActions), so the card never asks for a yes that would be cleared.
@@ -18957,6 +18963,11 @@ const AppView = {
       notes,
       linked,
       blocks,
+      // #6552: the help "?" explains THIS change, whose row the Votes step
+      // was built from — not the page's item, which on a request's page is
+      // the request and has no votes. The id rides beside data-voting-help
+      // so the click handler can resolve it through `_changeItems`.
+      changeId: pr.id,
       // The roster arrives from its own fetch; the head paints 'loading'
       // and `_loadVoteRoster` republishes when it answers.
       roster: showHelp ? (AppView._voteRoster[pr.id] || { phase: 'loading' }) : null,
@@ -19108,12 +19119,14 @@ const AppView = {
       // come from the same fields the pill uses, so they cannot disagree.
       rows.push({
         key: 'votes', tone: yes >= req ? 'ok' : 'vote', label: PlatformI18n.t('changes:ledger.label.votes'),
-        sub: PlatformI18n.t('changes:ledger.votes.needed', { yes, required: req }),
+        sub: PlatformI18n.t('changes:ledger.votes.needed', { count: yes, required: req }),
         text: [], roster: { ...d.roster, approved: yes >= req }, foot: [],
         warnFoot: [d.explicitNote, d.lockedNote].filter(Boolean).map((n) => [n]),
         // "How voting works" rides at the right end of this row's line — the
         // one row it explains — instead of a caption under the whole ledger.
         help: !!d.helpHint,
+        // #6552: the change the row is about, so the "?" reads its votes.
+        changeId: d.changeId != null ? d.changeId : pr.id,
       });
     }
 
@@ -22595,12 +22608,19 @@ const AppView = {
       }
       // "How voting works" help affordance (topic-head "?" button + the
       // inline "How voting works" link). Both carry data-voting-help and
-      // open the same read-only popover for the current topic item.
+      // open the same read-only popover for the change they explain.
+      // #6552: on a request's page the page item is the REQUEST, which has
+      // no votes; the Votes step carries its change's id beside the hint,
+      // so the popover counts the same row the card does.
       const help = e.target.closest('[data-voting-help]');
       if (help) {
         e.preventDefault();
         e.stopPropagation();
-        AppView._openVotingHelpPopover(help, AppView._findTopicItem());
+        const changeId = Number(help.dataset && help.dataset.votingHelpChange);
+        const row = Number.isFinite(changeId) && changeId > 0
+          ? (AppView._changeItems.get(changeId) || AppView._findTopicItem())
+          : AppView._findTopicItem();
+        AppView._openVotingHelpPopover(help, row);
         return;
       }
       // The click that RAN a ⋯ menu row is the click that opened whatever
