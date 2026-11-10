@@ -114,6 +114,10 @@ async function migrate(config) {
   // week, so Live this week has a closed thread to show. Staging has no
   // model, so the bot's reply is stored rather than asked for.
   await seedStagingClosedPrivateThread(pool);
+  // #6566's shots: the bot's reply after it filed a problem report, and its
+  // answer when asked for the link. Staging has no model, so both replies
+  // are stored messages.
+  await seedStagingBotReportReply(pool);
   // #6426's shots: Main Chat shows "Welcome back" after a day away, so the
   // capture member's chat with the bot has a visit old enough to show it.
   await seedStagingMainChatLastVisit(pool);
@@ -2591,6 +2595,107 @@ async function seedStagingClosedPrivateThread(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging closed private thread seeding failed', { message: err.message });
+  }
+}
+
+// #6566 (10 Nov 2026): the Homeroom bot's reply after it files a problem
+// report now gives the report's number and its card, and asking for the
+// link answers with the report already filed. A staging copy has no model,
+// so this writes both replies as stored messages in a private thread about
+// Homeroom, for the shots' member fixture (usernode-capture). Idempotent
+// through the root message's key; strictly a no-op outside staging.
+async function seedStagingBotReportReply(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const people = await pool.query(
+      `SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')`,
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!member || !bot || member.id === bot.id) return;
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const found = await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high],
+    );
+    let conversationId = found.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const created = await pool.query(
+        'INSERT INTO conversations (kind, created_by) VALUES (\'direct\', $1) RETURNING id',
+        [member.id],
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high],
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members (conversation_id, user_id, role, status)
+       VALUES ($1, $2, 'member', 'member'), ($1, $3, 'member', 'member')
+       ON CONFLICT (conversation_id, user_id) DO UPDATE SET status = 'member'`,
+      [conversationId, member.id, bot.id],
+    );
+    const key = 'staging-demo-bot-report-reply';
+    const had = await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
+      [conversationId, member.id, key],
+    );
+    let rootId = had.rows[0]?.id;
+    if (!rootId) {
+      const root = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, 'Staging demo: neither works, I have to kill the app', $3, NOW() - INTERVAL '1 day')
+         RETURNING id`,
+        [conversationId, member.id, key],
+      );
+      rootId = root.rows[0].id;
+      const filed = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Filed as #6564 on Homeroom''s requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.', $3, NOW() - INTERVAL '1 day')
+         RETURNING id`,
+        [conversationId, bot.id, rootId],
+      );
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'can you give me a link to it?', $3, NOW() - INTERVAL '1 day' + INTERVAL '1 minute')`,
+        [conversationId, member.id, rootId],
+      );
+      const again = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Already filed as #6564 on Homeroom''s requests board. Nothing new was filed.', $3, NOW() - INTERVAL '1 day' + INTERVAL '2 minutes')
+         RETURNING id`,
+        [conversationId, bot.id, rootId],
+      );
+      // The report's card, as the bot's reply carries it: a request on
+      // Homeroom's own board.
+      const platform = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+      const platformId = platform.rows[0]?.id;
+      if (platformId) {
+        for (const messageId of [filed.rows[0].id, again.rows[0].id]) {
+          await pool.query(
+            `INSERT INTO conversation_message_objects (message_id, position, object_type, app_id, object_ref)
+             VALUES ($1, 0, 'github_issue', $2, 6564) ON CONFLICT (message_id, position) DO NOTHING`,
+            [messageId, platformId],
+          );
+        }
+      }
+      await pool.query(
+        `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+         VALUES ($1, $2, $3, $4, 'idea', 'open')
+         ON CONFLICT (root_message_id) DO NOTHING`,
+        [member.id, conversationId, rootId, platformId || null],
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging bot report reply seeding failed', { message: err.message });
   }
 }
 
