@@ -42,6 +42,7 @@ import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadSummaryChip } from '../message-actions/thread-summary';
 import { useDismiss } from '../message-actions/use-dismiss';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { TranslateNote, observeAutoTranslate, useTranslate, worthAsking } from './translate';
 
 /*
@@ -435,7 +436,11 @@ export const MessageRow = memo(function MessageRow({
     || isTwoQuestions(message) || isReadyMessage(message) || !!head
     || (!!message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
       && !isTwoQuestions(message) && !isReadyMessage(message));
-  const sided = kind !== 'channel' && !block && !step && !message.system && !isCardMessage;
+  // Under one of the frame's looks no row has a side (the tour's s17: "your
+  // own messages and theirs share one style, so a thread reads top to
+  // bottom"): every row is the named row a channel draws.
+  const frame = isFrameSkin(useLiveSkin());
+  const sided = !frame && kind !== 'channel' && !block && !step && !message.system && !isCardMessage;
 
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its

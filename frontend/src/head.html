@@ -395,23 +395,41 @@
     }());
   </script>
   <script>
-    // Skin module — the new look, an experiment (Settings › Experimental,
+    // Skin module — the looks, experiments all (Settings › Experimental,
     // off by default). The same head-blocking pattern as window.Display:
     // the stored choice lands on <html> before app.css, whose rules read
-    // it, is applied, so the look never flashes in after first paint.
-    //   'homeroom:skin'  → 'brand'
+    // it, is applied, so a look never flashes in after first paint.
+    //   'homeroom:skin'  → 'brand'  the new look (light mode only)
+    //                    → 'glass', 'brandkit', 'workbench', 'paper',
+    //                      'pastel', 'mosaic', 'sunrise', 'today',
+    //                      'playground'  the nine looks of the one frame
+    //                      (light and dark; an admin's preview)
     //                    → key removed for the standard look (the default)
     // Kept on the DEVICE: there is nothing to save or fail. app.css scopes
-    // every rule of the look to html[data-skin="brand"]:not(.dark), so dark
-    // mode is the standard dark mode either way. Every storage access sits
-    // in try/catch: unreadable storage means the standard look.
+    // every rule of a look to html[data-skin="<look>"]. Every storage access
+    // sits in try/catch: unreadable storage means the standard look.
+    // `?skin=<look>|standard` pins a look for THIS LOAD only, nothing
+    // stored: the capture runner reaches the page by URL with a fresh
+    // profile, the same way `?theme=` pins the mode above.
     window.Skin = (function () {
       const SKIN_KEY = 'homeroom:skin';
+      // 'brand' is New look; the nine after it are the looks of the one
+      // frame (the 2026-11-06 screen tour), in the tour's order. The same
+      // list, less 'brand', is FRAME_SKINS in src/lib/skin.ts.
+      const SKINS = ['brand', 'glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'];
       const _listeners = [];
 
+      let pinned = null;
+      try {
+        const want = new URLSearchParams(window.location.search).get('skin');
+        if (want === 'standard' || SKINS.includes(want)) pinned = want;
+      } catch {}
+
       function get() {
+        if (pinned) return pinned;
         try {
-          return window.localStorage.getItem(SKIN_KEY) === 'brand' ? 'brand' : 'standard';
+          const val = window.localStorage.getItem(SKIN_KEY);
+          return SKINS.includes(val) ? val : 'standard';
         } catch {
           return 'standard';
         }
@@ -422,17 +440,19 @@
       // never disagrees with it.
       function apply() {
         const root = document.documentElement;
-        if (get() === 'brand') {
-          root.setAttribute('data-skin', 'brand');
+        const skin = get();
+        if (skin !== 'standard') {
+          root.setAttribute('data-skin', skin);
         } else {
           root.removeAttribute('data-skin');
         }
       }
 
       function set(skin) {
+        pinned = null;
         try {
-          if (skin === 'brand') {
-            window.localStorage.setItem(SKIN_KEY, 'brand');
+          if (SKINS.includes(skin)) {
+            window.localStorage.setItem(SKIN_KEY, skin);
           } else {
             window.localStorage.removeItem(SKIN_KEY);
           }

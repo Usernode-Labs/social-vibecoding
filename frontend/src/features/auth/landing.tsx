@@ -45,6 +45,7 @@ import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { Message, RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
+import { isFrameSkin, useSkin } from '../../lib/skin';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
@@ -80,6 +81,8 @@ import { Story } from './story';
 import { cardCover, morph, projectHero } from '../guest/card-morph';
 import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../guest/device-pins';
 import { GuestDiscover } from '../guest/guest-discover';
+import { GatedFrame } from '../guest/frame/gated-frame';
+import { LandingFrame } from '../guest/frame/landing-frame';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
 import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, projectHash } from '../guest/guest-data';
 import { noteSignUpFrom } from './sign-up-from';
@@ -823,6 +826,10 @@ export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.landing, false);
   const t = useMessages('auth');
+  // Under one of the frame's looks the guest Discover is the kit's page
+  // (../guest/frame/landing-frame.tsx). Standard until mount: this screen
+  // is in the prerendered document.
+  const frame = isFrameSkin(useSkin());
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -872,7 +879,13 @@ export function LandingScreen() {
   const [deepLink, setDeepLink] = useState<{ target: string; place: DeepLinkPlace } | null>(null);
   // Closed without signing in: the story, under an address that says so. The
   // link stays remembered, so a sign-in from the story still lands on it.
+  // UNDER A LOOK the link has a page of its own (../guest/frame/gated-frame
+  // .tsx) and the sheet opens from its Sign in, not by itself: closing the
+  // sheet then closes the sheet, and the page stays.
+  const [gateSheet, setGateSheet] = useState(false);
+  const gateSheetUp = useRef(false);
   const closeGate = useCallback(() => {
+    if (gateSheetUp.current) { setGateSheet(false); return; }
     setDeepLink(null);
     closeSheet();
     try {
@@ -1070,6 +1083,8 @@ export function LandingScreen() {
   // (./sign-up-from.ts): noted as it shows, in an effect, never the render.
   const gateTarget = gate?.target ?? null;
   useEffect(() => { if (gateTarget) noteSignUpFrom('link'); }, [gateTarget]);
+  gateSheetUp.current = frame && !!gate && gateSheet;
+  useEffect(() => { setGateSheet(false); }, [gateTarget]);
   const storyFront = storyOn && inApp && !linkedSlug && !discoverLink && !gate;
   // The guest pages (Discover, a project's page) and their bar.
   const guestPages = guestOn && !storyFront;
@@ -2257,6 +2272,30 @@ export function LandingScreen() {
               onShare={shareProject}
             />
           ) : null}
+          {/* The same page in the one frame, ahead of the standard one, which
+              app.css puts away while this is up. An account still in line
+              looks around on it too. */}
+          {frame && gate ? (
+            <GatedFrame
+              target={gate.target}
+              title={deepLinkTitle(gate.place, gateProject, (id, params) => t(id, params))}
+              waitlist={NEW_ACCOUNTS_WAIT}
+              onSignIn={() => setGateSheet(true)}
+              onStart={() => setSheet('start')}
+              onBrowse={closeGate}
+            />
+          ) : null}
+          {frame && guestPages && !guestProject && !linkPending && !gate ? (
+            <LandingFrame
+              apps={apps}
+              failed={appsFailed && !apps}
+              waitlist={NEW_ACCOUNTS_WAIT}
+              waiting={waitingGuest ? { email: sessionEmail() } : null}
+              onStart={() => setSheet('start')}
+              onOpenInside={(app) => { void live.current.openLandingApp(app); }}
+              onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
+            />
+          ) : null}
           {guestPages && !guestProject && !linkPending ? (
             <GuestDiscover
               apps={apps}
@@ -2322,7 +2361,7 @@ export function LandingScreen() {
       {gate ? <DeepLinkBackdrop /> : null}
       {gate ? (
         <SignInSheet
-          open
+          open={!frame || gateSheet}
           title={deepLinkTitle(gate.place, gateProject, (id, params) => t(id, params))}
           providers={providers}
           native={nativeSignIn}

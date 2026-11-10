@@ -742,8 +742,8 @@ test('#3051: the items query reads the counts\' own five predicates, once each',
     assert.equal((src.match(new RegExp(`\\$\\{${name}\\}`, 'g')) || []).length, reads,
       `${name} is read by COUNTS_SQL and ITEMS_SQL alike${reads === 4 ? ', and by NEEDS_FEED_SQL and OWED_BY_COMMUNITY_SQL' : ''}`);
   }
-  assert.equal((src.match(/\$\{VISIBLE_APP_WHERE\}/g) || []).length, 4,
-    'and all four apply GET /api/apps\'s visibility filter');
+  assert.equal((src.match(/\$\{VISIBLE_APP_WHERE\}/g) || []).length, 5,
+    'and all four apply GET /api/apps\'s visibility filter, as does the fifth read beside them, what went live this week (LIVE_FEED_SQL)');
   // The per-project count is the feed's own membership rule too.
   assert.match(route.OWED_BY_COMMUNITY_SQL,
     /JOIN community_members cm ON cm\.community_id = a\.community_id AND cm\.user_id = \$1/);
