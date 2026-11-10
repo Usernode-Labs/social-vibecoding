@@ -167,11 +167,16 @@ function EmailForm() {
         <SignInRow
           title={t('settings:email.title')}
           value={<span role={account || error ? undefined : 'status'}>{value}</span>}
-          action={account ? (open ? null : (
-            <button type="button" className={ROW_ACTION} aria-expanded="false" onClick={openEditor}>
-              {account.email ? t('settings:account.change') : t('settings:account.add')}
-            </button>
-          )) : error ? (
+          action={account ? (
+            // #6561: an address cannot be changed once it is linked, so a row
+            // that has one is for reading and offers no action. Add stays for
+            // an account with no email, since a first address is not a change.
+            !open && !account.email ? (
+              <button type="button" className={ROW_ACTION} aria-expanded="false" onClick={openEditor}>
+                {t('settings:account.add')}
+              </button>
+            ) : null
+          ) : error ? (
             <button type="button" className={ROW_ACTION} onClick={() => setReload((n) => n + 1)}>
               {t('core:common.tryAgain')}
             </button>
