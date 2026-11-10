@@ -5032,10 +5032,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out: the sign-in sheet opens (#6003)",
+      "name": "Signed out: the sign-in sheet offers Email code and Password before sending a code (#6003, #6553)",
       "path": "/?shot=anon&login=1",
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen [data-sign-in-sheet] #sign-in-sheet-title",
+      "expectSelector": "#auth-landing-screen [data-sign-in-sheet]:has(#sign-in-sheet-title) [data-sign-in-sheet-method] [data-sign-in-sheet-method-password]",
       "allowConsoleErrors": true
     },
     {
