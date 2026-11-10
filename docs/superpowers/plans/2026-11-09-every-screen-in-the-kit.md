@@ -197,7 +197,7 @@ Rulings:
   this week); the tour's five stages (Plan, Build, Checks, Vote, Live) are not counted anywhere.
 - The Workshop's ballot has one button, Review and vote, which opens Needs you: a No says why,
   which two inline buttons leave no room for.
-- Your work is one row (the bot tab's summary for this project), not the tour's row per item.
+- Your work is one row (the bot tab's summary for this project), not the tour's row per item; on the Workshop its title is what is next and its line the counts, so the row does not repeat the heading (10 Nov).
 - The Hub shows three topics and "All N". Topics is a page of the kit only: it has no address of
   its own, and a topic's channel is lit as Topics.
 

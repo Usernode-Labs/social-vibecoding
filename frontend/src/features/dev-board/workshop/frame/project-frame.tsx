@@ -392,7 +392,7 @@ export function ProjectWorkshopFrame({
       {work ? (
         <Sec label={t('project:workshop.desk.title')}>
           <Card>
-            <Row href={work.href} lead={<Lead icon="tool" />} title={t('project:workshop.desk.title')} line={work.line || undefined} right={<Meta>{work.words}</Meta>} go sm={false} />
+            <Row href={work.href} lead={<Lead icon="tool" />} title={work.line || work.words || t('project:workshop.desk.title')} line={work.line && work.words ? work.words : undefined} go sm={false} />
           </Card>
         </Sec>
       ) : null}

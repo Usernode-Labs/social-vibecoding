@@ -94,5 +94,10 @@ test('the list pane hands its own conversations to the kit list under a look, an
   assert.match(css, /html\[data-skin\] \.messages-layout\.messages-list-page:has\(> \[data-frame-list\]\) > \.messages-thread-pane \{ display: flex; \}/, 'and the pane beside it says nothing is open');
   assert.match(css, /html\[data-skin\] \.messages-layout:has\(> \[data-frame-list\]\) > \.messages-thread-pane \{[^}]*border-inline-start: 1px solid var\(--fr-line\);/, 'one line between the two panes');
   assert.match(css, /html\[data-skin\] \.messages-layout:has\(> \[data-frame-list\]\) > \.messages-thread-pane \{[^}]*border-top: 0;/, 'and no second: the pane is a dc-lift sheet whose top hairline drew a line under the header');
+  // The kit's pane clips its scroll (`.fr-pane .fr-scroll { overflow:
+  // hidden }`, in the compiled kit, which comes after the shell's rules at
+  // the same weight), so on a phone the list could not scroll at all: the
+  // shell's rule names the pane twice and wins, and the list pane scrolls.
+  assert.match(css, /html\[data-skin\] \.fr\.fr-pane,\s*html\[data-skin\] \.fr\.fr-pane > \.fr-scroll \{ overflow: visible; \}/);
   assert.match(css, /html\[data-skin\] \.messages-layout:has\(> \[data-frame-list\]\) \{ background: none; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; border-radius: 0; border-top: 0; \}/, 'nor the strip the layout is: the tour\'s Messages sits flat under the header');
 });

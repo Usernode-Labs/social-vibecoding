@@ -66,7 +66,10 @@ test('the vote that waits for you is the ballot card: its tally as a bar with th
 
 test('your work, what went live, and the weeks before as rows', () => {
   const html = render();
-  assert.match(html, /<a class="fr-row" href="#homeroom-bot\?project=homeroom">.*?<span class="fr-t">Your work<\/span><span class="fr-s">Next: Make proposals more visual<\/span><\/span><span class="fr-meta">In progress: 11<\/span>/s);
+  // The group's heading says Your work; the row says what is next and the
+  // counts, not the heading again (a row does not repeat its heading).
+  assert.match(html, /<h2 class="fr-cap">Your work<\/h2>.*?<a class="fr-row" href="#homeroom-bot\?project=homeroom">.*?<span class="fr-t">Next: Make proposals more visual<\/span><span class="fr-s">In progress: 11<\/span><\/span><svg/s);
+  assert.match(render({ work: { line: null, words: 'In progress: 11', href: '#homeroom-bot?project=homeroom' } }), /<span class="fr-t">In progress: 11<\/span><\/span><svg/, 'with nothing next, the counts are the row');
   assert.match(html, /<h2 class="fr-cap">Recently live<\/h2>.*?<a class="fr-row fr-sm" href="#app\/homeroom\/dev\/changes\/6369"><span class="fr-lead fr-ok" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Email templates, part 7<\/span><\/span><span class="fr-meta">55m<\/span>/s);
   assert.match(html, /<h2 class="fr-cap">Week by week<\/h2>.*?<button type="button" class="fr-row"><span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Last week<\/span><span class="fr-s">2 Nov – 8 Nov<\/span><\/span><span class="fr-meta">7 live<\/span>/s);
   const quiet = render({ work: null, live: [], weeks: [] });

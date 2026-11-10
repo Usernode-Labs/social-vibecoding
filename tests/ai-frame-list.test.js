@@ -119,6 +119,9 @@ test('the two panes sit as the tour draws them: the list 520px, the open item th
   assert.match(css, /html\[data-skin\] body:has\(#ai-screen\[data-frame-list\]:not\(\.hidden\)\) \{ --ai-main-w: max\(360px, calc\(var\(--platform-usable-w\) - 520px\)\); \}/);
   assert.match(css, /html\[data-skin\] body:has\(#ai-screen\[data-frame-list\]:not\(\.hidden\)\) \.side-panel \{ top: var\(--fr-shell-top\); border-radius: 0; background: none; box-shadow: none; border-inline-start: 1px solid var\(--fr-line\); \}/);
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] \.ai-askbar,\s*html\[data-skin\] #ai-screen\[data-frame-list\] \.ai-askbar-gap \{ display: none; \}/);
+  // The Ask bar was what kept room after the list's last row for the
+  // phone's tab bar (its sticky margin); with it put away the pane's foot
+  // spacer keeps that room (tests/frame-app.test.js).
 });
 
 test('the list\'s words are catalog text', () => {

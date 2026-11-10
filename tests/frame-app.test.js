@@ -145,6 +145,13 @@ test('today\'s header and tab bar stay mounted, unseen, and the screens take the
   assert.match(css, /@media \(min-width: 768px\) \{\s*html\[data-frame-chrome\] body \{ --platform-rail-full: var\(--fr-shell-left\); \}/);
   assert.match(css, /html\[data-frame-chrome\] body \{ --platform-bar-h: var\(--fr-shell-bottom\) !important; --platform-tabs-h: var\(--fr-shell-bottom\) !important; \}/);
   assert.match(css, /html\[data-skin\] \.fr\.fr-app\.fr-shell \{ position: fixed; inset: 0; z-index: 30;[^}]*pointer-events: none; \}/, 'over the screens, under the sheets, and taking presses only on what it draws');
+  // In the tour's mock the page scrolls inside the page area, under the
+  // bar's edge; in the shell it scrolls in the document and passes behind
+  // the bar, which the looks draw with no ground of its own. The shell's
+  // bar is frosted: the look's ground, mostly, over a blur, so a flat
+  // ground stays one colour and a wallpaper shows through softened, and
+  // what scrolls under is put away either way.
+  assert.match(css, /html\[data-skin\] :where\(\.fr\.fr-shell:not\(\.fr-shell-under\)\) \.fr-bar \{ background: color-mix\(in srgb, var\(--fr-ground\) 72%, transparent\); backdrop-filter: blur\(20px\) saturate\(1\.3\); -webkit-backdrop-filter: blur\(20px\) saturate\(1\.3\); \}/);
   // A phone browser's install strip is fixed over the top of the window
   // (#1372): the chrome starts under it, as the guest's does, and the
   // header's placeholder in the padded column is the bar alone, since the
@@ -153,6 +160,16 @@ test('today\'s header and tab bar stay mounted, unseen, and the screens take the
   // second the page started a strip's height too low.
   assert.match(css, /body\.has-install-strip \.fr\.fr-app\.fr-shell\[data-frame-app\],\s*body\.has-install-strip \.fr\.fr-app\.fr-shell\.fr-shell-under \{ top: calc\(var\(--platform-safe-top, 0px\) \+ var\(--install-strip-h\)\); \}/);
   assert.match(css, /html\[data-frame-chrome\] body\.has-install-strip #platform-header \{ height: calc\(var\(--fr-shell-top\) - var\(--install-strip-h\)\) !important; \}/);
+  // …and the header token the screens subtract from the window (`--ws-area`
+  // takes the strip off by --browser-banner-h already): the bar alone too,
+  // or a project's fitted Discussion was a strip shorter than the room.
+  assert.match(css, /html\[data-frame-chrome\] body\.has-install-strip \{ --platform-header-h: calc\(var\(--fr-shell-top\) - var\(--install-strip-h\)\); \}/);
+  // On a phone the kit's tab bar is fixed over the page's foot, and a kit
+  // page scrolls in the document or in a pane that gave up its own
+  // allowance for it: the page's last card ended under the bar. A spacer
+  // the bar's height after the page's inner, so each look's own padding
+  // stands and the page ends clear of the bar.
+  assert.match(css, /@media \(max-width: 767\.98px\) \{\s*html\[data-frame-chrome\] :is\(\.fr:not\(\.fr-app, \[data-project-frame\]\) > \.fr-inner, \[data-project-frame\]:is\(\[data-project-frame=\"status\"\], \[data-project-frame=\"topics\"\], \[data-project-frame=\"workshop-kit\"\], \[data-project-frame=\"all-kit\"\]\) > \.fr-inner, \.fr-pane > \.fr-scroll\)::after \{ content: ''; display: block; height: var\(--fr-shell-bottom, 0px\); \}/, 'a page and a pane (Messages\' list, the bot\'s) alike; a project page\'s head only where it is the whole page, since a channel\'s body follows it');
   const src = read('frontend', 'src', 'features', 'frame', 'frame-app.tsx');
   for (const name of ['--fr-shell-left', '--fr-shell-top', '--fr-shell-bottom']) assert.ok(src.includes(`'${name}'`), `${name} is published`);
   assert.match(src, /root\.setAttribute\('data-frame-chrome', ''\)/);

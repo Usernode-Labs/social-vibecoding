@@ -186,4 +186,10 @@ test('a topic\'s channel lights Topics but keeps the product\'s page under the h
   assert.match(page, /page: tab\.startsWith\('c:'\) && !frameTopics \? 'channel' : undefined,/);
   const css = read('public/css/app.css');
   assert.match(css, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\], \[data-project-frame="all-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'the body is put away for the kit\'s own pages only; a channel is not one');
+  // In a phone browser a channel's tab is a fitted box (`--ws-fit`), the
+  // chat's composer on its foot. Under a look the kit's head stands inside
+  // that box, taller than the standard one, and the chat under it, holding
+  // to its own 320px floor, ran under the kit's tab bar: it takes the room
+  // the head leaves, its stream scrolling inside it either way.
+  assert.match(css, /html\[data-skin\] \.dev-ws > \[data-project-frame\] ~ \.dev-ws-tabbody > \.dev-ws-discussion \{ min-height: 0; \}/);
 });
