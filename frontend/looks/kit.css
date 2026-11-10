@@ -37,6 +37,7 @@
 .phone .crumb .ci.keep{font-size:15px;font-weight:650}
 .bar .sp{flex:1}
 .ib{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;position:relative;flex:none;color:var(--ink)}
+.ib.markbtn{width:auto;display:inline-flex;align-items:center;gap:2px;padding:0 6px 0 5px;border-radius:18px}
 .ib .dot{position:absolute;top:5px;right:5px;width:9px;height:9px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 2px var(--ground)}
 .banner{flex:none;display:flex;align-items:center;gap:8px;min-height:36px;padding:8px 24px;background:var(--lit-t);color:var(--lit);font-size:13px;font-weight:550;border-bottom:1px solid var(--line)}
 .banner b{font-weight:700}.phone .banner{padding:8px 16px}

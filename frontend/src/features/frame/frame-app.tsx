@@ -43,6 +43,7 @@ import { openPlace, placeStore } from '../dev-board/workshop/place-store';
 import { placeName } from '../dev-board/workshop/places';
 import { communityScopeStore, goToCommunity } from '../workshop/community-scope';
 import { swatchFor } from '../messages/format';
+import { appContextStore } from '../app-context/app-context-store.js';
 import { framePageStore } from './frame-page-store';
 import { FrameSheets, openFrameSheet } from './frame-sheets';
 import { GuestFrame } from './guest-chrome';
@@ -150,6 +151,7 @@ export function FrameChrome() {
     if (here && here !== 'status') openPlace(inCommunity, 'status'); else pressTab('home');
   };
   const unread = useNodeShown('notifications-badge');
+  const menuOpen = !!(useStoreState(appContextStore) as { open?: boolean }).open;
   const user = (typeof window === 'undefined' ? undefined : (window as any).App?.user) as { username?: string; avatar_url?: string | null } | undefined;
   const me = user?.username || '';
   // The page area, published for the screens to lay themselves out by.
@@ -286,9 +288,7 @@ export function FrameChrome() {
               <button type="button" className={k('ib')} aria-label={t('core:header.back')} onClick={!page.crumb && inCommunity ? goUp : goBack}>
                 <Icon name="cl" />
               </button>
-            ) : (
-              <span className={k('p')}><Tile size={28} src={MARK} color="#0f1116" name={t('core:frame.brand')} /></span>
-            )}
+            ) : null}
             <div className={k('crumb')}>
               {/* Flat children: on a phone the kit keeps only the last one
                   (.crumb > *:not(.keep)), so nothing may wrap them. */}
@@ -309,6 +309,15 @@ export function FrameChrome() {
             <button type="button" className={k('ib')} aria-label={t('core:header.notifications')} onClick={() => openFrameSheet('notifications')}>
               <Icon name="bell" />
               {unread ? <span className={k('dot')} /> : null}
+            </button>
+            {/* The Homeroom mark and the menu behind it: the standard header's
+                #platform-mark-btn (features/header/platform-mark.tsx; the
+                app switcher, About, Invite), kept under every look. The same
+                controller; its desktop popover hangs under this button while
+                the standard header is folded away (features/app-context). */}
+            <button type="button" className={k('ib', 'markbtn')} aria-label={t('core:header.homeroomMenu')} aria-expanded={menuOpen} data-frame-mark="" onClick={() => { (window as any).AppContext?.toggle?.(); }}>
+              <Tile size={26} src={MARK} color="#0f1116" name={t('core:frame.brand')} />
+              <Icon name="cd" size={16} />
             </button>
             <button type="button" className={k('p')} aria-label={t('core:frame.menu.open')} onClick={() => openFrameSheet('menu')} style={{ background: 'none', border: 0 }}>
               <Av size={28} name={me || '?'} src={user?.avatar_url} color={swatchFor(me || '?')} />

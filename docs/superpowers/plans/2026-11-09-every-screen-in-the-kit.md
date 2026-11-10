@@ -506,3 +506,15 @@ takes a sentence to the bot), "Since you last looked" as one feed of
 merges, replies and votes opened (the live feed is merges only), the
 Standings' top rows (no list endpoint on the client yet) and "builds left
 this week" (no per-member read).
+
+### The Homeroom mark and its menu, under every look (10 Nov, evening)
+
+The standard header's `#platform-mark-btn` (the mark and ⌄: the app
+switcher, About, Invite, Suggest an improvement, Terms) is kept in the kit's
+bar at its end, after the bell, on a desktop and on a phone alike
+(`frame-app.tsx`, `.ib.markbtn`, `data-frame-mark`). It drives the same
+controller (`window.AppContext.toggle()`); the menu's desktop popover
+hangs under whichever mark has a box (`visibleMark()` in
+features/app-context/index.tsx), its outside-click guard spares the
+frame's button, and Escape gives focus back to it. The phone bar's
+leading brand tile went: the mark at the end is the brand now.

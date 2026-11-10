@@ -27581,6 +27581,7 @@ html[data-skin] .fr-crumb .fr-ic{color:var(--fr-faint)}
 html[data-skin] .fr-crumb .fr-ci{display:inline-flex;align-items:center;gap:8px;min-width:0}
 html[data-skin] .fr-bar .fr-sp{flex:1}
 html[data-skin] .fr-ib,html[data-skin]:where(:not([data-skin="brand"])) :is(.messages-thread-action,.messages-composer-action){width:36px;height:36px;border-radius:50%;display:grid;place-items:center;position:relative;flex:none;color:var(--fr-ink)}
+html[data-skin] .fr-ib.fr-markbtn{width:auto;display:inline-flex;align-items:center;gap:2px;padding-block:0 0;padding-inline:5px 6px;border-radius:18px}
 html[data-skin] .fr-ib .fr-dot,html[data-skin]:where(:not([data-skin="brand"])) :is(.messages-thread-action,.messages-composer-action) .fr-dot{position:absolute;top:5px;inset-inline-end:5px;width:9px;height:9px;border-radius:50%;background:var(--fr-acc);box-shadow:0 0 0 2px var(--fr-ground)}
 html[data-skin] .fr-banner{flex:none;display:flex;align-items:center;gap:8px;min-height:36px;padding:8px 24px;background:var(--fr-lit-t);color:var(--fr-lit);font-size:13px;font-weight:550;border-bottom:1px solid var(--fr-line)}
 html[data-skin] .fr-banner b{font-weight:700}

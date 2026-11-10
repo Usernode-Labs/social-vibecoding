@@ -82,6 +82,21 @@ test('the bar says where you are, with search and the bell; the phone\'s tab bar
   assert.match(html, /<header class="fr-bar">.*?<div class="fr-crumb"><span class="fr-ci fr-here fr-keep">Messages<\/span><\/div><span class="fr-sp"><\/span>/s);
   assert.match(html, /<button type="button" class="fr-ib fr-d" aria-label="[^"]+">/, 'search, on a desktop');
   assert.match(html, /<button type="button" class="fr-ib" aria-label="Notifications">/);
+  // The Homeroom mark and the menu behind it (the standard header's
+  // #platform-mark-btn: the app switcher, About, Invite), kept under every
+  // look at the bar's end, after the bell: the same tile and chevron, the
+  // same controller, on a desktop and on a phone alike.
+  assert.match(html, /<button type="button" class="fr-ib" aria-label="Notifications">.*?<\/button><button type="button" class="fr-ib fr-markbtn" aria-label="Homeroom menu" aria-expanded="false" data-frame-mark=""><span class="fr-tile" style="--fr-ts:26px;--fr-tc:#0f1116" aria-hidden="true"><img src="\/brand\/homeroom-mark\.png"[^>]*><\/span><svg class="fr-ic"[^>]*>.*?<\/svg><\/button>/s, 'the bell, then the mark, as the standard header orders them');
+  assert.doesNotMatch(html, /<span class="fr-p"><span class="fr-tile"/, 'the phone bar no longer leads with a second mark: the one at its end is the brand');
+  const frameSrc = read(FRAME_APP);
+  assert.match(frameSrc, /onClick=\{\(\) => \{ \(window as any\)\.AppContext\?\.toggle\?\.\(\); \}\}/, 'the standard header\'s own controller');
+  // The menu's desktop popover hangs under whichever mark has a box: the
+  // frame's while the standard header is folded away.
+  const ctx = read('frontend/src/features/app-context/index.tsx');
+  assert.match(ctx, /function visibleMark\(\): HTMLElement \| null \{/);
+  assert.match(ctx, /document\.querySelector\('\[data-frame-mark\]'\)/);
+  assert.match(ctx, /const mark = visibleMark\(\);\s*if \(!mark\) return;/, 'anchored under it');
+  assert.match(ctx, /frameMark\?\.contains\(t\)/, 'a click on it is not a click outside');
   const bar = html.slice(html.indexOf('<nav class="fr-tabbar"'));
   assert.deepEqual([...bar.matchAll(/<a class="fr-tb[^"]*" href="([^"]+)"/g)].map((m) => m[1]), ['#home', '#homeroom-bot', '#messages', '#profile']);
   assert.match(bar, /<a class="fr-tb fr-on" href="#messages" aria-current="page">/);
