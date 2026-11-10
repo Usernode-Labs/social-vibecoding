@@ -47,6 +47,7 @@ const {
 } = require('../middleware/rate-limits');
 const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
+const arrivalSource = require('../services/arrival-source');
 const releaseLinks = require('../services/release-links');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
@@ -330,6 +331,9 @@ function publicApiRoutes(config) {
       phone_sign_in: phoneAuth.offered(config),
       terms_link: await currentTermsLink(),
       privacy_link: privacyNoticeUrl(config),
+      // Where to write about your data (Settings › Privacy's usage data
+      // block): to be left out of screen usage data, or anything else.
+      data_protection_email: config.dataProtectionEmail || 'dataprotection@onhomeroom.com',
       child_safety_link: childSafetyUrl(config),
       account_deletion_link: accountDeletionUrl(config),
       // The same, from the Homeroom app's own sheets (the bridge's
@@ -396,6 +400,9 @@ function publicApiRoutes(config) {
     try {
       const { created, moreToken, submittedAt } = await waitlist.joinWaitlist(pool, {
         email,
+        // Admin › Journey's "where they signed up": Homeroom's own page, or
+        // the partner whose key this is.
+        source: req.waitlistIntegrator ? `partner:${req.waitlistIntegrator.label || 'unknown'}` : 'form',
         // A trusted integrator proxies real people, so its own server
         // address is not the signup's address. Recording the proxy for
         // every agency-sourced row is what this prefers away from; an
@@ -408,6 +415,18 @@ function publicApiRoutes(config) {
         // An unresolvable code is ignored rather than refused: a stale
         // link must never block a join.
         inviteCode: typeof req.body?.invite_code === 'string' ? req.body.invite_code : null,
+        // Where the landing page sent them (#6540): a host only, never the
+        // full address, plus the page's short utm and ref tags. A
+        // referrer_host that is present but empty or unreadable is 'none'
+        // (looked for, none given); an absent one is not recorded.
+        arrival: {
+          referrerHost: Object.prototype.hasOwnProperty.call(req.body || {}, 'referrer_host')
+            ? (arrivalSource.hostOf(req.body?.referrer_host) || 'none')
+            : null,
+          utmSource: arrivalSource.cleanTag(req.body?.utm_source),
+          utmCampaign: arrivalSource.cleanTag(req.body?.utm_campaign),
+          ref: arrivalSource.cleanTag(req.body?.ref),
+        },
       });
       // CASE 1 — a brand new address. Joined, code mailed, step 2 next.
       if (created) {
@@ -746,6 +765,10 @@ function publicApiRoutes(config) {
     try {
       const row = await waitlist.getSignupByMoreToken(pool, req.params.token);
       if (!row) return res.status(404).json({ error: 'Unknown or expired link.' });
+      // The "You're in" mail's own page reading this as it opens
+      // (features/auth/landing.tsx): Admin › Journey's "Opened the mail's
+      // page". A scanner's fetch of the mail's link does not run the page.
+      if (req.query.from === 'admit' && row.released_at) await releaseLinks.notePageOpened(pool, row.id);
       const answers = row.answers && typeof row.answers === 'object' ? row.answers : {};
       const status = signupStatus(row);
       // ?view=status answers the poll alone: the screen re-reads this route

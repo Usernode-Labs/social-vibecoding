@@ -394,6 +394,8 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #6371: This week, the page the weekly digest opens ─────────────
+  'weekly-digest-screen': 'This week (frontend/src/features/weekly-digest/index.tsx, #week): what each project did in the last seven days, which the Friday "Your weekly digest is ready" row opens. Ships hidden and empty; the read runs from its controller\'s open(), so the prerender and the first client render agree. App.REACT_SCREEN_IDS lists it, as it lists #workshop-screen.',
   // ── One Home (#6361): Home's sections for communities ─────────────
   'home-communities-section': 'Home\'s Pinned communities (features/home/pinned-communities.tsx), under Pinned apps: the communities you pinned, each a tile that opens its hub, then All communities and New community. Ships hidden: the pins load after mount. The tours and dapp.json\'s checks select it.',
   'home-join-section': 'Home\'s Communities to join (features/home/home-join.tsx over communities-to-join.tsx), last on Home: the public directory\'s picture cards, each with Join, more as you scroll. Discover\'s lane went with it (#home-browse-btn, its See all, left this map with that lane). Ships hidden; signed out, the landing draws the same section without the id.',
@@ -421,10 +423,12 @@ const ADDED_IDS = {
   'platform-side-strip-back': 'iPhone Duo: #back-btn\'s copy in the side strip, rendered from the same useBackSlot hook and handing its press to #back-btn. Ships hidden with no href, as #back-btn does.',
   // ── New look (an experiment) ───────────────────────────────────────
   'new-look-enabled': 'New look: the switch in Settings, Experimental (off by default, kept on the device by the head\'s window.Skin) that sets data-skin="brand" on <html>, which app.css draws the new look from in light mode. settings.js paints and saves it through window.Skin.',
+  // ── The frame's looks (an admin's preview) ─────────────────────────
+  'settings-look-section': 'Look: the menu\'s own wrapper under New look in Settings, Experimental, shipped hidden. settings.js _renderAdminSection lifts the class only for a real admin (App._realIsAdmin): the looks are an admin\'s preview while they are drawn screen by screen.',
+  'settings-look': 'Look: the menu of the one frame\'s nine looks (Standard, then glass, brandkit, workbench, paper, pastel, mosaic, sunrise, today, playground). Kept on the device by the head\'s window.Skin, which sets the chosen id as data-skin on <html> for app.css to draw from, light and dark. Exclusive with New look; settings.js paints and saves both through window.Skin.',
   // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────
-  'settings-usage-analytics': '#5097: the Share usage analytics switch (features/settings/sections/usage-analytics.tsx, the last block of Settings > Privacy). Off, and disabled until the saved choice is read.',
-  'settings-usage-analytics-section': '#5097: the Usage analytics block, the last of Settings > Privacy under #5104\'s contact settings (features/settings/sections/usage-analytics.tsx).',
-  'settings-usage-analytics-description': '#5097: the line under that switch saying what is collected; the switch\'s aria-describedby.',
+  // ── #5097: Settings > Privacy, usage data ──────────────
+  'settings-usage-analytics-section': '#5097: the usage data block, the last of Settings > Privacy under #5104\'s contact settings (features/settings/sections/usage-analytics.tsx): what Homeroom keeps, and the address to write to be left out of screen usage data.',
   // ── #5286: the admin console marks itself ─────────────────────────
   'admin-console-bar': '#5286: the admin console\'s own band at the top of #admin-root, ships hidden and is revealed through classList by AdminConsole._renderShell for an admin (never in public mode).',
   'admin-exit': '#5286: the band\'s Exit link, href #profile, which goes back to the address the console was entered from when one is known.',

@@ -662,6 +662,9 @@ app.use(reportShareRoutes(config));
 // Before authMiddleware: a mail client's one-click POST carries no session,
 // and the HMAC token in the link is the whole of the access check.
 app.use(require('./src/routes/activity-mail').activityMailRoutes(config));
+// The waitlist reminders' stop link (src/routes/waitlist-reminders.js), before
+// authMiddleware for the same reason: most of these people have no account.
+app.use(require('./src/routes/waitlist-reminders').waitlistReminderRoutes(config));
 app.use(require('./src/routes/mail-tracking').mailTrackingRoutes(config));
 // The configuration every process that runs the workflow machines sets up
 // (src/workflow/setup.ts): activity mail, the account-deletion guard on workers.
@@ -723,6 +726,7 @@ app.use(require('./src/routes/moderation').moderationRoutes(config));
 app.use(require('./src/routes/app-blocks').appBlockRoutes(config));
 app.use(require('./src/routes/community-pins').communityPinRoutes(config));
 app.use(require('./src/routes/home-pins').homePinRoutes(config));
+app.use(require('./src/routes/weekly-digest').weeklyDigestRoutes(config));
 app.use(require('./src/services/account-deletion-runtime').trackResponse);
 app.use(require('./src/routes/account-deletion').accountDeletionRoutes(config));
 app.use(cliBrowserRoutes(config));
@@ -1720,6 +1724,12 @@ async function cleanup() {
     log.info('server', 'In-flight requests and background work drained');
   }
   await pushStop;
+
+  // #6354: the design bot's one demo copy of Homeroom is disposable and is
+  // not serving anybody: stop it (and its database) now, before the drain
+  // spends its time. Bounded, and never a reason to hold the process.
+  await boundedStep(require('./src/services/design-capture').stopCopy(), BUILD_SHUTDOWN_MARK_TIMEOUT_MS)
+    .catch((err) => log.warn('server', 'Could not stop the design demo copy', { err: err.message }));
 
   // The checks runs this process launched go on without it: their Jobs
   // belong to the cluster. Their rows still carry this process's heartbeat,

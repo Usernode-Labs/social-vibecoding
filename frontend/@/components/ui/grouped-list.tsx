@@ -82,7 +82,7 @@ export const PLANE_FILL = 'bg-[color:var(--dc-sheet-solid)]';
  * inset (below) still lands where the tile ends. The colour is
  * `--app-sheet-line`, the sheets' own edge, which already has its dark value.
  */
-const groupedList = cva('mx-4 overflow-hidden rounded-[20px] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]', {
+const groupedList = cva('ui-glist mx-4 overflow-hidden rounded-[20px] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]', {
   variants: {
     tone: {
       card: 'bg-white dark:bg-zinc-900',
@@ -218,7 +218,7 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
       // (`flex` blockifies it) and takes no `type`.
       {...(as === 'button' ? { type: 'button' as const } : null)}
       className={cn(
-        'relative flex w-full items-center gap-4 px-4 py-3.5 text-start',
+        'ui-lrow relative flex w-full items-center gap-4 px-4 py-3.5 text-start',
         (props.onClick || as === 'button' || as === 'a') && 'cursor-pointer active:bg-zinc-50 dark:active:bg-zinc-800',
         rowSeparator({ inset: depth }),
         className,
@@ -227,14 +227,14 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
       {...props}
     >
       {leading}
-      <div className={cn('min-w-0 flex-1', contentClassName)}>
+      <div className={cn('ui-lrow-tx min-w-0 flex-1', contentClassName)}>
         {/* 15 OVER 13 (AGENTS.md, "Type and colour"). The title was 17px
             bold over a 15px subtitle: the size of a heading, on every row,
             so a list of five rows read as five headings and the one real
             heading above them had nothing left to be louder with. 15px at
             650 is the row's subject; 13px grey is the fact under it. */}
         <div className={cn(
-          'truncate text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100',
+          'ui-lrow-t truncate text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100',
           titleClassName,
         )}>{title}</div>
         {/* dark:text-zinc-400, not -500 (QA 2026-09-24 Q20): zinc-500 is
@@ -242,7 +242,7 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
             Discover rows' and the Me screen's meta lines. zinc-400 is 6.0 and
             5.2, and is still the quiet line under a bold title. */}
         {subtitle ? (
-          <div className={cn('mt-0.5 truncate text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400', subtitleClassName)}>{subtitle}</div>
+          <div className={cn('ui-lrow-s mt-0.5 truncate text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400', subtitleClassName)}>{subtitle}</div>
         ) : null}
       </div>
       {dot ? (
@@ -250,7 +250,7 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
       ) : null}
       {trailing}
       {chevron ? (
-        <ChevronRightIcon className="h-5 w-5 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+        <ChevronRightIcon className="ui-lrow-go h-5 w-5 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
       ) : null}
     </Tag>
   );

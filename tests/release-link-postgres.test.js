@@ -160,11 +160,16 @@ test('the release link signs its recipient in once, by POST, and only while it i
     assert.equal(signedInBody.user.id, user.id);
     assert.match(cookieValue(signedIn.headers, 'session'), /^[0-9a-f]{64}$/);
 
-    // ── A newer link replaces an unspent older one ──
+    // ── A newer link leaves an unspent older one working (the admit mail's
+    // beside a reminder's, services/waitlist-reminders.js), each until its
+    // own expiry ──
     const otherId = await released('other@example.test');
     const older = await releaseLinks.mint(pool, { signupId: otherId, email: 'other@example.test' });
-    const newer = await releaseLinks.mint(pool, { signupId: otherId, email: 'other@example.test' });
-    assert.equal((await spend(older)).status, 422);
+    const newerLink = await releaseLinks.mintLink(pool, { signupId: otherId, email: 'other@example.test' });
+    const newer = newerLink.token;
+    assert.ok(new Date(newerLink.expiresAt) - Date.now() > releaseLinks.RELEASE_LINK_TTL_MS - 60000, 'it says when it expires');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM waitlist_release_links WHERE signup_id = $1 AND consumed_at IS NULL', [otherId])).rows[0].n, 2);
+    assert.equal((await spend(older)).status, 200, 'the older unspent link still signs in');
 
     // ── A spent link stops working once a newer mail was sent ──
     const laterId = await released('later@example.test');

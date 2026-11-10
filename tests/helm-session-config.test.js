@@ -31,12 +31,14 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
     const rendered = execFileSync('helm', [...args, ...overrides], { encoding: 'utf8' });
     const env = Object.fromEntries([...rendered.matchAll(/\{name: ([A-Z0-9_]+), value: "([^"]*)"\}/g)]
       .map(([, key, value]) => [key, value]));
+    assert.equal(env.PLATFORM_SIGNALS, 'shadow', 'other platform signals retain their mode');
+    assert.equal(env.PLATFORM_SIGNALS_SECURITY_AUDIT, 'on', 'only security filing opts in');
     for (const [name, value] of Object.entries({
       CHECKS_MAX_CONCURRENT_RUNS: '4',
       ...expected, MAX_USER_SESSIONS: '3', MAX_USER_PROMOTED_SESSIONS: '5',
       MAX_ADMIN_USER_SESSIONS: '5', MAX_ADMIN_USER_PROMOTED_SESSIONS: '8',
       STAGING_IDLE_TEARDOWN_MS: '21600000',
-      PREVIEW_SLEEP_AFTER_MS: '3600000', APP_SLEEP_AFTER_MS: '3600000',
+      PREVIEW_SLEEP_AFTER_MS: '3600000', APP_SLEEP_AFTER_MS: '1209600000',
       ...expected,
     })) {
       assert.equal(env[name], value, name);
@@ -47,8 +49,38 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
     assert.equal(env.EARLY_UNIT_SUITE, expected.EARLY_UNIT_SUITE,
       'required mode disables early suites; other modes preserve an imported switch');
   }
+  const securityOff = execFileSync('helm', [...args, '--set-string', 'config.platformSignals.securityAudit=off'], { encoding: 'utf8' });
+  assert.match(securityOff, /name: PLATFORM_SIGNALS_SECURITY_AUDIT, value: "off"/);
   assert.throws(() => execFileSync('helm', [...args, '--set',
     'config.checkNodePoolRequired=true,config.checksMaxConcurrentRuns=0',
     '--set-string', 'config.checkNodePool=pool=checks'], { encoding: 'utf8', stdio: 'pipe' }),
   /requires a positive config.checksMaxConcurrentRuns/);
+});
+
+test('sleep exceptions reach web and conductor and reject undocumented exclusions', {
+  skip: !helmAvailable && 'helm is not installed',
+}, () => {
+  const args = ['template', 'sleep-default-test', 'deploy/helm/social-vibecoding-platform',
+    '--show-only', 'templates/platform.yaml', '--set', 'enabled=true', '--set', 'secrets.create=false',
+    '--set-string', `release.sourceRevision=${'a'.repeat(40)}`];
+  for (const image of ['image', 'workerImage', 'captureImage']) {
+    args.push('--set-string', `platform.${image}.digest=sha256:${'a'.repeat(64)}`);
+  }
+  for (const exceptions of [{}, { 1404: 'Temporary restart bug: replay keys are not durable' }]) {
+    const rendered = execFileSync('helm', [...args, '--set-json',
+      `config.appSleepExcludedApps=${JSON.stringify(exceptions)}`], { encoding: 'utf8' });
+    const pods = rendered.split(/^---$/m).filter((doc) => /^kind: Deployment$/m.test(doc));
+    assert.equal(pods.length, 2);
+    assert.deepEqual(pods.map((doc) => doc.match(/social\.usernode\.io\/process-role: "([a-z]+)"/)[1]).sort(),
+      ['conductor', 'web']);
+    for (const pod of pods) {
+      const value = pod.match(/\{name: APP_SLEEP_EXCLUDED_APPS, value: ("(?:[^"\\]|\\.)*")\}/)[1];
+      assert.deepEqual(JSON.parse(JSON.parse(value)), exceptions);
+    }
+  }
+  for (const exceptions of [[], { invalid: 'reason' }, { 0: 'reason' }, { 1404: '' }, { 1404: '  ' }, { 1404: [] }, { 1404: true }]) {
+    assert.throws(() => execFileSync('helm', [...args, '--set-json',
+      `config.appSleepExcludedApps=${JSON.stringify(exceptions)}`], { encoding: 'utf8', stdio: 'pipe' }),
+    /config.appSleepExcludedApps/);
+  }
 });

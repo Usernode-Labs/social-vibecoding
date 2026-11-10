@@ -71,6 +71,16 @@ const GENERIC_COPY = Object.freeze({ title: 'Homeroom', body: 'You have new acti
 // branch never becomes a label; the kind's no-label wording renders instead.
 const GENERATED_BRANCH_RE = /\d{6,}$/;
 
+// #6494: a storage detail token carries MiB used and MiB of cap. The push
+// says the same figures the drawer does: MB below 1 GiB, else GB with at
+// most one decimal ("1.6 GB", "3 GB").
+function storageSizeText(mib) {
+  const n = Number(mib);
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n < 1024) return `${Math.round(n)} MB`;
+  return `${(n / 1024).toFixed(1).replace(/\.0$/, '')} GB`;
+}
+
 // Push text is plain and single-line: drop control chars, collapse runs of
 // whitespace. Returns '' for anything that is not a usable string.
 function cleanText(value) {
@@ -419,6 +429,24 @@ function buildCopy(kind, context, now, t) {
         title: app ? t('push:firstMessage.title.app', { actor, app }) : t('push:firstMessage.title.plain', { actor }),
         body: message,
       };
+    // The leaked-link guard (services/community-invites.js GUARD): one link
+    // brought in a lot of people today, or paused itself. `detail` is
+    // "<inviteId>:<joins>" (invite-activity.js noteGuard).
+    case 'invite_link_busy':
+    case 'invite_link_paused': {
+      const joins = /^\d{1,9}:(\d{1,9})$/.exec(detail);
+      const count = joins ? Number(joins[1]) : 0;
+      if (kind === 'invite_link_busy') {
+        return {
+          title: app ? t('push:inviteLinkBusy.title.app', { app, count }) : t('push:inviteLinkBusy.title.plain', { count }),
+          body: t('push:inviteLinkBusy.body'),
+        };
+      }
+      return {
+        title: app ? t('push:inviteLinkPaused.title.app', { app }) : t('push:inviteLinkPaused.title.plain'),
+        body: t('push:inviteLinkPaused.body', { count }),
+      };
+    }
     // An invite into a private project is to join it (detail 'join',
     // services/collab-invites.js); the rest are to build one.
     case 'collab_invite':
@@ -606,7 +634,24 @@ function buildCopy(kind, context, now, t) {
     }
     // #1688: the Friday card. `detail` is "<merged>:<open>" — how many
     // changes went live this week and how many proposals are waiting.
+    // #6371: the one person-wide row carries
+    // `w:<projects>:<merged>:<open>` and says it is ready, under every
+    // project; the per-project format keeps today's wording.
     case 'weekly_digest': {
+      const week = /^w:(\d+):(\d+):(\d+)$/.exec(detail || '');
+      if (week) {
+        const merged = Number(week[2]);
+        const open = Number(week[3]);
+        const shipped = merged === 0
+          ? t('push:weeklyDigest.body.nothing')
+          : t('push:weeklyDigest.body.shipped', { count: merged });
+        return {
+          title: t('push:weeklyDigest.title.ready'),
+          body: open === 0
+            ? shipped
+            : t('push:weeklyDigest.body.both', { shipped, waiting: t('push:weeklyDigest.body.waiting', { count: open }) }),
+        };
+      }
       const counts = /^(\d+):(\d+)$/.exec(detail || '');
       const merged = counts ? Number(counts[1]) : 0;
       const open = counts ? Number(counts[2]) : 0;
@@ -705,7 +750,28 @@ function buildCopy(kind, context, now, t) {
     // tokens say what happened and what to do. #2273 gives the existing
     // deploy-failure token its own copy too. The full failure reason stays on
     // the app row; the push identifies the event and points to that detail.
-    case 'app_health':
+    case 'app_health': {
+      // #6494: the early and warning notices carry the figures. A bare token
+      // written before this change keeps the old copy.
+      const storage = /^storage_(early|warn):(\d{1,9}):(\d{1,9})$/.exec(detail);
+      if (storage) {
+        const used = storageSizeText(Number(storage[2]));
+        const limit = storageSizeText(Number(storage[3]));
+        if (storage[1] === 'early') {
+          return {
+            title: withApp(t('push:appHealth.storageEarly.title')),
+            body: app
+              ? t('push:appHealth.storageEarly.body.app', { app, used, limit })
+              : t('push:appHealth.storageEarly.body.plain', { used, limit }),
+          };
+        }
+        return {
+          title: withApp(t('push:appHealth.storageWarn.title')),
+          body: app
+            ? t('push:appHealth.storageWarn.bodySized.app', { app, used, limit })
+            : t('push:appHealth.storageWarn.bodySized.plain', { used, limit }),
+        };
+      }
       if (detail === 'storage_warn') {
         return {
           title: withApp(t('push:appHealth.storageWarn.title')),
@@ -736,6 +802,7 @@ function buildCopy(kind, context, now, t) {
         title: withApp(t('push:appHealth.other.title')),
         body: t('push:appHealth.other.body'),
       };
+    }
     // A server-wide cap nearing or at its ceiling, for full admins only
     // (services/platform-limit-alerts.js). The detail token carries which
     // cap, the level and the figures, so the push can say how close it is.

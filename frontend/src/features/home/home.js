@@ -119,6 +119,10 @@ const Home = {
     // later refreshes must preserve the position the user chose.
     Home._searchReveal.sync();
     if (App.user && !App._sessionFromSnapshot) window.UsernodeReact?.appAllowance?.refresh?.();
+    // The tiles' vote counts (request 6500): a bridge read, the same as the
+    // allowance above, so every path into load() (a visit to Home, a pull,
+    // the late-answer correction) re-reads what the tiles count.
+    if (App.user) window.UsernodeReact?.homePins?.refresh?.();
     Home._probeShortcutSupport();
     // The header's standing action, from the remembered row, BEFORE the
     // fetch below rather than after it. render() is the call every path
@@ -439,7 +443,7 @@ const Home = {
   //
   // Scope: this reorders the array that feeds Home.presentIds →
   // HomeLayout.deriveDefault, i.e. the DERIVED default grid. A user who
-  // has dragged their tiles has a stored arrangement that wins in
+  // has loaded their tiles has a stored arrangement that wins in
   // Home.currentLayout, and we deliberately leave it alone rather than
   // shoving their layout around; their new app still lands in the first
   // free cell via HomeLayout.repair.
@@ -578,6 +582,7 @@ const Home = {
   // Populated from GET /api/home-layout; a width with an empty array has
   // never been dragged and is DERIVED on demand (see currentLayout).
   _layouts: null,
+  _derivedSaveTried: false,
   _layoutFetchedAt: 0,
   _layoutInflight: null,
   LAYOUT_TTL_MS: 60 * 1000,
@@ -763,9 +768,8 @@ const Home = {
   // Resolution order:
   //   1. the stored arrangement (the viewer has dragged);
   //   2. flow order from favorite_order — i.e. the default home screen.
-  // Only (1) is authoritative; (2) is a derivation and is NOT persisted until
-  // the viewer actually drags. That is what makes this feature need no
-  // backfill.
+  // A fully loaded derived arrangement is saved once, so later activity
+  // cannot reshuffle the pinned apps before the viewer has ever dragged.
   //
   // There used to be a step between the two: the OTHER width's arrangement,
   // reflowed. THE UI OVERHAUL settled on four columns at every width, so there
@@ -775,6 +779,7 @@ const Home = {
     const present = Home.presentIds();
     const stored = Home._layouts && Home._layouts[String(cols)];
     let base;
+    let derived = false;
     if (Array.isArray(stored) && stored.length) {
       base = stored;
     } else {
@@ -788,6 +793,7 @@ const Home = {
       } else {
         const { yours } = Home.partitionApps(Home._apps || []);
         base = HomeLayout.deriveDefault({ apps: yours.map((a) => a.slug), cols });
+        derived = true;
       }
     }
     const { layout, changed } = HomeLayout.repair(base, cols, present);
@@ -799,8 +805,7 @@ const Home = {
     // A repair of a STORED layout is a real correction (an app was added or
     // deleted, a pre-overhaul widget cell reclaimed, a tile pulled back out of
     // the retired fifth column) and is worth persisting so the next load is
-    // clean. A repair of a derivation is not — writing it would turn a passive
-    // visit into a claim.
+    // clean. A new derivation is saved separately, once both reads finish.
     //
     // The `widgetsReady` gate that used to sit here is gone with the widgets.
     // It existed because a layout load that beat /api/home-panels saw an empty
@@ -820,6 +825,13 @@ const Home = {
       Home._layouts[String(cols)] = layout;
       const wire = (l) => JSON.stringify(HomeLayout.toWire(l));
       if (wire(layout) !== wire(stored)) Home._persistLayout(cols, layout);
+    }
+    if (derived && Home._appsLoaded && Home._layouts && !Home._derivedSaveTried
+        && !Home._layoutIsDemo && new URLSearchParams(location.search).get('demo') !== '1'
+        && window.App?.user && layout.some((item) => item.type === 'app')) {
+      Home._derivedSaveTried = true;
+      Home._layouts[String(cols)] = layout;
+      Home._persistLayout(cols, layout, { quiet: true });
     }
     return layout;
   },
@@ -862,7 +874,7 @@ const Home = {
   // the grid has already repainted optimistically, so this only records
   // where things landed. Same optimistic-then-revert shape the favourite
   // toggle uses.
-  async _persistLayout(cols, layout) {
+  async _persistLayout(cols, layout, { quiet = false } = {}) {
     // The staging demo payload is read-only by contract — it is a fixture,
     // not the viewer's arrangement, and writing it back would overwrite
     // their real cells with it. The grid still repaints optimistically, so
@@ -883,6 +895,11 @@ const Home = {
       }
       return true;
     } catch (err) {
+      if (quiet) {
+        // A later drag may already own this width; never discard its order.
+        if (Home._layouts?.[String(cols)] === layout) delete Home._layouts[String(cols)];
+        return false;
+      }
       PlatformUI.toast(message('home:layout.saveFailed'));
       await Home._ensureLayoutLoaded({ force: true });
       Home.render();
@@ -1063,10 +1080,6 @@ const Home = {
       // button beside the heading, not this tile, so the trailing tile keeps
       // exactly the presence it has at rest.
       if (App.user?.privateMember) create = null;
-      // ONE HOME (#6361): making something new is Pinned communities'
-      // "New community" tile now (./pinned-communities.tsx), so the apps
-      // grid draws no trailing tile of its own.
-      create = null;
     }
 
     // The search view is a flat, transient list — it must not inherit the

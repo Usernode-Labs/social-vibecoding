@@ -78,7 +78,7 @@ import { FRESH } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { EmbeddedConversation } from '../messages';
-import { closeNewThread, NewThreadButton, useNewThread } from '../messages/new-thread';
+import { closeNewThread, NewThreadButton, startNewThread, useNewThread } from '../messages/new-thread';
 import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
 import { closeThread, embed, loadConversations, useMessagesSnapshot } from '../messages/store';
@@ -100,6 +100,10 @@ import {
 } from './door';
 import { useLiveLists } from './live';
 import { AiLists } from './lists';
+import { AiFrameList } from './frame-list';
+import { isFrameSkin, useSkin } from '../../lib/skin';
+import { useFramePage } from '../frame/frame-page-store';
+import { Icon as KitIcon, Tile as KitTile, k as kit } from '@/components/ui/kit';
 import { historyAsked, isBotTabHash, kindOf, projectsOf, withFilter, type HistoryKind } from './filter-address';
 import { useHistory, type HistoryRow } from './history';
 import { communityScopeStore } from '../workshop/community-scope';
@@ -470,6 +474,10 @@ export function AiScreen(): ReactNode {
   const detailHere = !!detail && !!botId && (detail.kind === 'design'
     ? detail.ref.conversationId === botId && openRoot === detail.ref.rootId
       && (phone ? level === 1 : docked && !panel.open)
+    : detail.kind === 'draft'
+    // #6248: a request draft is read beside the thread it was said in, or Main.
+    ? detail.ref.conversationId === botId && (openRoot ?? null) === (detail.ref.rootId ?? null)
+      && (phone ? level === 1 : docked && !panel.open)
     : !!column && (column.at === 'page' || column.at === 'thread'));
   // With a preview beside the thread both edges are handles (#6359), each
   // the width of the column after it, the list taking what is left. In three
@@ -527,7 +535,8 @@ export function AiScreen(): ReactNode {
   useEffect(() => {
     if (!visible || !botId || !detail) return;
     if (detail.kind === 'design' && openRoot && openRoot !== detail.ref.rootId) closeDetail();
-    if (detail.kind !== 'design' && !detailHere) closeDetail();
+    if (detail.kind === 'draft' && openRoot && openRoot !== detail.ref.rootId) closeDetail();
+    if (detail.kind !== 'design' && detail.kind !== 'draft' && !detailHere) closeDetail();
   }, [visible, botId, detail, openRoot, detailHere]);
   // The tab pressed (the page's own address, from a thread's): the list
   // comes back, and the detail goes.
@@ -829,6 +838,13 @@ export function AiScreen(): ReactNode {
   useEffect(() => { if (searchOpen) searchRef.current?.focus(); }, [searchOpen]);
 
   const heroLine = work ? heroWords(owed, progress.length, fresh) : null;
+  // A look of the one frame draws the list with the kit (./frame-list.tsx),
+  // from the same rows and presses. Read after mount (lib/skin.ts says why).
+  const frame = isFrameSkin(useSkin());
+  // On a phone the open chat takes the whole screen: the frame's bar names
+  // it and its arrow goes back to the list (../frame/frame-page-store.ts).
+  const listAgain = useCallback(() => toListRef.current(), []);
+  useFramePage(frame && phone && visible && level === 1 && !threadUp ? [mainTitle] : null, listAgain);
   const hero = (
     <>
       <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
@@ -889,6 +905,31 @@ export function AiScreen(): ReactNode {
 
   const listContent = (
     <>
+      {frame ? (
+        <AiFrameList
+          heroLine={heroLine}
+          main={{ lit: lit === 'main', unread, open: openMain }}
+          lit={lit}
+          ready={!!work && !!needs}
+          rows={rows}
+          progress={progress}
+          waiting={waiting}
+          live={live}
+          openRow={openRow}
+          openThread={openThread}
+          picked={picked}
+          onPick={pick}
+          appFor={appFor}
+          onNew={() => { openBlank(); if (botId) startNewThread(botId); }}
+          query={query}
+          onQuery={setQuery}
+          history={history}
+          historyKind={historyKind}
+          onHistoryKind={pickKind}
+          openHistory={openHistory}
+          historyRef={historyRef}
+        />
+      ) : (
       <div className="ai-screen-body max-w-2xl mx-auto pb-8">
         <AiLists
           hero={hero}
@@ -917,6 +958,7 @@ export function AiScreen(): ReactNode {
         />
         <div className="ai-askbar-gap" aria-hidden="true" />
       </div>
+      )}
 
       {/* Ask Homeroom bot: Main. A bar over the tab bar; on a desktop Main
           is docked beside the list and this is not drawn. */}
@@ -945,6 +987,7 @@ export function AiScreen(): ReactNode {
       data-ai-open={columnOpen ? '' : undefined}
       data-ai-drawer={phone ? level : undefined}
       data-ai-preview={detailHere ? layout : undefined}
+      data-frame-list={frame ? '' : undefined}
       style={{ position: 'relative' }}
     >
       {phone ? (
@@ -983,6 +1026,23 @@ export function AiScreen(): ReactNode {
               alone under its own (ReplyThreadPanel `inMain`), with no bar of
               Main Chat's over it. 6 Nov 2026: Main Chat closes with its own
               ×, leaving the lists alone (#6425). */}
+          {frame ? (threadUp ? null : (
+            // The open item's head, as the kit draws it: who it is, one line
+            // about it, and the way to close it.
+            <header className="fr" data-ai-main-head="">
+              <div className={kit('dhead')}>
+                <KitTile name={t('messages:store.header.main')} src={BOT_AVATAR} />
+                <div className={kit('tx')}>
+                  <div className={kit('t')} id="ai-main-title">{t('messages:store.header.main')}</div>
+                  <div className={kit('s')}>{t('messages:ai.main.sub')}</div>
+                </div>
+                <button type="button" className={kit('ib')} data-ai-main-close="" aria-label={t('messages:ai.main.close')} onClick={closeColumn}>
+                  <KitIcon name="x" size={18} />
+                </button>
+              </div>
+            </header>
+          )) : (
+            <>
           {threadUp ? null : (
             <header className="ai-main-head" data-ai-main-head="">
               <img src={BOT_AVATAR} alt="" className="w-8 h-8 rounded-[10px] object-cover shrink-0" />
@@ -1007,6 +1067,8 @@ export function AiScreen(): ReactNode {
               </button>
             </header>
           )}
+            </>
+          )}
           {conversationUp ? <EmbeddedConversation conversationId={botId!} active={visible && columnOpen} at={at} mainChat /> : null}
         </aside>
       ) : null}
@@ -1020,7 +1082,7 @@ export function AiScreen(): ReactNode {
           id="ai-preview-pane"
           className="ai-preview-pane"
           data-ai-preview-pane={layout}
-          aria-label={t('messages:design.pane.label')}
+          aria-label={detail.kind === 'draft' ? t('messages:draft.pane.label') : t('messages:design.pane.label')}
         >
           {/* The thread | preview edge, a handle too (#6359): it sets the
               preview's own width, and the list takes what is left. */}

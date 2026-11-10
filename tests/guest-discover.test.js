@@ -359,9 +359,13 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   assert.doesNotMatch(read(JOIN), /snap-x|overflow-x-auto|w-\[min\(17rem/, 'nothing in the section scrolls sideways');
   assert.equal(message('home:join.featured'), 'Featured');
   assert.equal(message('home:join.more'), 'More communities');
-  const rest = html.indexOf('data-home-join-rest=""');
-  assert.ok(rest > html.indexOf('data-guest-featured="game-corner"') && rest < html.indexOf('<article data-guest-card="fresh-one"'), 'More communities sits between Featured and the rest');
-  assert.match(html, /<h3 class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*" data-home-join-rest="">More communities<\/h3>/);
+  // #6470: All is chosen by default, so the rest follow Featured with no
+  // "More communities" heading between them.
+  assert.doesNotMatch(html, /data-home-join-rest/, 'All chosen: the rest follow Featured with no heading (#6470)');
+  assert.ok(html.indexOf('data-guest-card="fresh-one"') > html.indexOf('data-guest-featured="game-corner"'), 'the rest still come after Featured');
+  // A chosen kind keeps the heading over its rest. The kind is internal state
+  // a chip click sets, so the static renderer cannot reach it: pin the source.
+  assert.match(read(JOIN), /\{kind && featured\.length \? <h3 className=\{`\$\{SMALL_CAPS_LABEL\} px-1 pb-2`\} data-home-join-rest="">\{t\('home:join\.more'\)\}<\/h3> : null\}/, 'a chosen kind keeps the heading over its rest');
   // Each featured card keeps what a card can do: Join, signed in.
   assert.match(cardOf(html, 'game-corner'), /data-home-join="game-corner"/);
   // A community already on this Home is in neither.
@@ -691,8 +695,9 @@ const SHEET = 'frontend/src/features/auth/sign-in-sheet.tsx';
 test('the ways in are the sheet\'s: Apple, Google and email, and a phone number on the landing\'s sheets', () => {
   const sheet = read(SHEET);
   // A phone where it is offered but not first: the link under the email.
-  assert.match(sheet, /\{phone \|\| phoneLink \? \(/);
-  assert.match(sheet, /\{phone \? t\('auth:signInSheet\.toPhone'\) : t\('auth:signInSheet\.toPhoneLink'\)\}/);
+  // An invite's Join draws its own (`inviteWays`, tests/invite-join-sheet.test.js).
+  assert.match(sheet, /\{phoneLink && !phone \? \(/);
+  assert.match(sheet, /className=\{QUIET\} onClick=\{\(\) => \{ setError\(null\); setStep\('phone'\); \}\}>\{t\('auth:signInSheet\.toPhoneLink'\)\}<\/button>/);
   const landing = read(LANDING);
   // The story's sheet (Sign up, Sign in), a project page's and a shared
   // link's: each offers it, and asks for a username after the code.
@@ -790,4 +795,19 @@ test('the landing\'s declared checks hold Discover and the bar\'s Sign in, folde
   // Its one other button is pinned by the story's own test above, under the
   // runner's selector cap (`MAX_TEST_SELECTOR_LEN`).
   assert.ok(one.expectSelector.length <= 256);
+});
+
+
+test('guest directory searches belong to their history entry and preserve other navigation state (#6507)', () => {
+  const { guestSearchFrom, withGuestSearch } = loadTsx('frontend/src/features/guest/search-history.ts');
+  const state = withGuestSearch({ navigation: { place: 'home' } }, 'garden');
+  assert.equal(guestSearchFrom(state), 'garden');
+  assert.deepEqual(state.navigation, { place: 'home' });
+  assert.equal(guestSearchFrom(withGuestSearch(state, '')), '');
+  assert.equal(guestSearchFrom(withGuestSearch(null, 'x'.repeat(1001))), '');
+  for (const invalid of [null, 7, 'garden', { homeroomGuestSearch: 7 }]) assert.equal(guestSearchFrom(invalid), '');
+  const src = read(DISCOVER);
+  assert.match(src, /useState\(''\)/, 'first render remains the empty prerender');
+  assert.match(src, /addEventListener\('popstate', restore\)/);
+  assert.match(src, /replaceState\(withGuestSearch\(window.history.state, value\), ''\)/);
 });

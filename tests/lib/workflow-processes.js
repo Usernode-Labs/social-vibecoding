@@ -43,13 +43,20 @@ function freePort() {
   });
 }
 
-// Start the workflow side: server.js booted as a conductor. `env` is what the
-// chart would set for it (the data key, the workflow's slots and pool, the
-// shots and phone-push switches); the child adds the database URL, and this
-// adds its own port.
-async function startWorkflowProcess({ databaseUrl, fixture, env = {} }) {
+// A boot that dies before it is ready is tried again on a fresh port. The
+// port is free only until the child binds it, which it does after its whole
+// boot (server.js's startup queries, its process row, its listener), so a
+// parallel test file can take it in between; and a refused database
+// connection during any startup query is fatal too. Both exit 1 before
+// `ready`, and neither is a reason for the check to fail.
+const BOOT_ATTEMPTS = 3;
+
+// One boot: server.js forked as a conductor on `PORT`. `env` is what the chart
+// would set for it (the data key, the workflow's slots and pool, the shots and
+// phone-push switches); the child adds the database URL, and this adds its
+// own port.
+function launch({ databaseUrl, fixture, env, port }) {
   let stderr = '';
-  const port = await freePort();
   const child = fork(CHILD, [], {
     env: { ...process.env, WF_TEST_CHILD: JSON.stringify({ databaseUrl, env: { ...env, PORT: String(port) }, fixture }) },
     execArgv: [],
@@ -62,25 +69,70 @@ async function startWorkflowProcess({ databaseUrl, fixture, env = {} }) {
     child.on('message', (m) => { if (m?.ready) resolve(); });
     exited.then(({ code, signal }) => reject(new Error(`the workflow process exited (${signal || code}) before it was ready\n${stderr.slice(-4000)}`)));
   });
-  return {
-    pid: child.pid,
-    port,
-    ready,
-    exited,
-    // A crash: nothing is flushed, nothing is stopped.
-    async kill() {
-      child.kill('SIGKILL');
-      await exited;
-    },
-    // A clean stop, as a release's SIGTERM gives one (server.js cleanup).
-    async stop() {
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      child.kill('SIGTERM');
-      const t = setTimeout(() => child.kill('SIGKILL'), 30000);
-      await exited;
-      clearTimeout(t);
-    },
-  };
+  return { child, port, exited, ready, stderr: () => stderr };
+}
+
+// A boot that dies before it is ready may already have run startup work
+// against this database (a retirement inventory, a refused outside call),
+// because losing its port fails at the very end of server.start(). That work
+// belongs to a process that never served: drop what its pid recorded, so the
+// boot that becomes ready is the one whose effects the check's assertions
+// count once. Its platform_processes row stays, as it does for a killed child.
+async function forgetBoot(databaseUrl, pid) {
+  const client = new Client({ connectionString: databaseUrl, connectionTimeoutMillis: 2000 });
+  try {
+    await client.connect();
+    await client.query('DELETE FROM wf_test_effects WHERE pid = $1', [pid]);
+  } catch {
+    // The harness tables may not exist yet, or the connection may be what
+    // refused; the retry itself does not depend on this cleanup.
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+// Start the workflow side: server.js booted as a conductor. A boot that exits
+// before saying it is ready is tried again, up to BOOT_ATTEMPTS, on a fresh
+// port; the first boot that becomes ready is the one this returns. If every
+// boot fails, the error names each attempt and carries its stderr, so a real
+// startup bug says what it is.
+async function startWorkflowProcess({ databaseUrl, fixture, env = {} }) {
+  const failures = [];
+  let lastExit = null;
+  for (let n = 1; n <= BOOT_ATTEMPTS; n += 1) {
+    const port = await freePort();
+    const attempt = launch({ databaseUrl, fixture, env, port });
+    try {
+      await attempt.ready;
+    } catch {
+      lastExit = await attempt.exited;
+      failures.push(`attempt ${n} (pid ${attempt.child.pid}, port ${port}) exited (${lastExit.signal || lastExit.code})\n${attempt.stderr().slice(-4000)}`);
+      await forgetBoot(databaseUrl, attempt.child.pid);
+      continue;
+    }
+    const { child, exited } = attempt;
+    return {
+      pid: child.pid,
+      port,
+      ready: Promise.resolve(),
+      exited,
+      // A crash: nothing is flushed, nothing is stopped.
+      async kill() {
+        child.kill('SIGKILL');
+        await exited;
+      },
+      // A clean stop, as a release's SIGTERM gives one (server.js cleanup).
+      async stop() {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        child.kill('SIGTERM');
+        const t = setTimeout(() => child.kill('SIGKILL'), 30000);
+        await exited;
+        clearTimeout(t);
+      },
+    };
+  }
+  const code = lastExit ? (lastExit.signal || lastExit.code) : 'unknown';
+  throw new Error(`the workflow process exited (${code}) before it was ready\n${failures.join('\n\n')}`);
 }
 
 // The leases of the dead process's work run out (time passing, without the

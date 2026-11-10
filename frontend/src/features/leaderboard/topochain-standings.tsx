@@ -28,7 +28,7 @@
  * initial value is what makes it do so.
  */
 
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, useEffect, type ReactNode } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
@@ -36,6 +36,10 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { ActivityRow } from './activity-row';
 import { topochainStandingsStore } from './topochain-standings-store.js';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
+import { StandingsFrameHead, StandingsFrameRows } from './frame/challenges-frame';
+import { useLeaderboardSection } from './section-store';
+import { MyStanding, myStandingStore, standingView } from './my-standing.js';
 
 type ColumnKey = 'rank' | 'user' | 'points';
 
@@ -47,6 +51,8 @@ type RowView = {
   /** No display name: `user` is the "Anonymous" stand-in. */
   anonymous?: boolean;
   points: string;
+  /** Your own row (under a look it is the lit one). */
+  viewer?: boolean;
 };
 
 /** #5275: the viewer's own place, pinned above the table. */
@@ -386,7 +392,7 @@ function StandingsSkeleton(): ReactNode {
   );
 }
 
-function Body({ view, drill }: { view: BodyView | null; drill: DrillView | null }): ReactNode {
+function Body({ view, drill, frame }: { view: BodyView | null; drill: DrillView | null; frame: boolean }): ReactNode {
   const t = useMessages('leaderboard');
   if (!view || view.state === 'loading') return <StandingsSkeleton />;
   if (view.state === 'error') {
@@ -437,9 +443,18 @@ function Body({ view, drill }: { view: BodyView | null; drill: DrillView | null 
     <>
       <ChallengeLine line={view.challengeLine} />
       <Disclaimer text={view.disclaimer} />
-      <YouLine you={view.you} />
+      {frame ? null : <YouLine you={view.you} />}
       <NonPodiumChip toggle={view.nonPodiumToggle} />
-      <StandingsTable view={view} drill={drill} />
+      {frame ? (
+        <StandingsFrameRows
+          label={t(view.isSeason ? 'leaderboard:standings.frame.season' : 'leaderboard:standings.frame.event')}
+          rows={view.rows}
+          you={view.you || null}
+          openIndex={drill && drill.index != null ? drill.index : null}
+          details={drill ? <DrillPanel view={drill} /> : null}
+          onOpen={(index) => controller()?._openRowAt(index)}
+        />
+      ) : <StandingsTable view={view} drill={drill} />}
       {view.orderNote ? <OrderNote /> : null}
     </>
   );
@@ -604,7 +619,32 @@ function Drill({ view, inline }: { view: DrillView | null; inline: boolean }): R
   );
 }
 
+/** Standings' head under one of the frame's looks: the kit's, with the viewer's place as its sentence. */
+function StandingsInFrameHead(): ReactNode {
+  const t = useMessages('leaderboard');
+  const standing = standingView(useStoreState(myStandingStore)) as { rank: number | null; people: number } | null;
+  useEffect(() => { void MyStanding.load(); }, []);
+  // The pane stays mounted behind the other sections.
+  const { section } = useLeaderboardSection();
+  const ranked = standing && standing.rank != null
+    ? (standing.people > 0
+      ? t('leaderboard:standing.rankOf', { rank: standing.rank, count: standing.people, number: standing.people.toLocaleString('en-US') })
+      : t('leaderboard:standing.rank', { rank: standing.rank })).replace(/<\/?\d+>/g, '')
+    : null;
+  return (
+    <StandingsFrameHead
+      up={section === 'topochain'}
+      tabs={[{ key: 'challenges', label: t('leaderboard:tabs.challenges') }, { key: 'topochain', label: t('leaderboard:tabs.standings') }]}
+      onTab={(key) => { if (key !== 'topochain') (window as any).Leaderboard?._setSection?.(key); }}
+      purpose={ranked}
+    />
+  );
+}
+
 export function TopochainStandingsPane(): ReactNode {
+  // Under one of the frame's looks the pane wears the kit's head and tabs
+  // (./frame/challenges-frame.tsx), as Challenges does; its table is its own.
+  const frame = isFrameSkin(useLiveSkin());
   const state = useStoreState(topochainStandingsStore) as {
     mounted: boolean;
     body: BodyView | null;
@@ -619,7 +659,8 @@ export function TopochainStandingsPane(): ReactNode {
     && state.drill.index < state.body.rows.length);
   return (
     <>
-      <div id="tc-lb-body"><Body view={state.body} drill={inline ? state.drill : null} /></div>
+      {frame ? <StandingsInFrameHead /> : null}
+      <div id="tc-lb-body"><Body view={state.body} drill={inline ? state.drill : null} frame={frame} /></div>
       <Drill view={state.drill} inline={inline} />
     </>
   );

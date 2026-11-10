@@ -12,6 +12,20 @@
 //   first_message   Somebody who joined through it wrote in the project's
 //                   chat for the first time ("said hi").
 //
+// And the leaked-link guard's two (community-invites.js GUARD, noteGuard
+// below), each its own row, never folded into another:
+//
+//   invite_link_busy    one link brought in GUARD.noticeAt people within a
+//                       day; once per link per window. Its row turns the
+//                       link off in one tap.
+//   invite_link_paused  one link reached GUARD.pauseAt and paused: new joins
+//                       are refused until its maker opens it again, from the
+//                       row or the invite pane.
+//
+// Their `detail` is "<inviteId>:<joins>"; the bell reads the link's state
+// with the row (notifications.js INVITE_LINK_STATE_SQL), so a button is only
+// offered while it still does something.
+//
 // Only the link's maker hears, and only about people who came by THEIR
 // link; the invite page tells a visitor that the maker sees when they join
 // (features/auth/invite-card.tsx). Time spent is never said.
@@ -46,6 +60,7 @@
 const crypto = require('crypto');
 const events = require('./events');
 const log = require('./logger');
+const arrivalSource = require('./arrival-source');
 
 const KINDS = Object.freeze(['invite_opened', 'member_joined', 'first_message']);
 // A first message counts as a hello for this long after joining. Past it, the
@@ -63,6 +78,43 @@ const BROWSER_VALUE_RE = /^[A-Za-z0-9_-]{22,64}$/;
 // The cookie a browser was counted with before an open counted a person
 // once (one per link, valued '1'): that browser has been told about already.
 const LEGACY_COOKIE_PREFIX = 'hr_io_';
+
+// Where the visitor came from (#6540): the invite page's request records the
+// referring host and the link's own `via` tag here, HttpOnly, for one hour.
+// It is read by the page's two API reads, which are what count the open, so
+// the source travels with the open without the page having to send it. Only
+// a host and a short tag are ever kept (`arrival-source.js`).
+const SOURCE_COOKIE = 'hr_iv_src';
+const SOURCE_COOKIE_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * Record where this visitor came from, when `source` holds anything to
+ * record. `host` is a hostname or 'none' (looked for, none given); `via` is
+ * the link's short tag. A null `source` leaves an existing cookie alone.
+ */
+function setSourceCookie(req, res, source) {
+  if (!source) return;
+  const host = source.referrerHost === 'none' ? 'none' : arrivalSource.hostOf(source.referrerHost);
+  if (host !== 'none' && !host) return;
+  const via = arrivalSource.cleanVia(source.via) || '';
+  res.cookie(SOURCE_COOKIE, `${host}|${via}`, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: req.secure || req.headers?.['x-forwarded-proto'] === 'https',
+    maxAge: SOURCE_COOKIE_MAX_AGE_MS,
+    path: '/',
+  });
+}
+
+/** The source this request's browser carries, or null when it carries none. */
+function sourceFrom(req) {
+  const value = req?.cookies?.[SOURCE_COOKIE];
+  if (typeof value !== 'string' || !value) return null;
+  const [rawHost, rawVia] = value.split('|');
+  const host = rawHost === 'none' ? 'none' : arrivalSource.hostOf(rawHost);
+  if (host !== 'none' && !host) return null;
+  return { referrerHost: host, via: arrivalSource.cleanVia(rawVia) };
+}
 
 /** This request's browser, as the hash an open is kept by, or null. */
 function browserFrom(req) {
@@ -193,7 +245,7 @@ const opensLock = (makerId, appId) => `invite-activity:${makerId}:${appId}:invit
  */
 async function openersOf(client, { makerId, appId, userId = null, browser = null }) {
   const { rows } = await client.query(
-    `SELECT id, user_id, browser, notification_id
+    `SELECT id, user_id, browser, notification_id, referrer_host, via
        FROM community_invite_opens
       WHERE maker_id = $1 AND app_id = $2
         AND (($3::int IS NOT NULL AND user_id = $3::int) OR ($4::text IS NOT NULL AND browser = $4::text))
@@ -216,11 +268,20 @@ async function mergeOpeners(client, rows, { userId = null, browser = null }) {
     await client.query('DELETE FROM community_invite_opens WHERE id = $1', [extra.id]);
     if (extra.notification_id != null) touched.add(Number(extra.notification_id));
   }
+  // The first open's source wins; a gap in the kept row is filled from the
+  // earliest row merged into it, so merging never loses where somebody came
+  // from.
+  const earliest = [...rest].sort((a, b) => a.id - b.id);
+  const firstHost = keep.referrer_host != null ? keep.referrer_host
+    : (earliest.find((r) => r.referrer_host != null) || {}).referrer_host ?? null;
+  const firstVia = keep.via != null ? keep.via
+    : (earliest.find((r) => r.via != null) || {}).via ?? null;
   await client.query(
     `UPDATE community_invite_opens
-        SET user_id = COALESCE(user_id, $2::int), browser = COALESCE(browser, $3::text)
+        SET user_id = COALESCE(user_id, $2::int), browser = COALESCE(browser, $3::text),
+            referrer_host = COALESCE(referrer_host, $4::text), via = COALESCE(via, $5::text)
       WHERE id = $1`,
-    [keep.id, userId, browser],
+    [keep.id, userId, browser, firstHost, firstVia],
   );
   return touched;
 }
@@ -262,7 +323,7 @@ function bellChanged(userId) {
  * their row, with their account, so opening the link again stays quiet.
  * Never throws. Resolves the ids of the notices it changed.
  */
-async function settleOpen(pool, { makerId, appId, userId, browser = null }) {
+async function settleOpen(pool, { makerId, appId, userId, browser = null, keepNotice = false }) {
   const touched = new Set();
   let client = null;
   try {
@@ -272,7 +333,7 @@ async function settleOpen(pool, { makerId, appId, userId, browser = null }) {
     const rows = await openersOf(client, { makerId, appId, userId, browser });
     if (rows.length) {
       for (const id of await mergeOpeners(client, rows, { userId, browser })) touched.add(id);
-      if (rows[0].notification_id != null) {
+      if (!keepNotice && rows[0].notification_id != null) {
         touched.add(Number(rows[0].notification_id));
         await client.query('UPDATE community_invite_opens SET notification_id = NULL WHERE id = $1', [rows[0].id]);
       }
@@ -288,6 +349,26 @@ async function settleOpen(pool, { makerId, appId, userId, browser = null }) {
   }
   if (touched.size) bellChanged(makerId);
   return [...touched];
+}
+
+/**
+ * `userId` signed up or in carrying link `token` (community-invites.js
+ * redeemCarried / dropCarried): the open this browser made signed out
+ * becomes theirs, so Admin › Journey can say when they opened the link. Not
+ * a join, so the open stays on the maker's notice as it was; a join through
+ * the link settles it later (noteJoined). Never throws.
+ */
+async function claimOpen(pool, { token, userId, browser = null }) {
+  if (!userId || !browser || typeof token !== 'string' || !token) return [];
+  try {
+    const { rows } = await pool.query('SELECT created_by, app_id FROM community_invites WHERE token = $1', [token]);
+    const invite = rows[0];
+    if (!invite || invite.created_by == null || Number(invite.created_by) === Number(userId)) return [];
+    return await settleOpen(pool, { makerId: invite.created_by, appId: invite.app_id, userId, browser, keepNotice: true });
+  } catch (err) {
+    log.warn('invite-activity', 'Could not claim an open on a sign-in', { err: err.message });
+    return [];
+  }
 }
 
 /**
@@ -352,7 +433,7 @@ async function tellMaker(client, { makerId, appId, openId }) {
  * false } when they were not (anybody signed out, or somebody who had
  * opened it before), or null when nothing was counted.
  */
-async function noteOpened(pool, { token, viewerId = null, browser = null, seenBefore = false }) {
+async function noteOpened(pool, { token, viewerId = null, browser = null, seenBefore = false, source = null }) {
   try {
     const { rows } = await pool.query(
       `SELECT ci.id, ci.created_by, ci.app_id, ci.community_id,
@@ -360,7 +441,7 @@ async function noteOpened(pool, { token, viewerId = null, browser = null, seenBe
                 SELECT 1 FROM community_members m WHERE m.community_id = ci.community_id AND m.user_id = $2
               )) AS viewer_is_member
          FROM community_invites ci
-        WHERE ci.token = $1 AND ci.revoked_at IS NULL
+        WHERE ci.token = $1 AND ci.revoked_at IS NULL AND ci.paused_at IS NULL
           AND (ci.expires_at IS NULL OR ci.expires_at > NOW())
           AND (ci.max_uses IS NULL OR ci.uses < ci.max_uses)`,
       [token, viewerId],
@@ -404,15 +485,17 @@ async function noteOpened(pool, { token, viewerId = null, browser = null, seenBe
         if (untold) told = await tellMaker(client, { makerId, appId, openId: known[0].id });
       } else if (seenBefore || joinedSince.length) {
         await client.query(
-          `INSERT INTO community_invite_opens (maker_id, app_id, user_id, browser) VALUES ($1, $2, $3, $4)`,
-          [makerId, appId, viewerId, browser],
+          `INSERT INTO community_invite_opens (maker_id, app_id, user_id, browser, referrer_host, via)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [makerId, appId, viewerId, browser, source?.referrerHost ?? null, source?.via ?? null],
         );
       } else {
         counted = true;
         const { rows: made } = await client.query(
-          `INSERT INTO community_invite_opens (maker_id, app_id, user_id, browser) VALUES ($1, $2, $3, $4)
+          `INSERT INTO community_invite_opens (maker_id, app_id, user_id, browser, referrer_host, via)
+           VALUES ($1, $2, $3, $4, $5, $6)
            RETURNING id`,
-          [makerId, appId, viewerId, browser],
+          [makerId, appId, viewerId, browser, source?.referrerHost ?? null, source?.via ?? null],
         );
         if (signedIn) told = await tellMaker(client, { makerId, appId, openId: made[0].id });
       }
@@ -433,7 +516,7 @@ async function noteOpened(pool, { token, viewerId = null, browser = null, seenBe
         type: events.EVENT_TYPES.INVITE_OPENED,
         userId: viewerId ?? undefined,
         appId,
-        metadata: { inviteId: invite.id, signedIn },
+        metadata: { inviteId: invite.id, signedIn, referrerHost: source?.referrerHost ?? null, via: source?.via ?? null },
       });
     }
     if (!told || !told.row) return { row: null, fresh: false };
@@ -441,6 +524,36 @@ async function noteOpened(pool, { token, viewerId = null, browser = null, seenBe
     return told;
   } catch (err) {
     log.warn('invite-activity', 'Could not count an invite opened', { err: err.message });
+    return null;
+  }
+}
+
+const GUARD_KINDS = Object.freeze(['invite_link_busy', 'invite_link_paused']);
+
+/**
+ * The leaked-link guard noticed invite `inviteId` (`kind`, one of
+ * GUARD_KINDS) after the join that made `joins`: its maker hears it, as a
+ * row of its own that rings. Nobody else does here; the full admins see it
+ * among the platform's unexpected events (community-invites.js tellGuard).
+ * No email: what it asks for is a tap. Never throws; resolves the row, or
+ * null.
+ */
+async function noteGuard(pool, { inviteId, kind, joins }) {
+  if (!GUARD_KINDS.includes(kind)) return null;
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO notifications (user_id, app_id, kind, detail, mailed_at)
+       SELECT ci.created_by, ci.app_id, $2, $3, NOW()
+         FROM community_invites ci
+        WHERE ci.id = $1 AND ci.created_by IS NOT NULL
+       RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, detail, created_at`,
+      [inviteId, kind, `${Number(inviteId)}:${Math.max(0, Math.floor(Number(joins) || 0))}`],
+    );
+    const row = rows[0] || null;
+    if (row) await notifications().hydrateAndPush(pool, row);
+    return row;
+  } catch (err) {
+    log.warn('invite-activity', 'Could not tell a link\'s maker about the guard', { inviteId, kind, err: err.message });
     return null;
   }
 }
@@ -483,11 +596,17 @@ async function noteFirstMessage(pool, { appId, userId, chatMessageId }) {
 
 module.exports = {
   KINDS,
+  GUARD_KINDS,
+  noteGuard,
   HELLO_WITHIN_DAYS,
   OPEN_PUSH_DELAY_MINUTES,
   BROWSER_COOKIE,
+  SOURCE_COOKIE,
   browserFrom,
+  claimOpen,
   ensureBrowser,
+  setSourceCookie,
+  sourceFrom,
   countedBefore,
   ring,
   noteJoined,

@@ -22,8 +22,9 @@
 //      presence, and both states open the same create flow.
 //   5. The section it replaced is gone, and the declared checks follow it.
 //
-// ONE HOME (#6361): the grid itself no longer draws this tile (see the test
-// that says so below); the component and the compact entry are what remain.
+// ONE HOME (#6361) took this tile off the grid and left making a project to
+// Pinned communities' New community tile; #6522 brought it back, so the
+// properties above hold again (the New community tile stays where it is).
 //
 // Run with: node --test tests/home-create-tile.test.js
 
@@ -183,7 +184,7 @@ function makeHome({ search = '', canCreateApps = true } = {}) {
   // Cross-realm: the store lives in the vm context, so round-trip through JSON.
   const model = () => JSON.parse(JSON.stringify(gridStore.get()));
   const moreCount = () => sandbox.chromeStore.get().moreCount;
-  return { Home: sandbox.__Home, model, moreCount };
+  return { Home: sandbox.__Home, model, moreCount, sandbox };
 }
 
 const mine = (n) => Array.from({ length: n }, (_, i) => ({
@@ -349,15 +350,27 @@ test('without a held-back tile, or with a count, the line is the expander alone'
   );
 });
 
-// ONE HOME (#6361): Home.render() places no Create tile any more. Making
-// something new is Pinned communities' New community tile
-// (frontend/src/features/home/pinned-communities.tsx), so the cases that
-// placed this one in the grid, held it behind "Show all N apps" or let a
-// search turn it off went with it. The component below still draws a view
-// it is handed, which the compact entry and its tests use.
-test('One Home (#6361): Home.render() hands the grid no Create tile', () => {
-  assert.match(HOME_SRC, /New community" tile now[\s\S]{0,200}create = null;/,
-    'render() ends by clearing the trailing tile, with the reason beside it');
+// #6522: Home.render() hands the grid its Create view again, and the three
+// cases that decide whether it is there at all.
+test('#6522: a normal account\'s render yields the Create view, search and private members none', () => {
+  const { Home, model } = makeHome();
+  Home._apps = mine(2);
+  Home.render();
+  const create = model().create;
+  assert.ok(create && typeof create === 'object', 'a normal account gets the trailing New project tile');
+  assert.equal(typeof create.enabled, 'boolean');
+  assert.equal(create.heldBack, false, 'with two apps the tile fits its own cell');
+
+  Home._query = 'App 1';
+  Home.render();
+  assert.equal(model().create, null, 'the search view is a flat list of matches: no create control');
+
+  // A private member makes no apps until they are let in off the waitlist.
+  const { Home: privateHome, model: privateModel, sandbox } = makeHome();
+  sandbox.App.user.privateMember = true;
+  privateHome._apps = mine(2);
+  privateHome.render();
+  assert.equal(privateModel().create, null, 'a private member gets no trailing tile');
 });
 
 test('the tile draws both states, and never the disabled attribute', () => {
@@ -437,19 +450,24 @@ test('the Create section is retired everywhere it was mounted', () => {
   assert.doesNotMatch(read('scripts/audit-react-ownership.mjs'), /sel: '#home-create-section'/);
 });
 
-test('the declared Create checks select Pinned communities\' last tile, New community (One Home, #6361)', () => {
+test('the declared Create checks select both New project and New community, in their two places (#6522)', () => {
   const declared = JSON.parse(read('dapp.json')).tests || [];
   const creates = declared.filter((t) => /data-panel-slot=\\?"create\\?"|data-panel-slot="create"/.test(t.expectSelector || ''));
   assert.equal(creates.length, 2, 'the enabled and the locked treatment');
   for (const t of creates) {
+    // The New community tile is still the last of Pinned communities…
     assert.match(t.expectSelector, /#home-communities-section:not\(\[hidden\]\) #home-new-community\[data-panel-slot="create"\]\[data-create-enabled="(true|false)"\]/);
     assert.match(t.expectSelector, /:last-child/);
     assert.equal(t.expectText, 'New community');
   }
   const paths = creates.map((t) => t.path).sort();
   assert.deepEqual(paths, ['/?demo=1&shot=create-disabled', '/?demo=1&shot=create-enabled']);
-  // The grid's tile no longer draws on Home: the enabled check says so.
-  assert.ok(creates.some((t) => t.expectSelector.includes('#home-apps-section:not(:has(#home-create-tile))')));
+  // …and the enabled check folds in the grid's own trailing tile, which is
+  // back on My apps (#6522), without a :not(:has()) guard asserting it gone.
+  const enabled = creates.find((t) => t.path === '/?demo=1&shot=create-enabled');
+  assert.match(enabled.expectSelector,
+    /#home-apps-section:not\(\[hidden\]\):has\(#home-create-tile\[data-panel-slot="create"\]\[data-create-enabled="true"\]\)/);
+  assert.doesNotMatch(enabled.expectSelector, /:not\(:has\(#home-create-tile\)\)/);
   // No check still anchors on the retired section (a :not(:has()) guard that
   // says it is gone is the one allowed mention).
   for (const t of declared) {

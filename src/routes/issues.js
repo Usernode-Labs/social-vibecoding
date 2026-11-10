@@ -912,6 +912,70 @@ async function withoutBotThreadCopies(pool, appId, issueNumber, comments) {
   return list.filter((c) => !(c && c.id != null && copied.has(String(c.id))));
 }
 
+// #6497: one read of a request's GitHub comments, for a page that draws them
+// in its own discussion (src/routes/chat.js) as well as for the comments
+// route below. `max` is how many of the newest are kept (the route's own
+// default, clipIssueComments' 30, when it is null); a request's first page
+// asks for every comment the reader fetched (github.ISSUE_COMMENTS_MAX).
+// Never throws: a failure is an empty thread with a note, so the page still
+// opens with what was said here.
+async function readRequestComments(pool, app, number, { demo = false, max = null } = {}) {
+  const clip = (list, wasTruncated = false) => (max == null
+    ? github.clipIssueComments(list, { wasTruncated })
+    : github.clipIssueComments(list, { wasTruncated, max }));
+  try {
+    const parsed = parseOwnerRepo(app && app.repo_url);
+    const n = Number(number);
+
+    if (!requestsOn() || !parsed || !Number.isFinite(n)) {
+      if (!IS_STAGING) return { comments: [], truncated: false, note: 'unavailable' };
+      const mocks = stagingMockIssueComments(n);
+      const clipped = clip(mocks);
+      return { comments: clipped.comments, truncated: clipped.truncated };
+    }
+
+    // Staging demo mode (?demo=1) on one of the MOCK rows: the page is on
+    // fixtures by choice — the list route appends these rows for it — so
+    // the thread is the fixture too, served without the live round trip.
+    // No real issue has these numbers, so the live fetch can only come back
+    // empty and fall through to the same mocks; what it costs is time. From
+    // a preview container whose outbound fetch hangs, that is the whole
+    // ISSUES_FETCH_TIMEOUT_MS, and the check runner polls a presence
+    // assertion for five seconds after the page settles
+    // (capture/capture.js ASSERT_MAX_MS) — exactly how the declared
+    // issue-page check found no comment bubbles on staging while passing
+    // locally, where GitHub is off and the mocks are immediate.
+    if (IS_STAGING && demo && isStagingMockIssueNumber(n)) {
+      const clipped = clip(stagingMockIssueComments(n));
+      return { comments: clipped.comments, truncated: clipped.truncated };
+    }
+
+    const raw = await github.fetchIssueComments(parsed.owner, parsed.repo, n);
+    // #3693: the bot's posts the issue's thread already shows are left out
+    // before the clip, so they never take one of its places.
+    const shown = await withoutBotThreadCopies(pool, app.id, n, raw.comments);
+    const clipped = clip(shown, raw.truncated);
+
+    // Staging-only fallback: an empty (or degraded) live thread would render
+    // nothing in the preview, so mock comments stand in. Strictly a no-op in
+    // production. Empty as GitHub sent it: a thread emptied only by leaving
+    // out the bot's thread copies is what a preview should show.
+    if (IS_STAGING && (raw.comments || []).length === 0) {
+      const mocks = clip(stagingMockIssueComments(n));
+      return { comments: mocks.comments, truncated: mocks.truncated };
+    }
+
+    return {
+      comments: clipped.comments,
+      truncated: clipped.truncated,
+      ...(raw.note ? { note: raw.note } : {}),
+    };
+  } catch (err) {
+    log.error('issues', 'Failed to fetch GitHub issue comments', { message: err.message });
+    return { comments: [], truncated: false, note: 'unavailable' };
+  }
+}
+
 // Pick the "In progress" chip's link destination from an issue's live
 // linked sessions, per viewer. Priority: a promoted/merging session (the
 // proposal — group-visible to everyone) > the viewer's own session (their
@@ -1419,6 +1483,36 @@ function issueRoutes(config) {
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // #6420: a change's `linked_issues` is a claim, not a merge. The request's
+  // requester can answer "This doesn't close it": the claim is marked (the
+  // change's vote card reads the same row) and one line is posted in the
+  // change's discussion so voters see it. The request stays linked: only its
+  // builder can remove it, and merging still closes it.
+  //
+  //   POST /api/apps/:slug/issues/:number/changes/:sessionId/not-closing
+  router.post('/api/apps/:slug/issues/:number/changes/:sessionId/not-closing', issueKindLimiter, sameOriginBrowserOnly,
+    communities.requireAppMembership(pool), async (req, res) => {
+      try {
+        const n = Number(req.params.number);
+        const sessionId = Number(req.params.sessionId);
+        if (!Number.isSafeInteger(n) || n <= 0 || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
+          return res.status(400).json({ error: 'Invalid request or change' });
+        }
+        const app = await appAccess.getAppForUser(
+          pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS,
+        );
+        if (!app) return res.status(404).json({ error: 'App not found' });
+        const out = await require('../services/change-claims').dispute(pool, {
+          appId: app.id, requestNumber: n, sessionId, userId: req.user.id, username: req.user.username,
+        });
+        if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
+        return res.json({ ok: true, disputed: true });
+      } catch (err) {
+        log.error('issues', 'Answering a change\'s claim failed', { message: err.message, slug: req.params.slug });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    });
 
   router.post('/api/apps/:slug/issues', issueKindLimiter, communities.requireAppMembership(pool), async (req, res) => {
     let { title, description, kind = 'general', payload = {} } = req.body || {};
@@ -2988,57 +3082,12 @@ function issueRoutes(config) {
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
 
-      const number = parseInt(req.params.number, 10);
-      const parsed = parseOwnerRepo(app.repo_url);
-
-      if (!requestsOn() || !parsed || !Number.isFinite(number)) {
-        if (!IS_STAGING) {
-          return res.json({ comments: [], truncated: false, note: 'unavailable' });
-        }
-        const mocks = stagingMockIssueComments(number);
-        const clipped = github.clipIssueComments(mocks);
-        return res.json({ comments: clipped.comments, truncated: clipped.truncated });
-      }
-
-      // Staging demo mode (?demo=1) on one of the MOCK rows: the page is on
-      // fixtures by choice — the list route appends these rows for it — so
-      // the thread is the fixture too, served without the live round trip.
-      // No real issue has these numbers, so the live fetch can only come
-      // back empty and fall through to the same mocks; what it costs is
-      // time. From a preview container whose outbound fetch hangs, that is
-      // the whole ISSUES_FETCH_TIMEOUT_MS, and the check runner polls a
-      // presence assertion for five seconds after the page settles
-      // (capture/capture.js ASSERT_MAX_MS) — which is exactly how the
-      // declared issue-page check found no comment bubbles on staging while
-      // passing locally, where GitHub is off and the mocks are immediate.
-      if (IS_STAGING && req.query.demo === '1' && isStagingMockIssueNumber(number)) {
-        const clipped = github.clipIssueComments(stagingMockIssueComments(number));
-        return res.json({ comments: clipped.comments, truncated: clipped.truncated });
-      }
-
-      const raw = await github.fetchIssueComments(parsed.owner, parsed.repo, number);
-      // #3693: the bot's posts the issue's thread already shows are left
-      // out before the clip, so they never take one of its places.
-      const shown = await withoutBotThreadCopies(pool, app.id, number, raw.comments);
-      let { comments, truncated } = github.clipIssueComments(shown, { wasTruncated: raw.truncated });
-
-      // Staging-only fallback: an empty (or degraded) live thread would
-      // render nothing in the preview — substitute mocks so the section is
-      // reviewable. Strictly a no-op in production. Empty as GitHub sent it:
-      // a thread emptied only by leaving out the bot's thread copies is what
-      // a preview should show, not a gap to fill with fixtures.
-      if (IS_STAGING && (raw.comments || []).length === 0) {
-        const clipped = github.clipIssueComments(stagingMockIssueComments(number));
-        comments = clipped.comments;
-        truncated = clipped.truncated;
-        return res.json({ comments, truncated });
-      }
-
-      return res.json({
-        comments,
-        truncated,
-        ...(raw.note ? { note: raw.note } : {}),
-      });
+      // The route keeps the newest 30 (`clipIssueComments`' default). A
+      // request's first page, which draws them as its discussion, asks
+      // readRequestComments for more (#6497).
+      res.json(await readRequestComments(pool, app, parseInt(req.params.number, 10), {
+        demo: req.query.demo === '1',
+      }));
     } catch (err) {
       log.error('issues', 'Failed to fetch GitHub issue comments', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3609,6 +3658,8 @@ module.exports = {
   shouldCreateGithubTwin,
   issueBodyWithScreenshots,
   MAX_GITHUB_ISSUE_BODY_CHARS,
+  // #6497: a request's GitHub comments, read beside its thread.
+  readRequestComments,
   // "In progress" derivation pieces, exported for unit tests.
   pickInProgressTarget,
   composeInProgress,

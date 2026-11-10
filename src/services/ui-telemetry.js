@@ -4,7 +4,6 @@ const crypto = require('node:crypto');
 const { ipKeyGenerator } = require('express-rate-limit');
 const events = require('./events');
 const usernames = require('./usernames');
-const leftOut = require('./journey-left-out');
 const usageAnalytics = require('./usage-analytics');
 const { scrubText } = require('./platform-signal-evidence');
 
@@ -50,7 +49,7 @@ const JOURNEY_SCREENS = Object.freeze(new Set([
 // since One Home (#6361) retired Discover's screen and the Communities list;
 // `needs` is the page left of the latter.
 const NAV_SCREENS = Object.freeze(new Set([
-  'home', 'discover', 'communities', 'needs', 'challenges', 'profile', 'my_proposals',
+  'home', 'discover', 'communities', 'needs', 'weekly_digest', 'challenges', 'profile', 'my_proposals',
   'settings', 'messages', 'assistant', 'agent_session', 'ai', 'app', 'project',
   'username_sheet', 'terms_sheet', 'join_sheet', 'tour',
 ]));
@@ -272,29 +271,13 @@ function isEligibleUser(user) {
   return !!user?.id && !usernames.isServiceIdentity(user.username);
 }
 
-// Eligible, switched "Share usage analytics" on in Settings (#5097: off
-// unless they did, services/usage-analytics.js), and has not objected to
-// being recorded (#3369: an admin adds them to the Journey page's left-out
-// list as "objected"). This is the answer /api/auth/me sends as
-// uiTelemetryEligible and the collector enforces.
+// Eligible, and has not objected to being recorded (services/usage-analytics.js:
+// screen usage data is recorded for everyone; somebody who asks is added to
+// the Journey page's left-out list as "objected"). This is the answer
+// /api/auth/me sends as uiTelemetryEligible and the collector enforces.
 async function isRecordable(pool, user) {
   if (!isEligibleUser(user)) return false;
-  if (!(await usageAnalytics.sharesUsageAnalytics(pool, user.id))) return false;
-  return !(await leftOut.hasObjected(pool, user.id));
-}
-
-// Whether the live shell's Google Analytics tag counts this person's visits
-// (#6314). The Share usage analytics switch does not decide this one, but an
-// objection does, and a service account is nobody. An unreadable list answers
-// false, so a failed read never counts somebody who objected.
-async function countsInGoogleAnalytics(pool, user) {
-  if (!isEligibleUser(user) || user.isSynthetic) return false;
-  try {
-    const ids = await leftOut.idsByReason(pool);
-    return !!ids && !ids.objected.has(Number(user.id));
-  } catch {
-    return false;
-  }
+  return usageAnalytics.recordsUsage(pool, user.id);
 }
 
 function plainObject(value) {
@@ -1269,7 +1252,6 @@ module.exports = {
   browserLanguages,
   daysWindow,
   insertBatch,
-  countsInGoogleAnalytics,
   isEligibleUser,
   isRecordable,
   clientErrorCode,

@@ -42,6 +42,12 @@ import { FeedbackSheet } from './feedback-sheet';
 import { FriendsSheet } from './friends-sheet';
 import { ProfileEditSheet } from './profile-edit-sheet';
 import { PublicProfileCard } from './public-profile-card';
+import { WeekShareSheet } from './week-share-sheet';
+import { appSlotsLine, useAppAllowance } from '../dialogs/app-allowance';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
+import { useVisibility } from '../../lib/visibility-store';
+import { YouFrame } from './frame/you-frame';
+import { useFramePage } from '../frame/frame-page-store';
 
 /** The round picture, or the initial-in-a-circle fallback — the idiom the rest
  *  of the app already uses for people. */
@@ -191,9 +197,14 @@ interface ActivityDay {
 
 interface ActivityCardView {
   empty: boolean;
+  canShare?: boolean;
   time?: string | null;
   apps?: string | null;
   appsLabel?: string;
+  merged?: string | null;
+  mergedLabel?: string | null;
+  challenges?: string | null;
+  challengesLabel?: string | null;
   days?: ActivityDay[];
 }
 
@@ -204,11 +215,28 @@ const ACTIVITY_PLOT_PX = 64;
 
 /** "This week" (#5626): your own time in apps, day by day. One series, so the
  *  title names it and there is no legend. Each day's words are in its `title`
- *  and for a screen reader; the busiest day's figure gives the bars a scale. */
+ *  and for a screen reader; the busiest day's figure gives the bars a scale.
+ *  #6464 adds the week's live changes and completed challenges, and the Share
+ *  action that opens ./week-share-sheet.tsx. */
 function ActivityCard({ activity }: { activity: ActivityCardView | null }): ReactNode {
   const t = useMessages('profile');
   if (!activity) return null;
-  const title = <h2 className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('profile:activity.title')}</h2>;
+  const title = (
+    <div className="flex items-center justify-between gap-3">
+      <h2 className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('profile:activity.title')}</h2>
+      {activity.canShare ? (
+        <Button
+          id="profile-activity-share"
+          variant="neutral"
+          size="sm"
+          ink="neutral"
+          onClick={() => Profile.showWeekShare()}
+        >
+          {t('profile:activity.share')}
+        </Button>
+      ) : null}
+    </div>
+  );
   if (activity.empty) {
     return (
       <section id="profile-activity" className={`rounded-2xl ${PLANE_FILL} p-4 mb-2`}>
@@ -221,7 +249,7 @@ function ActivityCard({ activity }: { activity: ActivityCardView | null }): Reac
   return (
     <section id="profile-activity" className={`rounded-2xl ${PLANE_FILL} p-4 mb-2`}>
       {title}
-      <div className="mt-2 flex gap-6">
+      <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
         {activity.time ? (
           <div>
             <div className="text-xl font-bold text-zinc-900 dark:text-zinc-100">{activity.time}</div>
@@ -232,6 +260,18 @@ function ActivityCard({ activity }: { activity: ActivityCardView | null }): Reac
           <div>
             <div className="text-xl font-bold text-zinc-900 dark:text-zinc-100">{activity.apps}</div>
             <div className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{activity.appsLabel}</div>
+          </div>
+        ) : null}
+        {activity.merged ? (
+          <div>
+            <div className="text-xl font-bold text-zinc-900 dark:text-zinc-100">{activity.merged}</div>
+            <div className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{activity.mergedLabel}</div>
+          </div>
+        ) : null}
+        {activity.challenges ? (
+          <div>
+            <div className="text-xl font-bold text-zinc-900 dark:text-zinc-100">{activity.challenges}</div>
+            <div className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{activity.challengesLabel}</div>
           </div>
         ) : null}
       </div>
@@ -354,10 +394,43 @@ function ProfileSkeleton(): ReactNode {
   );
 }
 
+/**
+ * The You tab under one of the frame's looks: the kit's page
+ * (./frame/you-frame.tsx) from this screen's own view, with the two facts
+ * the standard rows read for themselves (the App slots line, and whether
+ * the viewer is an admin).
+ */
+function YouInFrame({ view, publicStatus }: { view: any; publicStatus: string }): ReactNode {
+  const allowance = useAppAllowance();
+  const admin = useVisibility('switcher-row-admin', false);
+  // The bar says You, as the tab does (the standard header says Profile).
+  const tc = useMessages('core');
+  useFramePage([tc('core:tabs.me')], null);
+  return (
+    <YouFrame
+      identity={view.identity}
+      stats={view.stats}
+      activity={view.activity}
+      rows={view.rows}
+      slots={appSlotsLine(allowance.quota, allowance.requestedAt as string | null)}
+      admin={admin}
+      publicPage={view.publicControls && !view.publicControls.moderationDisabled ? { href: view.publicControls.openHref, published: view.publicControls.published, line: view.publicControls.visibility, status: publicStatus, onCopy: () => { void Profile.copyPublicLink(view.publicControls.openHref); } } : null}
+      onEdit={() => Profile.showEditSheet()}
+      onFriends={() => Profile.showFriends()}
+      onSlots={() => Profile.showAppSlots()}
+      onFeedback={() => Profile.showFeedback()}
+      onShareWeek={() => Profile.showWeekShare()}
+    />
+  );
+}
+
 export function ProfileRoot(): ReactNode {
   const state = useStoreState(profileStore);
   // Subscribed before the view is built: its lines are read as it is.
   const t = useMessages('profile');
+  // Under one of the frame's looks your own page is the kit's (the tour's
+  // s44); a public profile and the states before the data keep theirs.
+  const frame = isFrameSkin(useLiveSkin());
   const view = buildProfileView(state);
 
   if (view.kind === 'empty') return null;
@@ -435,6 +508,10 @@ export function ProfileRoot(): ReactNode {
       {/* #6446: the App allowance card, opened by the App slots row when no
           slot is free. */}
       {state.appSlotsOpen ? <AppSlotsSheet /> : null}
+      {/* #6464: "Share your week", opened by the This week card's Share. */}
+      {state.weekShareOpen ? (
+        <WeekShareSheet items={view.weekShare.items} link={view.weekShare.link} />
+      ) : null}
       {/*
           Two columns from lg (the navigation review): who you are on the
           left, with your Account group under it; Your work and Rewards on
@@ -449,6 +526,7 @@ export function ProfileRoot(): ReactNode {
           Your contributions, which closed the screen, is gone: Your changes
           lists every merged one.
       */}
+      {frame ? <YouInFrame view={view} publicStatus={state.publicStatus || ''} /> : (
       <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
         <div className="lg:col-start-1 lg:row-start-1">
           <IdentityCard identity={view.identity} />
@@ -465,6 +543,7 @@ export function ProfileRoot(): ReactNode {
           <AdminPanel />
         </div>
       </div>
+      )}
     </>
   );
 }

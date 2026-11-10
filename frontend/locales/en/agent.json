@@ -1135,6 +1135,10 @@
     "text": "View change",
     "description": "Link on a change's preview card in an agent session (the preview is a test build of the app with the change in it) once the change is in a vote or released: opens the change's page. \"change\" is a noun."
   },
+  "session.preview.vote": {
+    "text": "Vote",
+    "description": "Filled button on a change's preview card in an agent session while the change is up for the community's vote: a verb, opens the change's page at its Votes card."
+  },
   "session.preview.openDraft": {
     "text": "Open draft change",
     "description": "Link on a change's preview card in an agent session (the preview is a test build of the app with the change in it) while the change is still a draft: opens the change's page. \"Open\" is a verb, \"change\" a noun."
@@ -1795,6 +1799,10 @@
     "text": "turned off",
     "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: someone turned the link off, or its maker can no longer grant what it grants, so it no longer works. Lower case; it follows the first fact."
   },
+  "appContext.invite.detail.paused": {
+    "text": "paused",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: so many people joined through the link in one day that it stopped letting more in, until its maker opens it again. Lower case; it follows the first fact."
+  },
   "appContext.invite.detail.noEnd": {
     "text": "no end date",
     "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: the link never expires. Lower case; it follows the first fact."
@@ -1901,11 +1909,11 @@
   },
   "appContext.invite.expiresAfter": {
     "text": "Expires after",
-    "description": "Label of the drop-down in the Invite pane of the app menu that sets how long a new invite link works. Its options follow it: 1 day, 7 days, Until you turn it off."
+    "description": "Label of the drop-down in the Invite pane of the app menu that sets how long a new invite link works. Its options follow it: Never, 1 day, 7 days, 30 days."
   },
   "appContext.invite.option.untilOff": {
-    "text": "Until you turn it off",
-    "description": "Option in the \"Expires after\" drop-down in the Invite pane of the app menu: the new link never expires."
+    "text": "Never",
+    "description": "Option in the \"Expires after\" drop-down in the Invite pane of the app menu: the new link never expires and works until someone turns it off. It is the first option and the default."
   },
   "appContext.invite.option.days_one": {
     "text": "{{count}} day",
@@ -1917,11 +1925,11 @@
   },
   "appContext.invite.worksFor": {
     "text": "Works for",
-    "description": "Label of the drop-down in the Invite pane of the app menu that sets how many people a new invite link lets in. Its options follow it: 1 person, 25 people, Anyone with the link."
+    "description": "Label of the drop-down in the Invite pane of the app menu that sets how many people a new invite link lets in. Its options follow it: No limit, 1 person, 25 people and so on."
   },
   "appContext.invite.option.anyone": {
-    "text": "Anyone with the link",
-    "description": "Option in the \"Works for\" drop-down in the Invite pane of the app menu: the new link has no limit of people."
+    "text": "No limit",
+    "description": "Option in the \"Works for\" drop-down in the Invite pane of the app menu: the new link lets in any number of people. It is the first option and the default."
   },
   "appContext.invite.option.people_one": {
     "text": "{{count}} person",
@@ -1970,6 +1978,10 @@
   "appContext.invite.turnOff": {
     "text": "Turn off",
     "description": "Button on a row of the list of invite links in the Invite pane of the app menu: revokes that link so it stops working."
+  },
+  "appContext.invite.reopen": {
+    "text": "Open it again",
+    "description": "Button on a row of the list of invite links in the Invite pane of the app menu, on a link that paused itself because a lot of people joined through it in one day: lets people join through it again."
   },
   "appContext.about.contributor.live_one": {
     "text": "{{count}} live",

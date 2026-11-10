@@ -1,0 +1,66 @@
+/* J · Mosaic. Lists become tiles: every item is a card in a two-column grid, so a page reads at a glance. Navigation is a slim glass rail of pictures. */
+.hr{--surface:rgba(255,255,255,.7);--solid:#fff;--sunk:rgba(30,34,70,.07);--ink:#191c38;--mut:#5a5e82;--faint:#8f93b2;--line:rgba(30,34,70,.11);--line2:rgba(30,34,70,.07);
+  --acc:#2f66f0;--acc-ink:#fff;--acc-t:rgba(47,102,240,.13);--lit:#191c38;--lit-t:rgba(30,34,70,.09);--ring:rgba(255,255,255,.85);--soft:0 14px 30px -22px rgba(30,34,70,.5);
+  --f:"Urbanist",system-ui,-apple-system,"Segoe UI",sans-serif;font-family:var(--f)}
+.hr.dark{--surface:rgba(255,255,255,.07);--solid:#1b1d38;--sunk:rgba(255,255,255,.08);--ink:#f1f1fa;--mut:#adb0d0;--faint:#787b9d;--line:rgba(255,255,255,.12);--line2:rgba(255,255,255,.07);
+  --acc:#86a6ff;--acc-ink:#08112c;--acc-t:rgba(134,166,255,.16);--lit:#f1f1fa;--lit-t:rgba(255,255,255,.11);--ring:rgba(255,255,255,.12);--soft:0 14px 30px -22px rgba(0,0,0,.9)}
+.app{grid-template-columns:92px minmax(0,1fr)}
+.side{margin:12px 0 12px 12px;padding:10px 6px;gap:4px;border:0;border-radius:24px;align-items:stretch;background:var(--surface);backdrop-filter:blur(24px) saturate(1.4);-webkit-backdrop-filter:blur(24px) saturate(1.4);box-shadow:inset 0 0 0 1px var(--ring),var(--soft)}
+.brand{justify-content:center;padding:0;height:46px;margin-bottom:4px}.brand .bn{display:none}.brand .tile{--ts:38px!important}
+.nv{flex-direction:column;justify-content:center;gap:4px;height:auto;min-height:58px;padding:8px 2px;border-radius:16px;font-size:11px;font-weight:700;line-height:1.15;text-align:center;position:relative}
+.side .nv span.nm{flex:none;white-space:normal;max-width:100%}
+.nv .n{position:absolute;top:4px;right:10px}
+.nv.on{background:var(--ink);color:var(--solid)}.nv.on .ic{color:var(--solid)}
+.side .cap{font-size:0;height:1px;padding:0;margin:8px 16px;background:var(--line)}
+.nv.rec{min-height:48px;padding:5px 0}.nv.rec .nm{display:none}.nv.rec .tile{--ts:36px!important;border-radius:11px}
+.nv.rec .n{top:0;right:12px}
+.nv.rec.on{background:none}.nv.rec.on .tile{box-shadow:0 0 0 2px var(--solid),0 0 0 4px var(--ink)}
+.side .nv.all span.nm{display:none}.nv.all{min-height:44px}
+.sidefoot{border-top:1px solid var(--line)}.sidefoot .nv .ic{display:none}.sidefoot .av{--as:34px!important}
+.sidefoot .nv.on{background:none;color:var(--ink)}.sidefoot .nv.on .av{box-shadow:0 0 0 2px var(--solid),0 0 0 4px var(--ink)}
+.bar{height:60px;border-bottom:0;padding:0 32px}
+.banner{margin:0 32px;border:0;border-radius:16px;background:var(--surface);color:var(--ink);box-shadow:inset 0 0 0 1px var(--ring)}
+.phone .banner{margin:0 12px}
+.inner{padding:16px 32px 48px}
+.title{font-size:40px;font-weight:800;letter-spacing:-.03em;line-height:1.05}
+.phone .title{font-size:30px}
+.purpose{font-size:17px;margin-top:10px}
+.tabs{border-bottom:0;gap:8px;margin:-4px 0 26px}
+.phone .tabs{gap:6px;margin-right:-16px}
+.tab{height:36px;padding:0 15px;border-radius:12px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--ring);color:var(--mut);font-weight:700}
+.tab.on{background:var(--ink);color:var(--solid);box-shadow:none}.tab.on::after{display:none}
+.tab.on .n{background:var(--solid);color:var(--ink)}
+.cap{font-size:15px;font-weight:800;letter-spacing:-.005em;text-transform:none;color:var(--ink)}
+.sechead{padding:0 4px}
+.stack{gap:28px}
+.card{border-radius:22px;background:var(--surface);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);box-shadow:inset 0 0 0 1px var(--ring),var(--soft)}
+.row .t{font-weight:750;font-size:15.5px}
+.lead{border-radius:13px}
+/* the mosaic: in the content column a list is a grid of tiles */
+.cols>.stack:first-child .card:has(>.row){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;background:none;backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none;border-radius:0;overflow:visible}
+.phone .cols>.stack:first-child .card:has(>.row){grid-template-columns:minmax(0,1fr)}
+.cols>.stack:first-child .card:has(>.row)>.row{min-height:78px;padding:12px 14px;border-top:0;border-radius:20px;background:var(--surface);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);box-shadow:inset 0 0 0 1px var(--ring),var(--soft);align-items:center}
+.cols>.stack:first-child .card:has(>.row)>.row.sm{min-height:56px}
+.cols>.stack:first-child .card:has(>.row)>.row .t{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.25}
+.cols>.stack:first-child .card:has(>.row)>.row .go,.cols>.stack:first-child .card:has(>.row)>.row .track.mini{display:none}
+.cols>.stack:first-child .card:has(>.row)>.row.on{background:var(--ink);color:var(--solid)}
+.cols>.stack:first-child .card:has(>.row)>.row.on .s,.cols>.stack:first-child .card:has(>.row)>.row.on .meta{color:inherit;opacity:.75}
+.btn{border-radius:14px;font-weight:800}.btn.sm{border-radius:10px}
+.btn.quiet{background:var(--sunk)}
+.fact .v{font-size:30px;font-weight:800}
+.sub17{font-weight:800;font-size:18px}
+.inp{background:var(--surface);border-radius:14px}
+.search .inp{border-radius:16px;box-shadow:inset 0 0 0 1px var(--ring),var(--soft)}
+.pic{border-radius:14px}
+.note{border-radius:18px;background:var(--surface);color:var(--ink);box-shadow:inset 0 0 0 1px var(--ring)}.note .ic{color:var(--acc)}
+.composer{border-radius:20px;background:var(--surface);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:inset 0 0 0 1px var(--ring),var(--soft)}
+.composer .send{border-radius:14px}
+.pane+.pane{border-left:1px solid var(--line)}.dhead{border-bottom:1px solid var(--line)}
+.pane .title{font-size:32px}
+.sheet{border-radius:28px;background:color-mix(in srgb,var(--ground) 86%,transparent);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);box-shadow:var(--sh),inset 0 0 0 1px var(--ring)}
+.sheet .x{background:var(--surface)}
+.ov.right{padding:12px}.ov.right .sheet{border-radius:24px}.phone .ov.right{padding:0}
+.solo .title{font-size:38px}.phone .solo .title{font-size:30px}
+.phone .tabbar{background:color-mix(in srgb,var(--ground) 80%,transparent);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-top:1px solid var(--line)}
+.tb{font-weight:700}.tb.on{background:var(--ink);color:var(--solid)}
+.stage{border-radius:22px}

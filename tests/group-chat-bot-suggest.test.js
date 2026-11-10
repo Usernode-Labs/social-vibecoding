@@ -233,6 +233,79 @@ test('the transcript draws the row only for the person it is for', () => {
   assert.match(gc, /botSuggest: view\.botSuggest/);
 });
 
+test('#6519: suggestions show only under the newest comment', () => {
+  const { loadTsx } = require('./lib/render-tsx');
+  const { newestComment } = loadTsx('frontend/src/features/group-chat/transcript.tsx');
+  const row = (kind, over = {}) => ({ kind, id: over.id ?? 1, ...over });
+
+  assert.equal(newestComment([], true), null, 'an empty stream has no newest comment');
+  assert.equal(newestComment([], false), null);
+
+  const first = row('message', { id: 1 });
+  const second = row('message', { id: 2 });
+  assert.equal(newestComment([first, second], true), second, 'a later message wins');
+  assert.equal(newestComment([first, second], false), second);
+
+  // A status line is not a comment: the message under it stays newest.
+  for (const kind of ['system', 'vote', 'spec_share']) {
+    assert.equal(newestComment([first, row(kind, { id: 9 })], false), first, `${kind} is skipped`);
+    assert.equal(newestComment([first, row(kind, { id: 9 })], true), first, `${kind} is skipped with GitHub rows`);
+  }
+
+  // GitHub comments count on a request's page only, and a plan's mirror is not one.
+  const github = row('github', { id: 10, key: 'gh-1' });
+  assert.equal(newestComment([first, github], true), github, 'a GitHub comment wins');
+  assert.equal(newestComment([first, github], false), first, 'a change page has none');
+  assert.equal(newestComment([first, row('github', { id: 11, key: 'gh-2', githubSpec: { title: null, markdown: '', html: '' } })], true), first,
+    'a plan mirrored from GitHub is not a comment');
+
+  // A deleted message is not a comment either, so the one before it stays newest.
+  assert.equal(newestComment([first, row('message', { id: 3, deleted: true })], true), first);
+  assert.equal(newestComment([row('message', { id: 3, deleted: true })], true), null);
+
+  const tx = read('frontend/src/features/group-chat/transcript.tsx');
+  // The row draws a gate; the gate keeps the buttons only under the newest
+  // comment, told by its `latest` prop or by the stream's published context.
+  assert.match(tx, /<BotSuggestGate msg=\{msg\} latest=\{latest\} \/>/);
+  const gate = tx.slice(tx.indexOf('const BotSuggestGate'), tx.indexOf('const BotSuggestGate') + 700);
+  assert.match(gate, /const publishedNewest = useContext\(NewestCommentContext\);/);
+  assert.match(gate, /const newest = latest \|\| \(publishedNewest != null && publishedNewest === msg\);/);
+  assert.match(gate, /newest && msg\.botSuggest && msg\.botSuggest\.forMe && msg\.botSuggest\.status === 'open' && msg\.botSuggest\.actions\.length/);
+  assert.match(tx, /<NewestCommentContext\.Provider value=\{newest\}>/);
+  assert.match(tx, /const newest = newestComment\(stream\.rows, true\)/);
+  assert.match(tx, /const newest = newestComment\(rows, false\)/);
+  assert.equal((tx.match(/const newest = newestComment\(rows, false\)/g) || []).length, 2,
+    'both the change and the transcript rows find it');
+  const calls = tx.match(/<MessageRow\b[^>]*?\/>/gs) || [];
+  assert.ok(calls.length >= 4, 'the transcript draws the row in several places');
+  // A request's row call is pinned by tests/vote-row-card.test.js, so that
+  // stream answers through the context; every other row is told directly.
+  const direct = calls.filter((call) => !call.includes('seeVote={seeVoteOf(msg)}'));
+  assert.equal(direct.length, calls.length - 1, 'only the request stream answers through the context');
+  for (const call of direct) assert.match(call, /\blatest=/, 'every other row is told whether it is the newest comment');
+});
+
+test('#6519: a request\'s stream draws the suggestions under its newest comment only', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const suggest = { status: 'open', forMe: true, actions: [{ id: 'go_ahead', label: 'Go ahead', primary: true }] };
+  const rowBase = {
+    id: 1, kind: 'message', username: 'evan', time: '10:00', timeTitle: 't', bodyHtml: '<p>hi</p>', systemText: '',
+    mine: false, editedTitle: null, unread: false, bookmarked: false, canEdit: false, flash: false,
+    showEdit: false, showBookmark: false, showReact: false, quote: null, reactions: [],
+    attachments: [], voteRowClass: '', voteRef: null, specShare: null,
+  };
+  const lead = { earlier: false, placeholder: null, language: 'request', request: { loaded: true, githubMore: null } };
+  const bot = { ...rowBase, id: 10, username: 'homeroom_bot', botSuggest: suggest };
+  const newer = { ...rowBase, id: 11, time: '10:05', bodyHtml: '<p>newer</p>' };
+  const count = (html) => (html.match(/data-gc-bot-suggest/g) || []).length;
+  assert.equal(count(renderComponent('frontend/src/features/group-chat/transcript.tsx', 'RequestRows', {
+    view: { lead, messages: [bot, newer] },
+  })), 0, 'a comment after it takes the buttons away');
+  assert.equal(count(renderComponent('frontend/src/features/group-chat/transcript.tsx', 'RequestRows', {
+    view: { lead, messages: [bot] },
+  })), 1, 'the bot\'s own newest message still offers them');
+});
+
 test('#6272: a request-page reply whose text list was lifted shows buttons to the person it answered', async () => {
   const voice = require('../src/services/homeroom-bot-voice');
   const sent = [];

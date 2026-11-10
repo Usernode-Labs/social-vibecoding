@@ -454,8 +454,12 @@ is no replay plan to write and nothing to verify locally.
 - **An invite link grants what its maker could grant.** `/invite/<token>`
   (`services/community-invites.js`, the "Communities, stage 6" block of
   `schema.sql`) is made by any member from the logo menu's "Invite to
-  community" pane: 7 days and 25 people unless they choose otherwise, and
-  revocable. On a project where building is by invitation it is the
+  community" pane: no end date and no limit of people unless they choose
+  one, and revocable. The leaked-link guard (`GUARD` in that service)
+  counts joins through one link over a rolling 24 hours: at 20 its maker is
+  told once, with Turn off; at 100 the link pauses (`paused_at`), new joins
+  are refused and queued ones still apply, until its maker opens it again.
+  On a project where building is by invitation it is the
   collaborator invite, accepted; anywhere else it is membership. One SQL
   function, `apply_community_invite()`, applies it, both on the spot and from
   the trigger that runs when an account is let in, so a person without
@@ -826,9 +830,7 @@ Two behaviours are easy to lose to React's defaults and are worth naming:
   pins the Docker builder/copy contract. Its `public/index.html` input is the
   ignored output materialized by the test preflight, never a committed
   artifact.
-- The shell document loads **no cross-origin assets** (the live site's Google
-  Analytics tag is the one exception, by decision, and stays inside
-  `public/analytics-frame.html`, never in the shell's own page: #6314). marked, DOMPurify and qrcodejs
+- The shell loads **no cross-origin assets**. marked, DOMPurify and qrcodejs
   are vendored under `public/vendor/` by `npm run vendor:assets` (provenance
   in `public/vendor/README.md`). Don't add a CDN `<script>`/`<link>` to
   `frontend/src/head.html` — vendor or compile it instead; three tests

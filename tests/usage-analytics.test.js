@@ -1,8 +1,11 @@
 'use strict';
 
-// "Share usage analytics" (#5097): off for every account until switched on in
-// Settings > Privacy, kept on the server, and enforced there: an opted-out
-// account's usage events are dropped whatever the browser sends.
+// Usage data (Settings > Privacy). Screen usage data is recorded for every
+// account. Somebody who does not want it writes to the data protection
+// address the page gives, and an admin adds them to the Journey left-out
+// list as "objected", which erases it and stops it, on the server, whatever
+// the browser sends. There is no switch: #5593 made the same set opt-in
+// ("Share usage analytics"), and Google Analytics is gone from the app.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -11,37 +14,32 @@ const path = require('node:path');
 const express = require('express');
 
 const usageAnalytics = require('../src/services/usage-analytics');
+const leftOut = require('../src/services/journey-left-out');
 const telemetry = require('../src/services/ui-telemetry');
 const { renderComponent } = require('./lib/render-tsx');
 const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
+const exists = (relative) => fs.existsSync(path.join(ROOT, relative));
+const html = (text) => text.replace(/'/g, '&#x27;');
 
-// A users table of one column, as the service reads and writes it.
-function usersPool(initial = {}) {
-  const rows = new Map(Object.entries(initial).map(([id, on]) => [Number(id), on]));
+// The Journey left-out list as platform_settings stores it, and every query
+// the services make, recorded. A fresh pool per test: the list is cached per
+// pool.
+function listPool(entries = []) {
   const calls = [];
-  return {
-    rows,
-    calls,
-    async query(sql, params = []) {
-      const text = String(sql);
-      calls.push({ sql: text, params });
-      if (/SELECT usage_analytics FROM users WHERE id = \$1/.test(text)) {
-        return { rows: rows.has(params[0]) ? [{ usage_analytics: rows.get(params[0]) }] : [] };
-      }
-      if (/UPDATE users SET usage_analytics = \$1 WHERE id = \$2/.test(text)) {
-        if (!rows.has(params[1])) return { rows: [], rowCount: 0 };
-        rows.set(params[1], params[0]);
-        return { rows: [{ usage_analytics: params[0] }], rowCount: 1 };
-      }
-      // platform_settings (the Journey left-out list): nobody objected.
-      return { rows: [], rowCount: 0 };
-    },
-    async connect() { throw new Error('nothing may be stored'); },
-  };
+  async function query(sql, params = []) {
+    const text = String(sql);
+    calls.push({ sql: text, params });
+    if (/SELECT value FROM platform_settings WHERE key = \$1/.test(text)) {
+      return { rows: [{ value: JSON.stringify(entries) }] };
+    }
+    return { rows: [], rowCount: 0 };
+  }
+  return { calls, query, async connect() { return { query, release() {} }; } };
 }
+const objected = (userId) => ({ userId, reason: 'objected', note: 'emailed', addedAt: '2026-11-09T10:00:00Z' });
 
 async function serve(router, user, run) {
   const app = express();
@@ -57,45 +55,44 @@ async function serve(router, user, run) {
   }
 }
 
-test('the column is off by default for existing and new accounts, added idempotently', () => {
-  const schema = read('src/db/schema.sql');
-  assert.match(schema,
-    /ALTER TABLE users ADD COLUMN IF NOT EXISTS usage_analytics BOOLEAN NOT NULL DEFAULT FALSE;/);
-  assert.equal((schema.match(/usage_analytics BOOLEAN/g) || []).length, 1, 'declared once');
+test('screen usage data is recorded for everyone but who objected', async () => {
+  const pool = listPool([objected(2), { userId: 3, reason: 'test', note: '' }]);
+  assert.equal(await usageAnalytics.recordsUsage(pool, 1), true, 'recorded by default');
+  assert.equal(await usageAnalytics.recordsUsage(pool, 2), false, 'objected');
+  assert.equal(await usageAnalytics.recordsUsage(pool, 3), true, 'a test account on the list is still recorded');
+  assert.equal(await usageAnalytics.recordsUsage(pool, null), false, 'signed out');
+  assert.equal(await usageAnalytics.recordsUsage(pool, 'x'), false);
+  const src = read('src/services/usage-analytics.js');
+  assert.doesNotMatch(src, /usage_analytics FROM users|usage_left_out_at/, "no per-person switch is read: #5593's column is not");
+  assert.equal(exists('src/db/migrations/usage-left-out.sql'), false, 'and no column for one is added');
 });
 
-test('the service answers yes only for an explicit TRUE, and no when unreadable', async () => {
-  const pool = usersPool({ 1: true, 2: false });
-  assert.equal(await usageAnalytics.sharesUsageAnalytics(pool, 1), true);
-  assert.equal(await usageAnalytics.sharesUsageAnalytics(pool, 2), false);
-  assert.equal(await usageAnalytics.sharesUsageAnalytics(pool, 3), false, 'no such account');
-  assert.equal(await usageAnalytics.sharesUsageAnalytics(pool, null), false, 'signed out');
-  assert.equal(await usageAnalytics.sharesUsageAnalytics({ async query() { throw new Error('down'); } }, 1), false,
-    'a failed read never records anybody');
-  assert.equal(await usageAnalytics.setUsageAnalytics(pool, 2, true), true);
-  assert.equal(pool.rows.get(2), true);
-  assert.equal(await usageAnalytics.setUsageAnalytics(pool, 9, true), null, 'no such account');
+test('an objection erases every kind of screen usage data in the same transaction', async () => {
+  assert.deepEqual(usageAnalytics.SCREEN_USAGE_EVENT_TYPES, [
+    'ui_experience', 'ui_telemetry_delivery', 'first_session_moment',
+    'dapp_opened', 'live_build_opened', 'live_build_watched',
+  ]);
+  assert.equal(usageAnalytics.SCREEN_USAGE_EVENT_TYPES, leftOut.SCREEN_USAGE_EVENT_TYPES, 'one list');
+  const src = read('src/services/journey-left-out.js');
+  assert.match(src, /if \(reason === 'objected'\) \{\s*const res = await client\.query\(\s*'DELETE FROM events WHERE user_id = \$1 AND event_type = ANY\(\$2::text\[\]\)',\s*\[userId, SCREEN_USAGE_EVENT_TYPES\]/);
 });
 
-test('UI telemetry is recordable only for somebody who switched it on', async () => {
+test('UI telemetry is recordable for everyone but who objected, and the collector drops theirs', async () => {
   const person = (id) => ({ id, username: `person-${id}` });
-  const pool = usersPool({ 1: true, 2: false });
-  assert.equal(await telemetry.isRecordable(pool, person(1)), true);
-  assert.equal(await telemetry.isRecordable(pool, person(2)), false, 'off: not recorded');
+  const pool = listPool([objected(2)]);
+  assert.equal(await telemetry.isRecordable(pool, person(1)), true, 'recorded by default');
+  assert.equal(await telemetry.isRecordable(pool, person(2)), false, 'objected: not recorded');
   assert.equal(await telemetry.isRecordable(pool, null), false, 'signed out: not recorded');
-  assert.equal(await telemetry.isRecordable(usersPool({ 3: true }), { id: 3, username: 'usernode-capture' }), false,
-    'a service account stays out whatever its row says');
+  assert.equal(await telemetry.isRecordable(listPool(), { id: 3, username: 'usernode-capture' }), false,
+    'a service account stays out');
 
-  // A server-side failure note is dropped too.
-  const off = usersPool({ 2: false });
+  const off = listPool([objected(2)]);
   await telemetry.recordServerFailure(off, { user: person(2), get() { return null; } },
     { screen: 'report_dialog', action: 'content_report_submit', status: 500, message: 'x' });
-  assert.equal(off.calls.some(({ sql }) => /INSERT INTO events/.test(sql)), false);
-});
+  assert.equal(off.calls.some(({ sql }) => /INSERT INTO events/.test(sql)), false, 'a server-side failure note is dropped too');
 
-test('the collector drops a batch from somebody who has it off, whatever was sent', async () => {
   const { uiTelemetryRoutes } = require('../src/routes/ui-telemetry');
-  const pool = usersPool({ 2: false });
+  const collector = listPool([objected(2)]);
   const now = new Date().toISOString();
   const body = {
     schemaVersion: 2,
@@ -106,7 +103,7 @@ test('the collector drops a batch from somebody who has it off, whatever was sen
       screen: 'home', via: 'own', occurredAt: now, sequence: 1,
     }],
   };
-  await serve(uiTelemetryRoutes({}, { pool }), { id: 2, username: 'person-2' }, async (base) => {
+  await serve(uiTelemetryRoutes({}, { pool: collector }), person(2), async (base) => {
     const res = await fetch(`${base}/api/ui-telemetry/batch`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
@@ -117,73 +114,64 @@ test('the collector drops a batch from somebody who has it off, whatever was sen
     assert.equal(answer.discarded, true);
     assert.equal(answer.accepted, 0);
   });
-  assert.equal(pool.calls.some(({ sql }) => /INSERT INTO events/.test(sql)), false, 'nothing stored');
+  assert.equal(collector.calls.some(({ sql }) => /INSERT INTO events/.test(sql)), false, 'nothing stored');
 });
 
-test('GET and PUT /api/me/usage-analytics: off by default, and the choice persists', async (t) => {
-  const pool = usersPool({ 5: false });
-  const dbPool = require('../src/db/pool');
-  const realGetPool = dbPool.getPool;
-  dbPool.getPool = () => pool;
-  t.after(() => { dbPool.getPool = realGetPool; });
-  const { authRoutes } = require('../src/routes/auth');
-  const router = authRoutes({ jwtSecret: 'test-secret' });
-  const user = { id: 5, username: 'person-5' };
-  await serve(router, user, async (base) => {
-    const headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' };
-    const get = async () => (await fetch(`${base}/api/me/usage-analytics`)).json();
-    assert.deepEqual(await get(), { enabled: false, uiTelemetryEligible: false }, 'off by default');
-
-    const on = await fetch(`${base}/api/me/usage-analytics`, { method: 'PUT', headers, body: JSON.stringify({ enabled: true }) });
-    assert.equal(on.status, 200);
-    assert.deepEqual(await on.json(), { ok: true, enabled: true, uiTelemetryEligible: true });
-    assert.deepEqual(await get(), { enabled: true, uiTelemetryEligible: true }, 'kept on the server');
-
-    const off = await fetch(`${base}/api/me/usage-analytics`, { method: 'PUT', headers, body: JSON.stringify({ enabled: false }) });
-    assert.deepEqual(await off.json(), { ok: true, enabled: false, uiTelemetryEligible: false });
-    assert.equal(pool.rows.get(5), false);
-
-    const bad = await fetch(`${base}/api/me/usage-analytics`, { method: 'PUT', headers, body: JSON.stringify({ enabled: 'yes' }) });
-    assert.equal(bad.status, 400);
-  });
-  await serve(authRoutes({ jwtSecret: 'test-secret' }), null, async (base) => {
-    assert.equal((await fetch(`${base}/api/me/usage-analytics`)).status, 401, 'signed out');
-  });
+test('there is no switch to save, and the session answer says only whether to send', () => {
+  const auth = read('src/routes/auth.js');
+  assert.doesNotMatch(auth, /\/api\/me\/usage-analytics/, 'no route for a switch');
+  assert.match(auth, /uiTelemetryEligible: await uiTelemetry\.isRecordable\(pool, req\.user\),/);
+  assert.doesNotMatch(auth, /analyticsCounted|justSignedUp/, 'nothing for Google Analytics');
 });
 
-test('Settings > Privacy carries the switch, off until the saved choice is read', () => {
-  // #5097 + #5104: one Privacy page. The switch is its last block, under who
-  // can reach you and who can find you.
-  const html = renderComponent('frontend/src/features/settings/sections/privacy.tsx', 'PrivacySection', {});
-  assert.match(html, /data-settings-section="contact-privacy"/);
-  assert.match(html, /id="settings-contact-privacy-section"[\s\S]*id="settings-usage-analytics-section"/,
-    'after the contact settings');
-  assert.match(html, /<input[^>]*id="settings-usage-analytics"/);
-  assert.doesNotMatch(html, /<input[^>]*id="settings-usage-analytics"[^>]*checked=""/, 'the first render is off');
-  assert.match(html, /<input[^>]*id="settings-usage-analytics"[^>]*disabled=""|<input[^>]*disabled=""[^>]*id="settings-usage-analytics"/,
-    'and waits for the server');
-  assert.ok(html.includes(message('settings:privacy.usageAnalytics.label')));
-  // #5926: the first line says what is true now (off, in the first
-  // render); what is recorded, what never is and what switching off leaves
-  // in place are lines of their own.
-  for (const id of ['stateOff', 'records', 'neverRecords', 'alreadyRecorded']) {
-    assert.ok(html.includes(message(`settings:privacy.usageAnalytics.${id}`).replace(/'/g, '&#x27;')),
-      `with the ${id} line`);
+test('Google Analytics is gone from the app', () => {
+  for (const gone of ['public/analytics-frame.html', 'frontend/src/lib/google-analytics.ts']) {
+    assert.equal(exists(gone), false, `${gone} is removed`);
   }
-  assert.ok(!html.includes(message('settings:privacy.usageAnalytics.stateOn').replace(/'/g, '&#x27;')),
-    'not the on line while the switch is off');
-  assert.match(message('settings:privacy.usageAnalytics.records'), /^When it's on, we record: /);
-  assert.match(message('settings:privacy.usageAnalytics.neverRecords'), /^We never record: what you type or what is on screen\.$/);
-  assert.match(message('settings:privacy.usageAnalytics.alreadyRecorded'), /doesn't delete what was already recorded\.$/);
+  for (const file of ['frontend/src/main.tsx', 'public/js/app.js', 'src/middleware/auth.js', 'src/services/ui-telemetry.js', 'frontend/src/head.html']) {
+    assert.doesNotMatch(read(file), /googleAnalytics|google-analytics|analytics-frame|googletagmanager|gtag\(/i, `${file} has no trace of it`);
+  }
+  assert.doesNotMatch(read('src/prompts/app-conventions.md'), /Google Analytics/, 'no exception left for apps to point at');
+  assert.doesNotMatch(read('AGENTS.md'), /analytics-frame/);
+});
+
+test('Settings > Privacy says what is kept and where to write to be left out, with no switch', () => {
+  // #5097 + #5104: one Privacy page. Usage data is its last block, under who
+  // can reach you and who can find you.
+  const page = renderComponent('frontend/src/features/settings/sections/privacy.tsx', 'PrivacySection', {});
+  assert.match(page, /data-settings-section="contact-privacy"/);
+  assert.match(page, /id="settings-contact-privacy-section"[\s\S]*id="settings-usage-analytics-section"/,
+    'after the contact settings');
+  assert.doesNotMatch(page, /id="settings-usage-analytics"/, 'no switch');
+  for (const id of [
+    'title', 'intro', 'alwaysKept.title', 'alwaysKept.apps', 'alwaysKept.acts', 'alwaysKept.challenges',
+    'alsoRecorded.title', 'alsoRecorded.screens', 'alsoRecorded.speed', 'neverRecorded', 'leaveOut.ask',
+  ]) {
+    assert.ok(page.includes(html(message(`settings:privacy.usageAnalytics.${id}`))), `with the ${id} line`);
+  }
+  assert.match(page, /<p data-usage-analytics-ask="[^"]*">[\s\S]*<a href="mailto:dataprotection@onhomeroom\.com"[^>]*>dataprotection@onhomeroom\.com<\/a>/,
+    'the address, as the prerender ships it before the options arrive');
+  assert.match(message('settings:privacy.usageAnalytics.neverRecorded'), /^Never recorded: what you type, or what's on your screen\.$/);
+  assert.match(message('settings:privacy.usageAnalytics.alsoRecorded.title'), /for everyone: screen usage data$/);
+  assert.doesNotMatch(page, /Google Analytics|Leave me out/);
 
   const pane = read('frontend/src/features/settings/sections/usage-analytics.tsx');
-  assert.match(pane, /detail\?\.section === 'contact-privacy'\) void load\(\);/, 'read again when the page opens');
+  assert.match(pane, /useWaitlistOptions\(\)\?\.data_protection_email/, "the server's address once it arrives");
+  assert.doesNotMatch(pane, /fetch\(/, 'nothing to load or save');
   const settings = read('frontend/src/features/settings/settings.js');
   assert.doesNotMatch(settings, /key: 'privacy'/, 'no second Privacy row');
   assert.match(settings, /\{ key: 'contact-privacy', label: 'settings:nav\.part\.contactPrivacy'/);
 });
 
-test('the client sends usage analytics only on the server\'s explicit yes', () => {
+test('the data protection address is configurable and served with the legal links', () => {
+  assert.match(read('src/config.js'),
+    /dataProtectionEmail: \(process\.env\.PLATFORM_DATA_PROTECTION_EMAIL \|\| ''\)\.trim\(\) \|\| 'dataprotection@onhomeroom\.com',/,
+    'a self-hosted deployment sets its own');
+  assert.match(read('src/routes/public-api.js'),
+    /data_protection_email: config\.dataProtectionEmail \|\| 'dataprotection@onhomeroom\.com',/);
+});
+
+test('the client sends usage data only on the server\'s explicit yes', () => {
   const { loadTsx } = require('./lib/render-tsx');
   const { sharesUsageAnalytics } = loadTsx('frontend/src/lib/usage-analytics.ts');
   assert.equal(sharesUsageAnalytics({ App: { user: { id: 1, uiTelemetryEligible: true } } }), true);

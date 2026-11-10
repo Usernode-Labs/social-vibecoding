@@ -175,7 +175,7 @@ test('the page holds on "Signing you in…" from its first frame, checks, and on
   // The check and the address in one read; the options for the story's switch.
   const effect = src.slice(src.indexOf("if (!release || release.route !== 'signup' || !release.token) return undefined;"), src.indexOf('}, [release]);'));
   assert.ok(effect.length > 0, 'the effect is there');
-  const check = effect.indexOf('releaseAccountFromToken(token)');
+  const check = effect.indexOf('releaseAccountFromToken(token, { fromAdmitMail: true })');
   const decide = effect.indexOf('spendsOnLoad({ link, account, options })');
   const spend = effect.indexOf('spendReleaseLink(link.signIn!, { newAccountOnly: true })');
   assert.ok(check >= 0 && decide > check && spend > decide, 'look up, decide, then spend');
@@ -268,7 +268,7 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow and ad
   // The card is the shell's grouped list on the plane colour: 20px corners,
   // one hairline, hairlines between its rows.
   const card = html.slice(html.indexOf('data-welcome-page-points=""') - 200, html.indexOf('welcome-page-username'));
-  assert.match(card, /<div class="overflow-hidden rounded-\[20px\] shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] bg-\[color:var\(--dc-sheet-solid\)\] mx-0 mb-1 mt-3" role="list" data-welcome-page-points="">/);
+  assert.match(card, /<div class="ui-glist overflow-hidden rounded-\[20px\] shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] bg-\[color:var\(--dc-sheet-solid\)\] mx-0 mb-1 mt-3" role="list" data-welcome-page-points="">/);
   assert.equal((card.match(/role="listitem"/g) || []).length, 3, 'three rows');
   assert.equal((card.match(/\[&amp;:not\(:last-child\)\]:after:h-px/g) || []).length, 3, 'each row carries the hairline the last one drops');
   assert.equal((card.match(/\[&amp;:not\(:last-child\)\]:after:start-\[4\.25rem\]/g) || []).length, 3, 'the hairline starts where the words do, at the inline start');

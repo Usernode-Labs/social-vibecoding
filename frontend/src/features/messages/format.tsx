@@ -1,7 +1,9 @@
 import { createContext, useContext, useMemo, useState, type MouseEvent } from 'react';
 
+import { Av as KitAv, Tile as KitTile } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { messageStamp } from '../../lib/timestamp';
 import { requestHue } from './bot-request';
 import { dotText } from './bot-shared';
@@ -151,6 +153,15 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
   shape?: 'circle' | 'square';
 }) {
   const label = title || user?.username || 'Conversation';
+  // Under one of the frame's looks a face is the kit's: a circle in the
+  // person's own colour, the bot's the Homeroom tile (the tour's av()).
+  // Its sizes are the kit's three: 24, 32 and 40.
+  const frame = isFrameSkin(useLiveSkin());
+  if (frame) {
+    const px = size === 'sm' ? 24 : size === 'lg' ? 40 : 32;
+    if (user?.bot) return <KitTile size={px} src={BOT_AVATAR} name={label} />;
+    return <KitAv size={px} name={label} src={user?.avatarUrl} color={swatchFor(label)} />;
+  }
   const sizeClass = size === 'sm' ? 'w-7 h-7 text-[10px]' : size === 'lg' ? 'w-11 h-11 text-sm' : 'w-9 h-9 text-xs';
   const square = shape === 'square';
   const radius = square ? (size === 'sm' ? 'rounded-lg' : 'rounded-xl') : 'rounded-full';
@@ -303,11 +314,16 @@ export function cardProjectWords(object: Pick<SharedObjectCard, 'type' | 'appSlu
   return translate('messages:object.fromProject', { project });
 }
 
-export function ObjectCard({ object, compact = false, inboxOnly = false }: {
+export function ObjectCard({ object, compact = false, inboxOnly = false, onOpen }: {
   object: SharedObjectCard;
   compact?: boolean;
   /** Drawn in an app's discussion: see `recordObjectOrigin`. */
   inboxOnly?: boolean;
+  /**
+   * #6248: what pressing a card with no `href` does (a draft offered for
+   * filing): it becomes a button with the › every openable card shows.
+   */
+  onOpen?: () => void;
 }) {
   const t = useMessages('messages');
   const home = useContext(CardHomeContext);
@@ -331,12 +347,13 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
           </div>
         ) : null}
       </div>
-      {object.href ? <span aria-hidden="true" className="text-zinc-500 dark:text-zinc-400">›</span> : null}
+      {object.href || onOpen ? <span aria-hidden="true" className="text-zinc-500 dark:text-zinc-400">›</span> : null}
     </>
   );
   return object.href ? (
     <a href={object.href} className="messages-object-card" target={object.href.startsWith('http') ? '_blank' : undefined} rel="noopener noreferrer" onClick={(event) => recordObjectOrigin(event, object.href as string, inboxOnly)}>{body}</a>
-  ) : <div className="messages-object-card">{body}</div>;
+  ) : onOpen ? <button type="button" className="messages-object-card w-full text-start" onClick={onOpen}>{body}</button>
+    : <div className="messages-object-card">{body}</div>;
 }
 
 export function fileSize(bytes: number): string {

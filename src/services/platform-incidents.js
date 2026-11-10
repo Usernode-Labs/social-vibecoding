@@ -28,6 +28,13 @@ const KINDS = Object.freeze({
   // person would (homeroom-bot-flaky-checks.js): synced, filed or found its
   // fix, building, rechecking, green or person (detail.outcome).
   CHECKS_FIXING_FLAKE: 'checks_fixing_flake',
+  // The leaked-link guard (community-invites.js GUARD): one invite link
+  // brought in its notice line of people within a day, or reached its pause
+  // line and paused. Its maker is told too (invite-activity.js noteGuard);
+  // these let the full admins see it. { inviteId, joins, why }, never the
+  // token.
+  INVITE_LINK_BUSY: 'invite_link_busy',
+  INVITE_LINK_PAUSED: 'invite_link_paused',
 });
 
 // How far back the console looks, and how many it lists.
