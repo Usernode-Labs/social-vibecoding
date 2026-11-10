@@ -518,3 +518,9 @@ hangs under whichever mark has a box (`visibleMark()` in
 features/app-context/index.tsx), its outside-click guard spares the
 frame's button, and Escape gives focus back to it. The phone bar's
 leading brand tile went: the mark at the end is the brand now.
+- **The menu wears the look** (same evening): `#apps-switcher-sheet` is
+  drawn with the kit as the sign-in sheet is (app.css, THE HOMEROOM MENU):
+  the look's ground, shadow and ring, the Suggest row as the kit's button
+  and the Go to Homeroom card as the kit's card (wear map), rows in the
+  look's ink with its hover, the small print muted, the accent on what
+  asks for you. Its rows, panes and controller are untouched.

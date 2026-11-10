@@ -197,3 +197,29 @@ test('the chrome\'s words are catalog text', () => {
     assert.ok(en[k] && typeof en[k].text === 'string' && en[k].description, k);
   }
 });
+
+test('the Homeroom menu wears the look: the kit\'s sheet, its primary button, its rows and its small print', () => {
+  // The menu stays the product's (its rows, its panes, its controller);
+  // what it is drawn with under a look is the kit's, as the sign-in sheet
+  // is: the look's ground and shadow, the accent-filled Suggest row as the
+  // kit's button, the rows in the look's ink with the look's hover, the
+  // Homeroom card as the look's card, the legal links and the version muted.
+  const looks = JSON.parse(read('frontend/looks/looks.json'));
+  assert.ok(looks.wear.roots.btn.to.includes('#improve-row-feedback'), 'its one filled control is the kit\'s button');
+  assert.ok(looks.wear.roots.card.to.includes('#app-menu-homeroom-card'), 'the Go to Homeroom card is the kit\'s card');
+  const css = read('public/css/app.css');
+  assert.ok(css.includes('THE HOMEROOM MENU'));
+  const hand = css.slice(css.indexOf('THE HOMEROOM MENU'), css.indexOf('/* looks:begin'));
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) #apps-switcher-sheet \{[^}]*background: var\(--fr-solid, var\(--fr-ground\)\);[^}]*backdrop-filter: none;[^}]*box-shadow: var\(--fr-sh\), inset 0 0 0 1px var\(--fr-line\);[^}]*border-radius: 24px;[^}]*color: var\(--fr-ink\);[^}]*font-family: var\(--fr-f\);/);
+  assert.match(hand, /@media \(max-width: 639\.98px\) \{[^}]*#apps-switcher-sheet \{ border-radius: 24px 24px 0 0; \}/, 'a phone\'s bottom sheet keeps its square foot');
+  assert.match(hand, /#apps-switcher-title \{ color: var\(--fr-ink\); \}/);
+  assert.match(hand, /#apps-switcher-close \{ background: var\(--fr-sunk\); color: var\(--fr-ink\); \}/);
+  assert.match(hand, /#switcher-nav :is\(a, button\)(?:[^{]*) \{ color: var\(--fr-ink\); \}/, 'rows in the look\'s ink');
+  assert.match(hand, /#switcher-nav :is\(a, button\):hover \{ background: var\(--fr-sunk\); \}/, 'the look\'s hover');
+  assert.match(hand, /#switcher-nav :is\(a, button\) :is\(\.text-zinc-500, \.text-zinc-400\),[^{]*#app-menu-legal,[^{]*#app-menu-version \{ color: var\(--fr-mut\); \}/, 'the small print muted');
+  assert.match(hand, /#switcher-nav :is\(\.text-violet-600, \.text-violet-400\) \{ color: var\(--fr-acc\); \}/, 'what asks for you in the accent');
+  // The hooks those rules read are the menu's own.
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  for (const hook of ['id="apps-switcher-sheet"', 'id="apps-switcher-title"', 'id="apps-switcher-close"', 'id="switcher-nav"', 'id="app-menu-homeroom-card"', 'id="app-menu-legal"', 'id="app-menu-version"']) assert.ok(sheet.includes(hook), hook);
+  assert.ok(read('frontend/src/features/improve/actions.tsx').includes('id="improve-row-feedback"'));
+});
