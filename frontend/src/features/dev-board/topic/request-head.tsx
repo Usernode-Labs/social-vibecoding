@@ -70,9 +70,10 @@ import { usePanelHead } from '../../side-panel/head-store';
 import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
 import { useFramePage } from '../../frame/frame-page-store';
 import { placeName } from '../workshop/places';
-import { TopicFrameAbout, TopicFrameHead } from './frame/topic-frame';
+import { TopicFrameAbout, TopicFrameHead, TopicFrameStatus } from './frame/topic-frame';
 import { useSideStack } from './frame/side-stack';
-import { dotLine, topicBack } from './frame/topic-page';
+import { useFollowRow } from './frame/topic-follow';
+import { dotLine, frameStop, topicBack } from './frame/topic-page';
 
 function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -362,14 +363,17 @@ function RequestEditor({ r, onClose }: { r: RequestView; onClose: () => void }):
  * is at marked; one sentence; the claim's lapse in small words; and the one
  * thing this viewer would do next. A step already done gets no fill.
  */
-function RequestStatus({ s, specs, tracked = false }: {
+function RequestStatus({ s, specs, tracked = false, frame = false }: {
   s: RequestStatusView;
   specs: RequestSpecCard[];
   /** Homeroom bot's track card follows, with its own steps (TrackBar): one
       row of steps on the page, not two that disagree (polish board #12). */
   tracked?: boolean;
+  /** Under one of the frame's looks: the kit's status card (./frame/topic-frame.tsx). */
+  frame?: boolean;
 }): ReactNode {
   const t = useMessages('project');
+  const tc = useMessages('changes');
   const stage = requestStage(s.stage, specs.length);
   const at = STAGES.findIndex((step) => step.key === stage);
   // Voted in is the end: every stop is done.
@@ -381,6 +385,22 @@ function RequestStatus({ s, specs, tracked = false }: {
     : null;
   const say = sentences([s.lead, s.note || specLine]);
   const a = s.action;
+  if (frame) {
+    const stop = s.closed || tracked ? null : frameStop(stage);
+    return (
+      <div className="dev-request-status" role="group" aria-label={t('project:topic.request.status.label')} data-request-stage={stage}>
+        <TopicFrameStatus
+          pill={s.closed ? null : { word: t(STAGES[at].label), kind: a && !a.disabled ? 'act' : '' }}
+          at={stop ? stop.at : null}
+          state={stop ? stop.state : 'now'}
+          words={[tc('changes:track.plan'), tc('changes:track.build'), tc('changes:track.checks'), tc('changes:track.vote'), tc('changes:track.live')]}
+          say={s.closed || say || null}
+          fine={s.fine}
+          action={a ? { label: a.label, title: a.title, disabled: a.disabled, href: a.href, onClick: () => { if (a.act) call(a.act.fn, a.act.args || []); } } : null}
+        />
+      </div>
+    );
+  }
   return (
     <div className="dev-request-status" role="group" aria-label={t('project:topic.request.status.label')} data-request-stage={stage}>
       {s.closed || tracked ? null : (
@@ -607,6 +627,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     }] : []),
   ]);
   const threadMenu = ownAgent || agentSession || !!threadRead.data?.follow;
+  const followRow = useFollowRow(threadRead.data || null, threadRead.reread);
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
@@ -663,7 +684,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             />
           )}
           {working && !r.status.closed ? null : (
-            <RequestStatus s={r.status} specs={specs} tracked={!!track} />
+            <RequestStatus s={r.status} specs={specs} tracked={!!track} frame={frame} />
           )}
           {/* #6207/#6210: Homeroom bot's plan, public, with Build it for any member. */}
           {working || r.status.closed || !slug ? null : <RequestPlan slug={slug} number={r.number} specs={specs} />}
@@ -699,6 +720,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               line={r.askedTime ? t('project:frame.topic.asked', { when: r.askedTime }) : null}
               topic={r.category}
               topicLine={t('project:frame.topic.topic')}
+              follow={followRow ? { title: t('project:frame.topic.follow'), line: t('project:frame.topic.followLine'), ...followRow } : null}
             />
           ) : null}
         </div>

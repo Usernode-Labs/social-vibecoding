@@ -6662,5 +6662,13 @@
   "frame.allItems.loading": {
     "text": "Loading…",
     "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Shown in place of the list while the board is being read."
+  },
+  "frame.topic.follow": {
+    "text": "Follow this request",
+    "description": "A request's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of the row in the About column whose switch turns notifications for this request on or off."
+  },
+  "frame.topic.followLine": {
+    "text": "Replies and status changes",
+    "description": "A request's page under one of the frame's looks: the line under \"Follow this request\", saying what following brings."
   }
 }

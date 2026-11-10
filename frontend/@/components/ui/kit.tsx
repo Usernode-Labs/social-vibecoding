@@ -458,7 +458,7 @@ export function Field({ label, icon, before, hint, tone, bad, ...input }: {
 }
 
 /** An on or off setting on a row: the kit's switch, as a real one. */
-export function Tog({ on, onChange, label }: { on: boolean; onChange: (next: boolean) => void; label: string }) {
+export function Tog({ on, onChange, label, disabled, ...props }: { on: boolean; onChange: (next: boolean) => void; label: string; disabled?: boolean } & Record<`data-${string}`, string | undefined>) {
   return (
     <button
       type="button"
@@ -466,7 +466,9 @@ export function Tog({ on, onChange, label }: { on: boolean; onChange: (next: boo
       aria-checked={on}
       aria-label={label}
       className={k('tog', on && 'on')}
+      disabled={disabled}
       onClick={(event) => { event.stopPropagation(); onChange(!on); }}
+      {...props}
     />
   );
 }

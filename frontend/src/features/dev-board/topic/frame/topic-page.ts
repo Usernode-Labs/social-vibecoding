@@ -14,3 +14,16 @@ export function dotLine(parts: readonly (string | null | undefined | false)[]): 
   const said = parts.filter((part): part is string => typeof part === 'string' && part !== '');
   return said.length ? said.reduce((first, second) => translate('project:workRow.facts.pair', { first, second })) : '';
 }
+
+/**
+ * Where a request stands on the kit's five stops (Plan, Build, Checks,
+ * Vote, Live): asked, the plan is being made; a plan ready, the build
+ * waits for a go; built, a change is under way; voted in, every stop is
+ * done. Checks and Vote belong to the change, which says them itself.
+ */
+export function frameStop(stage: 'asked' | 'spec' | 'built' | 'voted'): { at: number; state: 'now' | 'wait' } {
+  if (stage === 'spec') return { at: 1, state: 'wait' };
+  if (stage === 'built') return { at: 1, state: 'now' };
+  if (stage === 'voted') return { at: 5, state: 'now' };
+  return { at: 0, state: 'now' };
+}
