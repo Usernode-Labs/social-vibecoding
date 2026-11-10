@@ -890,5 +890,53 @@
   "header.themeDark": {
     "text": "Switch to dark mode",
     "description": "Header theme toggle tooltip when light mode is active."
+  },
+  "frame.brand": {
+    "text": "Homeroom",
+    "description": "The product's name beside its mark at the top of the sidebar, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). A name: do not translate."
+  },
+  "frame.bot": {
+    "text": "Bot",
+    "description": "Short label of the Homeroom bot tab in the phone's tab bar, when the interface is drawn in one of the frame's looks (an admin's preview). The sidebar says Homeroom bot in full; the bar has room for one short word."
+  },
+  "frame.navigation": {
+    "text": "Homeroom",
+    "description": "Accessible name of the sidebar and of the phone's tab bar as navigation landmarks, when the interface is drawn in one of the frame's looks (an admin's preview). The product's name."
+  },
+  "frame.menu.handle": {
+    "text": "@{{username}}",
+    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one line under the person's name: their username with an at sign."
+  },
+  "frame.menu.profile": {
+    "text": "Your profile",
+    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row that opens the person's own profile."
+  },
+  "frame.menu.darkTheme": {
+    "text": "Dark theme",
+    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row with a switch: turns the dark theme on or off."
+  },
+  "frame.menu.invite": {
+    "text": "Invite people",
+    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row under the Homeroom label: opens inviting people to Homeroom."
+  },
+  "frame.menu.about": {
+    "text": "About Homeroom",
+    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row under the Homeroom label: opens what this build of Homeroom is. Homeroom is the product's name."
+  },
+  "frame.menu.signOut": {
+    "text": "Sign out",
+    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The last row: signs the person out."
+  },
+  "frame.menu.open": {
+    "text": "Account menu",
+    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Accessible name of the control that opens this menu."
+  },
+  "frame.menu.suggest": {
+    "text": "Suggest an improvement",
+    "description": "The account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the row under Homeroom that opens the Improve panel, as the logo menu's row does."
+  },
+  "frame.menu.homeScreen": {
+    "text": "Add Homeroom to your home screen",
+    "description": "The account menu under one of the frame's looks, on a phone's browser: the row that shows the steps to put Homeroom on the home screen, as the logo menu's row does."
   }
 }

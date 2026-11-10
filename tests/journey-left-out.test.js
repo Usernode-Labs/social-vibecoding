@@ -49,13 +49,12 @@ test('the list: add, replace, object (erasing and stopping telemetry), remove, a
     });
     await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
-    // The three whose recording is asked about switched "Share usage
-    // analytics" on (#5097): this list decides who is left out or erased,
-    // never who agreed to be recorded in the first place.
+    // Screen usage data is recorded for everyone (services/usage-analytics.js):
+    // an "objected" entry on this list is what stops it and erases it.
     const { rows: people } = await pool.query(
-      `INSERT INTO users (username, password, is_admin, admin_readonly, usage_analytics) VALUES
-         ('lead', 'x', TRUE, FALSE, FALSE), ('viewer', 'x', TRUE, TRUE, FALSE), ('tester', 'x', FALSE, FALSE, TRUE),
-         ('objector', 'x', FALSE, FALSE, TRUE), ('member', 'x', FALSE, FALSE, TRUE)
+      `INSERT INTO users (username, password, is_admin, admin_readonly) VALUES
+         ('lead', 'x', TRUE, FALSE), ('viewer', 'x', TRUE, TRUE), ('tester', 'x', FALSE, FALSE),
+         ('objector', 'x', FALSE, FALSE), ('member', 'x', FALSE, FALSE)
        RETURNING id, username`
     );
     const [lead, viewer, tester, objector, member] = people;
@@ -65,6 +64,8 @@ test('the list: add, replace, object (erasing and stopping telemetry), remove, a
         `INSERT INTO events (user_id, event_type, metadata) VALUES
            ($1, 'ui_experience', '{"kind":"screen_visit","screen":"home"}'),
            ($1, 'ui_telemetry_delivery', '{"batchId":"b"}'),
+           ($1, 'dapp_opened', '{"openingId":"o"}'),
+           ($1, 'first_session_moment', '{"kind":"made_seen"}'),
            ($1, 'pr_vote_cast', '{}')`,
         [who.id]
       );
@@ -76,18 +77,16 @@ test('the list: add, replace, object (erasing and stopping telemetry), remove, a
 
     const objected = await leftOut.add(pool, { userId: objector.id, reason: 'objected', note: 'asked by email' },
       { actorId: lead.id });
-    assert.equal(objected.erased, 2, 'both observations and receipts are erased');
+    assert.equal(objected.erased, 4, 'every kind of screen usage data is erased: observations, receipts, app openings, made-screen moments');
     const left = await pool.query('SELECT event_type FROM events WHERE user_id = $1', [objector.id]);
     assert.deepEqual(left.rows.map((r) => r.event_type), ['pr_vote_cast'], 'nothing else of theirs is touched');
-    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM events WHERE user_id = $1', [member.id])).rows[0].n, 3,
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM events WHERE user_id = $1', [member.id])).rows[0].n, 5,
       'nobody else is touched');
     assert.equal(await telemetry.isRecordable(pool, { id: objector.id, username: 'objector' }), false,
       'an objector is no longer recorded');
     assert.equal(await telemetry.isRecordable(pool, { id: member.id, username: 'member' }), true);
-    await pool.query('UPDATE users SET usage_analytics = FALSE WHERE id = $1', [member.id]);
-    assert.equal(await telemetry.isRecordable(pool, { id: member.id, username: 'member' }), false,
-      'and nobody is recorded without switching usage analytics on (#5097)');
-    await pool.query('UPDATE users SET usage_analytics = TRUE WHERE id = $1', [member.id]);
+    const usageAnalytics = require('../src/services/usage-analytics');
+    assert.equal(await usageAnalytics.recordsUsage(pool, objector.id), false, 'nor are their app openings or Live views');
 
     await leftOut.add(pool, { userId: tester.id, reason: 'test', note: 'renamed' }, { actorId: lead.id });
     const listed = await leftOut.list(pool);

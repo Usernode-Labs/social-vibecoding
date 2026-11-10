@@ -145,7 +145,7 @@ test('Q18: Your communities and the Homeroom menu take focus, rove, and give it 
   assert.match(sw, /if \(adoption\) adoption\.release\(\);\s*previousFocus\?\.focus\?\.\(\);/, 'and so does the sheet');
   const ctx = read('frontend/src/features/app-context/index.tsx');
   assert.match(ctx, /roveMenuFocus\(event, el, SHEET_ROWS\)/);
-  assert.match(ctx, /if \(inside\) document\.getElementById\(MARK_ID\)\?\.focus\(/);
+  assert.match(ctx, /if \(inside\) visibleMark\(\)\?\.focus\(/, 'to the mark that has a box: the standard header\'s, or the frame bar\'s under a look');
   assert.match(ctx, /const touring = !!tour && !tour\.classList\.contains\('hidden'\);/,
     'the welcome tour drives this menu and keeps its own focus');
 });

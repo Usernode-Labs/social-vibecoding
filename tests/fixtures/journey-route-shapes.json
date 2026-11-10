@@ -60,6 +60,9 @@
         "withAccount": "number"
       }
     ],
+    "invited": {
+      "people": "number"
+    },
     "otherWay": {
       "people": "number"
     }
@@ -78,17 +81,23 @@
         "daysSince": "number",
         "door": "string",
         "failedAttempts": "number",
+        "fromEmail": "object",
         "furthest": "string",
         "hasAccount": "boolean",
+        "invite": "object",
         "mail": "object",
+        "mailPage": "object",
         "name": "string",
+        "onboard": "object",
         "repeatedTaps": "number",
         "signupId": "number",
+        "signupMethod": "string",
         "steps": "object",
         "stuckAt": "string",
         "stuckReason": "string",
         "tour": "object",
         "userId": "number",
+        "waitlist": "object",
         "welcome": "object"
       }
     ],
@@ -167,6 +176,22 @@
   },
   "person": {
     "cameBackTo": [],
+    "cameIn": {
+      "door": "string",
+      "fromEmail": "object",
+      "invite": "object",
+      "mailPage": "object",
+      "signupMethod": "string",
+      "waitlist": {
+        "answeredFollowUp": "boolean",
+        "discovery": "object",
+        "joinedAt": "string",
+        "projectInvite": "boolean",
+        "referred": "boolean",
+        "source": "object",
+        "waitedDays": "number"
+      }
+    },
     "cameFrom": {},
     "challenges": {
       "credits": [],

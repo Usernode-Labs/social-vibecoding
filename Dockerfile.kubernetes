@@ -87,6 +87,7 @@ RUN apk upgrade --no-cache && apk add --no-cache git postgresql-client
 
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
+COPY vendor/decode-uri-component ./vendor/decode-uri-component
 # The download cache stays out of this layer too (see asset-deps): here it
 # would ship in the image every pod pulls, in a directory only root can read.
 RUN npm ci --omit=dev --cache /tmp/npm-cache && rm -rf /tmp/npm-cache

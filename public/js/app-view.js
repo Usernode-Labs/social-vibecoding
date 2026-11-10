@@ -12436,6 +12436,9 @@ const AppView = {
         ...base, kind: 'request', noun: 'request', n: Number(it.number) || null,
         category: cat ? cat.label : '', replies: Number(it.chatCount) || 0,
         stage: ws && ws.key !== 'claimed' && ws.key !== 'in_review' ? 'worked' : (ws && ws.key === 'in_review' ? 'vote' : 'request'),
+        // Nobody has taken it (the Workshop's "Nobody is on these"), so a
+        // row can say so where it would otherwise only name its column.
+        unclaimed: AppView._issueUnclaimed(it),
         at: ts(it.createdAt || it.created_at), ago: agoOf(it.createdAt || it.created_at),
       };
     }

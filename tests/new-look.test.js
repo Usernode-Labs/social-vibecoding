@@ -183,7 +183,12 @@ test('Geist loads from our own origin by an absolute path, and only for the new 
     'the face points at the self-hosted file by an absolute, same-origin path');
   const css = read('public', 'css', 'app.css');
   const before = css.slice(0, css.indexOf('/* ── THE NEW LOOK, AN EXPERIMENT'));
-  assert.ok(!/Geist/.test(before), 'nothing outside the new look names Geist');
+  // The Brand kit look (one of the frame's nine, tests/frame-looks.test.js)
+  // sets Geist too, by design, from this block's @font-face; its own block
+  // is set aside, and nothing else names the family.
+  const kit = before.indexOf('/* ── THE BRAND KIT LOOK');
+  const rest = kit < 0 ? before : before.slice(0, kit) + before.slice(before.indexOf('\n/* ── ', kit + 1));
+  assert.ok(!/Geist/.test(rest), 'nothing outside the new look and the Brand kit look names Geist');
 });
 
 test('/fonts/ is a public static prefix, like /vendor/', () => {

@@ -477,13 +477,13 @@ export function firstStepLine(from: 'invite' | 'story' | 'signin', signIn = fals
 
 /**
  * Whether a step carries the Email code | Password switch (#5258): the email
- * and password steps, wherever the sheet may be for an account somebody has.
+ * chooser, email and password steps, wherever the sheet may be for an account somebody has.
  * An invite's Join makes an account, so it has no switch until "Already on
  * Homeroom? Sign in" is pressed (`signIn`); a right code for a password
  * account still takes it to the password step, with the old link back.
  */
 export function hasMethodSwitch(step: string, from: 'invite' | 'story' | 'signin', signIn = false): boolean {
-  return (step === 'email' || step === 'password') && firstStepLine(from, signIn) === 'password';
+  return (step === 'choose' || step === 'email' || step === 'password') && firstStepLine(from, signIn) === 'password';
 }
 
 /** The steps an invite's Join can open on. */
@@ -1627,7 +1627,17 @@ export function SignInSheet({
   if (!open) return null;
 
   const methodSwitch = hasMethodSwitch(step, from, signIn);
-  const toStep = (next: Step) => { setError(null); setDetails(null); setResetSent(false); setStep(next); };
+  const toStep = (next: Step) => {
+    if (next === 'password' && (step === 'choose' || step === 'email')) {
+      const typed = (firstField.current?.value || email).trim();
+      identifierPrefill.current = typed;
+      setEmail(typed);
+    } else if (next === 'email' && step === 'password') {
+      const typed = (identifierField.current?.value || '').trim();
+      if (typed.includes('@')) setEmail(typed);
+    }
+    setError(null); setDetails(null); setResetSent(false); setStep(next);
+  };
   // An invite's links (`inviteWays`), each to its step and to signing in or not.
   const takeWay = (way: InviteWay) => {
     const to = inviteWayTarget(way, startStep);
@@ -1637,20 +1647,6 @@ export function SignInSheet({
   const ways = phone ? inviteWays(step, signIn) : [];
   const wayLine = (way: InviteWay) => <InviteWayLink key={way} way={way} onTake={takeWay} />;
 
-  // The way to a password, where the sheet may be for an account somebody
-  // has: under the first step's email, and nothing else under it (#5257).
-  const passwordLink = firstStepLine(from, signIn) === 'password' ? (
-    <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-      <a
-        href="#login"
-        data-sign-in-sheet-password=""
-        onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
-        className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-      >
-        {t('auth:signInSheet.withPassword')}
-      </a>
-    </p>
-  ) : null;
   // Under the email step's button: the terms only where the sheet only makes
   // an account (an invite's Join). Elsewhere sending a code makes nothing;
   // the code step, whose right code can, says them (#5257).
@@ -1769,7 +1765,7 @@ export function SignInSheet({
         {sub ? <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p> : null}
         {methodSwitch ? (
           <div role="radiogroup" aria-label={t('auth:signInSheet.method.label')} data-sign-in-sheet-method="" className={SWITCH_TRACK}>
-            <button type="button" role="radio" aria-checked={step === 'email'} data-sign-in-sheet-method-email="" className={step === 'email' ? SWITCH_ON : SWITCH_OFF} onClick={() => { if (step !== 'email') toStep('email'); }}>
+            <button type="button" role="radio" aria-checked={step !== 'password'} data-sign-in-sheet-method-email="" className={step !== 'password' ? SWITCH_ON : SWITCH_OFF} onClick={() => { if (step === 'password') toStep('email'); }}>
               {t('auth:signInSheet.method.emailCode')}
             </button>
             <button type="button" role="radio" aria-checked={step === 'password'} data-sign-in-sheet-method-password="" className={step === 'password' ? SWITCH_ON : SWITCH_OFF} onClick={() => { if (step !== 'password') toStep('password'); }}>
@@ -1802,7 +1798,6 @@ export function SignInSheet({
             {phoneLink && !phone ? (
               <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:signInSheet.toPhoneLink')}</button>
             ) : null}
-            {passwordLink}
             {/* An invite's Join: the phone, and the way in for an account made before (`inviteWays`). */}
             {ways.map(wayLine)}
           </div>

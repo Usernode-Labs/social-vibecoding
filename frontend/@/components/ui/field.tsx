@@ -41,11 +41,11 @@ export interface SectionHeadingProps {
 function SectionHeading({ title, children, className, blurbClassName }: SectionHeadingProps) {
   return (
     <>
-      <h3 className={cn('text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1', className)}>
+      <h3 className={cn('ui-sechead text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1', className)}>
         {title}
       </h3>
       {children === undefined ? null : (
-        <p className={cn('text-xs text-zinc-500 dark:text-zinc-500 mb-3', blurbClassName)}>
+        <p className={cn('ui-secblurb text-xs text-zinc-500 dark:text-zinc-500 mb-3', blurbClassName)}>
           {children}
         </p>
       )}

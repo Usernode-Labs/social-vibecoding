@@ -600,7 +600,7 @@ test('waitlist options: the seven question maps are served untouched beside it',
     }
     assert.deepEqual(
       Object.keys(body).sort(),
-      [...Object.keys(expected), 'account_deletion_link', 'child_safety_link', 'marketing_url', 'native_sign_in_providers', 'phone_sign_in', 'privacy_link', 'sign_in_providers', 'story_landing', 'terms_link', 'waitlist_url'].sort(),
+      [...Object.keys(expected), 'account_deletion_link', 'child_safety_link', 'data_protection_email', 'marketing_url', 'native_sign_in_providers', 'phone_sign_in', 'privacy_link', 'sign_in_providers', 'story_landing', 'terms_link', 'waitlist_url'].sort(),
       'the public payload grew or lost a field'
     );
     // And the service's own constants are unmutated by the spread: the live
@@ -641,24 +641,27 @@ test('a waitlist join stores where the landing page sent them, a host only (#654
     await join({ email: 'ada@example.com', referrer_host: 'https://discord.com/channels/12?secret=1',
       utm_source: 'x', utm_campaign: 'launch', ref: 'post-1' });
     const first = calls.find((c) => /INSERT INTO waitlist_signups/.test(c.sql));
-    assert.deepEqual(first.params.slice(5), ['discord.com', 'x', 'launch', 'post-1']);
+    // $6 is which form the signup came from (Admin › Journey's "where they
+    // signed up"); the landing page's arrival facts follow it.
+    assert.equal(first.params[5], 'form');
+    assert.deepEqual(first.params.slice(6), ['discord.com', 'x', 'launch', 'post-1']);
 
     // Present but empty: looked for, none given, never a blank field.
     calls.length = 0;
     await join({ email: 'bo@example.com', referrer_host: '' });
     const none = calls.find((c) => /INSERT INTO waitlist_signups/.test(c.sql));
-    assert.deepEqual(none.params.slice(5), ['none', null, null, null]);
+    assert.deepEqual(none.params.slice(6), ['none', null, null, null]);
 
     // Absent: not recorded at all.
     calls.length = 0;
     await join({ email: 'cy@example.com' });
     const absent = calls.find((c) => /INSERT INTO waitlist_signups/.test(c.sql));
-    assert.deepEqual(absent.params.slice(5), [null, null, null, null]);
+    assert.deepEqual(absent.params.slice(6), [null, null, null, null]);
 
     // A tag that fails its pattern is dropped, not stored.
     calls.length = 0;
     await join({ email: 'di@example.com', utm_source: 'two words', utm_campaign: 'a/b', ref: '<script>' });
     const bad = calls.find((c) => /INSERT INTO waitlist_signups/.test(c.sql));
-    assert.deepEqual(bad.params.slice(5), [null, null, null, null]);
+    assert.deepEqual(bad.params.slice(6), [null, null, null, null]);
   } finally { await srv.close(); }
 });

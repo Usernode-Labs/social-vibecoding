@@ -1,0 +1,55 @@
+/* C · Aurora glass. The wallpaper is the room; everything else is frosted glass floating in it. */
+.hr{--surface:rgba(255,255,255,.58);--sunk:rgba(55,71,123,.09);--ink:#1a1e3c;--mut:#565c82;--faint:#8b90b0;--line:rgba(55,71,123,.13);--line2:rgba(55,71,123,.08);
+  --acc:#3b55e6;--acc-ink:#fff;--acc-t:rgba(59,85,230,.12);--lit:#2b3769;--lit-t:rgba(55,71,123,.11);--ring:rgba(255,255,255,.8);--glow:0 22px 44px -30px rgba(55,71,123,.55);
+  --f:"Albert Sans",system-ui,-apple-system,"Segoe UI",sans-serif;font-family:var(--f)}
+.hr.dark{--surface:rgba(255,255,255,.065);--sunk:rgba(255,255,255,.08);--ink:#f1f0fa;--mut:#aeb0cf;--faint:#7a7d9e;--line:rgba(255,255,255,.12);--line2:rgba(255,255,255,.07);
+  --acc:#8ea2ff;--acc-ink:#0a0f2c;--acc-t:rgba(142,162,255,.16);--lit:#dfe3ff;--lit-t:rgba(199,208,245,.14);--ring:rgba(255,255,255,.12);--glow:0 22px 44px -30px rgba(0,0,0,.9)}
+.app{grid-template-columns:260px minmax(0,1fr)}
+.side{margin:12px 0 12px 12px;padding:14px 10px 10px;border-right:0;border-radius:28px;background:var(--surface);backdrop-filter:blur(26px) saturate(1.5);-webkit-backdrop-filter:blur(26px) saturate(1.5);box-shadow:inset 0 0 0 1px var(--ring),var(--glow)}
+.brand{font-size:18px;font-weight:700;letter-spacing:-.02em;margin-bottom:12px}
+.nv{height:40px;padding:0 12px;border-radius:14px;font-weight:600}
+.nv.on{background:var(--ink);color:var(--ground)}.nv.on .ic{color:var(--ground)}
+.cap{font-size:13px;font-weight:650;letter-spacing:0;text-transform:none;color:var(--mut)}
+.side .cap{padding:18px 12px 8px}
+.sidefoot{border-top:1px solid var(--line)}
+.bar{height:64px;border-bottom:0;padding:0 32px}
+.crumb{font-size:13.5px}
+.ib{background:var(--surface);box-shadow:inset 0 0 0 1px var(--ring)}
+.ib .dot{box-shadow:0 0 0 2px var(--ring)}
+.banner{margin:0 32px;border:0;border-radius:16px;background:var(--surface);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:inset 0 0 0 1px var(--ring);min-height:40px}
+.phone .banner{margin:0 12px}
+.inner{padding:20px 32px 48px}
+.title{font-size:36px;font-weight:700;letter-spacing:-.035em;line-height:1.08}
+.phone .title{font-size:28px}
+.purpose{font-size:16px}
+.tabs{border-bottom:0;gap:4px;padding:4px;margin:-4px 0 24px;border-radius:999px;background:var(--surface);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:inset 0 0 0 1px var(--ring);width:fit-content;max-width:100%}
+.phone .tabs{gap:2px;margin-right:0}
+.tab{height:34px;padding:0 16px;border-radius:999px;font-size:14px}
+.phone .tab{padding:0 12px}
+.tab.on{background:var(--ink);color:var(--ground)}.tab.on::after{display:none}
+.tab.on .n{background:var(--ground);color:var(--ink)}
+.card{border-radius:24px;background:var(--surface);backdrop-filter:blur(22px) saturate(1.4);-webkit-backdrop-filter:blur(22px) saturate(1.4);box-shadow:inset 0 0 0 1px var(--ring),var(--glow)}
+.row{min-height:64px;padding:10px 18px;gap:14px}.row.sm{min-height:50px}
+.row.on{background:var(--lit-t)}
+.lead{border-radius:50%;background:var(--surface);box-shadow:inset 0 0 0 1px var(--ring)}
+.tile{box-shadow:inset 0 0 0 1px rgba(0,0,0,.06),0 6px 14px -8px rgba(26,30,60,.5)}
+.btn{box-shadow:0 12px 24px -12px var(--acc)}
+.btn.quiet{background:var(--surface);box-shadow:inset 0 0 0 1px var(--ring)}.btn.line{box-shadow:inset 0 0 0 1px var(--line)}.btn.ok{box-shadow:0 12px 24px -12px var(--ok)}.btn.bad{box-shadow:none}
+.fact .v{font-size:28px;letter-spacing:-.03em}
+.inp{background:var(--surface);border-radius:16px;box-shadow:inset 0 0 0 1px var(--line)}
+.inp.focus{background:var(--surface)}
+.search .inp{backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:inset 0 0 0 1px var(--ring)}
+.pic{border-radius:16px;background:var(--sunk)}
+.note{border-radius:18px;background:var(--surface);color:var(--ink);box-shadow:inset 0 0 0 1px var(--ring)}
+.note .ic{color:var(--acc)}
+.composer{border-radius:26px;background:var(--surface);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);box-shadow:inset 0 0 0 1px var(--ring),var(--glow)}
+.pane+.pane{border-left:1px solid var(--line)}
+.dhead{border-bottom:1px solid var(--line)}
+.sheet{border-radius:32px;background:color-mix(in srgb,var(--ground) 82%,transparent);backdrop-filter:blur(34px) saturate(1.5);-webkit-backdrop-filter:blur(34px) saturate(1.5);box-shadow:var(--sh),inset 0 0 0 1px var(--ring)}
+.ov{backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}.ov.pop{backdrop-filter:none;-webkit-backdrop-filter:none}
+.ov.right{padding:12px}.ov.right .sheet{border-radius:28px;box-shadow:var(--sh),inset 0 0 0 1px var(--ring)}
+.phone .ov.right{padding:0}
+.sheet .x{background:var(--surface)}
+.phone .tabbar{margin:0 12px 12px;height:64px;padding:8px;border-top:0;border-radius:28px;background:var(--surface);backdrop-filter:blur(26px) saturate(1.5);-webkit-backdrop-filter:blur(26px) saturate(1.5);box-shadow:inset 0 0 0 1px var(--ring),var(--glow)}
+.tb{border-radius:20px}.tb.on{background:var(--ink);color:var(--ground)}
+.stage{border-radius:24px}.stage .title{font-size:26px}

@@ -1,0 +1,2 @@
+# Unified-diff context preserves upstream tabs and empty lines as patch data.
+dependencies.patch -whitespace

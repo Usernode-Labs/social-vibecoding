@@ -81,6 +81,7 @@ import '../improve/improve-status.js';
 // The bell's module. ../notifications/mount.ts installs the store's flush and
 // publishes the controller; this pulls both in.
 import '../notifications/mount';
+import { LookPicker } from '../frame/look-picker';
 
 // THE SESSION LIFECYCLE PILL MOVED INTO THE CHIP.
 //
@@ -731,6 +732,9 @@ export function PlatformHeader() {
               and it is checked BEFORE preventDefault — the rule
               tests/nav-new-tab.test.js pins across the whole shell.
           */}
+          {/* An admin's look picker (../frame/look-picker.tsx), beside the bell:
+              the way out of a look as well as the way in. */}
+          <LookPicker variant="shell" />
           {/*
               The experimental chat toggle rode here, between Improve and the
               bell, as a pill flipping `Chat` / `Classic`. It went to the

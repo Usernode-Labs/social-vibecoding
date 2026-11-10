@@ -84,6 +84,7 @@ import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
 import { ParkedStrip, PlatformTabs, SkipToNavigation, StripBack } from './features/nav';
+import { FrameApp } from './features/frame/frame-app';
 import { SidePanel } from './features/side-panel';
 import { AgentSessionScreen } from './features/agent-session';
 import { AiScreen } from './features/ai';
@@ -466,6 +467,15 @@ export function Shell() {
       */}
       <Island name="ParkedStrip"><ParkedStrip /></Island>
       <Island name="PlatformTabs"><PlatformTabs /></Island>
+      {/*
+          THE FRAME'S OWN CHROME (features/frame/frame-app.tsx): the sidebar,
+          bar and phone tab bar the 2026-11-06 screen tour draws, shown in
+          place of the header and the tab bar above while the device's look
+          is one of the frame's nine (an admin's preview). It renders
+          nothing on the first render and nothing under the standard look,
+          so the prerendered document does not know it exists.
+      */}
+      <Island name="FrameApp"><FrameApp /></Island>
       {/*
           #platform-side-strip-top — the header's back controls, drawn in the
           column of system chrome down an iPhone Duo's edge (features/nav/

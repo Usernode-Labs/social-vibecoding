@@ -5024,18 +5024,18 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out, 3 loads: #apps opens the same Home, its community cards each a picture and one link to its page with no Try it on the card, not \"could not load\" (#6015; One Home, #6361)",
+      "name": "Signed out, 3 loads: #apps opens the same searchable Home (#6507), its community cards each a picture and one link to its page with no Try it on the card, not \"could not load\" (#6015; One Home, #6361)",
       "path": "/?shot=anon#apps",
       "repeat": 3,
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-retry])) [data-guest-discover] [data-guest-card]:has(> [data-guest-card-cover]):not(:has([data-guest-try])) a[data-guest-card-link][href^=\"/app/\"]",
+      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-retry])) [data-guest-discover]:has([data-guest-search]) [data-guest-card]:has(> [data-guest-card-cover]):not(:has([data-guest-try])) a[data-guest-card-link][href^=\"/app/\"]",
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out: the sign-in sheet opens (#6003)",
+      "name": "Signed out: the sign-in sheet offers Email code and Password before sending a code (#6003, #6553)",
       "path": "/?shot=anon&login=1",
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen [data-sign-in-sheet] #sign-in-sheet-title",
+      "expectSelector": "#auth-landing-screen [data-sign-in-sheet]:has(#sign-in-sheet-title) [data-sign-in-sheet-method] [data-sign-in-sheet-method-password]",
       "allowConsoleErrors": true
     },
     {

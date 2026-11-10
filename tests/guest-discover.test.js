@@ -796,3 +796,18 @@ test('the landing\'s declared checks hold Discover and the bar\'s Sign in, folde
   // runner's selector cap (`MAX_TEST_SELECTOR_LEN`).
   assert.ok(one.expectSelector.length <= 256);
 });
+
+
+test('guest directory searches belong to their history entry and preserve other navigation state (#6507)', () => {
+  const { guestSearchFrom, withGuestSearch } = loadTsx('frontend/src/features/guest/search-history.ts');
+  const state = withGuestSearch({ navigation: { place: 'home' } }, 'garden');
+  assert.equal(guestSearchFrom(state), 'garden');
+  assert.deepEqual(state.navigation, { place: 'home' });
+  assert.equal(guestSearchFrom(withGuestSearch(state, '')), '');
+  assert.equal(guestSearchFrom(withGuestSearch(null, 'x'.repeat(1001))), '');
+  for (const invalid of [null, 7, 'garden', { homeroomGuestSearch: 7 }]) assert.equal(guestSearchFrom(invalid), '');
+  const src = read(DISCOVER);
+  assert.match(src, /useState\(''\)/, 'first render remains the empty prerender');
+  assert.match(src, /addEventListener\('popstate', restore\)/);
+  assert.match(src, /replaceState\(withGuestSearch\(window.history.state, value\), ''\)/);
+});

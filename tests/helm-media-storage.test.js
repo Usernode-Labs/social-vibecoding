@@ -2,9 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync, spawnSync } = require('node:child_process');
 
-// The media store's bucket (MEDIA_STORAGE_*): off by default, and on only with
-// an endpoint, a bucket and both keys. App file uploads (MINIO_*) are a
-// separate store the chart never configures, so turning media on leaves them off.
+// The chart's two object stores: the media store (MEDIA_STORAGE_*) and app file
+// uploads (MINIO_ENDPOINT, STORAGE_BUCKET, MINIO_ROOT_*). Each is off by default,
+// on only with an endpoint, a bucket and both keys, and independent of the other.
 
 const helmAvailable = spawnSync('helm', ['version', '--short'], { stdio: 'ignore' }).status === 0;
 
@@ -28,41 +28,54 @@ function renderer() {
   };
 }
 
-const ON = ['--set-string', 'config.mediaStorage.endpoint=https://hel1.your-objectstorage.com',
-  '--set-string', 'config.mediaStorage.bucket=example-media',
-  '--set-string', 'secrets.mediaStorageAccessKey=test-access,secrets.mediaStorageSecretKey=test-secret'];
+const STORES = [
+  { key: 'mediaStorage', endpoint: 'MEDIA_STORAGE_ENDPOINT', bucket: 'MEDIA_STORAGE_BUCKET',
+    access: 'MEDIA_STORAGE_ACCESS_KEY', secret: 'MEDIA_STORAGE_SECRET_KEY', others: /MEDIA_STORAGE_\w+: "test-|value: "example-media"/ },
+  { key: 'appFileStorage', endpoint: 'MINIO_ENDPOINT', bucket: 'STORAGE_BUCKET',
+    access: 'MINIO_ROOT_USER', secret: 'MINIO_ROOT_PASSWORD', others: /MINIO_\w+: "test-|value: "example-app-files"/ },
+];
+const bucketOf = (store) => (store.key === 'mediaStorage' ? 'example-media' : 'example-app-files');
+const on = (store) => ['--set-string', `config.${store.key}.endpoint=https://hel1.your-objectstorage.com`,
+  '--set-string', `config.${store.key}.bucket=${bucketOf(store)}`,
+  '--set-string', `secrets.${store.key}AccessKey=test-access,secrets.${store.key}SecretKey=test-secret`];
 
-test('media storage is off unless configured, and its keys ride the platform Secret', {
-  skip: !helmAvailable && 'helm is not installed',
-}, () => {
-  const { render } = renderer();
-  const off = render([]);
-  assert.match(off, /- \{name: MEDIA_STORAGE_ENDPOINT, value: ""\}/, 'no endpoint: the media store is off');
-  assert.match(off, /MEDIA_STORAGE_ACCESS_KEY: ""/);
+for (const store of STORES) {
+  const other = STORES.find((s) => s !== store);
 
-  const on = render(ON);
-  assert.match(on, /- \{name: MEDIA_STORAGE_ENDPOINT, value: "https:\/\/hel1\.your-objectstorage\.com"\}/);
-  assert.match(on, /- \{name: MEDIA_STORAGE_BUCKET, value: "example-media"\}/);
-  assert.match(on, /MEDIA_STORAGE_ACCESS_KEY: "test-access"/);
-  assert.match(on, /MEDIA_STORAGE_SECRET_KEY: "test-secret"/);
-  assert.doesNotMatch(on, /value: "test-(access|secret)"/, 'the keys are never plain env values');
-  assert.doesNotMatch(on, /MINIO_|name: STORAGE_BUCKET/, 'app file uploads stay unconfigured');
-  const checksum = (manifest) => manifest.match(/checksum\/secrets: ([a-f0-9]{64})/)?.[1];
-  assert.notEqual(checksum(off), checksum(on), 'turning media storage on rolls out the platform');
-});
+  test(`${store.key} is off unless configured, and its keys ride the platform Secret`, {
+    skip: !helmAvailable && 'helm is not installed',
+  }, () => {
+    const { render } = renderer();
+    const off = render([]);
+    assert.match(off, new RegExp(`- \\{name: ${store.endpoint}, value: ""\\}`), 'no endpoint: the store is off');
+    assert.match(off, new RegExp(`${store.access}: ""`));
 
-test('media storage refuses a half configuration', {
-  skip: !helmAvailable && 'helm is not installed',
-}, () => {
-  const { refusal, render } = renderer();
-  assert.match(refusal(['--set-string', 'config.mediaStorage.endpoint=https://hel1.your-objectstorage.com',
-    '--set-string', 'secrets.mediaStorageAccessKey=a,secrets.mediaStorageSecretKey=b']), /bucket is required/);
-  assert.match(refusal(['--set-string', 'config.mediaStorage.endpoint=https://hel1.your-objectstorage.com',
-    '--set-string', 'config.mediaStorage.bucket=example-media']), /mediaStorageAccessKey and secrets\.mediaStorageSecretKey are required/);
-  assert.match(refusal([...ON, '--set-string', 'config.mediaStorage.endpoint=hel1.your-objectstorage.com']), /must be a scheme and host/);
-  // With an external Secret the keys are that Secret's to carry.
-  const external = render(['--set', 'secrets.create=false', '--set-string', 'secrets.existingSecret=external-platform',
-    '--set-string', 'config.mediaStorage.endpoint=https://hel1.your-objectstorage.com',
-    '--set-string', 'config.mediaStorage.bucket=example-media']);
-  assert.match(external, /- \{name: MEDIA_STORAGE_BUCKET, value: "example-media"\}/);
-});
+    const enabled = render(on(store));
+    assert.match(enabled, new RegExp(`- \\{name: ${store.endpoint}, value: "https://hel1\\.your-objectstorage\\.com"\\}`));
+    assert.match(enabled, new RegExp(`- \\{name: ${store.bucket}, value: "${bucketOf(store)}"\\}`));
+    assert.match(enabled, new RegExp(`${store.access}: "test-access"`));
+    assert.match(enabled, new RegExp(`${store.secret}: "test-secret"`));
+    assert.doesNotMatch(enabled, /value: "test-(access|secret)"/, 'the keys are never plain env values');
+    assert.doesNotMatch(enabled, other.others, `${other.key} stays unconfigured`);
+    assert.match(enabled, new RegExp(`- \\{name: ${other.endpoint}, value: ""\\}`));
+    const checksum = (manifest) => manifest.match(/checksum\/secrets: ([a-f0-9]{64})/)?.[1];
+    assert.notEqual(checksum(off), checksum(enabled), 'turning the store on rolls out the platform');
+  });
+
+  test(`${store.key} refuses a half configuration`, {
+    skip: !helmAvailable && 'helm is not installed',
+  }, () => {
+    const { refusal, render } = renderer();
+    const endpoint = ['--set-string', `config.${store.key}.endpoint=https://hel1.your-objectstorage.com`];
+    assert.match(refusal([...endpoint,
+      '--set-string', `secrets.${store.key}AccessKey=a,secrets.${store.key}SecretKey=b`]), /bucket is required/);
+    assert.match(refusal([...endpoint, '--set-string', `config.${store.key}.bucket=${bucketOf(store)}`]),
+      new RegExp(`${store.key}AccessKey and secrets\\.${store.key}SecretKey are required`));
+    assert.match(refusal([...on(store), '--set-string', `config.${store.key}.endpoint=hel1.your-objectstorage.com`]),
+      new RegExp(`config\\.${store.key}\\.endpoint must be a scheme and host`));
+    // With an external Secret the keys are that Secret's to carry.
+    const external = render(['--set', 'secrets.create=false', '--set-string', 'secrets.existingSecret=external-platform',
+      ...endpoint, '--set-string', `config.${store.key}.bucket=${bucketOf(store)}`]);
+    assert.match(external, new RegExp(`- \\{name: ${store.bucket}, value: "${bucketOf(store)}"\\}`));
+  });
+}
