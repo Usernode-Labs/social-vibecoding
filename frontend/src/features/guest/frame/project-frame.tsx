@@ -17,6 +17,7 @@
  * with no line to reach would say less than the words do. Its before and
  * after are shown in the Workshop, where the votes are the page.
  */
+import { type ReactNode, useState } from 'react';
 import { Btn, Card, GroupLink, Icon, Lead, Meta, Note, PageBody, Row, Sec, Tabs, k } from '@/components/ui/kit';
 import { useMessages } from '../../../lib/i18n/react';
 import { agoStamp } from '../../../lib/timestamp';
@@ -24,6 +25,14 @@ import { type GuestApp, type GuestOverview, type GuestVote, MIN_ACTIVE, builders
 import type { GuestIntent } from '../guest-project';
 
 export type GuestProjectTab = 'hub' | 'workshop' | 'discussion';
+
+/** One of a change's two shots. A picture that cannot be read (the file
+    gone, a copy with no media) is dropped, leaving the figure's own ground
+    and its caption rather than the browser's broken picture. */
+function Shot({ src, label }: { src: string; label: string }): ReactNode {
+  const [bad, setBad] = useState(false);
+  return <figure>{bad ? null : <img src={src} alt="" loading="lazy" onError={() => setBad(true)} />}<figcaption>{label}</figcaption></figure>;
+}
 
 export function GuestProjectFrame({ app, overview, loaded, tab, onTab, signedIn, pinned, onPin, canTry, onIntent, onOpenInside, onShare, now }: {
   app: GuestApp;
@@ -196,8 +205,8 @@ export function GuestProjectFrame({ app, overview, loaded, tab, onTab, signedIn,
               <Card key={v.id}>
                 {v.pictures ? (
                   <div className="fr-shots">
-                    {v.pictures.before ? <figure><img src={v.pictures.before} alt="" loading="lazy" /><figcaption>{t('auth:guest.project.before')}</figcaption></figure> : null}
-                    <figure><img src={v.pictures.after} alt="" loading="lazy" /><figcaption>{t('auth:guest.project.after')}</figcaption></figure>
+                    {v.pictures.before ? <Shot src={v.pictures.before} label={t('auth:guest.project.before')} /> : null}
+                    <Shot src={v.pictures.after} label={t('auth:guest.project.after')} />
                   </div>
                 ) : null}
                 {voteRow(v)}

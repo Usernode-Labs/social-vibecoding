@@ -27000,6 +27000,11 @@ html[data-skin] #ai-screen[data-frame-list] .ai-askbar-gap { display: none; }
   html[data-skin] #ai-screen[data-frame-list] { --ai-main-w: max(360px, calc(var(--platform-usable-w) - 520px)); }
   html[data-skin] #ai-screen[data-frame-list] .ai-main-pane { top: var(--fr-shell-top); background: none; border-top: 0; border-inline-start: 1px solid var(--fr-line); border-radius: 0; }
   html[data-skin] #ai-screen[data-frame-list] #ai-main-divider { display: none; }
+  /* The chat in the column keeps the kit's 32px gutter (the Messages
+     pane's, below). Main's own centring rule (`A WIDER MAIN CHAT KEEPS A
+     READABLE LINE`) names the screen's id and floors the gutter at 0, so a
+     column under 784px ran its lines to the window's edge. */
+  html[data-skin]:where(:not([data-skin="brand"])) #ai-screen[data-frame-list] .ai-main-pane .messages-layout[data-main-chat] .chat-transcript { padding-inline: max(32px, calc((100% - 720px) / 2)); }
   /* A request or a decision opened from the list stands in the column
      through the shell's side panel, which is in <body> and reads the
      column's width there: the same width, so it ends where the list ends,
@@ -27366,8 +27371,13 @@ html[data-frame-chrome="guest"] [data-auth-back],
 html[data-frame-chrome="guest"] #auth-more-screen > a[href="#landing"] { display: none; }
 /* A phone browser's install strip is fixed at the top, over the screens:
    the chrome starts under it, as each screen does by itself. */
-body.has-install-strip .fr.fr-app.fr-shell[data-frame-app="guest"],
+body.has-install-strip .fr.fr-app.fr-shell[data-frame-app],
 body.has-install-strip .fr.fr-app.fr-shell.fr-shell-under { top: calc(var(--platform-safe-top, 0px) + var(--install-strip-h)); }
+/* The signed-in chrome too (frame-app.tsx): the strip covered its bar.
+   There the header keeps its place in the column at the bar's height,
+   and the body's padding already holds the strip's row, so the
+   placeholder is the bar alone, not the bar and the strip again. */
+html[data-frame-chrome] body.has-install-strip #platform-header { height: calc(var(--fr-shell-top) - var(--install-strip-h)) !important; }
 
 /* THE LANDING is the kit's page under a look (features/guest/frame/
    landing-frame.tsx), drawn ahead of the standard guest Discover, which

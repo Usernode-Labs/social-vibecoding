@@ -108,6 +108,11 @@ test('the two panes sit as the tour draws them: the list 520px, the open item th
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\]:not\(\[data-ai-open\]\) > \.fr-pane > \.fr-scroll \{ max-width: 720px; \}/, 'with nothing open beside it the list is a page of one column, not the whole width');
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] \.ai-main-pane \{ top: var\(--fr-shell-top\); background: none;[^}]*border-inline-start: 1px solid var\(--fr-line\);/);
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] #ai-main-divider \{ display: none; \}/, 'the width is the frame\'s, so the handle steps aside');
+  // The chat in the column keeps the kit's 32px gutter (the Messages pane's,
+  // .messages-thread-scroll under a look). Main's own centring rule names
+  // the screen's id and floors the gutter at 0, so a column under 784px
+  // ran its lines to the window's edge.
+  assert.match(css, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) #ai-screen\[data-frame-list\] \.ai-main-pane \.messages-layout\[data-main-chat\] \.chat-transcript \{ padding-inline: max\(32px, calc\(\(100% - 720px\) \/ 2\)\); \}/);
   // A request opened from a row stands in the column through the shell's
   // side panel (the tour's s11), which is in <body>: it takes the column's
   // width and line there, so it ends where the list ends.

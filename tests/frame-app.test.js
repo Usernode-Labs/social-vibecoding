@@ -145,6 +145,14 @@ test('today\'s header and tab bar stay mounted, unseen, and the screens take the
   assert.match(css, /@media \(min-width: 768px\) \{\s*html\[data-frame-chrome\] body \{ --platform-rail-full: var\(--fr-shell-left\); \}/);
   assert.match(css, /html\[data-frame-chrome\] body \{ --platform-bar-h: var\(--fr-shell-bottom\) !important; --platform-tabs-h: var\(--fr-shell-bottom\) !important; \}/);
   assert.match(css, /html\[data-skin\] \.fr\.fr-app\.fr-shell \{ position: fixed; inset: 0; z-index: 30;[^}]*pointer-events: none; \}/, 'over the screens, under the sheets, and taking presses only on what it draws');
+  // A phone browser's install strip is fixed over the top of the window
+  // (#1372): the chrome starts under it, as the guest's does, and the
+  // header's placeholder in the padded column is the bar alone, since the
+  // body's padding already holds the strip's row. Without the first the
+  // strip covered the bar (no back, no title); with it and without the
+  // second the page started a strip's height too low.
+  assert.match(css, /body\.has-install-strip \.fr\.fr-app\.fr-shell\[data-frame-app\],\s*body\.has-install-strip \.fr\.fr-app\.fr-shell\.fr-shell-under \{ top: calc\(var\(--platform-safe-top, 0px\) \+ var\(--install-strip-h\)\); \}/);
+  assert.match(css, /html\[data-frame-chrome\] body\.has-install-strip #platform-header \{ height: calc\(var\(--fr-shell-top\) - var\(--install-strip-h\)\) !important; \}/);
   const src = read('frontend', 'src', 'features', 'frame', 'frame-app.tsx');
   for (const name of ['--fr-shell-left', '--fr-shell-top', '--fr-shell-bottom']) assert.ok(src.includes(`'${name}'`), `${name} is published`);
   assert.match(src, /root\.setAttribute\('data-frame-chrome', ''\)/);

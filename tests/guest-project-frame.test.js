@@ -68,6 +68,12 @@ test('the Workshop: every vote with its before and after, then the requests', ()
   const html = render({ tab: 'workshop' });
   assert.deepEqual(caps(html), ['Up for a vote', 'Requests', 'People'], 'who made it and who uses it stand beside every tab');
   assert.match(html, /<div class="fr-shots"><figure><img src="\/b\.png" alt="" loading="lazy"\/><figcaption>Before<\/figcaption><\/figure><figure><img src="\/a\.png" alt="" loading="lazy"\/><figcaption>After<\/figcaption><\/figure><\/div>/);
+  // A shot that cannot be read (the file gone, a copy with no media) leaves
+  // the figure's own ground and its caption, not the browser's broken
+  // picture: the picture is dropped where it fails to load.
+  const src = read(VIEW);
+  assert.match(src, /function Shot\(\{ src, label \}: \{ src: string; label: string \}\): ReactNode \{\s*const \[bad, setBad\] = useState\(false\);/);
+  assert.match(src, /\{bad \? null : <img src=\{src\} alt="" loading="lazy" onError=\{\(\) => setBad\(true\)\} \/>\}<figcaption>\{label\}<\/figcaption>/);
   assert.deepEqual(titles(html), ['Snake: wrap-around walls', 'A change', 'A leaderboard', 'Sounds', 'and 1 more', 'Built by 25 people', 'Public community']);
   assert.match(html, /<h2 class="fr-cap">Requests<\/h2><button type="button" class="fr-link">Ask for something<\/button>/);
   assert.match(render({ tab: 'workshop', overview: null, loaded: false }), /<div class="fr-card fr-pad">Loading…<\/div>/);
