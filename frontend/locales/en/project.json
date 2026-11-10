@@ -6410,5 +6410,297 @@
   "topic.request.twin": {
     "text": "Similar to <0>#{{number}} {{title}}</0>",
     "description": "Hint below a request title: links to the closest similar open request, with its number and title."
+  },
+  "frame.ask": {
+    "text": "Ask for a change",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's one primary button: opens the form that sends a request to the project."
+  },
+  "frame.invite": {
+    "text": "Invite",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's second button: opens the invite link for this community."
+  },
+  "frame.hub.people": {
+    "text": "People",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who is active and who the community is for."
+  },
+  "frame.hub.rule": {
+    "text": "How a change goes live",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who must approve a change."
+  },
+  "frame.hub.app": {
+    "text": "The app",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that opens the project's own app."
+  },
+  "frame.hub.openApp": {
+    "text": "Open {{app}}",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of the row that opens the project's app; {{app}} is the app's name."
+  },
+  "frame.hub.open": {
+    "text": "Open",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small button at the end of the app's row: opens the app."
+  },
+  "frame.hub.builtBy": {
+    "text": "Built by {{username}}",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under a change that recently went live: who built it."
+  },
+  "frame.hub.allTopics_one": {
+    "text": "All {{count}}",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of the Topics group's label: opens the page that lists every topic; {{count}} is how many there are."
+  },
+  "frame.hub.allTopics_other": {
+    "text": "All {{count}}",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of the Topics group's label: opens the page that lists every topic; {{count}} is how many there are."
+  },
+  "frame.hub.channel": {
+    "text": "#{{handle}}",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of a channel's row and tab: the channel's handle after a hash sign, such as #general."
+  },
+  "frame.hub.saidBy": {
+    "text": "{{username}}: {{message}}",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under a channel's row: who wrote its last message, then the message."
+  },
+  "frame.hub.members_one": {
+    "text": "{{count}} member",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under the audience row in the context column: how many members the community has."
+  },
+  "frame.hub.members_other": {
+    "text": "{{count}} members",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under the audience row in the context column: how many members the community has."
+  },
+  "frame.place.workshop": {
+    "text": "Everything asked for, being built and voted on in {{project}}.",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the Workshop's title."
+  },
+  "frame.place.needs": {
+    "text": "What waits for your vote in {{project}}.",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the Needs you page's title."
+  },
+  "frame.place.channel": {
+    "text": "Where {{project}} talks.",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under a channel's title."
+  },
+  "frame.topics.purpose": {
+    "text": "Each topic is a channel and a category of work. A new topic is voted on like any change.",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title."
+  },
+  "frame.topics.propose": {
+    "text": "Propose a topic",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's one primary button: opens the form that proposes a new topic, which goes to a vote."
+  },
+  "frame.topics.about": {
+    "text": "About topics",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column."
+  },
+  "frame.topics.byVote": {
+    "text": "Changed by a vote",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of the one row in the context column: topics change only when the group votes."
+  },
+  "frame.topics.byVoteLine": {
+    "text": "New, renamed, merged or archived",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under 'Changed by a vote': the four ways a topic can change."
+  },
+  "frame.topics.requests_one": {
+    "text": "{{count}} open request",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a topic's row: how many open requests are filed under it."
+  },
+  "frame.topics.requests_other": {
+    "text": "{{count}} open requests",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a topic's row: how many open requests are filed under it."
+  },
+  "frame.topics.requestsAbout": {
+    "text": "{{requests}} · {{about}}",
+    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). A topic's line when it has both: its count of open requests ({{requests}} is already a phrase such as '7 open requests'), then what the topic is about."
+  },
+  "frame.workshop.where": {
+    "text": "Where things are",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group of figures at the top: how many items are open, unclaimed, waiting on votes and live this week."
+  },
+  "frame.workshop.needsVote": {
+    "text": "Needs your vote",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group holding the one change that waits for this person's vote."
+  },
+  "frame.workshop.yourVote": {
+    "text": "Your vote",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Blue pill over a change's title on its vote card: it waits for this person's vote."
+  },
+  "frame.workshop.yes_one": {
+    "text": "{{count}} yes",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card: how many people have voted yes."
+  },
+  "frame.workshop.yes_other": {
+    "text": "{{count}} yes",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card: how many people have voted yes."
+  },
+  "frame.workshop.noMore_one": {
+    "text": "{{no}} no · {{count}} more to pass",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card, after the yes count: how many voted no ({{no}}), then how many more yes votes ({{count}}) the change needs to pass."
+  },
+  "frame.workshop.noMore_other": {
+    "text": "{{no}} no · {{count}} more to pass",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card, after the yes count: how many voted no ({{no}}), then how many more yes votes ({{count}}) the change needs to pass."
+  },
+  "frame.workshop.noPassed": {
+    "text": "{{no}} no · passed",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card, after the yes count: how many voted no ({{no}}), and that the change has the yes votes it needs."
+  },
+  "frame.workshop.needed_one": {
+    "text": "{{count}} yes needed",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label on a vote card's bar, at the point the yes votes must reach."
+  },
+  "frame.workshop.needed_other": {
+    "text": "{{count}} yes needed",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label on a vote card's bar, at the point the yes votes must reach."
+  },
+  "frame.workshop.review": {
+    "text": "Review and vote",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The vote card's one button: opens the Needs you page, where the change is reviewed and the vote is cast."
+  },
+  "frame.workshop.weeks": {
+    "text": "Week by week",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group that lists earlier weeks, each opening what happened in it."
+  },
+  "frame.workshop.bot": {
+    "text": "Homeroom bot",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says how many of the bot's build slots are in use. Homeroom bot is a name."
+  },
+  "frame.workshop.building": {
+    "text": "Building {{used}} of {{cap}}",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of the row about Homeroom bot's build slots: how many it is building now, of how many it may build at once."
+  },
+  "frame.workshop.rule": {
+    "text": "Who decides",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who must approve a change."
+  },
+  "frame.workshop.unclaimed": {
+    "text": "Nobody is on these",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column listing open requests nobody has picked up."
+  },
+  "frame.workshop.all_one": {
+    "text": "All {{count}}",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of a group's label: opens the full list; {{count}} is how many there are."
+  },
+  "frame.workshop.all_other": {
+    "text": "All {{count}}",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of a group's label: opens the full list; {{count}} is how many there are."
+  },
+  "frame.workshop.liveCount_one": {
+    "text": "{{count}} live",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). At the end of a past week's row: how many changes went live that week."
+  },
+  "frame.workshop.liveCount_other": {
+    "text": "{{count}} live",
+    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). At the end of a past week's row: how many changes went live that week."
+  },
+  "frame.rule.you": {
+    "text": "You say yes",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: on a project that is just this person's, their own yes is what a change needs."
+  },
+  "frame.rule.members_one": {
+    "text": "{{count}} of {{total}} members says yes",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: how many of the active members ({{total}}) must approve a change ({{count}})."
+  },
+  "frame.rule.members_other": {
+    "text": "{{count}} of {{total}} members say yes",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: how many of the active members ({{total}}) must approve a change ({{count}})."
+  },
+  "frame.rule.approvers_one": {
+    "text": "{{count}} of {{total}} approvers says yes",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: how many of the named approvers ({{total}}) must approve a change ({{count}})."
+  },
+  "frame.rule.approvers_other": {
+    "text": "{{count}} of {{total}} approvers say yes",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: how many of the named approvers ({{total}}) must approve a change ({{count}})."
+  },
+  "frame.rule.afterChecks": {
+    "text": "After the checks pass",
+    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, Line under the approval rule's row: a change is voted on once its automatic checks have passed."
+  },
+  "frame.topic.about": {
+    "text": "About",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who asked and under which topic."
+  },
+  "frame.topic.asked": {
+    "text": "Asked {{when}}",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under the asker's name in the context column; {{when}} is a short date or time, such as '28 Oct, 10:24'."
+  },
+  "frame.topic.topic": {
+    "text": "Topic",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under a topic's name in the context column, saying the row is the topic the request is filed under."
+  },
+  "frame.allItems.purpose_one": {
+    "text": "{{count}} open request or change in {{project}}, newest first.",
+    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title. Singular."
+  },
+  "frame.allItems.purpose_other": {
+    "text": "{{count}} open requests and changes in {{project}}, newest first.",
+    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title. Plural."
+  },
+  "frame.allItems.all": {
+    "text": "All",
+    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The first tab, before one per stage of the board (Requests, Under way, In review, Done): every item."
+  },
+  "frame.allItems.search": {
+    "text": "Search requests, changes or a number",
+    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Placeholder of the search box under the tabs."
+  },
+  "frame.allItems.open_one": {
+    "text": "{{count}} open",
+    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the list: how many items it shows. Singular."
+  },
+  "frame.allItems.open_other": {
+    "text": "{{count}} open",
+    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the list: how many items it shows. Plural."
+  },
+  "frame.allItems.show": {
+    "text": "Show",
+    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the two rows in the side column that choose whose items the list shows."
+  },
+  "frame.allItems.everyone": {
+    "text": "Everyone's",
+    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). First row under Show: every member's items (the default)."
+  },
+  "frame.allItems.mine": {
+    "text": "Only yours",
+    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Second row under Show: only the items the viewer made or asked for."
+  },
+  "frame.allItems.none": {
+    "text": "Nothing matches that.",
+    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Shown in place of the list when the stage, Show and the search box leave nothing."
+  },
+  "frame.allItems.loading": {
+    "text": "Loading…",
+    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Shown in place of the list while the board is being read."
+  },
+  "frame.topic.follow": {
+    "text": "Follow this request",
+    "description": "A request's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of the row in the About column whose switch turns notifications for this request on or off."
+  },
+  "frame.topic.followLine": {
+    "text": "Replies and status changes",
+    "description": "A request's page under one of the frame's looks: the line under \"Follow this request\", saying what following brings."
+  },
+  "frame.allItems.nobody": {
+    "text": "Nobody on it",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the word at the end of a request's row that nobody has taken yet, where a row otherwise ends in its stage's word."
+  },
+  "frame.allItems.topicLine": {
+    "text": "{{people}} · {{items}}",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The line under a topic's row in the context column: how many people are in it and how many items are open, each a whole phrase, joined by a middle dot."
+  },
+  "frame.allItems.people_one": {
+    "text": "{{count}} person",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many people are involved in the topic. {{count}} is the number."
+  },
+  "frame.allItems.people_other": {
+    "text": "{{count}} people",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many people are involved in the topic. {{count}} is the number."
+  },
+  "frame.allItems.items_one": {
+    "text": "{{count}} item",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many of the topic's items are open. {{count}} is the number."
+  },
+  "frame.allItems.items_other": {
+    "text": "{{count}} items",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many of the topic's items are open. {{count}} is the number."
   }
 }

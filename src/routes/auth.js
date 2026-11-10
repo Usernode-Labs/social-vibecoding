@@ -40,7 +40,6 @@ const contactPreferences = require('../services/contact-preferences');
 const linkedPhones = require('../services/linked-phones');
 const linkedBrowsers = require('../services/linked-browsers');
 const uiTelemetry = require('../services/ui-telemetry');
-const usageAnalytics = require('../services/usage-analytics');
 const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
@@ -1015,14 +1014,9 @@ function authRoutes(config) {
         // Browser-check accounts authenticate normally to exercise protected
         // screens, but their scripted journeys must not enter product UI
         // analytics. The client waits for this server-owned decision.
-        // People who objected to being recorded answer false too (#3369).
+        // People who objected to being recorded (services/usage-analytics.js)
+        // answer false too.
         uiTelemetryEligible: await uiTelemetry.isRecordable(pool, req.user),
-        // The shell's one Google Analytics sign_up (#6314). A browser-check
-        // account is not somebody signing up.
-        analyticsCounted: await uiTelemetry.countsInGoogleAnalytics(pool, req.user),
-        justSignedUp: uiTelemetry.isEligibleUser(req.user)
-          && !req.user.isSynthetic
-          && await require('../services/usage-analytics').justSignedUp(pool, req.user.id),
         isAdmin: req.user.isAdmin,
         // View-only admin role (issue #311). `isAdmin` still drives every
         // client read/visibility gate; `canAdminWrite` drives mutating
@@ -1573,37 +1567,6 @@ function authRoutes(config) {
       res.json({ ok: true, locale: normalized });
     } catch (err) {
       log.error('settings', 'Failed to save locale preference', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // "Share usage analytics" (#5097), Settings > Privacy. Off unless the
-  // person switches it on (services/usage-analytics.js names what it
-  // covers). The answer carries uiTelemetryEligible, /api/auth/me's
-  // decision recomputed, so the shell can start or stop sending at once.
-  router.get('/api/me/usage-analytics', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    try {
-      const enabled = await usageAnalytics.sharesUsageAnalytics(pool, req.user.id);
-      res.set('Cache-Control', 'no-store');
-      res.json({ enabled, uiTelemetryEligible: enabled && await uiTelemetry.isRecordable(pool, req.user) });
-    } catch (err) {
-      log.error('settings', 'Failed to read the usage analytics choice', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  router.put('/api/me/usage-analytics', sameOriginBrowserOnly, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const { enabled } = req.body || {};
-    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be true or false' });
-    try {
-      const stored = await usageAnalytics.setUsageAnalytics(pool, req.user.id, enabled);
-      if (stored === null) return res.status(404).json({ error: 'Account not found' });
-      log.info('settings', 'Usage analytics choice saved', { userId: req.user.id, enabled: stored });
-      res.json({ ok: true, enabled: stored, uiTelemetryEligible: stored && await uiTelemetry.isRecordable(pool, req.user) });
-    } catch (err) {
-      log.error('settings', 'Failed to save the usage analytics choice', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

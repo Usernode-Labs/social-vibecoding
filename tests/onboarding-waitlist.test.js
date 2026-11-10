@@ -441,7 +441,7 @@ test('ensureAccountSignup gives a waiting account a row for its own confirmed ad
   await ensureAccountSignup(pool, { userId: 50 });
   assert.equal(pool.seen.length, 1);
   const { sql, params } = pool.seen[0];
-  assert.match(sql, /^INSERT INTO waitlist_signups \(email, linked_user_id, confirmed_at, more_token\) SELECT LOWER\(TRIM\(u\.email\)\), u\.id, NOW\(\), \$2 FROM users u WHERE u\.id = \$1/);
+  assert.match(sql, /^INSERT INTO waitlist_signups \(email, linked_user_id, confirmed_at, more_token, source\) SELECT LOWER\(TRIM\(u\.email\)\), u\.id, NOW\(\), \$2, 'account' FROM users u WHERE u\.id = \$1/);
   assert.match(sql, /u\.has_platform_access = FALSE/, 'an account already let in gets no row');
   assert.match(sql, /u\.is_admin IS NOT TRUE/);
   assert.match(sql, /u\.email_confirmed = TRUE/, 'only an address the account proved');

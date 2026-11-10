@@ -37,6 +37,8 @@ import { devicePinsStore, loadDevicePins, toggleDevicePin } from './device-pins'
 import { useCommunityColor } from '../../lib/community-color';
 import { agoStamp } from '../../lib/timestamp';
 import { GuestCover, GuestIcon, TryLink } from './guest-discover';
+import { GuestProjectFrame } from './frame/project-frame';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { type GuestApp, type GuestOverview, type GuestVote, MIN_ACTIVE, MIN_BUILDERS, buildersOf, canTryHere, fetchOverview, inHomeroomApp } from './guest-data';
 
 /** What somebody tried to do: the sign-in sheet is titled for it. */
@@ -207,6 +209,10 @@ export function GuestProject({ app, primaryClass, onIntent, onOpenInside, onShar
   useEffect(() => { loadDevicePins(); }, []);
   const pinnedHere = device.communities.includes(app.slug);
   const color = useCommunityColor({ color: app.icon_color, iconUrl: app.icon_url, iconEmoji: app.icon_emoji, key: app.slug });
+  // Under one of the frame's looks the page is the kit's
+  // (./frame/project-frame.tsx), handed this component's data and state.
+  // Mounted after the first paint, so the device's own look is read at once.
+  const frame = isFrameSkin(useLiveSkin());
   const [tab, setTab] = useState<Tab>(startOnWorkshop ? 'workshop' : 'hub');
   const [overview, setOverview] = useState<GuestOverview | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -246,6 +252,25 @@ export function GuestProject({ app, primaryClass, onIntent, onOpenInside, onShar
   const voteCards = (limit: number) => votes.slice(0, limit).map((v) => (
     <VoteCard key={v.id} vote={v} app={app} onIntent={onIntent} signedIn={signedIn} />
   ));
+
+  if (frame) {
+    return (
+      <GuestProjectFrame
+        app={app}
+        overview={overview}
+        loaded={loaded}
+        tab={tab}
+        onTab={setTab}
+        signedIn={signedIn}
+        pinned={pinnedHere}
+        onPin={() => { toggleDevicePin('communities', app.slug); }}
+        canTry={canTryHere(app, inHomeroomApp())}
+        onIntent={onIntent}
+        onOpenInside={onOpenInside}
+        onShare={onShare}
+      />
+    );
+  }
 
   return (
     <div data-guest-project={app.slug} className="mx-auto flex w-full flex-col gap-[18px] px-4">

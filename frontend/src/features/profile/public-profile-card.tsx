@@ -35,6 +35,9 @@ import { MessageButton } from './message-button';
 import { FriendButton } from '../friends/friend-button';
 import type { FriendState } from '../friends/api';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
+import { Av, Card, PageBody, Row, Sec, k } from '@/components/ui/kit';
+import { useMessages } from '../../lib/i18n/react';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 
 function PublicAvatar({ profile }: { profile: any }): ReactNode {
   const { initial, url } = publicAvatarView(profile);
@@ -79,8 +82,54 @@ export function PublicProfileCard({
   friendship?: { userId: number; state: FriendState } | null;
 }): ReactNode {
   // Subscribed: the social chips' labels are read by the view helper.
-  useMessages('profile');
+  const t = useMessages('profile');
   const socialLinks = verifiedSocialLinksView(profile);
+  // UNDER A LOOK the card is a page of the frame (the tour's s51, o26): the
+  // person's name as its title, their handle as its sentence, Message and
+  // the friend button as its actions, who they are in the column and their
+  // verified links beside it. The standard card below keeps the owner's
+  // preview and the standard look.
+  const frame = isFrameSkin(useLiveSkin());
+  const { url: avatarUrl } = publicAvatarView(profile);
+  if (frame) {
+    const handle = `@${profile.username}`;
+    const name = profile.displayName || handle;
+    const acts = friendship || allowMessage ? (
+      <>
+        {friendship ? <FriendButton userId={friendship.userId} username={profile.username} initialState={friendship.state} /> : null}
+        {allowMessage ? <MessageButton username={profile.username} /> : null}
+      </>
+    ) : undefined;
+    return (
+      <PageBody
+        data-public-profile-frame={profile.username}
+        title={name}
+        purpose={profile.displayName ? handle : undefined}
+        acts={acts}
+        side={socialLinks.length ? (
+          <Sec label={t('profile:frame.public.verified')}>
+            <Card>
+              {socialLinks.map((link) => (
+                <Row key={link.key} href={link.href} lead={<Av size={32} name={link.key === 'github' ? 'G' : 'X'} />} title={link.key === 'github' ? t('profile:frame.public.github') : t('profile:frame.public.x')} line={link.label} go sm={false} />
+              ))}
+            </Card>
+          </Sec>
+        ) : null}
+      >
+        <Sec label={t('profile:frame.public.about')}>
+          <Card>
+            <Row lead={<Av size={40} name={profile.displayName || profile.username} src={avatarUrl || null} />} title={name} line={profile.displayName ? handle : undefined} />
+            {profile.bio ? <div className={k('pad bio')}>{profile.bio}</div> : null}
+          </Card>
+        </Sec>
+        {allowReport ? (
+          <button type="button" className={k('link bad-link')} id="public-profile-report" onClick={() => openReport({ targetType: 'user', target: profile.username, label: `@${profile.username}` })}>
+            {t('profile:public.report')}
+          </button>
+        ) : null}
+      </PageBody>
+    );
+  }
   return (
     <>
       <article

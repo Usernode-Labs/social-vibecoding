@@ -170,9 +170,19 @@ endpoint and `config.mediaStorage.bucket` as `MEDIA_STORAGE_ENDPOINT` and
 without a bucket, or, when the chart creates the Secret, without both keys.
 Give the platform a key that can reach only its own bucket: a Hetzner Object
 Storage key reaches every bucket in its project, so the media bucket lives in a
-project of its own, apart from the database backups. App file uploads
-(`MINIO_*`, `src/services/app-files.js`) are a separate store this chart does
-not configure, so they stay off.
+project of its own, apart from the database backups.
+
+App file uploads (images and audio apps store, `src/services/app-files.js`)
+are a second store, off until `config.appFileStorage.endpoint` is set; until
+then every upload answers 503 `storage_unavailable`. The chart passes the
+endpoint and `config.appFileStorage.bucket` as `MINIO_ENDPOINT` and
+`STORAGE_BUCKET`, and maps `secrets.appFileStorageAccessKey` /
+`secrets.appFileStorageSecretKey` to `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`
+(names kept from the MinIO sidecar; any S3-compatible endpoint works). It is
+refused the same half configurations as the media store. Always set the
+bucket: bucket names are global, so the code's default, `usernode-app-files`,
+is not one to rely on. Its bucket may share the media project, and so its key, since both hold
+what people put into the platform.
 
 The infra values can use a separate SOPS-encrypted overlay containing only this
 new field, encrypted to the same cluster recipients and listed after the existing

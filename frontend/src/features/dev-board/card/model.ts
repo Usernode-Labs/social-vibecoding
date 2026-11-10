@@ -435,6 +435,8 @@ export interface RowBrief {
   closed: number[];
   /** Where it is, for a week's groups. */
   stage: 'request' | 'worked' | 'vote' | 'live';
+  /** A request nobody has taken (AppView._issueUnclaimed). */
+  unclaimed?: boolean;
   /** When it was made (epoch ms; 0 when unknown). */
   at: number;
   /**
