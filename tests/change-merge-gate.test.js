@@ -75,6 +75,23 @@ test('a long wait is called out at about 30 minutes, and not before', () => {
   assert.match(long, /say so in this change's thread/);
 });
 
+test('while the merge is under way it reads Merging now on a moving bar, with no times', () => {
+  const html = render({
+    name: message('changes:page.merge.name'),
+    figure: message('changes:page.merge.figure.merging'),
+    tone: 'muted', done: false,
+    segments: [{ weight: 1, pct: 60, state: 'moving' }],
+    label: message('changes:page.merge.label.merging'),
+    note: [], wait: null,
+  });
+  assert.match(html, /data-change-gate="merge"/);
+  assert.match(html, /data-tone="muted"/);
+  assert.match(html, /Merging now/);
+  assert.match(html, /data-state="moving"/);
+  assert.doesNotMatch(html, /Tried |Trying again/);
+  assert.doesNotMatch(html, /<button/);
+});
+
 test("GitHub's checks failing is red, names no times, and offers no button", () => {
   const html = render({
     name: message('changes:page.merge.name'),
