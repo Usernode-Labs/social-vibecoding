@@ -148,10 +148,10 @@ test('today\'s header and tab bar stay mounted, unseen, and the screens take the
   // In the tour's mock the page scrolls inside the page area, under the
   // bar's edge; in the shell it scrolls in the document and passes behind
   // the bar, which the looks draw with no ground of its own. The shell's
-  // bar is frosted: the look's ground, mostly, over a blur, so a flat
-  // ground stays one colour and a wallpaper shows through softened, and
-  // what scrolls under is put away either way.
-  assert.match(css, /html\[data-skin\] :where\(\.fr\.fr-shell:not\(\.fr-shell-under\)\) \.fr-bar \{ background: color-mix\(in srgb, var\(--fr-ground\) 72%, transparent\); backdrop-filter: blur\(20px\) saturate\(1\.3\); -webkit-backdrop-filter: blur\(20px\) saturate\(1\.3\); \}/);
+  // bar wears the look's ground as a tint, no blur (tests/no-glass-one-
+  // scheme.test.js), so a flat ground stays one colour, a wallpaper shows
+  // faintly, and what scrolls under is put away either way.
+  assert.match(css, /html\[data-skin\] :where\(\.fr\.fr-shell:not\(\.fr-shell-under\)\) \.fr-bar \{ background: color-mix\(in srgb, var\(--fr-ground\) 90%, transparent\); \}/);
   // A phone browser's install strip is fixed over the top of the window
   // (#1372): the chrome starts under it, as the guest's does, and the
   // header's placeholder in the padded column is the bar alone, since the
