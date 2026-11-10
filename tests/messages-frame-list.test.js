@@ -93,4 +93,6 @@ test('the list pane hands its own conversations to the kit list under a look, an
   assert.match(css, /html\[data-skin\] \.messages-layout\.messages-list-page > \.messages-list-pane\[data-frame-list\] \{ max-width: none; margin: 0; \}/, 'with nothing open the list stays where it is');
   assert.match(css, /html\[data-skin\] \.messages-layout\.messages-list-page:has\(> \[data-frame-list\]\) > \.messages-thread-pane \{ display: flex; \}/, 'and the pane beside it says nothing is open');
   assert.match(css, /html\[data-skin\] \.messages-layout:has\(> \[data-frame-list\]\) > \.messages-thread-pane \{[^}]*border-inline-start: 1px solid var\(--fr-line\);/, 'one line between the two panes');
+  assert.match(css, /html\[data-skin\] \.messages-layout:has\(> \[data-frame-list\]\) > \.messages-thread-pane \{[^}]*border-top: 0;/, 'and no second: the pane is a dc-lift sheet whose top hairline drew a line under the header');
+  assert.match(css, /html\[data-skin\] \.messages-layout:has\(> \[data-frame-list\]\) \{ background: none; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; border-radius: 0; border-top: 0; \}/, 'nor the strip the layout is: the tour\'s Messages sits flat under the header');
 });

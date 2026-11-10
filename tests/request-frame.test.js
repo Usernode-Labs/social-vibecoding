@@ -62,8 +62,18 @@ test('the side column is laid beside the words from measured heights, a look\'s 
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request \{[^}]*max-width: 1136px;/);
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-status, \.dev-request-track, \.dev-change-status, \.dev-change-pair, \.fr-topicside\) \{[^}]*position: absolute; top: var\(--fr-side-top, 0px\); inset-inline-end: 0; width: 320px;/);
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) #gc-thread-back \{ display: none; \}/, 'the bar has the way back');
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) #app-content > \.dc-lift-strip \{ background: none; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; border-radius: 0; border-top: 0; \}/,
+    'the board is the product\'s frosted strip (board-frame.tsx); the tour\'s pages sit flat under the header, so under a look the strip\'s fill, shoulders, shadow and hairline go');
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request > \.dev-request-sheet \{ background: none; box-shadow: none; border-radius: 0; border-top: 0; \}/,
+    'the sheet rising on the board (dc-lift-session) is put away whole: its fill, its shadow, its corners and its top hairline, which alone drew a line across the page above the title');
   const looks = JSON.parse(read('frontend/looks/looks.json'));
   assert.match(looks.wear.roots.card.to, /^:is\(\.dev-request-ask,/, 'with whatever else wears the card (a visitor\'s forms, tests/guest-chrome.test.js)');
+  // The cards the product keeps in the context column wear it too: a
+  // change's Votes and Tested, and Homeroom bot's track card on a request
+  // it is building. Beside the kit's status card in the look's surface,
+  // their white stood out as a second surface.
+  assert.ok(looks.wear.roots.card.to.includes('.dev-change-pair .dev-change-gate'));
+  assert.ok(looks.wear.roots.card.to.includes('.dev-request-track > [role="group"]'));
 });
 
 test('a change\'s page does the same: its title in the kit\'s head, its trail, its votes and checks in the context column', () => {
@@ -135,4 +145,12 @@ test('a change\'s page stands the kit\'s status card over its votes and checks, 
   assert.match(src, /useSideStack\(frame, `\[data-change-root="\$\{id \?\? ''\}"\] > \[data-image-viewer-scope\]`, \['\.dev-change-status', '\.dev-change-pair', '\.fr-topicside'\]\);/);
   const css = read('public/css/app.css');
   assert.match(css, /\.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-status, \.dev-request-track, \.dev-change-status, \.dev-change-pair, \.fr-topicside\) \{[^}]*position: absolute;/);
+  // In the 320px context column the Votes and Tested cards lay out as they
+  // do on a phone: the figure on one line, the card's buttons on a row of
+  // their own under the bar. "All checks passed" beside Open app wrapped
+  // onto two lines in the standard grid.
+  const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-change-pair \.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-change-pair \.dev-change-gate-act \{ order: 1; flex-wrap: wrap; margin-top: 10px; \}/);
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-change-pair \.dev-change-gate-figure \{ white-space: nowrap; \}/);
 });

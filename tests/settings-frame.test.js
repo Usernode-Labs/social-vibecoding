@@ -31,6 +31,7 @@ test('on a wide window the section comes first at the kit\'s 720px, the list of 
 
 test('the section\'s sheet is put away so its groups sit on the page, and its title is the kit\'s', () => {
   assert.match(hand, new RegExp(`${ANY} #settings-section-content\\.settings-sheet \\{[^}]*background: none; box-shadow: none;`));
+  assert.match(hand, new RegExp(`${ANY} #settings-section-content\\.settings-sheet \\{[^}]*border-radius: 0; border-top: 0;`), 'the sheet\'s top hairline goes with its fill and shadow: alone it drew a line across the page over the title');
   const looks = JSON.parse(read('frontend/looks/looks.json'));
   assert.match(looks.wear.roots.title.to, /\.settings-page-title/, 'each look\'s own title rule reaches it');
   assert.match(css, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) :is\(\.settings-page-title,#first-session-make-title,[^{]*\)\{font-size:28px;/);
