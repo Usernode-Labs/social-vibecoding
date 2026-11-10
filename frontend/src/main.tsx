@@ -70,6 +70,7 @@ import { installActionOutbox } from './lib/action-outbox';
 import { registerServiceWorker } from './lib/service-worker';
 import { applyNavSnapshot, applyShellSnapshot } from './lib/shell-snapshot-apply';
 import { installFirstPaintReserve } from './lib/first-paint-reserve';
+import { installBootRecovery } from './lib/boot-recovery';
 import { installJoinRequired } from './lib/join-required';
 import { installAdultGate } from './features/auth/adult-gate';
 import { installSessionRenewalRetry } from './lib/session-renewal-retry';
@@ -297,3 +298,8 @@ bootStep('applyNavSnapshot', () => {
 // kept for the next cold load, whose head script holds their skeletons at
 // those heights (./lib/first-paint-reserve.ts).
 bootStep('installFirstPaintReserve', installFirstPaintReserve);
+// #6564: a shell that opened blank asks the server for one copy the service
+// worker cannot answer from its cache. Installed after hydration, so a throw
+// in hydration cannot stop the recovery from being armed (each step swallows
+// its own throw). See ./lib/boot-recovery.ts for the two loop guards.
+bootStep('installBootRecovery', () => installBootRecovery());
