@@ -791,13 +791,17 @@ test('the steps sheet is the strip expanded: its headline and count, one short s
   assert.equal(s.detail, null, 'no detail on the page: the current step says it');
   assert.equal(s.simple, true);
   assert.deepEqual([s.done, s.total], [3, 5]);
-  assert.deepEqual(s.rows.map((r) => [r.gate, r.key, r.state, r.label, r.line]), [
-    ['approvals', 'votes', 'waiting', 'Votes', null],
-    ['integration', 'mergeability', 'done', 'No conflicts with main', null],
-    ['checks', 'checks', 'done', 'Checks', 'All 1 passed'],
-    ['main_healthy', 'main_healthy', 'done', 'Main is healthy', null],
-    ['github', 'github', 'pending', 'Merge', null],
+  assert.deepEqual(s.rows.map((r) => [r.gate, r.key, r.state, r.label]), [
+    ['approvals', 'votes', 'waiting', 'Votes'],
+    ['integration', 'mergeability', 'done', 'No conflicts with main'],
+    ['checks', 'checks', 'done', 'Checks'],
+    ['main_healthy', 'main_healthy', 'done', 'Main is healthy'],
+    ['github', 'github', 'pending', 'Merge'],
   ]);
+  // #6550: a finished merge step now says what was measured, and how old it is.
+  assert.match(s.rows[1].line, /^No conflicts · measured .+/);
+  assert.deepEqual([s.rows[0].line, s.rows[2].line, s.rows[3].line, s.rows[4].line],
+    [null, 'All 1 passed', null, null]);
   // No actor column, no ledger sentence, no bar or pill inside the vote step.
   for (const r of s.rows) {
     assert.equal(r.actor, undefined, `${r.gate} names nobody`);
@@ -875,7 +879,7 @@ test('a failing check opens its step onto the run, with each failure’s door; t
   const sync = s.rows.find((r) => r.gate === 'integration');
   assert.equal(sync.key, 'mergeability', 'the ledger row’s key is the data-note, so the declared checks still find it');
   assert.equal(sync.state, 'active');
-  assert.equal(sync.line, 'Conflict in 2 files · queued to fix');
+  assert.match(sync.line, /^Conflict in 2 files · queued to fix · measured .+/, 'the conflict says when it was measured');
   assert.match(html, /data-note="mergeability" data-req-gate="integration" data-req-state="active"><span class="dev-step-mark dev-step-mark-active" aria-hidden="true"><span class="dc-status-icon dc-status-spinner-arc"/);
   assert.doesNotMatch(html, /Main has moved 8 commits ahead/, 'no sentence restating the sync');
   const checks = s.rows.find((r) => r.gate === 'checks');

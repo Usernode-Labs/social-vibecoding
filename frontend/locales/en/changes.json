@@ -1999,9 +1999,17 @@
     "text": "GitHub refused · needs a manual sync",
     "description": "Line under the \"Merge\" step in a proposal's list of steps when GitHub refused to merge the change and a person has to bring it up to date with main by hand."
   },
-  "step.integration.notMeasured": {
-    "text": "Not measured yet",
-    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps before Homeroom has checked whether the change conflicts with the main branch."
+  "step.integration.clean": {
+    "text": "No conflicts",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps when Homeroom's own merge check found that the change does not conflict with the main branch."
+  },
+  "step.integration.measuring": {
+    "text": "Measuring…",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps while Homeroom has not yet checked whether this version of the change conflicts with the main branch."
+  },
+  "step.integration.withAge": {
+    "text": "{{line}} · {{measured}}",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps, adding how long ago Homeroom checked. {{line}} is the finding, such as \"No conflicts\" or a conflict, and {{measured}} is a phrase such as \"measured 2 minutes ago\"."
   },
   "step.integration.resolvingFiles_one": {
     "text": "Resolving a conflict in {{count}} file",

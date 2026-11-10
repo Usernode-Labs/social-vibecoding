@@ -18296,17 +18296,27 @@ const AppView = {
   // The integration step's line, from the same columns integrationStep reads
   // and the conflict lane's verdict on this head.
   _integrationLine(g, p, viewer) {
-    if (g.state === 'done') return null;
-    const served = (p.integration && Array.isArray(p.integration.blockReasons)) ? p.integration.blockReasons : [];
     const fresh = AppView._freshnessOf(p);
+    // A measurement is only honest with its age: "measured 2 minutes ago".
+    // MergeStatus loads before this module; a sandbox without it gives the
+    // bare line rather than throwing.
+    const aged = (line) => {
+      const age = (typeof MergeStatus !== 'undefined' && MergeStatus && typeof MergeStatus.ageOf === 'function')
+        ? MergeStatus.ageOf(fresh.checkedAt) : null;
+      return age ? PlatformI18n.t('changes:step.integration.withAge', { line, measured: age }) : line;
+    };
+    if (g.state === 'done') return aged(PlatformI18n.t('changes:step.integration.clean'));
+    const served = (p.integration && Array.isArray(p.integration.blockReasons)) ? p.integration.blockReasons : [];
     const n = Array.isArray(p.integration_conflict_paths) && p.integration_conflict_paths.length
       ? p.integration_conflict_paths.length : (Array.isArray(fresh.files) ? fresh.files.length : 0);
     const IDS = AppView.INTEGRATION_LINE_IDS;
-    const conflict = (ids) => (n ? PlatformI18n.t(ids.files, { count: n }) : PlatformI18n.t(ids.main));
+    const conflict = (ids) => aged(n ? PlatformI18n.t(ids.files, { count: n }) : PlatformI18n.t(ids.main));
     const conflicting = g.state !== 'pending' || fresh.mergeability === 'conflict'
       || p.merge_conflict_state === 'failed' || served.length > 0;
     if (!conflicting) {
-      return fresh.mergeability === 'unknown' || fresh.mergeability == null ? PlatformI18n.t('changes:step.integration.notMeasured') : null;
+      return fresh.mergeability === 'clean'
+        ? aged(PlatformI18n.t('changes:step.integration.clean'))
+        : PlatformI18n.t('changes:step.integration.measuring');
     }
     if (served.includes('integrating')) return n ? PlatformI18n.t('changes:step.integration.resolvingFiles', { count: n }) : PlatformI18n.t('changes:step.integration.resolvingMain');
     if (served.includes('unresolvable') || p.merge_conflict_state === 'failed') return conflict(IDS.manualSync);
@@ -25130,12 +25140,22 @@ const AppView = {
     const integrationMergeability = p.integration_merges_clean === true ? 'clean'
       : p.integration_merges_clean === false ? 'conflict' : null;
     const integrationFiles = Array.isArray(p.integration_conflict_paths) ? p.integration_conflict_paths : [];
-    const useIntegrationMerge = integrationWins && integrationMergeability !== null;
+    // #6550 — the integration record is our own real merge, made for this
+    // version of the change. A later GitHub snapshot that says nothing
+    // (mergeability null or 'unknown') is not a newer answer, so it must not
+    // hide one: the step read "Not measured yet" beside a clean measurement.
+    // A snapshot with a real verdict of its own still wins, as before.
+    const integrationCurrent = !(p.integration && p.integration.stale === true)
+      && !(p.integration_head_sha && p.reviewed_head_sha
+        && String(p.integration_head_sha).toLowerCase() !== String(p.reviewed_head_sha).toLowerCase());
+    const useIntegrationMerge = integrationMergeability !== null
+      && (integrationWins
+        || (integrationCurrent && (legacyMergeability == null || legacyMergeability === 'unknown')));
     const files = useIntegrationMerge ? integrationFiles : legacyFiles;
     const complete = useIntegrationMerge ? true : legacyComplete;
     const integrationBehind = num(p.integration_behind_by);
     return {
-      checkedAt: integrationWins ? p.integration_measured_at : legacyCheckedAt,
+      checkedAt: useIntegrationMerge ? p.integration_measured_at : legacyCheckedAt,
       mergeability: useIntegrationMerge ? integrationMergeability : legacyMergeability,
       files: files.filter((x) => typeof x === 'string'),
       filesComplete: complete === undefined ? null : complete,
