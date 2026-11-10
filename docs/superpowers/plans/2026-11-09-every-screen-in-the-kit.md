@@ -358,3 +358,44 @@ Still left: Needs you as a kit page (kept as the review stage by ruling), Settin
 desktop (s56: the product has no index there, by ruling) and each section's own rows, Friends
 as a page (s49: the product's dialog, solid), Standings as kit rows, and the request page's
 leftovers.
+
+### The last leftovers (11 Nov)
+
+Done (`545d0dd6f` on):
+
+- **Standings (s55)** as the kit's rows: rank in the lead, the name, the points, your own row
+  lit (the board's row view now says which is the viewer's), a row's details under it inside
+  the card. The board's hints and the non-podium chip stay above, the season picker and event
+  card over them. The standard look keeps its table.
+- **A request's status (s32, s33)** as the kit's card: the stage as a pill, the five-stop line
+  (asked is Plan under way, a plan ready is Build waiting, voted in is every stop done; no line
+  while the bot's track card says the steps), one sentence, the claim's small words, the one
+  action. Drawn in the same host the side column measures, with no label: it stands at the
+  words' top, where a label has no room, and the pill says the stage. **Follow this request**
+  is a switch on About, the same write the ⋯ row makes. The tour's primary button in the
+  head stays a ruling: the product keeps the action in the status card, beside its reason.
+- **You (s44, s45):** Open public page beside Edit profile while the page is live; a Public
+  page group in the context column (the Public profile row says whether it is on and opens
+  Edit profile, where the switch asks before publishing; Copy public link says so on its
+  line). Changes, Requests, Votes and Friends stay rows, not tabs (the earlier ruling).
+- **Settings' sections (s57 to s69):** every page is named at its head under a look, a
+  one-part page too, with one sentence under the name (`settings:frame.purpose.*`); a
+  section's grouped lists wear the kit's card and row (the primitives are named `ui-glist`,
+  `ui-lrow` and their parts, and the wear map scopes them with `:where()` inside the compound
+  so `.row+.row` stays one selector); a part's heading is the kit's small-caps label and its
+  sentence the kit's muted line. The controls stay the product's (a switch, a segmented
+  control, a form): the tour's radio rows and switches on rows are a product change, and a
+  one-part page's label repeats its name as its one group's label.
+
+Rulings: the standings' group label says This season or This event, not the tour's Top of
+the season / Around you (the board is one page, not two groups); the viewer's lit row
+depends on the board's `viewer_row`, which this copy's partner API does not fill, so it was
+checked by test only.
+
+Learned: `npm run ensure:shell` does not compile the looks section; a change to
+`frontend/looks/` needs `node scripts/build-looks-css.js` before `build:css`, or
+tests/looks-css.test.js fails on the committed section.
+
+Nothing of the programme is left but what the rulings keep: Needs you as the review stage,
+Settings' index on a desktop, Friends as the dialog, the blank thread as the column pane,
+Discover and an app's page, and the waitlist's look around as a member.
