@@ -3579,7 +3579,7 @@
       "expectSelector": "#settings-section-content [data-settings-section]:not(.hidden)"
     },
     {
-      "name": "Home's Pinned apps section renders for the seeded admin",
+      "name": "Home's Pinned apps section renders for the seeded admin and keeps its saved grid (#6492)",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
     },
