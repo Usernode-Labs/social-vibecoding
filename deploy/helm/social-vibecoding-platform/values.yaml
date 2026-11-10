@@ -272,9 +272,15 @@ config:
   # The media store's S3-compatible bucket (screenshots, videos and other
   # files kept out of PostgreSQL), as MEDIA_STORAGE_ENDPOINT and
   # MEDIA_STORAGE_BUCKET. Empty endpoint: off. The key pair is
-  # secrets.mediaStorageAccessKey / mediaStorageSecretKey. App file uploads
-  # (MINIO_*, src/services/app-files.js) are a separate store and stay off.
+  # secrets.mediaStorageAccessKey / mediaStorageSecretKey.
   mediaStorage:
+    endpoint: ""
+    bucket: ""
+  # App file uploads (images and audio apps store, src/services/app-files.js)
+  # in their own S3-compatible bucket, as MINIO_ENDPOINT and STORAGE_BUCKET.
+  # Empty endpoint: off, and every upload answers 503 storage_unavailable.
+  # The key pair is secrets.appFileStorageAccessKey / appFileStorageSecretKey.
+  appFileStorage:
     endpoint: ""
     bucket: ""
   logLevel: INFO
@@ -407,6 +413,9 @@ secrets:
   # The media store's key pair for config.mediaStorage. Supply both through SOPS.
   mediaStorageAccessKey: ""
   mediaStorageSecretKey: ""
+  # The app-file store's key pair for config.appFileStorage. Supply both through SOPS.
+  appFileStorageAccessKey: ""
+  appFileStorageSecretKey: ""
   # Optional mobile push settings. Supply all four through encrypted external values.
   mobilePushEnabled: false
   pushEnv: ""
