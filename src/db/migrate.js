@@ -16210,8 +16210,13 @@ async function seedStagingGithubChecksHold(pool) {
         [SESSION_ID, appId, botId, BRANCH, title, prNumber, head],
       );
     } else {
-      // Keep the fixture in the state it is for on every boot: the times keep
-      // counting, so a copy that has been up a while still says it is trying.
+      // Keep the fixture in the state it is for on every boot where neither
+      // workflow machine holds the row yet: once the proposal machine holds
+      // it, its status and promotion are the machine's to move, and once the
+      // preview machine holds it, the checks' verdict is its own. A seed that
+      // wrote either would be a second writer of a column only src/workflow/
+      // may write. The instance's own record below still resets the wait, so
+      // the times keep counting on a copy that has been up a while.
       await tx.query(
         `UPDATE chat_sessions
             SET status = 'promoted', pr_number = $2, pr_title = $3, pr_url = $4,
@@ -16222,7 +16227,9 @@ async function seedStagingGithubChecksHold(pool) {
                 integration_block_reasons = '["github_checks"]'::jsonb,
                 votes_required = 1, promoted_at = NOW() - INTERVAL '2 hours',
                 last_activity_at = NOW() - INTERVAL '2 minutes'
-          WHERE id = $1`,
+          WHERE id = $1
+            AND NOT wf_holds('proposal', 'session:' || id)
+            AND NOT wf_holds('preview', 'session:' || id)`,
         [SESSION_ID, prNumber, title, `https://github.com/example/example/pull/${prNumber}`, head],
       );
     }
