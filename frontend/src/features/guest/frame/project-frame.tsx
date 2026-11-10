@@ -107,7 +107,9 @@ export function GuestProjectFrame({ app, overview, loaded, tab, onTab, signedIn,
     </Card>
   );
 
-  const side = tab === 'hub' ? (
+  // Who made it and who uses it stand beside every tab, as the standard
+  // page's band says them over all three; the chat's door is the Hub's.
+  const side = (
     <>
       <Sec label={t('auth:guest.project.peopleLabel')}>
         <Card>
@@ -115,7 +117,7 @@ export function GuestProjectFrame({ app, overview, loaded, tab, onTab, signedIn,
           <Row lead={<Lead icon="globe" />} title={t('auth:guest.project.audience')} sm />
         </Card>
       </Sec>
-      <Sec label={t('auth:guest.project.fromChat')}>
+      {tab !== 'hub' ? null : <Sec label={t('auth:guest.project.fromChat')}>
         <Card>
           <Row
             lead={<Lead icon="chat" />}
@@ -126,9 +128,9 @@ export function GuestProjectFrame({ app, overview, loaded, tab, onTab, signedIn,
             wrap
           />
         </Card>
-      </Sec>
+      </Sec>}
     </>
-  ) : null;
+  );
 
   return (
     <PageBody

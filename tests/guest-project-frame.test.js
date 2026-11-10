@@ -66,9 +66,9 @@ test('the Hub: what is happening, what is up for a vote, what was voted in; who 
 
 test('the Workshop: every vote with its before and after, then the requests', () => {
   const html = render({ tab: 'workshop' });
-  assert.deepEqual(caps(html), ['Up for a vote', 'Requests']);
+  assert.deepEqual(caps(html), ['Up for a vote', 'Requests', 'People'], 'who made it and who uses it stand beside every tab');
   assert.match(html, /<div class="fr-shots"><figure><img src="\/b\.png" alt="" loading="lazy"\/><figcaption>Before<\/figcaption><\/figure><figure><img src="\/a\.png" alt="" loading="lazy"\/><figcaption>After<\/figcaption><\/figure><\/div>/);
-  assert.deepEqual(titles(html), ['Snake: wrap-around walls', 'A change', 'A leaderboard', 'Sounds', 'and 1 more']);
+  assert.deepEqual(titles(html), ['Snake: wrap-around walls', 'A change', 'A leaderboard', 'Sounds', 'and 1 more', 'Built by 25 people', 'Public community']);
   assert.match(html, /<h2 class="fr-cap">Requests<\/h2><button type="button" class="fr-link">Ask for something<\/button>/);
   assert.match(render({ tab: 'workshop', overview: null, loaded: false }), /<div class="fr-card fr-pad">Loading…<\/div>/);
   assert.match(render({ tab: 'workshop', overview: { ...OVERVIEW, votes: [], requests: null } }), /Nothing is up for a vote right now\..*The requests can&#x27;t be shown right now\./s);

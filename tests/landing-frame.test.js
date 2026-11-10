@@ -49,17 +49,19 @@ test('the kinds of community are the page\'s tabs, the same control as everywher
 test('All: what an account adds, apps to try, communities to look at; what is here today beside them', () => {
   const html = render();
   const caps = [...html.matchAll(/<h2 class="fr-cap"[^>]*>([^<]+)<\/h2>/g)].map((m) => m[1]);
-  assert.deepEqual(caps, ['With an account', 'Try an app now', 'Communities', 'Homeroom today']);
+  assert.deepEqual(caps, ['With an account', 'Try an app now', 'Featured', 'Communities', 'Homeroom today'], 'the platform\'s featured communities under their own label, as Home draws them');
   assert.deepEqual([...html.matchAll(/<span class="fr-t">([^<]+)<\/span>/g)].map((m) => m[1]).slice(0, 3), ['Vote on what changes', 'Ask for what you want', 'Make your own']);
   // An app that needs no account is a tile that opens it; one that does is not offered.
-  const tiles = html.slice(html.indexOf('fr-tiles'), html.indexOf('Communities</h2>'));
+  const tiles = html.slice(html.indexOf('fr-tiles'), html.indexOf('Featured</h2>'));
   assert.deepEqual([...tiles.matchAll(/<span class="fr-nm">([^<]+)<\/span>/g)].map((m) => m[1]), ['Game Corner', 'The Best Color', 'Todo List']);
   assert.match(tiles, /<a class="fr-at" href="https:\/\/game-corner\.example">/);
   assert.match(html, /No account needed/);
-  // Every community is a row, the featured one first, its people said in words, ending in Look.
+  // Every community is a row, the featured one under Featured, its people said in words, ending in Look.
+  const featured = html.slice(html.indexOf('Featured</h2>'), html.indexOf('Communities</h2>'));
+  assert.deepEqual([...featured.matchAll(/<span class="fr-t">([^<]+)<\/span>/g)].map((m) => m[1]), ['Game Corner']);
+  assert.match(featured, /<a class="fr-row" href="\/app\/game-corner"[^>]*>.*?<span class="fr-s">89 members<\/span>.*?<span class="fr-btn fr-quiet fr-sm">Look<\/span><\/a>/s);
   const rows = html.slice(html.indexOf('Communities</h2>'), html.indexOf('Homeroom today'));
-  assert.deepEqual([...rows.matchAll(/<span class="fr-t">([^<]+)<\/span>/g)].map((m) => m[1]), ['Game Corner', 'The Best Color', 'Community Tier Lists', 'Todo List']);
-  assert.match(rows, /<a class="fr-row" href="\/app\/game-corner"[^>]*>.*?<span class="fr-s">89 members<\/span>.*?<span class="fr-btn fr-quiet fr-sm">Look<\/span><\/a>/s);
+  assert.deepEqual([...rows.matchAll(/<span class="fr-t">([^<]+)<\/span>/g)].map((m) => m[1]), ['The Best Color', 'Community Tier Lists', 'Todo List']);
   assert.match(rows, /<span class="fr-s">1 member<\/span>/);
   assert.match(html, /<div class="fr-fact"><div class="fr-v">4<\/div><div class="fr-l">communities<\/div><\/div><div class="fr-fact"><div class="fr-v">3<\/div><div class="fr-l">apps to try<\/div><\/div>/);
 });
@@ -104,7 +106,7 @@ test('an account still in line looks around on the same page, which says where i
   assert.match(html, /<h1 class="fr-title">You&#x27;re on the waitlist<\/h1><p class="fr-purpose">[^<]*mina@example\.com[^<]*<\/p>/);
   assert.match(html, /<div class="fr-acts"><a class="fr-btn" href="#waiting" data-guest-waitlist-room="">[^<]+<\/a><\/div>/);
   assert.doesNotMatch(html, /With an account|Join the waitlist|Try an app first/);
-  const tiles = html.slice(html.indexOf('fr-tiles'), html.indexOf('Communities</h2>'));
+  const tiles = html.slice(html.indexOf('fr-tiles'), html.indexOf('Featured</h2>'));
   assert.deepEqual([...tiles.matchAll(/<span class="fr-nm">([^<]+)<\/span>/g)].map((m) => m[1]), ['Game Corner', 'The Best Color', 'Community Tier Lists', 'Todo List'], 'every app, signed in');
   assert.match(html, /<h2 class="fr-cap">Your spot<\/h2><\/div><div class="fr-card"><a class="fr-row fr-sm" href="#waiting">/);
   assert.match(render({ waiting: { email: null } }), /<p class="fr-purpose">[^<]+<\/p>/);

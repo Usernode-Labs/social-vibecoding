@@ -83,8 +83,12 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, 
   const inApp = inHomeroomApp();
   const tryable = (app: GuestApp) => !!waiting || canTryHere(app, inApp);
   const q = query.trim();
-  const rows = useMemo(() => filterApps(joinOrder(all), q, kind), [all, q, kind]);
-  const toTry = rows.filter(tryable);
+  const listed = useMemo(() => filterApps(joinOrder(all), q, kind), [all, q, kind]);
+  // The platform's featured communities lead under their own label (as
+  // Home draws them); the rest follow as Communities. A search lists all.
+  const featured = useMemo(() => (q ? [] : listed.filter((a) => a.featured)), [listed, q]);
+  const rows = useMemo(() => (q ? listed : listed.filter((a) => !a.featured)), [listed, q]);
+  const toTry = listed.filter(tryable);
   const bySlug = useMemo(() => new Map(all.map((a) => [a.slug, a])), [all]);
   const pinned = !kind && !q ? device.apps.map((s) => bySlug.get(s)).filter((a): a is GuestApp => !!a) : [];
   const front = !kind && !q && !waiting;
@@ -186,6 +190,24 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, 
           <Tiles>
             {toTry.slice(0, TRY_SHOWN).map(tile)}
           </Tiles>
+        </Sec>
+      ) : null}
+
+      {featured.length ? (
+        <Sec label={th('home:join.featured')}>
+          <Card>
+            {featured.map((a) => (
+              <Row
+                key={a.slug}
+                href={projectPath(a.slug)}
+                onClick={(event) => openProject(event, a.slug)}
+                lead={<Tile name={a.name || a.slug} src={a.icon_url} emoji={a.icon_emoji} color={a.icon_color} />}
+                title={a.name || a.slug}
+                line={a.member_count ? th('home:join.members', { count: a.member_count }) : (a.description || undefined)}
+                right={<span className="fr-btn fr-quiet fr-sm">{t('auth:frame.landing.look')}</span>}
+              />
+            ))}
+          </Card>
         </Sec>
       ) : null}
 
