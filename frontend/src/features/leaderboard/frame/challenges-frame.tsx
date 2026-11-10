@@ -7,6 +7,8 @@
  * Presentational: the pane's own view (../challenges-pane.tsx) with another
  * face. A challenge's own page and Standings are still the pane's.
  */
+import { Fragment } from 'react';
+import type * as React from 'react';
 import { Btn, Card, Facts, Frame, Head, Lead, Meta, Note, PageBody, Row, Sec, Tabs, k } from '@/components/ui/kit';
 import { useMessages } from '../../../lib/i18n/react';
 import { useFrameFlag } from '../../frame/frame-flag';
@@ -113,5 +115,48 @@ export function StandingsFrameHead({ up = true, tabs, onTab, purpose }: {
         <Tabs tabs={tabs} current="topochain" onPick={(key) => onTab(key)} />
       </div>
     </Frame>
+  );
+}
+
+/** A row of the board as the pane's view has it; `viewer` marks your own. */
+export interface StandingRowLike {
+  index: number; rank: string; nonPodium: boolean; user: string; anonymous?: boolean; points: string; viewer?: boolean;
+}
+
+/**
+ * Standings under a look (the tour's s55): the standard row, rank in the
+ * lead, the name, the points, your own row lit. A row's details open under
+ * it, inside the card, as they do under the table.
+ */
+export function StandingsFrameRows({ label, rows, you, openIndex, details, onOpen }: {
+  label?: string | null;
+  rows: StandingRowLike[];
+  you: { rank: string } | null;
+  openIndex: number | null;
+  details?: React.ReactNode;
+  onOpen: (index: number) => void;
+}) {
+  const t = useMessages('leaderboard');
+  return (
+    <Sec label={label || undefined} data-standings-rows="">
+      <Card>
+        {rows.map((row) => (
+          <Fragment key={row.index}>
+            <Row
+              sm={!row.nonPodium}
+              on={!!you && (row.viewer || (!row.nonPodium && row.rank === you.rank))}
+              lead={<Lead>{row.rank}</Lead>}
+              title={row.user}
+              line={row.nonPodium ? t('leaderboard:standings.nonPodiumTip') : undefined}
+              right={<Meta>{row.points}</Meta>}
+              label={row.anonymous ? t('leaderboard:standings.openDetailsAnonymous') : t('leaderboard:standings.openDetails', { name: row.user })}
+              pressed={openIndex === row.index}
+              onClick={() => onOpen(row.index)}
+            />
+            {openIndex === row.index && details ? <div className={k('pad')}>{details}</div> : null}
+          </Fragment>
+        ))}
+      </Card>
+    </Sec>
   );
 }

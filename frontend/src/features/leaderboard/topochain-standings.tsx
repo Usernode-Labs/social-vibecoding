@@ -37,7 +37,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { ActivityRow } from './activity-row';
 import { topochainStandingsStore } from './topochain-standings-store.js';
 import { isFrameSkin, useLiveSkin } from '../../lib/skin';
-import { StandingsFrameHead } from './frame/challenges-frame';
+import { StandingsFrameHead, StandingsFrameRows } from './frame/challenges-frame';
 import { useLeaderboardSection } from './section-store';
 import { MyStanding, myStandingStore, standingView } from './my-standing.js';
 
@@ -51,6 +51,8 @@ type RowView = {
   /** No display name: `user` is the "Anonymous" stand-in. */
   anonymous?: boolean;
   points: string;
+  /** Your own row (under a look it is the lit one). */
+  viewer?: boolean;
 };
 
 /** #5275: the viewer's own place, pinned above the table. */
@@ -372,7 +374,7 @@ function StandingsSkeleton(): ReactNode {
   );
 }
 
-function Body({ view, drill }: { view: BodyView | null; drill: DrillView | null }): ReactNode {
+function Body({ view, drill, frame }: { view: BodyView | null; drill: DrillView | null; frame: boolean }): ReactNode {
   const t = useMessages('leaderboard');
   if (!view || view.state === 'loading') return <StandingsSkeleton />;
   if (view.state === 'error') {
@@ -423,9 +425,18 @@ function Body({ view, drill }: { view: BodyView | null; drill: DrillView | null 
     <>
       <ChallengeLine line={view.challengeLine} />
       <Disclaimer text={view.disclaimer} />
-      <YouLine you={view.you} />
+      {frame ? null : <YouLine you={view.you} />}
       <NonPodiumChip toggle={view.nonPodiumToggle} />
-      <StandingsTable view={view} drill={drill} />
+      {frame ? (
+        <StandingsFrameRows
+          label={t(view.isSeason ? 'leaderboard:standings.frame.season' : 'leaderboard:standings.frame.event')}
+          rows={view.rows}
+          you={view.you || null}
+          openIndex={drill && drill.index != null ? drill.index : null}
+          details={drill ? <DrillPanel view={drill} /> : null}
+          onOpen={(index) => controller()?._openRowAt(index)}
+        />
+      ) : <StandingsTable view={view} drill={drill} />}
     </>
   );
 }
@@ -630,7 +641,7 @@ export function TopochainStandingsPane(): ReactNode {
   return (
     <>
       {frame ? <StandingsInFrameHead /> : null}
-      <div id="tc-lb-body"><Body view={state.body} drill={inline ? state.drill : null} /></div>
+      <div id="tc-lb-body"><Body view={state.body} drill={inline ? state.drill : null} frame={frame} /></div>
       <Drill view={state.drill} inline={inline} />
     </>
   );

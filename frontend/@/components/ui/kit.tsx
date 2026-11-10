@@ -218,9 +218,9 @@ export function GroupLink({ href, onClick, children }: { href?: string; onClick?
 }
 
 /** A labelled group: the label, at most one link, then one block. */
-export function Sec({ label, action, id, children }: { label?: React.ReactNode; action?: React.ReactNode; id?: string; children?: React.ReactNode }) {
+export function Sec({ label, action, id, children, ...props }: { label?: React.ReactNode; action?: React.ReactNode; id?: string; children?: React.ReactNode } & React.HTMLAttributes<HTMLElement>) {
   return (
-    <section className={k('sec')} id={id}>
+    <section className={k('sec')} id={id} {...props}>
       {label ? (
         <div className={k('sechead')}>
           <h2 className={k('cap')}>{label}</h2>

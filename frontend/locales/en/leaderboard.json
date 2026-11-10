@@ -1214,5 +1214,13 @@
   "frame.points": {
     "text": "points",
     "description": "Challenges when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label under the person's points total in the context column, as in '16,128' over 'points'."
+  },
+  "standings.frame.season": {
+    "text": "This season",
+    "description": "Label over the standings' rows under one of the frame's looks, on the whole-season board (Challenges > Standings): the people ranked this season."
+  },
+  "standings.frame.event": {
+    "text": "This event",
+    "description": "Label over the standings' rows under one of the frame's looks, when one event's board is picked instead of the whole season."
   }
 }

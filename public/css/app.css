@@ -27139,8 +27139,9 @@ html[data-skin][data-challenges-frame] #leaderboard-screen > div { max-width: no
 html[data-skin][data-challenges-frame] #standings-tabs { display: none; }
 html[data-skin][data-challenges-frame] #leaderboard-event-bar { box-sizing: border-box; max-width: 1136px; margin: 0 auto; padding: 0 32px; }
 html[data-skin][data-challenges-frame] #tc-se-grid > :not(.fr) { display: none; }
-/* Standings wears the same head and tabs over its own table, which sits in
-   the kit's column under them. */
+/* Standings wears the same head and tabs; its board is the kit's rows
+   (StandingsFrameRows) in the content column's width, a row's details
+   under it on the card's own padding. */
 html[data-skin][data-standings-frame] #leaderboard-screen { padding-inline-start: var(--platform-rail-w, 0px) !important; padding-inline-end: 0 !important; }
 html[data-skin][data-standings-frame] #leaderboard-screen > div { max-width: none; padding: 0; }
 html[data-skin][data-standings-frame] #standings-tabs { display: none; }
@@ -27155,6 +27156,8 @@ html[data-skin][data-standings-frame] #topochain-leaderboard-root { display: con
 html[data-skin][data-standings-frame] #topochain-leaderboard-root > .fr { order: 0; }
 html[data-skin][data-standings-frame] #leaderboard-screen > div > div:first-child { order: 1; }
 html[data-skin][data-standings-frame] #topochain-leaderboard-root > :not(.fr) { order: 2; width: 100%; }
+html[data-skin][data-standings-frame] #tc-lb-body > * { max-width: 720px; }
+html[data-skin] [data-standings-rows] > .fr-card > .fr-pad { padding: 0 16px 16px; }
 @media (max-width: 767.98px) {
   html[data-skin][data-challenges-frame] #leaderboard-event-bar,
   html[data-skin][data-standings-frame] #leaderboard-event-bar,
