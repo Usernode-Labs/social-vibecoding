@@ -26993,6 +26993,62 @@ html[data-frame-chrome] body { isolation: isolate; }
 html[data-skin] .fr.fr-shell.fr-shell-under > .fr-side { visibility: hidden; }
 html[data-skin] .fr.fr-shell:not(.fr-shell-under) > .fr-colm { background: none; box-shadow: none; }
 
+/* THE PHONE'S SAFE AREA. A look's bar sits at y=0 and its tab bar at the
+   window's foot, so on a phone with a notch the bar was under the status
+   bar and the tab bar under the home strip. Each now grows around the
+   inset and its own ground fills the strip: margin, not padding, so each
+   look keeps its border-box height. The page area the chrome measures
+   (--fr-shell-top, -bottom) then starts below the bar and ends above the
+   tab bar, and the screens follow. A tablet's sidebar takes the insets as
+   transparent borders, which its own ground paints under. Covered by
+   tests/frame-app.test.js. */
+html[data-skin] .fr.fr-shell .fr-bar {
+  position: relative;
+  margin-top: var(--platform-safe-top, 0px);
+}
+html[data-skin] .fr.fr-shell .fr-bar::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: 100%;
+  height: var(--platform-safe-top, 0px);
+  background: inherit;
+}
+html[data-skin]:not([data-skin="pastel"]) .fr.fr-shell > .fr-side {
+  border-top: var(--platform-safe-top, 0px) solid transparent;
+  border-bottom: var(--platform-safe-bottom, 0px) solid transparent;
+}
+@media (max-width: 767.98px) {
+  html[data-skin] .fr.fr-shell .fr-tabbar {
+    position: relative;
+    margin-bottom: var(--platform-safe-bottom, 0px);
+  }
+  html[data-skin] .fr.fr-shell .fr-tabbar::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    top: 100%;
+    height: var(--platform-safe-bottom, 0px);
+    background: inherit;
+  }
+  /* Glass and Pastel float their tab bar: it rises with the home strip and
+     the strip under it stays clear. */
+  html[data-skin="glass"] .fr.fr-shell .fr-tabbar,
+  html[data-skin="pastel"] .fr.fr-shell .fr-tabbar {
+    margin-bottom: calc(12px + var(--platform-safe-bottom, 0px));
+  }
+  html[data-skin="glass"] .fr.fr-shell .fr-tabbar::after,
+  html[data-skin="pastel"] .fr.fr-shell .fr-tabbar::after { content: none; }
+}
+/* Pastel's sidebar is a horizontal pill in the top row, so the layer is
+   offset instead of the pill taking borders; the bar inside it takes no
+   margin of its own, or the inset would count twice. */
+@media (min-width: 768px) {
+  html[data-skin="pastel"] .fr.fr-app.fr-shell { top: var(--platform-safe-top, 0px); }
+  html[data-skin="pastel"] .fr.fr-shell .fr-bar { margin-top: 0; }
+  html[data-skin="pastel"] .fr.fr-shell .fr-bar::before { content: none; }
+}
+
 /* A LIST BESIDE ITS OPEN ITEM (the kit's split: Homeroom bot's page). The
    screen stays the scroller and keeps its own column for the open item;
    under a look the list is the kit's pane, 520px as the tour draws it, and
@@ -27359,7 +27415,7 @@ html[data-skin] .fr-ovhost .fr-sheet > .fr-stack { min-height: 0; overflow-y: au
    screen already lays itself out by. */
 html[data-frame-chrome] #platform-header { visibility: hidden !important; pointer-events: none !important; box-sizing: border-box; height: var(--fr-shell-top) !important; min-height: 0 !important; padding-block: 0 !important; margin-block: 0 !important; }
 html[data-frame-chrome] #platform-tabs { visibility: hidden !important; pointer-events: none !important; }
-html[data-frame-chrome] body { --platform-header-h: var(--fr-shell-top); }
+html[data-frame-chrome] body { --platform-header-h: calc(var(--fr-shell-top) - var(--platform-safe-top, 0px)); }
 @media (min-width: 768px) {
   html[data-frame-chrome] body { --platform-rail-full: var(--fr-shell-left); }
 }
@@ -27400,7 +27456,11 @@ html[data-frame-chrome] body.has-install-strip #platform-header { height: calc(v
 /* …and the header token the screens subtract from the window: `--ws-area`
    (the project page's fitted room) takes the strip off by --browser-banner-h
    already, so the token is the bar alone, or the room was a strip short. */
-html[data-frame-chrome] body.has-install-strip { --platform-header-h: calc(var(--fr-shell-top) - var(--install-strip-h)); }
+html[data-frame-chrome] body.has-install-strip { --platform-header-h: calc(var(--fr-shell-top) - var(--install-strip-h) - var(--platform-safe-top, 0px)); }
+/* The layer starts below the strip AND the inset already (the rule above),
+   so the bar takes no margin of its own there: the inset would count twice. */
+body.has-install-strip .fr.fr-shell .fr-bar { margin-top: 0; }
+body.has-install-strip .fr.fr-shell .fr-bar::before { content: none; }
 /* On a phone the kit's tab bar is fixed over the page's foot (the standard
    bar's own height goes to --platform-tabs-h, but a kit page scrolls in
    the document, or in a pane that gave up its allowance with its padding),
