@@ -850,6 +850,12 @@ test('the server: a row\'s list is its stored work state, read for the viewer', 
   assert.equal(mine('planning').group, 'next', 'being planned');
   assert.equal(mine('building', { line: { code: 'fixing' } }).group, 'next', 'being fixed');
   assert.equal(mine('going_live').group, 'next');
+  assert.equal(aiWork.standing({ ...open, state: 'closed' }, ME, now, null, ws('going_live')).group, 'next',
+    'a merged request stays in progress until its release is live');
+  assert.equal(aiWork.standing({ ...open, state: 'closed', own: false }, ME, now, null, ws('going_live')), null,
+    'going live still belongs only to the people whose work it is');
+  assert.equal(aiWork.standing({ ...open, state: 'closed', own: false, change_user: ME }, ME, now, null, ws('going_live')).group, 'next',
+    'the builder also keeps a closed request going live');
   assert.equal(aiWork.standing({ ...open, state: 'closed' }, ME, now, null, ws('waiting_for_you', { why: 'plan', requesterId: ME })), null,
     'never on a closed thread');
   assert.equal(aiWork.standing(open, ME, now, null, ws('closed')), null, 'nor a closed request');

@@ -111,7 +111,7 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   // Hers, merged and going live; and hers, live yesterday. Only the merge
   // machine makes a merged row that is not live yet (schema.sql
   // chat_sessions_inserted_merged_live), so the first is written as it.
-  await request(app, 6, ada, 'Digest');
+  await request(app, 6, ada, 'Digest', 'closed');
   const tx = await pool.connect();
   try {
     await tx.query('BEGIN');

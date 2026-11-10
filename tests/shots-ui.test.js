@@ -977,3 +977,89 @@ test('a sharp still at its own address shows like any other, and nothing else ma
   assert.equal(pictures.screens.length, 1);
   assert.equal(pictures.screens[0].after.url, dense('4'));
 });
+
+// ── A failed run's retake, offered where the failure shows (issue #6551) ───
+
+function asUser(user, fn) {
+  const previous = globalThis.App;
+  globalThis.App = { user };
+  try { return fn(); } finally { globalThis.App = previous; }
+}
+
+function failedShots(overrides = {}) {
+  return shots({
+    state: 'failed', artifacts: [], failureCode: 'shots_capture_incomplete',
+    repairAvailable: true, failureReason: 'The shots agent could not reach the dialog.',
+    ...overrides,
+  });
+}
+
+test('only the change author or an app admin may retake a failed run', () => {
+  const item = { id: 42, user_id: 7, status: 'promoted', shots: failedShots() };
+  assert.equal(asUser({ id: 7 }, () => AppView._canRetakeShots(item)), true, 'its author may');
+  assert.equal(asUser({ id: 7, canAdminWrite: true }, () => AppView._canRetakeShots(item)), true, 'an app admin may');
+  assert.equal(asUser({ id: 8 }, () => AppView._canRetakeShots(item)), false, 'nobody else may');
+  assert.equal(asUser({ id: 42 }, () => AppView._canRetakeShots({ ...item, user_id: 8 })), false, 'not even another change');
+  // An app admin without the write flag, through the board's own context.
+  const ctx = AppView._proposalsCtx;
+  AppView._proposalsCtx = { ...(ctx || {}), isAppAdmin: true };
+  try {
+    assert.equal(asUser({ id: 8 }, () => AppView._canRetakeShots(item)), true);
+  } finally { AppView._proposalsCtx = ctx; }
+  // A read-only viewer sees no retake even on their own change.
+  const appData = AppView.appData;
+  AppView.appData = { can_collaborate: false };
+  try {
+    assert.equal(asUser({ id: 7 }, () => AppView._canRetakeShots(item)), false);
+  } finally { AppView.appData = appData; }
+  // Nothing to press while the platform is already retrying, or when the
+  // declaration itself says nothing visible changed.
+  assert.equal(asUser({ id: 7 }, () => AppView._canRetakeShots({ ...item, shots: failedShots({ automaticRetryPending: true }) })), false);
+  assert.equal(asUser({ id: 7 }, () => AppView._canRetakeShots({ ...item, shots: failedShots({ failureCode: 'visible_changes_conflict' }) })), false);
+  // Only a failed run has a retake worth offering.
+  for (const state of ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing', 'verified', 'stale', 'cancelled', 'not_required', 'overridden']) {
+    assert.equal(asUser({ id: 7 }, () => AppView._canRetakeShots({ ...item, shots: { state } })), false, state);
+  }
+});
+
+test('a failed run’s Details reading says what happened, and retakes only for a reader allowed to', () => {
+  const failed = failedShots();
+  const seen = AppView.shotsHtml(failed, { sessionId: 42, details: true });
+  assert.match(seen, /Couldn’t take the screenshots/);
+  assert.match(seen, /The shots agent could not reach the dialog\./);
+  assert.doesNotMatch(seen, /data-shots-retake/, 'no button for a reader who may not use it');
+  const allowed = AppView.shotsHtml(failed, { sessionId: 42, details: true, canRetake: true });
+  assert.match(allowed, /<button type="button" data-shots-retake="1"[^>]*onclick="AppView\.rerunShots\(42, this\)">Take the screenshots again<\/button>/);
+  // An automatic retry already coming draws nothing here, as everywhere else.
+  assert.equal(AppView.shotsHtml(failedShots({ automaticRetryPending: true }), { sessionId: 42, details: true, canRetake: true }), '');
+  // The thread reading of a failed run is unchanged: no panel until it passes.
+  assert.equal(AppView.shotsHtml(failed, { sessionId: 42, thread: true, canRetake: true }), '');
+  // A verified run's details still carries no retake (that is the card's).
+  const ready = AppView.shotsHtml(shots(), { sessionId: 42, details: true, canRetake: true });
+  assert.match(ready, /Taken on the exact before and after builds/);
+  assert.doesNotMatch(ready, /data-shots-retake/);
+});
+
+test('a failed run’s description drops the Before & after block that links to shots it has none of', () => {
+  const body = '## What changed\n\nFor real.\n\n'
+    + '<!-- usernode:shots -->\n## Before & after\n\n'
+    + '[See the before & after shots of this exact revision in Homeroom](https://example.test/change)\n'
+    + '<!-- /usernode:shots -->';
+  const failed = { id: 7, pr_body: body, shots: failedShots() };
+  const view = AppView._proposalBodyView(failed);
+  assert.match(view.html, /What changed/);
+  assert.doesNotMatch(view.html, /usernode:shots|Before &amp; after|exact revision/);
+  assert.match(failed.pr_body, /usernode:shots/, 'the pull request body itself is untouched');
+  // The legacy marker pair is stripped too.
+  const legacy = { id: 7, shots: failedShots(), pr_body: 'Intro.\n\n<!-- usernode:visual-evidence -->\n## Before & after\n<!-- /usernode:visual-evidence -->' };
+  assert.doesNotMatch(AppView._proposalBodyView(legacy).html, /usernode:visual-evidence|Before &amp; after/);
+  // A verified run, and one the platform is retrying, keep their block.
+  assert.match(AppView._proposalBodyView({ ...failed, shots: shots() }).html, /Before &amp; after/);
+  assert.match(AppView._proposalBodyView({
+    ...failed, shots: failedShots({ automaticRetryPending: true }),
+  }).html, /exact revision/);
+  // Nothing left but the block reads as no description at all.
+  assert.equal(AppView._proposalBodyView({
+    id: 7, shots: failedShots(), pr_body: '<!-- usernode:shots -->\n## Before & after\n<!-- /usernode:shots -->',
+  }), null);
+});

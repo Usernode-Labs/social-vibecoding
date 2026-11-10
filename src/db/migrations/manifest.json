@@ -277,9 +277,14 @@
       "schemaSha256": "9fcb84cb3d7312f478856b39a01072be8dec914e95cb334113893d45fe27ead7"
     },
     {
+      "id": "waitlist-first-mile-facts",
+      "sha256": "4d02dd130e5b9b37ef95a982ad488f68131af64f31d28662f3a67d1a16863af2",
+      "schemaSha256": "a427050558fdb8b26d311e317df9886d88b058ef12ae22b5c470acbbb246d059"
+    },
+    {
       "id": "change-close-reason",
       "sha256": "eb3c93d285e4d76faa45b681de0b5851db785aba364c7df3d848bd6e49f8aaef",
-      "schemaSha256": "4ce6ab21fcd15dbd0606ca890b2e2d065772833042de45b2e3c9eea41f5e1cc2"
+      "schemaSha256": "1984fd64dd9d5208bd78f18ea63875ed1577ee4ecca7da9d166f26b88e6adea8"
     }
   ]
 }

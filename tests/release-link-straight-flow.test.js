@@ -175,7 +175,7 @@ test('the page holds on "Signing you in…" from its first frame, checks, and on
   // The check and the address in one read; the options for the story's switch.
   const effect = src.slice(src.indexOf("if (!release || release.route !== 'signup' || !release.token) return undefined;"), src.indexOf('}, [release]);'));
   assert.ok(effect.length > 0, 'the effect is there');
-  const check = effect.indexOf('releaseAccountFromToken(token)');
+  const check = effect.indexOf('releaseAccountFromToken(token, { fromAdmitMail: true })');
   const decide = effect.indexOf('spendsOnLoad({ link, account, options })');
   const spend = effect.indexOf('spendReleaseLink(link.signIn!, { newAccountOnly: true })');
   assert.ok(check >= 0 && decide > check && spend > decide, 'look up, decide, then spend');

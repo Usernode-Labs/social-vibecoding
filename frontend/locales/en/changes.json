@@ -1999,9 +1999,17 @@
     "text": "GitHub refused · needs a manual sync",
     "description": "Line under the \"Merge\" step in a proposal's list of steps when GitHub refused to merge the change and a person has to bring it up to date with main by hand."
   },
-  "step.integration.notMeasured": {
-    "text": "Not measured yet",
-    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps before Homeroom has checked whether the change conflicts with the main branch."
+  "step.integration.clean": {
+    "text": "No conflicts",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps when Homeroom's own merge check found that the change does not conflict with the main branch."
+  },
+  "step.integration.measuring": {
+    "text": "Measuring…",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps while Homeroom has not yet checked whether this version of the change conflicts with the main branch."
+  },
+  "step.integration.withAge": {
+    "text": "{{line}} · {{measured}}",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps, adding how long ago Homeroom checked. {{line}} is the finding, such as \"No conflicts\" or a conflict, and {{measured}} is a phrase such as \"measured 2 minutes ago\"."
   },
   "step.integration.resolvingFiles_one": {
     "text": "Resolving a conflict in {{count}} file",
@@ -2507,9 +2515,13 @@
     "text": "{{count}} commits",
     "description": "Small text beside the label of the row on a proposal's page that says the change is behind the main branch. {{count}} is how many commits (saved code changes) behind it is."
   },
-  "ledger.votes.needed": {
-    "text": "{{yes}} of {{required}} needed",
-    "description": "Small text beside the \"Votes\" label on a proposal's page. {{yes}} is the number of Yes votes so far and {{required}} the number needed to approve the change."
+  "ledger.votes.needed_one": {
+    "text": "{{count}} yes vote, {{required}} needed",
+    "description": "Small text beside the \"Votes\" label on a proposal's page. {{count}} is the number of Yes votes so far (one) and {{required}} the number needed to approve the change."
+  },
+  "ledger.votes.needed_other": {
+    "text": "{{count}} yes votes, {{required}} needed",
+    "description": "Small text beside the \"Votes\" label on a proposal's page. {{count}} is the number of Yes votes so far and {{required}} the number needed to approve the change."
   },
   "ledger.sync.label": {
     "text": "Sync with main",
@@ -6369,7 +6381,7 @@
   },
   "shots.card.takeAgain": {
     "text": "Take the screenshots again",
-    "description": "Button on a proposal's screenshots card: starts taking the before/after screenshots over again."
+    "description": "Button on a proposal's screenshots card, on a change's board card, on its Before and after card and in its Details sheet: starts taking the before/after screenshots over again."
   },
   "shots.card.stop": {
     "text": "Stop",
@@ -8715,9 +8727,13 @@
     "text": "Needs another member’s yes",
     "description": "The large figure on the Votes card of a change's page when the change has enough Yes votes but still needs one from a member other than its author. \"Yes\" is the vote."
   },
-  "page.votes.figure.reached": {
-    "text": "{{yes}} of {{needed}} yes",
-    "description": "The large figure on the Votes card of a change's page once it has the Yes votes it needs. {{yes}} is how many Yes votes it has and {{needed}} how many it needs."
+  "page.votes.figure.reached_one": {
+    "text": "{{count}} yes vote, {{needed}} needed",
+    "description": "The large figure on the Votes card of a change's page once it has the Yes votes it needs. {{count}} is how many Yes votes it has (one) and {{needed}} how many it needs."
+  },
+  "page.votes.figure.reached_other": {
+    "text": "{{count}} yes votes, {{needed}} needed",
+    "description": "The large figure on the Votes card of a change's page once it has the Yes votes it needs. {{count}} is how many Yes votes it has and {{needed}} how many it needs."
   },
   "page.votes.figure.yourApproval": {
     "text": "Waiting for your approval",
@@ -8743,9 +8759,13 @@
     "text": "Votes: voted in",
     "description": "Accessible description of the progress bar on the Votes card of a change's page once the group approved the change."
   },
-  "page.votes.label.tally": {
-    "text": "Votes: {{yes}} of {{needed}} yes",
-    "description": "Accessible description of the progress bar on the Votes card of a change's page while the vote is open. {{yes}} is how many Yes votes it has and {{needed}} how many it needs."
+  "page.votes.label.tally_one": {
+    "text": "Votes: {{count}} yes vote, {{needed}} needed",
+    "description": "Accessible description of the progress bar on the Votes card of a change's page while the vote is open. {{count}} is how many Yes votes it has (one) and {{needed}} how many it needs."
+  },
+  "page.votes.label.tally_other": {
+    "text": "Votes: {{count}} yes votes, {{needed}} needed",
+    "description": "Accessible description of the progress bar on the Votes card of a change's page while the vote is open. {{count}} is how many Yes votes it has and {{needed}} how many it needs."
   },
   "page.votes.note.notAsked": {
     "text": "Its author has not asked for approval yet.",
@@ -8954,10 +8974,6 @@
   "page.votes.note.mergeCountdown": {
     "text": "It goes live when the countdown ends, unless someone objects.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while a timer is running after which the change is applied to the running app."
-  },
-  "page.votes.note.mergeCountdownDecided": {
-    "text": "It goes live when the countdown ends.",
-    "description": "One sentence of the line under the figure on the Votes card of a change's page: the yes votes it needs are in, it is counting down to go live, and there is no vote left to cast."
   },
   "page.votes.note.rejectCountdown": {
     "text": "It will be set aside when the countdown ends, unless someone speaks up.",

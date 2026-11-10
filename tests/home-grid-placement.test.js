@@ -18,8 +18,8 @@
 //      one writes nothing at all.
 //   4. The failure revert: a rejected write refetches server truth rather
 //      than leaving the grid showing an arrangement nobody saved.
-//   5. Layout resolution: a stored arrangement wins and a DERIVATION is never
-//      persisted, so a passive visit never becomes a claim.
+//   5. Layout resolution: a stored arrangement wins; the first fully loaded
+//      arrangement is saved once so activity cannot reshuffle pinned apps.
 //
 // THE UI OVERHAUL narrowed the canvas to app tiles at ONE column count.
 // Everything that used to be about widget footprints, per-breakpoint sizes or
@@ -2020,4 +2020,49 @@ test('an unknown gesture value falls back to the direct open (#1838)', async () 
   await frame();
   assert.deepEqual(env.opened, [['demo-app', env.card]]);
   assert.deepEqual(env.dispatched, []);
+});
+
+
+test('the first fully loaded pinned order is saved once and survives activity changes', async () => {
+  const { Home, fetchCalls } = makeHome();
+  Home._apps = [app('alpha', { is_favorited: true }), app('beta', { is_favorited: true })];
+  Home._layouts = {};
+  Home._appsLoaded = true;
+  const first = JSON.stringify(Home.currentLayout(4));
+  await flush();
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 1);
+  Home._apps.reverse();
+  assert.equal(JSON.stringify(Home.currentLayout(4)), first);
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 1);
+});
+
+test('passive order saves wait for both loads and exclude guests and demo fixtures', async () => {
+  for (const gate of ['apps', 'layout', 'guest', 'demo', 'query-demo', 'empty']) {
+    const { Home, sandbox, fetchCalls } = makeHome();
+    Home._apps = gate === 'empty' ? [] : [app('alpha', { is_favorited: true })];
+    Home._layouts = gate === 'layout' ? null : {};
+    Home._appsLoaded = gate !== 'apps';
+    if (gate === 'guest') sandbox.App.user = null;
+    if (gate === 'demo') Home._layoutIsDemo = true;
+    if (gate === 'query-demo') sandbox.location.search = '?demo=1';
+    Home.currentLayout(4);
+    await flush();
+    assert.equal(fetchCalls.length, 0, gate);
+  }
+});
+
+test('a failed passive order save stays quiet and does not retry on each render', async () => {
+  const { Home, fetchCalls, toasts, setFetch } = makeHome();
+  Home._apps = [app('alpha', { is_favorited: true })];
+  Home._layouts = {};
+  Home._appsLoaded = true;
+  setFetch(async () => ({ ok: false, status: 500 }));
+  Home.currentLayout(4);
+  await flush();
+  Home.currentLayout(4);
+  await flush();
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0].method, 'PUT');
+  assert.deepEqual(toasts, []);
+  assert.equal(Home._layouts['4'], undefined);
 });

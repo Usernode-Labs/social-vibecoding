@@ -639,6 +639,9 @@
     explicitApprovalCopy: explicitApprovalCopy,
     awaitingOtherMember: awaitingOtherMember,
     checksWillRetry: checksWillRetry,
+    // "measured 2 minutes ago", so a surface that states a measurement can
+    // say how old it is from the same wording as the status tooltip.
+    ageOf: ageOf,
     // Keys whose canonical badge belongs in the feed card's "state" slot.
     // In-vote / draft are conveyed by the vote pill; checks states keep their
     // own detailed badge (with per-test counts), so they're excluded here.

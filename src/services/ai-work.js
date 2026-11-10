@@ -377,7 +377,8 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
     return { group: 'live', work: stored, at: iso(liveAt),
       mergedAt: iso(row.merged_at), changeId: Number(row.change_id) || null };
   }
-  if (row.state !== 'open' || state.stage === 'closed') return null;
+  // A merge closes its request before the release carrying it is live.
+  if ((row.state !== 'open' && state.stage !== 'going_live') || state.stage === 'closed') return null;
   const decides = viewer?.decides === true
     || (state.requesterId != null && Number(state.requesterId) === Number(viewerId));
   // The bot's question is the Needs you feed's Answer.

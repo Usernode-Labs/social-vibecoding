@@ -1,0 +1,11 @@
+{
+  "name": "decode-uri-component",
+  "version": "0.5.1+homeroom.cjs.1",
+  "description": "Upstream 0.5.1 decoder with a CommonJS export adaptation",
+  "main": "index.js",
+  "license": "MIT",
+  "repository": "https://github.com/SamVerschueren/decode-uri-component",
+  "engines": {
+    "node": ">=14.16"
+  }
+}
