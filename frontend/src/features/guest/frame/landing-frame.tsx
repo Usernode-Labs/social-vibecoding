@@ -173,8 +173,10 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, 
       {!apps ? (
         failed ? (
           <Note tone="bad" icon="alert">
-            {t('auth:guest.loadFailed')}{' '}
-            {onRetry ? <Btn kind="quiet" small onClick={onRetry}>{t('auth:guest.retry')}</Btn> : null}
+            <span className={k('btnrow')}>
+              <span>{t('auth:guest.loadFailed')}</span>
+              {onRetry ? <Btn kind="quiet" small onClick={onRetry}>{t('auth:guest.retry')}</Btn> : null}
+            </span>
           </Note>
         ) : <Card pad>{t('auth:frame.landing.loading')}</Card>
       ) : null}
