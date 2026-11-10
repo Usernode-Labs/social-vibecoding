@@ -642,6 +642,8 @@ test('a waitlist join stores where the landing page sent them, a host only (#654
       utm_source: 'x', utm_campaign: 'launch', ref: 'post-1' });
     // params[5] is which form the join came from (waitlist_signups.source).
     const first = calls.find((c) => /INSERT INTO waitlist_signups/.test(c.sql));
+    // $6 is which form the signup came from (Admin › Journey's "where they
+    // signed up"); the landing page's arrival facts follow it.
     assert.equal(first.params[5], 'form');
     assert.deepEqual(first.params.slice(6), ['discord.com', 'x', 'launch', 'post-1']);
 

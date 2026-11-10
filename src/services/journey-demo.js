@@ -151,9 +151,8 @@ function firstMile(day) {
       step('mail_page', 'stuck', null, "Never opened the mail's page"), step('code_asked', 'not_yet'),
       step('account', 'not_yet'), step('access', 'not_yet'), step('opened', 'not_yet'),
       step('username', 'not_yet'), step('join', 'not_yet'), step('first_act', 'not_yet'),
-    ], { mail: { opened: false, clicked: false },
-      ...cameIn({ waitlist_joined_at: '2026-07-30T08:00:00Z', waitlist_source: 'form', waitlist_discovery: 'x' }),
-      cameFrom: cameFrom(null, null) }),
+    ], { mail: { opened: false, clicked: false }, cameFrom: cameFrom(null, null),
+      ...cameIn({ waitlist_joined_at: '2026-07-30T08:00:00Z', waitlist_source: 'form', waitlist_discovery: 'x' }) }),
   ];
   return {
     demo: true,

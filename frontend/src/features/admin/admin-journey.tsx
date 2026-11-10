@@ -759,7 +759,7 @@ const MAIL_PAGE_OUTCOME: Record<string, string> = {
   opened: 'opened', signed_in: 'signed in', welcome: 'welcome shown, no Get started',
   link_expired: 'link expired', link_used: 'link already used',
 };
-const formWords = (source: string | null | undefined) => (!source ? null
+const waitlistSourceWords = (source: string | null | undefined) => (!source ? null
   : source.startsWith('partner:') ? `${source.slice('partner:'.length)} (partner form)` : WAITLIST_SOURCE[source] || source);
 
 /** One short line of how a person came in, under their name in the first mile. */
@@ -768,7 +768,7 @@ function cameInLine(p: CameIn): string {
   if (p.invite) parts.push(`invited${p.invite.by ? ` by ${p.invite.by}` : ''}${p.invite.project ? ` · ${p.invite.project}` : ''}`);
   if (p.waitlist) {
     if (p.waitlist.waitedDays != null) parts.push(`waited ${p.waitlist.waitedDays} d`);
-    const from = formWords(p.waitlist.source);
+    const from = waitlistSourceWords(p.waitlist.source);
     if (from) parts.push(from);
   }
   if (p.signupMethod) parts.push(SIGNUP_METHOD[p.signupMethod] || p.signupMethod);
@@ -2169,7 +2169,7 @@ function CameInFacts({ cameIn }: { cameIn: CameIn & { door?: string | null } }) 
     const parts = [
       w.joinedAt ? `joined ${when(w.joinedAt)}` : null,
       w.waitedDays != null ? `waited ${days(w.waitedDays)}` : null,
-      formWords(w.source),
+      waitlistSourceWords(w.source),
       w.discovery ? `heard from: ${w.discovery}` : null,
       w.answeredFollowUp ? 'answered the follow-up' : 'no follow-up answers',
       w.referred ? 'referred by a waitlist member' : null,

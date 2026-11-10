@@ -402,7 +402,7 @@ function publicApiRoutes(config) {
         email,
         // Admin › Journey's "where they signed up": Homeroom's own page, or
         // the partner whose key this is.
-        form: req.waitlistIntegrator ? `partner:${req.waitlistIntegrator.label || 'unknown'}` : 'form',
+        source: req.waitlistIntegrator ? `partner:${req.waitlistIntegrator.label || 'unknown'}` : 'form',
         // A trusted integrator proxies real people, so its own server
         // address is not the signup's address. Recording the proxy for
         // every agency-sourced row is what this prefers away from; an
@@ -419,7 +419,7 @@ function publicApiRoutes(config) {
         // full address, plus the page's short utm and ref tags. A
         // referrer_host that is present but empty or unreadable is 'none'
         // (looked for, none given); an absent one is not recorded.
-        source: {
+        arrival: {
           referrerHost: Object.prototype.hasOwnProperty.call(req.body || {}, 'referrer_host')
             ? (arrivalSource.hostOf(req.body?.referrer_host) || 'none')
             : null,

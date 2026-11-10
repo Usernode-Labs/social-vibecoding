@@ -167,7 +167,7 @@ async function join(pool, { userId, rawEmail, ip = null, send }) {
   if (!email) throw new MemberWaitlistError('invalid_email', 'Enter a valid email address.');
   if (await heldByAnother(pool, userId, email)) throw new MemberWaitlistError('email_in_use', IN_USE, 409);
 
-  await waitlist.joinWaitlist(pool, { email, ip, form: 'app' });
+  await waitlist.joinWaitlist(pool, { email, ip, source: 'app' });
   const { rows } = await pool.query('SELECT email, email_confirmed FROM users WHERE id = $1', [userId]);
   const own = rows[0] && rows[0].email_confirmed && waitlist.normalizeEmail(rows[0].email) === email;
   if (own) {

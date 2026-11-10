@@ -77,9 +77,7 @@ function signupSource(value) {
 // this flag plus the existing row's confirmed_at is what picks the
 // branch. The capability token is the part that did NOT widen: a
 // re-join still gets null, whatever else the response says.
-// `form` is which form the person used (waitlist_signups.source, signupSource);
-// `source` is where its page sent them (#6540: a host and short tags).
-async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode = null, source = null, form = null }) {
+async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode = null, source = null, arrival = null }) {
   const moreToken = crypto.randomBytes(24).toString('hex');
   const stored = answers
     ? { _version: ANSWERS_VERSION, ...answers }
@@ -99,7 +97,7 @@ async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode
 
   // A `ref` that is a referral code is already carried as the referral, so
   // it is not stored a second time as a source tag (#6540).
-  let ref = source?.ref || null;
+  let ref = arrival?.ref || null;
   if (ref) {
     if (ref === inviteCode) ref = null;
     else {
@@ -131,8 +129,8 @@ async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode
        $6, $7, $8, $9, $10)
      ON CONFLICT (email) DO NOTHING
      RETURNING submitted_at`,
-    [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy, signupSource(form),
-      source?.referrerHost ?? null, source?.utmSource ?? null, source?.utmCampaign ?? null, ref]
+    [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy, signupSource(source),
+      arrival?.referrerHost ?? null, arrival?.utmSource ?? null, arrival?.utmCampaign ?? null, ref]
   );
   const created = rows.length > 0;
   return {

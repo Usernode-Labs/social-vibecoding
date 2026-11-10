@@ -156,9 +156,9 @@ test('the mail\'s page is recorded by its own read and the link\'s spend, never 
 
 test('every waitlist row says which form it came from', () => {
   assert.match(read('src/routes/public-api.js'),
-    /form: req\.waitlistIntegrator \? `partner:\$\{req\.waitlistIntegrator\.label \|\| 'unknown'\}` : 'form',/);
+    /source: req\.waitlistIntegrator \? `partner:\$\{req\.waitlistIntegrator\.label \|\| 'unknown'\}` : 'form',/);
   const members = read('src/services/member-waitlist.js');
-  assert.match(members, /waitlist\.joinWaitlist\(pool, \{ email, ip, form: 'app' \}\)/);
+  assert.match(members, /waitlist\.joinWaitlist\(pool, \{ email, ip, source: 'app' \}\)/);
   assert.match(members, /VALUES \(NULL, \$2, \$1, NOW\(\), \$3, 'app'\)/);
   assert.match(read('src/services/waitlist.js'), /SELECT LOWER\(TRIM\(u\.email\)\), u\.id, NOW\(\), \$2, 'account'/);
   assert.match(read('src/services/test-accounts.js'), /VALUES \(\$1, NOW\(\), NOW\(\), \$2, 'test'\)/);
