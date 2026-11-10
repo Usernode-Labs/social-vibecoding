@@ -348,7 +348,7 @@ test('unchanged vulnerable Buildx warns; an introduced version blocks; audits re
   const scan = { SchemaVersion: 2, Results: [{ Target: 'buildx', Vulnerabilities: [
     { Severity: 'HIGH', PkgName: 'golang.org/x/net', InstalledVersion: 'v0.59.0', VulnerabilityID: 'CVE-2026-78661', FixedVersion: '0.62.0' },
     { Severity: 'CRITICAL', PkgName: 'unfixable', InstalledVersion: '1', VulnerabilityID: 'CVE-2026-12345' },
-    { Severity: 'HIGH', PkgName: 'decode-uri-component', InstalledVersion: '0.2.2', VulnerabilityID: 'CVE-2026-118664', FixedVersion: '0.5.1' },
+    { Severity: 'HIGH', PkgName: 'zod', InstalledVersion: '3.25.76', VulnerabilityID: 'CVE-2023-54404', FixedVersion: '4.0.0' },
   ] }] };
   const unchanged = imageAssessment([scan], { component: 'standalone', baseline: new Set(['golang.org/x/net@v0.59.0']), now: NOW });
   assert.equal(unchanged.status, 'existing_findings');
@@ -360,7 +360,7 @@ test('unchanged vulnerable Buildx warns; an introduced version blocks; audits re
   const full = imageAssessment([scan, scan], { component: 'standalone', audit: true, now: NOW });
   assert.equal(full.findings.length, 3, 'deduplicate SBOM/full-image matches but retain all risk categories');
   assert.equal(full.blocking.length, 0);
-  assert.equal(full.findings.find((f) => f.id === 'CVE-2026-118664').acceptedUntil, '2026-11-28');
+  assert.equal(full.findings.find((f) => f.id === 'CVE-2023-54404').acceptedUntil, '2026-11-22');
   const lower = JSON.parse(JSON.stringify(scan));
   lower.Results[0].Vulnerabilities[0].Severity = 'LOW';
   const merged = imageAssessment([scan, lower], { component: 'standalone', audit: true, now: NOW });

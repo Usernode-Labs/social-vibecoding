@@ -54,6 +54,7 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
   && npm cache clean --force
 WORKDIR /build
 COPY package.json package-lock.json ./
+COPY vendor/decode-uri-component ./vendor/decode-uri-component
 RUN npm ci --ignore-scripts
 COPY tailwind.config.js ./
 COPY styles ./styles
@@ -108,6 +109,7 @@ COPY --from=buildx-tools /src/internal/namesgenerator/LICENSE /usr/local/share/d
 COPY --from=buildx-tools /src/internal/namesgenerator/NOTICE /usr/local/share/doc/buildx/NOTICE.namesgenerator
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY vendor/decode-uri-component ./vendor/decode-uri-component
 RUN npm ci --production
 COPY . .
 RUN node scripts/build-schema.js
