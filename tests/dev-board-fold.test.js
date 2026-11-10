@@ -83,9 +83,6 @@ function makeAppView({ search = '' } = {}) {
     pr_url: 'https://github.com/acme/app/pull/1540',
     status: 'promoted', username: 'evan', created_at: at(1), promoted_at: at(1), last_message_at: at(1),
     linked_issues: [], my_vote: null, votes_for: 3, votes_against: 1, yes_count: 3, no_count: 1,
-    // More yeses still needed, so the row keeps its Vote button (#6505: a
-    // decided change draws none).
-    votes_required: 5,
     checks_state: 'success', checks_total: 412, checks_passed: 412, message_count: 5,
   }];
   AppView._govProposals = [];
