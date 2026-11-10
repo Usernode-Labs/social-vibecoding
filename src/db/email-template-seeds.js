@@ -49,6 +49,16 @@ const STANDARD_LAYOUT_HTML = `<!doctype html><html><body style="${BODY_STYLE}">`
 
 // ── The seeds ──────────────────────────────────────────────────────────
 
+// The waitlist reminders' shared parts. Each reads as a short note from Evan:
+// left-aligned paragraphs (REMINDER_P), and the admit mail's button, which
+// signs in an account or starts a new one, left-aligned with them in a table
+// of its own (Drea, on 6508).
+const REMINDER_P = '<p style="margin:0 0 12px;font-size:16px;line-height:24px;color:#1c1c1e">';
+const REMINDER_BUTTON = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:left">'
+  + '<p style="margin:8px 0 20px"><a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;background:#0a6ee0;color:#ffffff;font-size:16px;font-weight:650;text-decoration:none">'
+  + '{{#if hasAccount}}Sign in{{else}}Get started{{/if}}</a></p></td></tr></table>';
+const REMINDER_TEXT_BUTTON = '{{#if hasAccount}}Sign in:{{else}}Get started:{{/if}}\n{{url}}\n\n';
+
 const SEEDS = {
   layouts: [
     { name: STANDARD_LAYOUT, html: STANDARD_LAYOUT_HTML, text: '{{content}}' },
@@ -157,34 +167,90 @@ const SEEDS = {
     waitlist_released: {
       name: ACTIONS.waitlist_released.label,
       layout: STANDARD_LAYOUT,
-      subject: `You're in. Welcome to Homeroom`,
+      subject: `You're in. Make your first app on Homeroom`,
       preheader: `Make and share apps with groups and friends. Here's how to get started.`,
       why: `You are receiving this because of activity on your account or your place on the waitlist. We only send mail you asked for.`,
-      html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center"><img src="${PRODUCTION_ORIGIN}/brand/people.png" width="272" height="204" alt="" style="display:block;margin:0 auto;border:0;max-width:100%;height:auto"><p style="margin:20px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#68686c">You're in</p>`
+      html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center"><img src="${PRODUCTION_ORIGIN}/brand/people.png" width="200" height="150" alt="" style="display:block;margin:0 auto;border:0;max-width:100%;height:auto"><p style="margin:20px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#68686c">You're in</p>`
         + `<p style="margin:10px 0 0;font-size:28px;line-height:32px;font-weight:800;color:#1c1c1e">Make and share apps with groups and friends.</p>`
-        + `{{#if hasAccount}}<p style="margin:10px 0 0;font-size:16px;line-height:22px;color:#68686c">Your account now has access. Sign in with your waitlist email.</p>{{/if}}`
+        + `{{#if hasAccount}}<p style="margin:10px 0 0;font-size:16px;line-height:22px;color:#68686c">Your account now has access. Sign in with your waitlist email.</p>{{else}}`
+        + `<p style="margin:10px 0 0;font-size:15px;line-height:22px;color:#1c1c1e">Start building, invite your people, or explore what others are making.</p>{{/if}}`
         + `<p style="margin:20px 0 0"><a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;background:#0a6ee0;color:#ffffff;font-size:16px;font-weight:650;text-decoration:none">`
         + `{{#if hasAccount}}Sign in{{else}}`
-        + `Create my account{{/if}}</a></p>`
+        + `Get started{{/if}}</a></p>`
         + `{{#if needsCodeNote}}<p style="margin:10px 0 0;font-size:13px;color:#68686c">Opening it emails you a 6-digit code to sign in with. The code expires in 10 minutes.</p>{{/if}}</td></tr></table>`
-        + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:24px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)"><tr><td width="34" height="34" bgcolor="#3484fc" style="width:34px;height:34px;background:#3484fc">&nbsp;</td><td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Make an app for your group</td></tr></table>`
-        + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:0px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)"><tr><td width="34" height="34" bgcolor="#8bd669" style="width:34px;height:34px;background:#8bd669">&nbsp;</td><td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Use and improve apps together</td></tr></table>`
-        + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:0px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)"><tr><td width="34" height="34" bgcolor="#fc5750" style="width:34px;height:34px;background:#fc5750">&nbsp;</td><td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Suggest, preview and vote on changes</td></tr></table>`
+        + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:24px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)"><tr><td width="34" height="34" bgcolor="#3484fc" style="width:34px;height:34px;background:#3484fc">&nbsp;</td><td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Make an app with your friends</td></tr></table>`
+        + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:0px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)"><tr><td width="34" height="34" bgcolor="#8bd669" style="width:34px;height:34px;background:#8bd669">&nbsp;</td><td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Build an app for your community</td></tr></table>`
+        + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:0px 0 8px;border:1px solid #0b0b0c;box-shadow:2px 2px 4px rgba(161,152,152,0.25)"><tr><td width="34" height="34" bgcolor="#fc5750" style="width:34px;height:34px;background:#fc5750">&nbsp;</td><td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:#1c1c1e">Join and help shape other community-owned apps</td></tr></table>`
         + `{{#if hasMobile}}<p style="margin:24px 0 8px;font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#68686c">Try it on mobile</p>`
         + `{{#if hasIos}}<p style="margin:0 0 8px"><strong>iPhone</strong>: <a href="{{iosLink}}" style="color:#0a6ee0">Get Homeroom on the App Store</a>.</p>{{/if}}`
-        + `{{#if hasAndroid}}<p style="margin:0 0 8px"><strong>Android</strong>: <a href="{{androidLink}}" style="color:#0a6ee0">Open the Homeroom testing link</a> while signed into Google Play with your waitlist email.</p>{{/if}}{{/if}}`
+        + `{{#if hasAndroid}}<p style="margin:0 0 8px"><strong>Android</strong>: <a href="{{androidLink}}" style="color:#0a6ee0">Get Homeroom on Google Play</a>.</p>{{/if}}{{/if}}`
         + `<p>See you there,<br>Evan from Homeroom</p>`,
       text: `You're in.\nMake and share apps with groups and friends.\n\n`
         + `{{#if hasAccount}}Your account now has access. Sign in with your waitlist email.{{else}}`
-        + `Create my account:{{/if}}\n{{url}}`
+        + `Start building, invite your people, or explore what others are making.\n\n`
+        + `Get started:{{/if}}\n{{url}}`
         + `{{#if needsCodeNote}}\n\n`
         + `Opening it emails you a 6-digit code to sign in with. The code expires in 10 minutes.{{/if}}\n\n`
-        + `- Make an app for your group\n- Use and improve apps together\n- Suggest, preview and vote on changes`
+        + `- Make an app with your friends\n- Build an app for your community\n- Join and help shape other community-owned apps`
         + `{{#if hasMobile}}\n\n`
         + `Try it on mobile`
         + `{{#if hasIos}}\niPhone: Get Homeroom on the App Store ({{iosLink}}).{{/if}}`
-        + `{{#if hasAndroid}}\nAndroid: Open the Homeroom testing link ({{androidLink}}) while signed into Google Play with your waitlist email.{{/if}}{{/if}}\n\n`
+        + `{{#if hasAndroid}}\nAndroid: Get Homeroom on Google Play ({{androidLink}}).{{/if}}{{/if}}\n\n`
         + `See you there,\nEvan from Homeroom`,
+    },
+
+    // The two reminders to somebody let in who has not signed in
+    // (services/waitlist-reminders.js). Their button is the admit mail's.
+    waitlist_reminder: {
+      name: ACTIONS.waitlist_reminder.label,
+      layout: STANDARD_LAYOUT,
+      subject: `You're in! Come see what we're building.`,
+      preheader: `Start an app, invite your friends, or jump into something already made.`,
+      why: `You are receiving this because you were let in from the waitlist and haven't signed in yet. We send one more reminder, then stop.`
+        + `{{#if hasUnsubscribeUrl}} <a href="{{unsubscribeUrl}}" style="color:#68686c">Stop these reminders</a>{{/if}}`,
+      html: `${REMINDER_P}Hey!</p>`
+        + `${REMINDER_P}Just a quick reminder that you're off the Homeroom waitlist!</p>`
+        + `${REMINDER_P}You can start an app with AI, invite your friends to help shape it, or jump into something someone else has already made.</p>`
+        + `${REMINDER_P}No big project needed. Start with something small and see where it goes.</p>`
+        + `{{#if hasAccount}}${REMINDER_P}Sign in with the email this was sent to.</p>{{/if}}`
+        + REMINDER_BUTTON
+        + `${REMINDER_P}See you in there,<br>Evan</p>`,
+      text: `Hey!\n\n`
+        + `Just a quick reminder that you're off the Homeroom waitlist!\n\n`
+        + `You can start an app with AI, invite your friends to help shape it, or jump into something someone else has already made.\n\n`
+        + `No big project needed. Start with something small and see where it goes.\n\n`
+        + `{{#if hasAccount}}Sign in with the email this was sent to.\n\n{{/if}}`
+        + REMINDER_TEXT_BUTTON
+        + `See you in there,\nEvan`
+        + `{{#if hasUnsubscribeUrl}}\n\nStop these reminders: {{unsubscribeUrl}}{{/if}}`,
+    },
+
+    waitlist_reminder_last: {
+      name: ACTIONS.waitlist_reminder_last.label,
+      layout: STANDARD_LAYOUT,
+      subject: `One last nudge 👋`,
+      preheader: `Your Homeroom invite is ready whenever you are.`,
+      why: `You are receiving this because you were let in from the waitlist and haven't signed in yet. This is the last reminder.`,
+      html: `${REMINDER_P}Hey!</p>`
+        + `${REMINDER_P}Just wanted to send one last reminder that your Homeroom invite is ready.</p>`
+        + `${REMINDER_P}We're building Homeroom around a simple idea: apps shouldn't just be made for people. The people using them should be able to help make them better, too.</p>`
+        + `${REMINDER_P}And we'd love for you to be part of that.</p>`
+        + REMINDER_BUTTON
+        + `${REMINDER_P}{{#if hasAccount}}You can sign in any time with the email this was sent to.{{else}}`
+        + `{{#if hasLinkUntil}}This button works until {{linkUntil}}, but you can still sign in with this email anytime afterward.{{else}}`
+        + `You can sign in any time with this email.{{/if}}{{/if}}</p>`
+        + `${REMINDER_P}And if now's not the right time, no worries. We won't keep sending reminders.</p>`
+        + `${REMINDER_P}Hope to see you around,<br>Evan</p>`,
+      text: `Hey!\n\n`
+        + `Just wanted to send one last reminder that your Homeroom invite is ready.\n\n`
+        + `We're building Homeroom around a simple idea: apps shouldn't just be made for people. The people using them should be able to help make them better, too.\n\n`
+        + `And we'd love for you to be part of that.\n\n`
+        + REMINDER_TEXT_BUTTON
+        + `{{#if hasAccount}}You can sign in any time with the email this was sent to.{{else}}`
+        + `{{#if hasLinkUntil}}This link works until {{linkUntil}}, but you can still sign in with this email anytime afterward.{{else}}`
+        + `You can sign in any time with this email.{{/if}}{{/if}}\n\n`
+        + `And if now's not the right time, no worries. We won't keep sending reminders.\n\n`
+        + `Hope to see you around,\nEvan`,
     },
 
     password_reset: {

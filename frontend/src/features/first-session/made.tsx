@@ -62,8 +62,8 @@
  * Nothing else: somebody brand new knows nobody on Homeroom to invite by
  * username yet, and the joining rule is the project's business later (both
  * taken out after Evan's run-through, 5 October 2026). The link it makes
- * stops after a week or 25 people (LINK_DAYS, LINK_USES), and the sheet says
- * so. A note they wrote themselves and shared (the share sheet, not Copy
+ * has no end date and no limit of people (LINK_DAYS, LINK_USES), like every
+ * new link, and the sheet says so. A note they wrote themselves and shared (the share sheet, not Copy
  * link) is also the maker's first message in the group's chat (the sheet
  * says so, #4238), so the people it brings find it waiting there. The note is
  * kept per project on this device
@@ -128,7 +128,7 @@ import type { HomeroomBotPlanQuestion } from '../messages/types';
 
 import { BUILD_LINE_WORDS, type BuildLineState, buildLineAsks, buildLineDone, buildLineOf, buildLineStopped, phaseLine, useNow } from './build-line';
 import { noteBuildStarted } from './build-line-words.js';
-import { copyText, inviteText } from './copy-invite';
+import { copyText, inviteText, withVia } from './copy-invite';
 import { DrawnLook, isDrawnLook, ownSrc, useLookSwap } from './drawn-look';
 import { FIRST_LOOK_POLL_MS, firstLookSrc } from './first-look';
 import { syncBuildActivity } from '../app-frame/build-activity';
@@ -462,13 +462,14 @@ export function inviteLine(me: string, name: string): string {
 // Read when the sheet opens, so it is written in the language on screen.
 const noteDefault = () => translate('onboarding:firstSession.invite.noteDefault');
 // The link every invite link gets by default (services/community-invites.js
-// DEFAULT_DAYS and DEFAULT_USES): a week, and 25 people. It used to work until
-// it was turned off, for anyone it reached (WP-D), which was safe while the
-// waitlist stood between a stranger and the group. A link lets somebody new
-// straight in now, as a private member, so a forwarded one stops on its own.
-// The project's invite pane still makes a longer or wider one on request.
-const LINK_DAYS = 7;
-const LINK_USES = 25;
+// DEFAULT_DAYS and DEFAULT_USES): no end date and no limit of people, 0
+// asking for each (9 Nov 2026). It stopped after a week or 25 people while a
+// link let somebody new straight in as a private member and nothing else
+// stood in a leak's way; the leaked-link guard does that now (a link that
+// brings in 100 people in a day pauses itself, and its maker is told). The
+// project's invite pane still makes a shorter or smaller one on request.
+const LINK_DAYS = 0;
+const LINK_USES = 0;
 
 /** The note, posted once per project as the maker's first chat message. */
 const postedKey = (slug: string) => `usernode:first-session:note-posted:${slug}`;
@@ -724,7 +725,7 @@ export function InviteSheet({ made, me, onClose, onSent }: {
       if (typeof nav.share === 'function') {
         sharing.current = true;
         try {
-          await nav.share({ title, text: note.trim() || undefined, url });
+          await nav.share({ title, text: note.trim() || undefined, url: withVia(url, 'shared') });
           await sent('shared');
           return;
         } catch (err) {
@@ -735,7 +736,7 @@ export function InviteSheet({ made, me, onClose, onSent }: {
           shareGoneAt.current = Date.now();
         }
       }
-      const outcome = await copyText(inviteText(note, url));
+      const outcome = await copyText(inviteText(note, withVia(url, 'copied')));
       if (outcome === 'copied') {
         setCopied(Date.now());
         await sent('copied');
@@ -758,8 +759,8 @@ export function InviteSheet({ made, me, onClose, onSent }: {
     setBusy(true); setError(null);
     try {
       const ready = linkRef.current;
-      const outcome = await copyText(ready ? inviteText(note, ready)
-        : link().then((url) => (url ? inviteText(note, url) : null)));
+      const outcome = await copyText(ready ? inviteText(note, withVia(ready, 'copied'))
+        : link().then((url) => (url ? inviteText(note, withVia(url, 'copied')) : null)));
       if (outcome === 'no-link') { setError((was) => was || translate('onboarding:firstSession.invite.error.noLink')); return; }
       if (outcome === 'refused') { setError(translate('onboarding:firstSession.invite.error.notCopied')); return; }
       setCopied(Date.now());

@@ -1090,6 +1090,12 @@ const Notifications = {
     if ((key === 'friend_accept' || key === 'friend_decline') && item.kind === 'friend_request') {
       return Notifications._answerFriendRequest(item, key === 'friend_accept');
     }
+    // The leaked-link guard's rows: turn the link off, or open a paused one
+    // again, right on the row.
+    if ((key === 'invite_turn_off' || key === 'invite_reopen')
+      && (item.kind === 'invite_link_busy' || item.kind === 'invite_link_paused')) {
+      return Notifications._actOnInviteLink(item, key === 'invite_reopen');
+    }
     // #3227: the kudos row's button opens the Kudos leaderboard, where the
     // change it thanks is ranked; the row itself still opens the change.
     if (key === 'kudos_board' && item.kind === 'kudos') {
@@ -1158,6 +1164,40 @@ const Notifications = {
     } catch (err) {
       console.warn('[notifications] friend answer failed', err);
       toast(t('notifications:friend.answerFailed'));
+      return false;
+    }
+  },
+
+  // The leaked-link guard's buttons (src/services/community-invites.js
+  // GUARD): Turn off this link (DELETE /api/invite-links/:id, as the invite
+  // pane's Turn off) or Open it again (POST /api/invite-links/:id/reopen).
+  // The row is read once acted on, and stops offering what no longer
+  // applies; the toast is the reader's own confirmation.
+  async _actOnInviteLink(item, reopen) {
+    const guard = parseInviteGuardDetail(item.detail);
+    if (!guard || !(guard.inviteId > 0)) return false;
+    const toast = (message, error) => {
+      if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) PlatformUI.toast(message, error ? { error: true } : undefined);
+    };
+    try {
+      const res = await fetch(
+        reopen ? `/api/invite-links/${guard.inviteId}/reopen` : `/api/invite-links/${guard.inviteId}`,
+        reopen
+          ? { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' } }
+          : { method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' } },
+      );
+      if (!res.ok) {
+        toast(t('notifications:row.inviteGuard.failed'), true);
+        return false;
+      }
+      item.inviteLinkState = reopen ? 'live' : 'ended';
+      Notifications._markOneRead(item.id);
+      Notifications._renderList();
+      toast(reopen ? t('notifications:row.inviteGuard.reopened') : t('notifications:row.inviteGuard.turnedOff'));
+      return true;
+    } catch (err) {
+      console.warn('[notifications] invite link action failed', err);
+      toast(t('notifications:row.inviteGuard.failed'), true);
       return false;
     }
   },
@@ -2957,6 +2997,15 @@ function rowView(n) {
   return tone ? { ...view, tone } : view;
 }
 
+/**
+ * The leaked-link guard's `detail` ("<inviteId>:<joins>",
+ * src/services/invite-activity.js noteGuard) as { inviteId, joins }, or null.
+ */
+function parseInviteGuardDetail(detail) {
+  const m = /^(\d{1,9}):(\d{1,9})$/.exec(String(detail || ''));
+  return m ? { inviteId: Number(m[1]), joins: Number(m[2]) } : null;
+}
+
 function rowWords(n) {
   // #6506: the subject line's weight and ink. An unread notice is bold in the
   // strong ink; a read one is regular and softer, so a list holding both
@@ -3874,6 +3923,33 @@ function rowWords(n) {
         : headline(asked ? t('notifications:row.inviteLink.asked')
           : (count > 1 ? t('notifications:row.inviteLink.saidHiWithOthers', { count: count - 1 })
             : t('notifications:row.inviteLink.saidHi')), messageWords(n.messageContent))),
+    };
+  }
+
+  // The leaked-link guard (src/services/community-invites.js GUARD): one of
+  // the reader's invite links brought in a lot of people today, or paused
+  // itself. `detail` is "<inviteId>:<joins>"; `inviteLinkState` is where the
+  // link stands now, so a button shows only while it still does something:
+  // Turn off on a link that works or is paused, Open it again on a paused one.
+  if (n.kind === 'invite_link_busy' || n.kind === 'invite_link_paused') {
+    const guard = parseInviteGuardDetail(n.detail);
+    const count = guard ? guard.joins : 0;
+    const project = n.appName || null;
+    const paused = n.kind === 'invite_link_paused';
+    const label = paused
+      ? (project ? t('notifications:row.inviteGuard.paused', { project, count }) : t('notifications:row.inviteGuard.pausedPlain', { count }))
+      : (project ? t('notifications:row.inviteGuard.busy', { project, count }) : t('notifications:row.inviteGuard.busyPlain', { count }));
+    const state = guard && guard.inviteId > 0 ? n.inviteLinkState : null;
+    const actions = [];
+    if (state === 'paused') actions.push({ key: 'invite_reopen', label: t('notifications:row.inviteGuard.reopen'), primary: true });
+    if (state === 'live' || state === 'paused') actions.push({ key: 'invite_turn_off', label: t('notifications:row.inviteGuard.turnOff') });
+    return {
+      ...base,
+      wrap: true,
+      icon: paused ? '\u23F8\uFE0F' : '\u{1F517}',
+      by: null,
+      ...headline(label, null),
+      ...(actions.length ? { actions } : {}),
     };
   }
 

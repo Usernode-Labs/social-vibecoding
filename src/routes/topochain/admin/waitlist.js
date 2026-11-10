@@ -12,8 +12,10 @@
 //     `bp_released_at`, which is what lets the mobile node enable its
 //     block producer (surfaced via GET /api/v4/mobile/me).
 // Plus a direct per-user access grant for accounts that never joined
-// the waitlist, and the switch for invite links skipping the waitlist
-// (services/community-invites.js, the invite tree).
+// the waitlist, the switch for invite links skipping the waitlist
+// (services/community-invites.js, the invite tree), and the reminders to
+// admitted people who have not signed in (services/waitlist-reminders.js):
+// their switch, and "Send a reminder now" on one row.
 'use strict';
 
 const { Router } = require('express');
@@ -25,10 +27,15 @@ const releaseMailSetting = require('../../../services/release-mail-setting');
 const { signalsFor } = require('../../../services/waitlist-signals');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
 const releaseLinks = require('../../../services/release-links');
+const waitlistReminders = require('../../../services/waitlist-reminders');
 const { loadMobileAppUrls } = require('../../../services/mobile-store-links');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
 const { ok, fail, iso, paginate, meta, csvField } = require('../helpers');
+
+function reminderFacts(sentAt, status) {
+  return sentAt ? { sent_at: iso(sentAt), status: status ?? null } : null;
+}
 
 function formatSignup(row) {
   return {
@@ -70,6 +77,15 @@ function formatSignup(row) {
         error: row.invite_mail_error ?? null,
       }
       : null,
+    // The two reminders a person let in who has not signed in is sent
+    // (services/waitlist-reminders.js): when each was sent (its stamp on the
+    // row) and what the newest delivery of it says, and whether they stopped
+    // them from the link in one.
+    reminders: {
+      first: reminderFacts(row.reminder_1_sent_at, row.reminder_1_mail_status),
+      last: reminderFacts(row.reminder_2_sent_at, row.reminder_2_mail_status),
+      stopped_at: iso(row.reminders_stopped_at),
+    },
     // Two-stage survey payload (versioned JSON — stage 1 at join, stage 2
     // merged in via the "Want in sooner?" form). Null for plain-email rows.
     answers: row.answers && typeof row.answers === 'object' ? row.answers : null,
@@ -322,10 +338,10 @@ function waitlistAdminRoutes(config) {
     // #4594: a new account's one-time sign-in link. A failure to mint drops
     // the link, not the mail: the mail's link still prefills the address
     // and sends a code, as it did before.
-    let signInToken = null;
+    let link = null;
     if (!hasAccount) {
       try {
-        signInToken = await releaseLinks.mint(pool, { signupId: released.id, email: to });
+        link = await releaseLinks.mintLink(pool, { signupId: released.id, email: to });
       } catch (err) {
         log.error('topochain-admin', 'release sign-in link not minted', { signupId: released.id, message: err.message });
       }
@@ -333,7 +349,9 @@ function waitlistAdminRoutes(config) {
     await sendWaitlistReleaseMail(config, to, {
       mobile,
       hasAccount,
-      signInToken,
+      signInToken: link ? link.token : null,
+      // When the link stops working, for the line above the button.
+      signInExpiresAt: link ? link.expiresAt : null,
       // #1548: lets the signup screen prefill the address and send the
       // code without a second step. An unguessable capability already
       // delivered to this address, so it carries nothing the recipient
@@ -406,6 +424,15 @@ function waitlistAdminRoutes(config) {
                 p.email AS invited_by_email,
                 u.username AS linked_username, u.has_platform_access,
                 CASE WHEN w.email IS NULL THEN RIGHT(ph.phone_e164, 4) END AS phone_last4,
+                w.reminder_1_sent_at, w.reminder_2_sent_at, w.reminders_stopped_at,
+                (SELECT d1.status FROM mail_deliveries d1
+                  WHERE w.reminder_1_sent_at IS NOT NULL AND d1.recipient = w.email
+                    AND d1.kind = 'waitlist_reminder'
+                  ORDER BY d1.created_at DESC, d1.id DESC LIMIT 1) AS reminder_1_mail_status,
+                (SELECT d2.status FROM mail_deliveries d2
+                  WHERE w.reminder_2_sent_at IS NOT NULL AND d2.recipient = w.email
+                    AND d2.kind = 'waitlist_reminder_last'
+                  ORDER BY d2.created_at DESC, d2.id DESC LIMIT 1) AS reminder_2_mail_status,
                 m.status AS invite_mail_status, m.created_at AS invite_mail_at,
                 m.error AS invite_mail_error
            FROM waitlist_signups w
@@ -576,6 +603,36 @@ function waitlistAdminRoutes(config) {
       });
     } catch (err) {
       log.error('topochain-admin', 'POST /admin/waitlist/:id/release failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── POST /api/v4/admin/waitlist/:id/remind ───────────────────────────
+  // "Send a reminder now" on an admitted row: its next reminder (the first,
+  // or the last), sent now whatever the spacing or the Reminders switch
+  // (services/waitlist-reminders.js remindNow). Refused, with the sentence
+  // the screen shows, for a row that signed in since it was admitted,
+  // stopped reminders, or had both. `status` is what the mailer recorded:
+  // `sent`, or why it did not go (a refused send is owed again).
+  router.post('/api/v4/admin/waitlist/:id/remind', adminWriteGate, async (req, res) => {
+    try {
+      const id = toIntId(req.params.id);
+      if (!id) return fail(res, 404, 'Waitlist entry not found.');
+      let sent;
+      try {
+        sent = await waitlistReminders.remindNow(config, pool, id);
+      } catch (err) {
+        if (err instanceof waitlistReminders.ReminderRefused) {
+          return fail(res, err.status, err.message, { code: err.code });
+        }
+        throw err;
+      }
+      log.info('topochain-admin', 'Waitlist reminder sent by hand', {
+        signupId: id, reminder: sent.reminder, status: sent.status, adminId: req.user?.id,
+      });
+      return ok(res, { data: { id, ...sent } });
+    } catch (err) {
+      log.error('topochain-admin', 'POST /admin/waitlist/:id/remind failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });
@@ -835,6 +892,51 @@ function waitlistAdminRoutes(config) {
       return ok(res, { data: formatReleaseMail(await releaseMailSetting.readReleaseMailSetting(pool)) });
     } catch (err) {
       log.error('topochain-admin', 'PUT /admin/release-email failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── GET / PUT /api/v4/admin/reminder-email ───────────────────────────
+  // The reminders to people admitted who have not signed in
+  // (services/waitlist-reminders.js, set in services/release-mail-setting.js):
+  // `mode` On, Dry run (the default: nothing sent) or Off, and `due`, who is
+  // owed one now by the clock's own rules (how many of each, and the oldest
+  // admits among them), which Dry run shows before anything goes. Independent
+  // of the release email.
+  const formatReminders = (s, due) => ({
+    mode: s.mode,
+    enabled: s.enabled,
+    updated_at: iso(s.updatedAt),
+    updated_by: s.updatedBy,
+    due: due ? {
+      first: due.first,
+      last: due.last,
+      rows: due.rows.map((r) => ({ id: r.id, email: r.email, released_at: iso(r.released_at), reminder: r.reminder })),
+    } : null,
+  });
+  const readReminders = async () => formatReminders(
+    await releaseMailSetting.readReminderMailSetting(pool),
+    await waitlistReminders.dueNow(pool),
+  );
+
+  router.get('/api/v4/admin/reminder-email', async (req, res) => {
+    try {
+      return ok(res, { data: await readReminders() });
+    } catch (err) {
+      log.error('topochain-admin', 'GET /admin/reminder-email failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  router.put('/api/v4/admin/reminder-email', adminWriteGate, async (req, res) => {
+    const mode = req.body?.mode;
+    if (!releaseMailSetting.REMINDER_MODES.includes(mode)) return fail(res, 422, 'Provide mode: on, dry_run or off.');
+    try {
+      await releaseMailSetting.setReminderMail(pool, { mode, actorId: req.user?.id ?? null });
+      log.info('topochain-admin', 'Reminder email mode set', { mode, adminId: req.user?.id });
+      return ok(res, { data: await readReminders() });
+    } catch (err) {
+      log.error('topochain-admin', 'PUT /admin/reminder-email failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });

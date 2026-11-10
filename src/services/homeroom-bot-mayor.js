@@ -267,6 +267,11 @@ const NEW_REQUEST = 'New request';
 const ADD_TO_EXISTING = 'Add to an existing request…';
 // The answers under each kind of offer (bot_cards.kind), the
 // one that does it first.
+// The bring-a-friend nudge's card (homeroom-bot-dm.js INVITE_NUDGE_KIND,
+// invite-nudge.js): a card with one server choice, Not now, so it is no
+// offer here and has no words to type.
+const INVITE_NUDGE_KIND = 'invite_friends';
+
 const OFFER_ANSWERS = Object.freeze({
   file_request: Object.freeze([FILE_IT, NOT_NOW]),
   withdraw_proposal: Object.freeze([WITHDRAW_IT, KEEP_IT]),
@@ -1426,12 +1431,13 @@ async function sourceRepo(pool, { user, project, deps = {} }) {
   return { app, repo };
 }
 
-async function listSource(pool, { user, project, dir, match, deps = {} }) {
+async function listSource(pool, { user, project, dir, match, ref, at, deps = {} }) {
   const found = await sourceRepo(pool, { user, project, deps });
   if (found.error) return found;
   const github = deps.github || require('./github');
-  const tree = await github.listRepoFiles(found.repo.owner, found.repo.repo, SOURCE_REF);
-  if (!tree) return { error: 'Could not read that project\'s code on main.' };
+  const sha = typeof ref === 'string' && /^[0-9a-f]{40}$/i.test(ref) ? ref.toLowerCase() : null;
+  const tree = await github.listRepoFiles(found.repo.owner, found.repo.repo, sha || SOURCE_REF);
+  if (!tree) return { error: sha ? 'Could not read that change\'s code.' : 'Could not read that project\'s code on main.' };
   const prefix = dir ? sourcePath(dir) : null;
   if (dir && !prefix) return { error: 'That folder is not a path in the project.' };
   const words = String(match || '').toLowerCase().split(/\s+/).filter(Boolean);
@@ -1440,22 +1446,24 @@ async function listSource(pool, { user, project, dir, match, deps = {} }) {
     && words.every((w) => f.path.toLowerCase().includes(w)));
   return {
     project: found.app.slug,
-    branch: SOURCE_REF,
+    at: sha ? (at || 'with_change') : 'main',
+    ...(sha ? {} : { branch: SOURCE_REF }),
     files: hits.slice(0, SOURCE_MAX_PATHS).map((f) => ({ path: f.path, size: f.size })),
     more: Math.max(0, hits.length - SOURCE_MAX_PATHS),
     ...(tree.truncated ? { note: 'The project is very large, so some files may be missing from this list.' } : {}),
   };
 }
 
-async function readSource(pool, { user, project, path: rawPath, fromLine, deps = {} }) {
+async function readSource(pool, { user, project, path: rawPath, fromLine, ref, at, deps = {} }) {
   const found = await sourceRepo(pool, { user, project, deps });
   if (found.error) return found;
   const filePath = sourcePath(rawPath);
   if (!filePath) return { error: 'That is not a file path in the project.' };
   if (SECRET_PATH_RE.test(filePath)) return { error: 'That file holds secrets, so it is never read.' };
   const github = deps.github || require('./github');
-  const text = await github.getFileContent(found.repo.owner, found.repo.repo, filePath, SOURCE_REF);
-  if (text == null) return { error: 'No such file on main. Use list_source to find it.' };
+  const sha = typeof ref === 'string' && /^[0-9a-f]{40}$/i.test(ref) ? ref.toLowerCase() : null;
+  const text = await github.getFileContent(found.repo.owner, found.repo.repo, filePath, sha || SOURCE_REF);
+  if (text == null) return { error: sha ? 'No such file at that change\'s version.' : 'No such file on main. Use list_source to find it.' };
   if (text.includes('\u0000')) return { error: 'That file is not text.' };
   const lines = text.split('\n');
   const from = Math.min(Math.max(1, Number.isInteger(Number(fromLine)) ? Number(fromLine) : 1), lines.length);
@@ -1470,11 +1478,80 @@ async function readSource(pool, { user, project, path: rawPath, fromLine, deps =
   }
   return {
     project: found.app.slug,
-    branch: SOURCE_REF,
+    at: sha ? (at || 'with_change') : 'main',
+    ...(sha ? {} : { branch: SOURCE_REF }),
     path: filePath,
     totalLines: lines.length,
     text: out.join('\n'),
     ...(line <= lines.length ? { nextLine: line } : {}),
+  };
+}
+
+/**
+ * #6533, #6541: the two versions of a change's code. Its saved starting
+ * point (`base_sha`) and its NEWEST version: the head the before/after shots
+ * recorded when the proposal last moved (`shots_detail->>'headSha'`,
+ * shots-state.js markStaleForHead, the same one get_proposal reports as
+ * `shots.headSha`), ahead of the reviewed and last-checked pins, so a commit
+ * pushed with no checks or review on it still wins. The old expression stays
+ * as the fallback for a change whose newest head was never recorded.
+ * Resolves `{ base, head, headSource, number }` or `{ error }`.
+ */
+async function changeRefs(pool, sessionId, appId, { deps = {} } = {}) {
+  const id = Number(sessionId);
+  const app = Number(appId);
+  if (!Number.isSafeInteger(id) || id <= 0) return { error: 'That change\'s code cannot be read yet.' };
+  const { rows: [row] } = await pool.query(
+    `SELECT id, app_id, pr_number, source, handoff_base_sha,
+            imported_pr_head_sha, reviewed_head_sha, checks_commit_sha, handoff_head_sha,
+            shots_detail->>'headSha' AS newest_head_sha,
+            COALESCE(CASE WHEN source = 'imported' THEN imported_pr_head_sha ELSE reviewed_head_sha END,
+                     checks_commit_sha, handoff_head_sha) AS head_sha
+       FROM chat_sessions WHERE id = $1`,
+    [id],
+  );
+  if (!row || (Number.isSafeInteger(app) && Number(row.app_id) !== app)) {
+    return { error: 'That change\'s code cannot be read yet.' };
+  }
+  const exact = (value) => (/^[0-9a-f]{40}$/i.test(String(value || '')) ? String(value).toLowerCase() : null);
+  const newest = exact(row.newest_head_sha);
+  const head = newest || exact(row.head_sha);
+  const headSource = newest ? 'newest' : 'last_checked';
+  if (!head) return { error: 'That change\'s code cannot be read yet.' };
+  // The starting point is the handoff base when the change has one, else the
+  // merge base with main, exactly as the before/after shots resolve theirs.
+  let base = exact(row.handoff_base_sha);
+  if (!base) {
+    try {
+      const { rows: [project] } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [row.app_id]);
+      const repo = require('./homeroom-bot').parseRepo(project?.repo_url);
+      if (repo) {
+        const github = deps.github || require('./github');
+        const comparison = await github.compareRefs(repo.owner, repo.repo, `main...${head}`);
+        base = exact(comparison?.mergeBaseSha);
+      }
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'A change\'s starting point could not be read', { sessionId: id, err: err.message });
+    }
+  }
+  return { base, head, headSource, number: row.pr_number || null };
+}
+
+/** The paths a change alters, between its base and its head, secrets left out. */
+async function listChangeFiles(pool, { user, project, change, deps = {} }) {
+  const found = await sourceRepo(pool, { user, project, deps });
+  if (found.error) return found;
+  const refs = await changeRefs(pool, change?.id ?? change?.sessionId, found.app.id, { deps });
+  if (refs.error) return refs;
+  if (!refs.base) return { error: 'That change has no starting point to compare with, so its files cannot be listed yet.' };
+  const github = deps.github || require('./github');
+  const files = await github.listChangedFiles(found.repo.owner, found.repo.repo, `${refs.base}...${refs.head}`);
+  if (!files) return { error: 'That change\'s files could not be read just now.' };
+  return {
+    project: found.app.slug,
+    at: 'with_change',
+    files: files.filter((path) => !SECRET_PATH_RE.test(path)).slice(0, SOURCE_MAX_PATHS),
+    more: Math.max(0, files.length - SOURCE_MAX_PATHS),
   };
 }
 
@@ -1708,6 +1785,16 @@ const CLAIMS = Object.freeze([
     backed: (ctx) => !!(ctx.posted || ctx.revised || ctx.commented || ctx.pictures || ctx.steered),
     said: 'says something was posted',
     instead: 'I haven\'t posted that anywhere yet.',
+  },
+  {
+    // #6534: a reply that says pictures, shots or a design are posted, when
+    // nothing was stored under it. In a project's thread only what was stored
+    // as an attachment counts; in the bot's own chat the gallery card does.
+    kind: 'posted_pictures',
+    re: /\bhere (?:are|is) the (?:pictures|shots|stills|designs?)\b|\bI(?:'ve| have)(?: just| now)? (?:attached|posted|added|put up) (?:the |your |two |three |four )?(?:pictures?|shots?|stills|designs?|before and after)\b|\battached below\b/i,
+    backed: (ctx) => !!(ctx.attached?.length || (!ctx.place && ctx.pictures?.made)),
+    said: 'says pictures or a design were posted',
+    instead: 'I haven\'t attached any pictures.',
   },
   {
     kind: 'started',
@@ -5201,8 +5288,9 @@ async function decideTyped(pool, config, { bot, user, settings, conversationId, 
       WHERE a.user_id = $1 AND a.conversation_id = $2 AND a.status = 'open'
         AND a.created_at > NOW() - make_interval(mins => $3)
         -- B6: a plan is built by its own button (or a reply to it), never by
-        -- a "yes" typed under some other offer's words.
-        AND a.kind <> 'build_plan'
+        -- a "yes" typed under some other offer's words. The bring-a-friend
+        -- nudge is decided by its Not now alone (invite-nudge.js).
+        AND a.kind NOT IN ('build_plan', 'invite_friends')
       ORDER BY a.id DESC LIMIT 4`,
     [user.id, conversationId, OFFER_TYPED_MINUTES],
   );
@@ -5244,8 +5332,10 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
     );
     action = rows[0];
   }
-  // B6: a reply to a plan is the plan's (homeroom-bot-dm.js changePlan).
-  if (!action || action.kind === 'build_plan') return null;
+  // B6: a reply to a plan is the plan's (homeroom-bot-dm.js changePlan). A
+  // reply to the bring-a-friend nudge is read by the model: its Not now is a
+  // button (invite-nudge.js dismiss).
+  if (!action || action.kind === 'build_plan' || action.kind === INVITE_NUDGE_KIND) return null;
   const [yesWord, noWord] = answersFor(action);
   const yes = typed ? typed.yes : said(message.content, yesWord);
   const no = typed ? !typed.yes : said(message.content, noWord);
@@ -5273,8 +5363,12 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
   const { rows } = await pool.query('SELECT * FROM bot_cards WHERE id = $1 AND user_id = $2 AND place = \'dm\'', [id, user.id]);
   const action = rows[0];
   const plan = action?.kind === 'build_plan';
-  if (!action || (!plan && !OFFER_ANSWERS[action.kind])) return { ok: false, status: 404, error: 'No such choice' };
-  if (plan ? choice !== 'build' : choice === 'build') {
+  // The bring-a-friend nudge (invite-nudge.js): Not now is its one server
+  // choice, decided here at once; its Invite people is answered on the device.
+  const nudge = action?.kind === INVITE_NUDGE_KIND;
+  if (!action || (!plan && !nudge && !OFFER_ANSWERS[action.kind])) return { ok: false, status: 404, error: 'No such choice' };
+  if (nudge && choice !== 'no') return { ok: false, status: 400, error: 'choice must be no' };
+  if (!nudge && (plan ? choice !== 'build' : choice === 'build')) {
     return { ok: false, status: 400, error: plan ? 'choice must be build' : 'choice must be yes or no' };
   }
   if (action.status !== 'open') return { ok: false, status: 409, error: 'already_decided', decided: action.status };
@@ -5287,6 +5381,7 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
     }).catch(() => {});
     return { ok: false, status: 410, error: 'expired' };
   }
+  if (nudge) return (deps.inviteNudge || require('./invite-nudge')).dismiss(pool, { user, action, deps });
   const out = await (deps.replies || require('../workflow/platform.ts')).tapDmAction({
     userId: Number(user.id), actionId: id, choice, answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
   });
@@ -7101,6 +7196,9 @@ module.exports = {
   sourceRepo,
   listSource,
   readSource,
+  // #6533: a change's two versions, and the files it alters.
+  changeRefs,
+  listChangeFiles,
   historyMessages,
   picturesMessage,
   withoutPictures,

@@ -162,11 +162,14 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // WP-E: the people your invite links bring, told to whoever made the
     // link (services/invite-activity.js). Opens are a count, never a name;
     // a join or a first hello names a signed-in person who came by your link.
+    // And the leaked-link guard's two (community-invites.js GUARD): a link
+    // that brought in a lot of people in a day, and one that paused itself.
+    // Their seed rows are a migration (invite-link-guard-push-kinds).
     key: 'invite_activity',
     label: 'Your invites',
-    description: 'When someone opens your invite link, joins through it, or says hi for the first time.',
+    description: 'When someone opens your invite link, joins through it, or says hi for the first time, and when a link brings in a lot of people in a day.',
     defaultEnabled: true,
-    kinds: Object.freeze(['invite_opened', 'member_joined', 'first_message']),
+    kinds: Object.freeze(['invite_opened', 'member_joined', 'first_message', 'invite_link_busy', 'invite_link_paused']),
   }),
 ]);
 

@@ -12,7 +12,9 @@
 // entry in the "accepted differences" tests.
 //
 // The snapshot covers the 13 kinds that existed when it was taken. A new action
-// needs no entry here (the seed checks below still cover it). A deliberate change
+// needs no entry here (the seed checks below still cover it), and may add rows
+// to tests/lib/mail-matrix.js so its conditionals are taken both ways (the
+// waitlist reminders do). A deliberate change
 // to a historical kind's seed wording regenerates that kind's hashes from the new
 // seeds in the same change, saying why in the commit:
 //   node -e "const m=require('./tests/lib/mail-matrix'),{buildMessage}=require('./src/services/mail/templates');
@@ -149,7 +151,10 @@ test('every kind has a seed that uses only declared placeholders and carries wha
       for (const name of placeholdersIn(template[field])) assert.ok(action.placeholders[name], `${kind}.${field}: ${name}`);
     }
     for (const form of ['html', 'text']) {
-      const named = placeholdersIn(template[form]);
+      // The html counts the why line too, as the validator does: the
+      // standard layout prints it under every mail (the reminders' stop
+      // link sits there).
+      const named = new Set([...placeholdersIn(template[form]), ...(form === 'html' ? placeholdersIn(template.why) : [])]);
       for (const name of action.required[form]) assert.ok(named.has(name), `${kind}.${form} must use ${name}`);
     }
     assert.equal(template.name, action.label);

@@ -446,6 +446,17 @@ function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactN
           <span>{s.line}</span>
         </p>
       ) : null}
+      {s.retake ? (
+        <button
+          type="button"
+          className="gc-vote-btn"
+          data-shots-retake="1"
+          title={translate('changes:page.menu.takeShotsAgainTitle')}
+          onClick={(e) => (window as any).AppView?.rerunShots?.(s.retake!, e.currentTarget)}
+        >
+          {translate('changes:shots.card.takeAgain')}
+        </button>
+      ) : null}
     </section>
   );
 }

@@ -91,6 +91,43 @@ test('invite news in the bell, folded into a count', () => {
     { label: 'Said hi, with 2 others', subject: 'hello!', by: 'sam' });
 });
 
+test('the leaked-link guard on a phone and in the bell: the count, and a button only while it does something', () => {
+  // A phone: `detail` is "<inviteId>:<joins>" (invite-activity.js noteGuard).
+  const copy = (kind, extra) => policy.buildNotificationCopy(kind, { appName: 'Run Club', ...extra });
+  assert.deepEqual(copy('invite_link_busy', { detail: '41:20' }),
+    { title: 'Your Run Club invite link brought in 20 people today', body: 'If you didn\'t expect that, you can turn it off' });
+  assert.deepEqual(copy('invite_link_paused', { detail: '41:100' }),
+    { title: 'Your Run Club invite link is paused', body: '100 people joined through it today. Open it again if that\'s expected.' });
+  assert.deepEqual(copy('invite_link_paused', { detail: '41:100', appName: null }),
+    { title: 'Your invite link is paused', body: '100 people joined through it today. Open it again if that\'s expected.' });
+
+  // The bell: the whole sentence is the label, and the buttons follow the
+  // link's state as the server read it with the row.
+  const actions = (n) => {
+    if (!rowView) bellRow({ kind: 'invite_opened' });
+    return (rowView({ id: 2, createdAt: new Date().toISOString(), readAt: null, appName: 'Run Club', appSlug: 'run-club', ...n }).actions || [])
+      .map((a) => a.key);
+  };
+  assert.deepEqual(bellRow({ kind: 'invite_link_busy', detail: '41:20', inviteLinkState: 'live' }),
+    { label: 'Your Run Club invite link brought in 20 people today.', subject: '', by: null });
+  assert.deepEqual(bellRow({ kind: 'invite_link_paused', detail: '41:100', inviteLinkState: 'paused' }), {
+    label: 'Your Run Club invite link is paused: 100 people joined through it today. Open it again if that\'s expected.',
+    subject: '', by: null,
+  });
+  assert.deepEqual(actions({ kind: 'invite_link_busy', detail: '41:20', inviteLinkState: 'live' }), ['invite_turn_off']);
+  assert.deepEqual(actions({ kind: 'invite_link_busy', detail: '41:20', inviteLinkState: 'ended' }), [], 'already off');
+  assert.deepEqual(actions({ kind: 'invite_link_paused', detail: '41:100', inviteLinkState: 'paused' }), ['invite_reopen', 'invite_turn_off']);
+  assert.deepEqual(actions({ kind: 'invite_link_paused', detail: '41:100', inviteLinkState: 'live' }), ['invite_turn_off'], 'opened again');
+  assert.deepEqual(actions({ kind: 'invite_link_paused', detail: '0:100', inviteLinkState: null }), [], 'a test row turns nothing off');
+  // The buttons are the pane's own calls.
+  const src = read('frontend/src/features/notifications/notifications.js');
+  assert.match(src, /reopen \? `\/api\/invite-links\/\$\{guard\.inviteId\}\/reopen` : `\/api\/invite-links\/\$\{guard\.inviteId\}`/);
+  // The server reads the link's state with the row, only the reader's own link.
+  const server = read('src/services/notifications.js');
+  assert.match(server, /WHERE guarded\.id = split_part\(n\.detail, ':', 1\)::int AND guarded\.created_by = n\.user_id\) END`;/);
+  assert.match(server, /\$\{INVITE_LINK_STATE_SQL\} AS invite_link_state`;/);
+});
+
 test('a build moment in the bell is the bot\'s, in its own words', () => {
   const row = bellRow({
     kind: 'build_ready', detail: 'hrbot:ready:Run Club', appName: null, appSlug: null,
@@ -147,7 +184,9 @@ test('opens are counted from the page\'s own reads, once per person, never from 
   assert.match(routes, /if \(standing\.live && !standing\.mine\) \{\s*countOpen\(req, res, req\.params\.token, req\.user\.id\);\s*void journeyEvents\.noteInviteSignedIn\(pool, \{ token: req\.params\.token, userId: req\.user\.id \}\);\s*\}/);
   // Every read is handed to the service with the browser it came from; the
   // service decides whether it is somebody new (invite-activity-postgres).
-  assert.match(routes, /const browser = inviteActivity\.ensureBrowser\(req, res\);\s*void inviteActivity\.noteOpened\(pool, \{ token, viewerId, browser, seenBefore \}\);/);
+  // The read also carries where the visitor came from (#6540) into the same
+  // service call, so the open keeps its referrer host and via tag.
+  assert.match(routes, /const browser = inviteActivity\.ensureBrowser\(req, res\);\s*const source = inviteActivity\.sourceFrom\(req\);\s*void inviteActivity\.noteOpened\(pool, \{ token, viewerId, browser, seenBefore, source \}\);/);
   const page = routes.slice(routes.indexOf("router.get('/invite/:token'"));
   assert.doesNotMatch(page, /countOpen/);
   assert.match(page, /inviteActivity\.ensureBrowser\(req, res\);/, 'the page sets the browser before its two reads race');

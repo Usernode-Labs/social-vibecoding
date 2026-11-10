@@ -1999,9 +1999,17 @@
     "text": "GitHub refused · needs a manual sync",
     "description": "Line under the \"Merge\" step in a proposal's list of steps when GitHub refused to merge the change and a person has to bring it up to date with main by hand."
   },
-  "step.integration.notMeasured": {
-    "text": "Not measured yet",
-    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps before Homeroom has checked whether the change conflicts with the main branch."
+  "step.integration.clean": {
+    "text": "No conflicts",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps when Homeroom's own merge check found that the change does not conflict with the main branch."
+  },
+  "step.integration.measuring": {
+    "text": "Measuring…",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps while Homeroom has not yet checked whether this version of the change conflicts with the main branch."
+  },
+  "step.integration.withAge": {
+    "text": "{{line}} · {{measured}}",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps, adding how long ago Homeroom checked. {{line}} is the finding, such as \"No conflicts\" or a conflict, and {{measured}} is a phrase such as \"measured 2 minutes ago\"."
   },
   "step.integration.resolvingFiles_one": {
     "text": "Resolving a conflict in {{count}} file",
@@ -2507,9 +2515,13 @@
     "text": "{{count}} commits",
     "description": "Small text beside the label of the row on a proposal's page that says the change is behind the main branch. {{count}} is how many commits (saved code changes) behind it is."
   },
-  "ledger.votes.needed": {
-    "text": "{{yes}} of {{required}} needed",
-    "description": "Small text beside the \"Votes\" label on a proposal's page. {{yes}} is the number of Yes votes so far and {{required}} the number needed to approve the change."
+  "ledger.votes.needed_one": {
+    "text": "{{count}} yes vote, {{required}} needed",
+    "description": "Small text beside the \"Votes\" label on a proposal's page. {{count}} is the number of Yes votes so far (one) and {{required}} the number needed to approve the change."
+  },
+  "ledger.votes.needed_other": {
+    "text": "{{count}} yes votes, {{required}} needed",
+    "description": "Small text beside the \"Votes\" label on a proposal's page. {{count}} is the number of Yes votes so far and {{required}} the number needed to approve the change."
   },
   "ledger.sync.label": {
     "text": "Sync with main",
@@ -5543,6 +5555,26 @@
     "text": "GitHub refused the merge. Homeroom tries again in a few minutes.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page, when GitHub refused the merge for a reason nobody has to act on, and the next try's time has passed or was not recorded. \"Homeroom\" is the name of the platform and stays as it is."
   },
+  "badge.reason.githubChecks.label": {
+    "text": "Waiting on GitHub's checks",
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: the proposal passed its vote and Homeroom's checks, but GitHub has not merged it because the required checks GitHub runs on it are still running, or failed and are being run again on today's main. The platform tries again by itself, so nobody has to act. \"GitHub\" is a product name and stays as it is."
+  },
+  "badge.reason.githubChecks.detail": {
+    "text": "GitHub's required checks on this change are still running, or are being run again on today's main. Homeroom tries again at {{time}}.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page. {{time}} is a clock time such as 10:45, shown in the viewer's own time zone. \"Homeroom\" is the name of the platform and stays as it is. \"GitHub\" is a product name and stays as it is."
+  },
+  "badge.reason.githubChecks.detailSoon": {
+    "text": "GitHub's required checks on this change are still running, or are being run again on today's main. Homeroom tries again in a few minutes.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page, when the next try's time has passed or was not recorded. \"Homeroom\" is the name of the platform and stays as it is. \"GitHub\" is a product name and stays as it is."
+  },
+  "badge.reason.githubChecksFailing.label": {
+    "text": "GitHub's checks are failing",
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: the proposal passed its vote, but the required checks GitHub runs on it failed again after Homeroom brought it up to date with main, so its author has to fix them. \"GitHub\" is a product name and stays as it is."
+  },
+  "badge.reason.githubChecksFailing.detail": {
+    "text": "The required checks GitHub runs on this change failed again after Homeroom brought it up to date with main. They have to pass before it can merge.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page. \"Homeroom\" is the name of the platform and stays as it is. \"GitHub\" is a product name and stays as it is."
+  },
   "badge.reason.mainPaused.label": {
     "text": "Going live is paused",
     "description": "Status tag on a proposal's card and row label in the ledger on its page: no change of this app can go live for now, because the tests of the app's main line of code are failing."
@@ -6349,7 +6381,7 @@
   },
   "shots.card.takeAgain": {
     "text": "Take the screenshots again",
-    "description": "Button on a proposal's screenshots card: starts taking the before/after screenshots over again."
+    "description": "Button on a proposal's screenshots card, on a change's board card, on its Before and after card and in its Details sheet: starts taking the before/after screenshots over again."
   },
   "shots.card.stop": {
     "text": "Stop",
@@ -8695,9 +8727,13 @@
     "text": "Needs another member’s yes",
     "description": "The large figure on the Votes card of a change's page when the change has enough Yes votes but still needs one from a member other than its author. \"Yes\" is the vote."
   },
-  "page.votes.figure.reached": {
-    "text": "{{yes}} of {{needed}} yes",
-    "description": "The large figure on the Votes card of a change's page once it has the Yes votes it needs. {{yes}} is how many Yes votes it has and {{needed}} how many it needs."
+  "page.votes.figure.reached_one": {
+    "text": "{{count}} yes vote, {{needed}} needed",
+    "description": "The large figure on the Votes card of a change's page once it has the Yes votes it needs. {{count}} is how many Yes votes it has (one) and {{needed}} how many it needs."
+  },
+  "page.votes.figure.reached_other": {
+    "text": "{{count}} yes votes, {{needed}} needed",
+    "description": "The large figure on the Votes card of a change's page once it has the Yes votes it needs. {{count}} is how many Yes votes it has and {{needed}} how many it needs."
   },
   "page.votes.figure.yourApproval": {
     "text": "Waiting for your approval",
@@ -8723,9 +8759,13 @@
     "text": "Votes: voted in",
     "description": "Accessible description of the progress bar on the Votes card of a change's page once the group approved the change."
   },
-  "page.votes.label.tally": {
-    "text": "Votes: {{yes}} of {{needed}} yes",
-    "description": "Accessible description of the progress bar on the Votes card of a change's page while the vote is open. {{yes}} is how many Yes votes it has and {{needed}} how many it needs."
+  "page.votes.label.tally_one": {
+    "text": "Votes: {{count}} yes vote, {{needed}} needed",
+    "description": "Accessible description of the progress bar on the Votes card of a change's page while the vote is open. {{count}} is how many Yes votes it has (one) and {{needed}} how many it needs."
+  },
+  "page.votes.label.tally_other": {
+    "text": "Votes: {{count}} yes votes, {{needed}} needed",
+    "description": "Accessible description of the progress bar on the Votes card of a change's page while the vote is open. {{count}} is how many Yes votes it has and {{needed}} how many it needs."
   },
   "page.votes.note.notAsked": {
     "text": "Its author has not asked for approval yet.",
@@ -8778,6 +8818,14 @@
   "page.votes.note.syncing": {
     "text": "Syncing with main: Homeroom asks for votes when it is caught up and its checks pass.",
     "description": "A change page's Votes card: the change conflicts with main and Homeroom is resolving that now, so nobody is asked to vote yet."
+  },
+  "page.votes.note.githubChecks": {
+    "text": "Approved. It merges once GitHub's required checks pass.",
+    "description": "A change page's Votes card: the change has the yes it needs, and its merge waits for the required checks GitHub runs on it (still running, or being run again on today's main). \"GitHub\" is a product name and stays as it is."
+  },
+  "page.votes.note.githubChecksFailing": {
+    "text": "Approved, but GitHub's required checks failed again. It merges once they pass.",
+    "description": "A change page's Votes card: the change has the yes it needs, but the required checks GitHub runs on it failed again after Homeroom brought it up to date with main. \"GitHub\" is a product name and stays as it is."
   },
   "page.votes.note.goingLive": {
     "text": "It’s going live.",

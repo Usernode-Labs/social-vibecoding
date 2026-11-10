@@ -97,7 +97,8 @@ async function migrate(config) {
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
-  // #6420's shots: a change on one request's page that names another request
+  // #6533: a change's thread whose bot reply already holds its email pictures.
+  await seedStagingChangePictures(pool);  // #6420's shots: a change on one request's page that names another request
   // as one it closes, so that request's page shows "Change #N says it closes
   // this" and the requester can answer it. Obviously fake, staging only.
   await seedStagingChangeClaim(pool);
@@ -300,6 +301,7 @@ async function migrate(config) {
   await seedStagingShotsNoticed(pool);
   // After seedStagingDemoAppCard, whose demo app it belongs to.
   await seedStagingShotsScreens(pool);
+  await seedStagingShotsFailed(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingCloneQuestionSuggestions(pool, config);
@@ -2079,6 +2081,91 @@ async function seedStagingChangeClaim(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging change-claim seeding failed', { message: err.message });
+  }
+}
+
+// #6533: the before & after shots show a change's thread whose Homeroom bot
+// reply already carries its email pictures. A fresh staging copy has no model
+// to answer in a change's thread, so the two pictures (the same admit email,
+// as it is today and with the change) and the reply under them are stored
+// here. Rows for the shots' member fixture (usernode-capture) on the
+// self-hosted Homeroom project only; nothing here is a signal the code reads
+// to decide anything. Idempotent by change number and picture id; strictly a
+// no-op outside staging.
+async function seedStagingChangePictures(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id, name, slug FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query(
+      "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')",
+    );
+    const app = apps.rows[0];
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!app || !member || !bot) return;
+    const changeNumber = 9653;
+    await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, pr_number, pr_title, session_title, status, source, created_at, last_activity_at)
+       SELECT $1, $2, 'staging/demo-change-pictures', $3,
+              'Staging demo: what a change looks like', 'Staging demo: what a change looks like',
+              'promoted', 'native', NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1 AND pr_number = $3)`,
+      [app.id, member.id, changeNumber],
+    );
+    const { rows: [change] } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND pr_number = $2 LIMIT 1', [app.id, changeNumber],
+    );
+    if (!change) return;
+    const { renderMessage } = require('../services/mail/render');
+    const { actionFor } = require('../services/mail/actions');
+    const { englishTemplate, seededLayout } = require('./email-template-seeds');
+    const kind = 'waitlist_released';
+    const template = englishTemplate(kind);
+    const layout = seededLayout(template.layout);
+    const drawn = renderMessage(kind, { template, layout }, actionFor(kind).sample);
+    const pictures = [
+      { id: 'a1'.repeat(16), side: 'before', subject: "You're in. Welcome to Homeroom", preheader: drawn.preheader, sha: 'a'.repeat(40) },
+      // The after side is the same email with words a change could give it.
+      { id: 'b2'.repeat(16), side: 'after', subject: "You're in. Bring your people", preheader: 'Invite up to three friends.', sha: 'b'.repeat(40) },
+    ];
+    for (const picture of pictures) {
+      const body = {
+        kind, side: picture.side, subject: picture.subject, preheader: picture.preheader,
+        html: drawn.html.replace(/You&#39;re in[\s\S]*?(?=<table role="presentation" cellpadding="0")/, ''),
+        text: drawn.text,
+      };
+      const data = Buffer.from(JSON.stringify(body), 'utf8');
+      await withStagingMedia(pool, data, 'application/json', (tx, m) => tx.query(
+        `INSERT INTO change_pictures (id, app_id, session_id, mail_kind, side, is_new, subject, preheader, sha, object_key, created_at)
+         VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7, $8, $9, NOW() - INTERVAL '2 days')
+         ON CONFLICT DO NOTHING`,
+        [picture.id, app.id, change.id, kind, picture.side, picture.subject, picture.preheader,
+          picture.sha, m.key],
+      ));
+    }
+    const gallery = {
+      type: 'gallery', v: 1, purpose: 'change',
+      project: { slug: app.slug, name: app.name || app.slug },
+      change: { sessionId: Number(change.id), number: changeNumber },
+      images: pictures.map((picture) => ({
+        id: picture.id, source: 'email', side: picture.side, isNew: false,
+        // #6541: a caption names the version it was drawn from.
+        caption: `${picture.subject} · ${picture.sha.slice(0, 7)}`,
+      })),
+    };
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+       SELECT $1, $2, 'Here is what this change looks like, drawn from bbbbbbb, its newest version: the admit email as it is today and with this change.',
+              'message', 'session', $3, $4, NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                           WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $3
+                             AND metadata->>'stagingDemo' = 'change-pictures')`,
+      [app.id, bot.id, Number(change.id), JSON.stringify({
+        stagingDemo: 'change-pictures', homeroomBot: { kind: 'voice', gallery },
+      })],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging change pictures seeding failed', { message: err.message });
   }
 }
 
@@ -5838,6 +5925,42 @@ async function seedStagingMergedPrs(pool, config) {
          ON CONFLICT (session_id, user_id) DO NOTHING`,
         [sessionId, secondVoter.id, f.hoursAgo + 1]
       );
+    }
+  }
+
+  // #6547: one merge LAST WEEK, before the same point in the week, so a
+  // fresh staging copy's Workshop has a "by this time last week" figure to
+  // compare against. Timed from the server's own calendar week, so it sits
+  // inside last week's to-date window (last Monday 00:00 to now minus seven
+  // days) whatever day the build runs. Idempotent through the branch name.
+  {
+    const branch = 'staging-fixture/merged-pr-to-date';
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch]
+    );
+    if (!existing.length) {
+      const author = users[0];
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+            votes_required, active_users_at_merge, created_at)
+         VALUES
+           ($1, $2, $3, $4, $5, $6, 'merged', $7, $8,
+            date_trunc('week', NOW()) - INTERVAL '7 days')
+         RETURNING id`,
+        [appId, author.id, branch, 9110,
+         '[staging fixture] Tidy the workshop tiles for small screens',
+         'In plain terms: this completed change improves the app for everyone who uses it, with no extra steps needed on your part.',
+         Math.max(1, Math.ceil(users.length / 2)), users.length]
+      );
+      await pool.query(
+        `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+         VALUES ($1, $2, 'yes', date_trunc('week', NOW()) - INTERVAL '7 days' + INTERVAL '2 hours')
+         ON CONFLICT (session_id, user_id) DO NOTHING`,
+        [rows[0].id, author.id]
+      );
+      inserted++;
     }
   }
 
@@ -11338,6 +11461,93 @@ async function seedStagingShotsScreens(pool) {
     log.info('db', 'Staging three-screen shots fixture seeded', { sessionId: id });
   } catch (err) {
     log.warn('db', 'Staging three-screen shots seeding failed', { message: err.message });
+  }
+}
+
+// The failed sibling of the two shots fixtures above (#6551): a change
+// waiting for a vote whose before & after screenshots could not be taken.
+// Authored by the shots' own member fixture (usernode-capture), who is a
+// member of this app, so the retake that failure now offers its author is
+// reachable on a preview. Every word is an obviously fake "Staging demo"
+// line; fixed id, idempotent, and a strict no-op outside staging.
+const STAGING_SHOTS_FAILED_SESSION_ID = 900161;
+
+async function seedStagingShotsFailed(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const planContract = require('../services/visible-changes');
+  const shotsState = require('../services/shots-state');
+  const id = STAGING_SHOTS_FAILED_SESSION_ID;
+  const runId = `${id}`.padEnd(32, 'f');
+  const baseSha = 'a'.repeat(40);
+  const headSha = 'b'.repeat(40);
+  const planHash = 'f'.repeat(64);
+  const failureCode = 'shots_capture_incomplete';
+  const failureReason = 'Staging demo: the screenshot agent could not reach the dialog.';
+  try {
+    const intent = planContract.parseIntent({
+      version: 1,
+      impact: 'ui',
+      rationale: 'Staging demo: the header gains a sort control.',
+      stories: [{
+        id: 'header-sort',
+        claim: 'Staging demo: the header shows a Newest sort control.',
+        persona: 'member',
+        viewports: [{ name: 'desktop', width: 1280, height: 800 }],
+        intent: {
+          startPath: '/',
+          steps: ['Open the screen'],
+          checkpoint: 'The sort control is in the header',
+          focus: 'Sort control',
+          baseState: 'not_present',
+          animation: 'none',
+        },
+      }],
+    });
+    const cleaned = {
+      cleanupComplete: true,
+      cleanupVersion: require('../services/shots-environment').RESOURCE_CLEANUP_VERSION,
+    };
+    // The proposal's own copy of the run, as a failed run leaves it.
+    const detail = {
+      ...shotsState.runSummary({
+        id: runId, state: 'failed', intent, base_sha: baseSha, head_sha: headSha,
+        plan_hash: planHash, failure_code: failureCode, failure_reason: failureReason,
+        hard_verdict: null, trace_summary: cleaned,
+      }),
+      intent,
+    };
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status,
+          created_at, promoted_at, reviewed_head_sha, check_state,
+          shots_state, shots_run_id, shots_detail, shots_updated_at)
+       SELECT $1::int, 900001, u.id, 'staging-demo/shots-failed', 9301::int,
+              '[Mock] Staging demo: before & after could not be taken', 'promoted',
+              NOW() - interval '4 hours', NOW() - interval '3 hours', $2::varchar, 'passing',
+              'failed', $3::varchar, $4::jsonb, NOW() - interval '2 hours'
+         FROM users u
+        WHERE u.username = 'usernode-capture'
+          AND EXISTS (SELECT 1 FROM apps WHERE id = 900001)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, headSha, runId, JSON.stringify(detail)]
+    );
+    await pool.query(
+      `INSERT INTO shot_runs
+         (id, session_id, base_sha, head_sha, plan_hash, intent, hard_verdict,
+          trace_summary, state, trigger, failure_code, failure_reason,
+          started_at, completed_at)
+       SELECT $1::varchar, $2::int, $3::varchar, $4::varchar, $5::varchar, $6::jsonb, NULL,
+              $7::jsonb, 'failed', 'staging-fixture', $8::varchar, $9::text,
+              NOW() - interval '3 hours', NOW() - interval '2 hours'
+        WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2::int AND app_id = 900001)
+          AND NOT wf_holds('shots', 'session:' || $2::int)
+       ON CONFLICT (id) DO NOTHING`,
+      [runId, id, baseSha, headSha, planHash, JSON.stringify(intent),
+        JSON.stringify(cleaned), failureCode, failureReason]
+    );
+    log.info('db', 'Staging failed-shots fixture seeded', { sessionId: id });
+  } catch (err) {
+    log.warn('db', 'Staging failed-shots seeding failed', { message: err.message });
   }
 }
 
@@ -18843,7 +19053,7 @@ module.exports = {
   markBareDateActivities,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
-  seedStagingGeneralChannel, seedStagingShotsNoticed, seedStagingShotsScreens,
+  seedStagingGeneralChannel, seedStagingShotsNoticed, seedStagingShotsScreens, seedStagingShotsFailed,
   seedStagingTranscriptShowcase, seedStagingVisuals, seedStagingGalleryProposals,
   // A test seam: preview-projects-source-repo.test.js counts what a preview's
   // sample apps leave room for under the limit it runs with.

@@ -1446,3 +1446,83 @@ test('say() carries a waiting note\'s Go ahead and retires both sets on the real
   assert.deepEqual(retired.homeroomBot.actions, []);
   assert.deepEqual(retired.homeroomBot.othersActions, []);
 });
+
+// #6539: on a change's thread, a message written straight after the bot's own
+// post is to the bot when it comes from the person that post answered, the
+// change's author or a project admin, within the window requests already use.
+// The gate's reads are real here: the thread's last message and the newest
+// finished turn's speaker.
+test('#6539: a change-thread follow-up is answered for the answered person and the author', { timeout: 120000 }, async (t) => {
+  const pool = await openDatabase(t);
+  if (!pool) return;
+
+  const mkUser = async (name, { synthetic = false } = {}) => (await pool.query(
+    `INSERT INTO users (username, password, has_platform_access, is_synthetic)
+     VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
+    [name, synthetic],
+  )).rows[0];
+  const bot = await mkUser('homeroom_bot', { synthetic: true });
+  const evan = await mkUser('evan_follows');
+  const drea = await mkUser('drea_follows');
+  const sam = await mkUser('sam_follows');
+  const { rows: [inserted] } = await pool.query(
+    `INSERT INTO apps (name, slug, status, created_by, repo_url, view_visibility, collab_visibility)
+     VALUES ('Follow ups', 'follow-ups', 'running', $1, 'https://github.com/usernode-bot/follow-ups', 'public', 'public')
+     RETURNING id`,
+    [evan.id],
+  );
+  const { rows: [app] } = await pool.query('SELECT * FROM apps WHERE id = $1', [inserted.id]);
+  // Somebody else's change, under way: neither the bot's own nor up for a vote.
+  const { rows: [change] } = await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title)
+     VALUES ($1, $2, 'dev/follow-ups', 'active', 'Follow ups') RETURNING id`,
+    [app.id, drea.id],
+  );
+  const place = { type: 'session', ref: change.id };
+  const settings = { mode: 'live', voiceSession: true, voiceIssue: true, voiceChat: true, pausedApps: [] };
+  const speakerOf = (u) => ({ id: Number(u.id), username: u.username, isSynthetic: false, hasPlatformAccess: true });
+  const say = async (who, content, thread) => {
+    const { rows: [row] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+       VALUES ($1, $2, $3, 'message', '{}', $4, $5) RETURNING id`,
+      [app.id, who.id, content, thread?.type || null, thread?.ref ?? null],
+    );
+    return row.id;
+  };
+  const rowOf = async (id) => (await pool.query('SELECT * FROM chat_messages WHERE id = $1', [id])).rows[0];
+  // A finished turn, as a turn that answered `person` leaves one.
+  const turnBy = async (person) => {
+    await pool.query(
+      `INSERT INTO homeroom_bot_voice_turns (app_id, place_type, place_ref, place_key, trigger, speaker_id, turn_key, finished_at)
+       VALUES ($1, 'session', $2, $3, 'message', $4, $5, NOW())`,
+      [app.id, Number(change.id), `${app.id}:session:${change.id}`, person.id, `follow-${Date.now()}-${Math.random()}`],
+    );
+  };
+  const gate = (row, speaker) => voice.gate(pool, {
+    app, place, row, bot, settings, speaker: speakerOf(speaker), deps: {},
+  });
+
+  // The bot answers Evan; Evan writes straight back with no @.
+  const botPost = await say(bot, 'Here they are, re-rendered at full width.', place);
+  await turnBy(evan);
+  const evanFollowUp = await say(evan, 'Can you draw them as illustrations instead?', place);
+  assert.deepEqual(await gate(await rowOf(evanFollowUp), evan), { speak: true, why: 'followed' });
+
+  // The change's author, straight after the bot's post, is answered too.
+  const botAgain = await say(bot, 'Sure, here are the three emails drawn as illustrations.', place);
+  const dreaAfter = await say(drea, 'and can it be wider?', place);
+  assert.deepEqual(await gate(await rowOf(dreaAfter), drea), { speak: true, why: 'followed' });
+
+  // Somebody else writing right after the bot's post needs an @.
+  const samAfter = await say(sam, 'Looks fine to me.', place);
+  assert.deepEqual(await gate(await rowOf(samAfter), sam), { speak: false, why: 'not_addressed' });
+
+  // A bot post older than the window is not followed.
+  await pool.query("UPDATE chat_messages SET created_at = NOW() - INTERVAL '31 minutes' WHERE id = $1", [botAgain]);
+  assert.deepEqual(await gate(await rowOf(samAfter), drea), { speak: false, why: 'not_addressed' });
+
+  // A mention still works, for anyone.
+  const tag = await say(sam, '@Homeroom bot can you check this?', place);
+  assert.deepEqual(await gate(await rowOf(tag), sam), { speak: true, why: 'mentioned' });
+  assert.ok(botPost, 'the bot posted in the change\'s discussion');
+});

@@ -1158,3 +1158,24 @@ test('#6346: an offer on the chat\'s last round is the answer, with no fallback'
   assert.match(String(turn.sent[0].content), /new request/i, 'the offer card is sent');
   assert.doesNotMatch(String(turn.sent[0].content), /couldn't answer just now/);
 });
+
+test('#6534: a reply saying pictures are posted is caught unless files were stored', async () => {
+  const pool = { query: async () => ({ rows: [{ n: 13 }] }) };
+  const ctx = { user: { id: 1 }, appIds: new Set() };
+  const kinds = async (text, extra = {}) => (await mayor.claimProblems(pool, { ...ctx, ...extra }, text)).map((p) => p.kind);
+  assert.deepEqual(await kinds('Here are the pictures for the empty state.'), ['posted_pictures']);
+  assert.deepEqual(await kinds('I\'ve attached the before and after shots.'), ['posted_pictures']);
+  assert.deepEqual(await kinds('The comparisons are attached below.'), ['posted_pictures']);
+  assert.deepEqual(await kinds('Here are the pictures.',
+    { attached: [{ id: 'a'.repeat(32), kind: 'image' }] }), [], 'stored under the reply');
+  assert.deepEqual(await kinds('I made two options for you.',
+    { pictures: { made: 2 } }), [], 'made this turn in the chat');
+  assert.deepEqual(await kinds('Here are the pictures.',
+    { place: { type: 'issue', ref: 1 }, pictures: { made: 2 } }), ['posted_pictures'],
+  'made but not stored in a project thread');
+  assert.deepEqual(await kinds('Here are the pictures.',
+    { place: { type: 'issue', ref: 1 }, attached: [{ id: 'b'.repeat(32), kind: 'image' }] }), [],
+  'stored under a reply in a project thread');
+  assert.deepEqual(await kinds('The pictures are in the thread above.'), [],
+    'not a claim that they were posted now');
+});
