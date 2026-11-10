@@ -197,7 +197,7 @@ test('get_journey_first_mile carries a cohort of a hundred in two answers that e
   // Whole-cohort counts on every page, the stuck lists as counts.
   assert.deepEqual(a.stepOrder, journey.FIRST_MILE_STEPS);
   const codeAsked = a.steps.find((s) => s.key === 'code_asked');
-  assert.deepEqual(codeAsked, { key: 'code_asked', passed: 50, stuck: 50 });
+  assert.deepEqual(codeAsked, { key: 'code_asked', passed: 50, stuck: 50, unrecorded: 0 });
   assert.deepEqual(a.mail, { tracked: 100, opened: 50, clicked: 50 });
 
   // One compact row: each step its time (to the second), its state, or "done".

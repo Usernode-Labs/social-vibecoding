@@ -111,13 +111,14 @@ test('the sweep keeps the admit mail on the waitlist row, and the first mile rea
         live[who].steps.slice(0, 3).map((st) => [st.key, st.state, st.note]), `${who}: the same first steps`);
     }
     assert.deepEqual(after['kim@example.test'].mail, { opened: true, clicked: true });
-    assert.deepEqual(after['kim@example.test'].steps.slice(1, 3).map((st) => [st.state, st.note]),
+    const step = (who, key) => after[who].steps.find((st) => st.key === key);
+    assert.deepEqual(['mail_sent', 'code_asked'].map((key) => [step('kim@example.test', key).state, step('kim@example.test', key).note]),
       [['done', 'clicked the link'], ['done', 'a sign-in code']]);
     assert.equal(after['lou@example.test'].mail, null, 'not tracked is a gap, not "no open"');
     assert.equal(after['lou@example.test'].stuckAt, 'code_asked');
     assert.equal(after['lou@example.test'].stuckReason, 'Admitted, never followed the mail');
     assert.deepEqual(after['max@example.test'].mail, { opened: true, clicked: true }, 'a spent link is a click');
-    assert.deepEqual(after['max@example.test'].steps[2].note, 'its sign-in link');
+    assert.deepEqual(step('max@example.test', 'code_asked').note, 'its sign-in link');
 
     // A second sweep finds nothing past 30 days and changes nothing kept,
     // and a later fact never moves an earlier one.
