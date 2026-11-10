@@ -24,6 +24,10 @@ import { createStore } from '../../lib/plain-store.js';
 import { useStoreState } from '../../lib/use-store-state';
 import { swatchFor } from '../messages/format';
 import { notificationsStore } from '../notifications/notifications-store.js';
+import { documentBuildId } from '../../lib/asset-url';
+import { homeroomHomeScreen, openHomeroomInBrowser, type HomeroomHomeScreen } from '../mobile-install/homeroom-home-screen';
+import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
+import type { MobileOs } from '../mobile-install/detect';
 
 type Which = 'notifications' | 'menu' | null;
 export const frameSheetStore = createStore({ open: null as Which });
@@ -79,9 +83,11 @@ export function NotificationsFrameSheet({ onClose, rows }: { onClose: () => void
   const asks = all.filter((r) => r.unread && r.needsYou);
   const news = all.filter((r) => r.unread && !r.needsYou);
   const earlier = all.filter((r) => !r.unread).slice(0, EARLIER_SHOWN);
-  const purpose = asks.length > 0
-    ? t('notifications:frame.purposeNeeds', { count: asks.length })
-    : all.length > 0 ? t('notifications:frame.purposeNews') : t('notifications:frame.purposeEmpty');
+  // No sentence until the bell's read has landed: the empty state's words
+  // on a list still loading would say nothing had ever arrived.
+  const purpose = !list ? undefined
+    : asks.length > 0 ? t('notifications:frame.purposeNeeds', { count: asks.length })
+      : all.length > 0 ? t('notifications:frame.purposeNews') : t('notifications:frame.purposeEmpty');
   const group = (label: string, items: NotificationView[], asking: boolean) => (items.length > 0 ? (
     <Sec label={label}>
       <Card>{items.map((view) => <NotificationRow key={view.id} view={view} asks={asking} onDone={onClose} />)}</Card>
@@ -106,10 +112,18 @@ export function NotificationsFrameSheet({ onClose, rows }: { onClose: () => void
   );
 }
 
-export function AccountMenuSheet({ onClose, username = '' }: { onClose: () => void; username?: string }) {
+export function AccountMenuSheet({ onClose, username = '', homeScreen = null, build = null }: {
+  onClose: () => void;
+  username?: string;
+  /** A phone browser's way to its home screen (steps, or the browser from the installed app); null elsewhere. */
+  homeScreen?: HomeroomHomeScreen;
+  /** The build this document is, beside About. */
+  build?: string | null;
+}) {
   const t = useMessages('core');
   const win = (typeof window === 'undefined' ? {} : window) as any;
   const [dark, setDark] = useState(false);
+  const [steps, setSteps] = useState<MobileOs | null>(null);
   useEffect(() => {
     const read = () => setDark(document.documentElement.classList.contains('dark'));
     read();
@@ -133,7 +147,20 @@ export function AccountMenuSheet({ onClose, username = '' }: { onClose: () => vo
       <Sec label={t('core:frame.brand')}>
         <Card>
           <Row sm lead={<Lead icon="users" />} title={t('core:frame.menu.invite')} go onClick={go(() => { void win.AppContext?.openInvite?.(); })} />
-          <Row sm lead={<Lead icon="info" />} title={t('core:frame.menu.about')} go onClick={go(() => win.App?.navigateToSettings?.('about'))} />
+          <Row sm lead={<Lead icon="edit" />} title={t('core:frame.menu.suggest')} go onClick={go(() => { win.Improve?.giveFeedback?.(); })} />
+          {homeScreen ? (
+            <Row
+              sm
+              lead={<Lead icon="dl" />}
+              title={t('core:frame.menu.homeScreen')}
+              go
+              onClick={() => {
+                if (homeScreen.via === 'browser') { onClose(); openHomeroomInBrowser(); return; }
+                setSteps(homeScreen.os);
+              }}
+            />
+          ) : null}
+          <Row sm lead={<Lead icon="info" />} title={t('core:frame.menu.about')} right={build ? <Meta>{build}</Meta> : undefined} go onClick={go(() => win.App?.navigateToSettings?.('about'))} />
         </Card>
       </Sec>
       <Sec>
@@ -141,6 +168,7 @@ export function AccountMenuSheet({ onClose, username = '' }: { onClose: () => vo
           <Row sm lead={<Lead icon="door" />} title={t('core:frame.menu.signOut')} onClick={go(() => { void win.Settings?.logout?.(); })} />
         </Card>
       </Sec>
+      {steps ? <InstallStepsSheet os={steps} onClose={() => setSteps(null)} /> : null}
     </Sheet>
   );
 }
@@ -149,7 +177,13 @@ export function AccountMenuSheet({ onClose, username = '' }: { onClose: () => vo
 export function FrameSheets({ username }: { username: string }) {
   const { open } = useStoreState(frameSheetStore) as { open: Which };
   const close = useCallback(() => openFrameSheet(null), []);
+  // A sheet is over the page it was opened on: a move to another address
+  // (a row's link, Back) puts it away.
+  useEffect(() => {
+    window.addEventListener('hashchange', close);
+    return () => window.removeEventListener('hashchange', close);
+  }, [close]);
   if (open === 'notifications') return <NotificationsFrameSheet onClose={close} />;
-  if (open === 'menu') return <AccountMenuSheet onClose={close} username={username} />;
+  if (open === 'menu') return <AccountMenuSheet onClose={close} username={username} homeScreen={homeroomHomeScreen()} build={documentBuildId()} />;
   return null;
 }

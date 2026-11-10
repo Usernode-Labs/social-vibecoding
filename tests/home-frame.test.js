@@ -25,7 +25,7 @@ const NOW = Date.parse('2026-11-09T12:00:00Z');
 const fixedStore = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
 
 // The modules HomeFrame reads, stubbed by the specifier it imports them as.
-function homeStubs({ pins = [], joined = [], owed = {}, apps = [], info = {} } = {}) {
+function homeStubs({ pins = [], joined = [], owed = {}, apps = [], info = {}, standing = null } = {}) {
   return {
     '../grid-store': { gridStore: fixedStore({ ready: true, view: 'grid', editing: false, items: apps.map((app) => ({ kind: 'card', placement: null, app })) }) },
     '../home-pins-store': {
@@ -35,6 +35,7 @@ function homeStubs({ pins = [], joined = [], owed = {}, apps = [], info = {} } =
     '../communities-to-join': { readDirectory: async () => [] },
     // What the two pages under Home read besides.
     '../../frame/frame-page-store': { useFramePage() {} },
+    '../../leaderboard/my-standing.js': { myStandingStore: fixedStore(standing ? { status: 'ready', ranking: { rank: standing.rank, total_participants: standing.people, total_points: standing.points } } : { status: 'idle' }), MyStanding: { load: async () => {} }, standingView: (st) => (st.status === 'ready' ? { rank: st.ranking.rank, people: st.ranking.total_participants, pending: null, token: null } : null) },
     '../../workshop/community-scope': { communityScopeStore: fixedStore({ slug: null, list: [], info }) },
   };
 }
@@ -244,4 +245,11 @@ test('the words are catalog text', () => {
     assert.doesNotMatch(en[k].description, /glass/i, `${k}: described for every look`);
   }
   assert.doesNotMatch(read('frontend', 'src', 'features', 'home', 'frame', 'home-frame.tsx'), />[A-Z][a-z]+ [a-z]+</, 'no English literal in the component');
+});
+
+test('your season is one row of the side column, to Challenges, once the standings know you (the tour\'s s01)', () => {
+  const html = render({}, homeStubs({ standing: { rank: 15, people: 149, points: 16128 } }));
+  assert.match(html, /<h2 class="fr-cap">Season<\/h2><\/div><div class="fr-card"><a class="fr-row" href="#leaderboard\/challenges"><span class="fr-lead">15<\/span><span class="fr-tx"><span class="fr-t">Rank 15 of 149<\/span><span class="fr-s">16,128 points<\/span><\/span><svg class="fr-ic fr-go"/);
+  assert.doesNotMatch(render(), /Season/, 'nothing until the standing is known');
+  assert.match(read(HOME_FRAME), /useEffect\(\(\) => \{ void MyStanding\.load\(\); \}, \[\]\);/, 'asked for once, as Challenges asks');
 });

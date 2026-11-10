@@ -26993,7 +26993,10 @@ html[data-skin] .fr-pane > .fr-scroll { overflow: visible; }
    for it over the tab bar is not drawn twice. */
 html[data-skin] #ai-screen[data-frame-list] .ai-askbar,
 html[data-skin] #ai-screen[data-frame-list] .ai-askbar-gap { display: none; }
+/* With nothing open beside it (#6425: Main opens from its row) the list is
+   a page of one column: the kit's 720px, not the whole width. */
 @media (min-width: 768px) {
+  html[data-skin] #ai-screen[data-frame-list]:not([data-ai-open]) > .fr-pane > .fr-scroll { max-width: 720px; }
   html[data-skin] #ai-screen[data-frame-list] { --ai-main-w: max(360px, calc(var(--platform-usable-w) - 520px)); }
   html[data-skin] #ai-screen[data-frame-list] .ai-main-pane { top: var(--fr-shell-top); background: none; border-top: 0; border-inline-start: 1px solid var(--fr-line); border-radius: 0; }
   html[data-skin] #ai-screen[data-frame-list] #ai-main-divider { display: none; }
@@ -27254,7 +27257,7 @@ html[data-skin]:where(:not([data-skin="brand"])) .messages-message { padding: 8p
 html[data-skin]:where(:not([data-skin="brand"])) .messages-message-grouped { padding-block: 1px; }
 html[data-skin]:where(:not([data-skin="brand"])) .messages-message:has(+ .messages-message-grouped) { padding-bottom: 0; }
 html[data-skin]:where(:not([data-skin="brand"])) .messages-message-grouped:not(:has(+ .messages-message-grouped)) { padding-bottom: 8px; }
-html[data-skin]:where(:not([data-skin="brand"])) .messages-message-gutter { flex-basis: 44px; width: 44px; }
+html[data-skin]:where(:not([data-skin="brand"])) .messages-message-gutter { flex-basis: 44px; width: 44px; margin-inline-start: 0; }
 html[data-skin="workbench"] .messages-message-gutter { flex-basis: 38px; width: 38px; }
 html[data-skin]:where(:not([data-skin="brand"])) .messages-message-head { min-height: 0; gap: 0; font-size: inherit; font-weight: 400; color: inherit; }
 html[data-skin]:where(:not([data-skin="brand"])) .messages-message-self .messages-message-head { justify-content: flex-start; }

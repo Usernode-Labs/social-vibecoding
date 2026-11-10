@@ -918,5 +918,13 @@
   "frame.menu.open": {
     "text": "Account menu",
     "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Accessible name of the control that opens this menu."
+  },
+  "frame.menu.suggest": {
+    "text": "Suggest an improvement",
+    "description": "The account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the row under Homeroom that opens the Improve panel, as the logo menu's row does."
+  },
+  "frame.menu.homeScreen": {
+    "text": "Add Homeroom to your home screen",
+    "description": "The account menu under one of the frame's looks, on a phone's browser: the row that shows the steps to put Homeroom on the home screen, as the logo menu's row does."
   }
 }

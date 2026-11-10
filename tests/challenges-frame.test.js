@@ -72,7 +72,10 @@ test('your season is two figures and one note in the context column; the token a
 test('the pane draws the kit\'s page under a look, ahead of its own parts, and the screen gives it the page area', () => {
   const src = read('frontend/src/features/leaderboard/challenges-pane.tsx');
   assert.match(src, /const frame = isFrameSkin\(useLiveSkin\(\)\);/);
-  assert.match(src, /\{frame && state\.grid && state\.grid\.kind === 'cards' \? \(\s*<ChallengesInFrame grid=\{state\.grid\} up=\{!state\.detail\} \/>/);
+  assert.match(src, /\{frame && \(!state\.grid \|\| state\.grid\.kind === 'loading' \|\| state\.grid\.kind === 'cards'\) \? \(\s*<ChallengesInFrame grid=\{state\.grid && state\.grid\.kind === 'cards' \? state\.grid : null\} up=\{!state\.detail\} \/>/,
+    'while the cards load the page is the kit\'s too, so the standard card and skeleton do not show under the kit\'s tabs');
+  assert.match(src, /notice=\{grid \? grid\.notice : t\('leaderboard:challenges\.loading'\)\}/);
+  assert.match(src, /groups=\{grid \? grid\.groups : \[\]\}/);
   assert.match(src, /up=\{up && section === 'challenges'\}/, 'the page on show only while its own section is, and no challenge\'s page is over it');
   assert.match(read('frontend/src/features/frame/frame-flag.ts'), /if \(!on\) return undefined;/);
   assert.match(src, /<YourStanding \/>\s*<Grid view=\{state\.grid\} \/>/, 'its own parts stay as written');

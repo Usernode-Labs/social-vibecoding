@@ -1218,5 +1218,29 @@
   "frame.allCommunities.none": {
     "text": "No community matches your search.",
     "description": "All communities, a page under Home when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Said in place of the groups when the search finds nothing."
+  },
+  "frame.season": {
+    "text": "Season",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Label of the side column's group with your place in the season's challenges."
+  },
+  "frame.seasonRank_one": {
+    "text": "Rank {{rank}} of {{number}}",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The season row's title: your place among the people ranked. {{rank}} is your place, {{number}} how many are ranked, formatted; {{count}} the same number for the plural."
+  },
+  "frame.seasonRank_other": {
+    "text": "Rank {{rank}} of {{number}}",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The season row's title: your place among the people ranked. {{rank}} is your place, {{number}} how many are ranked, formatted; {{count}} the same number for the plural."
+  },
+  "frame.seasonRankAlone": {
+    "text": "Rank {{rank}}",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The season row's title when the number of people ranked is not known. {{rank}} is your place."
+  },
+  "frame.seasonPoints_one": {
+    "text": "{{points}} point",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The season row's line: your points this season. {{points}} is the number formatted; {{count}} the same number for the plural."
+  },
+  "frame.seasonPoints_other": {
+    "text": "{{points}} points",
+    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The season row's line: your points this season. {{points}} is the number formatted; {{count}} the same number for the plural."
   }
 }

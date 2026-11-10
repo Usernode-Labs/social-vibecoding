@@ -136,6 +136,7 @@ test('app.css sets the standard row\'s own spacing aside under a look, and only 
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-message-grouped:not\(:has\(\+ \.messages-message-grouped\)\) \{ padding-bottom: 8px; \}/,
     'and the post ends where their run does');
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-thread-header > \.fr-av \{ --fr-as: 40px !important; \}/, 'the head\'s face is the row\'s size');
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-message-gutter \{ flex-basis: 44px; width: 44px; margin-inline-start: 0; \}/, 'a continuation\'s time sits under the face, not past the row\'s edge');
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-thread-pane > \.messages-thread-scroll \{[^}]*padding: 24px 32px;/, 'the open-item pane\'s own margins');
 });
 

@@ -48,6 +48,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { readDirectory } from '../communities-to-join';
 import { gridStore, type IconView } from '../grid-store';
 import { homePinsStore, loadHomePins, type HomePin, type JoinedCommunity } from '../home-pins-store';
+import { MyStanding, myStandingStore, standingView } from '../../leaderboard/my-standing.js';
 import { HomeAllApps } from './home-all-apps';
 import { HomeAllCommunities, type OwedVote } from './home-all-communities';
 
@@ -157,6 +158,11 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
   const t = useMessages('home');
   const pins = useStoreState(homePinsStore);
   const grid = useStoreState(gridStore);
+  // Your season (the tour's s01): one row of the side column, from the
+  // standing Challenges reads, once the standings know you.
+  const standingState = useStoreState(myStandingStore) as { status: string; ranking?: { total_points?: number | string } | null };
+  const standing = standingView(standingState) as { rank: number | null; people: number } | null;
+  useEffect(() => { void MyStanding.load(); }, []);
   const [feed, setFeed] = useState<FeedRow[] | null>(initialFeed);
   const [questions, setQuestions] = useState<BotQuestion[] | null>(initialQuestions);
   const [directory, setDirectory] = useState<DirectoryApp[] | null>(initialDirectory);
@@ -283,7 +289,21 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
   };
   const went = (live || []).slice(0, LIVE_SHOWN);
 
-  const side = went.length > 0 ? (
+  const seasonPoints = Math.round(Number(standingState.ranking?.total_points || 0));
+  const season = standing && standing.rank != null ? (
+    <Sec label={t('home:frame.season')}>
+      <Card>
+        <Row
+          href="#leaderboard/challenges"
+          lead={<Lead>{standing.rank}</Lead>}
+          title={standing.people > 0 ? t('home:frame.seasonRank', { rank: standing.rank, count: standing.people, number: standing.people.toLocaleString('en-US') }) : t('home:frame.seasonRankAlone', { rank: standing.rank })}
+          line={seasonPoints > 0 ? t('home:frame.seasonPoints', { count: seasonPoints, points: seasonPoints.toLocaleString('en-US') }) : undefined}
+          go
+        />
+      </Card>
+    </Sec>
+  ) : null;
+  const liveSec = went.length > 0 ? (
     <Sec label={t('home:frame.liveThisWeek')} id="home-frame-live">
       <Card>
         {went.map((row) => (
@@ -300,6 +320,7 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
       </Card>
     </Sec>
   ) : null;
+  const side = liveSec || season ? <>{liveSec}{season}</> : null;
 
   if (view === 'apps') return <HomeAllApps onBack={backHome} />;
   if (view === 'communities') {

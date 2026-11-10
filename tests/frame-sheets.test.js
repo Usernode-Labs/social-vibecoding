@@ -61,6 +61,8 @@ test('Notifications with nothing unread offers no button, and says so in its sen
   assert.doesNotMatch(seen, />Needs an answer<|>News</, 'an empty group is not drawn');
   const none = renderComponent(SHEETS, 'NotificationsFrameSheet', { onClose() {}, rows: [] }, { stubs, cache: false });
   assert.match(none, /<p class="fr-purpose">Nothing yet\. What happens in your communities shows up here\.<\/p>/);
+  const unread = renderComponent(SHEETS, 'NotificationsFrameSheet', { onClose() {}, rows: null }, { stubs, cache: false });
+  assert.doesNotMatch(unread, /fr-purpose/, 'before the bell\'s read lands the sheet says nothing, not "nothing yet"');
 });
 
 test('the bell\'s own controller reads, marks and opens; the sheet only asks it to', () => {
@@ -75,15 +77,23 @@ test('the account menu: you, Homeroom, then sign out, as single-line rows', () =
   const html = renderComponent(SHEETS, 'AccountMenuSheet', { onClose() {}, username: 'snait' }, { stubs, cache: false });
   assert.match(html, /<div class="fr-ov fr-pop">/, 'small, anchored to the corner');
   assert.match(html, /<h2 class="fr-title"[^>]*>snait<\/h2><p class="fr-purpose">@snait<\/p>/);
-  const order = ['>Your profile<', '>Settings<', '>Dark theme<', '>Invite people<', '>About Homeroom<', '>Sign out<'].map((w) => html.indexOf(w));
+  const order = ['>Your profile<', '>Settings<', '>Dark theme<', '>Invite people<', '>Suggest an improvement<', '>About Homeroom<', '>Sign out<'].map((w) => html.indexOf(w));
   assert.ok(order.every((at, i) => at > -1 && (i === 0 || at > order[i - 1])), `the rows in the tour's order: ${order}`);
-  assert.equal((html.match(/class="fr-row fr-sm"/g) || []).length, 6, 'every row is the single-line kind');
+  assert.equal((html.match(/class="fr-row fr-sm"/g) || []).length, 7, 'every row is the single-line kind');
+  assert.doesNotMatch(html, /home screen/, 'a desktop browser is not offered the phone\'s home screen');
+  const phone = renderComponent(SHEETS, 'AccountMenuSheet', { onClose() {}, username: 'snait', homeScreen: { os: 'ios', via: 'steps' }, build: '7d2db1b' }, { stubs, cache: false });
+  assert.match(phone, />Suggest an improvement<.*>Add Homeroom to your home screen<.*>About Homeroom<\/span><\/span><span class="fr-meta">7d2db1b<\/span>/s, 'the phone\'s row, and the build on About');
   assert.match(html, /Dark theme<\/span><\/span><button type="button" role="switch" aria-checked="false" aria-label="Dark theme" class="fr-tog"><\/button>/, 'the theme is a switch on a row');
   assert.match(html, /<h2 class="fr-cap">Homeroom<\/h2>/);
   const src = read('frontend', 'src', 'features', 'frame', 'frame-sheets.tsx');
-  for (const call of ["win.App?.navigateToSettings?.()", "win.Theme?.set?.(next ? 'dark' : 'light')", 'win.AppContext?.openInvite?.()', "win.App?.navigateToSettings?.('about')", 'win.Settings?.logout?.()']) {
+  for (const call of ["win.App?.navigateToSettings?.()", "win.Theme?.set?.(next ? 'dark' : 'light')", 'win.AppContext?.openInvite?.()', 'win.Improve?.giveFeedback?.()', "win.App?.navigateToSettings?.('about')", 'win.Settings?.logout?.()', 'openHomeroomInBrowser()', '<InstallStepsSheet os={steps} onClose={() => setSteps(null)} />']) {
     assert.ok(src.includes(call), `${call} is the shell's own entry point`);
   }
+});
+
+test('a move to another address puts the open sheet away', () => {
+  const src = read('frontend', 'src', 'features', 'frame', 'frame-sheets.tsx');
+  assert.match(src, /window\.addEventListener\('hashchange', close\);\s*return \(\) => window\.removeEventListener\('hashchange', close\);/);
 });
 
 test('the sheets\' words are catalog text', () => {
@@ -92,7 +102,7 @@ test('the sheets\' words are catalog text', () => {
     assert.ok(n[k] && typeof n[k].text === 'string' && n[k].description, k);
   }
   const c = JSON.parse(read('frontend', 'locales', 'en', 'core.json'));
-  for (const k of ['frame.menu.handle', 'frame.menu.profile', 'frame.menu.darkTheme', 'frame.menu.invite', 'frame.menu.about', 'frame.menu.signOut', 'frame.menu.open', 'common.close']) {
+  for (const k of ['frame.menu.handle', 'frame.menu.profile', 'frame.menu.darkTheme', 'frame.menu.invite', 'frame.menu.suggest', 'frame.menu.homeScreen', 'frame.menu.about', 'frame.menu.signOut', 'frame.menu.open', 'common.close']) {
     assert.ok(c[k] && typeof c[k].text === 'string' && c[k].description, k);
   }
 });
