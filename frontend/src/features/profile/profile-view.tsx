@@ -400,7 +400,7 @@ function ProfileSkeleton(): ReactNode {
  * the standard rows read for themselves (the App slots line, and whether
  * the viewer is an admin).
  */
-function YouInFrame({ view }: { view: any }): ReactNode {
+function YouInFrame({ view, publicStatus }: { view: any; publicStatus: string }): ReactNode {
   const allowance = useAppAllowance();
   const admin = useVisibility('switcher-row-admin', false);
   // The bar says You, as the tab does (the standard header says Profile).
@@ -414,6 +414,7 @@ function YouInFrame({ view }: { view: any }): ReactNode {
       rows={view.rows}
       slots={appSlotsLine(allowance.quota, allowance.requestedAt as string | null)}
       admin={admin}
+      publicPage={view.publicControls && !view.publicControls.moderationDisabled ? { href: view.publicControls.openHref, published: view.publicControls.published, line: view.publicControls.visibility, status: publicStatus, onCopy: () => { void Profile.copyPublicLink(view.publicControls.openHref); } } : null}
       onEdit={() => Profile.showEditSheet()}
       onFriends={() => Profile.showFriends()}
       onSlots={() => Profile.showAppSlots()}
@@ -524,7 +525,7 @@ export function ProfileRoot(): ReactNode {
           Your contributions, which closed the screen, is gone: Your changes
           lists every merged one.
       */}
-      {frame ? <YouInFrame view={view} /> : (
+      {frame ? <YouInFrame view={view} publicStatus={state.publicStatus || ''} /> : (
       <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
         <div className="lg:col-start-1 lg:row-start-1">
           <IdentityCard identity={view.identity} />

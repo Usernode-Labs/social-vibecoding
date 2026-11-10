@@ -1050,5 +1050,9 @@
   "frame.public.x": {
     "text": "X",
     "description": "Someone's public profile when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row in the Verified group: the person's X account, which opens it."
+  },
+  "frame.copy": {
+    "text": "Copy",
+    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The small button at the end of the \"Copy public link\" row in the Public page group; pressing it copies the link to your public profile."
   }
 }

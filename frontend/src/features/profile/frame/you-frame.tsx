@@ -11,7 +11,7 @@
  */
 import type { MouseEvent } from 'react';
 
-import { Btn, Card, Facts, Lead, PageBody, Row, Sec } from '@/components/ui/kit';
+import { Btn, Card, Facts, Icon, Lead, PageBody, Row, Sec, k } from '@/components/ui/kit';
 import { useMessages } from '../../../lib/i18n/react';
 import { useFrameFlag } from '../../frame/frame-flag';
 
@@ -22,6 +22,8 @@ interface Rows {
   changes?: string | null; requests?: string | null; requestsPending?: boolean; feedback?: string | null;
   votes?: string | null; challenges?: string | null; friends?: string | null;
 }
+/** Your public page (the tour's s44, s45): where it is, whether it is live, and what the last copy said. */
+interface PublicPage { href: string; published: boolean; line: string; status: string; onCopy: () => void }
 
 /** A plain click is handled here; a cmd-click or a middle click keeps the address. */
 const plain = (event: MouseEvent<HTMLElement>, run: () => void) => {
@@ -30,7 +32,7 @@ const plain = (event: MouseEvent<HTMLElement>, run: () => void) => {
   run();
 };
 
-export function YouFrame({ identity, stats, activity, rows, slots, admin, onEdit, onFriends, onSlots, onFeedback }: {
+export function YouFrame({ identity, stats, activity, rows, slots, admin, publicPage = null, onEdit, onFriends, onSlots, onFeedback }: {
   identity: Identity;
   stats: Stat[];
   activity: Activity | null;
@@ -38,6 +40,8 @@ export function YouFrame({ identity, stats, activity, rows, slots, admin, onEdit
   /** The App slots row's line, as the standard row says it. */
   slots: string | null;
   admin: boolean;
+  /** Null until the page knows, or while moderation hides it. */
+  publicPage?: PublicPage | null;
   onEdit: () => void;
   onFriends: () => void;
   onSlots: () => void;
@@ -53,9 +57,24 @@ export function YouFrame({ identity, stats, activity, rows, slots, admin, onEdit
       data-you-frame=""
       title={identity.name}
       purpose={purpose}
-      acts={<Btn icon="edit" onClick={onEdit}>{t('profile:identity.edit')}</Btn>}
+      acts={(
+        <>
+          <Btn icon="edit" onClick={onEdit}>{t('profile:identity.edit')}</Btn>
+          {publicPage && publicPage.published ? <a className={k('btn', 'quiet')} href={publicPage.href}><Icon name="out" size={17} />{t('profile:edit.public.open')}</a> : null}
+        </>
+      )}
       side={(
         <>
+          {publicPage ? (
+            <Sec label={t('profile:edit.public.group')}>
+              <Card>
+                <Row wrap lead={<Lead icon="eye" />} title={t('profile:edit.public.label')} line={publicPage.line} go onClick={onEdit} />
+                {publicPage.published ? (
+                  <Row sm={!publicPage.status} lead={<Lead icon="link" />} title={t('profile:edit.public.copy')} line={publicPage.status || undefined} right={<Btn kind="quiet" small onClick={publicPage.onCopy}>{t('profile:frame.copy')}</Btn>} />
+                ) : null}
+              </Card>
+            </Sec>
+          ) : null}
           <Sec label={t('profile:rewards.heading')}>
             <Card>
               <Row href="#leaderboard/challenges" lead={<Lead icon="trophy" />} title={t('profile:more.challenges.title')} line={rows.challenges || t('profile:more.challenges.hint')} go />

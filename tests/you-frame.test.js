@@ -73,11 +73,25 @@ test('the context column: the season, then friends, projects and Settings; Admin
 test('the profile draws the kit\'s page under a look, from its own view, with its sheets', () => {
   const src = read('frontend/src/features/profile/profile-view.tsx');
   assert.match(src, /const frame = isFrameSkin\(useLiveSkin\(\)\);/);
-  assert.match(src, /\{frame \? <YouInFrame view=\{view\} \/> : \(/);
+  assert.match(src, /\{frame \? <YouInFrame view=\{view\} publicStatus=\{state\.publicStatus \|\| ''\} \/> : \(/);
   assert.match(src, /<YouFrame\s+identity=\{view\.identity\}/);
   assert.match(src, /onEdit=\{\(\) => Profile\.showEditSheet\(\)\}/);
   assert.match(src, /useFramePage\(\[tc\('core:tabs\.me'\)\], null\);/, 'the bar says You, as the tab does');
   assert.match(src, /<div className="lg:grid lg:grid-cols-\[minmax\(0,22rem\)_minmax\(0,1fr\)\]/, 'the standard page stays as written');
   const css = read('public/css/app.css');
   assert.match(css, /html\[data-skin\]\[data-you-frame\] #profile-screen \{ padding-inline-start: var\(--platform-rail-w, 0px\) !important; padding-inline-end: 0 !important; \}/, 'the page has the frame\'s page area');
+});
+
+test('Public page is the head\'s second button while the page is live, and a group of the context column', () => {
+  const live = render({ publicPage: { href: '#profile/snait', published: true, line: 'On: anyone with the link can view it, no account needed', status: '', onCopy() {} } });
+  assert.match(live, /<div class="fr-acts"><button type="button" class="fr-btn"><svg[^>]*>.*?<\/svg>Edit profile<\/button><a class="fr-btn fr-quiet" href="#profile\/snait"><svg[^>]*>.*?<\/svg>Open public page<\/a><\/div>/s);
+  assert.match(live, /<h2 class="fr-cap">Public page<\/h2><\/div><div class="fr-card"><button type="button" class="fr-row fr-wrap"><span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Public profile<\/span><span class="fr-s">On: anyone with the link can view it, no account needed<\/span><\/span><svg class="fr-ic fr-go"[^>]*>.*?<\/svg><\/button><div class="fr-row fr-sm"><span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Copy public link<\/span><\/span><button type="button" class="fr-btn fr-quiet fr-sm">Copy<\/button><\/div><\/div>/s,
+    'the switch is in Edit profile, where it asks before publishing: the row opens it');
+  assert.match(render({ publicPage: { href: '#profile/snait', published: true, line: 'On', status: 'Public link copied.', onCopy() {} } }), /<span class="fr-t">Copy public link<\/span><span class="fr-s">Public link copied\.<\/span>/, 'the copy says it did');
+  const off = render({ publicPage: { href: '#profile/snait', published: false, line: 'Off: your profile has no public link', status: '', onCopy() {} } });
+  assert.doesNotMatch(off, /Open public page|Copy public link/, 'nothing to open or copy while it is off');
+  assert.match(off, /<span class="fr-t">Public profile<\/span><span class="fr-s">Off: your profile has no public link<\/span>/);
+  assert.doesNotMatch(render(), /Public page|Public profile/, 'before the page knows: nothing');
+  const view = read('frontend/src/features/profile/profile-view.tsx');
+  assert.match(view, /publicPage=\{view\.publicControls && !view\.publicControls\.moderationDisabled \? \{ href: view\.publicControls\.openHref, published: view\.publicControls\.published, line: view\.publicControls\.visibility, status: publicStatus, onCopy: \(\) => \{ void Profile\.copyPublicLink\(view\.publicControls\.openHref\); \} \} : null\}/);
 });
