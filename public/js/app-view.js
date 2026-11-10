@@ -25155,7 +25155,11 @@ const AppView = {
     const complete = useIntegrationMerge ? true : legacyComplete;
     const integrationBehind = num(p.integration_behind_by);
     return {
-      checkedAt: useIntegrationMerge ? p.integration_measured_at : legacyCheckedAt,
+      // The time belongs to the newest measurement, even when neither source
+      // carries a verdict yet: a row says how old what it reports is. A record
+      // with no timestamp of its own leaves the older one in place.
+      checkedAt: (integrationWins || (useIntegrationMerge && integrationAt !== null))
+        ? p.integration_measured_at : legacyCheckedAt,
       mergeability: useIntegrationMerge ? integrationMergeability : legacyMergeability,
       files: files.filter((x) => typeof x === 'string'),
       filesComplete: complete === undefined ? null : complete,
