@@ -85,6 +85,7 @@ async function migrate(config) {
   await seedAdmin(pool, config);
   await seedCaptureUser(pool);
   await seedCaptureAdminUser(pool);
+  await seedStagingLongInbox(pool);
   // Must run BEFORE every staging fixture — a dozen of them own rows via a
   // hard-coded created_by = 900001. See seedStagingDemoUser.
   await seedStagingDemoUser(pool);
@@ -1519,6 +1520,26 @@ async function seedTermsVersions(pool) {
        ON CONFLICT (version) DO NOTHING`,
       [v.version, v.title, body, v.link, v.publishedAt]
     );
+  }
+}
+
+// #6501: enough obviously fake group conversations to exercise a long inbox.
+// The fixture member alone sees them; no messages or notifications are sent.
+async function seedStagingLongInbox(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const member = (await pool.query("SELECT id FROM users WHERE username = 'usernode-capture'")).rows[0];
+  if (!member) return;
+  for (let i = 1; i <= 18; i += 1) {
+    const title = `Staging demo inbox ${String(i).padStart(2, '0')}`;
+    await pool.query(
+      `INSERT INTO conversations (kind, title, created_by)
+       SELECT 'group', $1::varchar, $2::int WHERE NOT EXISTS (
+         SELECT 1 FROM conversations WHERE title = $1 AND created_by = $2)`, [title, member.id]);
+    await pool.query(
+      `INSERT INTO conversation_members (conversation_id, user_id, role, status, joined_at, responded_at)
+       SELECT id, $2, 'owner', 'member', NOW(), NOW() FROM conversations
+        WHERE title = $1 AND created_by = $2
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`, [title, member.id]);
   }
 }
 
