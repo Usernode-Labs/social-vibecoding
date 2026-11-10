@@ -148,6 +148,7 @@ async function migrate(config) {
   // #6263's shots: a bot-built change on a request page whose description is
   // marked out of date, so the note under it has a state to show.
   await seedStagingBotStaleDescription(pool);
+  await seedStagingClosedGoingLive(pool);
   // #6284's shots: a bot change whose checks failed after the bot stopped at
   // its own limit of three fixes, so the Testing card and the Homeroom bot
   // page have the stopped state to show (and Let it try again).
@@ -421,6 +422,40 @@ async function migrate(config) {
 // somebody other than the issuer. Headless work is sponsored rather than
 // issued by its user_id, and maintenance proposals belong to the platform,
 // so neither is assigned by this human-work backfill.
+// #6544: a closed request with a merged change still awaiting release.
+// Obviously fake data for the shots member; no production writes.
+async function seedStagingClosedGoingLive(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const member = (await tx.query("SELECT id FROM users WHERE username = 'usernode-capture'")).rows[0];
+    if (!member) { await tx.query('ROLLBACK'); return; }
+    await tx.query(
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+       SELECT 'Staging demo release', 'staging-demo-closed-going-live', 'running', $1, 'public', 'members'
+        WHERE NOT EXISTS (SELECT 1 FROM apps WHERE slug = 'staging-demo-closed-going-live')`, [member.id]);
+    const app = (await tx.query("SELECT id FROM apps WHERE slug = 'staging-demo-closed-going-live'")).rows[0];
+    await tx.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, state)
+       SELECT $1, 96544, 'Staging demo: a closed request going live', 'Obviously fake release example.', $2, 'closed'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = 96544)`, [app.id, member.id]);
+    // The merge machine alone may leave a merged change not yet live.
+    await tx.query("SELECT set_config('app.wf_writer', 'transition', true)");
+    await tx.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, session_title, pr_number,
+                                  linked_issues, status, shared_at, promoted_at, merged_at)
+       SELECT $1, $2, 'staging-fixture/closed-going-live', 'Staging demo: a closed request going live', 96545,
+              '{96544}', 'merged', NOW(), NOW(), NOW()
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1 AND branch_name = 'staging-fixture/closed-going-live')`,
+      [app.id, member.id]);
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging closed request going-live seed failed', { message: err.message });
+  } finally { tx.release(); }
+}
+
 async function backfillProposalIssuerAssignments(pool) {
   const result = await pool.query(
     `INSERT INTO topic_attribute_votes
