@@ -108,6 +108,27 @@ test("GitHub's checks failing is red, names no times, and offers no button", () 
   assert.doesNotMatch(html, /<button/);
 });
 
+test('the card is Votes and Tested\'s own markup: name, figure, bar and note in that order', () => {
+  const html = render(held());
+  // The same skeleton GateCard draws for Votes and Tested, in the same order.
+  const parts = ['dev-change-gate-main', 'dev-change-gate-head', 'dev-change-gate-name',
+    'dev-change-gate-figure', 'dev-change-bar', 'dev-change-bar-seg',
+    'dev-change-bar-fill', 'dev-change-gate-note'];
+  let at = -1;
+  for (const part of parts) {
+    const next = html.indexOf(part, at + 1);
+    assert.ok(next > at, part);
+    at = next;
+  }
+  assert.match(html, /class="dev-change-gate"/);
+  assert.match(html, /class="dev-change-gate-main"/);
+  assert.match(html, /class="dev-change-gate-head"/);
+  assert.match(html, /class="dev-change-gate-name"/);
+  assert.match(html, /class="dev-change-gate-figure"/);
+  assert.match(html, /class="dev-change-bar"/);
+  assert.match(html, /class="dev-change-gate-note"/);
+});
+
 test('the card is the same card as Votes and Tested, with a name and a bar', () => {
   const html = render(held());
   assert.match(html, /class="dev-change-gate"/);
