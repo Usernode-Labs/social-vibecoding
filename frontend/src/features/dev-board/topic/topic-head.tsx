@@ -1690,7 +1690,7 @@ export function ChangeSheets({ id, row, body }: { id: number; row: any; body: To
         steps={body.steps}
         help={!!(body.details && body.details.help)}
         html={body.proposalBody?.html || ''}
-        shotsHtml={av && row?.shots ? av.shotsHtml(row.shots, { sessionId: id, details: true }) : ''}
+        shotsHtml={av && row?.shots ? av.shotsHtml(row.shots, { sessionId: id, details: true, canRetake: !!av._canRetakeShots?.(row) }) : ''}
       />
       {av?._canEditDescription?.(row) ? (
         <DescriptionEditor key={id} id={id} onSaved={(data) => av._cacheDescription(id, data)} />
@@ -1850,7 +1850,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               steps={body.steps}
               help={!!(body.details && body.details.help)}
               html={body.proposalBody?.html || ''}
-              shotsHtml={av && session?.shots ? av.shotsHtml(session.shots, { sessionId: Number(id), details: true }) : ''}
+              shotsHtml={av && session?.shots ? av.shotsHtml(session.shots, { sessionId: Number(id), details: true, canRetake: !!av._canRetakeShots?.(session) }) : ''}
             />
           ) : null}
           {id && active && av?._canEditDescription(session) ? <DescriptionEditor key={id} id={Number(id)} onSaved={(data) => {

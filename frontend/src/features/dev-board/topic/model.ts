@@ -856,6 +856,12 @@ export interface TopicBody {
      * way, not as a failure.
      */
     retrying?: boolean;
+    /**
+     * The change this viewer may start the failed run again on, or null.
+     * `_canRetakeShots` decides: its author or a project admin, on a failed
+     * run with no automatic retry coming.
+     */
+    retake?: number | null;
     label: string;
     sentence: string;
     claims: string[];

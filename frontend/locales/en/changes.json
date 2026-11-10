@@ -6369,7 +6369,7 @@
   },
   "shots.card.takeAgain": {
     "text": "Take the screenshots again",
-    "description": "Button on a proposal's screenshots card: starts taking the before/after screenshots over again."
+    "description": "Button on a proposal's screenshots card, on a change's board card, on its Before and after card and in its Details sheet: starts taking the before/after screenshots over again."
   },
   "shots.card.stop": {
     "text": "Stop",

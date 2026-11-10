@@ -301,6 +301,7 @@ async function migrate(config) {
   await seedStagingShotsNoticed(pool);
   // After seedStagingDemoAppCard, whose demo app it belongs to.
   await seedStagingShotsScreens(pool);
+  await seedStagingShotsFailed(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingCloneQuestionSuggestions(pool, config);
@@ -11463,6 +11464,93 @@ async function seedStagingShotsScreens(pool) {
   }
 }
 
+// The failed sibling of the two shots fixtures above (#6551): a change
+// waiting for a vote whose before & after screenshots could not be taken.
+// Authored by the shots' own member fixture (usernode-capture), who is a
+// member of this app, so the retake that failure now offers its author is
+// reachable on a preview. Every word is an obviously fake "Staging demo"
+// line; fixed id, idempotent, and a strict no-op outside staging.
+const STAGING_SHOTS_FAILED_SESSION_ID = 900161;
+
+async function seedStagingShotsFailed(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const planContract = require('../services/visible-changes');
+  const shotsState = require('../services/shots-state');
+  const id = STAGING_SHOTS_FAILED_SESSION_ID;
+  const runId = `${id}`.padEnd(32, 'f');
+  const baseSha = 'a'.repeat(40);
+  const headSha = 'b'.repeat(40);
+  const planHash = 'f'.repeat(64);
+  const failureCode = 'shots_capture_incomplete';
+  const failureReason = 'Staging demo: the screenshot agent could not reach the dialog.';
+  try {
+    const intent = planContract.parseIntent({
+      version: 1,
+      impact: 'ui',
+      rationale: 'Staging demo: the header gains a sort control.',
+      stories: [{
+        id: 'header-sort',
+        claim: 'Staging demo: the header shows a Newest sort control.',
+        persona: 'member',
+        viewports: [{ name: 'desktop', width: 1280, height: 800 }],
+        intent: {
+          startPath: '/',
+          steps: ['Open the screen'],
+          checkpoint: 'The sort control is in the header',
+          focus: 'Sort control',
+          baseState: 'not_present',
+          animation: 'none',
+        },
+      }],
+    });
+    const cleaned = {
+      cleanupComplete: true,
+      cleanupVersion: require('../services/shots-environment').RESOURCE_CLEANUP_VERSION,
+    };
+    // The proposal's own copy of the run, as a failed run leaves it.
+    const detail = {
+      ...shotsState.runSummary({
+        id: runId, state: 'failed', intent, base_sha: baseSha, head_sha: headSha,
+        plan_hash: planHash, failure_code: failureCode, failure_reason: failureReason,
+        hard_verdict: null, trace_summary: cleaned,
+      }),
+      intent,
+    };
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status,
+          created_at, promoted_at, reviewed_head_sha, check_state,
+          shots_state, shots_run_id, shots_detail, shots_updated_at)
+       SELECT $1::int, 900001, u.id, 'staging-demo/shots-failed', 9301::int,
+              '[Mock] Staging demo: before & after could not be taken', 'promoted',
+              NOW() - interval '4 hours', NOW() - interval '3 hours', $2::varchar, 'passing',
+              'failed', $3::varchar, $4::jsonb, NOW() - interval '2 hours'
+         FROM users u
+        WHERE u.username = 'usernode-capture'
+          AND EXISTS (SELECT 1 FROM apps WHERE id = 900001)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, headSha, runId, JSON.stringify(detail)]
+    );
+    await pool.query(
+      `INSERT INTO shot_runs
+         (id, session_id, base_sha, head_sha, plan_hash, intent, hard_verdict,
+          trace_summary, state, trigger, failure_code, failure_reason,
+          started_at, completed_at)
+       SELECT $1::varchar, $2::int, $3::varchar, $4::varchar, $5::varchar, $6::jsonb, NULL,
+              $7::jsonb, 'failed', 'staging-fixture', $8::varchar, $9::text,
+              NOW() - interval '3 hours', NOW() - interval '2 hours'
+        WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2::int AND app_id = 900001)
+          AND NOT wf_holds('shots', 'session:' || $2::int)
+       ON CONFLICT (id) DO NOTHING`,
+      [runId, id, baseSha, headSha, planHash, JSON.stringify(intent),
+        JSON.stringify(cleaned), failureCode, failureReason]
+    );
+    log.info('db', 'Staging failed-shots fixture seeded', { sessionId: id });
+  } catch (err) {
+    log.warn('db', 'Staging failed-shots seeding failed', { message: err.message });
+  }
+}
+
 // (#60) Fixtures for the leaderboard user-profile drill-in. The profile
 // view lists a user's PROPOSED PRs (chat_sessions) with kudos counts
 // (pr_kudos) — both staging:private tables, so without seeding the view
@@ -18965,7 +19053,7 @@ module.exports = {
   markBareDateActivities,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
-  seedStagingGeneralChannel, seedStagingShotsNoticed, seedStagingShotsScreens,
+  seedStagingGeneralChannel, seedStagingShotsNoticed, seedStagingShotsScreens, seedStagingShotsFailed,
   seedStagingTranscriptShowcase, seedStagingVisuals, seedStagingGalleryProposals,
   // A test seam: preview-projects-source-repo.test.js counts what a preview's
   // sample apps leave room for under the limit it runs with.
