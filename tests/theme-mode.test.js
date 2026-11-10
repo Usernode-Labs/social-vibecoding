@@ -393,3 +393,16 @@ test('the theme button click handler does NOT close the drawer', () => {
   assert.ok(!/<a\b/.test(body),
     'an anchor here would be closed by the drawer\'s delegated link handler');
 });
+
+
+test('the header toggles the same persisted theme as Settings (#6459)', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'frontend/src/features/header/theme-toggle.tsx'), 'utf8');
+  assert.match(source, /window.Theme\?\.set\?\./);
+  assert.match(source, /window.Theme\?\.onChange\?\.\(sync\)/);
+  assert.match(source, /aria-pressed=\{dark\}/);
+  assert.doesNotMatch(source, /localStorage/, 'the header creates no second preference');
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/header/theme-toggle.tsx', 'HeaderThemeToggle', {});
+  assert.match(html, /aria-label="Dark mode" aria-pressed="false"/);
+  assert.match(html, /title="Switch to dark mode"/);
+});

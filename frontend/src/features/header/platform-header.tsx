@@ -47,6 +47,7 @@ import { ChromelessPill } from './chromeless-pill';
 import { useCommunityHeaderTint } from './community-tint';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
+import { HeaderThemeToggle } from './theme-toggle';
 import { InAppActions } from './in-app-actions';
 import { SidebarToggle } from '../nav/sidebar-toggle';
 import { improveStore, topicBackHref } from '../improve/improve-store.js';
@@ -745,6 +746,7 @@ export function PlatformHeader() {
               only on hover. Same for #sidebar-toggle; the back button and
               the app chip keep theirs.
           */}
+          <HeaderThemeToggle />
           <a
             id="notifications-btn"
             href="#notifications"

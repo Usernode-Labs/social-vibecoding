@@ -878,5 +878,17 @@
   "header.drawer.toHome": {
     "text": "Back to Home",
     "description": "Accessible name of the back button in the header on a community's Hub on a phone: returns to Home, where the viewer's communities are."
+  },
+  "header.darkMode": {
+    "text": "Dark mode",
+    "description": "Accessible name of the persistent header theme toggle. Pressed means dark mode is on."
+  },
+  "header.themeLight": {
+    "text": "Switch to light mode",
+    "description": "Header theme toggle tooltip when dark mode is active."
+  },
+  "header.themeDark": {
+    "text": "Switch to dark mode",
+    "description": "Header theme toggle tooltip when light mode is active."
   }
 }

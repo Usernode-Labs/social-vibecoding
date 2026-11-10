@@ -3012,7 +3012,7 @@
     {
       "name": "The header carries the mark and the bell, and no second alerting glyph (#2718)",
       "path": "/",
-      "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
+      "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn):has([data-header-theme][aria-pressed]) #notifications-btn"
     },
     {
       "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages, then Recents (the pinned group, then the rest), then you (One Home, #6361; the Communities node stays in the markup, drawn on neither bar, for the routes that name it)",
