@@ -4,9 +4,15 @@
  * Invite links: /invite/<token>, a way into a community that anyone holding
  * the link can use (schema.sql, "Communities, stage 6: invite links").
  *
- *   createInvite  any member makes one for a project they are in. It lasts
- *                 DEFAULT_DAYS and works for DEFAULT_USES people unless they
- *                 choose otherwise, within the LIMITS.
+ *   createInvite  any member makes one for a project they are in. It never
+ *                 ends and works for any number of people (DEFAULT_DAYS and
+ *                 DEFAULT_USES are NO_LIMIT) unless they choose an end date
+ *                 or a limit, within the LIMITS.
+ *   the guard     a link that brings in GUARD.noticeAt people within a
+ *                 rolling GUARD.windowHours tells its maker once in that
+ *                 window; at GUARD.pauseAt it PAUSES, refusing new joins
+ *                 until its maker opens it again (reopenInvite). Counted and
+ *                 decided in redeem, under the link's row lock.
  *   listInvites   the viewer's live links plus, for the last 30 days, the
  *                 ones that ended (every such link, for someone who manages
  *                 the project), each with how it ended and what became of
@@ -50,9 +56,44 @@ const appAdmins = require('./app-admins');
 const communities = require('./communities');
 const { publicMergedStill } = require('./shots-public');
 
-const DEFAULT_DAYS = 7;
-const DEFAULT_USES = 25;
+// WP-D: 0 asks for no limit: a link with no end date (`days: 0`) or for any
+// number of people (`maxUses: 0`), stored as NULL, which works until it is
+// turned off.
+const NO_LIMIT = 0;
+function isNoLimit(value) {
+  return value === NO_LIMIT || value === String(NO_LIMIT);
+}
+
+// A new link has no end date and no limit unless its maker picks one (9 Nov
+// 2026). The guard below stands where a week and 25 people used to: a link
+// that leaks pauses itself instead of every link stopping on its own.
+const DEFAULT_DAYS = NO_LIMIT;
+const DEFAULT_USES = NO_LIMIT;
 const LIMITS = Object.freeze({ minDays: 1, maxDays: 30, minUses: 1, maxUses: 100 });
+
+// THE LEAKED-LINK GUARD (schema: the invite-link-guard migration). Joins
+// through one link are counted over a ROLLING window of `windowHours`, from
+// the moment its maker last opened it again when that is later: a rolling
+// window, not a calendar day, so a leak that starts before midnight UTC is
+// not let through twice. At `noticeAt` its maker hears it, once per window;
+// at `pauseAt` the join that reaches it is the last one, and the link
+// pauses. Every redemption made through the link counts, joined or queued:
+// a leak is people following it, whether or not they get in yet.
+const GUARD = Object.freeze({ windowHours: 24, noticeAt: 20, pauseAt: 100 });
+
+/**
+ * What one more join through a link does to it, given `joins` (counted with
+ * that join, in the window) and whether its maker was told it was busy in
+ * the window already. Pure. `pause`: this join reaches GUARD.pauseAt, so the
+ * link pauses after it. `busy`: this join reaches GUARD.noticeAt and its
+ * maker has not heard in this window. A pause says it all, so the two never
+ * come together.
+ */
+function guardStep({ joins, noticed = false } = {}) {
+  const n = Number(joins) || 0;
+  if (n >= GUARD.pauseAt) return { pause: true, busy: false };
+  return { pause: false, busy: n >= GUARD.noticeAt && !noticed };
+}
 // Live links one person may hold for one project at a time. Links are cheap
 // to make; a cap keeps a single account from minting an unbounded supply.
 const MAX_LIVE_PER_MAKER = 10;
@@ -93,34 +134,28 @@ function cleanNote(value) {
   return { ok: true, note };
 }
 
-/** A whole number within [min, max], or `fallback` when none was given. */
-function clampInt(value, fallback, min, max) {
-  if (value === undefined || value === null || value === '') return fallback;
+/** A whole number within [min, max], or null when it is not one. */
+function clampInt(value, min, max) {
   const n = Number(value);
   if (!Number.isInteger(n) || n < min || n > max) return null;
   return n;
 }
 
-// WP-D: 0 asks for no limit: a link with no end date (`days: 0`) or for any
-// number of people (`maxUses: 0`), stored as NULL, which works until it is
-// turned off. The first session's invite asks for both: the project is the
-// gift, so its link should outlive any week.
-const NO_LIMIT = 0;
-function isNoLimit(value) {
-  return value === NO_LIMIT || value === String(NO_LIMIT);
-}
+const given = (value) => !(value === undefined || value === null || value === '');
 
 /**
  * Why a link cannot be used, or null when it can. A link whose maker can no
  * longer grant what it grants (removed from the group, left the community,
  * account gone) reads as turned off: it died with their standing
- * (schema.sql, community_invite_maker_holds).
+ * (schema.sql, community_invite_maker_holds). A paused link (the guard) is
+ * the last reason: it can be opened again, so anything final says first.
  */
 function deadReason(invite, now = new Date()) {
   if (!invite) return 'unknown';
   if (invite.revoked_at || invite.maker_holds === false) return 'revoked';
   if (invite.expires_at != null && new Date(invite.expires_at) <= now) return 'expired';
   if (invite.max_uses != null && invite.uses >= invite.max_uses) return 'used_up';
+  if (invite.paused_at) return 'paused';
   return null;
 }
 
@@ -184,10 +219,13 @@ async function createInvite(pool, { app, user, days, maxUses, note }) {
   }
   const cleaned = cleanNote(note);
   if (!cleaned.ok) return { ok: false, status: 400, error: cleaned.error };
-  const noEnd = isNoLimit(days);
-  const anyone = isNoLimit(maxUses);
-  const d = noEnd ? NO_LIMIT : clampInt(days, DEFAULT_DAYS, LIMITS.minDays, LIMITS.maxDays);
-  const u = anyone ? NO_LIMIT : clampInt(maxUses, DEFAULT_USES, LIMITS.minUses, LIMITS.maxUses);
+  // Nothing asked: the defaults, which are no end and no limit.
+  const askedDays = given(days) ? days : DEFAULT_DAYS;
+  const askedUses = given(maxUses) ? maxUses : DEFAULT_USES;
+  const noEnd = isNoLimit(askedDays);
+  const anyone = isNoLimit(askedUses);
+  const d = noEnd ? NO_LIMIT : clampInt(askedDays, LIMITS.minDays, LIMITS.maxDays);
+  const u = anyone ? NO_LIMIT : clampInt(askedUses, LIMITS.minUses, LIMITS.maxUses);
   if (d === null) {
     return { ok: false, status: 400, error: `A link lasts between ${LIMITS.minDays} and ${LIMITS.maxDays} days.` };
   }
@@ -231,11 +269,13 @@ async function listInvites(pool, { app, user }) {
   const manages = !!user && (user.canAdminWrite || await appAdmins.canManageApp(pool, app, user));
   const { rows } = await pool.query(
     `SELECT i.id, i.token, i.created_by, i.max_uses, i.uses, i.expires_at, i.created_at, i.note,
-            i.shared_at, u.username AS created_by_username,
+            i.shared_at, i.paused_at, u.username AS created_by_username,
             CASE
               WHEN i.revoked_at IS NOT NULL OR NOT community_invite_maker_holds(i.id) THEN 'revoked'
               WHEN i.expires_at IS NOT NULL AND i.expires_at <= NOW()                THEN 'expired'
               WHEN i.max_uses IS NOT NULL AND i.uses >= i.max_uses                   THEN 'used_up'
+              -- The guard paused it: listed with the live ones, to open again.
+              WHEN i.paused_at IS NOT NULL                                           THEN 'paused'
               ELSE 'live'
             END AS status,
             r.joined, r.waiting
@@ -309,12 +349,14 @@ async function hasLiveLink(pool, appId, userId) {
  * how many are live, how many people joined through them, how many still
  * wait on one, and when the soonest of them ends (null when none of them
  * has an end). Pure, over listInvites' serialized links: only the live ones
- * count, so a link turned off, ended or used up says nothing here.
+ * count, so a link turned off, ended or used up says nothing here. A paused
+ * one (the guard) is still out, as hasLiveLink and linksOutFor read it: its
+ * maker can open it again.
  */
 function summarizeLinks(links) {
   // Audit D03: a link that never went out (made by opening the pane, never
   // copied or shared, nobody come through it) is not one that is out.
-  const live = (Array.isArray(links) ? links : []).filter((l) => l && l.status === 'live'
+  const live = (Array.isArray(links) ? links : []).filter((l) => l && (l.status === 'live' || l.status === 'paused')
     && (l.shared || Number(l.joined) > 0 || Number(l.waiting) > 0));
   let soonest = null;
   for (const link of live) {
@@ -523,6 +565,46 @@ async function revokeInvite(pool, { inviteId, user }) {
 }
 
 /**
+ * Open a link the guard paused again: whoever may turn it off may (its
+ * maker, a project admin, a platform admin). The pause goes and the count
+ * starts again from now (`reopened_at`), so the next GUARD.pauseAt joins in
+ * a window pause it again. Returns `{ ok: true, reopened }` (false: it was
+ * not paused, or is turned off, so nothing changed) or a 404 for a link the
+ * caller may not see, as revokeInvite answers. A join waiting on the link's
+ * row lock goes first, and is counted.
+ */
+async function reopenInvite(pool, { inviteId, user }) {
+  const id = parseInt(inviteId, 10);
+  if (!Number.isFinite(id)) return { ok: false, status: 404, error: 'Invite link not found' };
+  const { rows } = await pool.query(
+    `SELECT i.id, i.created_by, a.id AS app_id, a.slug, a.created_by AS app_created_by
+       FROM community_invites i JOIN apps a ON a.id = i.app_id
+      WHERE i.id = $1`,
+    [id]
+  );
+  const row = rows[0];
+  const app = row ? { id: row.app_id, slug: row.slug, created_by: row.app_created_by } : null;
+  if (!row || !(await canRevoke(pool, app, row, user))) {
+    return { ok: false, status: 404, error: 'Invite link not found' };
+  }
+  const { rows: reopened } = await pool.query(
+    `UPDATE community_invites SET paused_at = NULL, reopened_at = NOW()
+      WHERE id = $1 AND paused_at IS NOT NULL AND revoked_at IS NULL
+      RETURNING id`,
+    [id]
+  );
+  if (reopened.length) {
+    events.record(pool, {
+      type: events.EVENT_TYPES.INVITE_LINK_REOPENED,
+      userId: user.id,
+      appId: row.app_id,
+      metadata: { inviteId: id },
+    });
+  }
+  return { ok: true, reopened: reopened.length > 0 };
+}
+
+/**
  * Audit D03: the link went out. The Invite pane says so on the first Copy
  * or Share of a link its viewer made; only the maker's word counts, and
  * the first time is the one kept. `{ ok, shared }`, or a 404 for a link
@@ -547,7 +629,7 @@ async function loadInvite(db, token, { lock = false } = {}) {
   if (!isToken(token)) return null;
   const { rows } = await db.query(
     `SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses,
-            i.expires_at, i.revoked_at, i.note,
+            i.expires_at, i.revoked_at, i.paused_at, i.note,
             a.slug, a.name, a.icon_emoji, a.icon_image_id, a.icon_color, a.created_by AS app_created_by,
             a.self_hosted, a.collab_visibility, a.view_visibility, a.community_id AS app_community_id,
             a.manifest_snapshot->>'description' AS description,
@@ -832,9 +914,62 @@ async function entryFor(pool, invite, user, showSelfHosted) {
 }
 
 /**
+ * Count one more join through invite `inviteId` and apply the guard
+ * (guardStep), inside redeem's transaction, which holds the link's row lock:
+ * a pause it sets is what the next join through the link reads. The window
+ * is the last GUARD.windowHours, or since the link was opened again when
+ * that is later. Resolves { joins, busy, pause }.
+ */
+async function guardJoin(client, inviteId) {
+  const { rows } = await client.query(
+    `SELECT (SELECT COUNT(*)::int FROM community_invite_redemptions x
+              WHERE x.invite_id = i.id
+                AND x.created_at >= GREATEST(NOW() - make_interval(hours => $2::int),
+                                             COALESCE(i.reopened_at, '-infinity'::timestamptz))) AS joins,
+            (i.busy_noticed_at IS NOT NULL
+              AND i.busy_noticed_at > NOW() - make_interval(hours => $2::int)) AS noticed
+       FROM community_invites i
+      WHERE i.id = $1`,
+    [inviteId, GUARD.windowHours]
+  );
+  const joins = rows[0]?.joins || 0;
+  const step = guardStep({ joins, noticed: rows[0]?.noticed === true });
+  if (step.pause) {
+    await client.query('UPDATE community_invites SET paused_at = NOW() WHERE id = $1 AND paused_at IS NULL', [inviteId]);
+  } else if (step.busy) {
+    await client.query('UPDATE community_invites SET busy_noticed_at = NOW() WHERE id = $1', [inviteId]);
+  }
+  return { joins, ...step };
+}
+
+/**
+ * After a join the guard noticed commits: the link's maker hears it, with a
+ * way to turn the link off (and, once paused, to open it again), and the full
+ * admins see it among the platform's unexpected events (platform-
+ * incidents.js: Admin › Unexpected events, its daily digest and its hourly
+ * alert). Never throws, and nothing waits on it.
+ */
+function tellGuard(pool, { invite, guard }) {
+  const kind = guard.pause ? 'invite_link_paused' : 'invite_link_busy';
+  void require('./invite-activity').noteGuard(pool, { inviteId: invite.id, kind, joins: guard.joins });
+  void require('./platform-incidents').record(pool, {
+    kind,
+    appId: invite.app_id,
+    detail: {
+      inviteId: invite.id,
+      joins: guard.joins,
+      why: guard.pause
+        ? `An invite link paused itself: ${guard.joins} people followed it within ${GUARD.windowHours} hours.`
+        : `An invite link brought in ${guard.joins} people within ${GUARD.windowHours} hours.`,
+    },
+  }).catch(() => {});
+}
+
+/**
  * Follow a link as `user` ({ id, isAdmin, hasPlatformAccess }). One
- * transaction, the link's row locked for its use count. `browser` is the
- * browser it was followed from (invite-activity.browserFrom), for the
+ * transaction, the link's row locked for its use count and the guard
+ * (guardJoin). `browser` is the browser it was followed from
+ * (invite-activity.browserFrom), for the
  * maker's open notice. `requirePhone` is whether a private member must have
  * a verified phone or a confirmed email (joinAsPrivateMember): the callers
  * pass firebase-phone-auth.offered(config).
@@ -846,7 +981,9 @@ async function entryFor(pool, invite, user, showSelfHosted) {
  *                    holds the right, say, or a private member has neither
  *                    a verified phone nor a confirmed email): joins when
  *                    let in (no slug);
- * or `{ ok: false, status: 404|410, reason }` for an unknown or dead link.
+ * or `{ ok: false, status: 404|410, reason }` for an unknown or dead link
+ * (reason 'paused' for one the guard paused: a new join is refused, while a
+ * redemption already queued on it still applies, here and on release).
  *
  * Somebody without platform access joins too, as a PRIVATE MEMBER
  * (`privateMember`, users.private_member_since in schema.sql): in this
@@ -885,6 +1022,8 @@ async function redeem(pool, { token, user, browser = null, requirePhone = false 
       [invite.id, user.id]
     );
     let redemptionId;
+    // What this join did to the link (guardJoin), told once it commits.
+    let guard = null;
     if (prior[0] && prior[0].status === 'queued') {
       if (hasAccess) {
         await client.query('COMMIT');
@@ -912,6 +1051,9 @@ async function redeem(pool, { token, user, browser = null, requirePhone = false 
       );
       await client.query('UPDATE community_invites SET uses = uses + 1 WHERE id = $1', [invite.id]);
       redemptionId = redemption[0].id;
+      // The guard, under the row lock this transaction holds: the next join
+      // waits for it, and reads the pause it may set.
+      guard = await guardJoin(client, invite.id);
     }
 
     let privateMember = false;
@@ -945,6 +1087,7 @@ async function redeem(pool, { token, user, browser = null, requirePhone = false 
       await require('../workflow/platform.ts').greet(client, { userId: user.id, kind: 'joiner', appId: invite.app_id });
     }
     await client.query('COMMIT');
+    if (guard && (guard.busy || guard.pause)) tellGuard(pool, { invite, guard });
 
     const status = after[0]?.status === 'joined' ? 'joined' : 'queued';
     if (status === 'joined') {
@@ -1160,6 +1303,8 @@ module.exports = {
   DEFAULT_DAYS,
   DEFAULT_USES,
   LIMITS,
+  GUARD,
+  guardStep,
   NOTE_MAX,
   cleanNote,
   pictureBytes,
@@ -1186,6 +1331,7 @@ module.exports = {
   createInvite,
   listInvites,
   revokeInvite,
+  reopenInvite,
   preview,
   standing,
   redeem,

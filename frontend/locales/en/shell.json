@@ -231,6 +231,10 @@
     "text": "That invite link has been used as many times as it allows.",
     "description": "Error toast shown to a person who followed an invite link to a community that has reached its limit of people."
   },
+  "invite.dead.paused": {
+    "text": "This invite link is paused. Ask the person who shared it for a new one.",
+    "description": "Error toast shown to a person who followed an invite link to a community that stopped letting people in for now, because a lot of people joined through it in one day."
+  },
   "invite.dead.unknown": {
     "text": "That invite link does not work.",
     "description": "Error toast shown to a person who followed an invite link to a community that does not exist or cannot be used, when no more specific reason is known."

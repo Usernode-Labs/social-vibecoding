@@ -16,7 +16,8 @@
 // design and More like are then said as the person's own words, which the
 // bot reads like anything they type.
 
-import { useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 import { CheckIcon } from '@/components/ui/icons';
 
@@ -127,6 +128,8 @@ function Thumb({ image, caption }: { image: GalleryImage; caption: string }): Re
 
 export function GalleryCard({ message, card }: BotCardProps): ReactNode {
   const t = useMessages('messages');
+  // #6533: a change's pictures are drawn by their own card.
+  if (card.purpose === 'change') return <ChangePictures card={card} />;
   const g = galleryOf(card);
   const [letter, setLetter] = useState(g.letters[0] || 'A');
   const [busy, setBusy] = useState<string | null>(null);
@@ -246,6 +249,275 @@ export function GalleryCard({ message, card }: BotCardProps): ReactNode {
       ) : null}
       {error ? <p className="messages-bot-note" role="alert">{error}</p> : null}
       <p className="messages-bot-note" data-bot-gallery-paid="">{t('messages:botCards.gallery.paid')}</p>
+    </div>
+  );
+}
+
+// ── A change's pictures (#6533) ─────────────────────────────────────────
+//
+// Under Homeroom bot's reply in a change's thread: what the change looks
+// like, as pictures. An email is drawn through the sandboxed frame the admin
+// console's preview uses (the route answers JSON, never text/html); a screen
+// is the change's own verified shot. Nothing here runs the change's code.
+
+export interface ChangePicture {
+  id: string;
+  source: 'email' | 'shot';
+  side: 'before' | 'after';
+  isNew: boolean;
+  caption: string;
+  url: string | null;
+  width: number | null;
+  height: number | null;
+}
+
+export interface ChangeGalleryState {
+  slug: string;
+  sessionId: number;
+  number: number | null;
+  images: ChangePicture[];
+}
+
+interface EmailBody {
+  kind: string;
+  side: 'before' | 'after';
+  subject: string;
+  preheader: string;
+  html: string;
+  text: string;
+}
+
+/** Pure: the card as the server stored it, read defensively. Ids only. */
+export function changeGalleryOf(card: Record<string, unknown>): ChangeGalleryState | null {
+  if (card.purpose !== 'change') return null;
+  const project = card.project && typeof card.project === 'object' ? card.project as Record<string, unknown> : null;
+  const change = card.change && typeof card.change === 'object' ? card.change as Record<string, unknown> : null;
+  const slug = project && typeof project.slug === 'string' ? project.slug : '';
+  const sessionId = Number(change?.sessionId);
+  if (!slug || !Number.isSafeInteger(sessionId) || sessionId <= 0) return null;
+  const images: ChangePicture[] = [];
+  for (const entry of Array.isArray(card.images) ? card.images.slice(0, 12) : []) {
+    const im = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+    const id = String(im.id || '');
+    if (!ID_RE.test(id)) continue;
+    const source = im.source === 'shot' ? 'shot' : 'email';
+    images.push({
+      id,
+      source,
+      side: im.side === 'before' ? 'before' : 'after',
+      isNew: im.isNew === true,
+      caption: typeof im.caption === 'string' ? im.caption.slice(0, 200) : '',
+      url: source === 'shot' && typeof im.url === 'string' && im.url.startsWith('/api/') ? im.url : null,
+      width: size(im.width),
+      height: size(im.height),
+    });
+  }
+  const number = Number(change?.number);
+  return { slug, sessionId, number: Number.isSafeInteger(number) && number > 0 ? number : null, images };
+}
+
+function emailUrl(slug: string, sessionId: number, id: string): string {
+  return `/api/apps/${encodeURIComponent(slug)}/proposals/${sessionId}/pictures/${id}`;
+}
+
+// #6548: an opened email is drawn at its full length inside a box that
+// scrolls, at a phone's or the desktop email's own width. The measured frame
+// gets `allow-same-origin` only so the viewer can read its document's height;
+// nothing in the email runs.
+const MIN_EMAIL_HEIGHT = 160;
+const FALLBACK_EMAIL_HEIGHT = 2000;
+const EMAIL_WIDTHS = { phone: 'min(375px, 100%)', desktop: '680px' } as const;
+type EmailSize = keyof typeof EMAIL_WIDTHS;
+
+function EmailFrame({ html, title, className, width, height, onHeight }: {
+  html: string;
+  title: string;
+  className?: string;
+  width?: string;
+  height?: number;
+  onHeight?: (height: number) => void;
+}): ReactNode {
+  const frame = useRef<HTMLIFrameElement | null>(null);
+  const measured = typeof onHeight === 'function';
+  const report = useCallback(() => {
+    if (!onHeight) return;
+    let found = 0;
+    try {
+      const doc = frame.current ? frame.current.contentDocument : null;
+      found = doc && doc.documentElement ? doc.documentElement.scrollHeight : 0;
+    } catch {
+      found = 0;
+    }
+    onHeight(found > 0 ? Math.max(MIN_EMAIL_HEIGHT, found) : FALLBACK_EMAIL_HEIGHT);
+  }, [onHeight]);
+  // A width change does not reload the frame, and scrollHeight never reports
+  // less than the frame's current height: shrink to the minimum, then measure
+  // once the new width has been painted.
+  useEffect(() => {
+    if (!measured) return undefined;
+    onHeight?.(MIN_EMAIL_HEIGHT);
+    let second = 0;
+    const first = requestAnimationFrame(() => { second = requestAnimationFrame(report); });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, [measured, width, onHeight, report]);
+  return (
+    <iframe
+      ref={frame}
+      title={title}
+      sandbox={measured ? 'allow-same-origin' : ''}
+      srcDoc={html}
+      className={className || 'h-full w-full'}
+      style={{
+        border: 0,
+        pointerEvents: 'none',
+        background: '#f5f5f7',
+        ...(width ? { width } : {}),
+        ...(height != null ? { height } : {}),
+      }}
+      inert={measured ? true : undefined}
+      tabIndex={measured ? -1 : undefined}
+      onLoad={measured ? report : undefined}
+    />
+  );
+}
+
+function labelOf(picture: ChangePicture, t: (id: string) => string): string {
+  const base = picture.side === 'before' ? t('messages:botCards.gallery.today') : t('messages:botCards.gallery.withChange');
+  return picture.isNew ? `${base} · ${t('messages:botCards.gallery.newMark')}` : base;
+}
+
+function EmailTile({ slug, sessionId, picture }: { slug: string; sessionId: number; picture: ChangePicture }): ReactNode {
+  const t = useMessages('messages');
+  const [body, setBody] = useState<EmailBody | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    let live = true;
+    fetch(emailUrl(slug, sessionId, picture.id), { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (live && data && typeof data.html === 'string') setBody(data as EmailBody); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [slug, sessionId, picture.id]);
+  const label = labelOf(picture, t);
+  const title = picture.caption || t('messages:botCards.gallery.emailFrame', { subject: '' });
+  return (
+    <li className="flex min-w-0 flex-col gap-1" data-bot-change-picture={picture.id} data-bot-change-side={picture.side}>
+      <button
+        type="button"
+        className="block overflow-hidden rounded-xl bg-white text-start shadow-[0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900"
+        style={{ aspectRatio: '4 / 5' }}
+        aria-label={t('messages:botCards.gallery.openEmail', { subject: picture.caption })}
+        onClick={() => setOpen(true)}
+      >
+        {body ? <EmailFrame html={body.html} title={t('messages:botCards.gallery.emailFrame', { subject: picture.caption })} /> : <span className="block h-full w-full" aria-hidden="true" />}
+      </button>
+      <span className="text-[12px] font-bold text-zinc-500 dark:text-zinc-400">{label}</span>
+      <span className="truncate text-[13px]">{picture.caption}</span>
+      {open && body ? (
+        <EmailViewer body={body} caption={picture.caption} onClose={() => setOpen(false)} />
+      ) : null}
+      <span className="sr-only">{title}</span>
+    </li>
+  );
+}
+
+function EmailViewer({ body, caption, onClose }: { body: EmailBody; caption: string; onClose: () => void }): ReactNode {
+  const t = useMessages('messages');
+  // #6548: the first width follows the viewer's own screen; reopening starts
+  // again from the screen.
+  const [size, setSize] = useState<EmailSize>(() => (
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 767px)').matches
+      ? 'phone' : 'desktop'
+  ));
+  const [height, setHeight] = useState(MIN_EMAIL_HEIGHT);
+  const onHeight = useCallback((next: number) => setHeight(next), []);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="w-full max-w-[720px] rounded-2xl bg-white p-4 dark:bg-zinc-900" onClick={(event) => event.stopPropagation()}>
+        <div className="mb-1 flex flex-wrap items-center gap-2">
+          <p className="min-w-0 flex-1 text-[13px] font-semibold">{t('messages:botCards.gallery.subjectLine', { subject: body.subject || caption })}</p>
+          <div className="inline-flex rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800" role="group" aria-label={t('messages:botCards.compare.sizeGroup')}>
+            {(['phone', 'desktop'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={size === s}
+                className={size === s
+                  ? 'h-8 rounded-full bg-white px-3 text-[13px] font-semibold text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-zinc-100'
+                  : 'h-8 rounded-full px-3 text-[13px] font-semibold text-zinc-600 dark:text-zinc-300'}
+                onClick={() => setSize(s)}
+                data-bot-email-size={s}
+              >
+                {s === 'phone' ? t('messages:botCards.compare.phone') : t('messages:botCards.compare.desktop')}
+              </button>
+            ))}
+          </div>
+        </div>
+        {body.preheader ? <p className="mb-2 text-[13px] text-zinc-500 dark:text-zinc-400">{body.preheader}</p> : null}
+        <div className="max-h-[70vh] overflow-auto rounded-xl">
+          <EmailFrame
+            html={body.html}
+            title={t('messages:botCards.gallery.emailFrame', { subject: body.subject || caption })}
+            className="mx-auto block"
+            width={EMAIL_WIDTHS[size]}
+            height={height}
+            onHeight={onHeight}
+          />
+        </div>
+        <button type="button" className="messages-bot-secondary mt-3" onClick={onClose}>Close</button>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ScreenTile({ picture }: { picture: ChangePicture }): ReactNode {
+  const t = useMessages('messages');
+  const [viewing, setViewing] = useState(false);
+  const label = labelOf(picture, t);
+  const src = picture.url || '';
+  if (!src) return null;
+  const ratio = picture.width && picture.height ? `${picture.width} / ${picture.height}` : '4 / 5';
+  return (
+    <li className="flex min-w-0 flex-col gap-1" data-bot-change-picture={picture.id} data-bot-change-side={picture.side}>
+      <a
+        href={src}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block overflow-hidden rounded-xl bg-zinc-100 shadow-[0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800"
+        style={{ aspectRatio: ratio }}
+        aria-label={t('messages:botCards.gallery.openScreen', { caption: picture.caption })}
+        onClick={(event) => openInViewer(event, () => setViewing(true))}
+      >
+        <img src={src} alt={picture.caption} loading="lazy" className="h-full w-full object-cover" />
+      </a>
+      <span className="text-[12px] font-bold text-zinc-500 dark:text-zinc-400">{label}</span>
+      <span className="truncate text-[13px]">{picture.caption}</span>
+      {viewing ? <ImageViewer src={src} alt={picture.caption} onClose={() => setViewing(false)} /> : null}
+    </li>
+  );
+}
+
+/** The pictures under Homeroom bot's reply in a change's thread. */
+export function ChangePictures({ card }: { card: Record<string, unknown> | null | undefined }): ReactNode {
+  const t = useMessages('messages');
+  const g = card ? changeGalleryOf(card as Record<string, unknown>) : null;
+  if (!g || !g.images.length) return null;
+  return (
+    <div className="mt-2 flex max-w-[520px] flex-col gap-2" data-bot-change-gallery="" data-bot-change={g.sessionId}>
+      <ul className="grid grid-cols-2 gap-2" aria-label={t('messages:botCards.gallery.changeGroup')}>
+        {g.images.map((im) => (im.source === 'shot'
+          ? <ScreenTile key={im.id} picture={im} />
+          : <EmailTile key={im.id} slug={g.slug} sessionId={g.sessionId} picture={im} />))}
+      </ul>
     </div>
   );
 }

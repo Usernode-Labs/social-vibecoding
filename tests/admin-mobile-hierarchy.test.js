@@ -46,10 +46,12 @@ test('one breakpoint constant, read through matchMedia, in step with the md: cla
   // with where the sidebar actually appears. Those two class strings are on
   // the React-owned chassis since #1082 chunk E — same classes, and the
   // disagreement they guard against is exactly as easy to introduce there.
-  assert.match(islandTsx, /hidden md:block md:w-64/,
-    'the sidebar still switches at md — the constant must match it');
-  assert.match(islandTsx, /md:flex md:items-start md:gap-6/,
-    'the shell row still switches at md');
+  // #6456 stacked the top bar above the content (it was a sidebar beside
+  // it); the switch is still at md.
+  assert.match(islandTsx, /id="admin-nav-desktop"\s+className="hidden md:block shrink-0"/,
+    'the desktop bar still switches at md — the constant must match it');
+  assert.match(islandTsx, /md:flex md:flex-col md:gap-8/,
+    'the shell stack still switches at md');
 });
 
 test('level state and the viewport listener exist', () => {

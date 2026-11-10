@@ -1596,8 +1596,8 @@
     "description": "Error on the sheet for sending an invite link to a community when the invite link could not be copied to the clipboard."
   },
   "firstSession.invite.limits": {
-    "text": "Anyone with the link can join for the next 7 days, up to 25 people.",
-    "description": "Small print at the bottom of the invite sheet: how long the link works and how many people may use it. The numbers 7 and 25 are fixed."
+    "text": "Anyone with the link can join until you turn it off.",
+    "description": "Small print at the bottom of the invite sheet: the invite link has no end date and no limit of people; it works until the person who made it turns it off."
   },
   "firstSession.tour.counter": {
     "text": "{{step}} of {{total}}",

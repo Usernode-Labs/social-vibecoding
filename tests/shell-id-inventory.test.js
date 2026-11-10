@@ -394,6 +394,8 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #6371: This week, the page the weekly digest opens ─────────────
+  'weekly-digest-screen': 'This week (frontend/src/features/weekly-digest/index.tsx, #week): what each project did in the last seven days, which the Friday "Your weekly digest is ready" row opens. Ships hidden and empty; the read runs from its controller\'s open(), so the prerender and the first client render agree. App.REACT_SCREEN_IDS lists it, as it lists #workshop-screen.',
   // ── One Home (#6361): Home's sections for communities ─────────────
   'home-communities-section': 'Home\'s Pinned communities (features/home/pinned-communities.tsx), under Pinned apps: the communities you pinned, each a tile that opens its hub, then All communities and New community. Ships hidden: the pins load after mount. The tours and dapp.json\'s checks select it.',
   'home-join-section': 'Home\'s Communities to join (features/home/home-join.tsx over communities-to-join.tsx), last on Home: the public directory\'s picture cards, each with Join, more as you scroll. Discover\'s lane went with it (#home-browse-btn, its See all, left this map with that lane). Ships hidden; signed out, the landing draws the same section without the id.',
@@ -968,7 +970,7 @@ const ADDED_IDS = {
   // public/index.html because the chassis is React-owned markup now, so it is
   // prerendered instead of assembled at mount. Nothing below them moved —
   // #admin-section-content is still an innerHTML host owned by the module.
-  'admin-nav-desktop': 'Admin console desktop sidebar host, empty until AdminConsole._renderShell fills it (#1082).',
+  'admin-nav-desktop': 'Admin console desktop nav host, empty until AdminConsole._renderShell fills it (#1082); the top bar and open-section tabs since #6456, a sidebar before.',
   'admin-view-only-banner': 'Admin console view-only banner (#311), ships hidden and is toggled through classList (#1082).',
   'admin-section-content': 'Admin console section host — the phone level-1 menu and every section render into it (#1082).',
   'admin-temp-pw-modal': 'Admin console temporary-password dialog root (#282), now static React markup (#1082).',

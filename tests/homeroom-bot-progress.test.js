@@ -144,6 +144,31 @@ test('a proposal: its checks, then the group\'s vote', () => {
   assert.equal(progress.outcomeOf({ mode: 'shadow', verdict: 'person' }), null);
 });
 
+// #6528: a passing change is still Checking while its before & after shots
+// are taken, so the ready bell waits for the pictures too.
+test('#6528: a passing change holds at checking until its shots settle', () => {
+  const head = 'a'.repeat(40);
+  const open = {
+    proposal_status: 'promoted', proposal_at: ago(20), check_state: 'passing',
+    checks_sha: head, reviewed_head_sha: head,
+  };
+  const shooting = {
+    shots_state: 'exploring', shots_run_id: 'r'.repeat(32),
+    shots_detail: { headSha: head, required: true }, shots_updated_at: ago(5), checks_at: ago(5),
+  };
+  assert.deepEqual(stage({ ...open, ...shooting }), {
+    stage: 'checks', since: ago(5),
+    doing: 'it\'s waiting for approval, and its tests passed; its before and after shots are still being taken',
+  });
+  assert.equal(stage({ ...open, ...shooting, shots_state: 'verified' }).stage, 'vote');
+  assert.equal(stage({ ...open, ...shooting, shots_detail: { headSha: head, required: false } }).stage, 'vote',
+    'nothing visible to shoot is not held');
+  assert.equal(stage({ ...open, ...shooting, checks_at: ago(50), shots_updated_at: ago(50) }).stage, 'vote',
+    'the hold lapses after 45 minutes');
+  assert.equal(stage({ ...open, ...shooting, first_version: true }).stage, 'vote',
+    'a first version goes live without a vote and is not held');
+});
+
 // 13 Oct 2026 (D1): a project's first version goes live without a vote, so
 // once its tests pass it waits on nobody, and while they run the bot does
 // not say it is waiting for approval.
@@ -663,8 +688,15 @@ test('#6234: both reads of a change carry it, and the Homeroom bot page keeps it
   const ws = require('../src/services/work-state');
   const fixing = ws.fromStage({ stage: 'fixing' }, {});
   assert.deepEqual([fixing.stage, fixing.line, ws.placeFor(fixing, { own: true })], ['building', { code: 'fixing' }, 'next']);
+  // #6545: a fix waiting its turn is Checking with its failing tests, not a
+  // change ready to vote on.
   const queued = ws.fromStage({ stage: 'fix_queued' }, {});
-  assert.deepEqual([queued.stage, queued.line, ws.placeFor(queued, { own: true })], ['up_for_vote', { code: 'update_queued' }, 'waiting']);
+  assert.deepEqual([queued.stage, queued.line, ws.placeFor(queued, { own: true })], ['checking', { code: 'checks_failing' }, 'waiting']);
+  const counted = ws.fromStage({ stage: 'fix_queued' }, { failed_checks: 4 });
+  assert.deepEqual([counted.stage, counted.line], ['checking', { code: 'checks_failing', failing: 4 }]);
+  // An update queued on a passing change still holds its vote.
+  const followUp = ws.fromStage({ stage: 'followup_queued' }, {});
+  assert.deepEqual([followUp.stage, followUp.line], ['up_for_vote', { code: 'update_queued' }]);
   assert.equal(require('../src/services/homeroom-bot-track').STEP_OF_STAGE[fixing.stage], 'build', 'its track lights Build');
 });
 

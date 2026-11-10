@@ -32,11 +32,12 @@
  *
  * Friends and App slots, the rows about the account itself. App slots (#3250)
  * is the one place the allowance shows outside the create dialog, so a "your
- * app quota changed" notice has somewhere to point: "1 of 2 app slots used",
- * from the session's allowance store. A plain click opens the create dialog in
- * place while a slot is free, and the App allowance card instead once none is
- * (or the server is full), so the row says why and offers "Request more"
- * (#6446, ./app-slots-sheet.tsx); a modified click keeps `#create`. Friends
+ * app quota changed" notice has somewhere to point: "1 app slot free of 2",
+ * from the session's allowance store (#6466). A plain click always opens the
+ * App allowance card (./app-slots-sheet.tsx), at its own address,
+ * `#profile?slots`, so the row says how much room is left and offers
+ * "Request more"; a modified click keeps that address (#6446). Projects are
+ * made from Home. Friends
  * was a section of its own under these rows (#2386); it is a row now, with
  * the one number it is allowed ("1 request waiting": friends themselves are
  * never counted), and it opens the same section as a card over this screen
@@ -269,18 +270,14 @@ export function AccountPanel({ rows }: {
         <ListRow
           as="a"
           id="profile-row-app-slots"
-          href="#create"
+          href="#profile?slots"
           onClick={(event) => {
             if (!plainClick(event)) return;
             event.preventDefault();
-            // No slot free (or a full server): the make screen could only
-            // say so and pale its Make it, so the row opens the allowance
-            // card, which offers "Request more" (#6446).
-            if (allowance.blocked) {
-              Profile.showAppSlots();
-              return;
-            }
-            (window as unknown as { App?: { showCreateModal?: () => void } }).App?.showCreateModal?.();
+            // #6466: the row says how much room there is and opens the
+            // allowance card, which offers "Request more". Projects are made
+            // from Home, never from here.
+            Profile.showAppSlots();
           }}
           leading={<IconTile size="sm"><AppWindowIcon /></IconTile>}
           title={t('profile:more.appSlots.title')}

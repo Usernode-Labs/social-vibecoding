@@ -75,6 +75,7 @@
       "tracked": "number"
     },
     "notRecorded": {},
+    "sources": [],
     "people": [
       {
         "daysSince": "number",
@@ -191,6 +192,7 @@
         "waitedDays": "number"
       }
     },
+    "cameFrom": {},
     "challenges": {
       "credits": [],
       "openedAt": "object"

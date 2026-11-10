@@ -124,6 +124,7 @@ const EXEMPT = new Map([
   // POST by design. It carries no session; the HMAC token in its query is
   // the whole of the check, and all it can do is turn activity mail off.
   ['activity-mail.js POST /mail/unsubscribe', 'a mail client\'s one-click unsubscribe: sessionless, the signed token in the link is the check'],
+  ['waitlist-reminders.js POST /mail/reminders/stop', 'the waitlist reminders\' one-click stop: sessionless (most have no account), the signed token in the link is the check'],
   // #6157: a sleeping preview's waking page asks the platform to wake it from
   // the preview's own origin, a cross-site POST by design (no-cors, no body,
   // no credentials). It reads no session and can only wake the preview its

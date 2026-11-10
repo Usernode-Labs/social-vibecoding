@@ -677,26 +677,27 @@ test('live this week says what last week came to, the whole rate on hover, and n
   AppView._merged = [
     { id: 78, pr_number: 40, pr_title: 'This week', status: 'merged', username: 'alice', merged_at: iso(monday + 3600000), created_at: iso(monday + 3600000), row_type: 'pr' },
     { id: 79, pr_number: 39, pr_title: 'Also this week', status: 'merged', username: 'bob', merged_at: iso(monday + 7200000), created_at: iso(monday + 7200000), row_type: 'pr' },
-    { id: 80, pr_number: 38, pr_title: 'Last week', status: 'merged', username: 'bob', merged_at: iso(monday - 3 * 86400000), created_at: iso(monday - 3 * 86400000), row_type: 'pr' },
+    { id: 80, pr_number: 38, pr_title: 'Last week', status: 'merged', username: 'bob', merged_at: iso(monday - 6 * 86400000), created_at: iso(monday - 6 * 86400000), row_type: 'pr' },
   ];
   const rate = (html) => {
     const m = html.match(/<span class="dev-ws-dash-sub" data-ws-dash-sub="rate"[^>]*>[\s\S]*?<\/span>/);
     return m ? m[0] : '';
   };
   // Up: the arrow, last week's figure, and the rate in words on hover —
-  // pace()'s sentence, which says what the line only points at.
+  // pace()'s sentence, which says what the line only points at. #6547: the
+  // comparison is last week UP TO THIS SAME POINT, not its whole total.
   const up = rate(workshopHtml(AppView, 'workshop'));
-  assert.match(up, /data-dir="up" title="2 landed this week, up from 1 the week before\."><svg class="dev-ws-dash-trend"[^>]*aria-hidden="true"[\s\S]*?<\/svg>from 1<\/span>$/);
+  assert.match(up, /data-dir="up" title="2 landed this week, up from 1 by this time last week\."><svg class="dev-ws-dash-trend"[^>]*aria-hidden="true"[\s\S]*?<\/svg>from 1 by this time last week<\/span>$/);
   // Down, from the server's whole-history counts: the same arrow, turned over.
-  AppView._mergedShipped = { week: 3, prevWeek: 7 };
-  assert.match(rate(workshopHtml(AppView, 'workshop')), /data-dir="down" title="3 landed this week, down from 7 the week before\."><svg[\s\S]*?<\/svg>from 7<\/span>$/);
+  AppView._mergedShipped = { week: 3, prevWeek: 7, prevWeekToDate: 5 };
+  assert.match(rate(workshopHtml(AppView, 'workshop')), /data-dir="down" title="3 landed this week, down from 5 by this time last week\."><svg[\s\S]*?<\/svg>from 5 by this time last week<\/span>$/);
   assert.match(CSS, /\.dev-ws-dash-sub\[data-dir="down"\] \.dev-ws-dash-trend \{ transform: rotate\(180deg\); \}/);
   assert.match(CSS, /\.dev-ws-dash-sub\[data-dir="up"\] \{ color: var\(--state-ok\); \}/);
   // The same: no arrow at all.
-  AppView._mergedShipped = { week: 4, prevWeek: 4 };
-  assert.match(rate(workshopHtml(AppView, 'workshop')), /data-dir="same" title="4 landed this week, the same as the week before\.">from 4<\/span>$/);
+  AppView._mergedShipped = { week: 4, prevWeek: 4, prevWeekToDate: 4 };
+  assert.match(rate(workshopHtml(AppView, 'workshop')), /data-dir="same" title="4 landed this week, the same as by this time last week\.">from 4 by this time last week<\/span>$/);
   // A week with nothing in it is a zero, and a zero says nothing.
-  AppView._mergedShipped = { week: 2, prevWeek: 0 };
+  AppView._mergedShipped = { week: 2, prevWeek: 0, prevWeekToDate: 0 };
   assert.equal(rate(workshopHtml(AppView, 'workshop')), '');
   // And a paged history states no rate at all: its earlier week is the half
   // that falls off the end of the page.
@@ -705,7 +706,7 @@ test('live this week says what last week came to, the whole rate on hover, and n
   const paged = workshopHtml(AppView, 'workshop');
   assert.equal(rate(paged), '', 'no comparison off a partial page');
   assert.match(paged, /data-ws-dash-cell="shipped"[^>]*><b>2\+<\/b>/, 'only the floor');
-  assert.equal(message('project:workshop.dash.fromLastWeek', { count: 382 }), 'from 382');
+  assert.equal(message('project:workshop.dash.fromLastWeek', { count: 382 }), 'from 382 by this time last week');
   assert.equal(message('project:workshop.dash.onYou', { count: 4 }), '4 on you');
 });
 
@@ -720,7 +721,7 @@ test('a paged merge history states a floor and no rate at all', () => {
   // landed this week, the first in a fortnight". `At least` was already on
   // the count and never helped, because the fault was in the comparison.
   AppView._mergedHasMore = true;
-  AppView._merged.push({ ...AppView._merged[0], id: 77, pr_number: 39, merged_at: at(5), created_at: at(5), last_message_at: at(5) });
+  AppView._merged.push({ ...AppView._merged[0], id: 77, pr_number: 39, merged_at: at(8), created_at: at(8), last_message_at: at(8) });
   const paged = workshopHtml(AppView, 'workshop');
   assert.ok(!paged.includes('data-ws-dash-sub="rate"'), 'no rate off a partial page, though the page holds a week before');
   // The floor is said in one character, on the tile itself.
@@ -732,7 +733,7 @@ test('a paged merge history states a floor and no rate at all', () => {
   const whole = workshopHtml(AppView, 'workshop');
   assert.match(whole, /data-ws-dash-cell="shipped"[^>]*><b>1<\/b>/, 'no marker');
   assert.ok(!whole.includes('title="At least this many'), 'and no floor tooltip');
-  assert.match(whole, /data-ws-dash-sub="rate" data-dir="same" title="1 landed this week, the same as the week before\.">from 1</);
+  assert.match(whole, /data-ws-dash-sub="rate" data-dir="same" title="1 landed this week, the same as by this time last week\.">from 1 by this time last week</);
 });
 
 test('busiest names the theme that is MOVING, and stays quiet without a clear leader', () => {
@@ -1506,11 +1507,21 @@ test('the dashboard reads a rate, not just a count, and says when it is a floor'
   AppView._merged = [
     { id: 78, pr_number: 40, pr_title: 'This week', status: 'merged', username: 'alice', merged_at: iso(monday + 3600000), created_at: iso(monday + 3600000), row_type: 'pr' },
     { id: 79, pr_number: 39, pr_title: 'Also this week', status: 'merged', username: 'bob', merged_at: iso(monday + 7200000), created_at: iso(monday + 7200000), row_type: 'pr' },
-    { id: 80, pr_number: 38, pr_title: 'Last week', status: 'merged', username: 'bob', merged_at: iso(monday - 3 * 86400000), created_at: iso(monday - 3 * 86400000), row_type: 'pr' },
+    { id: 80, pr_number: 38, pr_title: 'Last week', status: 'merged', username: 'bob', merged_at: iso(monday - 6 * 86400000), created_at: iso(monday - 6 * 86400000), row_type: 'pr' },
   ];
   const d = AppView._workshopView().dashboard;
   assert.equal(d.shippedWeek, 2);
   assert.equal(d.shippedPrevWeek, 1, 'the week before, from the same source, so the two compare');
+  assert.equal(d.shippedPrevWeekToDate, 1, '#6547: last week up to this same point');
+
+  // #6547: a row from later in last week is part of last week's total but
+  // was not yet there "by this time last week", so it belongs to one count
+  // and not the other.
+  AppView._merged.push({ id: 81, pr_number: 37, pr_title: 'Late last week', status: 'merged', username: 'bob', merged_at: iso(monday - 2 * 86400000), created_at: iso(monday - 2 * 86400000), row_type: 'pr' });
+  const later = AppView._workshopView().dashboard;
+  assert.equal(later.shippedPrevWeek, 2, 'the whole of last week');
+  assert.equal(later.shippedPrevWeekToDate, 1, 'but not up to this point');
+  AppView._merged.pop();
   assert.equal(d.partial, false);
 
   // The merged history is paged. With more behind it the counts are floors,
@@ -1525,11 +1536,21 @@ test('#1922: the server\'s whole-history week counts replace the page count and 
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
   // A full page with more behind it — the case that used to read "20+".
   AppView._mergedHasMore = true;
-  AppView._mergedShipped = { week: 34, prevWeek: 27 };
+  AppView._mergedShipped = { week: 34, prevWeek: 27, prevWeekToDate: 19 };
   const d = AppView._workshopView().dashboard;
   assert.equal(d.shippedWeek, 34, 'the real number, not what the page holds');
   assert.equal(d.shippedPrevWeek, 27, 'the week before, from the same count');
+  assert.equal(d.shippedPrevWeekToDate, 19, '#6547: and the same point last week');
   assert.equal(d.partial, false, 'an exact count is never a floor');
+
+  // An older server sends only the whole prior week: the comparison falls
+  // back to it rather than showing nothing.
+  AppView._mergedShipped = { week: 34, prevWeek: 27 };
+  const older = AppView._workshopView().dashboard;
+  assert.equal(older.shippedPrevWeek, 27);
+  assert.equal(older.shippedPrevWeekToDate, 27, 'the full week stands in');
+
+  AppView._mergedShipped = { week: 34, prevWeek: 27, prevWeekToDate: 19 };
   const html = workshopHtml(AppView, 'workshop');
   assert.match(html, /data-ws-dash-cell="shipped"[^>]*><b>34<\/b>/, 'no "+" on the tile');
   assert.ok(!html.includes('title="At least this many'), 'and no floor tooltip');
@@ -1544,6 +1565,7 @@ test('#1922: the server\'s whole-history week counts replace the page count and 
 test('#1922: the loader keeps the server\'s week counts, and only well-formed ones', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
   assert.match(src, /const shipped = mergedData\.shipped;\s*AppView\._mergedShipped = shipped\s*&& Number\.isFinite\(shipped\.week\) && Number\.isFinite\(shipped\.prevWeek\)/);
+  assert.match(src, /prevWeekToDate: Number\.isFinite\(shipped\.prevWeekToDate\) \? shipped\.prevWeekToDate : null/);
   assert.match(src, /partial: !serverShipped && !!AppView\._mergedHasMore,/);
 });
 
@@ -2081,8 +2103,12 @@ test('"Open on Board" narrows the board to the theme and goes there by hash', ()
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
   AppView.openBoardForTheme('t');
   assert.equal(AppView._kanbanFilters.theme, 't');
-  assert.equal(AppView._loadKanbanFilters('demo-app').theme, null,
-    'sessionStorage is stubbed empty here; the write is the module\'s _saveKanbanFilters');
+  // #6509: the theme is saved with the project's filters, so the board that
+  // opens reads it back from localStorage; another project's is untouched.
+  assert.equal(AppView._loadKanbanFilters('demo-app').theme, 't',
+    'the theme is remembered with the project’s filters');
+  assert.equal(AppView._loadKanbanFilters('another-app').theme, null,
+    'and a project keeps its own filters');
 });
 
 // ── the component ────────────────────────────────────────────────────

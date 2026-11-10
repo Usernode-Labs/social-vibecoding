@@ -45,9 +45,14 @@ const pushed = (over = {}) => ({
 
 // ── The composer's meter ────────────────────────────────────────────────
 
-function devChat({ search = '' } = {}) {
+function devChat({ search = '', sharedState = null } = {}) {
   let published = null;
   let requests = 0;
+  let ticket = 0;
+  // The ONE shared allowance (#6493). The real holder is
+  // features/header/ai-credit.js; a plain cell stands in for it here so what
+  // is under test is the dev chat's getter and its repaint, not that module.
+  const shared = { state: sharedState };
   const sandbox = {
     console, URLSearchParams,
     location: { search },
@@ -61,6 +66,13 @@ function devChat({ search = '' } = {}) {
   sandbox.addEventListener = () => {};
   sandbox.Settings = { state: {} };
   sandbox.PlatformI18n = englishPlatformI18n();
+  sandbox.AiCredit = {
+    Budget: {
+      current: () => shared.state,
+      adopt: (snap) => { shared.state = snap; return true; },
+      _takeTicket: () => { ticket += 1; return ticket; },
+    },
+  };
   vm.createContext(sandbox);
   const file = path.join(root, 'frontend/src/features/dev-chat/dev-chat.js');
   vm.runInContext(fs.readFileSync(file, 'utf8') + '\n;this.chat = DevChat;', sandbox);
@@ -79,6 +91,7 @@ function devChat({ search = '' } = {}) {
   };
   return {
     chat,
+    shared,
     requests: () => requests,
     html: () => (published
       ? renderComponent('frontend/src/features/dev-chat/budget-pill.tsx', 'BudgetPillView',
@@ -88,38 +101,41 @@ function devChat({ search = '' } = {}) {
 }
 
 test('a pushed figure repaints the composer meter with no request of its own', () => {
-  const h = devChat();
-  h.chat.budget = { spentCents: 1200, limitCents: 5000, remainingCents: 3800, capWindow: 'weekly', aiEnabled: true };
+  const h = devChat({
+    sharedState: pushed({ spentCents: 1200, weeklySpentCents: 1200, remainingCents: 3800 }),
+  });
   h.chat.renderBudget();
   assert.match(h.html(), /\$12\.00/);
 
-  h.chat.applyBudgetUpdate(pushed({ spentCents: 1850, weeklySpentCents: 1850, remainingCents: 3150 }));
+  // app.js's order: the push lands in the one shared allowance first, then
+  // the dev chat repaints from it.
+  const next = pushed({ spentCents: 1850, weeklySpentCents: 1850, remainingCents: 3150 });
+  h.shared.state = next;
+  h.chat.applyBudgetUpdate(next);
   assert.match(h.html(), /\$18\.50/, 'the meter moved mid-turn');
   assert.match(h.html(), /\$50\.00/);
   assert.equal(h.requests(), 0, 'the push carries the figures; nothing is refetched');
 
   // …and again, a couple of seconds later, as the next call lands.
-  h.chat.applyBudgetUpdate(pushed({ spentCents: 2010, weeklySpentCents: 2010, remainingCents: 2990 }));
+  const later = pushed({ spentCents: 2010, weeklySpentCents: 2010, remainingCents: 2990 });
+  h.shared.state = later;
+  h.chat.applyBudgetUpdate(later);
   assert.match(h.html(), /\$20\.10/);
 });
 
-test('the push merges: /api/budget\'s own fields survive it', () => {
+test('the dev chat composes the shared snapshot with /api/budget\'s own fields', () => {
   const h = devChat();
-  h.chat.budget = {
-    spentCents: 1200, limitCents: 5000, remainingCents: 3800, capWindow: 'weekly',
-    // Three fields the pushed snapshot does not carry. _globalBudgetOut()
-    // reads two of them to decide whose budget the exhausted banner blames.
-    globalSpentCents: 4000, globalLimitCents: 100000, aiEnabled: true,
-    byokSpentCents: 0,
-  };
-  h.chat.applyBudgetUpdate(pushed({ spentCents: 4900, weeklySpentCents: 4900, remainingCents: 100, byokCents: 450 }));
+  h.chat._budgetExtras = { globalSpentCents: 4000, globalLimitCents: 100000, aiEnabled: true };
+  // Three fields the pushed snapshot does not carry. _globalBudgetOut()
+  // reads two of them to decide whose budget the exhausted banner blames.
+  h.shared.state = pushed({ spentCents: 4900, weeklySpentCents: 4900, remainingCents: 100, byokCents: 450 });
   assert.equal(h.chat.budget.globalSpentCents, 4000);
   assert.equal(h.chat.budget.globalLimitCents, 100000);
   assert.equal(h.chat.budget.aiEnabled, true);
   assert.equal(h.chat._globalBudgetOut(), false, 'the shared-budget verdict is unchanged');
-  assert.equal(h.chat.byokSpentCents, undefined);
   assert.equal(h.chat.budget.byokSpentCents, 450,
-    'the route\'s spelling of the BYOK figure is kept in step with the snapshot\'s');
+    'the snapshot\'s byokCents is the spelling this meter reads');
+  assert.equal(h.chat.budget.limitCents, 5000, 'the allowance itself is the shared one');
 });
 
 test('a fixture page keeps its fixture', () => {
@@ -127,9 +143,10 @@ test('a fixture page keeps its fixture', () => {
     const h = devChat({ search });
     const before = h.chat._budgetDemo() ? null : h.chat._shotCreditsLowBudget();
     h.chat.budget = before || { spentCents: 5000, limitCents: 5000, remainingCents: 0 };
+    h.shared.state = pushed({ spentCents: 10, weeklySpentCents: 10, remainingCents: 4990 });
     h.chat.applyBudgetUpdate(pushed({ spentCents: 10, weeklySpentCents: 10, remainingCents: 4990 }));
     assert.notEqual(h.chat.budget.spentCents, 10,
-      `${search} is showing a fixture on purpose and a real push must not swap it out`);
+      `${search} is showing a fixture on purpose and the shared figure must not swap it out`);
   }
 });
 
@@ -202,6 +219,11 @@ test('the global socket routes budget_updated to both meters', () => {
   const body = appJs.slice(start, appJs.indexOf('break;', start));
   assert.match(body, /DevChat\.applyBudgetUpdate\(data\.budget\)/);
   assert.match(body, /AiCredit\?\.Budget\?\.applyPush\?\.\(data\.budget\)/);
+  // #6493: the shared allowance is adopted BEFORE the dev chat repaints, so
+  // the meter draws the figure the push just moved.
+  assert.ok(body.indexOf('AiCredit') > -1
+    && body.indexOf('AiCredit') < body.indexOf('DevChat.applyBudgetUpdate'),
+  'AiCredit.Budget.applyPush runs first');
   // It has to sit in the GLOBAL event switch — the per-user socket — not the
   // per-session one, or a user watching the board would never see it move.
   const globalSwitch = appJs.slice(0, start);

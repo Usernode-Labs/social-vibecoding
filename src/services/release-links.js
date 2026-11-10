@@ -20,7 +20,10 @@
 //   - bound to the waitlist row it was minted for and that row's address: a
 //     row whose address changed, or that was un-released, spends nothing;
 //   - single use once the account it starts is set up, and good for
-//     RELEASE_LINK_TTL_MS (7 days). Until then (no username chosen and no
+//     RELEASE_LINK_TTL_MS (7 days) from its own mail. A row can hold several:
+//     the admit mail's and each reminder's (services/waitlist-reminders.js),
+//     and an unspent one works until its own expiry, whichever mail it came
+//     in. Until the account is set up (no username chosen and no
 //     password set) the newest link for the row works again: the phone
 //     app's own browser opened it and spent it before handing it to Safari
 //     (Evan, 10 Oct 2026), so the person's own tap found it used and was
@@ -65,11 +68,14 @@ function hashToken(token) {
 }
 
 /**
- * A fresh link for one released waitlist row. Any earlier unspent link for
- * the same row stops working: the newest mail is the one to follow.
- * Returns the raw token, for the mail only.
+ * A fresh link for one released waitlist row: `{ token, expiresAt }`, the raw
+ * token for the mail only and when it stops working, or null. An earlier
+ * unspent link for the same row keeps working until its own expiry: a
+ * reminder's link (services/waitlist-reminders.js) does not take the admit
+ * mail's away from somebody who opens that one instead. A spent one is still
+ * reopened only while it is the row's newest (spend, below).
  */
-async function mint(pool, { signupId, email }) {
+async function mintLink(pool, { signupId, email }) {
   const address = emailSignup.normalizeEmail(email);
   if (!signupId || !address) return null;
   const token = crypto.randomBytes(32).toString('base64url');
@@ -87,15 +93,17 @@ async function mint(pool, { signupId, email }) {
     log.warn('release-links', 'Expired link cleanup skipped', { message: error.message });
   }
   await pool.query(
-    'DELETE FROM waitlist_release_links WHERE signup_id = $1 AND consumed_at IS NULL',
-    [signupId]
-  );
-  await pool.query(
     `INSERT INTO waitlist_release_links (token_hash, signup_id, email, expires_at, created_at)
      VALUES ($1, $2, $3, $4, NOW())`,
     [hashToken(token), signupId, address, expiresAt]
   );
-  return token;
+  return { token, expiresAt };
+}
+
+/** mintLink's token alone, for a caller that does not say when it expires. */
+async function mint(pool, input) {
+  const link = await mintLink(pool, input);
+  return link ? link.token : null;
 }
 
 // The first time the row's link was spent, for the admin Journey's first
@@ -250,5 +258,5 @@ async function isNewAccount(pool, signup) {
 
 module.exports = {
   RELEASE_LINK_TTL_MS, TOKEN_RE, FOLLOWED_SQL, PAGE_OPENED_SQL, PAGE_OUTCOME_SQL,
-  mint, spend, hashToken, isNewAccount, notePageOpened, notePageOutcome,
+  mint, mintLink, spend, hashToken, isNewAccount, notePageOpened, notePageOutcome,
 };

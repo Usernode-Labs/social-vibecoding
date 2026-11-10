@@ -815,7 +815,8 @@ test('B6: where the waiting state is read, and where it ends', () => {
   assert.match(src, /\.\.\.\(planChange \? \{ planChange: \{ \.\.\.planChange, requester: requester\.username \} \} : \{\}\),/);
   const progressSrc = read('src/services/homeroom-bot-progress.js');
   assert.match(progressSrc, /run\.awaiting_go_at AS plan_waiting_at/);
-  assert.match(read('src/services/homeroom-bot-mayor.js'), /AND a\.kind <> 'build_plan'/);
+  // A typed "yes" never builds a plan (nor decides the bring-a-friend nudge, invite-nudge.js).
+  assert.match(read('src/services/homeroom-bot-mayor.js'), /AND a\.kind NOT IN \('build_plan', 'invite_friends'\)/);
   const schema = read('src/db/schema.sql');
   for (const column of ['plan JSONB', 'awaiting_go_at TIMESTAMPTZ', 'plan_change TEXT',
     'plan_send_attempts INTEGER NOT NULL DEFAULT 0', 'plan_unsent_at TIMESTAMPTZ']) {

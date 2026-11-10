@@ -405,5 +405,7 @@ test('the panel sections publish through a store, on one paint', () => {
   // grid's trailing tile, and it arrives on the grid model in the same paint.
   assert.equal('create' in state, false, 'no create block in the panels model');
   const grid = JSON.parse(JSON.stringify(sandbox.gridStore.get()));
-  assert.equal(grid.create, null, 'One Home (#6361): no trailing tile; New community is Pinned communities\' own');
+  assert.ok(grid.create && typeof grid.create === 'object',
+    '#6522: the grid carries its trailing New project tile again');
+  assert.equal(typeof grid.create.enabled, 'boolean', 'the view is a real create view, not a placeholder');
 });

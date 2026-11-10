@@ -182,4 +182,3 @@ test('the plain vote pill says so in a field, so nothing has to recognise its En
     assert.equal(!!s.plainVote, /^Vote\b/.test(s.label || ''), `${s.key}: ${s.label}`);
   }
 });
-

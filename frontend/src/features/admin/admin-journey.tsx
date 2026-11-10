@@ -180,6 +180,14 @@ type CameIn = {
   fromEmail?: number | null;
   invite?: { by: string | null; project: string | null; slug: string | null; openedAt: string | null; how: string | null; status: string | null } | null;
 };
+// Where somebody came from (#6540): hosts and short tags only. `null`
+// means nothing was recorded; 'none' means looked for and none given.
+type CameFromInvite = { referrerHost: string | null; via: string | null; project: string | null; at: string };
+type CameFromWaitlist = {
+  referrerHost: string | null; utmSource: string | null; utmCampaign: string | null; ref: string | null; at: string;
+};
+type CameFrom = { invite: CameFromInvite | null; waitlist: CameFromWaitlist | null };
+type SourceCount = { way: 'invite' | 'waitlist' | 'unknown'; from: string | null; people: number };
 type MilePerson = {
   userId: number | null; name: string; steps: MileStep[]; furthest: string | null; stuckAt: string | null;
   stuckReason: string | null; daysSince: number; failedAttempts: number; repeatedTaps: number;
@@ -189,6 +197,7 @@ type MilePerson = {
   onboard?: { shown: boolean; done: number | null; total: number | null; complete: boolean } | null;
   // What the admit mail's tracking saw; `null` when it was not tracked.
   mail?: { opened: boolean; clicked: boolean } | null;
+  cameFrom?: CameFrom | null;
 } & CameIn;
 type Summary = {
   demo?: boolean;
@@ -238,6 +247,33 @@ function when(iso: string | null | undefined): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC';
+}
+
+/** A source as Journey says it: the site, "no referrer", or "Not recorded". */
+function fromWords(host: string | null | undefined): string {
+  if (host === 'none') return 'no referrer';
+  if (!host) return 'Not recorded';
+  return host;
+}
+
+/** How an invite link went out, in words; null when it was not tagged. */
+function viaWords(via: string | null | undefined): string | null {
+  if (via === 'copied') return 'link was copied';
+  if (via === 'shared') return 'link was shared';
+  return null;
+}
+
+/** One count in a cohort's "Came from" line, in words. */
+function sourceWords(s: SourceCount): string {
+  if (s.way === 'invite') {
+    if (s.from === 'none') return 'invite link with no referrer';
+    return s.from ? `invite link from ${s.from}` : 'invite link, not recorded';
+  }
+  if (s.way === 'waitlist') {
+    if (s.from === 'none') return 'waitlist with no referrer';
+    return s.from ? `waitlist from ${s.from}` : 'waitlist, not recorded';
+  }
+  return 'not recorded';
 }
 
 function gap(fromIso: string | null, toIso: string | null): string {
@@ -364,6 +400,7 @@ type Cohorts = {
 type FirstMile = {
   cohort: string; people: MilePerson[];
   steps: Array<{ key: string; passed: number; stuck: Array<Person & { days: number; reason: string | null }> }>;
+  sources?: SourceCount[];
   mail?: { tracked: number; opened: number; clicked: number } | NotRecorded;
   notRecorded?: Record<string, NotRecorded>;
 };
@@ -722,7 +759,7 @@ const MAIL_PAGE_OUTCOME: Record<string, string> = {
   opened: 'opened', signed_in: 'signed in', welcome: 'welcome shown, no Get started',
   link_expired: 'link expired', link_used: 'link already used',
 };
-const sourceWords = (source: string | null | undefined) => (!source ? null
+const waitlistSourceWords = (source: string | null | undefined) => (!source ? null
   : source.startsWith('partner:') ? `${source.slice('partner:'.length)} (partner form)` : WAITLIST_SOURCE[source] || source);
 
 /** One short line of how a person came in, under their name in the first mile. */
@@ -731,7 +768,7 @@ function cameInLine(p: CameIn): string {
   if (p.invite) parts.push(`invited${p.invite.by ? ` by ${p.invite.by}` : ''}${p.invite.project ? ` · ${p.invite.project}` : ''}`);
   if (p.waitlist) {
     if (p.waitlist.waitedDays != null) parts.push(`waited ${p.waitlist.waitedDays} d`);
-    const from = sourceWords(p.waitlist.source);
+    const from = waitlistSourceWords(p.waitlist.source);
     if (from) parts.push(from);
   }
   if (p.signupMethod) parts.push(SIGNUP_METHOD[p.signupMethod] || p.signupMethod);
@@ -919,6 +956,11 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
             {groups.map((m) => (
               <div key={m.cohort} className="contents">
                 <span className={`col-span-full mt-2 ${JUI.label}`}>{label(m.cohort)} · {m.people.length}{cohortMail(m.people, nowMs)}</span>
+                {m.sources && m.sources.length ? (
+                  <span className={`col-span-full ${JUI.fine}`} data-journey-mile-sources="">
+                    {`Came from: ${m.sources.map((s) => `${sourceWords(s)} ${s.people}`).join(', ')}`}
+                  </span>
+                ) : null}
                 {m.people.map((p, i) => {
                   const done = p.steps.every((st) => st.state === 'done' || st.state === 'skipped' || st.state === 'unknown');
                   return (
@@ -2127,7 +2169,7 @@ function CameInFacts({ cameIn }: { cameIn: CameIn & { door?: string | null } }) 
     const parts = [
       w.joinedAt ? `joined ${when(w.joinedAt)}` : null,
       w.waitedDays != null ? `waited ${days(w.waitedDays)}` : null,
-      sourceWords(w.source),
+      waitlistSourceWords(w.source),
       w.discovery ? `heard from: ${w.discovery}` : null,
       w.answeredFollowUp ? 'answered the follow-up' : 'no follow-up answers',
       w.referred ? 'referred by a waitlist member' : null,
@@ -2157,6 +2199,7 @@ type PersonData = {
   userId: number; name: string; cohort: string | null; firstMile: MilePerson;
   // How they came in; absent from older servers and the staging demo.
   cameIn?: CameIn & { door?: string | null };
+  cameFrom: CameFrom;
   found: Array<{ slug: string; name: string; how: string | null; stayed: boolean | null; seconds: number | null }>;
   cameBackTo: Array<{ slug: string; name: string; days: number }>;
   usedOftenNotOnHome: Array<{ slug: string; name: string; days: number }>;
@@ -2218,6 +2261,33 @@ function PersonView({ userId, onBack, onName }: { userId: number; onBack: () => 
           </p>
           {isNotRecorded(p.navigation) ? <p className={`${JUI.fine} mt-1`}>Navigation not recorded yet: {p.navigation.reason}</p> : null}
           {p.cameIn ? section('How they came in', <CameInFacts cameIn={p.cameIn} />) : null}
+          {section('Came from', (p.cameFrom?.invite || p.cameFrom?.waitlist) ? (
+            <>
+              {p.cameFrom.invite ? (
+                <div className={JUI.row} data-journey-came-from="invite">
+                  <span className="text-sm w-44 shrink-0">Invite link</span>
+                  <span className="text-sm font-medium">{fromWords(p.cameFrom.invite.referrerHost)}</span>
+                  <span className={JUI.fine}>
+                    {[viaWords(p.cameFrom.invite.via), p.cameFrom.invite.project, when(p.cameFrom.invite.at)].filter(Boolean).join(' · ')}
+                  </span>
+                </div>
+              ) : null}
+              {p.cameFrom.waitlist ? (
+                <div className={JUI.row} data-journey-came-from="waitlist">
+                  <span className="text-sm w-44 shrink-0">Waitlist</span>
+                  <span className="text-sm font-medium">{fromWords(p.cameFrom.waitlist.referrerHost)}</span>
+                  <span className={JUI.fine}>
+                    {[
+                      p.cameFrom.waitlist.utmSource ? `utm_source ${p.cameFrom.waitlist.utmSource}` : null,
+                      p.cameFrom.waitlist.utmCampaign ? `utm_campaign ${p.cameFrom.waitlist.utmCampaign}` : null,
+                      p.cameFrom.waitlist.ref ? `ref ${p.cameFrom.waitlist.ref}` : null,
+                      when(p.cameFrom.waitlist.at),
+                    ].filter(Boolean).join(' · ')}
+                  </span>
+                </div>
+              ) : null}
+            </>
+          ) : <Empty>Not recorded.</Empty>)}
           {section('First mile', p.firstMile.steps.map((st) => {
             const g = st.at ? gap(prevAt, st.at) : '';
             if (st.at) prevAt = st.at;

@@ -1,7 +1,7 @@
 {
   "search.placeholder": {
-    "text": "Search apps and communities…",
-    "description": "Placeholder inside the search field at the top of the Home screen, which filters the viewer's pinned apps and communities and the communities they can join."
+    "text": "Search apps and communities… (Ctrl+K)",
+    "description": "Placeholder inside the search field at the top of the Home screen, which filters the viewer's pinned apps and communities and the communities they can join. Ctrl+K is the keyboard shortcut that puts the cursor in this field (Command+K on a Mac, / also works); keep the key name as written."
   },
   "search.label": {
     "text": "Search apps and communities",
@@ -905,7 +905,7 @@
   },
   "join.more": {
     "text": "More communities",
-    "description": "Small heading over the rest of the community cards, after the Featured ones, in Communities to join on Home (signed in or out). Shown only when Featured is shown above it."
+    "description": "Small heading over the rest of the community cards, after the Featured ones, in Communities to join on Home (signed in or out). Shown only when a kind other than All is chosen and Featured is shown above it."
   },
   "join.votes_one": {
     "text": "{{count}} up for a vote",
@@ -934,6 +934,18 @@
   "join.allJoined": {
     "text": "You're in every community of this kind.",
     "description": "Line in Communities to join when the chosen kind has no community the viewer is not already in."
+  },
+  "join.empty": {
+    "text": "No communities yet.",
+    "description": "Line in Communities to join when there are no public communities at all to list, signed in or out."
+  },
+  "join.failed": {
+    "text": "Couldn't load communities.",
+    "description": "Line in Communities to join when the public directory could not be read."
+  },
+  "join.retry": {
+    "text": "Try again",
+    "description": "Button under the line that says the communities could not be loaded. Reads the directory once more."
   },
   "join.loadingMore": {
     "text": "Loading more communities",

@@ -29,6 +29,7 @@ function create() {
         to,
         kind,
         subject: message.subject,
+        replyTo: message.replyTo || undefined,
         // The whole reason this transport exists: a staging tester needs
         // the code / the link to finish the flow by hand.
         code: payload.code || undefined,
