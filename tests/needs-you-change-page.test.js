@@ -1498,3 +1498,29 @@ test('#6521 list row and Testing card agree on a pass from an older version', ()
   assert.match(src, /proposal\.checks_on_head = sessionChecksOnHead\(proposal\)/);
   assert.match(src, /cs\.reviewed_head_sha,\n\s+-- #6521[\s\S]{0,400}cs\.checks_commit_sha,/);
 });
+
+test('a failed run offers its author or an admin Take the screenshots again on the Before and after card (#6551)', () => {
+  const av = context();
+  const claim = { id: 's1', claim: 'The preview waits for sign-in', viewports: ['desktop'], steps: ['Open a preview'] };
+  const failed = { state: 'failed', failureReason: 'The dialog never opened.', claims: [claim], artifacts: [] };
+  // The model says who may retake: the author (42) or an app admin, and only
+  // while the platform is not already retrying it on its own.
+  assert.equal(av._changeShotsView('proposal', { ...PR, user_id: 42, shots: failed }).retake, 4090);
+  assert.equal(av._changeShotsView('proposal', { ...PR, user_id: 7, shots: failed }).retake, null, 'somebody else gets none');
+  assert.ok(!av._changeShotsView('proposal', { ...PR, user_id: 42, shots: { ...failed, automaticRetryPending: true } }).retake, 'not while a retry is coming');
+  assert.ok(!av._changeShotsView('proposal', { ...PR, user_id: 42, shots: { state: 'exploring', claims: [claim], artifacts: [] } }).retake);
+  // The card draws the button under the failure line, and only then.
+  const authored = render(av, { ...PR, user_id: 42, shots: failed }).page;
+  assert.match(authored, /data-change-shots="failed"[\s\S]*<button type="button" class="gc-vote-btn" data-shots-retake="1"[^>]*>Take the screenshots again<\/button>/);
+  assert.doesNotMatch(render(av, { ...PR, user_id: 7, shots: failed }).page, /data-shots-retake/);
+  // Details: the failed run's own block (what happened and why) replaces the
+  // dead link to shots tied to a revision that has none.
+  const details = av.shotsHtml(failed, { sessionId: 4090, details: true, canRetake: true });
+  assert.match(details, /Couldn’t take the screenshots/);
+  assert.match(details, /data-shots-retake="1"/);
+  // The two mounts pass the same answer through.
+  assert.match(read('frontend/src/features/dev-board/topic/topic-head.tsx'),
+    /av\.shotsHtml\(row\.shots, \{ sessionId: id, details: true, canRetake: !!av\._canRetakeShots\?\.\(row\) \}\)/);
+  assert.match(read('frontend/src/features/dev-board/topic/topic-head.tsx'),
+    /av\.shotsHtml\(session\.shots, \{ sessionId: Number\(id\), details: true, canRetake: !!av\._canRetakeShots\?\.\(session\) \}\)/);
+});

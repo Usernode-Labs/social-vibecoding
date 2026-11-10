@@ -8726,7 +8726,10 @@ const AppView = {
     }
     const running = !view.notStarted && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(view.state) || view.retrying);
     if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };
-    return { state: view.state, html: '', line: view.sentence, waiting: false };
+    return {
+      state: view.state, html: '', line: view.sentence, waiting: false,
+      retake: AppView._canRetakeShots(item) ? Number(item.id) : null,
+    };
   },
 
   // "The preview is ready · Try it", in a change's stream.
@@ -17875,7 +17878,21 @@ const AppView = {
   // `html` is `DevChat.renderMarkdown`'s output: another renderer's markup,
   // sanitised where it is built, rendered through a sink.
   _proposalBodyView(pr) {
-    const md = pr && typeof pr.pr_body === 'string' ? pr.pr_body.trim() : '';
+    let md = pr && typeof pr.pr_body === 'string' ? pr.pr_body.trim() : '';
+    // When the screenshots failed, the description's "Before & after" block
+    // links to shots that do not exist. Leave it out here, where Homeroom
+    // shows the description; the pull request on GitHub keeps it.
+    const failedShots = pr && pr.shots && typeof pr.shots === 'object'
+      && String(pr.shots.state || '') === 'failed' && pr.shots.automaticRetryPending !== true;
+    if (failedShots) {
+      for (const [open, close] of [['<!-- usernode:shots -->', '<!-- /usernode:shots -->'],
+        ['<!-- usernode:visual-evidence -->', '<!-- /usernode:visual-evidence -->']]) {
+        const start = md.indexOf(open);
+        const end = md.indexOf(close);
+        if (start !== -1 && end > start) md = `${md.slice(0, start)}${md.slice(end + close.length)}`;
+      }
+      md = md.replace(/\n{3,}/g, '\n\n').trim();
+    }
     if (!md) return null;
     const id = Number(pr && pr.id);
     const hasStableId = Number.isInteger(id) && id > 0;
@@ -18020,6 +18037,19 @@ const AppView = {
     const actions = (isMerged || AppView.readOnly)
       ? []
       : [...AppView._cardVoteButtonSpecs(pr), ...bandKudos];
+    // A change whose screenshots failed offers its author or a project admin
+    // the retake the change page's ⋯ menu already has, right where the
+    // failure shows. The band's one-line fold moves it into ⋯ when there is
+    // no room, like any other action that does not fit. The detail head
+    // (`noNav`) carries none: its page keeps the ⋯ row.
+    if (!noNav && !isMerged && !AppView.readOnly && AppView._canRetakeShots(pr)) {
+      actions.push({
+        key: 'shots-retake', cls: 'gc-vote-btn',
+        label: PlatformI18n.t('changes:shots.card.takeAgain'),
+        title: PlatformI18n.t('changes:page.menu.takeShotsAgainTitle'),
+        act: { fn: 'rerunShots', args: [pr.id] }, passNode: true,
+      });
+    }
     // With the slot on the face, ⋯ drops its "Give kudos" row — the same
     // rule the merged card has always applied (two ways to give one kudos
     // on one card is one too many).
@@ -26526,6 +26556,23 @@ const AppView = {
     };
   },
 
+  // Whether the viewer may start a failed run again: its author or an app
+  // admin, the same people the change page's ⋯ menu offers it to, and only
+  // while the platform is not already retrying it on its own. A failure
+  // caused by a declaration that says nothing visible changed has no retry
+  // worth pressing. Mirrors the server's rule (src/routes/shots.js).
+  _canRetakeShots(item) {
+    if (!item || AppView.readOnly) return false;
+    const shots = item.shots && typeof item.shots === 'object' ? item.shots : null;
+    if (!shots || String(shots.state || '') !== 'failed') return false;
+    if (shots.automaticRetryPending === true) return false;
+    if (shots.failureCode === 'visible_changes_conflict') return false;
+    const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
+    const manager = !!(App.user && App.user.canAdminWrite)
+      || !!(AppView._proposalsCtx && AppView._proposalsCtx.isAppAdmin);
+    return mine || manager;
+  },
+
   // An element shot too small to read at card size (a corner badge is a few
   // dozen pixels) does not lead; the screen shot does, on both sides, so the
   // pair stays comparable. A shot without recorded dimensions still leads.
@@ -26782,11 +26829,16 @@ const AppView = {
     if (!shots || typeof shots !== 'object') return '';
     const thread = !!opts.thread;
     const detailsOnly = !!opts.details;
-    if ((thread || detailsOnly) && String(shots.state || '') !== 'verified') return '';
+    const state = String(shots.state || 'planned');
+    // A failed run's details reading is the one non-verified one that draws:
+    // the sheet says what happened and why, instead of linking to shots that
+    // do not exist. One the platform is already retrying reads as under way
+    // and draws nothing there.
+    const failedDetails = detailsOnly && state === 'failed' && shots.automaticRetryPending !== true;
+    if ((thread || detailsOnly) && state !== 'verified' && !failedDetails) return '';
     const sessionId = Number(opts.sessionId);
     const claims = Array.isArray(shots.claims) ? shots.claims.slice(0, 3) : [];
     const artifacts = Array.isArray(shots.artifacts) ? shots.artifacts : [];
-    const state = String(shots.state || 'planned');
     const esc = escapeHtml;
     const attr = escapeAttr;
     const shortSha = (sha) => /^[0-9a-f]{40}$/i.test(String(sha || ''))
@@ -26818,8 +26870,12 @@ const AppView = {
       const retryable = (state === 'failed' && shots.automaticRetryPending !== true
           && (shots.repairAvailable === true || shots.failureCode === 'shots_stopped'))
         || AppView._shotsNotStarted(shots);
-      const retry = retryable && Number.isInteger(sessionId) && sessionId > 0
-        ? `<button type="button" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.takeAgain')}</button>`
+      // The details reading of a failed run asks only whether this reader may
+      // start it again (`canRetake`, the author or an app admin); every other
+      // reading keeps the `retryable` rule above.
+      const wantsRetake = detailsOnly ? opts.canRetake === true : retryable;
+      const retry = wantsRetake && Number.isInteger(sessionId) && sessionId > 0
+        ? `<button type="button"${detailsOnly ? ' data-shots-retake="1"' : ''} class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.takeAgain')}</button>`
         : '';
       const stoppable = ['provisioning', 'exploring', 'replaying', 'reviewing'].includes(state)
         && Number.isInteger(sessionId) && sessionId > 0;

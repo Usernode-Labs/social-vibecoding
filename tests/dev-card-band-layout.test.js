@@ -652,3 +652,46 @@ test('a busy action pill draws the spinner arc beside its label and says it is b
   assert.doesNotMatch(atRest, /dc-status-spinner-arc/);
   assert.match(atRest, /^<button class="gc-vote-btn">/);
 });
+
+test('a change whose screenshots failed offers its author or an admin the retake in its band', () => {
+  // #6551: the card carried "Couldn't take the screenshots" with no way to act
+  // on it. The same retake the change page's ⋯ menu has now rides the band
+  // for the author or an app admin, and folds into ⋯ when it does not fit.
+  const AppView = makeAppView();
+  const failed = {
+    state: 'failed', failureCode: 'shots_capture_incomplete', repairAvailable: true,
+    failureReason: 'The shots agent could not reach the dialog.',
+  };
+  const author = PR({ user_id: ME, shots: failed });
+  const model = AppView._proposalCardModel(author);
+  const retake = (model.actions || []).find((a) => a.key === 'shots-retake');
+  assert.ok(retake, 'the author sees it');
+  assert.equal(retake.act.fn, 'rerunShots');
+  assert.equal(retake.act.args.length, 1);
+  assert.equal(retake.act.args[0], author.id);
+  assert.equal(retake.passNode, true);
+  assert.equal(retake.cls, 'gc-vote-btn');
+  assert.equal(retake.label, 'Take the screenshots again');
+  assert.equal(retake.title, 'Take the before & after screenshots again on this exact build');
+  assert.equal(model.actions[model.actions.length - 1].key, 'shots-retake', 'after the vote pills');
+  const html = proposalCardHtml(AppView, author);
+  assert.match(html, /<button class="gc-vote-btn" title="Take the before &amp; after screenshots again on this exact build"[^>]*data-act="rerunShots">Take the screenshots again<\/button>/);
+
+  // An app admin sees it too, through the board's own context.
+  AppView._proposalsCtx = { ...AppView._proposalsCtx, isAppAdmin: true };
+  assert.ok((AppView._proposalCardModel(PR({ shots: failed })).actions || []).some((a) => a.key === 'shots-retake'));
+  AppView._proposalsCtx = { majority: 2 };
+
+  // Other readers get the failure tag and no button.
+  const other = PR({ user_id: 999, shots: failed });
+  assert.ok(!(AppView._proposalCardModel(other).actions || []).some((a) => a.key === 'shots-retake'));
+
+  // The detail head keeps the page's ⋯ row instead.
+  assert.ok(!(AppView._proposalCardModel(author, { noNav: true }).actions || []).some((a) => a.key === 'shots-retake'));
+  // Merged cards are untouched.
+  assert.ok(!(AppView._proposalCardModel({ ...author, status: 'merged' }).actions || []).some((a) => a.key === 'shots-retake'));
+  // Nothing to press while the platform is already retrying, or when the run
+  // has not failed.
+  assert.ok(!(AppView._proposalCardModel(PR({ user_id: ME, shots: { ...failed, automaticRetryPending: true } })).actions || []).some((a) => a.key === 'shots-retake'));
+  assert.ok(!(AppView._proposalCardModel(PR({ user_id: ME, shots: { state: 'verified', artifacts: [] } })).actions || []).some((a) => a.key === 'shots-retake'));
+});
