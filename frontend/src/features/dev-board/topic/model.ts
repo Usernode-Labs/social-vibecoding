@@ -294,6 +294,8 @@ export interface LedgerRow {
    * It used to be a caption under the whole ledger; it explains this row.
    */
   help?: boolean;
+  /** #6552: the change this row explains, so its "?" reads that change's votes. */
+  changeId?: number | null;
 }
 
 export interface ProposalDetails {
@@ -515,6 +517,12 @@ export interface StepsView {
   rows: StepRow[];
   /** One short step per merge gate (`_gateStepsView`), rather than ledger rows. */
   simple?: boolean;
+  /**
+   * #6552: the change these steps belong to, riding on the "?" hints as
+   * `data-voting-help-change`. On a request's page the page item is the
+   * request, so the help popover must read this change's row instead.
+   */
+  changeId?: number | null;
 }
 
 /** Everything under the card, by topic kind. */
@@ -856,6 +864,12 @@ export interface TopicBody {
      * way, not as a failure.
      */
     retrying?: boolean;
+    /**
+     * The change this viewer may start the failed run again on, or null.
+     * `_canRetakeShots` decides: its author or a project admin, on a failed
+     * run with no automatic retry coming.
+     */
+    retake?: number | null;
     label: string;
     sentence: string;
     claims: string[];

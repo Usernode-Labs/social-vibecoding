@@ -173,6 +173,9 @@ export interface Incidents {
 export const INCIDENT_KIND: Record<string, string> = {
   build_interrupted: 'Build interrupted',
   checks_not_change: 'Red check not caused by its change',
+  // The leaked-link guard (services/community-invites.js GUARD).
+  invite_link_busy: 'Invite link brought in many people',
+  invite_link_paused: 'Invite link paused',
 };
 
 export const INCIDENT_OUTCOME: Record<string, string> = {

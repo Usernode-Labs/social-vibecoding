@@ -2,12 +2,45 @@
 
 Pull requests compare image dependencies with the same component at the exact
 PR base commit. A fixable HIGH/CRITICAL finding newly introduced by the change
-fails its check. An unchanged affected package/version is a warning. Releases
-keep comparing against immutable recorded release images. Existing scoped,
-expiring exceptions still apply to gating.
+fails its check. An unchanged affected package/version is a warning. Existing
+scoped, expiring exceptions still apply to gating.
+
+## Merge enforcement and delivery
+
+GitHub's protection for `main` must require the checks listed in
+`security/required-merge-checks.json`, from the GitHub Actions app, with admin
+enforcement and no bypass. This covers manual merges and Homeroom's pinned-head
+merge API, including its vote override. Keep existing review requirements.
+Strict up-to-date checks are not required: Homeroom already handles integration
+with main, and this policy does not add a resync for every unrelated merge.
+
+The `Security merge gate` job always runs on pull requests, including when a
+dependency fails or is skipped. It succeeds only when the lockfile audit and all
+five image checks succeed. Missing, running, failed or cancelled checks cannot
+satisfy branch protection. When GitHub refuses a merge, Homeroom's existing merge
+queue records the refusal and retries after four minutes; a force vote does not
+bypass GitHub protection. An open proposal predating this job must sync with main
+before it can satisfy the new required check.
+
+Before merging the advisory release policy, require the six existing lockfile
+and image checks. Once this workflow is on main, also require `Security merge
+gate`, completing the checked-in list. Requiring the new job before its workflow
+lands would prevent older PRs, including the separate esbuild repair, from merging.
+Repo settings are separate from source control: verify the check names, GitHub
+Actions source and admin enforcement in Settings > Branches > main. The checked-in
+list is the final contract, not a claim that a workflow configures its own protection.
+
+After merge to protected main, release scans use `SECURITY_AUDIT_ONLY=1`. The legacy
+`feat/k8s` trigger and dispatches on other branches retain the blocking baseline
+comparison; they do not have main's required pre-merge scans. Findings on main are warnings in
+the job log and summary, with full reports retained, and do not stop delivery.
+The independent daily audit below still opens native security requests. Scanner
+execution errors, malformed reports, runtime validation failures and the existing
+non-security release checks still fail: an unavailable assessment is never a
+clean verdict. There is no blanket `continue-on-error` or scanner removal.
 
 The scanner emits `assessment.json` beside its full SBOM/image reports:
-`clean`, `existing_findings`, `regression`, or `unavailable`. Failed scans or
+`clean`, `existing_findings`, `regression`, `findings` (advisory), or `unavailable`. Failed scans or
 comparisons are unavailable and require retry/review, never a clean verdict
 or a fabricated new vulnerability. The normal runtime probes still gate.
 
@@ -66,6 +99,16 @@ meaning. No Discord routing change is included.
 Complete reports, including lower severities, are retained as workflow artifacts
 for 30 days. An assessment failure requires rerunning the audit; it is not an
 empty vulnerability list.
+
+The compact report accepts up to 10,000 typed findings per component, with an
+unchanged 1 MiB limit on each assessment input and on the complete serialized
+report and its downloaded archive. Findings are never truncated. The former
+1,000-finding limit discarded the successful worker (3,399 findings) and capture
+(1,575 findings) scans on November 10, 2026. Larger inventories still require a
+bounded, valid report; exceeding either limit remains an unavailable assessment.
+Debian's exact `TEMP-0000000-ABCDEF` advisory identifier format is accepted too;
+these real scanner findings previously invalidated both components after the
+count limit was lifted. They remain in the inventory with their original severity.
 
 Rerun all jobs, or dispatch a new audit, to obtain a complete fresh assessment.
 Artifacts are scoped to the run attempt; retrying only the aggregator cannot

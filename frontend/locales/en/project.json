@@ -684,12 +684,12 @@
     "description": "Line under the \"waiting on votes\" figure on the Workshop tab of a project's page: how many of those proposals wait on the viewer's own vote. {{count}} is that number, never zero."
   },
   "workshop.dash.fromLastWeek_one": {
-    "text": "from {{count}}",
-    "description": "Line under the \"live this week\" figure on the Workshop tab of a project's page, beside an up or down arrow: how many changes went live last week, for comparison. {{count}} is last week's number."
+    "text": "from {{count}} by this time last week",
+    "description": "Line under the \"live this week\" figure on the Workshop tab of a project's page, beside an up or down arrow: how many changes had gone live last week by this same point in the week, for comparison. {{count}} is that number."
   },
   "workshop.dash.fromLastWeek_other": {
-    "text": "from {{count}}",
-    "description": "Line under the \"live this week\" figure on the Workshop tab of a project's page, beside an up or down arrow: how many changes went live last week, for comparison. {{count}} is last week's number."
+    "text": "from {{count}} by this time last week",
+    "description": "Line under the \"live this week\" figure on the Workshop tab of a project's page, beside an up or down arrow: how many changes had gone live last week by this same point in the week, for comparison. {{count}} is that number."
   },
   "workshop.pace.nonePartial": {
     "text": "Nothing has landed this week.",
@@ -716,28 +716,28 @@
     "description": "Sentence of the fallback summary on a project's Workshop tab: how many changes were merged this week, when none were merged the week before. Change is a noun; a fortnight is two weeks."
   },
   "workshop.pace.up_one": {
-    "text": "{{count}} landed this week, up from {{previous}} the week before.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: more changes were merged this week ({{count}}) than the week before ({{previous}})."
+    "text": "{{count}} landed this week, up from {{previous}} by this time last week.",
+    "description": "Sentence of the fallback summary on a project's Workshop tab: more changes were merged this week ({{count}}) than had gone live last week by this same point in the week ({{previous}})."
   },
   "workshop.pace.up_other": {
-    "text": "{{count}} landed this week, up from {{previous}} the week before.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: more changes were merged this week ({{count}}) than the week before ({{previous}})."
+    "text": "{{count}} landed this week, up from {{previous}} by this time last week.",
+    "description": "Sentence of the fallback summary on a project's Workshop tab: more changes were merged this week ({{count}}) than had gone live last week by this same point in the week ({{previous}})."
   },
   "workshop.pace.down_one": {
-    "text": "{{count}} landed this week, down from {{previous}} the week before.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: fewer changes were merged this week ({{count}}) than the week before ({{previous}})."
+    "text": "{{count}} landed this week, down from {{previous}} by this time last week.",
+    "description": "Sentence of the fallback summary on a project's Workshop tab: fewer changes were merged this week ({{count}}) than had gone live last week by this same point in the week ({{previous}})."
   },
   "workshop.pace.down_other": {
-    "text": "{{count}} landed this week, down from {{previous}} the week before.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: fewer changes were merged this week ({{count}}) than the week before ({{previous}})."
+    "text": "{{count}} landed this week, down from {{previous}} by this time last week.",
+    "description": "Sentence of the fallback summary on a project's Workshop tab: fewer changes were merged this week ({{count}}) than had gone live last week by this same point in the week ({{previous}})."
   },
   "workshop.pace.same_one": {
-    "text": "{{count}} landed this week, the same as the week before.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: as many changes were merged this week ({{count}}) as the week before."
+    "text": "{{count}} landed this week, the same as by this time last week.",
+    "description": "Sentence of the fallback summary on a project's Workshop tab: as many changes were merged this week ({{count}}) as had gone live last week by this same point in the week."
   },
   "workshop.pace.same_other": {
-    "text": "{{count}} landed this week, the same as the week before.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: as many changes were merged this week ({{count}}) as the week before."
+    "text": "{{count}} landed this week, the same as by this time last week.",
+    "description": "Sentence of the fallback summary on a project's Workshop tab: as many changes were merged this week ({{count}}) as had gone live last week by this same point in the week."
   },
   "workshop.desk.title": {
     "text": "Your work",
@@ -1670,6 +1670,10 @@
   "invite.dead.usedUp": {
     "text": "That invite link has been used as many times as it allows.",
     "description": "Error toast after pressing Join on a project's page opened from an invite link, when the link's limit on how many people may use it has been reached."
+  },
+  "invite.dead.paused": {
+    "text": "This invite link is paused. Ask the person who shared it for a new one.",
+    "description": "Error toast after pressing Join on a project's page opened from an invite link, when the link stopped letting people in for now because a lot of people joined through it in one day."
   },
   "invite.dead.unknown": {
     "text": "That invite link does not work.",

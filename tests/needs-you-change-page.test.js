@@ -791,13 +791,17 @@ test('the steps sheet is the strip expanded: its headline and count, one short s
   assert.equal(s.detail, null, 'no detail on the page: the current step says it');
   assert.equal(s.simple, true);
   assert.deepEqual([s.done, s.total], [3, 5]);
-  assert.deepEqual(s.rows.map((r) => [r.gate, r.key, r.state, r.label, r.line]), [
-    ['approvals', 'votes', 'waiting', 'Votes', null],
-    ['integration', 'mergeability', 'done', 'No conflicts with main', null],
-    ['checks', 'checks', 'done', 'Checks', 'All 1 passed'],
-    ['main_healthy', 'main_healthy', 'done', 'Main is healthy', null],
-    ['github', 'github', 'pending', 'Merge', null],
+  assert.deepEqual(s.rows.map((r) => [r.gate, r.key, r.state, r.label]), [
+    ['approvals', 'votes', 'waiting', 'Votes'],
+    ['integration', 'mergeability', 'done', 'No conflicts with main'],
+    ['checks', 'checks', 'done', 'Checks'],
+    ['main_healthy', 'main_healthy', 'done', 'Main is healthy'],
+    ['github', 'github', 'pending', 'Merge'],
   ]);
+  // #6550: a finished merge step now says what was measured, and how old it is.
+  assert.match(s.rows[1].line, /^No conflicts · measured .+/);
+  assert.deepEqual([s.rows[0].line, s.rows[2].line, s.rows[3].line, s.rows[4].line],
+    [null, 'All 1 passed', null, null]);
   // No actor column, no ledger sentence, no bar or pill inside the vote step.
   for (const r of s.rows) {
     assert.equal(r.actor, undefined, `${r.gate} names nobody`);
@@ -875,7 +879,7 @@ test('a failing check opens its step onto the run, with each failure’s door; t
   const sync = s.rows.find((r) => r.gate === 'integration');
   assert.equal(sync.key, 'mergeability', 'the ledger row’s key is the data-note, so the declared checks still find it');
   assert.equal(sync.state, 'active');
-  assert.equal(sync.line, 'Conflict in 2 files · queued to fix');
+  assert.match(sync.line, /^Conflict in 2 files · queued to fix · measured .+/, 'the conflict says when it was measured');
   assert.match(html, /data-note="mergeability" data-req-gate="integration" data-req-state="active"><span class="dev-step-mark dev-step-mark-active" aria-hidden="true"><span class="dc-status-icon dc-status-spinner-arc"/);
   assert.doesNotMatch(html, /Main has moved 8 commits ahead/, 'no sentence restating the sync');
   const checks = s.rows.find((r) => r.gate === 'checks');
@@ -1366,6 +1370,11 @@ test('the Votes card says when a change still needs a Yes from another member', 
 test('#4455: the Votes card: one part per yes, the figure in the accent when the viewer can give it, and a yes a newer push retired', () => {
   const av = context();
   const v = av._topicViewFor('proposal', PR);
+  // #6552: the steps and the "?" hint name the change they belong to, so the
+  // help reads its votes even when the page is a request's.
+  assert.equal(v.body.steps.changeId, PR.id, 'the steps sheet names its change');
+  assert.equal(v.body.details.ledger.find((r) => r.key === 'votes').changeId, PR.id,
+    'the votes ledger row names its change');
   const votes = (item, roster) => {
     if (roster) av._voteRoster[item.id] = { phase: 'ready', ...roster };
     const built = av._topicViewFor('proposal', item);
@@ -1380,7 +1389,7 @@ test('#4455: the Votes card: one part per yes, the figure in the accent when the
   assert.equal(votes({ ...PR, my_vote: 'yes' }).tone, 'muted');
   // Reached, while testing runs: the names, and that it waits on testing.
   const reached = votes({ ...PR, yes_count: 2, check_state: 'pending' }, { yesNames: ['jo', 'cilokman'], earlierYes: [], earlierNo: [], approvers: 0 });
-  assert.equal(reached.figure, '2 of 2 yes');
+  assert.equal(reached.figure, message('changes:page.votes.figure.reached', { count: 2, needed: 2 }));
   assert.equal(reached.done, true);
   assert.deepEqual(reached.note, ['jo and cilokman said yes.', 'It goes live once testing passes.']);
   // Run four (13 Oct): the reader is "You", never their own username, and
@@ -1497,4 +1506,30 @@ test('#6521 list row and Testing card agree on a pass from an older version', ()
   assert.match(src, /row\.checks_on_head = sessionChecksOnHead\(row\)/);
   assert.match(src, /proposal\.checks_on_head = sessionChecksOnHead\(proposal\)/);
   assert.match(src, /cs\.reviewed_head_sha,\n\s+-- #6521[\s\S]{0,400}cs\.checks_commit_sha,/);
+});
+
+test('a failed run offers its author or an admin Take the screenshots again on the Before and after card (#6551)', () => {
+  const av = context();
+  const claim = { id: 's1', claim: 'The preview waits for sign-in', viewports: ['desktop'], steps: ['Open a preview'] };
+  const failed = { state: 'failed', failureReason: 'The dialog never opened.', claims: [claim], artifacts: [] };
+  // The model says who may retake: the author (42) or an app admin, and only
+  // while the platform is not already retrying it on its own.
+  assert.equal(av._changeShotsView('proposal', { ...PR, user_id: 42, shots: failed }).retake, 4090);
+  assert.equal(av._changeShotsView('proposal', { ...PR, user_id: 7, shots: failed }).retake, null, 'somebody else gets none');
+  assert.ok(!av._changeShotsView('proposal', { ...PR, user_id: 42, shots: { ...failed, automaticRetryPending: true } }).retake, 'not while a retry is coming');
+  assert.ok(!av._changeShotsView('proposal', { ...PR, user_id: 42, shots: { state: 'exploring', claims: [claim], artifacts: [] } }).retake);
+  // The card draws the button under the failure line, and only then.
+  const authored = render(av, { ...PR, user_id: 42, shots: failed }).page;
+  assert.match(authored, /data-change-shots="failed"[\s\S]*<button type="button" class="gc-vote-btn" data-shots-retake="1"[^>]*>Take the screenshots again<\/button>/);
+  assert.doesNotMatch(render(av, { ...PR, user_id: 7, shots: failed }).page, /data-shots-retake/);
+  // Details: the failed run's own block (what happened and why) replaces the
+  // dead link to shots tied to a revision that has none.
+  const details = av.shotsHtml(failed, { sessionId: 4090, details: true, canRetake: true });
+  assert.match(details, /Couldn’t take the screenshots/);
+  assert.match(details, /data-shots-retake="1"/);
+  // The two mounts pass the same answer through.
+  assert.match(read('frontend/src/features/dev-board/topic/topic-head.tsx'),
+    /av\.shotsHtml\(row\.shots, \{ sessionId: id, details: true, canRetake: !!av\._canRetakeShots\?\.\(row\) \}\)/);
+  assert.match(read('frontend/src/features/dev-board/topic/topic-head.tsx'),
+    /av\.shotsHtml\(session\.shots, \{ sessionId: Number\(id\), details: true, canRetake: !!av\._canRetakeShots\?\.\(session\) \}\)/);
 });

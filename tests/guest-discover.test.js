@@ -695,8 +695,9 @@ const SHEET = 'frontend/src/features/auth/sign-in-sheet.tsx';
 test('the ways in are the sheet\'s: Apple, Google and email, and a phone number on the landing\'s sheets', () => {
   const sheet = read(SHEET);
   // A phone where it is offered but not first: the link under the email.
-  assert.match(sheet, /\{phone \|\| phoneLink \? \(/);
-  assert.match(sheet, /\{phone \? t\('auth:signInSheet\.toPhone'\) : t\('auth:signInSheet\.toPhoneLink'\)\}/);
+  // An invite's Join draws its own (`inviteWays`, tests/invite-join-sheet.test.js).
+  assert.match(sheet, /\{phoneLink && !phone \? \(/);
+  assert.match(sheet, /className=\{QUIET\} onClick=\{\(\) => \{ setError\(null\); setStep\('phone'\); \}\}>\{t\('auth:signInSheet\.toPhoneLink'\)\}<\/button>/);
   const landing = read(LANDING);
   // The story's sheet (Sign up, Sign in), a project page's and a shared
   // link's: each offers it, and asks for a username after the code.

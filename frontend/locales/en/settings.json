@@ -953,7 +953,7 @@
   },
   "account.change": {
     "text": "Change",
-    "description": "Link at the right of the Username, Email & recovery and Password rows in Settings: opens a small form under that row to change it."
+    "description": "Link at the right of the Username and Password rows in Settings: opens a small form under that row to change it."
   },
   "account.add": {
     "text": "Add",
@@ -1780,7 +1780,7 @@
     "description": "Name of a phone notification category in Settings > Mobile push categories: activity on invite links the person shared."
   },
   "alerts.push.inviteActivity.description": {
-    "text": "When someone opens your invite link, joins through it, or says hi for the first time.",
+    "text": "When someone opens your invite link, joins through it, or says hi for the first time, and when a link brings in a lot of people in a day.",
     "description": "What the \"Your invites\" category covers, under its name in Settings > Mobile push categories."
   },
   "alerts.push.directInteractions.label": {

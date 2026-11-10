@@ -567,16 +567,20 @@ export function Roster({ r }: { r: RosterView }): ReactNode {
 }
 
 /** "How voting works", and the circular "?" — both open the same popover. */
-function HelpLinks({ question }: { question: boolean }): ReactNode {
+function HelpLinks({ question, changeId }: { question: boolean; changeId?: number | null }): ReactNode {
   const t = useMessages('project');
+  // #6552: the change the hint explains, beside data-voting-help, so the
+  // popover reads that row rather than the page's item.
+  const change = changeId ? { 'data-voting-help-change': changeId } : {};
   return (
     <span className="dev-ledger-help voting-help-hint">
-      <button type="button" className="voting-help-link un-touch-target" data-voting-help="">{t('project:topic.help.howVotingWorks')}</button>
+      <button type="button" className="voting-help-link un-touch-target" data-voting-help="" {...change}>{t('project:topic.help.howVotingWorks')}</button>
       {question ? (
         <button
           type="button"
           className="voting-help-btn un-touch-target"
           data-voting-help=""
+          {...change}
           aria-label={t('project:topic.help.votingAndMerges')}
           title={t('project:topic.help.votingAndMerges')}
         >?</button>
@@ -599,9 +603,11 @@ function passingCount(r: LedgerRow): number {
   return r.passCount ?? (r.passes ? r.passes.length : 0);
 }
 
-function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode {
+function LedgerRowBody({ r, help, changeId }: { r: LedgerRow; help: boolean; changeId?: number | null }): ReactNode {
   const t = useMessages('project');
   const names = usePassNames(r.passesFor);
+  // The sheet's change wins; a row may carry its own for another reader.
+  const hint = changeId ?? r.changeId ?? null;
   return (
     <>
       {r.text.length ? (
@@ -618,7 +624,7 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
       {r.roster || r.help ? (
         <span className="dev-ledger-review-line">
           {r.roster ? <Roster r={r.roster} /> : null}
-          {r.help ? <HelpLinks question={help} /> : null}
+          {r.help ? <HelpLinks question={help} changeId={hint} /> : null}
         </span>
       ) : null}
       {/* One ordered sequence: a line, or the list its previous line
@@ -1260,7 +1266,7 @@ function VoteTally({ v }: { v: NonNullable<StepRow['vote']> }): ReactNode {
 }
 
 /** One step: the mark, the label, who acts at the right; under them, what the row says. */
-function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
+function StepRowView({ r, help, changeId }: { r: StepRow; help: boolean; changeId?: number | null }): ReactNode {
   const row = r.row || null;
   const gateAttrs = r.gate ? { 'data-req-gate': r.gate, 'data-req-state': r.state } : {};
   return (
@@ -1273,7 +1279,7 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
       {r.vote || row || r.note || r.action ? (
         <div className="dev-step-body">
           {r.vote ? <VoteTally v={r.vote} /> : null}
-          {row ? <LedgerRowBody r={row} help={help} /> : (r.note ? <span className="dev-step-note">{r.note}</span> : null)}
+          {row ? <LedgerRowBody r={row} help={help} changeId={changeId} /> : (r.note ? <span className="dev-step-note">{r.note}</span> : null)}
           {r.action ? <span className="dev-ledger-ops"><ActionButton a={r.action} /></span> : null}
         </div>
       ) : null}
@@ -1282,7 +1288,7 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
 }
 
 /** "?" — How voting works, on the Votes step's line. */
-function HelpQuestion(): ReactNode {
+function HelpQuestion({ changeId }: { changeId?: number | null }): ReactNode {
   const t = useMessages('project');
   return (
     <span className="dev-ledger-help voting-help-hint">
@@ -1290,6 +1296,7 @@ function HelpQuestion(): ReactNode {
         type="button"
         className="voting-help-btn un-touch-target"
         data-voting-help=""
+        {...(changeId ? { 'data-voting-help-change': changeId } : {})}
         aria-label={t('project:topic.steps.votingHelp')}
         title={t('project:topic.steps.votingHelp')}
       >?</button>
@@ -1456,7 +1463,7 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
  * onto its run (RunPanel) by itself while a run is going and when it failed,
  * and a reader's own open or close sticks after that.
  */
-function GateStepView({ r }: { r: StepRow }): ReactNode {
+function GateStepView({ r, changeId }: { r: StepRow; changeId?: number | null }): ReactNode {
   const run = r.run || null;
   const seed = !!(run && run.open);
   const [open, setOpen] = useState(seed);
@@ -1504,7 +1511,7 @@ function GateStepView({ r }: { r: StepRow }): ReactNode {
           {r.votes || r.help ? (
             <span className="dev-ledger-review-line">
               {r.votes ? <span className="dev-ledger-roster dev-step-line">{r.votes}</span> : null}
-              {r.help ? <HelpQuestion /> : null}
+              {r.help ? <HelpQuestion changeId={changeId} /> : null}
             </span>
           ) : null}
           {r.was ? <span className="dev-step-line dev-step-vote-was">{r.was}</span> : null}
@@ -1548,8 +1555,8 @@ function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
               detail (_topicStepsView's `useRow`), which remounted the step
               and redrew it from nothing mid-read. */}
           {s.rows.map((r) => (s.simple
-            ? <GateStepView key={r.gate || r.key} r={r} />
-            : <StepRowView key={r.gate || r.key} r={r} help={help} />))}
+            ? <GateStepView key={r.gate || r.key} r={r} changeId={s.changeId} />
+            : <StepRowView key={r.gate || r.key} r={r} help={help} changeId={s.changeId} />))}
         </ol>
       </div>
     </section>
@@ -1690,7 +1697,7 @@ export function ChangeSheets({ id, row, body }: { id: number; row: any; body: To
         steps={body.steps}
         help={!!(body.details && body.details.help)}
         html={body.proposalBody?.html || ''}
-        shotsHtml={av && row?.shots ? av.shotsHtml(row.shots, { sessionId: id, details: true }) : ''}
+        shotsHtml={av && row?.shots ? av.shotsHtml(row.shots, { sessionId: id, details: true, canRetake: !!av._canRetakeShots?.(row) }) : ''}
       />
       {av?._canEditDescription?.(row) ? (
         <DescriptionEditor key={id} id={id} onSaved={(data) => av._cacheDescription(id, data)} />
@@ -1850,7 +1857,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               steps={body.steps}
               help={!!(body.details && body.details.help)}
               html={body.proposalBody?.html || ''}
-              shotsHtml={av && session?.shots ? av.shotsHtml(session.shots, { sessionId: Number(id), details: true }) : ''}
+              shotsHtml={av && session?.shots ? av.shotsHtml(session.shots, { sessionId: Number(id), details: true, canRetake: !!av._canRetakeShots?.(session) }) : ''}
             />
           ) : null}
           {id && active && av?._canEditDescription(session) ? <DescriptionEditor key={id} id={Number(id)} onSaved={(data) => {

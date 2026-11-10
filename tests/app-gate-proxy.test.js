@@ -16,6 +16,7 @@ const http = require('node:http');
 const net = require('node:net');
 
 const { createGate, HEALTH_PATH } = require('../scripts/app-gate');
+const { createActivity } = require('../src/services/gateway-activity');
 const kubernetes = require('../src/services/kubernetes');
 
 const listen = (server) => new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
@@ -315,9 +316,9 @@ test('its own health path answers without asking anyone', async () => {
   assert.equal(asked.length, 0);
 });
 
-function upgrade(pathname, extraHeaders = {}) {
+function upgrade(pathname, extraHeaders = {}, port = gatePort) {
   return new Promise((resolve, reject) => {
-    const socket = net.connect(gatePort, '127.0.0.1', () => {
+    const socket = net.connect(port, '127.0.0.1', () => {
       openSockets.push(socket);
       const lines = [`GET ${pathname} HTTP/1.1`, 'host: a.onhomeroom.com', 'connection: Upgrade', 'upgrade: websocket',
         'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==', 'sec-websocket-version: 13', 'origin: https://a.onhomeroom.com',
@@ -336,6 +337,35 @@ function upgrade(pathname, extraHeaders = {}) {
     socket.on('error', reject);
   });
 }
+
+test('homepage probes do not refresh gateway activity; ordinary reads, writes and sockets do', async () => {
+  let now = 100;
+  const firstSocket = openSockets.length;
+  const activity = createActivity({ now: () => now });
+  const isolated = createGate({ platformUrl: `http://127.0.0.1:${platformPort}`,
+    resolveUpstream: () => ({ host: '127.0.0.1', port: appPort }), activity, log: silent });
+  const port = await listen(isolated);
+  const userAgent = 'usernode-dapp-homepage-healthcheck/1';
+  const hit = async (method, agent) => {
+    const response = await fetch(`http://127.0.0.1:${port}/`, { method,
+      headers: { 'user-agent': agent }, ...(method === 'POST' ? { body: 'accepted write' } : {}) });
+    await response.text(); assert.equal(response.status, 200);
+  };
+  try {
+    await hit('HEAD', userAgent); await hit('GET', userAgent);
+    assert.equal(activity.snapshot().upstreams['app-a'], undefined);
+    now = 200; await hit('HEAD', 'ordinary-browser');
+    assert.equal(activity.snapshot().upstreams['app-a'].lastRequestAt, 200);
+    now = 300; await hit('POST', userAgent);
+    assert.equal(activity.snapshot().upstreams['app-a'].lastRequestAt, 300);
+    now = 400;
+    assert.match(await upgrade('/ws', { 'user-agent': userAgent }, port), /^HTTP\/1.1 101/);
+    assert.equal(activity.snapshot().upstreams['app-a'].lastRequestAt, 400);
+  } finally {
+    for (const socket of openSockets.slice(firstSocket)) socket.destroy();
+    await close(isolated);
+  }
+});
 
 test('a WebSocket handshake is decided, carries the identity, and is then piped both ways', async () => {
   const data = await upgrade('/ws', { 'x-usernode-identity': 'FORGED' });

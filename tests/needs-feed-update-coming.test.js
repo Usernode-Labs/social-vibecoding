@@ -238,7 +238,7 @@ test('#6282: the Votes card says an update is coming and takes no vote', () => {
   assert.notEqual(held.tone, 'ask');
   assert.equal(held.note[0], message('changes:page.votes.note.updateComing'));
   // The tally and who can vote stay as they were.
-  assert.equal(held.label, 'Votes: 1 of 2 yes');
+  assert.equal(held.label, message('changes:page.votes.label.tally', { count: 1, needed: 2 }));
   assert.ok(held.note.some((line) => /Any of the 5 members/.test(line)));
   // With no update coming, it asks as it always did.
   const open = av._changeVotesView({ ...item, update_coming: null }, card);

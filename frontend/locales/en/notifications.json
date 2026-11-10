@@ -1343,6 +1343,58 @@
     "text": "Said hi, with {{count}} others",
     "description": "First line of a notification to the person who made an invite link: the person named on the last line wrote their first message, and so did {{count}} more people who joined through it."
   },
+  "row.inviteGuard.busy_one": {
+    "text": "Your {{project}} invite link brought in {{count}} person today.",
+    "description": "The whole text of a notification to the person who made an invite link, when a lot of people joined through that one link within a day, which can mean it was shared further than they meant. {{project}} is the project's name; {{count}} is how many people joined through it in the last day. A button under it turns the link off."
+  },
+  "row.inviteGuard.busy_other": {
+    "text": "Your {{project}} invite link brought in {{count}} people today.",
+    "description": "The whole text of a notification to the person who made an invite link, when a lot of people joined through that one link within a day, which can mean it was shared further than they meant. {{project}} is the project's name; {{count}} is how many people joined through it in the last day. A button under it turns the link off."
+  },
+  "row.inviteGuard.busyPlain_one": {
+    "text": "Your invite link brought in {{count}} person today.",
+    "description": "The whole text of a notification to the person who made an invite link, when a lot of people joined through that one link within a day, used when the project's name is not known. {{count}} is how many people joined through it in the last day. A button under it turns the link off."
+  },
+  "row.inviteGuard.busyPlain_other": {
+    "text": "Your invite link brought in {{count}} people today.",
+    "description": "The whole text of a notification to the person who made an invite link, when a lot of people joined through that one link within a day, used when the project's name is not known. {{count}} is how many people joined through it in the last day. A button under it turns the link off."
+  },
+  "row.inviteGuard.paused_one": {
+    "text": "Your {{project}} invite link is paused: {{count}} person joined through it today. Open it again if that's expected.",
+    "description": "The whole text of a notification to the person who made an invite link, when so many people joined through that one link within a day that it stopped letting more in. {{project}} is the project's name; {{count}} is how many people joined through it in the last day. Buttons under it open the link again or turn it off."
+  },
+  "row.inviteGuard.paused_other": {
+    "text": "Your {{project}} invite link is paused: {{count}} people joined through it today. Open it again if that's expected.",
+    "description": "The whole text of a notification to the person who made an invite link, when so many people joined through that one link within a day that it stopped letting more in. {{project}} is the project's name; {{count}} is how many people joined through it in the last day. Buttons under it open the link again or turn it off."
+  },
+  "row.inviteGuard.pausedPlain_one": {
+    "text": "Your invite link is paused: {{count}} person joined through it today. Open it again if that's expected.",
+    "description": "The whole text of a notification to the person who made an invite link, when so many people joined through that one link within a day that it stopped letting more in, used when the project's name is not known. {{count}} is how many people joined through it in the last day. Buttons under it open the link again or turn it off."
+  },
+  "row.inviteGuard.pausedPlain_other": {
+    "text": "Your invite link is paused: {{count}} people joined through it today. Open it again if that's expected.",
+    "description": "The whole text of a notification to the person who made an invite link, when so many people joined through that one link within a day that it stopped letting more in, used when the project's name is not known. {{count}} is how many people joined through it in the last day. Buttons under it open the link again or turn it off."
+  },
+  "row.inviteGuard.turnOff": {
+    "text": "Turn off this link",
+    "description": "Button on a notification about one of the reader's invite links that brought in a lot of people in a day: stops the link working, for good."
+  },
+  "row.inviteGuard.reopen": {
+    "text": "Open it again",
+    "description": "Button on a notification about one of the reader's invite links that paused itself after a lot of people joined through it in a day: lets people join through it again."
+  },
+  "row.inviteGuard.turnedOff": {
+    "text": "Invite link turned off",
+    "description": "Short confirmation shown after the reader turned one of their invite links off from a notification."
+  },
+  "row.inviteGuard.reopened": {
+    "text": "Invite link open again",
+    "description": "Short confirmation shown after the reader opened one of their paused invite links again from a notification: people can join through it again."
+  },
+  "row.inviteGuard.failed": {
+    "text": "Could not change the invite link. Try again.",
+    "description": "Error shown when turning an invite link off, or opening it again, from a notification did not work."
+  },
   "row.collab.invitedJoin": {
     "text": "Invited you to join",
     "description": "The whole text of a notification: the person named on the last line invited the viewer into the private project named there."

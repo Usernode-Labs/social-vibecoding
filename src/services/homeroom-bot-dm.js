@@ -247,8 +247,65 @@ function firstLiveActions({ slug }) {
   if (typeof slug !== 'string' || !slug) return [];
   return [
     { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: `#app/${encodeURIComponent(slug)}/dev/hub` },
-    { id: 'invite_people', label: 'Invite people', style: 'secondary', type: 'invite' },
+    { ...INVITE_PEOPLE, style: 'secondary' },
   ];
+}
+
+// The button that opens the project's invite sheet in place, answered on the
+// device (bot-question.tsx, from the message's appSlug): a first version
+// going live offers it (firstLiveActions), and so does the bring-a-friend
+// nudge (inviteNudgeActions).
+const INVITE_PEOPLE = Object.freeze({ id: 'invite_people', label: 'Invite people', type: 'invite' });
+
+// ── The bring-a-friend nudge (invite-nudge.js) ──────────────────────────
+//
+// Somebody new to a project hears from the bot once, after the first thing
+// they did there, asking them to invite one or two friends to it. The
+// message's kind is its bot card's (bot_cards.kind), whose Not now is the
+// one server choice (invite-nudge.js dismiss); Invite people is the go-live
+// button, answered on the device.
+
+const INVITE_NUDGE_KIND = 'invite_friends';
+// What they did first, as the message says it ("You voted in Run Club.").
+const INVITE_NUDGE_ACTS = Object.freeze({
+  vote: 'voted',
+  message: 'posted',
+  request: 'asked for a change',
+  change: 'made a change',
+  app: 'used the app',
+});
+
+/**
+ * Pure: what the nudge says, by the first thing they did in the project
+ * (`act`, one of INVITE_NUDGE_ACTS). Null for an act it has no words for, or
+ * no project name.
+ */
+function inviteNudgeText({ act, appName }) {
+  const did = INVITE_NUDGE_ACTS[act];
+  const name = clip(String(appName || '').replace(/\s+/g, ' '), 60);
+  if (!did || !name) return null;
+  return `You ${did} in ${name}. ${name} is better with your people: invite one or two friends?\n\n`
+    + 'They can use it straight away and help shape it.';
+}
+
+/** Pure: the nudge's two buttons: Invite people, the act, and Not now, decided once on the server. */
+function inviteNudgeActions() {
+  return [
+    { ...INVITE_PEOPLE, style: 'primary' },
+    { id: 'no', label: 'Not now', style: 'secondary', type: 'server' },
+  ];
+}
+
+/**
+ * Pure: the nudge's metadata: its project (what the invite sheet invites
+ * to), the act it names, its bot card (`actionId`, what Not now decides)
+ * and its buttons. No moment: it rings nothing, and counts as unread.
+ */
+function inviteNudgeMeta({ slug, appName, act, actionId }) {
+  return {
+    kind: INVITE_NUDGE_KIND, appSlug: slug, appName, act, actionId: Number(actionId),
+    actions: inviteNudgeActions(), status: 'open', mirrors: false,
+  };
 }
 
 // What routes/conversations.js does after a send, done here because the
@@ -2319,7 +2376,7 @@ const PLAN_GO_WORDS = new Set([
 // first, its handle or its display name (with the zero-width character the
 // composer writes after the @: homeroom-bot-holds.js mentionPattern).
 const LEADING_MENTIONS_RE = new RegExp(
-  `^\\s*(?:@[\\u200b\\u200c\\u200d\\u2060]?(?:${BOT_USERNAME}|homeroom bot)(?![a-z0-9_-])[\\s,:;.!-]*)+`, 'i',
+  `^\\s*(?:@[\\u200b\\u200c\\u200d\\u2060]?(?:${BOT_USERNAME}|homeroombot|homeroom bot)(?![a-z0-9_-])[\\s,:;.!-]*)+`, 'i',
 );
 
 /** Pure (#4488): whether words written under a plan say to go ahead (PLAN_GO_WORDS). */
@@ -6547,6 +6604,13 @@ module.exports = {
   readyStates,
   openAppAction,
   firstLiveActions,
+  // The bring-a-friend nudge's words and buttons (invite-nudge.js).
+  INVITE_PEOPLE,
+  INVITE_NUDGE_KIND,
+  INVITE_NUDGE_ACTS,
+  inviteNudgeText,
+  inviteNudgeActions,
+  inviteNudgeMeta,
   // B6: a first version's plan.
   PLAN_KIND,
   planCardText,

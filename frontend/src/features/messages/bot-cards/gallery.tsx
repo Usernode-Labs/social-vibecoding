@@ -16,7 +16,7 @@
 // design and More like are then said as the person's own words, which the
 // bot reads like anything they type.
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { CheckIcon } from '@/components/ui/icons';
@@ -320,14 +320,66 @@ function emailUrl(slug: string, sessionId: number, id: string): string {
   return `/api/apps/${encodeURIComponent(slug)}/proposals/${sessionId}/pictures/${id}`;
 }
 
-function EmailFrame({ html, title, className }: { html: string; title: string; className?: string }): ReactNode {
+// #6548: an opened email is drawn at its full length inside a box that
+// scrolls, at a phone's or the desktop email's own width. The measured frame
+// gets `allow-same-origin` only so the viewer can read its document's height;
+// nothing in the email runs.
+const MIN_EMAIL_HEIGHT = 160;
+const FALLBACK_EMAIL_HEIGHT = 2000;
+const EMAIL_WIDTHS = { phone: 'min(375px, 100%)', desktop: '680px' } as const;
+type EmailSize = keyof typeof EMAIL_WIDTHS;
+
+function EmailFrame({ html, title, className, width, height, onHeight }: {
+  html: string;
+  title: string;
+  className?: string;
+  width?: string;
+  height?: number;
+  onHeight?: (height: number) => void;
+}): ReactNode {
+  const frame = useRef<HTMLIFrameElement | null>(null);
+  const measured = typeof onHeight === 'function';
+  const report = useCallback(() => {
+    if (!onHeight) return;
+    let found = 0;
+    try {
+      const doc = frame.current ? frame.current.contentDocument : null;
+      found = doc && doc.documentElement ? doc.documentElement.scrollHeight : 0;
+    } catch {
+      found = 0;
+    }
+    onHeight(found > 0 ? Math.max(MIN_EMAIL_HEIGHT, found) : FALLBACK_EMAIL_HEIGHT);
+  }, [onHeight]);
+  // A width change does not reload the frame, and scrollHeight never reports
+  // less than the frame's current height: shrink to the minimum, then measure
+  // once the new width has been painted.
+  useEffect(() => {
+    if (!measured) return undefined;
+    onHeight?.(MIN_EMAIL_HEIGHT);
+    let second = 0;
+    const first = requestAnimationFrame(() => { second = requestAnimationFrame(report); });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, [measured, width, onHeight, report]);
   return (
     <iframe
+      ref={frame}
       title={title}
-      sandbox=""
+      sandbox={measured ? 'allow-same-origin' : ''}
       srcDoc={html}
       className={className || 'h-full w-full'}
-      style={{ border: 0, pointerEvents: 'none', background: '#f5f5f7' }}
+      style={{
+        border: 0,
+        pointerEvents: 'none',
+        background: '#f5f5f7',
+        ...(width ? { width } : {}),
+        ...(height != null ? { height } : {}),
+      }}
+      inert={measured ? true : undefined}
+      tabIndex={measured ? -1 : undefined}
+      onLoad={measured ? report : undefined}
     />
   );
 }
@@ -374,6 +426,14 @@ function EmailTile({ slug, sessionId, picture }: { slug: string; sessionId: numb
 
 function EmailViewer({ body, caption, onClose }: { body: EmailBody; caption: string; onClose: () => void }): ReactNode {
   const t = useMessages('messages');
+  // #6548: the first width follows the viewer's own screen; reopening starts
+  // again from the screen.
+  const [size, setSize] = useState<EmailSize>(() => (
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 767px)').matches
+      ? 'phone' : 'desktop'
+  ));
+  const [height, setHeight] = useState(MIN_EMAIL_HEIGHT);
+  const onHeight = useCallback((next: number) => setHeight(next), []);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -382,10 +442,35 @@ function EmailViewer({ body, caption, onClose }: { body: EmailBody; caption: str
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" role="dialog" aria-modal="true" onClick={onClose}>
       <div className="w-full max-w-[720px] rounded-2xl bg-white p-4 dark:bg-zinc-900" onClick={(event) => event.stopPropagation()}>
-        <p className="mb-1 text-[13px] font-semibold">{t('messages:botCards.gallery.subjectLine', { subject: body.subject || caption })}</p>
+        <div className="mb-1 flex flex-wrap items-center gap-2">
+          <p className="min-w-0 flex-1 text-[13px] font-semibold">{t('messages:botCards.gallery.subjectLine', { subject: body.subject || caption })}</p>
+          <div className="inline-flex rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800" role="group" aria-label={t('messages:botCards.compare.sizeGroup')}>
+            {(['phone', 'desktop'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={size === s}
+                className={size === s
+                  ? 'h-8 rounded-full bg-white px-3 text-[13px] font-semibold text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-zinc-100'
+                  : 'h-8 rounded-full px-3 text-[13px] font-semibold text-zinc-600 dark:text-zinc-300'}
+                onClick={() => setSize(s)}
+                data-bot-email-size={s}
+              >
+                {s === 'phone' ? t('messages:botCards.compare.phone') : t('messages:botCards.compare.desktop')}
+              </button>
+            ))}
+          </div>
+        </div>
         {body.preheader ? <p className="mb-2 text-[13px] text-zinc-500 dark:text-zinc-400">{body.preheader}</p> : null}
-        <div className="h-[70vh] overflow-hidden rounded-xl">
-          <EmailFrame html={body.html} title={t('messages:botCards.gallery.emailFrame', { subject: body.subject || caption })} />
+        <div className="max-h-[70vh] overflow-auto rounded-xl">
+          <EmailFrame
+            html={body.html}
+            title={t('messages:botCards.gallery.emailFrame', { subject: body.subject || caption })}
+            className="mx-auto block"
+            width={EMAIL_WIDTHS[size]}
+            height={height}
+            onHeight={onHeight}
+          />
         </div>
         <button type="button" className="messages-bot-secondary mt-3" onClick={onClose}>Close</button>
       </div>

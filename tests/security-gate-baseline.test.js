@@ -227,13 +227,15 @@ test('what is live comes off the newest stable chart, and an unreadable chart is
   assert.equal(liveRelease('usernode-labs', { run: () => ({ status: 1 }) }), null);
 });
 
-test('the workflow compares PRs to their base and releases to immutable release images', () => {
+test('PR findings block against the exact base; post-merge findings are advisory', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
   const step = (job, name) => workflow.jobs[job].steps.find((s) => s.name === name);
-  // Lockfiles: a pull request's base, or the live release.
+  // PRs and other release branches retain a lockfile baseline. Only protected
+  // main can use advisory findings after its required pre-merge scans.
   const lockfiles = workflow.jobs['security-lockfiles'];
-  assert.equal(step('security-lockfiles', 'Read the live release').if, "github.event_name != 'pull_request'");
   const baseline = step('security-lockfiles', 'Fetch the baseline commit');
+  assert.equal(baseline.if, "github.event_name == 'pull_request' || github.ref != 'refs/heads/main'");
+  assert.equal(step('security-lockfiles', 'Read the live release').if, "github.event_name != 'pull_request' && github.ref != 'refs/heads/main'");
   assert.equal(baseline.env.BASE_SHA, '${{ github.event.pull_request.base.sha }}');
   assert.equal(baseline.env.LIVE_SHA, '${{ steps.live.outputs.revision }}');
   assert.match(baseline.run, /git fetch --no-tags --depth=1 origin "\$revision"/);
@@ -241,14 +243,17 @@ test('the workflow compares PRs to their base and releases to immutable release 
   assert.deepEqual(auditStep.env, {
     SECURITY_BASELINE_REVISION: '${{ steps.baseline.outputs.revision }}',
     SECURITY_BASELINE_NAME: '${{ steps.baseline.outputs.name }}',
+    SECURITY_AUDIT_ONLY: "${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && '1' || '0' }}",
   });
   // PR images use the exact PR base, including standalone and starter.
   const prScan = step('security-images', 'Build and scan the finished image');
   assert.equal(prScan.env.SECURITY_BASELINE_REVISION, '${{ github.event.pull_request.base.sha }}');
   assert.equal(prScan.env.SECURITY_SCAN_PLATFORM, 'linux/amd64');
+  assert.equal(prScan.env.SECURITY_AUDIT_ONLY, undefined, 'PRs retain the blocking scanner default');
   assert.equal(workflow.jobs['security-images'].steps.some((s) => s.uses?.startsWith('actions/cache')), false,
     'PR-written inventories cannot be persisted then reused by a later revision');
   const releaseScan = step('build', 'Verify runtime and scan the exact image SBOM');
+  assert.equal(releaseScan.env.SECURITY_AUDIT_ONLY, "${{ github.ref == 'refs/heads/main' && '1' || '0' }}");
   assert.equal(releaseScan.env.LIVE_DIGEST, '${{ steps.live.outputs[matrix.component] }}');
   assert.match(releaseScan.run, /export BASELINE_IMAGE="ghcr\.io\/\$REGISTRY_OWNER\/social-vibecoding-\$\{\{ matrix\.component \}\}@\$LIVE_DIGEST"/);
   assert.match(releaseScan.run, /sh scripts\/check-published-image\.sh "\$IMAGE" "\$REPORT" "\$\{\{ matrix\.component \}\}"/);
@@ -280,7 +285,7 @@ case "$*" in
   *"image inspect"*) echo "sha256:${'e'.repeat(64)}" ;;
   *"anchore/syft"*) cat "${path.join(dir, 'baseline.json')}" ;;
   *"imagetools inspect"*) cat "${path.join(dir, 'attestation.json')}" ;;
-  *"--entrypoint node"*) cat > /dev/null; echo '{}' ;;
+  *"--entrypoint node"*) cat > /dev/null; [ "\${FAKE_RUNTIME_FAILURE:-}" != 1 ] || exit 8; echo '{}' ;;
   *" image --skip-db-update"*) [ "\${FAKE_IMAGE_SCAN_FAILURE:-}" != 1 ] || exit 9; cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
   *" sbom "*) cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
 esac
@@ -343,7 +348,7 @@ test('unchanged vulnerable Buildx warns; an introduced version blocks; audits re
   const scan = { SchemaVersion: 2, Results: [{ Target: 'buildx', Vulnerabilities: [
     { Severity: 'HIGH', PkgName: 'golang.org/x/net', InstalledVersion: 'v0.59.0', VulnerabilityID: 'CVE-2026-78661', FixedVersion: '0.62.0' },
     { Severity: 'CRITICAL', PkgName: 'unfixable', InstalledVersion: '1', VulnerabilityID: 'CVE-2026-12345' },
-    { Severity: 'HIGH', PkgName: 'decode-uri-component', InstalledVersion: '0.2.2', VulnerabilityID: 'CVE-2026-118664', FixedVersion: '0.5.1' },
+    { Severity: 'HIGH', PkgName: 'zod', InstalledVersion: '3.25.76', VulnerabilityID: 'CVE-2023-54404', FixedVersion: '4.0.0' },
   ] }] };
   const unchanged = imageAssessment([scan], { component: 'standalone', baseline: new Set(['golang.org/x/net@v0.59.0']), now: NOW });
   assert.equal(unchanged.status, 'existing_findings');
@@ -355,7 +360,7 @@ test('unchanged vulnerable Buildx warns; an introduced version blocks; audits re
   const full = imageAssessment([scan, scan], { component: 'standalone', audit: true, now: NOW });
   assert.equal(full.findings.length, 3, 'deduplicate SBOM/full-image matches but retain all risk categories');
   assert.equal(full.blocking.length, 0);
-  assert.equal(full.findings.find((f) => f.id === 'CVE-2026-118664').acceptedUntil, '2026-11-28');
+  assert.equal(full.findings.find((f) => f.id === 'CVE-2023-54404').acceptedUntil, '2026-11-22');
   const lower = JSON.parse(JSON.stringify(scan));
   lower.Results[0].Vulnerabilities[0].Severity = 'LOW';
   const merged = imageAssessment([scan, lower], { component: 'standalone', audit: true, now: NOW });
@@ -452,4 +457,73 @@ test('an unavailable lockfile baseline is an assessment failure rather than an i
   assert.doesNotMatch(result.stdout, /Security gate: root lockfile/);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'root-gate.json'))).blocking, []);
   assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'root-gate.json'))).status, 'unavailable');
+});
+
+test('post-merge lockfile findings warn without a baseline, but failed or malformed audits still fail', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-lock-advisory-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  const auditFile = path.join(dir, 'audit.json');
+  fs.writeFileSync(auditFile, JSON.stringify(audit('minio', 'node_modules/minio', 'high', 'GHSA-new')));
+  fs.writeFileSync(path.join(bin, 'npm'), `#!/bin/sh\ncat "${auditFile}"\nexit "\${FAKE_AUDIT_EXIT:-1}"\n`, { mode: 0o755 });
+  const out = path.join(dir, 'reports');
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, SECURITY_AUDIT_ONLY: '1',
+    SECURITY_BASELINE_REVISION: 'f'.repeat(40), SECURITY_REPORT_DIR: out, GITHUB_STEP_SUMMARY: path.join(dir, 'summary.md') };
+  const run = (extra = {}) => spawnSync(process.execPath, ['scripts/security-audit.js'], { cwd: ROOT, encoding: 'utf8', env: { ...env, ...extra } });
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /::warning title=Security finding: root lockfile::minio@.*: GHSA-new/);
+  assert.doesNotMatch(result.stdout, /::error|Already shipped/);
+  const assessment = JSON.parse(fs.readFileSync(path.join(out, 'root-gate.json')));
+  assert.equal(assessment.mode, 'audit');
+  assert.equal(assessment.status, 'findings');
+  assert.deepEqual(assessment.blocking, []);
+  assert.equal(assessment.advisory.length, 1);
+  assert.match(fs.readFileSync(env.GITHUB_STEP_SUMMARY, 'utf8'), /Security findings: advisory after merge/);
+  assert.equal(run({ FAKE_AUDIT_EXIT: '2' }).status, 1, 'audit execution errors still fail');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'root-gate.json'))).status, 'unavailable');
+  fs.writeFileSync(auditFile, '{}');
+  assert.equal(run().status, 1, 'an invalid audit is not a clean or advisory verdict');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'root-gate.json'))).status, 'unavailable');
+});
+
+test('the same image finding blocks a PR and warns after merge while runtime and scanner failures still fail', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-image-advisory-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const out = path.join(dir, 'out');
+  fs.mkdirSync(out);
+  const scan = { SchemaVersion: 2, Results: [{ Target: 'worker', Vulnerabilities: [
+    { Severity: 'HIGH', PkgName: 'stdlib', InstalledVersion: 'v1.23.12', VulnerabilityID: 'CVE-fixture', FixedVersion: '1.27.3' },
+  ] }] };
+  fs.writeFileSync(path.join(out, 'vulnerabilities.json'), JSON.stringify(scan));
+  const env = { ...process.env, SECURITY_AUDIT_ONLY: '0', GITHUB_STEP_SUMMARY: path.join(dir, 'summary.md') };
+  const strict = spawnSync(process.execPath, ['scripts/security-findings.js', '--assess', out, 'worker'], { cwd: ROOT, encoding: 'utf8', env });
+  assert.equal(strict.status, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'assessment.json'))).status, 'regression');
+  fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(scan));
+  const sbom = path.join(dir, 'sbom.json');
+  fs.writeFileSync(sbom, '{}');
+  const bin = fakeDocker(dir);
+  const run = (extra = {}) => spawnSync('sh', ['scripts/check-image-security.sh', 'fixture', out, sbom, 'worker'], {
+    cwd: ROOT, encoding: 'utf8', env: { ...env, PATH: `${bin}:${process.env.PATH}`, SECURITY_AUDIT_ONLY: '1', ...extra },
+  });
+  const advisory = run();
+  assert.equal(advisory.status, 0, advisory.stderr);
+  assert.match(advisory.stdout, /::warning title=Security finding: worker image::stdlib@v1\.23\.12: CVE-fixture/);
+  const assessment = JSON.parse(fs.readFileSync(path.join(out, 'assessment.json')));
+  assert.equal(assessment.status, 'findings');
+  assert.equal(assessment.complete, true);
+  assert.deepEqual(assessment.blocking, []);
+  assert.equal(assessment.findings[0].id, 'CVE-fixture');
+  const calls = fs.readFileSync(path.join(dir, 'calls.log'), 'utf8');
+  assert.match(calls, /--entrypoint node/);
+  assert.match(calls, / image --skip-db-update/);
+  assert.doesNotMatch(calls, /imagetools inspect|anchore\/syft/, 'post-merge audits do not need a baseline');
+  assert.equal(run({ FAKE_RUNTIME_FAILURE: '1' }).status, 8);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'assessment.json'))).status, 'unavailable');
+  assert.equal(run({ FAKE_IMAGE_SCAN_FAILURE: '1' }).status, 9);
+  fs.writeFileSync(path.join(dir, 'report.json'), '{}');
+  assert.equal(run().status, 1, 'invalid scan reports still fail');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'assessment.json'))).status, 'unavailable');
 });

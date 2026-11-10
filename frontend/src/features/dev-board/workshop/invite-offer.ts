@@ -117,6 +117,7 @@ const DEAD: Record<string, string> = {
   expired: 'project:invite.dead.expired',
   revoked: 'project:invite.dead.revoked',
   used_up: 'project:invite.dead.usedUp',
+  paused: 'project:invite.dead.paused',
   unknown: 'project:invite.dead.unknown',
 };
 

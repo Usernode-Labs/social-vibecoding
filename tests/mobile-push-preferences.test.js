@@ -64,6 +64,8 @@ const CURRENT_KINDS = [
   // invite link brings back to its maker ("Your invites").
   'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
   'invite_opened', 'member_joined', 'first_message',
+  // The leaked-link guard's two, to the link's maker ("Your invites").
+  'invite_link_busy', 'invite_link_paused',
   // #4396: a project the person joined while it was made is open
   // (proposal_alerts, services/project-opened.js).
   'project_opened',
