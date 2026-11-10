@@ -32,7 +32,7 @@ test('security exceptions are exact, scoped to one advisory, and expire', () => 
   assert.equal(excepted('golang.org/x/net', 'v0.59.0', ['CVE-2026-78669'], now, undefined, 'standalone'), true);
   assert.equal(excepted('golang.org/x/net', 'v0.59.0', ['CVE-2026-78669'], Date.parse('2026-11-12'), undefined, 'standalone'), true);
   assert.equal(excepted('golang.org/x/net', 'v0.59.0', ['CVE-2026-78669'], Date.parse('2026-11-13'), undefined, 'standalone'), false);
-  assert.equal(excepted('decode-uri-component', '0.2.2', ['GHSA-qr28-fpjm-wq7f'], now), true);
+  assert.equal(excepted('decode-uri-component', '0.2.2', ['GHSA-qr28-fpjm-wq7f'], now), false);
   assert.equal(excepted('decode-uri-component', '0.2.3', ['GHSA-qr28-fpjm-wq7f'], now), false);
   assert.equal(excepted('decode-uri-component', '0.2.2', ['GHSA-qr28-fpjm-wq7f'], Date.parse('2026-11-28')), false);
   const audit = { metadata: { vulnerabilities: {} }, vulnerabilities: { pkg: {

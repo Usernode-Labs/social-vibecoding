@@ -54,6 +54,7 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
   && npm cache clean --force
 WORKDIR /build
 COPY package.json package-lock.json ./
+COPY vendor/decode-uri-component ./vendor/decode-uri-component
 RUN npm ci --ignore-scripts
 COPY tailwind.config.js ./
 COPY styles ./styles
@@ -92,6 +93,7 @@ COPY --from=docker-tools /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=buildx-tools /buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY vendor/decode-uri-component ./vendor/decode-uri-component
 RUN npm ci --production
 COPY . .
 RUN node scripts/build-schema.js
