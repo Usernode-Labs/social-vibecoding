@@ -5,6 +5,9 @@
 const COMPONENTS = Object.freeze(['platform', 'standalone', 'worker', 'capture', 'starter']);
 const LEVELS = Object.freeze(['UNKNOWN', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);
 const MAX_BYTES = 1024 * 1024;
+// Browser/compiler images already carry several thousand advisory matches.
+// Keep a count bound as well as the unchanged serialized report byte limit.
+const MAX_FINDINGS = 10_000;
 const IMAGE = /^(?:sha256:[a-f0-9]{64}|ghcr\.io\/[a-z0-9._/-]+@sha256:[a-f0-9]{64})$/;
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9._:+~!^*<>=-]{0,199}$/;
 
@@ -20,7 +23,7 @@ function identity(value, expected) {
 }
 
 function finding(raw) {
-  if (!raw || !/^(?:CVE-\d{4}-\d{4,}|GHSA-[a-z0-9-]{8,}|GO-\d{4}-\d{3,})$/.test(raw.id || '')
+  if (!raw || !/^(?:CVE-\d{4}-\d{4,}|GHSA-[a-z0-9-]{8,}|GO-\d{4}-\d{3,}|TEMP-\d{7}-[A-F0-9]{6})$/.test(raw.id || '')
     || !/^[A-Za-z0-9@][A-Za-z0-9._/@+-]{0,199}$/.test(raw.package || '')
     || !VERSION.test(raw.version || '') || !LEVELS.includes(raw.severity)
     || (raw.fixedVersion && (typeof raw.fixedVersion !== 'string' || raw.fixedVersion.length > 500
@@ -34,7 +37,7 @@ function finding(raw) {
 
 function component(raw) {
   if (!raw || !COMPONENTS.includes(raw.component) || !IMAGE.test(raw.image || '') || !Array.isArray(raw.findings)
-    || raw.findings.length > 1000 || raw.status !== (raw.findings.length ? 'findings' : 'clean')
+    || raw.findings.length > MAX_FINDINGS || raw.status !== (raw.findings.length ? 'findings' : 'clean')
     || !Number.isFinite(Date.parse(raw.checkedAt))) throw new Error('Incomplete security component');
   return { component: raw.component, image: raw.image, status: raw.status, checkedAt: raw.checkedAt,
     findings: raw.findings.map(finding) };
@@ -77,4 +80,4 @@ function readReport(text, expected = {}) {
     unavailable: COMPONENTS.filter((name) => !names.has(name)) };
 }
 
-module.exports = { COMPONENTS, LEVELS, MAX_BYTES, IMAGE, finding, fromAssessments, readReport };
+module.exports = { COMPONENTS, LEVELS, MAX_BYTES, MAX_FINDINGS, IMAGE, finding, fromAssessments, readReport };

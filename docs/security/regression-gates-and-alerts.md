@@ -100,6 +100,16 @@ Complete reports, including lower severities, are retained as workflow artifacts
 for 30 days. An assessment failure requires rerunning the audit; it is not an
 empty vulnerability list.
 
+The compact report accepts up to 10,000 typed findings per component, with an
+unchanged 1 MiB limit on each assessment input and on the complete serialized
+report and its downloaded archive. Findings are never truncated. The former
+1,000-finding limit discarded the successful worker (3,399 findings) and capture
+(1,575 findings) scans on November 10, 2026. Larger inventories still require a
+bounded, valid report; exceeding either limit remains an unavailable assessment.
+Debian's exact `TEMP-0000000-ABCDEF` advisory identifier format is accepted too;
+these real scanner findings previously invalidated both components after the
+count limit was lifted. They remain in the inventory with their original severity.
+
 Rerun all jobs, or dispatch a new audit, to obtain a complete fresh assessment.
 Artifacts are scoped to the run attempt; retrying only the aggregator cannot
 reuse old clean reports to close a finding.
