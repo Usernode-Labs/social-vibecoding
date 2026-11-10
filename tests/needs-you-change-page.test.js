@@ -1366,6 +1366,11 @@ test('the Votes card says when a change still needs a Yes from another member', 
 test('#4455: the Votes card: one part per yes, the figure in the accent when the viewer can give it, and a yes a newer push retired', () => {
   const av = context();
   const v = av._topicViewFor('proposal', PR);
+  // #6552: the steps and the "?" hint name the change they belong to, so the
+  // help reads its votes even when the page is a request's.
+  assert.equal(v.body.steps.changeId, PR.id, 'the steps sheet names its change');
+  assert.equal(v.body.details.ledger.find((r) => r.key === 'votes').changeId, PR.id,
+    'the votes ledger row names its change');
   const votes = (item, roster) => {
     if (roster) av._voteRoster[item.id] = { phase: 'ready', ...roster };
     const built = av._topicViewFor('proposal', item);
@@ -1380,7 +1385,7 @@ test('#4455: the Votes card: one part per yes, the figure in the accent when the
   assert.equal(votes({ ...PR, my_vote: 'yes' }).tone, 'muted');
   // Reached, while testing runs: the names, and that it waits on testing.
   const reached = votes({ ...PR, yes_count: 2, check_state: 'pending' }, { yesNames: ['jo', 'cilokman'], earlierYes: [], earlierNo: [], approvers: 0 });
-  assert.equal(reached.figure, '2 of 2 yes');
+  assert.equal(reached.figure, message('changes:page.votes.figure.reached', { count: 2, needed: 2 }));
   assert.equal(reached.done, true);
   assert.deepEqual(reached.note, ['jo and cilokman said yes.', 'It goes live once testing passes.']);
   // Run four (13 Oct): the reader is "You", never their own username, and

@@ -34,6 +34,7 @@ const { renderComponent } = require('./lib/render-tsx');
 
 const HELP = 'frontend/src/features/dev-board/voting-help.tsx';
 const render = (live) => renderComponent(HELP, 'VotingHelp', { live });
+const TOPIC_HEAD = 'frontend/src/features/dev-board/topic/topic-head.tsx';
 
 test('eight rules, and the emphasis falls where it was written', () => {
   const html = render('');
@@ -106,4 +107,33 @@ test('the module keeps the host, the geometry and the wording', () => {
   assert.match(open[1], /document\.body\.appendChild\(pop\)/);
   // And the string constant is gone, not left as a second copy to drift.
   assert.doesNotMatch(code, /_VOTING_HELP_RULES_HTML/);
+});
+
+test('#6552: the "?" reads the change it sits beside, not the page item', () => {
+  // On a request's page the page item is the request, which has no votes;
+  // the Votes step carries its change's id, and the click handler resolves
+  // it through the cached change rows before falling back to the page item.
+  const src = read('public/js/app-view.js');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const handler = code.match(/const help = e\.target\.closest\('\[data-voting-help\]'\);([\s\S]*?)\n\s*return;/);
+  assert.ok(handler, 'the data-voting-help click handler is found');
+  assert.match(handler[1], /help\.dataset\.votingHelpChange/, 'it reads the hint\'s change id');
+  assert.match(handler[1], /AppView\._changeItems\.get\(changeId\) \|\| AppView\._findTopicItem\(\)/,
+    'the cached change row wins, the page item is the fallback');
+});
+
+test('#6552: the steps sheet puts the change id beside every voting hint', () => {
+  const steps = {
+    headline: 'Waiting to go live', detail: null, done: 3, total: 4, simple: true, changeId: 42,
+    rows: [{ key: 'votes', gate: 'approvals', state: 'done', label: 'Votes', votes: 'ana said yes.', help: true }],
+  };
+  const html = renderComponent(TOPIC_HEAD, 'DetailsBody', { prRef: null, steps, help: true, html: '' });
+  assert.match(html, /data-voting-help-change="42"/, 'the "?" names its change');
+  assert.match(html, /data-voting-help=""/, 'and still opens the popover');
+
+  // No change id: the attribute is left out rather than rendered empty.
+  const bare = renderComponent(TOPIC_HEAD, 'DetailsBody', {
+    prRef: null, steps: { ...steps, changeId: null }, help: true, html: '',
+  });
+  assert.doesNotMatch(bare, /data-voting-help-change/);
 });

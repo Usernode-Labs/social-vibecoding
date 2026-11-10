@@ -2507,9 +2507,13 @@
     "text": "{{count}} commits",
     "description": "Small text beside the label of the row on a proposal's page that says the change is behind the main branch. {{count}} is how many commits (saved code changes) behind it is."
   },
-  "ledger.votes.needed": {
-    "text": "{{yes}} of {{required}} needed",
-    "description": "Small text beside the \"Votes\" label on a proposal's page. {{yes}} is the number of Yes votes so far and {{required}} the number needed to approve the change."
+  "ledger.votes.needed_one": {
+    "text": "{{count}} yes vote, {{required}} needed",
+    "description": "Small text beside the \"Votes\" label on a proposal's page. {{count}} is the number of Yes votes so far (one) and {{required}} the number needed to approve the change."
+  },
+  "ledger.votes.needed_other": {
+    "text": "{{count}} yes votes, {{required}} needed",
+    "description": "Small text beside the \"Votes\" label on a proposal's page. {{count}} is the number of Yes votes so far and {{required}} the number needed to approve the change."
   },
   "ledger.sync.label": {
     "text": "Sync with main",
@@ -8715,9 +8719,13 @@
     "text": "Needs another member’s yes",
     "description": "The large figure on the Votes card of a change's page when the change has enough Yes votes but still needs one from a member other than its author. \"Yes\" is the vote."
   },
-  "page.votes.figure.reached": {
-    "text": "{{yes}} of {{needed}} yes",
-    "description": "The large figure on the Votes card of a change's page once it has the Yes votes it needs. {{yes}} is how many Yes votes it has and {{needed}} how many it needs."
+  "page.votes.figure.reached_one": {
+    "text": "{{count}} yes vote, {{needed}} needed",
+    "description": "The large figure on the Votes card of a change's page once it has the Yes votes it needs. {{count}} is how many Yes votes it has (one) and {{needed}} how many it needs."
+  },
+  "page.votes.figure.reached_other": {
+    "text": "{{count}} yes votes, {{needed}} needed",
+    "description": "The large figure on the Votes card of a change's page once it has the Yes votes it needs. {{count}} is how many Yes votes it has and {{needed}} how many it needs."
   },
   "page.votes.figure.yourApproval": {
     "text": "Waiting for your approval",
@@ -8743,9 +8751,13 @@
     "text": "Votes: voted in",
     "description": "Accessible description of the progress bar on the Votes card of a change's page once the group approved the change."
   },
-  "page.votes.label.tally": {
-    "text": "Votes: {{yes}} of {{needed}} yes",
-    "description": "Accessible description of the progress bar on the Votes card of a change's page while the vote is open. {{yes}} is how many Yes votes it has and {{needed}} how many it needs."
+  "page.votes.label.tally_one": {
+    "text": "Votes: {{count}} yes vote, {{needed}} needed",
+    "description": "Accessible description of the progress bar on the Votes card of a change's page while the vote is open. {{count}} is how many Yes votes it has (one) and {{needed}} how many it needs."
+  },
+  "page.votes.label.tally_other": {
+    "text": "Votes: {{count}} yes votes, {{needed}} needed",
+    "description": "Accessible description of the progress bar on the Votes card of a change's page while the vote is open. {{count}} is how many Yes votes it has and {{needed}} how many it needs."
   },
   "page.votes.note.notAsked": {
     "text": "Its author has not asked for approval yet.",
