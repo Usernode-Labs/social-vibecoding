@@ -244,7 +244,9 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     // for #6399, the request whose hand-back reason a later release lifted,
     // and 9114/9115 for #6211, the pair whose discussions show the overlap
     // note, its three choices and the line saying what was chosen).
-    assert.strictEqual(body.issues.length, 28);
+    // #6503: the similar-title fixture adds one ordinary request.
+    assert.strictEqual(body.issues.length, 29);
+    assert.strictEqual(body.issues.find((i) => i.number === 900001).similar.number, 9006503);
 
     // #6399: and opened by its address, as the shots do, the request whose
     // hand-back reason a later release lifted is there without ?demo=1.

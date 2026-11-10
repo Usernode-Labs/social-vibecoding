@@ -6402,5 +6402,13 @@
   "topic.decision.outcome.superseded": {
     "text": "No longer needed. Voting has ended.",
     "description": "Line under the Votes card on a governance vote's page once something else settled what it was about, so the vote no longer applies."
+  },
+  "workRow.twin": {
+    "text": "Similar to <0>#{{number}}</0>",
+    "description": "Hint below a request in the Workshop: links to another open request with a similar title. It does not merge them."
+  },
+  "topic.request.twin": {
+    "text": "Similar to <0>#{{number}} {{title}}</0>",
+    "description": "Hint below a request title: links to the closest similar open request, with its number and title."
   }
 }

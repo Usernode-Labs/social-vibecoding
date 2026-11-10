@@ -415,6 +415,7 @@ export interface RowTag {
  * stays the source of the item's hooks and its Yes/No specs.
  */
 export interface RowBrief {
+  twin?: { number: number; title: string } | null;
   /** The neutral tile's glyph. */
   kind: 'request' | 'change' | 'live' | 'vote';
   /** Which word names it ("Change #4456", "Request"): a key, the row reads the message. */

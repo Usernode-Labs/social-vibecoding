@@ -277,6 +277,8 @@ function stagingMockIssues(repoUrl) {
       + 'Steps to reproduce:\n1. Enable dark mode in the header\n'
       + '2. Refresh the page\n3. The app is back in light mode\n\n'
       + 'Expected: the preference persists across reloads.', 2),
+    mk(9006503, '[Mock] Dark mode toggle forgets its setting after refresh',
+      'Staging-only sample of a similar open request. Compare the two before deciding.', 3),
     mk(900002, '[Mock] Add a keyboard shortcut for voting',
       'Staging-only mock issue for previewing the Dev card list.\n\n'
       + 'Power users vote on a lot of proposals — pressing Y/N while a '
@@ -2828,6 +2830,8 @@ function issueRoutes(config) {
       const used = await countWeeklyBountiesUsed(pool, req.user.id, weekStartUtc());
       const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
+      const twins = await require('../services/request-similarity').boardTwins(pool, app.id, issues, FEEDBACK_FALLBACK_TITLE);
+      for (const issue of issues) issue.similar = twins.get(Number(issue.number)) || null;
       res.json({
         issues,
         truncatedList: !!result.truncatedList,
@@ -3024,7 +3028,9 @@ function issueRoutes(config) {
       }
       const addressed = addressedBy.get(number)
         || (issue === mock && mock.mockAddressedBy) || null;
-      const issueFields = { ...issue };
+      const twins = issue.state === 'closed' ? new Map() : await require('../services/request-similarity').boardTwins(
+        pool, app.id, [...(IS_STAGING ? stagingMockIssues(app.repo_url) : []), issue], FEEDBACK_FALLBACK_TITLE);
+      const issueFields = { ...issue, similar: twins.get(number) || null };
       delete issueFields.mockAddressedBy;
       delete issueFields.mockClosedVia;
 

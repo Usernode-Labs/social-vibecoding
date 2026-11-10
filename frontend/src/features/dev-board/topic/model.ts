@@ -550,6 +550,7 @@ export interface ClosesRequestView {
 }
 
 export interface RequestView {
+  similar?: { number: number; title: string } | null;
   number: number;
   /** The category's name, as plain words under "Request #N"; null when unset. */
   category: string | null;
