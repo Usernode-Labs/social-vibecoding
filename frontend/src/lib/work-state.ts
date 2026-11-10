@@ -144,6 +144,10 @@ export function stageWords(state: WorkState, { yours = true }: { yours?: boolean
   // #6531: a conflicting change the lane is catching up says "Syncing with
   // main" in its stage word, not "Checking".
   if (state.stage === 'checking' && code === 'syncing') return { id: 'core:work.stage.syncing' };
+  // #6563: an approved change whose merge GitHub holds is not going live yet.
+  if (state.stage === 'going_live' && (code === 'github_checks' || code === 'github_wait')) {
+    return { id: 'core:work.stage.waitingToMerge' };
+  }
   if (state.stage === 'reading' && NOT_STARTED.has(code)) return { id: 'core:work.stage.notStarted' };
   if (state.stage === 'building' && READY.has(code)) return { id: 'core:work.stage.readyToBuild' };
   return { id: STAGE_WORDS[state.stage] || STAGE_WORDS.reading };

@@ -675,6 +675,10 @@
     "text": "Going live",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change was approved and is being put live."
   },
+  "work.stage.waitingToMerge": {
+    "text": "Waiting to merge",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change was approved and tested, and GitHub has not merged it yet because GitHub's own required checks are still running or it is held back for a moment."
+  },
   "work.stage.live": {
     "text": "Live",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change is live."

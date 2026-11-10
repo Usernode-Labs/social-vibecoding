@@ -2935,6 +2935,38 @@
     "text": "{{count}} more",
     "description": "Button under the list of requests a change will close, on its Votes card, when some more are hidden. Tapping it shows the hidden lines in the same list."
   },
+  "topic.change.gate.merge.tried_one": {
+    "text": "Tried {{count}} min ago.",
+    "description": "One sentence at the end of the line under the Merging card on a change's page: when Homeroom last asked GitHub to merge the change. {{count}} is how many minutes ago, 1."
+  },
+  "topic.change.gate.merge.tried_other": {
+    "text": "Tried {{count}} min ago.",
+    "description": "One sentence at the end of the line under the Merging card on a change's page: when Homeroom last asked GitHub to merge the change. {{count}} is how many minutes ago."
+  },
+  "topic.change.gate.merge.triedJustNow": {
+    "text": "Tried just now.",
+    "description": "One sentence at the end of the line under the Merging card on a change's page: Homeroom asked GitHub to merge the change less than a minute ago."
+  },
+  "topic.change.gate.merge.next_one": {
+    "text": "Trying again in about {{count}} min.",
+    "description": "The last sentence of the line under the Merging card on a change's page: when Homeroom asks GitHub again. {{count}} is how many minutes from now, 1."
+  },
+  "topic.change.gate.merge.next_other": {
+    "text": "Trying again in about {{count}} min.",
+    "description": "The last sentence of the line under the Merging card on a change's page: when Homeroom asks GitHub again. {{count}} is how many minutes from now."
+  },
+  "topic.change.gate.merge.nextNow": {
+    "text": "Trying again now.",
+    "description": "The last sentence of the line under the Merging card on a change's page: Homeroom is asking GitHub to merge it again now."
+  },
+  "topic.change.gate.merge.longFigure": {
+    "text": "Waiting longer than usual",
+    "description": "The large figure on the Merging card of a change's page once the merge has waited about 30 minutes or more, in place of the reason it waits."
+  },
+  "topic.change.gate.merge.long": {
+    "text": "This usually takes a few minutes, and it has waited {{minutes}} min. Homeroom keeps trying. If it is still waiting, say so in this change's thread.",
+    "description": "One sentence of the line under the Merging card on a change's page once the merge has waited about 30 minutes or more. {{minutes}} is how many minutes it has waited. The last sentence asks the reader to report it in the change's own discussion."
+  },
   "topic.change.shots.title": {
     "text": "Before and after",
     "description": "Name, and accessible name, of the card on a change's page that holds screenshots of the app before and after the change, or the line saying where they are."
