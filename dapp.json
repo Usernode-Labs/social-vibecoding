@@ -5058,6 +5058,12 @@
       "expectText": "Restart build"
     },
     {
+      "name": "#6544: a closed request stays in Waiting & in progress while its merged change goes live",
+      "path": "/#homeroom-bot",
+      "expectSelector": "#ai-screen [data-ai-list=\"busy\"] [data-ai-group=\"staging-demo-closed-going-live\"] [data-ai-line=\"going_live\"]",
+      "expectText": "Staging demo: a closed request going live"
+    },
+    {
       "name": "#6019 (#6160): the AI tab's Waiting & in progress card of its own lists your work under way then what waits on someone else (going live before being built, then other people's votes on a change or a group decision, then a build held back as Homeroom bot says in Main)",
       "path": "/?demo=1#homeroom-bot",
       "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"open\"] + [data-ai-sheet=\"busy\"] [data-ai-list=\"busy\"] [data-ai-group=\"staging-demo-your-app\"] [data-ai-line=\"going_live\"] ~ [data-ai-line=\"building\"] ~ [data-ai-line=\"up_for_vote\"]",
