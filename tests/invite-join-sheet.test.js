@@ -132,7 +132,8 @@ test('signing in is the email with the Email code | Password switch; making an a
   const src = read(SHEET);
   assert.match(src, /const methodSwitch = hasMethodSwitch\(step, from, signIn\);/);
   assert.match(src, /const emailFoot = firstStepLine\(from, signIn\) === 'terms' \? <TermsNotice \/> : null;/);
-  assert.match(src, /const passwordLink = firstStepLine\(from, signIn\) === 'password' \? \(/);
+  assert.equal(hasMethodSwitch('choose', 'signin'), true);
+  assert.equal(hasMethodSwitch('choose', 'invite'), false);
   // The choose step says it is for an account made before only when signing in.
   assert.match(src, /: step === 'choose'\s+\? \(signIn \? t\('auth:signInSheet\.choose\.lead'\) : ''\)/);
 });
@@ -168,7 +169,7 @@ test('only the invite\'s Join changes: the landing\'s sheets keep their phone li
   assert.match(html, /data-sign-in-sheet="choose"/);
   assert.match(html, /data-sign-in-sheet-to-phone=""[^>]*>Use a phone number instead<\/button>/);
   assert.doesNotMatch(html, /Sign up with email instead|Already on Homeroom\? <a|New to Homeroom\?/);
-  assert.match(html, /data-sign-in-sheet-password=""/, 'Use a password, as before');
+  assert.match(html, /data-sign-in-sheet-method-password=""/, 'Password is offered before a code is sent');
   // Its phone step keeps "Already on Homeroom? Sign in with email" (the phone-step source).
   const src = read(SHEET);
   assert.match(src, /\{step === 'phone' && !phone \? \(\s+<p className="mt-4 text-center text-\[13px\] text-zinc-500 dark:text-zinc-400">\s+<RichMessage id="auth:signInSheet\.phone\.haveAccount"/);

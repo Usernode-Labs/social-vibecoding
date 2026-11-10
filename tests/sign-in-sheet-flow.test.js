@@ -458,7 +458,7 @@ test('the password step sends the sign-in screen\'s exchange, and says what it r
 test('the password step is the sheet\'s: the link opens it, and Forgot password opens the reset in the sheet', () => {
   const src = read(SHEET);
   assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password' \| 'forgot' \| 'phone' \| 'phone-code' \| 'link';/);
-  assert.match(src, /data-sign-in-sheet-password=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('password'\); \}\}/);
+  assert.match(src, /data-sign-in-sheet-method-password=""[^\n]*toStep\('password'\)/);
   assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>\{t\('auth:signInSheet\.password\.identifierLabel'\)\}<\/label>/);
   assert.equal(message('auth:signInSheet.password.identifierLabel'), 'Username or email');
   assert.match(src, /<PasswordInput ref=\{currentPasswordField\} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password"/);
@@ -535,7 +535,7 @@ test('each way into the sheet says only what is true for it', () => {
   assert.doesNotMatch(landing, /No app, no password/);
 });
 
-test('the first step with Apple and Google: the terms under them, then the email, then the password (#5257)', () => {
+test('the first step offers Email code and Password before Apple, Google or sending a code (#6553)', () => {
   const { SignInSheet } = loadTsx(SHEET);
   const render = (from) => renderToHtml(createElement(SignInSheet, {
     open: true, title: 'Continue to Homeroom', from, providers: ['google', 'apple'], onClose() {}, primaryClass: 'pill',
@@ -547,21 +547,23 @@ test('the first step with Apple and Google: the terms under them, then the email
     const order = [
       at(/data-sign-in-provider="google"/), at(/data-sign-in-provider="apple"/),
       at(/By continuing, you agree to Homeroom&#x27;s terms and acknowledge the privacy notice\./), at(/data-sign-in-sheet-or=""/),
-      at(/id="sign-in-sheet-email"/), at(/data-sign-in-provider="email"/), at(/data-sign-in-sheet-password=""/),
+      at(/id="sign-in-sheet-email"/), at(/data-sign-in-provider="email"/),
     ];
     for (const i of order) assert.ok(i > 0, `${from}: every part is there`);
     assert.deepEqual([...order].sort((a, b) => a - b), order, `${from}: in that order`);
     // The email is sent from here: a form, its button the submit.
     assert.match(html, /<button type="submit" data-sign-in-provider="email"[^>]*>Continue with email<\/button><\/form>/);
     assert.equal((html.match(/By continuing/g) || []).length, 1, `${from}: the terms once`);
-    assert.match(html, />Use a password<\/a>/);
+    assert.match(html, /data-sign-in-sheet-method-email=""[^>]*>Email code<\/button>/);
+    assert.match(html, /data-sign-in-sheet-method-password=""[^>]*>Password<\/button>/);
+    assert.ok(at(/data-sign-in-sheet-method-password/) < at(/data-sign-in-provider="google"/));
   }
   // An invite's Join only makes an account: its terms, and no password.
   const join = render('invite');
   assert.match(join, /By continuing, you agree/);
   assert.doesNotMatch(join, /Use a password|data-sign-in-sheet-password=/);
   assert.equal(message('auth:signInSheet.withPassword'), 'Use a password');
-  assert.match(message('auth:signInSheet.resume.passwordRequired'), /"Use a password"/);
+  assert.match(message('auth:signInSheet.resume.passwordRequired'), /"Password"/);
 });
 
 test('Email code | Password is one switch, and the password and reset steps say no terms (#5258)', () => {
@@ -570,7 +572,8 @@ test('Email code | Password is one switch, and the password and reset steps say 
   for (const from of ['signin', 'story']) {
     assert.equal(hasMethodSwitch('email', from), true);
     assert.equal(hasMethodSwitch('password', from), true);
-    for (const step of ['choose', 'code', 'forgot', 'account', 'phone']) assert.equal(hasMethodSwitch(step, from), false);
+    assert.equal(hasMethodSwitch('choose', from), true);
+    for (const step of ['code', 'forgot', 'account', 'phone']) assert.equal(hasMethodSwitch(step, from), false);
   }
   assert.equal(hasMethodSwitch('email', 'invite', true), true, 'an invite\'s Join, signing an account in');
   // An invite's Join only makes an account: no password half to switch to.
