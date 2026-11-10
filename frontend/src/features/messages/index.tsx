@@ -133,8 +133,9 @@ import { changeRowWords } from '../agent-session/transcript';
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
-import { INBOX_QUERY_MAX, INBOX_SECTIONS, agentAsksForYou, buildInbox, savedInboxQuery, shownInSection, type AppDiscussion, type InboxSection } from './inbox';
+import { INBOX_QUERY_MAX, INBOX_SECTIONS, agentAsksForYou, buildInbox, discussionSection, savedInboxQuery, shownInSection, type AppDiscussion, type InboxSection } from './inbox';
 import { useSidebarRows } from '../nav/sidebar-rows';
+import { channelPlace, placeHref } from '../dev-board/workshop/places';
 import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
 
 /*
@@ -389,7 +390,7 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
   const handle = discussion.channel || discussion.slug;
   return (
     <a
-      href={`#messages/app/${encodeURIComponent(discussion.slug)}`}
+      href={`#${placeHref(discussion.slug, channelPlace(discussion.channel)).slice(1)}`}
       data-inbox-app={discussion.slug}
       data-inbox-channel={handle}
       className={`messages-conversation-row messages-channel-row ${active ? 'messages-conversation-active' : ''}`}
@@ -931,6 +932,10 @@ function ConversationList({ drawer = false }: {
   // Agents shows its week until "N older chats" (./inbox.ts
   // shownInSection). Not remembered: the next visit starts on the week.
   const [agentsExpanded, setAgentsExpanded] = useState(false);
+  const [channelsExpanded, setChannelsExpanded] = useState(false);
+  const discussion = discussionSection(snap.conversations, snap.discussions);
+  const showDiscussion = mounted && !searching && !!(discussion.general || discussion.others.length);
+
 
   // #4729: the archived agent chats fold behind a link at the Agents
   // section's foot, in the "N older chats" shape. Opening it re-reads the
@@ -1083,7 +1088,7 @@ function ConversationList({ drawer = false }: {
           // The archived chats are reached past the open ones: under all of
           // them, once "N older chats" has shown the rest below it.
           const archive = section === 'agents' && showArchivedToggle && (!older || agentsExpanded);
-          if (!entries.length && !archive) return null;
+          if (!entries.length && !archive && !(section === 'agents' && showDiscussion)) return null;
           const more = older > 0 ? (
             <button
               key="agents-older"
@@ -1098,7 +1103,7 @@ function ConversationList({ drawer = false }: {
           ) : null;
           return (
             <Fragment key={section}>
-              <SectionHead section={section} folded={folded} aside={asides[section].text} ask={asides[section].ask} />
+              {entries.length || archive ? <SectionHead section={section} folded={folded} aside={asides[section].text} ask={asides[section].ask} /> : null}
               {shown.length || more || archive ? (
                 <div className="messages-section-card" data-inbox-card={section}>
                   {shown.map(inboxRow)}
@@ -1130,6 +1135,20 @@ function ConversationList({ drawer = false }: {
                       ))}
                     </div>
                   )}
+                </>
+              ) : null}
+              {section === 'agents' && showDiscussion ? (
+                <>
+                  <h3 className="messages-section-head" data-inbox-section="discussion"><span className="messages-section-name">{t('messages:inbox.section.discussion')}</span></h3>
+                  <div className="messages-section-card" data-inbox-card="discussion">
+                    {discussion.general ? <GeneralChannelRow conversation={discussion.general} active={snap.route.conversationId === discussion.general.id} /> : null}
+                    {discussion.others.length ? (
+                      <button type="button" className="messages-inbox-older" data-inbox-more="discussion" aria-expanded={channelsExpanded} onClick={() => setChannelsExpanded(!channelsExpanded)}>
+                        {channelsExpanded ? t('messages:inbox.channels.hide') : t('messages:inbox.channels.show', { count: discussion.others.length })}
+                      </button>
+                    ) : null}
+                    {channelsExpanded ? discussion.others.map((channel) => <AppChannelRow key={channel.slug} discussion={channel} active={false} />) : null}
+                  </div>
                 </>
               ) : null}
             </Fragment>

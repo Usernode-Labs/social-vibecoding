@@ -28,13 +28,9 @@
  *
  * ── Channels live in their communities now ────────────────────────────
  *
- * Messages is PEOPLE AND AGENTS. The channels — #general and one per app —
- * were a second section here (#2783, below), and they moved to the hub of
- * the community each belongs to (features/dev-board/workshop/hub-cards.tsx);
- * #general is the Homeroom community's. So the merge below draws the chats
- * section alone, and the Channels filter is gone with the section. A
- * channel keeps its address (`#messages/app/<slug>`, `#messages/<id>` for
- * #general), and opening one lights Communities rather than Messages.
+ * Messages carries a Discussion shortcut: #general, then other channels
+ * folded behind their count. These doors open the channel on its project's
+ * page; the inbox merge below still contains people and agents only.
  *
  * ── Two sections, Discord's (#2783, retired) ──────────────────────────
  *
@@ -288,4 +284,14 @@ export function shownInSection<T extends InboxEntry>(section: InboxSection, entr
     else older.push(entry);
   }
   return { shown, older: older.length, olderShown: expanded ? older : [] };
+}
+
+
+/** Channels are shortcuts to their own project pages, separate from chat search. */
+export function discussionSection(conversations: ConversationSummary[], discussions: AppDiscussion[]) {
+  return {
+    general: conversations.find((c) => c.kind === 'channel' && c.channelKey === 'general')
+      || conversations.find((c) => c.kind === 'channel') || null,
+    others: discussions,
+  };
 }

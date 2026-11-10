@@ -628,3 +628,17 @@ test('a new account\'s Messages says it is empty: #general is read but never lis
   assert.doesNotMatch(SCREEN, /!snap\.conversations\.length && !inbox\.length/);
   assert.equal(message('messages:inbox.empty.title'), 'No messages yet');
 });
+
+
+test('Discussion shortcuts choose general and keep other project channels in server order', () => {
+  const general = { id: 3, kind: 'channel', channelKey: 'general' };
+  const others = [{ slug: 'second' }, { slug: 'first' }];
+  const section = inbox.discussionSection([{ id: 1, kind: 'direct' }, { id: 2, kind: 'channel', channelKey: 'other' }, general], others);
+  assert.deepEqual(section, { general, others });
+  assert.deepEqual(inbox.discussionSection([], []), { general: null, others: [] });
+  assert.equal(inbox.discussionSection([{ id: 1, kind: 'direct', homeroomBot: true }], []).general, null);
+  assert.match(SCREEN, /const showDiscussion = mounted && !searching/);
+  assert.match(SCREEN, /section === 'agents' && showDiscussion/);
+  assert.match(SCREEN, /data-inbox-more="discussion" aria-expanded=\{channelsExpanded\}/);
+  assert.match(SCREEN, /placeHref\(discussion.slug, channelPlace\(discussion.channel\)\)/);
+});
