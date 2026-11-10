@@ -90,7 +90,7 @@ test('dapp.json\'s icon.color reaches the page: manifest, column, list and app r
   assert.match(read('frontend/src/features/improve/improve-status.js'), /iconColor: appData\.icon_color \|\| null,/);
   assert.match(read('frontend/src/features/workshop/community-scope.ts'), /iconColor: r\.icon_color \|\| null,/);
   const dapp = JSON.parse(read('dapp.json'));
-  assert.deepEqual(dapp.icon, { image: 'public/apple-touch-icon.png', color: '#37477b' },
+  assert.deepEqual(dapp.icon, { image: 'public/icon.png', color: '#37477b' },
     'Homeroom sets its own: its mark is black and white, so it has no hue to read');
 });
 

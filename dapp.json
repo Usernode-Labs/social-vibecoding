@@ -2,7 +2,7 @@
   "name": "Homeroom",
   "description": "The community for the platform itself. Discuss the platform and help make it better.",
   "icon": {
-    "image": "public/apple-touch-icon.png",
+    "image": "public/icon.png",
     "color": "#37477b"
   },
   "topics": [

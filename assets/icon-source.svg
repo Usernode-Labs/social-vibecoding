@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Class Jump's app icon: the Homeroom brand tile (cream figure on a near-black
+       rounded square), with Class Jump's own subject mid-jump over a short bar.
+       Rasterised to public/app-icon.png; the icon must be a PNG, never this SVG. -->
+  <rect width="1024" height="1024" rx="184.32" fill="#0b0b0b"/>
+  <g fill="#fffeea" stroke="#fffeea" stroke-width="73.143" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="548.571" cy="256" r="91.429" stroke="none"/>
+    <path fill="none" d="M548.571 365.714 L475.429 585.143 M475.429 585.143 L329.143 694.857 M475.429 585.143 L621.714 731.429 M512 438.857 L694.857 365.714 M512 438.857 L329.143 402.286"/>
+    <rect x="219.429" y="822.857" width="585.143" height="73.143" rx="36.571" stroke="none"/>
+  </g>
+</svg>
