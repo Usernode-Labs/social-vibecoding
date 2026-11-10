@@ -35,19 +35,23 @@ function skinModuleSrc() {
 }
 
 // Runs the module against a stub window/document. `stored` seeds storage,
-// `search` is the page's query string, `broken` makes storage throw.
-function runSkin({ stored = null, search = '', broken = false } = {}) {
+// `search` is the page's query string, `broken` makes every storage access
+// throw, `storageThrows` makes only writes throw (storage readable, not
+// writable), `href` is the page's full address.
+function runSkin({ stored = null, search = '', broken = false, storageThrows = false, href = null } = {}) {
   const store = new Map(stored === null ? [] : [['homeroom:skin', stored]]);
   const attrs = new Map();
   const listeners = [];
+  const replaced = [];
   const localStorage = {
     getItem(k) { if (broken) throw new Error('blocked'); return store.has(k) ? store.get(k) : null; },
-    setItem(k, v) { if (broken) throw new Error('blocked'); store.set(k, String(v)); },
-    removeItem(k) { if (broken) throw new Error('blocked'); store.delete(k); },
+    setItem(k, v) { if (broken || storageThrows) throw new Error('blocked'); store.set(k, String(v)); },
+    removeItem(k) { if (broken || storageThrows) throw new Error('blocked'); store.delete(k); },
   };
   const window = {
     localStorage,
-    location: { search },
+    location: { search, href: href || `https://app.example/${search}` },
+    history: { replaceState(state, title, url) { replaced.push(url); } },
     addEventListener(type, fn) { if (type === 'storage') listeners.push(fn); },
   };
   const document = {
@@ -56,8 +60,8 @@ function runSkin({ stored = null, search = '', broken = false } = {}) {
       removeAttribute(k) { attrs.delete(k); },
     },
   };
-  vm.runInNewContext(skinModuleSrc(), { window, document, URLSearchParams });
-  return { Skin: window.Skin, store, attrs, listeners };
+  vm.runInNewContext(skinModuleSrc(), { window, document, URLSearchParams, URL });
+  return { Skin: window.Skin, store, attrs, listeners, replaced };
 }
 
 // ── The inline head module ───────────────────────────────────────────────
@@ -92,6 +96,42 @@ test('?skin= pins the look for this load and stores nothing', () => {
   const off = runSkin({ stored: 'glass', search: '?skin=standard' });
   assert.equal(off.attrs.has('data-skin'), false, 'standard pins the standard look over a stored one');
   assert.equal(runSkin({ search: '?skin=neon' }).Skin.get(), 'standard', 'an unknown pin is ignored');
+});
+
+test('a pick applies and holds even when the browser refuses to store it', () => {
+  const fired = [];
+  // Storage can be read but not written: the old value stays stored.
+  const r = runSkin({ stored: 'glass', storageThrows: true });
+  assert.equal(r.attrs.get('data-skin'), 'glass');
+  r.Skin.onChange(() => fired.push(r.Skin.get()));
+  r.Skin.set('paper');
+  assert.equal(r.attrs.get('data-skin'), 'paper', 'the picked look is on <html> at once');
+  assert.equal(r.Skin.get(), 'paper', 'and is what every reader gets, not the stale stored look');
+  assert.deepEqual(fired, ['paper'], 'and the listeners repaint');
+  assert.equal(r.store.get('homeroom:skin'), 'glass', 'storage still holds the old value: the write was refused');
+});
+
+test('a pick replaces a look named in the address, keeping the rest of it', () => {
+  const r = runSkin({
+    search: '?skin=glass&tab=2',
+    href: 'https://app.example/wall?skin=glass&tab=2#section',
+  });
+  assert.equal(r.replaced.length, 0, 'a load alone never rewrites the address');
+  r.Skin.set('workbench');
+  assert.equal(r.Skin.get(), 'workbench');
+  assert.equal(r.store.get('homeroom:skin'), 'workbench');
+  assert.deepEqual(r.replaced, ['/wall?tab=2#section'],
+    'the skin parameter is gone, the other parameters and the hash stay');
+});
+
+test('a pick made in another tab takes over, after a local pick', () => {
+  const r = runSkin({ stored: 'glass' });
+  r.Skin.set('paper');
+  assert.equal(r.Skin.get(), 'paper');
+  r.store.set('homeroom:skin', 'mosaic');
+  for (const fn of r.listeners) fn({ key: 'homeroom:skin' });
+  assert.equal(r.attrs.get('data-skin'), 'mosaic', 'the in-memory pick is dropped for the other tab\'s');
+  assert.equal(r.Skin.get(), 'mosaic');
 });
 
 // ── The nine looks of the frame ──────────────────────────────────────────
