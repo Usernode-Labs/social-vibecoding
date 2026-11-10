@@ -50,6 +50,7 @@ import { isPlusThreadOpener, isRequestNews, requestKey } from './bot-request';
 import { firstRowInView, scrollCorrection, type MeasuredRow, type SavedPlace } from './list-place';
 import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
+import { InboxToEnd } from './inbox-to-end';
 import { WelcomeBack } from './welcome-back';
 import { dropOnComposer, useComposerDropReady } from './pane-drop';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
@@ -1155,6 +1156,7 @@ function ConversationList({ drawer = false }: {
           );
         })}
       </div>
+      <InboxToEnd scroller={scrollRef} />
     </section>
   );
 

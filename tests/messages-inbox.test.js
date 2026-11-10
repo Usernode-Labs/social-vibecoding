@@ -642,3 +642,14 @@ test('Discussion shortcuts choose general and keep other project channels in ser
   assert.match(SCREEN, /data-inbox-more="discussion" aria-expanded=\{channelsExpanded\}/);
   assert.match(SCREEN, /placeHref\(discussion.slug, channelPlace\(discussion.channel\)\)/);
 });
+
+test('the oldest-chats shortcut shows only above the end of a visible overflowing inbox', () => {
+  const { showsToEnd } = loadTsx('frontend/src/features/messages/inbox-to-end.tsx');
+  assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 500, scrollTop: 0 }), false);
+  assert.equal(showsToEnd({ clientHeight: 0, scrollHeight: 900, scrollTop: 0 }), false);
+  assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 1200, scrollTop: 0 }), true);
+  assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 1200, scrollTop: 580 }), false);
+  assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 1200, scrollTop: 579 }), true);
+  assert.match(SCREEN, /<InboxToEnd scroller=\{scrollRef\} \/>/);
+  assert.equal(message('messages:inbox.toEnd.label'), 'Oldest chats');
+});

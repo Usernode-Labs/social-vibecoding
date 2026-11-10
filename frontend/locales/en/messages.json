@@ -5822,5 +5822,13 @@
   "inbox.channels.hide": {
     "text": "Hide other channels",
     "description": "Folds project channel shortcuts in Messages, keeping general visible."
+  },
+  "inbox.toEnd.label": {
+    "text": "Oldest chats",
+    "description": "Floating shortcut at the foot of a long Messages list. Scrolls to the oldest chats."
+  },
+  "inbox.toEnd.name": {
+    "text": "Jump to the oldest chats, at the end of the list",
+    "description": "Accessible name and tooltip of the Messages list shortcut."
   }
 }
