@@ -20,6 +20,8 @@ export interface ProjectTab { key: string; label: string; count?: number }
 interface HeadProps {
   tabs: ProjectTab[];
   tab: string;
+  /** What the page is when it is not the lit tab's own: a topic's channel lights Topics but is drawn by the product below the head. */
+  page?: string;
   onTab: (key: string) => void;
   /** Ask for a change; null for someone who may not ask (a visitor). */
   onAsk?: (() => void) | null;
@@ -76,7 +78,7 @@ export function ProjectFrameHead({ title, purpose, ...head }: HeadProps & { titl
   useProjectFrameFlag();
   const acts = useActs(head);
   return (
-    <Frame data-project-frame={head.tab}>
+    <Frame data-project-frame={head.page || head.tab}>
       <div className={k('inner')}>
         <Head title={title} purpose={purpose || undefined} acts={acts} />
         <PlaceTabs {...head} />
@@ -430,6 +432,8 @@ export interface AllItemRow {
 
 /** A stage of the board: its name, and the items in it, newest first. */
 export interface AllItemsCol { key: string; title: string; items: AllItemRow[] }
+/** A topic of the board (the standard's By category card): who is in it, how many items are open, its channel. */
+export interface AllItemsTopic { key: string; name: string; icon: string; people: number; items: number; href: string }
 
 /** The five-stop line's stop for each of the board's columns. */
 const COL_STOP: Record<string, [number, 'now' | 'wait']> = {
@@ -443,10 +447,11 @@ const COL_STOP: Record<string, [number, 'now' | 'wait']> = {
  * beside them narrows the list to yours.
  */
 export function ProjectAllItemsFrame({
-  project, cols, loading, stage, onStage, mine, onMine, query, onQuery, openKey, onOpen, ...head
+  project, cols, loading, stage, onStage, mine, onMine, query, onQuery, openKey, onOpen, topics = [], ...head
 }: HeadProps & {
   project: string;
   cols: AllItemsCol[];
+  topics?: AllItemsTopic[];
   loading: boolean;
   /** The column shown, or '' for all. */
   stage: string;
@@ -487,12 +492,30 @@ export function ProjectAllItemsFrame({
         />
       )}
       side={(
-        <Sec label={t('project:frame.allItems.show')}>
-          <Card>
-            <Row lead={<Lead icon={mine ? '' : 'check'} />} title={t('project:frame.allItems.everyone')} on={!mine} pressed={!mine} onClick={() => onMine(false)} sm />
-            <Row lead={<Lead icon={mine ? 'check' : ''} />} title={t('project:frame.allItems.mine')} on={mine} pressed={mine} onClick={() => onMine(true)} sm />
-          </Card>
-        </Sec>
+        <>
+          <Sec label={t('project:frame.allItems.show')}>
+            <Card>
+              <Row lead={<Lead icon={mine ? '' : 'check'} />} title={t('project:frame.allItems.everyone')} on={!mine} pressed={!mine} onClick={() => onMine(false)} sm />
+              <Row lead={<Lead icon={mine ? 'check' : ''} />} title={t('project:frame.allItems.mine')} on={mine} pressed={mine} onClick={() => onMine(true)} sm />
+            </Card>
+          </Sec>
+          {topics.length ? (
+            <Sec label={t('project:places.list.topics')}>
+              <Card>
+                {topics.map((topic) => (
+                  <Row
+                    key={topic.key}
+                    href={topic.href}
+                    lead={topic.icon ? <Lead>{topic.icon}</Lead> : <Lead icon="hash" />}
+                    title={topic.name}
+                    line={t('project:frame.allItems.topicLine', { people: t('project:frame.allItems.people', { count: topic.people }), items: t('project:frame.allItems.items', { count: topic.items }) })}
+                    go
+                  />
+                ))}
+              </Card>
+            </Sec>
+          ) : null}
+        </>
       )}
     >
       <Search value={query} onChange={onQuery} placeholder={t('project:frame.allItems.search')} />

@@ -49,6 +49,7 @@ import { readDirectory } from '../communities-to-join';
 import { gridStore, type IconView } from '../grid-store';
 import { homePinsStore, loadHomePins, type HomePin, type JoinedCommunity } from '../home-pins-store';
 import { MyStanding, myStandingStore, standingView } from '../../leaderboard/my-standing.js';
+import { panelsStore, type HomePanelsState } from '../panels-store';
 import { HomeAllApps } from './home-all-apps';
 import { HomeAllCommunities, type OwedVote } from './home-all-communities';
 
@@ -58,6 +59,7 @@ const APPS_SHOWN = 11;
 const COMMUNITIES_SHOWN = 6;
 const JOIN_SHOWN = 4;
 const LIVE_SHOWN = 4;
+const CHALLENGES_SHOWN = 4;
 
 /** A row of GET /api/workshop/needs-feed, the fields this screen reads. */
 export type FeedRow = {
@@ -91,6 +93,9 @@ type DirectoryApp = {
   icon_emoji?: string | null;
   icon_color?: string | null;
   member_count?: number | null;
+  /** The platform features it (an admin's pick), in `featured_order`. */
+  featured?: boolean;
+  featured_order?: number | null;
 };
 
 type Counts = Record<string, { working?: number; needs?: number }>;
@@ -161,6 +166,9 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
   // Your season (the tour's s01): one row of the side column, from the
   // standing Challenges reads, once the standings know you.
   const standingState = useStoreState(myStandingStore) as { status: string; ranking?: { total_points?: number | string } | null };
+  // The season's challenges, as Home's own strip reads them (../panels-store,
+  // filled by home-panels.js): the same heading and rows, as a group.
+  const { challenges } = useStoreState(panelsStore) as HomePanelsState;
   const standing = standingView(standingState) as { rank: number | null; people: number } | null;
   useEffect(() => { void MyStanding.load(); }, []);
   const [feed, setFeed] = useState<FeedRow[] | null>(initialFeed);
@@ -266,7 +274,11 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
   const pinned = new Set(pins.pins.map((p) => p.slug));
   const mine: HomePin[] = [...pins.pins, ...pins.joined.filter((c) => !pinned.has(c.slug)).map(joinedAsPin)];
   const inMine = new Set(mine.map((p) => p.slug));
-  const toJoin = (directory || []).filter((a) => a && a.slug && !inMine.has(a.slug));
+  const toJoinAll = (directory || []).filter((a) => a && a.slug && !inMine.has(a.slug));
+  // The platform's featured communities lead, under their own label, in
+  // their order; the rest follow as Communities to join.
+  const featured = toJoinAll.filter((a) => a.featured).sort((a, b) => (a.featured_order ?? Number.MAX_SAFE_INTEGER) - (b.featured_order ?? Number.MAX_SAFE_INTEGER));
+  const toJoin = toJoinAll.filter((a) => !a.featured);
 
   const communityLine = (slug: string): string => {
     const owed = pins.owed[slug] || 0;
@@ -351,6 +363,28 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
         </Sec>
       ) : null}
 
+      {challenges && challenges.rows.length > 0 ? (
+        <Sec
+          label={challenges.heading}
+          id="home-frame-challenges"
+          action={challenges.seeAll ? <GroupLink href="#leaderboard/challenges">{t('home:challenges.seeAll.text')}</GroupLink> : null}
+        >
+          <Card>
+            {challenges.rows.slice(0, CHALLENGES_SHOWN).map((row) => (
+              <Row
+                key={row.id}
+                href={row.eventId != null ? `#leaderboard/challenges/${row.eventId}` : '#leaderboard/challenges'}
+                lead={<Lead icon="trophy" tone={row.state === 'done' ? 'ok' : 'acc'} />}
+                title={row.goal}
+                line={row.stateLabel || undefined}
+                right={row.reward ? <Meta>{row.reward}</Meta> : undefined}
+                go
+              />
+            ))}
+          </Card>
+        </Sec>
+      ) : null}
+
       {apps.length > 0 ? (
         <Sec
           label={t('home:frame.pinnedApps')}
@@ -402,6 +436,24 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
                 />
               );
             })}
+          </Card>
+        </Sec>
+      ) : null}
+
+      {featured.length > 0 ? (
+        <Sec label={t('home:join.featured')} id="home-frame-featured">
+          <Card>
+            {featured.slice(0, JOIN_SHOWN).map((a) => (
+              <Row
+                key={a.slug}
+                href={hubHref(a.slug)}
+                onClick={(event) => openHub(event, a.slug)}
+                lead={<Tile name={a.name || a.slug} src={a.icon_url} emoji={a.icon_emoji} color={a.icon_color} />}
+                title={a.name || a.slug}
+                line={a.member_count ? t('home:join.members', { count: a.member_count }) : undefined}
+                right={<span className="fr-btn fr-sm">{t('home:frame.join')}</span>}
+              />
+            ))}
           </Card>
         </Sec>
       ) : null}

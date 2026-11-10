@@ -84,3 +84,13 @@ test('under a look New message opens the sheet, in place of the standard dialog'
   assert.match(pane, /\{frameNew \? <NewMessageSheet known=\{known\} onClose=\{\(\) => setFrameNew\(false\)\} \/> : null\}/);
   assert.match(pane, /const person = c\.kind === 'direct' && !c\.homeroomBot \? directPerson\(c\) : null;/, 'its people: those already talked to, the bot left out');
 });
+
+test('an agent chat, the other kind the standard dialog starts, is a row under the people until somebody is picked', () => {
+  const html = render({ onAgent() {} });
+  assert.match(html, /<h2 class="fr-cap">Or else<\/h2><\/div><div class="fr-card"><button type="button" class="fr-row"><span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Agent chat<\/span><span class="fr-s">Plan and build a change with a coding agent<\/span><\/span><svg class="fr-ic fr-go"/s);
+  assert.doesNotMatch(render({ onAgent() {}, picked: [EVAN] }), /Agent chat/, 'a picked person means a message');
+  assert.doesNotMatch(render({ onAgent() {}, query: 'ev' }), /Agent chat/, 'nor while searching');
+  assert.doesNotMatch(render(), /Agent chat/, 'nothing without the entry');
+  const src = read(SHEET);
+  assert.match(src, /onAgent=\{\(\) => \{ onClose\(\); void startAgentSession\(\{ entry: 'messages' \}\); \}\}/, 'the same start the standard dialog makes');
+});

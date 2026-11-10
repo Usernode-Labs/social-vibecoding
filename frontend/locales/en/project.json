@@ -6674,5 +6674,25 @@
   "frame.allItems.nobody": {
     "text": "Nobody on it",
     "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the word at the end of a request's row that nobody has taken yet, where a row otherwise ends in its stage's word."
+  },
+  "frame.allItems.topicLine": {
+    "text": "{{people}} · {{items}}",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The line under a topic's row in the context column: how many people are in it and how many items are open, each a whole phrase, joined by a middle dot."
+  },
+  "frame.allItems.people_one": {
+    "text": "{{count}} person",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many people are involved in the topic. {{count}} is the number."
+  },
+  "frame.allItems.people_other": {
+    "text": "{{count}} people",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many people are involved in the topic. {{count}} is the number."
+  },
+  "frame.allItems.items_one": {
+    "text": "{{count}} item",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many of the topic's items are open. {{count}} is the number."
+  },
+  "frame.allItems.items_other": {
+    "text": "{{count}} items",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many of the topic's items are open. {{count}} is the number."
   }
 }

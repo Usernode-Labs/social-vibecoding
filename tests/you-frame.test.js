@@ -95,3 +95,13 @@ test('Public page is the head\'s second button while the page is live, and a gro
   const view = read('frontend/src/features/profile/profile-view.tsx');
   assert.match(view, /publicPage=\{view\.publicControls && !view\.publicControls\.moderationDisabled \? \{ href: view\.publicControls\.openHref, published: view\.publicControls\.published, line: view\.publicControls\.visibility, status: publicStatus, onCopy: \(\) => \{ void Profile\.copyPublicLink\(view\.publicControls\.openHref\); \} \} : null\}/);
 });
+
+test('the week can be shared, as the standard card shares it, and Notifications is a row of Account', () => {
+  const html = render({ activity: { ...base.activity, canShare: true }, onShareWeek() {} });
+  assert.match(html, /<h2 class="fr-cap">This week<\/h2><button type="button" class="fr-link">Share<\/button><\/div>/, 'the group\'s own link, as the standard card\'s button');
+  assert.doesNotMatch(render({ activity: { ...base.activity, canShare: false }, onShareWeek() {} }), /fr-cap">This week<\/h2><button/, 'nothing to share: no link');
+  assert.match(html, /<span class="fr-t">Notifications<\/span><span class="fr-s">What you are told about, here and in each app<\/span><\/span><svg class="fr-ic fr-go"/);
+  assert.match(html, /href="#settings\/alerts"/);
+  const view = read('frontend/src/features/profile/profile-view.tsx');
+  assert.match(view, /onShareWeek=\{\(\) => Profile\.showWeekShare\(\)\}/);
+});

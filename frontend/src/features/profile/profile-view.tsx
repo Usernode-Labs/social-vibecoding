@@ -419,6 +419,7 @@ function YouInFrame({ view, publicStatus }: { view: any; publicStatus: string })
       onFriends={() => Profile.showFriends()}
       onSlots={() => Profile.showAppSlots()}
       onFeedback={() => Profile.showFeedback()}
+      onShareWeek={() => Profile.showWeekShare()}
     />
   );
 }

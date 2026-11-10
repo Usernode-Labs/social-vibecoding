@@ -15,7 +15,8 @@
  */
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 
-import { Av, Btn, Card, Field, Fields, GroupLink, Note, Row, Sec, Sheet } from '@/components/ui/kit';
+import { Av, Btn, Card, Field, Fields, GroupLink, Lead, Note, Row, Sec, Sheet } from '@/components/ui/kit';
+import { startAgentSession } from '../agent-session/store';
 import { useMessages } from '../../lib/i18n/react';
 import * as api from './api';
 import { swatchFor } from './format';
@@ -31,7 +32,7 @@ export function groupTitle(me: string, picked: Pick<ConversationUser, 'username'
 const face = (user: ConversationUser) => <Av size={40} name={user.username || '?'} src={user.avatarUrl} color={swatchFor(user.username || '?')} />;
 
 export function NewMessageSheetView({
-  query, onQuery, picked, people, searching, onToggle, onUnpick, busy, error, onStart, onClose, blocked, onBlocked, onUnblock,
+  query, onQuery, picked, people, searching, onToggle, onUnpick, busy, error, onStart, onClose, blocked, onBlocked, onUnblock, onAgent = null,
 }: {
   query: string;
   onQuery: (next: string) => void;
@@ -49,6 +50,8 @@ export function NewMessageSheetView({
   /** The blocked list once asked for; null until then. */
   blocked: ConversationUser[] | null;
   onBlocked: () => void;
+  /** Agent chat, the other kind the standard dialog offers: plan and build a change with a coding agent. Null while a person is being picked. */
+  onAgent?: (() => void) | null;
   onUnblock: (user: ConversationUser) => void;
 }) {
   const t = useMessages('messages');
@@ -96,6 +99,13 @@ export function NewMessageSheetView({
         </Sec>
       ) : null}
       {typed && !others.length ? <Card pad>{searching ? t('messages:frame.new.searching') : t('messages:frame.new.none')}</Card> : null}
+      {onAgent && !typed && !picked.length && !blocked ? (
+        <Sec label={t('messages:frame.new.orElse')}>
+          <Card>
+            <Row lead={<Lead icon="spark" />} title={t('messages:inbox.new.agent.label')} line={t('messages:inbox.new.agent.hint')} go onClick={onAgent} />
+          </Card>
+        </Sec>
+      ) : null}
       {blocked ? (
         <Sec label={t('messages:frame.new.blocked')}>
           {blocked.length ? (
@@ -180,6 +190,7 @@ export function NewMessageSheet({ known, onClose }: {
       onClose={onClose}
       blocked={blocked}
       onBlocked={() => void showBlocked()}
+      onAgent={() => { onClose(); void startAgentSession({ entry: 'messages' }); }}
       onUnblock={(user) => void unblock(user)}
     />
   );

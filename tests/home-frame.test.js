@@ -25,7 +25,7 @@ const NOW = Date.parse('2026-11-09T12:00:00Z');
 const fixedStore = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
 
 // The modules HomeFrame reads, stubbed by the specifier it imports them as.
-function homeStubs({ pins = [], joined = [], owed = {}, apps = [], info = {}, standing = null } = {}) {
+function homeStubs({ pins = [], joined = [], owed = {}, apps = [], info = {}, standing = null, challenges = null } = {}) {
   return {
     '../grid-store': { gridStore: fixedStore({ ready: true, view: 'grid', editing: false, items: apps.map((app) => ({ kind: 'card', placement: null, app })) }) },
     '../home-pins-store': {
@@ -35,6 +35,7 @@ function homeStubs({ pins = [], joined = [], owed = {}, apps = [], info = {}, st
     '../communities-to-join': { readDirectory: async () => [] },
     // What the two pages under Home read besides.
     '../../frame/frame-page-store': { useFramePage() {} },
+    '../panels-store': { panelsStore: fixedStore({ painted: true, challenges: challenges || null }) },
     '../../leaderboard/my-standing.js': { myStandingStore: fixedStore(standing ? { status: 'ready', ranking: { rank: standing.rank, total_participants: standing.people, total_points: standing.points } } : { status: 'idle' }), MyStanding: { load: async () => {} }, standingView: (st) => (st.status === 'ready' ? { rank: st.ranking.rank, people: st.ranking.total_participants, pending: null, token: null } : null) },
     '../../workshop/community-scope': { communityScopeStore: fixedStore({ slug: null, list: [], info }) },
   };
@@ -252,4 +253,27 @@ test('your season is one row of the side column, to Challenges, once the standin
   assert.match(html, /<h2 class="fr-cap">Season<\/h2><\/div><div class="fr-card"><a class="fr-row" href="#leaderboard\/challenges"><span class="fr-lead">15<\/span><span class="fr-tx"><span class="fr-t">Rank 15 of 149<\/span><span class="fr-s">16,128 points<\/span><\/span><svg class="fr-ic fr-go"/);
   assert.doesNotMatch(render(), /Season/, 'nothing until the standing is known');
   assert.match(read(HOME_FRAME), /useEffect\(\(\) => \{ void MyStanding\.load\(\); \}, \[\]\);/, 'asked for once, as Challenges asks');
+});
+
+test('the season\'s challenges are a group of rows under Needs you, as Home draws them (its Next challenges strip)', () => {
+  const view = { key: 'next', title: 'Challenges', mode: 'next', heading: 'Next challenges', seeAll: true, note: null, rows: [
+    { id: 'c1', eventId: 7, icon: null, illustration: null, illustrationTone: null, goal: 'Use apps for 10 minutes', done: false, reward: '1,000 pts', state: 'progress', stateLabel: 'Started', fill: 0.4 },
+    { id: 'c2', eventId: 7, icon: null, illustration: null, illustrationTone: null, goal: 'Join a community', done: true, reward: '500 pts', state: 'done', stateLabel: 'Done', fill: 1 },
+  ] };
+  const html = render({}, homeStubs({ challenges: view }));
+  assert.match(html, /<h2 class="fr-cap">Next challenges<\/h2><a class="fr-link" href="#leaderboard\/challenges">See all<\/a><\/div><div class="fr-card"><a class="fr-row" href="#leaderboard\/challenges\/7"><span class="fr-lead fr-acc" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Use apps for 10 minutes<\/span><span class="fr-s">Started<\/span><\/span><span class="fr-meta">1,000 pts<\/span><svg class="fr-ic fr-go"/s);
+  assert.match(html, /<a class="fr-row" href="#leaderboard\/challenges\/7"><span class="fr-lead fr-ok" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Join a community<\/span><span class="fr-s">Done<\/span>/s, 'a done challenge is green');
+  const src = read(HOME_FRAME);
+  assert.ok(src.indexOf('id="home-frame-challenges"') < src.indexOf("label={t('home:frame.pinnedApps')}"), 'under Needs you, before the pins, as the standard page orders it');
+  assert.doesNotMatch(render(), /Next challenges|fr-cap">Challenges/, 'nothing until the panel is known');
+  const none = render({}, homeStubs({ challenges: { ...view, mode: 'none', heading: 'Challenges', seeAll: false, rows: [], note: { title: 'Nothing open', text: 'New ones on Monday.' } } }));
+  assert.doesNotMatch(none, /fr-cap">Challenges/, 'a note with no challenge draws no group');
+});
+
+test('the communities the platform features lead Communities to join, under their own label', () => {
+  const dir = [{ slug: 'plain', name: 'Plain', member_count: 3 }, { slug: 'star', name: 'Star', member_count: 9, featured: true, featured_order: 1 }, { slug: 'moon', name: 'Moon', member_count: 4, featured: true, featured_order: 0 }];
+  const html = render({ initialDirectory: dir });
+  assert.match(html, /<h2 class="fr-cap">Featured<\/h2><\/div><div class="fr-card"><a class="fr-row" href="[^"]*moon[^"]*">.*?<span class="fr-t">Moon<\/span>.*?<a class="fr-row" href="[^"]*star[^"]*">.*?<span class="fr-t">Star<\/span>/s, 'in their featured order');
+  assert.match(html, /<h2 class="fr-cap">Communities to join<\/h2>.*?<span class="fr-t">Plain<\/span>/s);
+  assert.doesNotMatch(html.slice(html.indexOf('Communities to join')), /<span class="fr-t">Moon<\/span>/, 'a featured community is not listed twice');
 });

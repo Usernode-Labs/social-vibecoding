@@ -11,13 +11,13 @@
  */
 import type { MouseEvent } from 'react';
 
-import { Btn, Card, Facts, Icon, Lead, PageBody, Row, Sec, k } from '@/components/ui/kit';
+import { Btn, Card, Facts, GroupLink, Icon, Lead, PageBody, Row, Sec, k } from '@/components/ui/kit';
 import { useMessages } from '../../../lib/i18n/react';
 import { useFrameFlag } from '../../frame/frame-flag';
 
 interface Identity { name: string; sub?: string | null; chips?: Array<{ key: string; label: string }> }
 interface Stat { key: string; value: string; label: string; zero?: boolean }
-interface Activity { empty: boolean; time?: string | null; apps?: string | null; appsLabel?: string }
+interface Activity { empty: boolean; time?: string | null; apps?: string | null; appsLabel?: string; canShare?: boolean }
 interface Rows {
   changes?: string | null; requests?: string | null; requestsPending?: boolean; feedback?: string | null;
   votes?: string | null; challenges?: string | null; friends?: string | null;
@@ -32,7 +32,7 @@ const plain = (event: MouseEvent<HTMLElement>, run: () => void) => {
   run();
 };
 
-export function YouFrame({ identity, stats, activity, rows, slots, admin, publicPage = null, onEdit, onFriends, onSlots, onFeedback }: {
+export function YouFrame({ identity, stats, activity, rows, slots, admin, publicPage = null, onEdit, onFriends, onSlots, onFeedback, onShareWeek }: {
   identity: Identity;
   stats: Stat[];
   activity: Activity | null;
@@ -46,6 +46,8 @@ export function YouFrame({ identity, stats, activity, rows, slots, admin, public
   onFriends: () => void;
   onSlots: () => void;
   onFeedback: () => void;
+  /** Share your week (#6464), the standard card's own button: the group's link. */
+  onShareWeek?: () => void;
 }) {
   useFrameFlag('you-frame');
   const t = useMessages('profile');
@@ -84,6 +86,7 @@ export function YouFrame({ identity, stats, activity, rows, slots, admin, public
             <Card>
               <Row href="#profile?friends" onClick={(e) => plain(e, onFriends)} lead={<Lead icon="users" />} title={t('profile:more.friends.title')} line={rows.friends || t('profile:more.friends.hint')} go />
               <Row href="#profile?slots" onClick={(e) => plain(e, onSlots)} lead={<Lead icon="box" />} title={t('profile:more.appSlots.title')} line={slots || t('profile:more.appSlots.hint')} go />
+              <Row href="#settings/alerts" lead={<Lead icon="bell" />} title={t('profile:settings.notifications.title')} line={t('profile:settings.notifications.hint')} go />
               <Row sm href="#settings" lead={<Lead icon="sliders" />} title={t('profile:more.settings.title')} go />
               {admin ? <Row sm href="#admin" lead={<Lead icon="shield" />} title={t('profile:admin.console.title')} go /> : null}
             </Card>
@@ -105,7 +108,7 @@ export function YouFrame({ identity, stats, activity, rows, slots, admin, public
         </Card>
       </Sec>
       {activity && !activity.empty ? (
-        <Sec label={t('profile:activity.title')}>
+        <Sec label={t('profile:activity.title')} action={activity.canShare && onShareWeek ? <GroupLink onClick={onShareWeek}>{t('profile:activity.share')}</GroupLink> : undefined}>
           <Card>
             {activity.time ? <Row sm lead={<Lead icon="clock" />} title={t('profile:frame.week.time', { time: activity.time })} /> : null}
             {activity.apps ? <Row sm lead={<Lead icon="grid" />} title={t('profile:frame.week.apps', { count: activity.apps, label: activity.appsLabel || '' })} /> : null}

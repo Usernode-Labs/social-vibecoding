@@ -177,3 +177,13 @@ test('the project\'s ⋯ stands at the end of the kit\'s head: the one node the 
   assert.match(hand, /html\[data-skin\] \.dev-ws > \[data-project-frame="status"\] ~ \.dev-ws-tabbody #dev-plus-menu \{ inset-inline-start: auto; inset-inline-end: 0; \}/, 'and its menu opens towards the start');
   assert.equal((read('frontend/src/features/dev-board/workshop/workshop.tsx').match(/<DevPlusMenu\b/g) || []).length, 1);
 });
+
+test('a topic\'s channel lights Topics but keeps the product\'s page under the head (its figures and its room)', () => {
+  const head = renderComponent(FRAME, 'ProjectFrameHead', { title: '#onboarding', purpose: 'Where Homeroom talks.', tabs: [{ key: 'status', label: 'Hub' }, { key: 'topics', label: 'Topics' }], tab: 'topics', page: 'channel', onTab() {} }, { cache: false });
+  assert.match(head, /^<div class="fr" data-project-frame="channel">/);
+  assert.match(head, /<button type="button" class="fr-tab fr-on" aria-pressed="true">Topics<\/button>/);
+  const page = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(page, /page: tab\.startsWith\('c:'\) && !frameTopics \? 'channel' : undefined,/);
+  const css = read('public/css/app.css');
+  assert.match(css, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\], \[data-project-frame="all-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'the body is put away for the kit\'s own pages only; a channel is not one');
+});

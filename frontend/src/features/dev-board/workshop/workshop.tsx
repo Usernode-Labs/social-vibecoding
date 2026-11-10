@@ -3821,7 +3821,10 @@ export function DevWorkshop(): ReactNode {
   const joinHere = community && !community.is_member && (window as any).App?.user
     ? () => { void offerJoin({ code: 'join_required', app: { slug, name: projectName } }).finally(() => { void reloadCommunity(slug); }); }
     : null;
-  const frameHead = { tabs: frameTabs, tab: frameTab, onTab: pickFrameTab, onAsk: askChange, onInvite: inviteHere, onJoin: joinHere };
+  // A topic's channel lights Topics but is the product's own page under
+  // the head (its figures, its signals, its room), so the head says so and
+  // app.css leaves the body on show.
+  const frameHead = { tabs: frameTabs, tab: frameTab, page: tab.startsWith('c:') && !frameTopics ? 'channel' : undefined, onTab: pickFrameTab, onAsk: askChange, onInvite: inviteHere, onJoin: joinHere };
   // Said the same way on the Hub and in the Workshop: your work with
   // Homeroom bot here, and the approval rule in its short words, the wait
   // as its line.
@@ -3885,6 +3888,7 @@ export function DevWorkshop(): ReactNode {
         {...frameHead}
         project={projectName}
         cols={cols}
+        topics={v.themes.filter((th) => !th.ungrouped && th.topic).map((th) => ({ key: th.id, name: th.name, icon: th.icon, people: th.people.length, items: th.counts.open + th.counts.underway + th.counts.review, href: placeHref(slug, channelPlace(th.topic!.handle)) }))}
         loading={!!board.loading && !board.cols.length}
         stage={frameStage}
         onStage={setFrameStage}

@@ -85,3 +85,16 @@ test('a request nobody has taken ends in "Nobody on it", from the brief the boar
   assert.match(read('public/js/app-view.js'), /unclaimed: AppView\._issueUnclaimed\(it\),/);
   assert.match(read('frontend/src/features/dev-board/card/model.ts'), /unclaimed\?: boolean;/);
 });
+
+test('the board\'s topics are rows of the context column, each with its people and its open items, to its channel (the standard By category view)', () => {
+  const html = render({ topics: [
+    { key: 'onboarding', name: 'Onboarding', icon: '🚪', people: 7, items: 7, href: '#app/homeroom/dev/c/onboarding' },
+    { key: 'infra', name: 'Infra', icon: '', people: 1, items: 10, href: '#app/homeroom/dev/c/infra' },
+  ] });
+  assert.match(html, /<h2 class="fr-cap">Topics<\/h2><\/div><div class="fr-card"><a class="fr-row" href="#app\/homeroom\/dev\/c\/onboarding"><span class="fr-lead">🚪<\/span><span class="fr-tx"><span class="fr-t">Onboarding<\/span><span class="fr-s">7 people · 7 items<\/span><\/span><svg class="fr-ic fr-go"/);
+  assert.match(html, /<span class="fr-t">Infra<\/span><span class="fr-s">1 person · 10 items<\/span>/);
+  assert.ok(html.indexOf('>Show<') < html.indexOf('>Topics<'), 'under Show');
+  assert.doesNotMatch(render(), /fr-cap">Topics/, 'none: no group');
+  const page = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(page, /topics=\{v\.themes\.filter\(\(th\) => !th\.ungrouped && th\.topic\)\.map\(\(th\) => \(\{ key: th\.id, name: th\.name, icon: th\.icon, people: th\.people\.length, items: th\.counts\.open \+ th\.counts\.underway \+ th\.counts\.review, href: placeHref\(slug, channelPlace\(th\.topic!\.handle\)\) \}\)\)\}/);
+});

@@ -12,7 +12,7 @@
  * built by ./model.ts, and draws this in its place while the device's look
  * is one of the frame's. Nothing is read or decided here.
  */
-import { type RefObject } from 'react';
+import { useState, type RefObject } from 'react';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { getDateLocale } from '../../lib/i18n/runtime';
@@ -22,7 +22,7 @@ import { byMonth, historyGlyph, historyTooltip, historyWords, monthName, type Hi
 import { BOT_AVATAR } from '../messages/format';
 import { rowKey } from './column';
 import {
-  byProject, rankProjects, railProjects, shortWords,
+  GROUP_FIRST, byProject, notMoving, rankProjects, railProjects, shortWords,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
 import type { Stage } from '../../lib/work-state';
@@ -100,6 +100,34 @@ export function AiFrameList({
   };
   const needs = rows.filter((row) => matches(row.title, row.app));
   const busy = picked.length ? progress.filter((th) => matches(th.title, th.app, th.number)) : [];
+  // Under All, the product's three groups (./lists.tsx): what is under way
+  // and what moves while it waits as one, folded after its first rows; the
+  // rows nobody is moving put away under their head; what went live this
+  // week, folded the same way. A search shows every match.
+  const [moreBusy, setMoreBusy] = useState(false);
+  const [showStill, setShowStill] = useState(false);
+  const [moreLive, setMoreLive] = useState(false);
+  const allBusy = picked.length ? [] : [...progress, ...waiting.filter((th) => !notMoving(th))].filter((th) => matches(th.title, th.app, th.number));
+  const still = picked.length ? [] : waiting.filter((th) => notMoving(th) && matches(th.title, th.app, th.number));
+  const went = live.filter((th) => matches(th.title, th.app, th.number));
+  const fold = <T,>(list: T[], open: boolean, first: number): T[] => (q || open || list.length <= first ? list : list.slice(0, first));
+  const threadRow = (th: AiThread, kind: 'busy' | 'live') => {
+    const [at, state] = STOP[th.work.stage] || [0, 'now'];
+    return (
+      <Row
+        key={`${kind}:${th.threadId}`}
+        lead={kind === 'live' ? <Lead icon="check" tone="ok" /> : <Lead icon={notMoving(th) ? 'clock' : 'tool'} />}
+        title={th.title || (th.number != null ? `#${th.number}` : '')}
+        line={kind === 'live' ? th.app?.name || undefined : say(shortWords(th)) || undefined}
+        right={kind === 'live' ? undefined : <Track mini at={at} state={state} words={stops} />}
+        on={!!lit && rowKey(th) === lit}
+        onClick={() => openThread(th)}
+      />
+    );
+  };
+  const moreLink = (list: unknown[], open: boolean, first: number, toggle: (next: boolean) => void) => (q || list.length <= first ? null : (
+    <GroupLink onClick={() => toggle(!open)}>{open ? t('messages:frame.bot.showLess') : t('messages:frame.bot.showMore', { count: list.length - first })}</GroupLink>
+  ));
   const locale = getDateLocale();
   const done = (history?.rows || []).filter((row) => matches(row.title, row.app, row.number));
   const months = byMonth(done);
@@ -180,7 +208,23 @@ export function AiFrameList({
             </Sec>
           ))}
 
-          {ready && needs.length === 0 && busy.length === 0 ? <Card pad>{t('messages:frame.bot.quiet')}</Card> : null}
+          {allBusy.length ? (
+            <Sec label={t('messages:ai.busy.title', { count: allBusy.length })} action={moreLink(allBusy, moreBusy, GROUP_FIRST.busy, setMoreBusy)}>
+              <Card>{fold(allBusy, moreBusy, GROUP_FIRST.busy).map((th) => threadRow(th, 'busy'))}</Card>
+            </Sec>
+          ) : null}
+          {still.length ? (
+            <Sec label={t('messages:ai.up.stillCount', { count: still.length })} action={q ? null : <GroupLink onClick={() => setShowStill(!showStill)}>{showStill ? t('messages:frame.bot.showLess') : t('messages:frame.bot.show')}</GroupLink>}>
+              {q || showStill ? <Card>{still.map((th) => threadRow(th, 'busy'))}</Card> : null}
+            </Sec>
+          ) : null}
+          {went.length ? (
+            <Sec label={t('messages:ai.live.title', { count: went.length })} action={moreLink(went, moreLive, GROUP_FIRST.live, setMoreLive)}>
+              <Card>{fold(went, moreLive, GROUP_FIRST.live).map((th) => threadRow(th, 'live'))}</Card>
+            </Sec>
+          ) : null}
+
+          {ready && needs.length === 0 && busy.length === 0 && allBusy.length === 0 && went.length === 0 ? <Card pad>{t('messages:frame.bot.quiet')}</Card> : null}
 
           {history && (!q || done.length) ? (
             <div ref={historyRef} data-ai-frame-history="">

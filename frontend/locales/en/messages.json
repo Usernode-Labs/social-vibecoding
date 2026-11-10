@@ -5946,5 +5946,25 @@
   "frame.new.unblock": {
     "text": "Unblock",
     "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): a sheet over Messages. Small button at the end of a blocked person's row."
+  },
+  "frame.bot.showMore_one": {
+    "text": "{{count}} more",
+    "description": "Homeroom bot's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The link at the end of a group's label that unfolds the rows past its first few. {{count}} is how many more there are."
+  },
+  "frame.bot.showMore_other": {
+    "text": "{{count}} more",
+    "description": "Homeroom bot's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The link at the end of a group's label that unfolds the rows past its first few. {{count}} is how many more there are."
+  },
+  "frame.bot.show": {
+    "text": "Show",
+    "description": "Homeroom bot's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The link at the end of the Not moving group's label that shows its rows, which are put away by default."
+  },
+  "frame.bot.showLess": {
+    "text": "Show less",
+    "description": "Homeroom bot's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The link at the end of a group's label once it is unfolded: folds it back to its first few rows, or puts the Not moving rows away again."
+  },
+  "frame.new.orElse": {
+    "text": "Or else",
+    "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the label over the one other kind of chat the sheet can start, an agent chat, under the people."
   }
 }

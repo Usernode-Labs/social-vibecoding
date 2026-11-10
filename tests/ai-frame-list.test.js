@@ -156,3 +156,36 @@ test('History: what finished, by month, as the You tab\'s three lists (your chan
   const page = read('frontend', 'src', 'features', 'ai', 'index.tsx');
   assert.match(page, /history=\{history\}\s+historyKind=\{historyKind\}\s+onHistoryKind=\{pickKind\}\s+openHistory=\{openHistory\}\s+historyRef=\{historyRef\}\s+\/>/, 'the same history, kind and presses as the standard list');
 });
+
+test('under All, the work under way, the rows nobody is moving and what went live are the product\'s three groups, folded as it folds them', () => {
+  const wait = (id, title, app, stage, line) => ({ ...thread(id, title, app, stage), work: { stage, line: line || null } });
+  const live = (id, title, app) => ({ ...thread(id, title, app, 'live'), kind: 'change', change: { number: id } });
+  const html = render({
+    progress: [thread(1, 'One', homeroom, 'building'), thread(2, 'Two', corner, 'checking'), thread(3, 'Three', homeroom, 'building'), thread(4, 'Four', homeroom, 'building')],
+    waiting: [wait(5, 'Five', homeroom, 'up_for_vote'), wait(6, 'Six', corner, 'waiting_for_you'), wait(7, 'Seven', homeroom, 'stopped')],
+    live: [live(8, 'Eight', homeroom), live(9, 'Nine', corner), live(10, 'Ten', homeroom), live(11, 'Eleven', homeroom)],
+  });
+  // Waiting & in progress: under way first, then what moves while it waits; three shown, the rest behind one link.
+  const busy = html.slice(html.indexOf('Waiting &amp; in progress · 5<'), html.indexOf('Not moving · 2<'));
+  assert.match(busy, /^Waiting &amp; in progress · 5<\/h2><button type="button" class="fr-link">2 more<\/button>/);
+  assert.deepEqual([...busy.matchAll(/<span class="fr-t">([^<]+)<\/span>/g)].map((m) => m[1]), ['One', 'Two', 'Three'], 'the first three');
+  assert.match(busy, /<span class="fr-track fr-mini" role="img" aria-label="Build">/, 'each with the five-stop line');
+  // Not moving: folded away under its head, shown by its link.
+  const still = html.slice(html.indexOf('Not moving · 2<'), html.indexOf('Live this week · 4<'));
+  assert.match(still, /^Not moving · 2<\/h2><button type="button" class="fr-link">Show<\/button>/);
+  assert.doesNotMatch(still, /fr-row/, 'nothing until asked');
+  // Live this week: green checks, the project under each, three shown.
+  const went = html.slice(html.indexOf('Live this week · 4<'));
+  assert.match(went, /^Live this week · 4<\/h2><button type="button" class="fr-link">1 more<\/button>/);
+  assert.match(went, /<span class="fr-lead fr-ok" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Eight<\/span><span class="fr-s">Homeroom<\/span>/s);
+  assert.equal((went.match(/class="fr-row/g) || []).length, 3);
+  // A picked project keeps its own In progress group instead.
+  const picked = render({ picked: ['homeroom'], progress: [thread(1, 'One', homeroom, 'building')], waiting: [wait(5, 'Five', homeroom, 'up_for_vote')], live: [live(8, 'Eight', homeroom)] });
+  assert.match(picked, />Homeroom · in progress</);
+  assert.doesNotMatch(picked, /Waiting &amp; in progress ·/);
+  assert.match(picked, />Live this week · 1</, 'what went live is listed under a project too');
+  for (const k of ['frame.bot.showMore_one', 'frame.bot.showMore_other', 'frame.bot.show', 'frame.bot.showLess']) {
+    const m = JSON.parse(read('frontend/locales/en/messages.json'));
+    assert.ok(m[k] && m[k].text && m[k].description, k);
+  }
+});
