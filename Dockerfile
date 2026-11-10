@@ -65,8 +65,22 @@ RUN npm run build:css
 
 # Docker CLI from the upstream Go security rebuild.
 FROM docker:29.9.2-cli AS docker-tools
-# Stable Buildx still embeds vulnerable x/net; this official RC carries v0.62.0.
-FROM docker/buildx-bin:0.39.0-rc1@sha256:a765b549a3ac9bc905152f4387c2f03763930a9b08020b9c3eae1c9d3290f559 AS buildx-tools
+# Keep the RC's patched x/net, remove its obsolete Docker module and update
+# go-archive. Every other dependency remains in the upstream vendored tree.
+FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS buildx-tools
+RUN apk add --no-cache patch
+WORKDIR /src
+ADD --checksum=sha256:d2b5d92ff45929f83aad2f44ca045c887e61c2a851c72ee185ce68a13f118dd8 https://codeload.github.com/docker/buildx/tar.gz/b708617c05822b226f952c4e223cf750cbbd4798 /tmp/buildx.tar.gz
+RUN tar -xzf /tmp/buildx.tar.gz --strip-components=1 && rm /tmp/buildx.tar.gz
+COPY build-support/buildx/dependencies.patch /tmp/dependencies.patch
+RUN patch -p1 < /tmp/dependencies.patch
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} \
+    go build -mod=vendor -trimpath \
+      -ldflags '-X github.com/docker/buildx/version.Version=v0.39.0-rc1-homeroom.1 -X github.com/docker/buildx/version.Revision=b708617c05822b226f952c4e223cf750cbbd4798' \
+      -o /buildx ./cmd/buildx
 
 # Stage 3 — production runtime.
 FROM node:22.23.4-alpine
@@ -90,6 +104,8 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 RUN apk add --no-cache git postgresql-client
 COPY --from=docker-tools /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=buildx-tools /buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
+COPY --from=buildx-tools /src/internal/namesgenerator/LICENSE /usr/local/share/doc/buildx/LICENSE.namesgenerator
+COPY --from=buildx-tools /src/internal/namesgenerator/NOTICE /usr/local/share/doc/buildx/NOTICE.namesgenerator
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --production

@@ -24,21 +24,6 @@
     "reason": "No patched Zod 3 exists. Remote MCP has a 512kb body limit and maxToolInputElements=10000 before validation. Visible-change declaration arrays reject lengths beyond their existing 3-story/2-viewport/40-step/5-hint maxima before parsing elements. Worker servers use stdio only. Retain the existing API pending a separately tested Zod 4 migration; see docs/security/october-2026-update.md."
   },
   {
-    "package": "github.com/moby/go-archive",
-    "versions": [
-      "v0.2.0"
-    ],
-    "ids": [
-      "CVE-2026-17106",
-      "GHSA-hfg8-hc9c-6c3h"
-    ],
-    "components": [
-      "standalone"
-    ],
-    "expires": "2026-11-13",
-    "reason": "Latest upstream Buildx 0.38.1 still embeds this module (re-checked 2026-10-29: still the latest release). govulncheck 1.9.0 found a module-only match and no affected extraction symbols in the official linux/arm64 binary. Retain as an explicit remaining finding pending vendor update and amd64 review. Kubernetes platform has no Docker CLI. See docs/security/october-2026-update.md."
-  },
-  {
     "package": "golang.org/x/net",
     "versions": [
       "v0.59.0"
