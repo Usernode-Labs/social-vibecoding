@@ -11455,6 +11455,36 @@ const AppView = {
       || Number(b.row_type !== 'close_issue') - Number(a.row_type !== 'close_issue')
       || Number(b.id) - Number(a.id);
   },
+  // #6482: several change rows can name one pull request (a rebuilt or
+  // re-submitted change). The Completed list and Recently live show one entry
+  // per pull request — the record the server keeps, and the same one GET
+  // /api/apps/:slug/changes/:number opens: the row that reached a vote
+  // (`promoted`, then `merging`), then the newest. An applied close-issue
+  // decision and a row with no pull request number are each their own entry;
+  // the input order is otherwise kept. The server already groups a loaded
+  // page, but rows cached across loads (the page-append path dedups only by
+  // `row_type:id`) can still hold a twin.
+  _onePerPullRequest(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    const rank = (row) => {
+      if (row.status === 'promoted') return 2;
+      if (row.status === 'merging') return 1;
+      return 0;
+    };
+    const best = new Map();
+    for (const row of list) {
+      if (!row || row.row_type === 'close_issue' || row.pr_number == null) continue;
+      const key = String(row.pr_number);
+      const held = best.get(key);
+      if (!held
+        || rank(row) > rank(held)
+        || (rank(row) === rank(held) && Number(row.id) > Number(held.id))) {
+        best.set(key, row);
+      }
+    }
+    return list.filter((row) => !row || row.row_type === 'close_issue'
+      || row.pr_number == null || best.get(String(row.pr_number)) === row);
+  },
   async _fetchMergedPage(slug, cursor = null, limit = null) {
     const qs = AppView._demoQS();
     const params = ['results=failing'];
@@ -12772,7 +12802,7 @@ const AppView = {
   // it). One whose rollout failed or stalled has not gone live, and its page
   // says so (`_topicHeroView`), so it is not one of these.
   _workshopRecentLive(limit = AppView.WORKSHOP_RECENT_LIVE_MAX) {
-    const rows = (Array.isArray(AppView._merged) ? AppView._merged : [])
+    const rows = AppView._onePerPullRequest(Array.isArray(AppView._merged) ? AppView._merged : [])
       .filter((m) => m && m.row_type !== 'close_issue' && m.id != null
         && m.deployment_state !== 'failed' && m.deployment_state !== 'stalled')
       .slice(0, limit);
@@ -15293,7 +15323,7 @@ const AppView = {
     for (const g of gov) review.push({ kind: 'gov', item: g, _r: 4, _t: govT(g) });
     review.sort((a, b) => (a._r - b._r) || (b._t - a._t));
 
-    const done = merged.slice().sort(AppView._compareMergedRows);
+    const done = AppView._onePerPullRequest(merged).sort(AppView._compareMergedRows);
 
     // In progress = pinned own sessions (most recent activity first) →
     // headless-working issues → other users' shared sessions (oldest
