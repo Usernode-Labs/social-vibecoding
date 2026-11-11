@@ -315,20 +315,22 @@ test('Homeroom Wallet wears the look: the QR in a card, the linked key one row o
   assert.doesNotMatch(settings, /#wallet-qr-canvas \{[^}]*background/, 'the code keeps its white ground');
 });
 
-test('the Homeroom app page: each part is a label over one card, a neutral wrapper round the part\'s own nodes', () => {
+test('the Homeroom app page: each part is one card headed by its name, and no wrapper stands between a heading and what follows it', () => {
   const src = section('usernode-ui.tsx');
-  assert.match(src, /<SectionHeading title=\{title\}>\{description \|\| undefined\}<\/SectionHeading>[\s\S]*?<div className="ui-card ui-unbody">\{children\}<\/div>\s*<\/div>/);
+  assert.match(src, /<div id=\{id\} className="ui-card ui-unsec mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-800">\s*<SectionHeading title=\{title\}>\{description \|\| undefined\}<\/SectionHeading>\s*\{children\}\s*<\/div>/, 'names on the part\'s own box; its children stay the heading\'s siblings');
+  assert.match(css, /\n\.settings-sheet h3 \+ p \{ font-size: 15px; line-height: 1\.35; margin-bottom: 14px; \}/, 'the standard sheet styles the paragraph after a heading: a wrapper between them changed a part that opens with a note (About, Account)');
   assert.match(src, /const ROW_BASE = 'ui-unrow flex items-center gap-2 mt-1 text-sm w-full text-start';/);
   assert.doesNotMatch(src, /isFrameSkin|useLiveSkin|useSkin/, 'one markup for both looks');
   const U = `${IN}#settings-usernode-section `;
-  assert.match(settings, new RegExp(`${U}\\.ui-unbody \\{ display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 8px 16px 16px; \\}`));
+  assert.match(settings, new RegExp(`${U}\\.ui-unsec \\{ display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin-top: 12px; padding: 12px 16px 16px; border: 0; \\}`));
+  assert.match(settings, new RegExp(`${U}\\.ui-unsec > h3\\.ui-sechead \\{ margin: 0; padding: 0; font-family: var\\(--fr-f\\); font-size: 15px; font-weight: 650;[^}]*text-transform: none; color: var\\(--fr-ink\\); \\}`), 'the part\'s name heads its card, in the row\'s type');
   assert.match(settings, new RegExp(`${U}\\.ui-unrow \\{ gap: 12px; min-height: 40px;`));
   assert.match(settings, new RegExp(`${U}\\.bg-emerald-500 \\{ background: var\\(--fr-ok\\); \\}`), 'a state\'s dot is the look\'s');
   assert.match(settings, new RegExp(`${U}\\.bg-amber-500 \\{ background: var\\(--fr-wait\\); \\}`));
-  assert.match(settings, new RegExp(`${U}\\.ui-unbody > label:has\\(> \\.un-switch\\) \\{ flex-direction: row-reverse; justify-content: space-between;`), 'a switch at the end of its row');
-  assert.match(settings, new RegExp(`${U}\\.ui-unbody > div\\.rounded-md\\.border\\.border-amber-300 \\{ background: var\\(--fr-wait-t\\); \\}`), 'a notice is a tinted box');
-  assert.match(settings, new RegExp(`${U}\\.ui-unbody details \\{ margin: 0 0 8px; padding: 12px 16px; border: 0; border-radius: 12px; background: var\\(--fr-sunk\\); \\}`));
-  assert.doesNotMatch(css.replace(settings, ''), /\.ui-(unbody|unrow|walletkey)/, 'the standard look says nothing for these names');
+  assert.match(settings, new RegExp(`${U}\\.ui-unsec > label:has\\(> \\.un-switch\\) \\{ flex-direction: row-reverse; justify-content: space-between;`), 'a switch at the end of its row');
+  assert.match(settings, new RegExp(`${U}\\.ui-unsec > div\\.rounded-md\\.border\\.border-amber-300 \\{ background: var\\(--fr-wait-t\\); \\}`), 'a notice is a tinted box');
+  assert.match(settings, new RegExp(`${U}\\.ui-unsec details \\{ margin: 0 0 8px; padding: 12px 16px; border: 0; border-radius: 12px; background: var\\(--fr-sunk\\); \\}`));
+  assert.doesNotMatch(css.replace(settings, ''), /\.ui-(unsec|unbody|unrow|walletkey)/, 'the standard look says nothing for these names');
 });
 
 test('no rule here paints a literal colour or blurs the page', () => {

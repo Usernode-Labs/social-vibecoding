@@ -78,14 +78,14 @@ export function UnSection(
   },
 ): ReactNode {
   return (
-    <div id={id} className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-800">
+    // `ui-card ui-unsec` draw nothing in the standard look: under a look the
+    // part is one card headed by its name (app.css, SETTINGS). Names on the
+    // part's own box, and no wrapper round its children: the standard sheet
+    // styles the paragraph that follows a heading (`h3 + p`), so a wrapper
+    // between the two changed a part that opens with a note.
+    <div id={id} className="ui-card ui-unsec mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-800">
       <SectionHeading title={title}>{description || undefined}</SectionHeading>
-      {/* A neutral wrapper round the part's own rows, notes and buttons. The
-          standard look draws nothing for it (no class of its own has a rule
-          there, and a block with no padding or border lets its children's
-          margins through); under a look it is the part's card (app.css,
-          SETTINGS: `.ui-unbody`). */}
-      <div className="ui-card ui-unbody">{children}</div>
+      {children}
     </div>
   );
 }

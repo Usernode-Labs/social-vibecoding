@@ -27843,20 +27843,25 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #wallet-pubkey-display { font-family: var(--fr-fm); font-size: 13px; color: var(--fr-ink); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #wallet-status { padding: 0 4px; font-size: 13px; line-height: 1.45; }
 /* HOMEROOM APP (sections/usernode.tsx, usernode-ui.tsx; the phone app's own
-   settings). Each part is a label and its note over one card
-   (`.ui-unbody`, a neutral wrapper) holding the part's own nodes in the
-   kit's type and tokens: a status row (the name in the row's type, its
-   state at the end in the look's ok or waiting ink behind a dot of the
-   same), a switch at the end of its row, notes in the muted 13px, build
-   and error words in the mono face, a notice as a tinted box, the buttons
-   the kit's small ones on one wrapping line, a widget's lines, and the
-   help's questions as sunk boxes. */
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 8px 16px 16px; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > *, html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div > :is(button, a) { margin: 0; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > :is(button, a):not(.ui-unrow) { align-self: flex-start; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div:has(> :is(button, a).border) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div:empty { display: none; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div:has(> :is(button, a).border) > p { flex: 1 0 100%; }
+   settings). Each part is one card headed by its name and its note
+   (`.ui-unsec`: names on the part's own box, which the standard look draws
+   as a ruled-off block), holding the part's own nodes in the kit's type and
+   tokens: a status row (the name in the row's type, its state at the end in
+   the look's ok or waiting ink behind a dot of the same), a switch at the
+   end of its row, notes in the muted 13px, build and error words in the
+   mono face, a notice as a tinted box, the buttons the kit's small ones on
+   one wrapping line, a widget's lines, and the help's questions as sunk
+   boxes. No wrapper stands round a part's nodes: the standard sheet styles
+   the paragraph that follows a heading, and a wrapper between the two
+   changed the standard look of a part that opens with a note. */
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin-top: 12px; padding: 12px 16px 16px; border: 0; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > *, html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > div > :is(button, a) { margin: 0; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > h3.ui-sechead { margin: 0; padding: 0; font-family: var(--fr-f); font-size: 15px; font-weight: 650; line-height: 1.45; letter-spacing: 0; text-transform: none; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > p.ui-secblurb { margin: -6px 0 4px; padding: 0; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > :is(button, a):not(.ui-unrow) { align-self: flex-start; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > div:has(> :is(button, a).border) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > div:empty { display: none; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > div:has(> :is(button, a).border) > p { flex: 1 0 100%; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unrow { gap: 12px; min-height: 40px; padding: 0; border-radius: 0; background: none; font-size: 15px; line-height: 1.45; color: var(--fr-ink); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section button.ui-unrow { cursor: pointer; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unrow > span:nth-child(2) { font-weight: 650; color: var(--fr-ink); }
@@ -27866,25 +27871,25 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .bg-emerald-500 { background: var(--fr-ok); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .bg-amber-500 { background: var(--fr-wait); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .text-emerald-700 { color: var(--fr-ok); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section :is(.text-amber-800, p.text-amber-800) { color: var(--fr-wait); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody p { margin: 0; padding: 0; font-size: 13px; line-height: 1.45; color: var(--fr-mut); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody p.text-amber-800 { color: var(--fr-wait); font-weight: 600; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody p.font-mono { font-family: var(--fr-fm); font-size: 12px; color: var(--fr-mut); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div.rounded-md.border { padding: 12px; border: 0; border-radius: 12px; background: var(--fr-sunk); font-size: 13px; line-height: 1.45; color: var(--fr-ink); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div.rounded-md.border.border-amber-300 { background: var(--fr-wait-t); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div.rounded-md.border.border-emerald-300 { background: var(--fr-ok-t); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div.rounded-md.border > p { color: var(--fr-ink); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div.rounded-md.border > :is(button, a) { margin-top: 12px; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > label:has(> .un-switch) { flex-direction: row-reverse; justify-content: space-between; gap: 12px; min-height: 40px; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > label:has(> .un-switch) > span { font-size: 15px; line-height: 1.45; font-weight: 650; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .text-amber-800 { color: var(--fr-wait); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec p:not(.ui-secblurb) { margin: 0; padding: 0; font-size: 13px; line-height: 1.45; color: var(--fr-mut); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec p.text-amber-800 { color: var(--fr-wait); font-weight: 600; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec p.font-mono { font-family: var(--fr-fm); font-size: 12px; color: var(--fr-mut); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > div.rounded-md.border { padding: 12px; border: 0; border-radius: 12px; background: var(--fr-sunk); font-size: 13px; line-height: 1.45; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > div.rounded-md.border.border-amber-300 { background: var(--fr-wait-t); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > div.rounded-md.border.border-emerald-300 { background: var(--fr-ok-t); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > div.rounded-md.border > p { color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > div.rounded-md.border > :is(button, a) { margin-top: 12px; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > label:has(> .un-switch) { flex-direction: row-reverse; justify-content: space-between; gap: 12px; min-height: 40px; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > label:has(> .un-switch) > span { font-size: 15px; line-height: 1.45; font-weight: 650; color: var(--fr-ink); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section #settings-widget-icon-entries { display: flex; flex-direction: column; gap: 4px; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section #settings-widget-icon-entries > div { margin: 0; gap: 12px; font-size: 13px; line-height: 1.45; color: var(--fr-mut); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section #settings-widget-icon-entries > div > span:nth-child(2) { color: var(--fr-ink); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div.mt-3 > div:first-child { margin: 8px 0; font-size: 13px; font-weight: 650; color: var(--fr-ink); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody details { margin: 0 0 8px; padding: 12px 16px; border: 0; border-radius: 12px; background: var(--fr-sunk); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody details:last-child { margin-bottom: 0; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody details > summary { font-size: 15px; font-weight: 650; color: var(--fr-ink); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody details > p { margin-top: 8px; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec > div.mt-3 > div:first-child { margin: 8px 0; font-size: 13px; font-weight: 650; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec details { margin: 0 0 8px; padding: 12px 16px; border: 0; border-radius: 12px; background: var(--fr-sunk); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec details:last-child { margin-bottom: 0; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec details > summary { font-size: 15px; font-weight: 650; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unsec details > p { margin-top: 8px; }
 /* While the page reads the app, or when it could not (no part, so no card): the words stand as a note, the failure in the look's bad ink. */
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section #settings-usernode-error > p { margin: 0 0 4px; padding: 0 4px; font-size: 13px; line-height: 1.45; color: var(--fr-mut); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section #settings-usernode-error > p.text-red-700 { font-size: 15px; font-weight: 650; color: var(--fr-bad); }

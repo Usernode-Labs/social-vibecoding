@@ -956,3 +956,64 @@ Left, and why:
 - The rows of a stand-alone page are still drawn by hand (the `row` root is Settings').
 - Not seen: the room with a real account in line, and what follows Save, Skip or Join (nothing was
   submitted). The room was seen through `/?shot=waiting` and `/?shot=waiting-invite`.
+
+### Leftovers, group C (11 Nov 2026): Settings' last pieces, and the standard look compared with the base
+
+**Settings (s56 to s73).** The rules of lane S held: one markup for both looks, no node settings.js binds
+moved or re-created, every id and class kept; what was added is names that draw nothing in the standard look.
+
+- **The list stays in view on a desktop** (overturns lane S's ruling "the list is part of the page"): under a
+  look `#settings-sidebar-col` sticks 16px under the bar once the head has scrolled away and scrolls on its
+  own when it is taller than the window, as the standard look's list does. It is 8px larger on every side
+  and takes them back as margins, so the cards keep their shadows inside the scroller.
+- **A field inside a card has an edge in Pastel and Paper** (the Language and Look menus, the Cap $ field, the
+  keys): Pastel takes the sunk fill it uses on a white sheet with a hairline; Paper keeps its white field
+  with a ring that shows. Said in Settings' own block (`html[data-skin="pastel"|"paper"] #settings-screen …`),
+  not in the looks' files.
+- **In Paper a quiet button inside a card is the white one** (found reading the dark steps: Upload, Change
+  and the rest stood sunk on a sunk card, in light too). Paper says so itself (`.card .btn.quiet`), but the
+  wear map repeats a rule for the wearers of one component at a time, so that rule reached Settings' cards
+  holding the kit's own button and never Settings' own buttons. Said by hand for this screen; **needs group
+  A** for the cause (below).
+- **With the keys up on a phone the tab bar goes while Settings is open.** The standard look hides
+  `#platform-tabs` on `html.un-kb` and `html.platform-kb-open`; the frame's `.fr-tabbar` had no such rule,
+  so with "Find a setting" focused it rode on the keyboard (seen by focusing the field with a tap and making
+  the page as short as the app's web view makes it: `platform-kb-open` comes on). The frame measures its
+  page area, so the room returns to the page by itself. The rule is scoped to Settings here; the same fault
+  is on every page with a field on a phone (**needs group A**, below).
+- **Disconnect in a tool's card is the small bad button** (`ui-btn-sm` on the button, which had no class
+  that says small).
+- **Homeroom Wallet** (shown locally from the console: `Settings.state.walletLinkEnabled = true;
+  Settings._renderWalletSection(); Settings._renderNavIfOpen(); location.hash = '#settings/wallet'`, with
+  `Settings.state.usernodePubkey` set or cleared and `Settings._walletPollTimer` set for the three states):
+  the page's note, then the button; or the QR in a card (`ui-card` on `#wallet-linking`) with its time left
+  and Cancel under it, the code on its white ground; or the linked key as one row of a card
+  (`ui-card ui-walletkey`), mono, behind the look's tick.
+- **Homeroom app** (opened locally with `/#settings/usernode?usernodedemo=ios`, which draws the connection
+  and the permissions; every other part was drawn by publishing a sample model from the console,
+  `window.UsernodeReact.settingsUsernode.publish({…})`): each part is one card headed by its name and its
+  note. The card is the part's own box (`ui-card ui-unsec` on `UnSection`'s root, the block the standard
+  look rules off), and a status row is named `ui-unrow`; everything else is dressed by hand rules under
+  `#settings-usernode-section` (the state's dot and word in the look's ok or waiting ink, a switch at the
+  end of its row, notices as tinted boxes, the help's questions as sunk boxes, mono for build and error
+  words). **No wrapper stands round a part's nodes.** A first version put one there (`ui-unbody`), and the
+  comparison with the base caught it changing the standard look: the standard sheet styles the paragraph
+  that follows a heading (`.settings-sheet h3 + p`: 15px, 14px under it), which About's first build line
+  and Account's sentence are, and the wrapper stood between the two. The lesson for any further wrapper in
+  Settings: a neutral wrapper is neutral only if nothing in the standard sheet reads the nodes on either
+  side of it as neighbours.
+- **Dark mode.** All eighteen steps were read in Glass dark on a desktop, and the four the visual pass had
+  not read in dark (s63 calm, s66, s67 on a phone, s70) in a second look each on a phone or a desktop. One
+  fault found (Paper's quiet button, above); nothing else.
+
+Needs group A (shared files, not changed here):
+
+- `scripts/build-looks-css.js` / the wear map: a kit rule naming two components (`.card .btn.quiet`) is
+  repeated for the wearers of the first only, with the kit's class kept for the second
+  (`:is(.ui-glist,.ui-card):is(#settings-root *) .fr-btn.fr-quiet`). It should pair a root's wearer with
+  the same page's wearer of the other root. Only `paper.css` has such a rule today
+  (`.card .btn.quiet,.card .btn.line{background:var(--surface);box-shadow:none}`). With that fixed, the hand
+  rule "IN PAPER A QUIET BUTTON INSIDE A CARD" in Settings' block can go.
+- The frame's hand rules: `@media (max-width: 767.98px) { html[data-skin]:is(.un-kb, .platform-kb-open)
+  .fr.fr-shell .fr-tabbar { display: none; } }`, for every page (Messages' composer, the bot, #general, a
+  request's reply box all keep the bar on the keys today). With it, Settings' scoped copy can go.
