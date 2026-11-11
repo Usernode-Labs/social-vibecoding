@@ -50,7 +50,7 @@ const TRANSITIONS = Object.freeze({
 // a build that fails, a change that broke on the after build or a state the
 // copies cannot reach is the proposal's to fix.
 const PLATFORM_FAULT_KINDS = new Set([
-  'database', 'clone', 'worker_bootstrap', 'github_rate_limited', 'agent_exit',
+  'database', 'clone', 'worker_bootstrap', 'github_rate_limited', 'github_unavailable', 'agent_exit',
 ]);
 
 const { currentCode, agentBusyCode, AGENT_BUSY_REASON } = detailRules;

@@ -3402,6 +3402,9 @@ const OUTCOME_FACTS = Object.freeze({
   ask: 'you need one answer from them before you can make it: your question is below',
   person: 'a person should decide this, not you: why is below',
   failed: 'you tried and could not make it',
+  // #6598: the work never started, so nothing was touched and the asks stay.
+  start_retrying: 'you could not start because GitHub did not answer; nothing was changed; you try again on your own in a few minutes',
+  start_failed: 'you could not start because GitHub did not answer after several tries; nothing was changed; they can ask again',
   gone: 'the change was merged or closed before you could make it, so nothing was done',
 });
 
@@ -3477,6 +3480,14 @@ function mustSay(outcome) {
   if (outcome.descriptionReworded) lines.push('Its description was reworded to match: say so.');
   if (outcome.descriptionStale) lines.push('Its description could not be reworded, so it still describes the earlier version: say so.');
   if (outcome.action === 'failed') lines.push('The change is as it was.');
+  // #6598: work that never started says so, in these words, and never tells
+  // anybody to do it themselves.
+  if (outcome.action === 'start_retrying') {
+    lines.push("GitHub didn't answer when I tried to start, so nothing was changed. I'll try again in a few minutes.");
+  }
+  if (outcome.action === 'start_failed') {
+    lines.push("GitHub still didn't answer, so nothing was changed. Ask me again here when you'd like me to try.");
+  }
   return lines;
 }
 
@@ -3507,6 +3518,11 @@ function plainReport(outcome) {
       return `I think a person should take this one from here: ${reply}`;
     case 'gone':
       return 'This change isn\'t up for a vote any more, so I didn\'t make that change. Ask on a request if it still needs doing.';
+    // #6598: a start GitHub's outage stopped has its own words, and no
+    // "ask me again" line: the first failure is retrying by itself.
+    case 'start_retrying':
+    case 'start_failed':
+      return mustSay(outcome).join(' ');
     default:
       return [outcome.why ? `I couldn't make that change: ${ownWhy(outcome.why)}.` : 'I couldn\'t make that change.', ...mustSay(outcome),
         outcome.retrying ? 'I\'ll try once more on my own.' : 'Ask me again here to try again.'].join(' ');
@@ -3615,7 +3631,10 @@ async function composeReport(pool, cfg, { app, session, bot, asks, outcome, deps
     asked,
     `What came of it: ${OUTCOME_FACTS[outcome.action] || OUTCOME_FACTS.failed}${outcome.action === 'revise' && !outcome.moved ? ' (but nothing changed)' : ''}.`,
     // #6537: a change its author made in their own coding tool, updated for them.
-    outcome.handedOver ? 'This change is not yours: its author made it in their own coding tool, and you were asked to update it for them, on their change. Never call it yours.' : null,
+    // #6598: a start that never ran is nobody's to do, so the model is not
+    // prompted to hand it back.
+    outcome.handedOver && outcome.action !== 'start_retrying' && outcome.action !== 'start_failed'
+      ? 'This change is not yours: its author made it in their own coding tool, and you were asked to update it for them, on their change. Never call it yours.' : null,
     withoutInternals(outcome.summary) ? `What changed, in the coding agent's words: ${clip(withoutInternals(outcome.summary), 600)}` : null,
     withoutInternals(outcome.reply) ? `What the coding agent said: ${clip(withoutInternals(outcome.reply), 1500)}` : null,
     outcome.why ? `Why it did not work: ${clip(outcome.why, 300)}` : null,
