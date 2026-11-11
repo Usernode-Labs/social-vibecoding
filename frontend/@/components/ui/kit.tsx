@@ -681,7 +681,7 @@ export function RowArrow() {
  * its tile large on the cover; its name, one sentence, who is there, and
  * the row's one word.
  */
-export function PicCard({ href, onClick, cover, darkCover, tile, color, title, line, two, meta, word, badge, flag, label, ...data }: {
+export function PicCard({ href, onClick, cover, darkCover, tile, color, title, line, two, meta, word, end, badge, flag, label, ...data }: {
   /** With no picture: the colour the tile stands on (the community's own). */
   color?: string | null;
   /** The sentence may take two lines (a directory's card). */
@@ -701,9 +701,15 @@ export function PicCard({ href, onClick, cover, darkCover, tile, color, title, l
   line?: React.ReactNode;
   meta?: React.ReactNode;
   word?: React.ReactNode;
+  /**
+   * A control of the card's own at its foot, beside `meta` (Join on a
+   * member's Home). A button may not sit inside a link, so the card is then
+   * a group: its picture and words are the door, the foot stands under it.
+   */
+  end?: React.ReactNode;
 } & Record<`data-${string}`, string | undefined>) {
-  return (
-    <a className={k('card', 'fcard')} href={href} onClick={onClick} aria-label={label} {...data}>
+  const face = (
+    <>
       <span className={k('fcover', !cover && color ? 'tc' : '')} style={!cover && color ? { '--fr-tc': color } as Custom : undefined}>
         {cover ? <img src={cover} alt="" loading="lazy" className={k('sun')} /> : tile}
         {cover && darkCover ? <img src={darkCover} alt="" loading="lazy" className={k('moon')} /> : null}
@@ -713,10 +719,19 @@ export function PicCard({ href, onClick, cover, darkCover, tile, color, title, l
       <span className={k('fbody')}>
         <span className={k('t')}>{title}</span>
         {line ? <span className={k('s', two && 'two')}>{line}</span> : null}
-        {meta || word ? <span className={k('fm')}>{meta}{word ? <span className={k('btn', 'quiet', 'sm')}>{word}</span> : null}</span> : null}
+        {!end && (meta || word) ? <span className={k('fm')}>{meta}{word ? <span className={k('btn', 'quiet', 'sm')}>{word}</span> : null}</span> : null}
       </span>
-    </a>
+    </>
   );
+  if (end) {
+    return (
+      <div className={k('card', 'fcard')} {...data}>
+        <a className={k('fdoor')} href={href} onClick={onClick} aria-label={label}>{face}</a>
+        <div className={k('fm')}><span className={k('fmt')}>{meta}</span>{end}</div>
+      </div>
+    );
+  }
+  return <a className={k('card', 'fcard')} href={href} onClick={onClick} aria-label={label} {...data}>{face}</a>;
 }
 
 /**

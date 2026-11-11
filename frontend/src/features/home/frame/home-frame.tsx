@@ -59,7 +59,7 @@ import { useCommunityColor } from '../../../lib/community-color';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { liveAppLabel, useLiveAppSlugs } from '../../app-frame/live-apps';
-import { type GuestApp } from '../../guest/guest-data';
+import { type GuestApp, MIN_PEOPLE, isNew } from '../../guest/guest-data';
 import { communityScopeStore } from '../../workshop/community-scope';
 import { openAddAppsSheet } from '../add-apps-sheet';
 import { chromeStore } from '../chrome-store';
@@ -493,6 +493,7 @@ function PinnedCommunities({ query }: { query: string }) {
 /** Communities to join: the public directory, less the ones already on this Home (./to-join.tsx draws it). */
 function ToJoin({ query, initialDirectory }: { query: string; initialDirectory: GuestApp[] | null }) {
   const t = useMessages('home');
+  const ta = useMessages('auth');
   const pins = useStoreState(homePinsStore);
   const [apps, setApps] = useState<GuestApp[] | null>(initialDirectory);
   const [failed, setFailed] = useState(false);
@@ -540,6 +541,20 @@ function ToJoin({ query, initialDirectory }: { query: string; initialDirectory: 
       heading={t('home:join.heading')}
       id="home-frame-to-join"
       title={door}
+      // A member's directory is picture cards, as the standard Home draws
+      // them: the picture or the tile on the community's colour, "New" and
+      // who is there on the cover, and a foot with its line and Join.
+      link={(app) => ({
+        href: hubHref(app.slug),
+        onClick: (event) => openHub(event, app.slug),
+        label: (app.active_users || 0) >= MIN_PEOPLE ? ta('auth:guest.card.peopleLabel', { name: app.name, count: app.active_users || 0 }) : undefined,
+      })}
+      picture={(app) => ({
+        flag: isNew(app) ? ta('auth:guest.card.new') : undefined,
+        badge: (app.active_users || 0) >= MIN_PEOPLE ? <><Icon name="users" size={14} />{(app.active_users || 0).toLocaleString()}</> : undefined,
+        meta: meta(app),
+        end: join(app),
+      })}
       cardEnd={join}
       cardLine={meta}
       rowEnd={join}

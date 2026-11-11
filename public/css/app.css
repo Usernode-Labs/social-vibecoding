@@ -28230,6 +28230,14 @@ html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet section > p { paddi
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet :is(a, button).text-violet-700 { color: var(--fr-acc); font-weight: 600; }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet .un-group-row:is(a, button) { font-size: 15px; }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet .text-red-700 { color: var(--fr-bad); }
+/* In the sheet a card is drawn with the kit's plain edge (a look's own
+   card, a white ring and a soft shadow in Glass, has nothing to stand out
+   from on the sheet's ground: the one-row cards, Username and Account
+   email, read as bare lines). The preview of the public page ("What's on
+   it") is a card too: it was painted in the sheet's own colour. */
+html[data-skin][data-skin]:not([data-skin="brand"]) #profile-edit-sheet .un-group { box-shadow: inset 0 0 0 1px var(--fr-line); }
+html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet #public-profile-card { border-radius: 20px; background: var(--fr-surface); box-shadow: inset 0 0 0 1px var(--fr-line); color: var(--fr-ink); }
+html[data-skin="workbench"] #profile-edit-sheet #public-profile-card { border-radius: 10px; }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet .text-emerald-700 { color: var(--fr-ok); }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet .un-group-row .rounded-full.text-emerald-700 { align-items: center; height: 24px; padding: 0 10px; background: var(--fr-ok-t); font-size: 12px; font-weight: 700; }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet :is(input, textarea).bg-transparent { color: var(--fr-ink); font-size: 15px; }
@@ -28809,6 +28817,10 @@ html[data-skin]:not([data-skin="brand"]) [data-new-message] .text-red-700 { colo
 html[data-skin]:not([data-skin="brand"]) [data-new-message] .border-t { border-color: var(--fr-line); }
 html[data-skin]:not([data-skin="brand"]) [data-new-message] .ms-auto > button:disabled { opacity: .45; }
 html[data-skin]:not([data-skin="brand"]) [data-new-message] .border-t > button { color: var(--fr-acc); font-size: 13px; font-weight: 600; }
+/* "Blocked people" is never broken over two lines: beside Cancel and Create
+   group on a phone the row wraps instead, the two buttons under the link. */
+html[data-skin]:not([data-skin="brand"]) [data-new-message] .border-t { flex-wrap: wrap; row-gap: 12px; }
+html[data-skin]:not([data-skin="brand"]) [data-new-message] .border-t > button { flex: none; white-space: nowrap; }
 html[data-skin]:not([data-skin="brand"]) [data-new-message] .rounded-lg.border { padding: 12px; border-color: var(--fr-line); border-radius: 12px; }
 html[data-skin]:not([data-skin="brand"]) [data-new-message] .rounded-lg.border > .font-semibold { color: var(--fr-ink); font-size: 13px; font-weight: 650; }
 html[data-skin]:not([data-skin="brand"]) [data-new-message] .rounded-lg.border .truncate { color: var(--fr-ink); font-size: 15px; }
@@ -29806,6 +29818,9 @@ html[data-skin] .fr-lookrow .fr-v{color:var(--fr-mut);font-weight:500}
 html[data-skin] .fr-lookrow select{position:absolute;top:0;inset-inline-start:0;width:100%;height:100%;opacity:0}
 html[data-skin] .fr-crumb .fr-cs.fr-off{height:0}
 html[data-skin] .fr-barline{display:none}
+html[data-skin] .fr-fcard .fr-fdoor{display:flex;flex-direction:column;flex:1;min-width:0;color:inherit;text-decoration:none}
+html[data-skin] .fr-fcard>.fr-fm{margin:0;padding:0 12px 12px;font-size:13px;color:var(--fr-mut)}
+html[data-skin] .fr-fcard>.fr-fm .fr-fmt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (min-width: 768px){
 html[data-skin][data-skin] .fr-p{display:none!important}
 }

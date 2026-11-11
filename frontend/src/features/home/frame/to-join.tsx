@@ -42,11 +42,14 @@ export function across(count: number): 2 | 3 | 4 {
 }
 
 /** A community as a visitor's picture card. A component, for the colour it reads off the icon. */
-function PictureCard({ app, to, flag, badge }: {
+function PictureCard({ app, to, flag, badge, meta, end }: {
   app: GuestApp;
   to: { href: string; onClick: (event: React.MouseEvent<HTMLElement>) => void; label?: string };
   flag?: React.ReactNode;
   badge?: React.ReactNode;
+  /** A member's card ends in a foot: how many are there or what is up for a vote, and Join. */
+  meta?: React.ReactNode;
+  end?: React.ReactNode;
 }) {
   const color = useCommunityColor({ color: app.icon_color, iconUrl: app.icon_url, iconEmoji: app.icon_emoji, key: app.slug });
   return (
@@ -64,6 +67,8 @@ function PictureCard({ app, to, flag, badge }: {
       title={app.name || app.slug}
       line={app.description || undefined}
       two
+      meta={meta}
+      end={end}
     />
   );
 }
@@ -85,7 +90,7 @@ export function ToJoinView({ apps, failed, onRetry, exclude, query, heading, id,
   /** The whole card or row is the door (a visitor's, which holds no button). `label` is what a screen reader hears for it. */
   link?: (app: GuestApp) => { href: string; onClick: (event: React.MouseEvent<HTMLElement>) => void; label?: string };
   /** A visitor's directory: every community a picture card, with these on its cover ("New", the people count). Needs `link`. */
-  picture?: (app: GuestApp) => { flag?: React.ReactNode; badge?: React.ReactNode };
+  picture?: (app: GuestApp) => { flag?: React.ReactNode; badge?: React.ReactNode; meta?: React.ReactNode; end?: React.ReactNode };
   /** At the end of a card's first line, and of a row: Join, or how many people. */
   cardEnd: (app: GuestApp) => React.ReactNode;
   rowEnd: (app: GuestApp) => React.ReactNode;

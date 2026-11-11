@@ -529,3 +529,7 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .barline{display:none}
 .phone .barline{display:block;flex:none;padding:0 12px 8px;font:500 12px/1.35 var(--f);color:var(--mut);border-bottom:1px solid var(--line)}
 .phone .bar:has(+.barline){border-bottom-color:transparent}
+/* left-overs D: a picture card with a control of its own (Join) is a group: the door over a foot */
+.fcard .fdoor{display:flex;flex-direction:column;flex:1;min-width:0;color:inherit;text-decoration:none}
+.fcard>.fm{margin:0;padding:0 12px 12px;font-size:13px;color:var(--mut)}
+.fcard>.fm .fmt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
