@@ -284,44 +284,34 @@ test('the reply\'s text is read from its arguments as they arrive', () => {
   assert.equal(mayor.draftOf({ content: long, toolCalls: [] }), long.trim(), 'words longer than any preamble are the answer');
 });
 
-test('what is shown as it is written goes out at most every 250 ms, newest words, in order, and stops when the turn does', async () => {
+test('#6581: the card says "Writing" once while the answer is written, and carries no words', async () => {
   const said = [];
-  const waits = [];
   const ctx = { deps: { doing: async (what) => { said.push(what); } } };
-  const writer = mayor.draftWriter(ctx, { every: 250, wait: async (ms) => { waits.push(ms); } });
+  const writer = mayor.draftWriter(ctx, { every: 250, wait: async () => {} });
   const reply = (text) => ({ content: '', toolCalls: [{ function: { name: 'reply', arguments: `{"text":"${text}` } }] });
   writer.onDelta(reply('One'));
   await ctx.saying;
   writer.onDelta(reply('One two'));
   writer.onDelta(reply('One two three'));
   await ctx.saying;
-  assert.deepEqual(said, [{ kind: 'writing', text: 'One' }, { kind: 'writing', text: 'One two three' }], 'the words in between were never queued twice');
-  assert.equal(waits.length, 1, 'the second waited its turn');
+  assert.deepEqual(said, [{ kind: 'writing' }], 'one "Writing", with none of the answer\'s words');
   writer.onDelta({ content: 'Let me', toolCalls: [] });
   await ctx.saying;
-  assert.equal(said.length, 2, 'nothing new to show');
-  // #6405: a round that calls another tool writes no answer, and says nothing:
-  // the card keeps its words rather than dropping back to "Thinking".
+  assert.equal(said.length, 1, 'a preamble shows nothing');
+  // A round that calls another tool writes no answer, and says nothing.
   writer.onDelta({ content: '', toolCalls: [{ function: { name: 'read_source', arguments: '{' } }] });
   await ctx.saying;
-  assert.deepEqual(said.at(-1), { kind: 'writing', text: 'One two three' }, 'an empty round sends no null');
-  // The correction pass writes the answer again: what is shown stays.
-  writer.restart();
-  await ctx.saying;
-  assert.equal(said.length, 2, 'restarting says nothing');
+  assert.equal(said.length, 1, 'an empty round sends no null');
+  // The correction pass writes the answer again: no second "Writing".
   writer.onDelta(reply('Ref'));
   await ctx.saying;
-  assert.deepEqual(said.at(-1), { kind: 'writing', text: 'One two three' }, 'a shorter rewrite is not shown');
-  writer.onDelta(reply('One two three and four'));
+  assert.equal(said.length, 1, 'a rewritten answer sends nothing new');
+  writer.close({ clear: true });
   await ctx.saying;
-  assert.deepEqual(said.at(-1), { kind: 'writing', text: 'One two three and four' }, 'a rewrite as long as the floor shows');
-  writer.onDelta(reply('One two three and four, five'));
-  await ctx.saying;
-  assert.deepEqual(said.at(-1), { kind: 'writing', text: 'One two three and four, five' }, 'and then grows as usual');
-  writer.close();
+  assert.deepEqual(said, [{ kind: 'writing' }, null], 'a turn that found no answer drops the card');
   writer.onDelta(reply('Again, after'));
   await ctx.saying;
-  assert.deepEqual(said.at(-1), { kind: 'writing', text: 'One two three and four, five' }, 'nothing once the message is on its way');
+  assert.equal(said.length, 2, 'nothing once the message is on its way');
   // A turn with no working card writes nothing.
   assert.equal(mayor.draftWriter({ deps: {} }), null);
 });
@@ -344,7 +334,7 @@ test('a turn streams its answer to the working card, and the message sent takes 
   assert.equal(typeof seen[0].onDelta, 'function', 'every request is streamed');
   const writing = turn.doings.filter((d) => d?.kind === 'writing');
   assert.ok(writing.length >= 1);
-  assert.equal(writing.at(-1).text, words);
+  assert.ok(writing.every((d) => d.text === undefined), 'the card carries none of the answer\'s words');
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].content, words, 'the message is what counts');
   // Asked not to (a caller with no working card), nothing streams.
@@ -358,7 +348,7 @@ test('a typing event carries the answer\'s newest words, within the bus\'s budge
   assert.ok(realDm.DOING_KINDS.includes('writing'));
   assert.deepEqual(realDm.typingDoing({ kind: 'writing', text: '  Hello  ' }), { kind: 'writing', text: 'Hello' });
   assert.equal(realDm.typingDoing({ kind: 'writing', text: '' }), null);
-  assert.equal(realDm.typingDoing({ kind: 'writing' }), null);
+  assert.deepEqual(realDm.typingDoing({ kind: 'writing' }), { kind: 'writing' }, '#6581: no words, so the card says "Writing"');
   for (const text of ['word '.repeat(2000), '漢字かな'.repeat(1500), '"\\'.repeat(3000), '🙂'.repeat(4000)]) {
     const doing = realDm.typingDoing({ kind: 'writing', text });
     assert.ok(doing.text.startsWith('… '), 'a long answer shows its end');
@@ -545,7 +535,8 @@ test('a reply after a walkthrough written beside a call sends the walkthrough, a
     assert.equal(sent[0].metadata.kind, 'confirm', 'still the offer, with File it');
     assert.deepEqual(sent[0].metadata.looked.items, [{ what: 'Read 1 file in Gym Tracker' }], 'and the line above it');
     const writing = doings.filter((d) => d?.kind === 'writing');
-    assert.ok(writing.at(-1).text.startsWith(walk), 'the card never swaps the walkthrough for the short reply');
+    assert.ok(writing.length >= 1);
+    assert.ok(writing.every((d) => d.text === undefined), '#6581: the card never carries the answer\'s words');
   } finally {
     access.checkAppAccess = was;
   }
