@@ -843,6 +843,18 @@
     "text": "Not shared yet",
     "description": "Status beside the word \"Change\" at the top of a change's page. The change is still being built and only its owner can see it."
   },
+  "page.hero.status.approvedChecking": {
+    "text": "Approved · checking the latest version",
+    "description": "Status beside the word \"Change\" at the top of a change's page. The change has the votes its project's rule needs, and Homeroom's own checks are still running on its latest version."
+  },
+  "page.hero.status.approvedGithub": {
+    "text": "Approved · waiting on GitHub's checks",
+    "description": "Status beside the word \"Change\" at the top of a change's page. The change has the votes its project's rule needs and Homeroom's checks passed, and GitHub's own required checks are still running before it merges."
+  },
+  "page.hero.status.approvedFailing": {
+    "text": "Approved · checks failing",
+    "description": "Status beside the word \"Change\" at the top of a change's page. The change has the votes its project's rule needs, but its checks are failing, so it cannot go live until they are fixed."
+  },
   "page.hero.status.merging": {
     "text": "Going live",
     "description": "Status beside the word \"Change\" at the top of a change's page. The change was approved and is being merged into the project."
@@ -8960,7 +8972,7 @@
     "description": "One sentence of the line under the figure on the Votes card of a change's page: the change has the votes it needs but its automated checks fail, and someone else has to fix it. {{author}} is their username."
   },
   "page.votes.note.liveOnceTested": {
-    "text": "It goes live once testing passes.",
+    "text": "It goes live once its checks pass.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page when the change has the votes it needs and its automated checks have not passed yet."
   },
   "page.votes.figure.noVote": {

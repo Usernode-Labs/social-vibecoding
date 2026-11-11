@@ -2033,6 +2033,13 @@
       "preview": "ITEMS_SQL"
     },
     {
+      "source": "src/services/threads.js",
+      "kind": "structural-template",
+      "fingerprint": "ceaf327ad2eb29657681",
+      "count": 1,
+      "preview": "`SELECT w.session_id FROM work_states w WHERE w.session_id = ANY($1::int[]) AND ${APPROVED_SQL('w')}`"
+    },
+    {
       "source": "src/services/topochain/challenge-onboarding.js",
       "kind": "structural-template",
       "fingerprint": "0d73f67849537e7007aa",
@@ -2318,6 +2325,13 @@
       "fingerprint": "e291c7da7e5ce11b4cf9",
       "count": 1,
       "preview": "REQUEST_FACTS_SQL"
+    },
+    {
+      "source": "src/services/work-state.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "efa4a36d01d42c3c8181",
+      "count": 1,
+      "preview": "VOTES_IN_SQL"
     },
     {
       "source": "src/services/worker-eviction.js",

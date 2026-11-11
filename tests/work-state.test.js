@@ -17,12 +17,13 @@ const base = { app_id: 1, issue_number: 7, mode: 'live', run_at: ago(30), reques
 const derive = (extra) => ws.derive({ ...base, ...extra }, { now: NOW });
 
 // #6563: an approved, tested change whose merge GitHub is holding is not
-// going live yet. Its stage word says so, and its second line says on what.
-test('an approved change whose merge GitHub holds says Waiting to merge', () => {
+// going live yet. #6594: waiting on GitHub's required checks is still
+// approved; only GitHub itself holding the merge reads "Waiting to merge".
+test('an approved change waiting on GitHub says Approved, and a GitHub hold says Waiting to merge', () => {
   const held = { stage: 'going_live', line: { code: 'github_checks' } };
-  assert.equal(ws.stageSays(held), 'Waiting to merge');
+  assert.equal(ws.stageSays(held), 'Approved');
   assert.equal(ws.stageSays({ stage: 'going_live', line: { code: 'github_wait' } }), 'Waiting to merge');
-  assert.equal(ws.lineSays(held), "Waiting for GitHub's checks");
+  assert.equal(ws.lineSays(held), "Waiting on GitHub's checks");
   assert.equal(ws.lineSays({ stage: 'going_live', line: { code: 'github_wait' } }), 'Waiting on GitHub');
   assert.equal(ws.stageSays({ stage: 'going_live' }), 'Going live', 'a plain merge keeps its word');
   assert.equal(ws.WORDS['work.stage.waitingToMerge'], 'Waiting to merge');
@@ -30,8 +31,52 @@ test('an approved change whose merge GitHub holds says Waiting to merge', () => 
   assert.equal(core['work.stage.waitingToMerge'].text, ws.WORDS['work.stage.waitingToMerge'],
     'the server and the browser say the same');
   const ts = fs.readFileSync(path.join(ROOT, 'frontend/src/lib/work-state.ts'), 'utf8');
-  assert.match(ts, /stage === 'going_live' && \(code === 'github_checks' \|\| code === 'github_wait'\)/);
+  assert.match(ts, /stage === 'going_live' && code === 'github_checks'.*\n.*stage === 'going_live' && code === 'github_wait'/);
   assert.match(ts, /core:work\.stage\.waitingToMerge/);
+});
+
+// #6594: once a change has the votes its rule needs, nothing says "Up for a
+// vote" while its checks run: it is approved, and says what it waits on.
+test('#6594: a change whose votes are in is Approved while its checks run', () => {
+  const request = (extra) => derive({ proposal_status: 'promoted', ...extra });
+  const running = request({ votes_in: true, check_state: 'pending' });
+  assert.equal(running.stage, 'checking');
+  assert.deepEqual(running.line, { code: 'approved_checking' });
+  assert.equal(ws.stageSays(running), 'Approved');
+  assert.equal(ws.lineSays(running), 'Checking the latest version');
+  assert.equal(ws.says(running), 'Approved · Checking the latest version', 'as the request words it');
+
+  const failing = request({ votes_in: true, check_state: 'failing' });
+  assert.equal(failing.stage, 'checking');
+  assert.deepEqual(failing.line, { code: 'checks_failing' }, 'a failure keeps today’s failing words');
+
+  const passing = request({ votes_in: true, check_state: 'passing' });
+  assert.equal(passing.stage, 'going_live', 'its votes are in and it is being merged');
+
+  const github = request({ votes_in: true, check_state: 'passing', integration_block_reasons: ['github_checks'] });
+  assert.equal(ws.stageSays(github), 'Approved');
+  assert.equal(ws.lineSays(github), "Waiting on GitHub's checks");
+
+  // A change with no request of its own reads the same.
+  const change = (extra) => ws.deriveChange({ status: 'promoted', check_state: 'pending', ...extra }, { now: NOW });
+  assert.deepEqual(change({ votes_in: true }).line, { code: 'approved_checking' });
+  assert.equal(ws.deriveChange({ status: 'promoted', check_state: 'passing', votes_in: true }, { now: NOW }).stage, 'going_live');
+  assert.equal(ws.deriveChange({ status: 'promoted', check_state: 'failing', votes_in: true }, { now: NOW }).line.code,
+    'checks_failing', 'a failure stays a failure');
+
+  // Without its votes it still asks for one, and says why a push retired them.
+  const retired = change({ check_state: 'passing', earlier_yes: 4 });
+  assert.equal(retired.stage, 'up_for_vote');
+  assert.deepEqual(retired.line, { code: 'earlier_yes', count: 4 });
+  assert.equal(ws.lineSays(retired), 'Changed since its 4 yes votes, which count again once each is confirmed');
+  assert.equal(ws.lineSays({ stage: 'up_for_vote', line: { code: 'earlier_yes', count: 1 } }),
+    'Changed since its yes vote, which counts again once confirmed');
+  const core = JSON.parse(fs.readFileSync(path.join(ROOT, 'frontend/locales/en/core.json'), 'utf8'));
+  for (const key of ['work.stage.approved', 'work.line.approvedChecking', 'work.line.earlierYes_one', 'work.line.earlierYes_other']) {
+    assert.ok(core[key] && core[key].text, `${key} is in the catalog`);
+  }
+  assert.equal(core['work.stage.approved'].text, ws.WORDS['work.stage.approved']);
+  assert.equal(core['work.line.approvedChecking'].text, ws.WORDS['work.line.approvedChecking']);
 });
 
 test('the ten stages, and nothing else, are what a request can be in', () => {

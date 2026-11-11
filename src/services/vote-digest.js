@@ -40,6 +40,7 @@ const log = require('./logger');
 const { VOTE_DIGEST_LOCK } = require('./advisory-locks');
 const { firstVersionSql } = require('./first-version-rule');
 const { voteReadySql } = require('./vote-ready');
+const { APPROVED_SQL } = require('./work-state');
 
 const INTERVAL_MS = 60 * 60 * 1000;      // swept hourly (the vote-digest clock)
 // 20 rather than 24: the sweep is hourly and a strict 24 would drift a
@@ -99,6 +100,11 @@ const PENDING_SQL = `
        -- #6402: and only once its checks passed and it merges cleanly with
        -- main. A change still being tested is nobody's vote yet.
        AND ${voteReadySql('cs')}
+       -- #6594: nor once its votes are in: it is approved and waits on its
+       -- checks, so the digest does not ask anyone for a vote it has.
+       AND NOT EXISTS (
+             SELECT 1 FROM work_states w
+              WHERE w.session_id = cs.id AND ${APPROVED_SQL('w')})
   )
   SELECT s.user_id, COUNT(DISTINCT p.id) AS pending,
          -- The one change, when there is exactly one: the row names it, so a

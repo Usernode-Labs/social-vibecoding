@@ -4609,6 +4609,9 @@ function voteRoutes(config) {
           }
         );
         row.votes_required = gate.required;
+        // #6594: its votes are in, so its card says Approved and what it
+        // waits on, not "Waiting for approval". A first version has no vote.
+        row.votes_in = gate.mergeable === true && row.first_version !== true;
         row.merge_window_ends_at = gate.windowEndsAt;
         row.contested = gate.contested;
         row.reject_window_ends_at = gate.rejectionEndsAt;
@@ -5323,6 +5326,9 @@ function voteRoutes(config) {
           }
         );
         proposal.votes_required = gate.required;
+        // #6594: the same fact the board's rows carry, so the change page's
+        // own heading says Approved instead of Waiting for approval.
+        proposal.votes_in = gate.mergeable === true && proposal.first_version !== true;
         proposal.merge_window_ends_at = gate.windowEndsAt;
         proposal.contested = gate.contested;
         proposal.reject_window_ends_at = gate.rejectionEndsAt;
