@@ -251,6 +251,7 @@ test('the chrome keeps clear of a phone\'s status bar and home strip', () => {
     'the bar\'s own ground fills the status bar\'s strip');
   assert.match(css, /html\[data-skin\]:not\(\[data-skin="pastel"\]\) \.fr\.fr-shell > \.fr-side \{\s*border-top: var\(--platform-safe-top, 0px\) solid transparent;\s*border-bottom: var\(--platform-safe-bottom, 0px\) solid transparent;\s*\}/,
     'a tablet\'s sidebar keeps its first and last rows clear, its ground under the transparent borders');
+  assert.match(css, /@media \(max-width: 767\.98px\) \{\s+html\[data-skin\]:is\(\.un-kb, \.platform-kb-open\) \.fr\.fr-shell \.fr-tabbar \{ display: none; \}/, 'with the keys up the bar goes, on every page');
   assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-tabbar \{\s*position: relative;\s*margin-bottom: var\(--platform-safe-bottom, 0px\);\s*\}/);
   assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-tabbar::after \{[^}]*top: 100%;[^}]*height: var\(--platform-safe-bottom, 0px\);[^}]*background: inherit;/,
     'the tab bar\'s ground fills the home strip');

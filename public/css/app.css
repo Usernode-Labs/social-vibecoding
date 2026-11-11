@@ -27069,6 +27069,14 @@ html[data-skin]:not([data-skin="pastel"]) .fr.fr-shell > .fr-side {
   border-top: var(--platform-safe-top, 0px) solid transparent;
   border-bottom: var(--platform-safe-bottom, 0px) solid transparent;
 }
+/* WITH THE KEYS UP ON A PHONE THE FRAME'S TAB BAR GOES, on every page, as
+   the standard look's does (`html.un-kb #platform-tabs`,
+   `html.platform-kb-open #platform-tabs`): it rode on the keyboard under a
+   reply box, a chat's field or a filter. The frame measures its page area,
+   so the room comes back to the page by itself. */
+@media (max-width: 767.98px) {
+  html[data-skin]:is(.un-kb, .platform-kb-open) .fr.fr-shell .fr-tabbar { display: none; }
+}
 @media (max-width: 767.98px) {
   html[data-skin] .fr.fr-shell .fr-tabbar {
     position: relative;
