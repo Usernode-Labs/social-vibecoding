@@ -1633,7 +1633,7 @@ export function SignInSheet({
   if (!open) return null;
 
   const methodSwitch = hasMethodSwitch(step, from, signIn);
-  const kitStep = kit && (step === 'choose' || step === 'phone' || step === 'password');
+  const kitStep = kit && (step === 'choose' || step === 'email' || step === 'phone' || step === 'password');
   const toStep = (next: Step) => {
     if (next === 'password' && (step === 'choose' || step === 'email')) {
       const typed = (firstField.current?.value || email).trim();
@@ -1770,7 +1770,7 @@ export function SignInSheet({
           </button>
         </div>
         {sub ? <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p> : null}
-        {/* Under a look three steps are laid out as the kit's sheet (kitSteps, after this render); any other step, and every step under the standard look, is what follows. */}
+        {/* Under a look four steps are laid out as the kit's sheet (kitSteps, after this render); any other step, and every step under the standard look, is what follows. */}
         {kitStep ? kitSteps() : (<>
         {methodSwitch ? (
           <div role="radiogroup" aria-label={t('auth:signInSheet.method.label')} data-sign-in-sheet-method="" className={SWITCH_TRACK}>
@@ -2060,10 +2060,15 @@ export function SignInSheet({
   );
 
   // THE KIT BRANCH (version 2 of the looks, the tour's o04 to o06): under a
-  // look the first step, the phone step and the password step are laid out
-  // as the kit's sheet. The field in a card first, the other ways as rows
-  // in one card under "or", the one primary button last, the terms as the
-  // sheet's foot; the Email code | Password switch is the kit's tabs.
+  // look the first step, the email step, the phone step and the password
+  // step are laid out as the kit's sheet. The field in a card first, the
+  // other ways as rows in one card under "or", the one primary button last,
+  // the terms as the sheet's foot; the Email code | Password switch is the
+  // kit's tabs. The email step is one of them because a sheet opens on it
+  // whenever Apple and Google are not known yet (a members' address opened
+  // by a visitor asks for the sheet before the providers have answered), and
+  // because the switch's Email code leads back to it: every step that
+  // carries the switch draws it the same way.
   // Everything else is this sheet's own: the shell above (dim, cover, panel,
   // title and close), the same fields with their ids and refs, the same
   // handlers, and every data-sign-in-* hook. A function declaration, so it
@@ -2110,6 +2115,18 @@ export function SignInSheet({
       ...(phoneLink && !phone ? [toPhone(() => { setError(null); setStep('phone'); }, 'to-phone')] : []),
       ...wayRows,
     ];
+    // The email step's ways are the standard step's own: "Other ways to
+    // continue" (to the first step, where Apple and Google are), then the phone.
+    const emailRows = [
+      ...(providers.length ? [(
+        <button key="other-ways" type="button" data-sign-in-sheet-other-ways="" className={k('row', 'sm')} onClick={() => { setError(null); setStep('choose'); }}>
+          <span className={k('lead')} aria-hidden="true"><KitIcon name="more" /></span>
+          <span className={k('tx')}><span className={k('t')}>{t('auth:signInSheet.email.otherWays')}</span></span>
+        </button>
+      )] : []),
+      ...(phoneLink && !phone ? [toPhone(() => { setError(null); setStep('phone'); }, 'to-phone')] : []),
+      ...wayRows,
+    ];
     return (
       <div data-sign-in-sheet-kit="">
         {methodSwitch ? (
@@ -2137,6 +2154,19 @@ export function SignInSheet({
             <button type="submit" data-sign-in-provider="email" data-sign-in-email-empty={hasAddress ? undefined : ''} disabled={busy} className={k('btn', 'block', !hasAddress && 'off')} {...HOLD_FIELD_FOCUS}>
               {busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.continueWithEmail')}
             </button>
+          </form>
+        ) : null}
+
+        {step === 'email' ? (
+          <form className={`mt-5 ${k('stack')}`} onSubmit={(e) => { e.preventDefault(); void requestCode(firstField.current?.value || ''); }}>
+            <div className={FIELD_GROUP}>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-email" className={LABEL}>{t('auth:signInSheet.email.label')}</label>
+                <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
+              </div>
+            </div>
+            {emailRows.length ? or(emailRows) : null}
+            <button type="submit" disabled={busy} className={k('btn', 'block', busy && 'off')} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.email.send')}</button>
           </form>
         ) : null}
 
@@ -2190,7 +2220,8 @@ export function SignInSheet({
         {alert}
         <SessionConfirmationNotice completion={completion} />
 
-        {step === 'password' ? null : (
+        {/* The email step says the terms only where the standard one does (emailFoot: an invite's Join); with nothing to say it has no foot. */}
+        {step === 'password' || (step === 'email' && !lineWays.length && !emailFoot) ? null : (
           <div className={`mt-4 flex flex-col gap-2 ${k('foot')}`}>
             {lineWays.length ? <div data-sign-in-sheet-ways="" className="flex flex-col gap-1.5">{lineWays.map(wayLine)}</div> : null}
             {/* The landing's sheets, whose phone is a link away: back to the email. */}
@@ -2206,7 +2237,7 @@ export function SignInSheet({
                   ]} />
               </p>
             ) : null}
-            <TermsNotice recaptcha={step === 'phone' && recaptchaInUse ? RECAPTCHA_LINE : null} />
+            {step === 'email' ? emailFoot : <TermsNotice recaptcha={step === 'phone' && recaptchaInUse ? RECAPTCHA_LINE : null} />}
           </div>
         )}
       </div>

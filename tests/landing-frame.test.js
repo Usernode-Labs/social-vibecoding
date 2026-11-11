@@ -55,7 +55,7 @@ test('the three points are the side column, first on a phone, and do not change 
 test('Communities is Home\'s own section: the kinds, Featured as cards, the rest as rows, and a visitor\'s card has no button', () => {
   const html = render();
   assert.deepEqual(caps(html), ['Communities'], 'a first visit has no pins: the search, then the directory');
-  assert.match(html, /<div class="fr-cols"><div class="fr-stack"><div class="fr-search"><label class="fr-inp">.*?<\/label><\/div><section class="fr-sec"><div class="fr-sechead"><h2 class="fr-cap">Communities<\/h2>/s, 'the search leads the work column');
+  assert.match(html, /<div class="fr-cols"><div class="fr-stack"><div class="fr-search fr-flush"><label class="fr-inp">.*?<\/label><\/div><section class="fr-sec"><div class="fr-sechead"><h2 class="fr-cap">Communities<\/h2>/s, 'the search leads the work column');
   assert.deepEqual([...html.matchAll(/<button type="button" class="fr-btn(?: fr-quiet)? fr-sm" aria-pressed="(true|false)" data-home-join-kind="[a-z]+">([^<]+)<\/button>/g)].map((m) => [m[2], m[1]]),
     [['All', 'true'], ['Games', 'false'], ['Social', 'false'], ['Other', 'false']]);
   // Featured: the whole card is the door; the pill is how many people used it lately, heard with the name.

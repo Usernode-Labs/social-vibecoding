@@ -1,8 +1,9 @@
 // The sign-in sheet under a look (frontend/src/features/auth/sign-in-sheet
 // .tsx, its kit branch): version 2 of the screen tour's o04, o04b, o04c, o05
-// and o06. The first step, the phone step and the password step are laid
-// out as the kit's sheet: the field in a card, the other ways as rows in
-// one card under "or", the one primary button last, the terms as the foot.
+// and o06. The first step, the email step, the phone step and the password
+// step are laid out as the kit's sheet: the field in a card, the other ways
+// as rows in one card under "or", the one primary button last, the terms as
+// the foot.
 // It is a branch of the sheet's own render, inside the sheet's own shell
 // (dim, cover, panel, title and close): the same fields, ids, refs, handlers
 // and data-sign-in-* hooks. The other steps, and every step under the
@@ -64,18 +65,43 @@ test('the phone step: the number in its card, Apple and Google under "or", Text 
   }
 });
 
+test('the email step is the kit\'s sheet too: what a sheet opens on before Apple and Google are known, and where the switch\'s Email code leads', () => {
+  // The visual pass (o12, o04): a members' address opened by a visitor asks
+  // for the sheet before the providers have answered, so it opens on the
+  // email step, which only wore the look: plain blue links, and the
+  // standard segmented switch where the next step drew the look's tabs.
+  const html = sheet('glass', { providers: [], phoneLink: true, title: 'Sign in to open Messages' });
+  assert.match(html, /^<div data-sign-in-sheet="email" class="fixed inset-0 z-50">/, 'no providers: the sheet opens on the email step');
+  assert.match(html, /<\/div><div data-sign-in-sheet-kit=""><div class="mt-4"><div role="radiogroup"[^>]* data-sign-in-sheet-method="" class="fr-tabs fr-seg"><button type="button" role="radio" aria-checked="true" data-sign-in-sheet-method-email="" class="fr-tab fr-on">Email code<\/button>/, 'the switch is one drawing on every step that has it');
+  assert.ok(rising(order(html, ['id="sign-in-sheet-title"', 'data-sign-in-sheet-method=""', 'id="sign-in-sheet-email"', 'data-sign-in-sheet-or=""', 'data-sign-in-sheet-to-phone=""', '>Send code</button>'])), 'the kit sheet\'s order');
+  assert.match(html, /<button type="submit" class="fr-btn fr-block">Send code<\/button><\/form>/, 'the step\'s own button and words');
+  assert.doesNotMatch(html, /By continuing|data-sign-in-sheet-other-ways|class="fr-foot/, 'no terms here (sending a code makes nothing) and no way to providers that are not there, as the standard step');
+  // Once the providers are known the step keeps its own way to them, as a row.
+  assert.match(KIT, /\.\.\.\(providers\.length \? \[\(\s*<button key="other-ways" type="button" data-sign-in-sheet-other-ways="" className=\{k\('row', 'sm'\)\} onClick=\{\(\) => \{ setError\(null\); setStep\('choose'\); \}\}>/);
+  assert.match(KIT, /<span className=\{k\('t'\)\}>\{t\('auth:signInSheet\.email\.otherWays'\)\}<\/span>/, 'the standard step\'s own words');
+  assert.match(KIT, /\{step === 'email' \? \(\s*<form className=\{`mt-5 \$\{k\('stack'\)\}`\} onSubmit=\{\(e\) => \{ e\.preventDefault\(\); void requestCode\(firstField\.current\?\.value \|\| ''\); \}\}>/);
+  assert.match(KIT, /\{step === 'email' \? emailFoot : <TermsNotice /, 'the terms only where the standard step says them (an invite\'s Join)');
+  // An invite's Join on the email step says the terms, in the foot.
+  const invite = sheet('paper', { providers: [], from: 'invite' });
+  if (/data-sign-in-sheet="email"/.test(invite)) assert.match(invite, /class="mt-4 flex flex-col gap-2 fr-foot">.*By continuing/s);
+  // The standard look's email step is untouched.
+  const standard = sheet('standard', { providers: [], phoneLink: true });
+  assert.match(standard, /^<div data-sign-in-sheet="email"/);
+  assert.doesNotMatch(standard, /data-sign-in-sheet-kit|class="fr-/);
+});
+
 test('the password step: the switch as the kit\'s tabs, the two fields in one card, Sign in, then Forgot password?', () => {
   assert.match(KIT, /\{step === 'password' \? \(\s*<form className=\{`mt-5 \$\{k\('stack'\)\}`\} onSubmit=\{\(e\) => \{ e\.preventDefault\(\); void signInWithPassword\(\); \}\}>/);
   assert.match(KIT, /<input ref=\{identifierField\} id="sign-in-sheet-identifier" name="username" type="text" required autoComplete="username"/);
   assert.match(KIT, /<PasswordInput ref=\{currentPasswordField\} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password"/);
   assert.match(KIT, /<button type="button" data-sign-in-sheet-forgot="" className=\{k\('link'\)\} onClick=\{\(\) => \{ typedIdentifier\.current = \(identifierField\.current\?\.value \|\| ''\)\.trim\(\); toStep\('forgot'\); \}\}>/);
-  assert.match(KIT, /\{step === 'password' \? null : \(\s*<div className=\{`mt-4 flex flex-col gap-2 \$\{k\('foot'\)\}`\}>/, 'no terms on this step, as today');
+  assert.match(KIT, /\{step === 'password' \|\| \(step === 'email' && !lineWays\.length && !emailFoot\) \? null : \(\s*<div className=\{`mt-4 flex flex-col gap-2 \$\{k\('foot'\)\}`\}>/, 'no terms on this step, as today');
 });
 
-test('it is a branch: three steps under a look, and the standard render is untouched', () => {
+test('it is a branch: four steps under a look, and the standard render is untouched', () => {
   assert.match(SRC, /const kit = isFrameSkin\(useLiveSkin\(\)\);/, 'a hook at the top, never behind a condition');
   assert.doesNotMatch(SRC, /(&&|\|\||\?)\s*!?isFrameSkin\(use(Live)?Skin\(\)\)/);
-  assert.match(SRC, /const kitStep = kit && \(step === 'choose' \|\| step === 'phone' \|\| step === 'password'\);/);
+  assert.match(SRC, /const kitStep = kit && \(step === 'choose' \|\| step === 'email' \|\| step === 'phone' \|\| step === 'password'\);/);
   assert.match(SRC, /\{kitStep \? kitSteps\(\) : \(<>\s*\{methodSwitch \? \(\s*<div role="radiogroup"/, 'one shell: the kit\'s steps or the standard ones inside it');
   assert.match(KIT, /^\/\/ THE KIT BRANCH[\s\S]*?\n  function kitSteps\(\) \{/, 'a hoisted function after the standard render, which stays the first the suites find');
   assert.ok(SRC.indexOf("{step === 'choose' ? (") < SRC.indexOf('// THE KIT BRANCH'));
@@ -89,7 +115,7 @@ test('it is a branch: three steps under a look, and the standard render is untou
     assert.ok(KIT.includes(hook), `${hook} is in the kit branch`);
   }
   // The steps the mockups do not draw keep wearing the look (app.css, THE SIGN-IN SHEET).
-  for (const step of ['email', 'code', 'phone-code', 'forgot', 'account']) assert.doesNotMatch(KIT, new RegExp(`step === '${step}' \\?`), step);
+  for (const step of ['code', 'phone-code', 'forgot', 'account']) assert.doesNotMatch(KIT, new RegExp(`step === '${step}' \\?`), step);
 });
 
 test('app.css: the switch takes the look\'s tabs in the kit branch, and the rows stand in for the kit\'s reset', () => {

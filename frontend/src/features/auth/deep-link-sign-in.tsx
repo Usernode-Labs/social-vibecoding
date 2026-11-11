@@ -133,6 +133,8 @@ export function gatePlaceWords(target: string): { head: GatePlaceWord | null; tr
   if (head === 'leaderboard') {
     return { head: !parts[1] || parts[1] === 'challenges' ? { id: 'leaderboard:tabs.challenges' } : null, trail: [] };
   }
+  // The older address of the same page, which the router rewrites to #leaderboard/challenges once somebody is in.
+  if (head === 'challenges') return { head: { id: 'leaderboard:tabs.challenges' }, trail: [] };
   if ((head === 'profile' || head === 'me') && parts[1]) {
     // Somebody's profile, not You: the bar keeps the name it had (guest-chrome.tsx readProfile).
     let name = '';
