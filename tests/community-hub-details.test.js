@@ -605,10 +605,12 @@ test('signed in but not in it: the hub leads with the project card, Open app, Jo
     activity: { active_week: 34, shipped_month: 39, active_people: five },
   });
   const realFetch = globalThis.fetch;
+  const over = new Map();
   globalThis.fetch = async (url) => {
     const slug = String(url).match(/\/api\/apps\/([^/]+)\/community/)[1];
-    return { ok: true, json: async () => record(slug, slug === 'garden-member') };
+    return { ok: true, json: async () => ({ ...record(slug, slug === 'garden-member'), ...(over.get(slug) || {}) }) };
   };
+  const reloadCommunityAs = async (slug, extra) => { over.set(slug, extra); await reloadCommunity(slug); };
   try {
     await reloadCommunity('garden-outsider');
     await reloadCommunity('garden-member');
@@ -632,6 +634,11 @@ test('signed in but not in it: the hub leads with the project card, Open app, Jo
     // viewer reads on the hub, and who it is for.
     assert.match(html, /<div data-ws-people-card=""[^>]*>[\s\S]*data-ws-active-people="34"[\s\S]*data-ws-community-audience=""/);
     assert.doesNotMatch(html, /dev-ws-hero-id|data-ws-community-invite/, 'not the member\'s hero');
+    // Zero says nothing: a project nobody is in yet says who it is for alone.
+    await reloadCommunityAs('garden-empty', { member_count: 0, members: [], activity: null });
+    const empty = renderToHtml(createElement(CommunityCard, { slug: 'garden-empty', name: 'Garden', canOpenApp: true, menu }));
+    assert.match(empty, /<span class="dev-ws-hero-count" data-ws-members-cell="members"><span class="dev-ws-hero-audience" data-ws-community-audience=""><svg[^>]*>[\s\S]*?<\/svg><b>Public community<\/b><\/span><\/span>/);
+    assert.doesNotMatch(empty, /0 members|data-ws-active-people/);
     // A member keeps the hub's own hero, the ⋯ drawn for it.
     const member = renderToHtml(createElement(CommunityCard, { slug: 'garden-member', name: 'Garden', canOpenApp: true, menu }));
     assert.match(member, /^<section class="dev-ws-hero dev-ws-hero-summary"/);

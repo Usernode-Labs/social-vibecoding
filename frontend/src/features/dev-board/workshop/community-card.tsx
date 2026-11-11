@@ -1231,7 +1231,12 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
         />
         <PeopleCard
           data-ws-people-card=""
-          audience={<HeroCount count={count} audience={data.audience} audienceLabel={data.audience_label} />}
+          // Zero says nothing: with nobody in it yet, who it is for alone.
+          audience={count > 0 ? <HeroCount count={count} audience={data.audience} audienceLabel={data.audience_label} /> : (
+            <span className="dev-ws-hero-count" data-ws-members-cell="members">
+              <AudienceLabel audience={data.audience}>{data.audience_label}</AudienceLabel>
+            </span>
+          )}
         >
           {others ? <HeroActive activity={data.activity} /> : null}
         </PeopleCard>
