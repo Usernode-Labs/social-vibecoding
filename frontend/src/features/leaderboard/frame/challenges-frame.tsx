@@ -129,7 +129,7 @@ export function ChallengesFrame({ up = true, tabs, onTab, state = 'cards', error
             {group.cards.map((card) => (card.done ? (
               <Row key={card.key} sm lead={<Lead icon="check" tone="ok" />} title={card.goal || card.label} right={<Meta tone="ok">{card.earned || card.reward}</Meta>} onClick={() => onOpen(card.idx)} />
             ) : (
-              <Row key={card.key} lead={<Lead icon="trophy" tone="acc" />} title={card.goal || card.label} line={card.stateLabel || undefined} right={<Pill>{card.reward}</Pill>} go onClick={() => onOpen(card.idx)} sm={false} />
+              <Row key={card.key} wrap lead={<Lead icon="trophy" tone="acc" />} title={card.goal || card.label} line={card.stateLabel || undefined} right={<Pill>{card.reward}</Pill>} go onClick={() => onOpen(card.idx)} sm={false} />
             )))}
           </Card>
         </Sec>

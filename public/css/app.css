@@ -27784,6 +27784,26 @@ html[data-skin][data-person-frame] #profile-root > div { max-width: none; margin
 }
 /* A verified account under the head is a door to it: the pill, as a link. */
 html[data-skin] [data-you-frame] a.fr-pill { text-decoration: none; }
+/* Changes, Requests and Votes draw the bot's History rows (features/ai/
+   frame-list.tsx Groups) in a card of ordinary rows, not its compact list:
+   a hairline over each project after the first, and a project's "Show N
+   more" in the accent, under its titles. */
+html[data-skin] [data-you-history-month] .fr-row { width: 100%; }
+html[data-skin] [data-you-history-month] .fr-row .fr-t,
+html[data-skin] [data-you-history-month] .fr-row .fr-s { text-align: start; }
+html[data-skin] [data-you-history-month] [data-ai-group] + [data-ai-group],
+html[data-skin] [data-you-history-month] [data-ai-group] + .fr-row { border-top: 1px solid var(--fr-line2); }
+html[data-skin] [data-you-history-month] .fr-row.fr-more { border-top: 1px solid var(--fr-line2); color: var(--fr-acc); }
+html[data-skin] [data-you-history-month] .fr-row.fr-more .fr-t { color: var(--fr-acc); font-size: 13px; font-weight: 600; }
+html[data-skin] [data-you-history-month] .fr-row.fr-more .fr-tx { padding-inline-start: 36px; }
+/* On a phone a row keeps how it ended beside its title, as History's own row
+   does: dropped to a line of its own under a wrapped title it read as a
+   second item. The title wraps; the project and number are its second line. */
+@media (max-width: 767.98px) {
+  html[data-skin][data-skin] [data-you-history-month] .fr-row.fr-item { flex-wrap: nowrap; }
+  html[data-skin][data-skin] [data-you-history-month] .fr-row.fr-item .fr-tx { flex: 1 1 0; }
+  html[data-skin][data-skin] [data-you-history-month] .fr-row.fr-item .fr-tx ~ * { margin: 0; }
+}
 /* The Friends tab's username search is the product's own field and result
    list (features/friends/friend-search.tsx), wearing the kit's field and
    card: the same tokens the kit's .inp and .card are drawn with. */
@@ -27793,6 +27813,20 @@ html[data-skin] [data-you-friends-search] #profile-friend-search-input::placehol
 html[data-skin] [data-you-friends-search] #profile-friend-search-input:focus { outline: 0; box-shadow: inset 0 0 0 2px var(--fr-acc); }
 html[data-skin] [data-you-friends-search] #profile-friend-search-results { border-radius: 20px; background: var(--fr-surface); color: var(--fr-ink); box-shadow: inset 0 0 0 1px var(--fr-line); }
 html[data-skin] [data-you-friends-search] #profile-friend-search-results > * { border-color: var(--fr-line2); }
+/* The kit's page resets every margin and padding inside it, so the result
+   list's own utilities say nothing there: its card, rows, picture and friend
+   button are spelt here, as the Friends card just below draws its own (the
+   kit's .row, .av and .btn.sm). The buttons of an act (Add friend, Accept)
+   keep the accent; a state (Friends, Requested) and Decline are quiet. */
+html[data-skin] [data-you-friends-search] #profile-friend-search-results { margin-top: 12px; }
+html[data-skin] [data-you-friends-search] [data-friend-search-result] { gap: 12px; min-height: 60px; padding: 8px 16px; }
+html[data-skin] [data-you-friends-search] [data-friend-search-result] + * { border-top: 1px solid var(--fr-line2); }
+html[data-skin] [data-you-friends-search] [data-friend-search-result] > span { width: 40px; height: 40px; background: var(--fr-sunk); color: var(--fr-mut); font-size: 16px; }
+html[data-skin] [data-you-friends-search] [data-friend-search-result] > a { color: var(--fr-ink); font-size: 15px; font-weight: 650; }
+html[data-skin] [data-you-friends-search] #profile-friend-search-results > p { padding: 16px; color: var(--fr-mut); font-size: 13px; }
+html[data-skin] [data-you-friends-search] [data-friend-button] > button { height: 32px; padding: 0 14px; border-radius: 999px; background: var(--fr-sunk); color: var(--fr-ink); font-size: 13px; font-weight: 650; white-space: nowrap; }
+html[data-skin] [data-you-friends-search] [data-friend-button] > button:is([data-friend-action="request"], [data-friend-action="accept"]) { background: var(--fr-acc); color: var(--fr-acc-ink); }
+html[data-skin] [data-you-friends-search] [data-friend-button] > p { margin-top: 4px; padding: 4px 8px; background: var(--fr-solid); color: var(--fr-bad); }
 html[data-skin] [data-you-friends] .fr-row .fr-t a,
 html[data-skin] [data-you-friends-sent] .fr-row .fr-t a { color: inherit; text-decoration: none; }
 

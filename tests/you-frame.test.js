@@ -115,10 +115,20 @@ test('what the first tour invented is gone', () => {
 
 test('Changes, Requests and Votes are History for that kind, read with History\'s own hook', () => {
   const src = read(`${DIR}/you-history.tsx`);
-  assert.match(src, /import \{ byMonth, historyGlyph, historyWords, monthName, useHistory, type HistoryRow \} from '\.\.\/\.\.\/ai\/history';/);
+  assert.match(src, /import \{ monthName, useHistory, type HistoryRow \} from '\.\.\/\.\.\/ai\/history';/);
   assert.match(src, /const history = useHistory\(\{\s+showing,\s+signedIn: [^\n]+\n\s+projects: one,\s+kind,\s+demo: isDemo\(\),\s+\}\);/);
-  assert.match(src, /byProject\(month\.rows\)\.map/, 'by month, then by project');
-  assert.match(src, /'messages:ai\.live\.numberPr' : 'messages:ai\.live\.number'/, 'a change on GitHub reads PR, as History writes it');
+  // What today's History holds for the kind: its rows are the bot's lists' own
+  // lines, drawn by the rows its page draws under a look, so a project folds
+  // after its first rows ("Show N more") and a row says its project and number
+  // (its tooltip; its second line on a phone).
+  assert.match(src, /const \{ historyMonths: months \} = useAiLines\(\{\s+ready: history\.ready, rows: NO_ROWS, owed: 0, progress: NO_ROWS, waiting: NO_ROWS, live: NO_ROWS,\s+openRow: nothing, openThread: nothing, history: \{ \.\.\.history, rows \}, openHistory,\s+\}\);/, 'by month, as the bot\'s lists build them');
+  assert.match(src, /<Groups lines=\{month\.rows\} heads=\{!picked\} first=\{GROUP_FIRST\.live\} where \/>/, 'by project, folded as History folds');
+  assert.doesNotMatch(src, /byProject|historyWords|historyGlyph|numberPr/, 'no second copy of the rows\' words');
+  const list = read('frontend/src/features/ai/frame-list.tsx');
+  assert.match(list, /export function Groups\(/);
+  assert.match(list, /: where && line\.tooltip \? <span className=\{k\('s p'\)\} aria-hidden="true" data-ai-line-where="">\{line\.tooltip\}<\/span> : null\}/, 'the row\'s own line, on a phone');
+  assert.match(list, /t\('messages:ai\.work\.showMore', \{ count: hidden \}\)/);
+  assert.equal(JSON.parse(read('frontend/locales/en/profile.json'))['frame.projectLeft'], undefined, 'a project left is said in History\'s own words');
   assert.match(src, /<ShowAll onClick=\{history\.more\}>\{history\.loading \? t\('messages:ai\.history\.loading'\) : t\('messages:ai\.history\.earlier'\)\}<\/ShowAll>/);
   assert.doesNotMatch(src, /HISTORY_KINDS|ai\.history\.kind\.|Track\b/, 'the tab is the kind: no kind buttons, no five-stop line');
   const html = renderComponent(`${DIR}/you-history.tsx`, 'YouHistory', { shell: shell({ tab: 'changes' }), kind: 'change' }, { cache: false });

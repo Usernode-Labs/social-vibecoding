@@ -58,9 +58,11 @@ test('first in the column: the points and how many are done, over one bar', () =
 
 test('what can still be earned is rows that open the challenge, each ending in its points as a pill', () => {
   const html = render();
-  assert.match(html, /<h2 class="fr-cap">Next challenges<\/h2><\/div><div class="fr-card"><button type="button" class="fr-row"><span class="fr-lead fr-acc" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Build for your community<\/span><span class="fr-s">Started<\/span><\/span><span class="fr-pill" data-kind="none">1,000 pts<\/span><svg/s);
+  assert.match(html, /<h2 class="fr-cap">Next challenges<\/h2><\/div><div class="fr-card"><button type="button" class="fr-row fr-wrap"><span class="fr-lead fr-acc" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Build for your community<\/span><span class="fr-s">Started<\/span><\/span><span class="fr-pill" data-kind="none">1,000 pts<\/span><svg/s);
   assert.match(html, /<span class="fr-t">Send useful feedback<\/span><span class="fr-s">0\/4 counted this week<\/span><\/span><span class="fr-pill" data-kind="none">Up to 1,000 pts<\/span>/, 'its name, then where it stands, never its kind in capitals');
   assert.doesNotMatch(html, /WEEKLY/);
+  // The wrapping row: beside the points pill a phone cut the name to "Use apps for 10 min…".
+  assert.doesNotMatch(html, /<button type="button" class="fr-row"><span class="fr-lead fr-acc"/, 'no open challenge is a one-line row');
 });
 
 test('what is done is short rows with a green check and the points earned in green', () => {

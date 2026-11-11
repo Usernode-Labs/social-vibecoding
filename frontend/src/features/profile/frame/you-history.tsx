@@ -4,9 +4,14 @@
  *
  * The rows, their words and their reads are History's own (../../ai/history.ts
  * useHistory, the hook the Homeroom bot page's card reads with; GET
- * /api/ai/history), so a thing listed there is listed here and says the same:
- * by month, then by project, one line each (its mark, its number, its title,
- * how it ended), "Earlier months" at the end. The tab is the kind, so there
+ * /api/ai/history), built by the bot's lists' own model (../../ai/lines.ts
+ * useAiLines) and drawn by the rows its page draws under a look
+ * (../../ai/frame-list.tsx Groups), so a thing listed there is listed here and
+ * says the same: by month, then by project, one line each (its mark, its
+ * number, its title, how it ended), a project's first rows before its own
+ * "Show N more", "Earlier months" at the end. A row's own line (its project
+ * and number) is its tooltip, and its second line on a phone, where the
+ * number has no column. The tab is the kind, so there
  * are no kind buttons. The side column holds the projects to narrow the list
  * to (a row of small buttons over the list on a phone); one project picked is
  * read from the server, whose pages are then that project's.
@@ -14,20 +19,25 @@
  * `#homeroom-bot/history?kind=…` still opens the Homeroom bot page; this is
  * another way to the same list, from You.
  */
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { Btn, Card, Icon, Meta, Row, Sec, ShowAll, Tile, k } from '@/components/ui/kit';
+import { Btn, Card, Icon, Row, Sec, ShowAll, Tile, k } from '@/components/ui/kit';
 import { getDateLocale } from '../../../lib/i18n/runtime';
 import { useMessages } from '../../../lib/i18n/react';
 import type { HistoryKind } from '../../ai/filter-address';
-import { byMonth, historyGlyph, historyWords, monthName, useHistory, type HistoryRow } from '../../ai/history';
-import { byProject, type AiApp, type Phrase } from '../../ai/model';
+import { Groups } from '../../ai/frame-list';
+import { monthName, useHistory, type HistoryRow } from '../../ai/history';
+import { useAiLines } from '../../ai/lines';
+import { GROUP_FIRST, type AiApp } from '../../ai/model';
 import { YouPage, type YouShell } from './you-frame';
 
-/** The glyph of a finished item: what became of it (../../ai/frame-list.tsx draws the same). */
-const HISTORY_ICON: Record<ReturnType<typeof historyGlyph>, string> = { live: 'check', closed: 'x', request: 'chat', vote: 'vote', private: 'lock' };
-
 const NONE: readonly string[] = [];
+const NO_ROWS: never[] = [];
+const nothing = () => {};
+/** A finished item opens its own page: the request's, the change's, the decision's. */
+function openHistory(row: HistoryRow): void {
+  if (row.href) window.location.assign(row.href);
+}
 
 function isDemo(): boolean {
   if (typeof window === 'undefined') return false;
@@ -43,7 +53,6 @@ export function YouHistory({ shell, kind }: { shell: YouShell; kind: HistoryKind
   const tp = useMessages('profile');
   const tc = useMessages('core');
   const locale = getDateLocale();
-  const say = (p: Phrase): string => String(t(p.id, p.values as Record<string, unknown> | undefined));
   // One project, or all of them. The list of projects is every one a read has
   // named: once one is picked the server answers with its rows alone, and the
   // others must stay there to be picked.
@@ -69,13 +78,14 @@ export function YouHistory({ shell, kind }: { shell: YouShell; kind: HistoryKind
   }, [history.rows]);
   // A read that is on its way for another project still holds the last one's rows.
   const rows = picked ? history.rows.filter((row) => row.app?.slug === picked) : history.rows;
-  const months = byMonth(rows);
+  // The rows as the bot's lists build them, by month (no other list is read here).
+  const { historyMonths: months } = useAiLines({
+    ready: history.ready, rows: NO_ROWS, owed: 0, progress: NO_ROWS, waiting: NO_ROWS, live: NO_ROWS,
+    openRow: nothing, openThread: nothing, history: { ...history, rows }, openHistory,
+  });
   const more = history.ready && history.next
     ? <ShowAll onClick={history.more}>{history.loading ? t('messages:ai.history.loading') : t('messages:ai.history.earlier')}</ShowAll>
     : null;
-  const number = (row: HistoryRow) => (row.number
-    ? t(row.change && row.app?.changesOnGithub ? 'messages:ai.live.numberPr' : 'messages:ai.live.number', { number: row.number })
-    : '');
   return (
     <YouPage
       shell={shell}
@@ -117,30 +127,8 @@ export function YouHistory({ shell, kind }: { shell: YouShell; kind: HistoryKind
       {months.map((month, at) => (
         <Sec key={month.key} label={monthName(month.at, locale)} data-you-history-month={month.key}>
           <Card>
-            {byProject(month.rows).map((group) => (
-              <Fragment key={group.app?.slug || ''}>
-                {group.app ? (
-                  <Row
-                    sm
-                    kind="proj"
-                    lead={<ProjectTile app={group.app} size={24} />}
-                    title={group.items[0]?.left ? tp('profile:frame.projectLeft', { project: group.app.name || group.app.slug }) : (group.app.name || group.app.slug)}
-                  />
-                ) : null}
-                {group.items.map((row) => (
-                  <Row
-                    key={row.key}
-                    sm
-                    kind="item"
-                    glyph={HISTORY_ICON[historyGlyph(row)]}
-                    num={number(row)}
-                    title={row.title || ''}
-                    right={<Meta>{say(historyWords(row, locale))}</Meta>}
-                    href={row.href || undefined}
-                  />
-                ))}
-              </Fragment>
-            ))}
+            {/* One project picked: its button names it, so its name is not said again over its rows. */}
+            <Groups lines={month.rows} heads={!picked} first={GROUP_FIRST.live} where />
             {at === months.length - 1 ? more : null}
           </Card>
         </Sec>
