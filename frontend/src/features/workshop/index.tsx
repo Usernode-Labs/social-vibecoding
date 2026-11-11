@@ -43,6 +43,8 @@ import { flushSync } from 'react-dom';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { withoutClosedVote } from '../../lib/work-state';
+import { WORK_CHANGED_EVENT } from '../messages/bot-shared';
 import {
   publishVoteSaved,
   voteSavedStore,
@@ -358,6 +360,19 @@ voteSavedStore.subscribe(() => {
   }
   savedVoteSeqSeen = seen;
 });
+
+// 11 Nov 2026 (one model): a change whose vote a `work_state` push says
+// closed leaves the feed at once (lib/work-state.ts withoutClosedVote), and
+// the feed is read again.
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener(WORK_CHANGED_EVENT, (event) => {
+    const state = workshopStore.get();
+    const feed = withoutClosedVote(state.feed, (event as CustomEvent).detail);
+    if (feed === state.feed) return;
+    workshopStore.set({ feed });
+    void workshopController.refreshNeeds();
+  });
+}
 
 // `publishVoteSaved` and `voteSavedStore` are re-exported so the saved-vote
 // tests can drive the real publish path against this page's own store.

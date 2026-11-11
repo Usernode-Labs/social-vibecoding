@@ -110,10 +110,12 @@ test('WP-C: Suggest it files it for the project, and only her card is sent', asy
       },
       liveSvc: { isLiveFor: () => true },
       mayor: { fileRequest: async () => { order.push('filed'); return { issueNumber: 4, queueId: null }; } },
-      // Its stored work state: filed and queued, waiting to be read.
+      // Its stored work state: filed and queued, waiting to be read (or,
+      // held, waiting for the first version: its line says so).
       workState: {
         ensure: async () => {},
-        forRequests: async (_pool, appId, numbers) => new Map(numbers.map((n) => [n, { stage: 'reading', line: { code: 'queued' } }])),
+        forRequests: async (_pool, appId, numbers) => new Map(numbers.map((n) => [n,
+          { stage: 'reading', line: { code: held ? 'first_version_wait' : 'queued' } }])),
       },
       ws: {
         broadcast: (appId, frame) => { order.push('broadcast'); frames.push({ appId, frame }); },

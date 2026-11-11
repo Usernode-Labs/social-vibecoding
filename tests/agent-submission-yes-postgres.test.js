@@ -14,6 +14,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
@@ -126,11 +127,12 @@ test('a change waits for its author\'s own yes, which counts, however it was mad
   await t.test('Needs you and the digest ask a change\'s author for their yes', async () => {
     await pool.query(`UPDATE chat_sessions SET status = 'closed' WHERE app_id = $1`, [club.id]);
     const owed = async (who) => {
+      await settleWorkStates(pool);
       const { rows } = await pool.query(COUNTS_SQL, [who.id, false, false]);
       const row = rows.find((r) => r.slug === club.slug);
       return row ? Number(row.needs) : 0;
     };
-    const digest = async (who) => (await pool.query(PENDING_SQL, ['24'])).rows.find((r) => r.user_id === who.id);
+    const digest = async (who) => (await settleWorkStates(pool), await pool.query(PENDING_SQL, ['24'])).rows.find((r) => r.user_id === who.id);
     const byHand = await proposal(sam);
     assert.equal(await owed(sam), 1, 'their own change made on Homeroom is owed by them');
     assert.equal(Number((await digest(sam)).pending), 1);

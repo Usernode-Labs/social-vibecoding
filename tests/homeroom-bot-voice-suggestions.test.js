@@ -169,7 +169,15 @@ async function sayWith(extra, pool = sayPool()) {
   const sent = [];
   const deps = {
     ws: {
-      async sendBotMessage(_pool, _appId, args) { sent.push(args); return { id: 900, createdAt: new Date() }; },
+      // Step 3: a card is written with its message (ws.sendBotMessage), its
+      // offer and buttons put into the metadata there, as a card of id 77.
+      async sendBotMessage(_pool, _appId, args) {
+        const metadata = args.card
+          ? require('../src/services/bot-cards').withThreadCard(args.metadata, { id: 77, ...args.card, user_id: args.card.forUserId })
+          : args.metadata;
+        sent.push({ ...args, metadata });
+        return { id: 900, createdAt: new Date(), ...(args.card ? { cardId: 77 } : {}) };
+      },
       broadcast() {},
     },
     notifications: { async createMentionNotifications() { return []; } },

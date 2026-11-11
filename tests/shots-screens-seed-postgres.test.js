@@ -14,6 +14,7 @@ require('./lib/media-store').useMemoryMedia(require('node:test'));
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -89,6 +90,7 @@ test('a staging preview owes the shots member a change with three screens (Postg
     assert.match(row.pr_title, /^\[Mock\] Staging demo/);
 
     // The member's Needs you, by the feed's own query and pictures.
+    await settleWorkStates(pool);
     const rows = (await pool.query(overview.NEEDS_FEED_SQL, [member.id, false, false, overview.NEEDS_FEED_MAX])).rows;
     const owed = rows.find((r) => Number(r.id) === SESSION_ID);
     assert.ok(owed, 'the shots member is owed a vote on it');

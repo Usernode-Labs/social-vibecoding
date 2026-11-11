@@ -314,6 +314,10 @@ async function migrate(config) {
   // seeded there) and AFTER seedStagingReadonlyDevTab (its live domain hangs
   // off that app).
   await seedStagingCustomDomains(pool);
+  // #6601: the shots' own waiting card-picture vote, whose proposer is the
+  // capture member, so Edit proposal and Replace the waiting change are
+  // reachable on a fresh staging copy. Obviously fake, idempotent.
+  await seedStagingWaitingIllustration(pool);
   await seedStagingPublicApiContributors(pool);
   await seedStagingVisuals(pool);
   // Must run AFTER seedStagingVisuals: it owns the gallery demo app this
@@ -428,11 +432,37 @@ async function migrate(config) {
   await backfillFiledDraftCards(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
+  // After the staging fixtures: the changes they made (and any other) up
+  // for a vote or merging with no work state yet are marked for the drain.
+  await markChangesWithoutWorkState(pool);
   await migrateAppDbsToPerRole(pool, config);
   finishPhase('maintenanceMs');
   timings.totalMs = Date.now() - startedAt;
   log.info('db', 'Migration phases complete', timings);
   return timings;
+}
+
+// 11 Nov 2026 (docs/plans/bot-one-model.md): Needs you and the vote digest
+// ask for a vote only off a change's own work state (work_states.vote_open),
+// and the work states are staging:private, so a staging copy starts with
+// none while its changes are there. Every change up for a vote or merging
+// with no row yet is marked (work_state_dirty), and the work-state drain
+// makes its row within seconds; production's were marked once by migration
+// work-state-backfill-and-indexes, and this finds any since. Idempotent: a
+// change marked already, or with its row, is skipped. Never fails a boot.
+async function markChangesWithoutWorkState(pool) {
+  try {
+    const { rowCount } = await pool.query(
+      `INSERT INTO work_state_dirty (session_id)
+       SELECT cs.id FROM chat_sessions cs
+        WHERE cs.status IN ('promoted', 'merging') AND cs.is_headless IS NOT TRUE
+          AND NOT EXISTS (SELECT 1 FROM work_states ws WHERE ws.item_kind = 'change' AND ws.session_id = cs.id)
+       ON CONFLICT (session_id) WHERE session_id IS NOT NULL DO NOTHING`,
+    );
+    if (rowCount) log.info('db', 'Marked changes with no work state for the drain', { count: rowCount });
+  } catch (err) {
+    log.warn('db', 'Marking changes with no work state failed', { message: err.message });
+  }
 }
 
 // Proposal authorship predates proposal-level assignee votes, so existing
@@ -568,16 +598,14 @@ async function backfillFiledDraftCards(pool) {
 // request #3 on Papote showed four. What became of each plan is written on
 // its row from now on (homeroom-bot-live.js notePlanRows); a row from
 // before is told here, once. Only a row still reading 'waiting' whose plan
-// no longer waits changes, so it is a no-op after its first run.
+// no longer waits changes, so it is a no-op after its first run. Step 4
+// (11 Nov 2026): its status only; the words shown stay.
 async function backfillPlanRows(pool) {
-  const endings = require('../services/homeroom-bot-live').PLAN_ROW_ENDINGS;
   let result;
   try {
     result = await pool.query(
       `UPDATE chat_messages m
-          SET metadata = jsonb_set(m.metadata, '{specShare,botNote}', to_jsonb(s.note)),
-              content = regexp_replace(m.content, '\\.(?: Nothing is built yet\\.)? Waiting for [^\\n]*$',
-                CASE s.note WHEN 'building' THEN $1 WHEN 'replaced' THEN $2 ELSE $3 END)
+          SET metadata = jsonb_set(m.metadata, '{specShare,botNote}', to_jsonb(s.note))
          FROM (SELECT p.thread_message_id AS id,
                       CASE WHEN r.plan->'chosen' IS NOT NULL THEN 'building'
                            WHEN r.build_error = 'skipped: the request was read again'
@@ -587,7 +615,6 @@ async function backfillPlanRows(pool) {
                  JOIN homeroom_bot_runs r ON r.id = p.run_id
                 WHERE p.kind = 'plan' AND p.thread_message_id IS NOT NULL AND r.awaiting_go_at IS NULL) s
         WHERE m.id = s.id AND m.metadata->'specShare'->>'botNote' = 'waiting'`,
-      [endings.building, endings.replaced, endings.stopped],
     );
   } catch (err) {
     log.warn('db', 'Plan-row backfill skipped (query failed)', { err: err.message });
@@ -2353,7 +2380,7 @@ async function seedStagingBotAlreadyWorks(pool) {
        RETURNING id`,
       [
         appId, botId,
-        `Already works: ${reason} Anyone in the project can Propose to close it, or reply here if something is missing.`,
+        `Already works: ${reason} Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.`,
         number,
         JSON.stringify({ stagingDemo: 'already-works-note', homeroomBot: { kind: 'note' } }),
       ],
@@ -2389,11 +2416,11 @@ async function seedStagingBotAlreadyWorks(pool) {
         [userId, appId, noteId, botId, detail],
       );
     }
-    // #6321: the note as it is written now, with Propose to close and Keep it
-    // open under it for any member. A copy that already has the older note is
-    // brought up to it, so the after copy shows the state either way. A row
-    // nobody decides with until a person taps; idempotent by the offer tied
-    // to the note.
+    // #6321: the note with Propose to close and Keep it open under it for
+    // any member. A copy that already has the note gets its buttons, so the
+    // after copy shows the state either way (its words stay as written). A
+    // row nobody decides with until a person taps; idempotent by the offer
+    // tied to the note.
     if (noteId != null) {
       const tied = await pool.query(
         `SELECT 1 FROM bot_cards WHERE place = 'thread' AND chat_message_id = $1
@@ -2406,9 +2433,10 @@ async function seedStagingBotAlreadyWorks(pool) {
           [appId, JSON.stringify({ issueNumber: number, title, why: reason }), noteId],
         );
         const offerId = Number(offer.id);
-        await pool.query('UPDATE chat_messages SET content = $2, metadata = $3 WHERE id = $1', [
+        // Its buttons only: a message's words never change once written
+        // (step 4, 11 Nov 2026), so the note is written with these words.
+        await pool.query('UPDATE chat_messages SET metadata = $2 WHERE id = $1', [
           noteId,
-          `Already works: ${reason} Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.`,
           JSON.stringify({
             stagingDemo: 'already-works-note',
             homeroomBot: {
@@ -3982,9 +4010,9 @@ async function seedStagingBotOverlap(pool) {
 // #6535's shots: the same overlap note on #9115, with its plan now building.
 // The change closes the question's buttons when that happens; nothing here
 // runs a model, so the after copy needs the state stored: an obviously fake
-// plan row under the note, and the note's offer expired as the build path
-// expires it. The before copy has no such seed, so it still shows the open
-// question and its three buttons. Idempotent: the plan row is made once and
+// plan row under the note, and the note's offer retired as the request's
+// move to building retires it. The before copy has no such seed, so it
+// still shows the open question and its three buttons. Idempotent: the plan row is made once and
 // the retirement is a no-op after it. A no-op outside staging.
 async function seedStagingBotOverlapBuilt(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
@@ -4028,10 +4056,14 @@ async function seedStagingBotOverlapBuilt(pool) {
       [appId, smaller, planContent],
     );
     if (!plan) return;
-    await require('../services/homeroom-bot-live').retireOverlapOffers(pool, {
-      appId, issueNumber: smaller, beforeMessageId: Number(plan.id),
-      deps: { ws: { broadcast() {} } },
-    });
+    // Its buttons go as the request's move to building retires them
+    // (bot-cards.js retireFor): a no-op once they have.
+    const { rows: cards } = await pool.query(
+      `SELECT id, kind, place, user_id, chat_message_id, message_id, conversation_id FROM bot_cards
+        WHERE place = 'thread' AND chat_message_id = $1 AND status = 'open'`,
+      [Number(note.id)],
+    );
+    await require('../services/bot-cards').retireCards(pool, cards, 'building');
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot overlap build seeding failed', { message: err.message });
   }
@@ -9644,6 +9676,57 @@ async function seedStagingCustomDomains(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging custom-domain fixtures skipped', { err: err.message });
+  }
+}
+
+// #6601's shots: a waiting card-picture change on a project the capture
+// member owns, so the vote's ⋯ menu offers Edit proposal and the editor
+// opens on that waiting record with "Replace the waiting change". The
+// picture bytes wait in app_illustration_proposals under the urls the card
+// previews, exactly as a real proposal carries them. A fresh staging copy
+// has no such vote (the feature is new), and this is the only place it is
+// made. Obviously fake, idempotent, staging only.
+async function seedStagingWaitingIllustration(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const capture = (await pool.query("SELECT id, username FROM users WHERE username = 'usernode-capture'")).rows[0];
+    if (!capture) return;
+    // The browse-card fixture's real PNG, so /app-illustrations/<id> decodes.
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAg0lEQVR42r3NuRGAMAwEQNdFbXRAIVRHAyQwDmB4/MjS3QUbb5qn7VBKymxddl2YM1l4ZZLwmdHDb0YNSxktrGWUsJXBw14GDS0ZLLRmkHAkC4ejWSj0ZO7Qm7nCSDYcRrOhEJGZQ1RmCpFZN0RnzZCRVUNWVgyZ2S9kZ69Qkd2hKstOLPva44BQr+EAAAAASUVORK5CYII=',
+      'base64'
+    );
+    const lightId = 'fed66010000000000000000000000a01';
+    const darkId = 'fed66010000000000000000000000a02';
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by)
+       VALUES (900160, 'Staging demo waiting picture', 'staging-demo-waiting-picture', 'running', 'public', $1)
+       ON CONFLICT DO NOTHING`, [capture.id]
+    );
+    const app = (await pool.query("SELECT id FROM apps WHERE slug = 'staging-demo-waiting-picture'")).rows[0];
+    if (!app) return;
+    const proposed = {
+      url: `/app-illustrations/${lightId}`, darkUrl: `/app-illustrations/${darkId}`,
+      zoom: 1.2, x: 5, y: -3, tint: 'teal',
+    };
+    await pool.query(
+      `INSERT INTO issues (id, app_id, title, description, kind, payload, created_by, status)
+       VALUES (9076601, $1, 'Change the featured illustration', $2, 'featured_illustration', $3::jsonb, $4, 'open')
+       ON CONFLICT DO NOTHING`,
+      [app.id,
+        `${capture.username} proposed changing the featured illustration on the project's Discover card. `
+          + 'It applies when the group votes it in.',
+        JSON.stringify({ proposed, current: null, remove: false }), capture.id]
+    );
+    await pool.query(
+      `INSERT INTO app_illustration_proposals
+         (issue_id, app_id, id, content_type, data, dark_id, dark_content_type, dark_data)
+       VALUES (9076601, $1, $2, 'image/png', $3, $4, 'image/png', $3)
+       ON CONFLICT DO NOTHING`, [app.id, lightId, png, darkId]
+    );
+    log.info('db', 'Staging waiting-illustration fixture seeded', { appId: app.id });
+  } catch (err) {
+    log.warn('db', 'Staging waiting-illustration fixture skipped', { err: err.message });
   }
 }
 
@@ -19626,6 +19709,7 @@ async function seedStagingPlatformMail(pool) {
 // meant to be called from anywhere else in the app.
 module.exports = {
   migrateAppDbsToPerRole,
+  markChangesWithoutWorkState,
   seedStagingTranslations,
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
   seedStagingProfileCustomization,

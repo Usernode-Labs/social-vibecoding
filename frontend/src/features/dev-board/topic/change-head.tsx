@@ -39,7 +39,7 @@
  * clashes with the version's own changes, Ask Homeroom bot to fit it.
  */
 
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { forwardRef, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
@@ -60,6 +60,7 @@ import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
+import { TopicPageContext } from './topic-store';
 import { ThreadItems, pageSlug } from './thread-items';
 import type { ClosesRequest } from './thread-model';
 import { changeMenuKey } from './thread-menu';
@@ -675,6 +676,11 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   threadAsChange?: boolean;
 }): ReactNode {
   const t = useMessages('project');
+  // #6608: the thread list and the bot door read the project THIS page was
+  // painted for (TopicPageContext), never whichever project the app last
+  // loaded. `pageSlug()` is the fallback for the Workshop's own side panel
+  // and older callers outside a painted head.
+  const slug = useContext(TopicPageContext).slug || pageSlug();
   // Under one of the frame's looks the page tells the bar its trail (the
   // Workshop, then this change) and stands its votes and checks, and About,
   // in the context column beside its words (./frame/side-stack.ts).
@@ -754,7 +760,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
             />
           ) : null}
           {/* #6019: the requests, other changes and votes in its thread. */}
-          {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
+          {id ? <ThreadItems slug={slug} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
           {frame ? (
             <div className="dev-change-status">
@@ -774,7 +780,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392:
               the words say so, and the bot building or fixing it leaves this out. */}
           <WorkWithBotButton
-            slug={pageSlug()}
+            slug={slug}
             number={v.number}
             voting={!!v.votes.facts?.length}
             botAtWork={v.testing.botFix === 'fixing' || v.testing.botFix === 'queued'}

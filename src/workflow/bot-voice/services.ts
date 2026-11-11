@@ -75,6 +75,7 @@ export function botVoiceServices({ config, pool }: Deps): Record<string, WorkHan
         const out = await legacy('services/homeroom-bot-holds').sayHeld(pool, {
           appId: Number(input.appId), issueNumber: Number(input.issueNumber), kind: String(input.kind), text: String(input.text),
           mention: input.mention || null, mentions: Array.isArray(input.mentions) ? input.mentions : [],
+          mentionId: Number(input.mentionId) || null,
         });
         return (out || null) as Json;
       },

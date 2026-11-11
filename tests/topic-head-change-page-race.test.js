@@ -100,3 +100,20 @@ test('the change page\'s own head and its guard are gone (#4455)', () => {
   const mount = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'mount.ts'), 'utf8');
   assert.doesNotMatch(mount, /mountChangePage|dev-change-overview/);
 });
+
+// #6608: a change's thread list and its bot door read the project the page
+// was PAINTED for (the topic page's context), not whichever project the app
+// last loaded — on a cross-project switch the global slug has already moved
+// while the row is still the previous change's.
+test('a change page\'s thread list is in the same project it was painted for (#6608)', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', 'change-head.tsx'),
+    'utf8',
+  );
+  assert.match(src, /const slug = useContext\(TopicPageContext\)\.slug \|\| pageSlug\(\);/,
+    'the painted project wins, with pageSlug only as the fallback');
+  assert.match(src, /<ThreadItems slug=\{slug\}/);
+  assert.match(src, /<WorkWithBotButton\s+slug=\{slug\}/);
+  assert.doesNotMatch(src, /<ThreadItems slug=\{pageSlug\(\)\}/,
+    'never the global read alone');
+});

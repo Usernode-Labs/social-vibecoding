@@ -116,9 +116,13 @@ test('the AI tab leaves your own change to Needs you until you vote on it', () =
   // what this test is about; one still waiting for its checks says so instead
   // (#6060), pinned in tests/ai-screen.test.js.
   const row = { change_status: 'promoted', check_state: 'passing', change_user: SAM, state: 'open', promoted_at: OPENED, voted: false };
-  const vote = { stage: 'up_for_vote', why: null, reason: null, line: null, since: OPENED };
-  assert.equal(aiWork.standing(row, SAM), null, 'yours, unvoted: a vote you owe, however it was made');
-  assert.deepEqual(aiWork.standing({ ...row, voted: true, my_vote: 'yes' }, SAM),
+  const words = { stage: { id: 'core:work.stage.upForVote' }, stageOthers: { id: 'core:work.stage.upForVote' }, line: null };
+  // Its stored work state: open for votes (services/work-state.js), with its words.
+  const stored = { stage: 'up_for_vote', why: null, reason: null, line: null, since: OPENED, whoseMove: 'group', voteOpen: true, requesterId: SAM, words };
+  const vote = { stage: 'up_for_vote', why: null, reason: null, line: null, since: OPENED, words };
+  assert.equal(aiWork.standing(row, SAM, undefined, null, stored), null, 'yours, unvoted: a vote you owe, however it was made');
+  assert.equal(aiWork.standing({ ...row, by_agent: true }, SAM, undefined, null, stored), null, 'made by an agent: a vote you owe too');
+  assert.deepEqual(aiWork.standing({ ...row, voted: true, my_vote: 'yes' }, SAM, undefined, null, stored),
     { group: 'waiting', work: vote, at: OPENED, myVote: 'yes' });
-  assert.equal(aiWork.standing(row, KIM), null, 'someone else\'s, unvoted, is owed as before');
+  assert.equal(aiWork.standing(row, KIM, undefined, null, { ...stored, requesterId: SAM }), null, 'someone else\'s, unvoted, is owed as before');
 });

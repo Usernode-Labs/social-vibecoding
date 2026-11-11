@@ -356,6 +356,9 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     // the last `days` days' move offers and how each was decided, and the
     // verdicts flagged as about Homeroom that sent none, with why.
     moveOffers: p.moveOffers ? moveOffersOf(p.moveOffers) : null,
+    // Step 5 of the bot's one model: whether it reads requests again less,
+    // and says less twice (homeroom-bot-health.js shapeRereads).
+    rereads: rereadsOf(p.health?.rereads),
     // Errors that should not happen, the last week's (platform-incidents.js).
     incidents: p.incidents ? {
       days: num(p.incidents.days), total: num(p.incidents.total) || 0,
@@ -404,6 +407,42 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     person: person ? await personWeek(pool, s, person, deps) : null,
     filters: { app: f.app, verdict: query.verdict && VERDICTS.includes(query.verdict) ? query.verdict : null },
     nextBefore: runs.length === f.limit ? runs[runs.length - 1].id : null,
+  };
+}
+
+/**
+ * Step 5: the re-read numbers as the connector carries them (the rollout
+ * health's `rereads`): counts, rates, weeks and codes, each read as the type
+ * it should be, so nothing else rides along. Null without them. Pure.
+ */
+function rereadsOf(r) {
+  if (!r || typeof r !== 'object') return null;
+  const counts = (m, re) => Object.fromEntries(Object.entries(m && typeof m === 'object' && !Array.isArray(m) ? m : {})
+    .filter(([k]) => re.test(k)).map(([k, n]) => [k, num(n) || 0]));
+  const repair = r.claimRepair || {};
+  return {
+    days: num(r.days),
+    weeks: num(r.weeks),
+    reads: num(r.reads) || 0,
+    requests: num(r.requests) || 0,
+    perRequest: num(r.perRequest),
+    otherRuns: counts(r.otherRuns, CODE_RE),
+    byWeek: (Array.isArray(r.byWeek) ? r.byWeek : []).slice(0, 8)
+      .filter((w) => /^\d{4}-\d{2}-\d{2}$/.test(String(w?.week || '')))
+      .map((w) => ({
+        week: w.week,
+        reads: num(w.reads) || 0,
+        why: counts(w.why, READ_REASON_RE),
+        taps: num(w.taps) || 0,
+        notFound: num(w.notFound) || 0,
+        gone: num(w.gone) || 0,
+        surfaces: Object.fromEntries(Object.entries(w.surfaces && typeof w.surfaces === 'object' ? w.surfaces : {})
+          .filter(([k]) => CODE_RE.test(k))
+          .map(([k, s]) => [k, { taps: num(s?.taps) || 0, notFound: num(s?.notFound) || 0, gone: num(s?.gone) || 0 }])),
+      })),
+    claimRepair: { recovered: num(repair.recovered) || 0, turns: num(repair.turns) || 0, rate: num(repair.rate) },
+    // Counted by step 4 from its said-once keys; null until then.
+    duplicateNotes: num(r.duplicateNotes),
   };
 }
 
@@ -780,6 +819,7 @@ module.exports = {
   personWeek,
   rateRun,
   recentShots,
+  rereadsOf,
   saveSettings,
   settingsOf,
   SETTINGS_FIELDS,

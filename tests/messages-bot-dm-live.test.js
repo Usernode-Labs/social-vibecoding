@@ -232,12 +232,11 @@ test('#4220: a stop with no new message on its way clears the line at once', asy
   assert.deepEqual(h.state().typing[42], []);
 });
 
-// 4 Nov 2026 (#6302): the answer so far was drawn only while the newest
-// doing was 'writing'. Every later step the bot named (a read, a wordless
-// "thinking") rebuilt the entry without it, so the words disappeared and came
-// back as the next round streamed: the working card flashed. The store holds
-// the last draft on the bot's Typist now, and it leaves with the card.
-test('the answer so far stays on the card while the bot reads or thinks, and leaves with it', async () => {
+// 4 Nov 2026 (#6302): every step the bot named rebuilt its entry, so the card
+// flashed back to "Thinking" between rounds; the last step named is held now.
+// Step 4 (11 Nov 2026, #6405, #6581): no words are held or shown: a typing
+// event's words are dropped, and the answer appears once, as the message.
+test('the card keeps the last step named while the bot thinks, holds no words, and leaves with the typing', async () => {
   const h = harness([serverMessage(1, BOT, 'Hello.')]);
   Object.assign(globalThis.window, { setTimeout: () => 1, clearTimeout: () => {} });
   const dm = {
@@ -252,22 +251,20 @@ test('the answer so far stays on the card while the bot reads or thinks, and lea
   });
 
   typing({ kind: 'writing', text: 'A couple of the names you gave' });
-  assert.equal(h.store.typingUsers(42)[0].draft, 'A couple of the names you gave');
+  assert.deepEqual(h.store.typingUsers(42)[0], { name: 'Homeroom bot', unnamed: false, bot: true, doing: { kind: 'writing' } },
+    'the step, never the words');
   typing({ kind: 'request', number: 436 });
   assert.deepEqual(h.store.typingUsers(42)[0], {
     name: 'Homeroom bot', unnamed: false, bot: true,
     doing: { kind: 'request', number: 436 },
-    draft: 'A couple of the names you gave',
-  }, 'held while it reads the request');
+  });
   // #6405: a step with no name of its own no longer drops the card back to
   // "Thinking"; the last step it named stays up until it names the next one.
   typing();
   assert.deepEqual(h.store.typingUsers(42)[0].doing, { kind: 'request', number: 436 }, 'the last step named stays up');
-  assert.equal(h.store.typingUsers(42)[0].draft, 'A couple of the names you gave', 'not hidden while it thinks');
-  typing({ kind: 'writing', text: 'So I checked: the list is right' });
-  assert.equal(h.store.typingUsers(42)[0].draft, 'So I checked: the list is right', 'the newer answer replaces it');
+  assert.equal(Object.hasOwn(h.store.typingUsers(42)[0], 'draft'), false);
   h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: false });
-  assert.deepEqual(h.store.typingUsers(42), [], 'the card and its words go when typing stops');
+  assert.deepEqual(h.store.typingUsers(42), [], 'the card goes when typing stops');
 });
 
 test('31 Oct 2026: typing in a thread is that thread\'s line, and never the conversation\'s', async () => {
