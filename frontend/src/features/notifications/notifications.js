@@ -63,6 +63,15 @@ const listText = (parts) => PlatformI18n.listText(parts);
 const NATIVE_INVALIDATION_TIMEOUT_MS = 10000;
 const NATIVE_INVALIDATION_REFRESH_VERSION = 1;
 
+// #18: a plain message belongs to the Messages tab rather than the bell — the
+// Unread tab neither lists nor counts it. rowView prints this as `plainMessage`
+// (using an item's `appId` rather than the raw row's `app_id`), and the
+// controller's app-less clear reads the same rule so it leaves those messages
+// unread (#6579).
+function isPlainMessageNotification(n) {
+  return !!n && ((n.kind === 'conversation_message' && n.appId == null) || n.kind === 'channel_message');
+}
+
 const Notifications = {
   // #1191 slice 6: the drawer's two innerHTML hosts are React now. This module
   // still owns the fetches, the mark-read discipline, the click routing and
@@ -798,6 +807,50 @@ const Notifications = {
       return true;
     } catch (err) {
       console.warn('[notifications] markAppRead failed', err);
+      failed();
+      return false;
+    }
+  },
+
+  // #6579: mark every unread notification that belongs to NO project read —
+  // the Unread tab's "Across Homeroom" heading's Mark read. The route's
+  // `{ no_app: true }` branch (markReadForNoApp) clears every such unread row
+  // the server has, including ones the sheet has not paged in, while every
+  // project's rows and the plain messages stay unread. Same discipline as
+  // markAppRead: nothing flips until the server answers, and a failure keeps
+  // every mark and says so with a toast.
+  async markNoAppRead() {
+    const inHand = (n) => !!n && n.appId == null && !n.readAt && !isPlainMessageNotification(n);
+    // Nothing in hand to clear (another tab or a refresh got there first):
+    // no request, and the caller's button has nothing to wait on.
+    if (!Notifications.items.some(inHand)) return false;
+    const failed = () => window.PlatformUI?.toast?.(t('notifications:toast.markAppFailed'));
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ no_app: true }),
+      });
+      if (!res.ok) { failed(); return false; }
+      const data = await res.json();
+      Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
+      // Flip only what is still unread: a refresh that landed while the
+      // request was running replaced `items` with the server's own rows,
+      // which already say what is true.
+      const now = new Date().toISOString();
+      for (const n of Notifications.items) {
+        if (inHand(n)) n.readAt = now;
+      }
+      Notifications._reconcileCompletionTitle();
+      Notifications._renderBadge();
+      Notifications._renderList();
+      // #449's reason, for the app-less group: an open group chat may be
+      // drawing dots for the notifications that were just cleared.
+      window.GroupChat?.reconcileDotsFromNotifications?.();
+      return true;
+    } catch (err) {
+      console.warn('[notifications] markNoAppRead failed', err);
       failed();
       return false;
     }
@@ -3033,7 +3086,7 @@ function rowWords(n) {
     // tab neither lists nor counts it, so it says what the badge says.
     // #5580: the Homeroom bot's reply about a project is the exception: it
     // carries that project, files under it on Unread, and the bell counts it.
-    plainMessage: (n.kind === 'conversation_message' && n.appId == null) || n.kind === 'channel_message',
+    plainMessage: isPlainMessageNotification(n),
     // #4769: whether the user has bookmarked this row — the feed row's
     // bookmark button and the pinned section both read it. A save is not a
     // read state; the two flags never derive from each other.

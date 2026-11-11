@@ -27,7 +27,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { englishPlatformI18n } = require('./lib/platform-i18n');
-const { loadTsx } = require('./lib/render-tsx');
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -35,8 +35,9 @@ const FE_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'),
   'utf8'
 );
+const SHEET_PATH = 'frontend/src/features/notifications/notifications-sheet.tsx';
 const SHEET_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications-sheet.tsx'),
+  path.join(__dirname, '..', SHEET_PATH),
   'utf8'
 );
 const CATALOG = JSON.parse(fs.readFileSync(
@@ -210,6 +211,134 @@ test('markAppRead: a rejected fetch (offline) keeps the unread state and shows a
   assertUntouched(f);
 });
 
+// ── 1b. the app-less clear (#6579) ──────────────────────────────────────
+
+// The extracted method calls the module's plain-message helper; pull that
+// from the source too so the test exercises the shipped rule, not a copy.
+function buildMarkNoAppRead() {
+  const re = /async markNoAppRead\(([^)]*)\)\s*\{([\s\S]*?)\n  \},/;
+  const m = FE_SRC.match(re);
+  assert.ok(m, 'markNoAppRead() definition found in notifications.js');
+  const helper = FE_SRC.match(/function isPlainMessageNotification\(n\) \{([\s\S]*?)\n\}/);
+  assert.ok(helper, 'isPlainMessageNotification() definition found in notifications.js');
+  const isPlain = new Function('n', helper[1]);
+  const run = new Function(
+    ...m[1].split(',').map((p) => p.trim()).filter(Boolean),
+    't', 'Notifications', 'fetch', 'window', 'console', 'isPlainMessageNotification',
+    `return (async () => {${m[2]}})();`
+  );
+  return (notifications, fetchStub, windowStub, consoleStub) => run(
+    englishPlatformI18n().t, notifications, fetchStub, windowStub, consoleStub, isPlain
+  );
+}
+
+function noAppFixture() {
+  const rendered = { badge: 0, list: 0 };
+  const N = {
+    unread: 5,
+    items: [
+      // The app-less group's unread rows: clear these.
+      { id: 1, kind: 'friend_request', appId: null, readAt: null },
+      { id: 2, kind: 'platform_incident', appId: null, readAt: null },
+      // Unread from a project: must stay unread.
+      { id: 3, kind: 'check_failed', appId: 7, readAt: null },
+      // Plain messages belong to the Messages tab: must stay unread.
+      { id: 4, kind: 'conversation_message', appId: null, readAt: null },
+      { id: 5, kind: 'channel_message', appId: null, readAt: null },
+      // A conversation that carries a project is not app-less at all.
+      { id: 6, kind: 'conversation_message', appId: 3, readAt: null },
+      // Already read app-less: timestamp preserved.
+      { id: 7, kind: 'kudos', appId: null, readAt: '2026-01-01T00:00:00Z' },
+    ],
+    _reconcileCompletionTitle() {},
+    _renderBadge() { rendered.badge++; },
+    _renderList() { rendered.list++; },
+  };
+  return { N, rendered };
+}
+
+test('markNoAppRead posts { no_app: true } and flips only app-less, non-message unread items', async () => {
+  const { N, rendered } = noAppFixture();
+  const fetchCalls = [];
+  const fetchStub = (url, opts) => {
+    fetchCalls.push({ url, opts });
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ unread: 4, messageUnread: 1, cleared: 2 }) });
+  };
+  let dotReconciles = 0;
+  const windowStub = { GroupChat: { reconcileDotsFromNotifications() { dotReconciles++; } } };
+
+  const markNoAppRead = buildMarkNoAppRead();
+  const ok = await markNoAppRead(N, fetchStub, windowStub, console);
+
+  assert.equal(ok, true);
+  assert.equal(fetchCalls.length, 1, 'the request is sent');
+  assert.equal(fetchCalls[0].url, '/api/notifications/read');
+  assert.deepEqual(JSON.parse(fetchCalls[0].opts.body), { no_app: true });
+
+  assert.equal(N.unread, 4, 'server-reported unread adopted');
+  assert.equal(N.messageUnread, 1, 'server-reported message count adopted');
+  assert.ok(N.items[0].readAt, 'the app-less first row cleared');
+  assert.ok(N.items[1].readAt, 'the app-less second row cleared');
+  assert.equal(N.items[2].readAt, null, 'another app\'s row stays unread');
+  assert.equal(N.items[3].readAt, null, 'a plain conversation message stays unread');
+  assert.equal(N.items[4].readAt, null, 'a channel message stays unread');
+  assert.equal(N.items[5].readAt, null, 'a conversation carrying a project stays unread');
+  assert.equal(N.items[6].readAt, '2026-01-01T00:00:00Z', 'already-read timestamp preserved');
+  assert.ok(rendered.badge >= 1 && rendered.list >= 1, 'badge and list re-rendered');
+  assert.equal(dotReconciles, 1, 'in-chat unread dots reconciled without waiting for WS');
+});
+
+test('markNoAppRead sends nothing when nothing app-less and unread is in hand', async () => {
+  const { N } = noAppFixture();
+  N.items.forEach((n) => {
+    if (n.appId == null) n.readAt = n.readAt || '2026-01-02T00:00:00Z';
+  });
+  let fetched = 0;
+  const markNoAppRead = buildMarkNoAppRead();
+  await markNoAppRead(N, () => { fetched++; return Promise.resolve({ ok: true, json: () => ({}) }); }, {}, console);
+  assert.equal(fetched, 0, 'another tab or a refresh got there first: no request');
+  assert.equal(N.unread, 5, 'nothing changed');
+});
+
+function noAppFailureFixture() {
+  const f = noAppFixture();
+  const toasts = [];
+  const windowStub = {
+    PlatformUI: { toast(msg) { toasts.push(msg); } },
+    GroupChat: { reconcileDotsFromNotifications() {} },
+  };
+  const errors = [];
+  const consoleStub = { warn() {}, error(...a) { errors.push(a); }, log() {} };
+  return { ...f, toasts, windowStub, consoleStub, errors };
+}
+
+function assertNoAppUntouched(f) {
+  assert.equal(f.N.unread, 5, 'badge count kept');
+  assert.equal(f.N.items[0].readAt, null, 'unread app-less item kept unread');
+  assert.equal(f.N.items[1].readAt, null, 'unread app-less item kept unread');
+  assert.equal(f.N.items[2].readAt, null);
+  assert.equal(f.N.items[3].readAt, null);
+  assert.equal(f.N.items[6].readAt, '2026-01-01T00:00:00Z');
+  assert.deepEqual(f.toasts, ['Couldn’t mark these notifications as read. Try again.']);
+  assert.equal(f.errors.length, 0, 'no console.error on an expected failure');
+}
+
+test('markNoAppRead: a server error keeps the unread state and shows a toast', async () => {
+  const f = noAppFailureFixture();
+  const markNoAppRead = buildMarkNoAppRead();
+  await markNoAppRead(f.N, () => Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({}) }),
+    f.windowStub, f.consoleStub);
+  assertNoAppUntouched(f);
+});
+
+test('markNoAppRead: a rejected fetch (offline) keeps the unread state and shows a toast', async () => {
+  const f = noAppFailureFixture();
+  const markNoAppRead = buildMarkNoAppRead();
+  await markNoAppRead(f.N, () => Promise.reject(new TypeError('Failed to fetch')),
+    f.windowStub, f.consoleStub);
+  assertNoAppUntouched(f);
+});
+
 // ── 2. rowView carries the app id ───────────────────────────────────────
 
 let screenViews = null;
@@ -288,4 +417,53 @@ test('the catalog holds the four new entries', () => {
   for (const id of ['sheet.markAppRead', 'sheet.markAppReadLabel', 'sheet.group.other', 'toast.markAppFailed']) {
     assert.ok(CATALOG[id].description, `${id} carries a description`);
   }
+});
+
+// ── 4. the sheet draws Mark read on the app-less group too (#6579) ──────
+
+const { createStore } = loadTsx('frontend/src/lib/plain-store.js');
+
+function renderSheet(list) {
+  const notificationsStore = createStore({
+    saved: [], invites: [], screenList: list, touch: false, loadingMore: false, screenCanLoadMore: false,
+    badgeTotal: list.length,
+  });
+  const notificationsSheetStore = createStore({ open: true, adopted: false });
+  // The controller tests above ran with `window` standing in for the page;
+  // the sheet renders as the prerender does, with none.
+  const page = globalThis.window;
+  delete globalThis.window;
+  try {
+    const mod = loadTsx(SHEET_PATH, {
+      stubs: {
+        './notifications-store.js': { notificationsStore },
+        './notifications-sheet-store.js': { notificationsSheetStore },
+      },
+    });
+    return renderToHtml(createElement(mod.NotificationsSheetView));
+  } finally { globalThis.window = page; }
+}
+
+const sheetView = (id, overrides = {}) => ({
+  id, kind: 'voted_change_merged', unread: true, label: 'Live', segments: [],
+  createdAtMs: Date.now() - id * 60000, who: '', appLine: 'Notes', appName: 'Notes', appId: 5,
+  storyKey: null, storyRef: null, ...overrides,
+});
+const appLess = (id) => sheetView(id, { kind: 'pr_proposed', needsYou: true, appId: null, appName: null, appLine: '' });
+
+test('with two groups, "Across Homeroom" draws the app-less Mark read', () => {
+  const html = renderSheet([appLess(1), sheetView(2, { appId: 6, appName: 'Polls' })]);
+  const heads = [...html.matchAll(/data-notif-app-group="([^"]+)"([\s\S]*?)(?=data-notif-app-group="|$)/g)];
+  const other = heads.find((m) => m[1] === 'other');
+  assert.ok(other, 'the app-less group is on the tab');
+  assert.match(other[2], /data-notif-app-read="other"/, 'its heading carries Mark read');
+  assert.match(other[2], new RegExp('aria-label="Mark all from ' + 'Across Homeroom' + ' as read"'));
+  const project = heads.find((m) => m[1] === 'a:6');
+  assert.match(project[2], /data-notif-app-read="6"/, 'and a project still carries its own');
+});
+
+test('with the app-less group alone, it draws no Mark read', () => {
+  const html = renderSheet([appLess(1)]);
+  assert.match(html, /data-notif-app-group="other"/);
+  assert.doesNotMatch(html, /data-notif-app-read/, 'Mark all read in the title row is the one');
 });
