@@ -31,7 +31,7 @@
  */
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
-import { Av, Count, Frame, Icon, Tile, k } from '@/components/ui/kit';
+import { Av, Btn, Count, Frame, Icon, Tile, k } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
 import { whenPlatformViewer } from '../../lib/platform-viewer';
 import { isFrameSkin, useSkin } from '../../lib/skin';
@@ -44,6 +44,9 @@ import { placeName } from '../dev-board/workshop/places';
 import { communityScopeStore, goToCommunity } from '../workshop/community-scope';
 import { swatchFor } from '../messages/format';
 import { appContextStore } from '../app-context/app-context-store.js';
+import { useInAppShown } from '../header/in-app-actions';
+import { Improve } from '../improve/improve-controller.js';
+import { improveStore } from '../improve/improve-store.js';
 import { framePageStore } from './frame-page-store';
 import { FrameSheets, openFrameSheet } from './frame-sheets';
 import { GuestFrame } from './guest-chrome';
@@ -132,7 +135,17 @@ export function FrameChrome() {
   // (../dev-board/workshop/place-store.ts); the arrow goes up to the Hub from
   // a place and back to Home from the Hub, as the standard header's does.
   const where = useStoreState(placeStore);
-  const here = inCommunity && where.slug === inCommunity ? where.place : null;
+  // A RUNNING APP (the tour's s38) is the project's App place: the bar says
+  // the project and "App", the word its places list has for that row. The
+  // app tab publishes no place, so what the page last said is not read
+  // there. The bar also carries Suggest, the one control the standard
+  // header has on a project's pages besides the bell and the mark, shown by
+  // the same rule and pressed the same way (../header/in-app-actions.tsx).
+  const tProject = useMessages('project');
+  const improve = useStoreState(improveStore) as { target?: string; tab?: string };
+  const onApp = !!inCommunity && improve.target === 'app' && improve.tab === 'app';
+  const suggest = useInAppShown();
+  const here = inCommunity && !onApp && where.slug === inCommunity ? where.place : null;
   const project = inCommunity ? scope.info[inCommunity] : null;
   const projectCrumb = { word: project?.name || title, lead: <Tile size={24} name={project?.name || title} src={project?.iconUrl} emoji={project?.iconEmoji} color={project?.iconColor} /> };
   // A page that says its own trail inside a project (a request, a change)
@@ -140,9 +153,11 @@ export function FrameChrome() {
   const crumbs: Array<{ word: string; lead?: ReactNode }> = page.crumb
     ? [...(inCommunity ? [projectCrumb] : []), ...page.crumb.map((word) => ({ word }))]
     : inCommunity
-      ? [projectCrumb, ...(here && here !== 'status' ? [{ word: placeName(here) }] : [])]
+      ? [projectCrumb, ...(onApp ? [{ word: tProject('project:places.list.app') }] : here && here !== 'status' ? [{ word: placeName(here) }] : [])]
       : (title ? [{ word: title }] : []);
-  const back = page.crumb ? !!page.onBack : inCommunity ? true : shellBack;
+  // Beside a running app the way back is the shell's own, as on any page
+  // that is not one of the project's places.
+  const back = page.crumb ? !!page.onBack : inCommunity && !onApp ? true : shellBack;
   const goBack = () => {
     if (page.crumb && page.onBack) page.onBack(); else press('back-btn');
   };
@@ -285,7 +300,7 @@ export function FrameChrome() {
         <div className={k('colm')}>
           <header className={k('bar')}>
             {back ? (
-              <button type="button" className={k('ib')} aria-label={t('core:header.back')} onClick={!page.crumb && inCommunity ? goUp : goBack}>
+              <button type="button" className={k('ib')} aria-label={t('core:header.back')} onClick={!page.crumb && inCommunity && !onApp ? goUp : goBack}>
                 <Icon name="cl" />
               </button>
             ) : null}
@@ -300,6 +315,13 @@ export function FrameChrome() {
               ))}
             </div>
             <span className={k('sp')} />
+            {/* Suggest, on a desktop only: a phone reaches it through the
+                mark's menu, as under the standard header. */}
+            {suggest ? (
+              <Btn kind="line" small icon="edit" className="d" data-frame-suggest="" aria-label={t('core:header.inApp.suggestLabel')} onClick={() => Improve.giveFeedback({ target: 'app' })}>
+                {t('core:header.inApp.suggest')}
+              </Btn>
+            ) : null}
             {/* Search is your communities': the page that lists them, with its field. */}
             <button type="button" className={k('ib d')} aria-label={t('core:rail.search')} onClick={() => goToCommunity(null)}>
               <Icon name="search" />
