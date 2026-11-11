@@ -256,12 +256,11 @@ function VoteCloses({ closes, id }: { closes: ClosesRequest[]; id: number | null
             ) : null}
             {!confirmed && !r.closed && !r.disputed && r.waiting && r.canConfirm ? (
               <>
-                {' '}
                 <Button
                   type="button"
                   variant="pillAccent"
                   size="sm"
-                  className="align-middle"
+                  className="align-middle ms-1"
                   disabled={sending === r.number}
                   data-change-vote-closes-confirm={r.number}
                   onClick={() => void confirm(r.number)}
@@ -272,8 +271,7 @@ function VoteCloses({ closes, id }: { closes: ClosesRequest[]; id: number | null
             ) : null}
             {failed === r.number ? (
               <>
-                {' '}
-                <span className="text-[color:var(--state-blocked)]" role="alert">
+                <span className="ms-1 text-[color:var(--state-blocked)]" role="alert">
                   {t('project:topic.thread.page.claimDisputeFailed')}
                 </span>
               </>
