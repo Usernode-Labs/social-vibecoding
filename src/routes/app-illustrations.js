@@ -142,11 +142,15 @@ function illustrationRoutes(config) {
   };
   const propose = async (req, res, next, proposed, images, replace = false) => {
     const app = req.illustrationApp;
+    // The waiting change a replace was aimed at, kept for a refusal's link:
+    // a vote that lands between the read and the row lock closes it, and the
+    // editor should still be able to open the change that was decided.
+    let waiting = null;
     try {
       // A replace of the open card this app already has. replaceProposal
       // answers for the proposer only; anyone else is refused.
       if (replace) {
-        const waiting = await proposals.findOpenProposal(pool, app.id);
+        waiting = await proposals.findOpenProposal(pool, app.id);
         if (waiting) {
           const issue = await proposals.replaceProposal(pool, {
             app, user: req.user, issueId: waiting.id, proposed, images,
@@ -175,7 +179,16 @@ function illustrationRoutes(config) {
         return res.status(403).json({ code: 'not_proposer', error: err.message });
       }
       if (err instanceof proposals.NotOpenError) {
-        return res.status(409).json({ error: err.message });
+        return res.status(409).json({
+          error: err.message,
+          // #6601: the decided change is still openable, so the editor's
+          // refusal carries "Open the proposal" and its Replace button stays
+          // disabled rather than offering a retry that cannot work.
+          pending: waiting ? {
+            ...proposals.proposalLink(app, waiting),
+            mine: !!(req.user && Number(waiting.created_by) === Number(req.user.id)),
+          } : null,
+        });
       }
       next(err);
     }
