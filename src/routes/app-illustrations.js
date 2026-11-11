@@ -117,20 +117,78 @@ function illustrationRoutes(config) {
   router.get(path, async (req, res, next) => {
     try {
       const pending = await proposals.findOpenProposal(pool, req.illustrationApp.id);
+      // #6601: the waiting change's author sees whose it is, and the record
+      // it carries, so the editor can open on it and replace it. Nobody else
+      // is told what the waiting change proposes.
+      const mine = !!(pending && req.user && Number(pending.created_by) === Number(req.user.id));
       res.json({
         illustration: req.illustrationApp.featured_illustration || null,
-        pending: pending ? proposals.proposalLink(req.illustrationApp, pending) : null,
+        pending: pending ? {
+          ...proposals.proposalLink(req.illustrationApp, pending),
+          mine,
+          ...(mine ? { proposed: (pending.payload && pending.payload.proposed) || null } : {}),
+        } : null,
       });
     } catch (err) { next(err); }
   });
-  const propose = async (req, res, next, proposed, images) => {
+  // The record a replace builds over: the waiting proposal's own `proposed`
+  // when one is open (so a field left out keeps what the waiting change
+  // had), else what the card wears. With nothing waiting, replace falls
+  // through to a new proposal as usual.
+  const mergeBase = async (app, replace) => {
+    if (!replace) return app.featured_illustration || null;
+    const waiting = await proposals.findOpenProposal(pool, app.id);
+    return waiting ? ((waiting.payload && waiting.payload.proposed) || null) : (app.featured_illustration || null);
+  };
+  const propose = async (req, res, next, proposed, images, replace = false) => {
     const app = req.illustrationApp;
+    // The waiting change a replace was aimed at, kept for a refusal's link:
+    // a vote that lands between the read and the row lock closes it, and the
+    // editor should still be able to open the change that was decided.
+    let waiting = null;
     try {
+      // A replace of the open card this app already has. replaceProposal
+      // answers for the proposer only; anyone else is refused.
+      if (replace) {
+        waiting = await proposals.findOpenProposal(pool, app.id);
+        if (waiting) {
+          const issue = await proposals.replaceProposal(pool, {
+            app, user: req.user, issueId: waiting.id, proposed, images,
+          });
+          return res.status(200).json({
+            illustration: app.featured_illustration || null,
+            proposal: proposals.proposalLink(app, issue),
+            replaced: true,
+          });
+        }
+      }
       const issue = await proposals.createProposal(pool, { app, user: req.user, proposed, images });
       res.status(201).json({ illustration: app.featured_illustration || null, proposal: proposals.proposalLink(app, issue) });
     } catch (err) {
       if (err instanceof proposals.PendingProposalError) {
-        return res.status(409).json({ error: err.message, pending: err.issue ? proposals.proposalLink(app, err.issue) : null });
+        const issue = err.issue;
+        return res.status(409).json({
+          error: err.message,
+          pending: issue ? {
+            ...proposals.proposalLink(app, issue),
+            mine: !!(req.user && Number(issue.created_by) === Number(req.user.id)),
+          } : null,
+        });
+      }
+      if (err instanceof proposals.NotProposerError) {
+        return res.status(403).json({ code: 'not_proposer', error: err.message });
+      }
+      if (err instanceof proposals.NotOpenError) {
+        return res.status(409).json({
+          error: err.message,
+          // #6601: the decided change is still openable, so the editor's
+          // refusal carries "Open the proposal" and its Replace button stays
+          // disabled rather than offering a retry that cannot work.
+          pending: waiting ? {
+            ...proposals.proposalLink(app, waiting),
+            mine: !!(req.user && Number(waiting.created_by) === Number(req.user.id)),
+          } : null,
+        });
       }
       next(err);
     }
@@ -174,45 +232,53 @@ function illustrationRoutes(config) {
     if (body.preview !== undefined && body.preview !== null && !loopType) {
       return res.status(400).json({ error: 'Choose an MP4 or WebM preview of at most 1.5 MB.' });
     }
-    const current = req.illustrationApp.featured_illustration || null;
+    // #6601: an explicit replace of the waiting change (the editor's own
+    // Save does not send this; the Replace button does). A field the call
+    // leaves out keeps what the WAITING change had, not what the card wears.
+    const replace = body.replace === true;
+    const base = await mergeBase(req.illustrationApp, replace);
     // A dark image or a reframe on its own needs a light image to sit under
-    // it, and the only one in hand is the app's current record: a proposal
-    // that is still open does not count, and there is at most one anyway.
-    if (!light && !current?.url) return res.status(409).json({ error: 'Upload a light image first.' });
+    // it, and the one in hand is the waiting record when replacing, else the
+    // app's current record.
+    if (!light && !base?.url) return res.status(409).json({ error: 'Upload a light image first.' });
     const lightId = light ? proposals.newImageId() : null;
     const darkId = dark ? proposals.newImageId() : null;
     const previewId = loop ? proposals.newImageId() : null;
-    // The same merge the direct write performed: the current record under
-    // the new framing, then whichever urls this save replaces. A dark left
-    // undefined keeps the current dark image; null drops it. The preview
+    // The same merge the direct write performed: the base record under the
+    // new framing, then whichever urls this save replaces. A dark left
+    // undefined keeps the base's dark image; null drops it. The preview
     // follows the same rule, and a record without one carries no key.
-    const { preview: currentPreview, ...kept } = current || {};
-    const preview = body.preview === undefined ? (currentPreview || null)
+    const { preview: basePreview, ...kept } = base || {};
+    const preview = body.preview === undefined ? (basePreview || null)
       : loop ? { url: proposals.previewUrl(previewId), type: loopType } : null;
     const proposed = {
       ...kept,
       ...framing,
-      url: light ? proposals.imageUrl(lightId) : current.url,
-      darkUrl: body.dark === undefined ? (current?.darkUrl || null) : dark ? proposals.imageUrl(darkId) : null,
+      url: light ? proposals.imageUrl(lightId) : base.url,
+      darkUrl: body.dark === undefined ? (base?.darkUrl || null) : dark ? proposals.imageUrl(darkId) : null,
       ...(preview ? { preview } : {}),
     };
     await propose(req, res, next, proposed, {
       light: light ? { id: lightId, contentType: validateImage(light), data: light } : null,
       dark: dark ? { id: darkId, contentType: validateImage(dark), data: dark } : null,
       preview: loop ? { id: previewId, contentType: loopType, data: loop } : null,
-    });
+    }, replace);
   });
   router.patch(path, async (req, res, next) => {
     const framing = parseFraming(req.body);
     if (!framing) return res.status(400).json({ error: 'Choose valid image framing and a card colour from the set.' });
-    const current = req.illustrationApp.featured_illustration || null;
-    if (!current) return res.status(409).json({ error: 'The illustration was removed. Upload an image again.' });
-    await propose(req, res, next, { ...current, ...framing }, {});
+    const replace = !!req.body && req.body.replace === true;
+    const base = await mergeBase(req.illustrationApp, replace);
+    if (!base) return res.status(409).json({ error: 'The illustration was removed. Upload an image again.' });
+    await propose(req, res, next, { ...base, ...framing }, {}, replace);
   });
   router.delete(path, async (req, res, next) => {
-    // Nothing to remove means nothing to vote on.
-    if (!req.illustrationApp.featured_illustration) return res.json({ illustration: null, proposal: null });
-    await propose(req, res, next, null, {});
+    const replace = req.query.replace === '1';
+    // Nothing to remove, and no waiting change to turn into a removal, means
+    // nothing to vote on.
+    const waiting = replace ? await proposals.findOpenProposal(pool, req.illustrationApp.id) : null;
+    if (!req.illustrationApp.featured_illustration && !waiting) return res.json({ illustration: null, proposal: null });
+    await propose(req, res, next, null, {}, replace);
   });
   return router;
 }

@@ -51,7 +51,7 @@ function cleanReplyHtml(value) {
 
 /**
  * Pure: the words a fragment shows, as one string, for the checks a reply's
- * words go through (homeroom-bot-mayor.js claimProblems): its styles, any
+ * words go through (reply-claims.js checkReply): its styles, any
  * script and comments left out, every tag a space, entities read.
  */
 function htmlWords(html) {

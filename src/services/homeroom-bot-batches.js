@@ -92,6 +92,9 @@ function bucketOf(track) {
   if (!work) return 'waiting';
   if (work.stage === 'closed' && track.doneBy) return 'live';
   if (work.stage === 'building' && READY_LINES.has(work.line?.code)) return 'waiting';
+  // 11 Nov 2026: a change with an update queued is the bot's (building),
+  // but in the roll-up it is still the change it was: ready.
+  if (work.stage === 'building' && work.line?.code === 'update_queued') return 'ready';
   return BUCKET_OF[work.stage] || 'waiting';
 }
 
@@ -146,6 +149,7 @@ function readOf({ track = null, run = null, queued = false, personAt = null, now
   // week's building time is the allowance's).
   if (track?.held?.limit) return { read: 'ready', note: null, why: track.held.limit === 'allowance' ? 'allowance' : 'held' };
   if (s === 'building' && code === 'queued') return { read: 'underway', note: null, why: 'build_queued' };
+  if (s === 'building' && code === 'update_queued') return { read: 'underway', note: null, why: 'vote' };
   if (UNDERWAY_WHY[s]) return { read: 'underway', note: null, why: UNDERWAY_WHY[s] };
   if (s === 'reading' || s === 'planning') return { read: 'reading', note: null, why: null };
   if (s === 'waiting_for_you' && work.why === 'plan') return { read: 'ready', note: null, why: 'plan' };

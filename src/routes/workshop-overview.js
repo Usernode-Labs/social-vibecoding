@@ -80,12 +80,9 @@ const proposalTouches = require('../services/proposal-touches');
 const visualsService = require('../services/visuals');
 const shotsView = require('../services/shots-view');
 const { botRequestedBySql } = require('../services/bot-requested-by');
-const { firstVersionSql } = require('../services/first-version-rule');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const { threadsInSql } = require('../services/ai-work');
-const { updateComingSql } = require('../services/homeroom-bot-progress');
-const { voteReadySql, awaitingYesSql } = require('../services/vote-ready');
-const { APPROVED_SQL } = require('../services/work-state');
+const { awaitingYesSql } = require('../services/vote-ready');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
 const codeMissing = require('../services/code-missing');
@@ -183,45 +180,37 @@ const BALLOT_THREAD_SQL = (cs) => `${cs}.thread_id IS NOT NULL AND cardinality($
 // their yes, and their tap is (governance-rules.ts, 11 Nov 2026; a change a
 // coding agent submitted was the first, #6006). Nor is it their pick on a
 // ballot.
+// 11 Nov 2026 (docs/plans/bot-one-model.md, step 3): whether a change is
+// open for votes is its stored work state's (work_states.vote_open,
+// services/work-state.js deriveChange): up for a vote, its checks passed on
+// its head (#6402), it merges cleanly or waits only for a yes (#6531), it is
+// not its project's first version (13 Oct 2026, D1), no update is on its way
+// (#6282), GitHub is not holding an approved merge (#6546), and its before &
+// after shots are not still being taken (#6528), and its votes are not in
+// yet (#6594: one that has them is Approved or going live, so it asks
+// nothing of anyone). The same row every screen
+// draws, so a merged, merging or held change is never a Vote row while its
+// own page says it is going live. Voting early stays possible on the
+// change's own page. What is left here is the viewer's own: not theirs, not
+// voted on yet, and the ballot's exclusions.
+const VOTE_OPEN_SQL = (alias) => `EXISTS (SELECT 1 FROM work_states wso
+                WHERE wso.item_kind = 'change' AND wso.item_ref = ${alias}.id AND wso.vote_open)`;
+
 const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
+       AND ${VOTE_OPEN_SQL('cs')}
        AND NOT EXISTS (
          SELECT 1 FROM pr_votes pv
           WHERE pv.session_id = cs.id
             AND pv.user_id = $1
             AND ${currentVotePredicateSql('pv', 'cs')}
        )
-       AND NOT ${firstVersionSql('cs')}
-       -- #6282 (4 Nov 2026): a change with an update on its way asks for no
-       -- vote. A yes cast now is cleared when the update lands and Homeroom
-       -- asks again, so it waits under Updating / Update queued instead
-       -- (services/homeroom-bot-progress.js updateComingSql, which the AI tab
-       -- and the change's own Votes card read too). A ballot goes with it
-       -- while any of its changes has an update coming, so nobody picks a
-       -- change that is about to change.
-       AND ${updateComingSql('cs')} IS NULL
-       -- #6402 (6 Nov 2026): a vote is asked only once the change is ready:
-       -- its checks passed (or it had nothing to test) and it merges cleanly
-       -- with main. Until then it waits under Waiting & in progress, worded
-       -- by services/work-state.js. Voting early stays possible on the
-       -- change's own page.
-       AND ${voteReadySql('cs')}
-       -- #6594 (11 Nov 2026): a change whose votes are in asks nothing of
-       -- anyone, not only of the person who voted. Its stored work state is
-       -- Approved (waiting on its checks) or Going live, so it leaves the
-       -- feed, the counts and the ballot rows alike.
-       AND NOT EXISTS (
-             SELECT 1 FROM work_states w
-              WHERE w.session_id = cs.id AND ${APPROVED_SQL('w')})
-       AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
-             SELECT 1 FROM chat_sessions ru
-              WHERE ${RIVAL_SQL('cs', 'ru')}
-                AND ${updateComingSql('ru')} IS NOT NULL))
-       -- A ballot waits too while any of its changes is not ready, so nobody
-       -- picks between changes that are still being checked.
+       -- A ballot waits while any of its changes is not open for votes (an
+       -- update on its way, its checks still running), so nobody picks
+       -- between changes that are about to change or still being checked.
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
              SELECT 1 FROM chat_sessions rr
               WHERE ${RIVAL_SQL('cs', 'rr')}
-                AND NOT ${voteReadySql('rr')}))
+                AND NOT ${VOTE_OPEN_SQL('rr')}))
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND (
              EXISTS (SELECT 1 FROM chat_sessions rv
                       WHERE ${RIVAL_SQL('cs', 'rv')}
@@ -1456,5 +1445,5 @@ module.exports = {
   withPictures, withCodeMissing, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,
-  MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE,
+  MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE, OWED_PROPOSALS_WHERE, VOTE_OPEN_SQL,
 };

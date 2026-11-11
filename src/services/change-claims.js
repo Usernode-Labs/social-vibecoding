@@ -86,16 +86,20 @@ async function announce(pool, { sessionId = null, appId = null } = {}, deps = {}
       );
       if (!claimed.length) continue;
       try {
-        const message = await ws.sendBotMessage(pool, Number(row.app_id), {
-          user: bot,
-          content: claimLine({
+        // Step 4: one post (bot-post.js), once per change and request.
+        const botPost = require('./bot-post');
+        const out = await botPost.post(pool, {
+          place: { type: 'issue', ref: Number(row.request_number) }, appId: Number(row.app_id), kind: 'change_claim',
+          author: bot, issueNumber: Number(row.request_number), sessionId: Number(row.session_id),
+          words: claimLine({
             prNumber: row.pr_number == null ? null : Number(row.pr_number),
             requestNumber: Number(row.request_number),
             repoUrl: row.repo_url,
           }),
           metadata: { kind: 'change_claim', sessionId: Number(row.session_id), request: Number(row.request_number) },
-          thread: { type: 'issue', ref: Number(row.request_number) },
-        });
+          version: `change-${Number(row.session_id)}`, record: false,
+        }, { ws });
+        const message = out.outcome === 'said' ? { id: out.messageId } : null;
         if (message) {
           await notifications.createThreadNotifications(pool, {
             appId: Number(row.app_id), messageId: message.id, senderId: bot.id,

@@ -363,13 +363,19 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
     const myVote = row.decision_vote === 'yes' || row.decision_vote === 'no' ? row.decision_vote : null;
     // Their vote still owed: the Needs you feed's, as a change's is.
     if (!myVote && row.decision_mine !== true) return null;
-    return { group: 'waiting', work: { stage: 'up_for_vote', why: null, reason: null, line: null, since: iso(row.created_at) },
-      at: iso(row.created_at), myVote };
+    const vote = { stage: 'up_for_vote', why: null, reason: null, line: null, since: iso(row.created_at) };
+    return { group: 'waiting', work: { ...vote, words: workState.phrasesOf(vote) }, at: iso(row.created_at), myVote };
   }
-  const state = work || fallbackState(row);
+  // 11 Nov 2026: the stored row is the one source (statesFor makes it first
+  // when it is missing); a thread with none to read is not listed.
+  const state = work;
   if (!state) return null;
   const at = iso(state.since) || iso(row.request_at || row.created_at);
-  const stored = { stage: state.stage, why: state.why || null, reason: state.reason || null, line: state.line || null, since: at };
+  // Its words travel with it (work-state.js phrasesOf): the tab draws them.
+  const stored = {
+    stage: state.stage, why: state.why || null, reason: state.reason || null, line: state.line || null, since: at,
+    words: state.words || workState.phrasesOf(state),
+  };
   if (state.stage === 'live') {
     const liveAt = row.live_at || state.since;
     if (!liveAt || now - new Date(liveAt) > LIVE_DAYS * DAY_MS) return null;
@@ -396,7 +402,8 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   const updating = status === 'promoted' && (code === 'revising' || code === 'update_queued' || code === 'fixing');
   // #6600: its last takeover attempt failed, and nothing has checked it since.
   const botFixFailed = row.update_failed != null || code === 'bot_fix_failed';
-  const voteOwed = state.stage === 'up_for_vote' && !updating && status === 'promoted' && wouldVote;
+  // Owed only while its change is open for votes (work_states.vote_open).
+  const voteOwed = (state.voteOpen ?? state.stage === 'up_for_vote') && !updating && status === 'promoted' && wouldVote;
   // Their own change (not Homeroom bot's, whose fixes are its own) that
   // waits on them: checks that failed, a preview that did not build, a
   // conflict to resolve (THREADS_SQL needs_fix). Needs you, with Fix it,
@@ -443,39 +450,6 @@ function inFlight(state) {
   return state.stage === 'checking' || state.stage === 'up_for_vote' || state.stage === 'going_live';
 }
 
-/**
- * Pure: a thread's state before its stored row exists (it is made on the
- * read, workFor; this covers a read that failed): its change's, or waiting
- * to be read. Null for a thread with neither a request nor a change.
- *
- * Waiting to be read only for a request that is open. A thread with a
- * number but no request row (an old request from before the move off
- * GitHub, never mirrored into `requests`) is not one: listing it drew a row
- * with no title, "Not started yet", that opened the project's Workshop
- * (6 Nov 2026, twelve of them under Not moving). The tab before #6359 left
- * such a thread out the same way.
- */
-function fallbackState(row) {
-  if (row.change_status) {
-    const change = workState.deriveChange({
-      status: row.change_status, check_state: row.check_state, promoted_at: row.promoted_at,
-      merged_at: row.merged_at, live_at: row.live_at, last_activity_at: row.last_activity_at,
-    });
-    // #6282: an update on its way holds the vote (work-state.js derive says
-    // the same). #6545: a queued one holds only a vote, never a change still
-    // checking (a fix waiting its turn). #6600: a running takeover says the
-    // bot is fixing its failing checks, and one that failed says so. Its
-    // clock stays the change's last activity, as an update's always has.
-    const updated = workState.withUpdate(change, { coming: row.update_coming, failed: row.update_failed });
-    if (updated !== change) return { ...updated, since: iso(row.last_activity_at || row.promoted_at) };
-    return updated;
-  }
-  if (row.request_state === 'open') {
-    return { stage: 'reading', why: null, reason: null, line: { code: 'waiting' }, since: iso(row.request_at || row.created_at) };
-  }
-  return null;
-}
-
 // In progress is soonest first: going live, then a change being fixed or
 // updated, then made, then planned, then a request being read.
 const NEXT_ORDER = { going_live: 0, checking: 1, building: 2, planning: 3, reading: 4 };
@@ -488,7 +462,8 @@ const nextRank = (t) => (t.work.stage === 'building' && t.work.line && ['fixing'
 function waitingRank(t) {
   const { stage, line } = t.work;
   const code = line && line.code;
-  if (stage === 'up_for_vote') return code === 'update_queued' ? 1 : 0;
+  if (stage === 'up_for_vote') return 0;
+  if (stage === 'building' && code === 'update_queued') return 1;
   if (stage === 'checking' || (stage === 'planning' && code !== 'retry_plan')) return 0;
   if (stage === 'planning') return 4;
   if (stage === 'building') return code === 'queued' ? 2 : 3;
@@ -562,7 +537,7 @@ function arrange(rows, viewerId, now = new Date(), botId = null, states = null, 
  * The stored work state of each thread's request (by botKey) and of each
  * change with no request (`change:<id>`), with a row made first for any
  * request that has none yet (work-state.js ensure). Empty on a read error:
- * the rows then fall back to what their change says (fallbackState).
+ * a thread with no row read is then not listed.
  */
 async function statesFor(pool, rows) {
   const states = new Map();
@@ -570,11 +545,7 @@ async function statesFor(pool, rows) {
   const changes = (rows || []).filter((r) => r.change_id && r.request_id == null).map((r) => Number(r.change_id));
   try {
     await workState.ensure(pool, requests.map((r) => ({ appId: Number(r.app_id), issueNumber: Number(r.number) })));
-    const missingChanges = changes.length ? (await pool.query(
-      `SELECT x.id FROM unnest($1::int[]) AS x(id)
-        WHERE NOT EXISTS (SELECT 1 FROM work_states ws WHERE ws.item_kind = 'change' AND ws.item_ref = x.id)`,
-      [changes])).rows.map((r) => Number(r.id)) : [];
-    if (missingChanges.length) await workState.refresh(pool, missingChanges.map((id) => ({ sessionId: id })));
+    await workState.ensureChanges(pool, changes);
     const { rows: found } = await pool.query(
       `SELECT ws.*, a.slug FROM work_states ws JOIN apps a ON a.id = ws.app_id
         WHERE (ws.item_kind = 'request' AND (ws.app_id, ws.item_ref) IN (SELECT * FROM unnest($1::int[], $2::int[])))
@@ -949,7 +920,6 @@ module.exports = {
   PRIVATE_MAX,
   LIVE_DAYS,
   standing,
-  fallbackState,
   arrange,
   shapePrivate,
   filedKey,

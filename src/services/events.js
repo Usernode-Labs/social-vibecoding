@@ -284,6 +284,14 @@ const EVENT_TYPES = Object.freeze({
   // it), kindsAfter (what still fails), used ('whole', 'lines' or
   // 'fallback') and model }. Rollout health reads it; the log line stays.
   BOT_PLAN_CARD: 'bot_plan_card',
+  // Step 5 of the Homeroom bot's one model (11 Nov 2026): a tap on one of
+  // its offers or cards, as the route answered it: { surface ('thread': a
+  // project thread's offer, routes/chat.js; 'chat': an offer in a person's
+  // chat with it, routes/conversations.js actions; 'card': a card under a
+  // reply there, homeroom-bot-cards), status (the HTTP status answered) }.
+  // Rollout health counts the 404s and 410s per week: a button that no
+  // longer does anything.
+  BOT_OFFER_TAP: 'bot_offer_tap',
   // #4449: Live, the new app shown taking shape while its first version is
   // built (services/first-version-live.js). Written to compare build times
   // with and without the watcher, and to see how often Live showed nothing.
@@ -403,6 +411,20 @@ function record(poolOrConfig, { type, userId, appId, sessionId, metadata } = {})
   }
 }
 
+/**
+ * A tap on one of the Homeroom bot's offers or cards, as its route answered
+ * it (BOT_OFFER_TAP): `surface` 'thread' | 'chat' | 'card' and the HTTP
+ * `status`. Best-effort, as every record is.
+ */
+function recordBotOfferTap(poolOrConfig, { surface, status, userId = null, appId = null } = {}) {
+  return record(poolOrConfig, {
+    type: EVENT_TYPES.BOT_OFFER_TAP,
+    userId,
+    appId,
+    metadata: { surface: String(surface || ''), status: Number(status) || null },
+  });
+}
+
 // A pg Pool exposes `.query`; a config object does not. Disambiguate so
 // callers can hand us either.
 function resolvePool(poolOrConfig) {
@@ -412,4 +434,4 @@ function resolvePool(poolOrConfig) {
   return getPool(poolOrConfig);
 }
 
-module.exports = { record, EVENT_TYPES };
+module.exports = { record, recordBotOfferTap, EVENT_TYPES };

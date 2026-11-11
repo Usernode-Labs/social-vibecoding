@@ -354,7 +354,12 @@ test('a post with `dm` is relayed to the requester\'s DM; one without is not', a
   const real = dm.relayIssuePost;
   dm.relayIssuePost = async (args) => { relayed.push(args); return null; };
   t.after(() => { dm.relayIssuePost = real; });
-  const pool = { async query(s) { return /INSERT INTO homeroom_bot_posts/.test(s) ? { rows: [{ id: 11 }] } : { rows: [] }; } };
+  const pool = {
+    async query(s) {
+      if (/INSERT INTO bot_posts/.test(s)) return { rows: [{ id: 21, fresh: true, outcome: 'pending' }] };
+      return /INSERT INTO homeroom_bot_posts/.test(s) ? { rows: [{ id: 11 }] } : { rows: [] };
+    },
+  };
   const github = { async createIssueComment() { return { id: 1, created_at: 'now' }; } };
   const ws = { async sendBotMessage() { return { id: 5 }; } };
   const sender = { id: 2, username: 'homeroom_bot' };
@@ -368,7 +373,7 @@ test('a post with `dm` is relayed to the requester\'s DM; one without is not', a
   });
   assert.equal(relayed.length, 1);
   assert.equal(relayed[0].kind, 'question');
-  assert.equal(relayed[0].postId, 11, 'keyed by the post, so a retry sends once');
+  assert.equal(relayed[0].postKey, 'bot-post-21', 'keyed by the post (bot-post.js), so a retry sends once');
   assert.deepEqual(relayed[0].dm, { question: 'Q?', answers: ['A'] });
   // A relay that throws never fails the post.
   dm.relayIssuePost = async () => { throw new Error('boom'); };
