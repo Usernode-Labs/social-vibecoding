@@ -147,6 +147,10 @@ import { revealScrollTop, useKeyboardSurface } from '../../lib/keyboard-surface'
 import { usePageLock } from '../../lib/page-lock';
 import { mayFocusByCodeNow } from '../auth/sign-in-sheet';
 import { MakeRuleLine } from '../who-decides/make-rule';
+import { MakeRuleRows } from '../who-decides/make-rule';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
+import { useFramePage } from '../frame/frame-page-store';
+import { MakeFrame, MakeFrameShell, type MakeIdea } from './frame/make-frame';
 import { DEFAULT_PRESET, type PresetKey } from '../who-decides/model';
 import { AppAllowance, useAppAllowance } from '../dialogs/app-allowance';
 import { deviceTimeZone, postCreateApp } from '../dialogs/post-create-app';
@@ -412,6 +416,10 @@ export function MakeScreen({
   audience?: CreateAudience;
 }) {
   const t = useMessages('onboarding');
+  // The look, read here with the other hooks: under one of the frame's
+  // looks Create's screen is drawn in the kit (the branch before the
+  // standard render, at the foot of this function).
+  const look = useLiveSkin();
   const waitlistIdea = typeof idea === 'string' && idea.trim() ? idea : null;
   const fromCreate = entry === 'create';
   // At the allowance's limit (or a full server), Make it and Import it are
@@ -575,6 +583,15 @@ export function MakeScreen({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose, leave]);
+  // IN THE ONE FRAME (looks v2, the tour's s42 and s43). From Create, below
+  // the frame's bar, a look draws this screen as a page of the kit
+  // (./frame/make-frame.tsx) instead of placing the standard form in the
+  // page area: the bar says Home › New project and its arrow leaves the way
+  // ✕ does. The first session's Make has no frame around it and keeps the
+  // whole screen and the standard form. This overturns the first
+  // programme's ruling that Make keeps its form under a look.
+  const kit = isFrameSkin(look) && fromCreate && underHeader;
+  useFramePage(kit ? [t('core:tabs.home'), t('home:create.label')] : null, kit && onClose ? leave : null);
 
   const template = picked && picked !== OWN_IDEA ? picked : null;
   // The fourth tile: a pick from "Something else…" (Your own idea, or one of
@@ -739,6 +756,138 @@ export function MakeScreen({
   // dialog's quiet row, #23): a returning maker can be at their limit, a new
   // account never is. The wrapper goes with it when there is nothing to say.
   const allowance = fromCreate ? <div className="mt-4 empty:hidden"><AppAllowance id="make-app-quota" surface="pane" quiet /></div> : null;
+
+  // THE KIT'S PAGE. Everything it shows is read off the state above and
+  // every press runs a handler above; the three closures written out here
+  // are the standard fields' own inline ones (the description, the name,
+  // dictation), word for word, since those are written in the markup below.
+  if (kit) {
+    const tileOf = (example: Template) => (example.chart ? <TierChart /> : example.emoji);
+    const ideas: MakeIdea[] = [
+      ...FRONT.map((example) => ({
+        attr: example.key, on: picked === example, lead: tileOf(example), label: t(example.short), onPick: () => pickTemplate(example),
+      })),
+      {
+        attr: fourth ? (fourth === OWN_IDEA ? OWN_IDEA : fourth.key) : MORE_TILE,
+        on: !!fourth,
+        lead: fourth === OWN_IDEA ? '💡' : fourth ? tileOf(fourth) : (
+          <span className="mk-four">{MORE.slice(0, 4).map((m) => <span key={m.key}>{m.emoji}</span>)}</span>
+        ),
+        label: fourth === OWN_IDEA ? t('onboarding:firstSession.make.ownIdea') : fourth ? t(fourth.short) : t('onboarding:firstSession.make.somethingElse'),
+        popup: true,
+        chevron: !!fourth,
+        onPick: () => setSheetOpen(true),
+      },
+    ];
+    const kitMic = (
+      <SpeakButton
+        scope={`make:${mode}:${template?.key || 'idea'}:${written === null ? choice : 'written'}`}
+        disabled={busy || mode !== 'make'}
+        onBusyChange={setDictating}
+        getText={() => (templated ? words : brief)}
+        maxLength={templated ? template?.finish ? BRIEF_MAX - 200 : 60 : BRIEF_MAX}
+        onText={(next) => {
+          if (templated) { setChoice(OWN); changeWords(next); if (template && !nameTyped) setName(suggestedName(template, OWN, next)); }
+          else { setBrief(next); setPicked(OWN_IDEA); setWritten(null); setError(null); setMissing(null); }
+        }}
+      />
+    );
+    const kitSheet = sheetOpen && typeof document !== 'undefined'
+      ? createPortal(
+        <MoreSheet
+          picked={fourth}
+          onPick={(next) => { setSheetOpen(false); pickTemplate(next); }}
+          onPickIdea={() => { setSheetOpen(false); pickIdea(); }}
+          onClose={() => setSheetOpen(false)}
+        />,
+        document.body,
+      )
+      : null;
+    return (
+      <MakeFrameShell rootRef={rootRef} scrollerRef={scrollerRef} rootClass={MAKE_ROOT_UNDER_HEADER} entry={entry} mode={mode}>
+        {mode === 'import' ? (
+          <ImportForm
+            className={formClass}
+            header={null}
+            frame={{ motion, title: t(IMPORT_TITLE), line: t(IMPORT_LINE), onClose: onClose ? leave : null }}
+            submit={importRepo}
+            blocked={quotaBlocks}
+            onDescribe={() => { setMode('make'); setTimeout(() => briefRef.current?.focus({ preventScroll: true }), 0); }}
+            allowance={allowance}
+          />
+        ) : (
+          <MakeFrame
+            motion={motion}
+            title={makeTitle(entry, who)}
+            onSubmit={() => { void make(); }}
+            onImport={() => setMode('import')}
+            onClose={onClose ? leave : null}
+            busy={busy}
+            off={dictating || busy || quotaBlocks}
+            ideas={ideas}
+            brief={templated && template && said ? {
+              kind: 'sentence',
+              template: template.key,
+              head: said.head,
+              tail: said.tail,
+              fill: said.fill,
+              finish: !!template.finish,
+              own: choice === OWN,
+              words,
+              onWords: changeWords,
+              fieldRef: wordsFieldRef,
+              areaRef: wordsBoxRef,
+              fieldPlaceholder: t(template.own.example),
+              areaPlaceholder: t(boxExample),
+              areaMax: BRIEF_MAX - 200,
+              chips: chips.map((c) => ({ key: c.key, label: t(c.label), on: choice === c.key, onPick: () => pickChoice(c.key) })),
+              onWriteOut: template.finish ? null : writeOut,
+            } : {
+              kind: 'plain',
+              boxRef: briefRef,
+              value: brief,
+              max: BRIEF_MAX,
+              placeholder: t('onboarding:firstSession.make.briefPlaceholder'),
+              onChange: (next) => {
+                setBrief(next);
+                if (picked !== OWN_IDEA && next !== written) {
+                  setPicked(OWN_IDEA);
+                  setWritten(null);
+                }
+                setError(null);
+                setMissing(null);
+              },
+              onScroll: (e) => setBriefScrolled(briefFades(e.currentTarget)),
+              fade: briefScrolled ? BRIEF_FADE : '',
+              kept: waitlistIdea && brief === waitlistIdea && ideaSource === 'waitlist' ? { attr: 'data-make-waitlist-idea', text: t(WAITLIST_IDEA_LINE) }
+                : waitlistIdea && brief === waitlistIdea && ideaSource === 'search' ? { attr: 'data-make-search-idea', text: t(SEARCH_IDEA_LINE) }
+                  : null,
+            }}
+            onToName={toName}
+            mic={kitMic}
+            briefNeeded={missing === 'brief' || missing === 'blank' ? needed : null}
+            name={{
+              boxRef: nameRef,
+              value: name,
+              placeholder: t(template ? template.namePlaceholder : 'onboarding:firstSession.make.namePlaceholderOwn'),
+              onChange: (next) => {
+                setName(next);
+                setNameTyped(next.trim() !== '');
+                setError(null);
+                setMissing(null);
+              },
+              needed: missing === 'name' ? needed : null,
+            }}
+            speed={speed ? { key: speed, id: SPEED_LINE[speed] } : null}
+            rule={<MakeRuleRows preset={rule} onPick={setRule} who={who} />}
+            allowance={allowance}
+            error={error}
+          />
+        )}
+        {kitSheet}
+      </MakeFrameShell>
+    );
+  }
 
   return (
     <div

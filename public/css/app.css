@@ -27664,6 +27664,52 @@ html[data-skin][data-frame-chrome] .platform-kb-surface.platform-under-header {
   color: var(--fr-ink);
   font-family: var(--fr-f);
 }
+/* MAKE AND IMPORT IN THE KIT (features/first-session/frame/make-frame.tsx,
+   version 2 of the tour's s42 and s43). From Create, under a look, the
+   screen above holds a page of the kit instead of the standard form: the
+   same root and scroller, the same fields. The kit draws the head, the
+   columns, the cards, the fields and the buttons; these are the page's own
+   small parts, in the kit's tokens: an idea's picture, a picked idea's
+   sentence with its blank, the microphone's place in a box, the line about
+   speed, the error, the status line's spinner, and the product's own
+   allowance block under the page (it is not the kit's, so it stands
+   outside the frame root, at the form's edge). */
+html[data-skin] [data-make-kit] .mk-form { display: flex; flex-direction: column; flex: 1 0 auto; min-width: 0; }
+html[data-skin] [data-make-kit] .fr-head .fr-acts { align-items: center; }
+html[data-skin] [data-make-kit] .fr-head .fr-acts .fr-ib { cursor: pointer; background: var(--fr-sunk); }
+html[data-skin] [data-make-kit] :is(.fr-btn, .fr-link, .fr-card.fr-press, button.fr-row) { cursor: pointer; }
+html[data-skin] [data-make-kit] .fr-btn:disabled { cursor: default; }
+html[data-skin] [data-make-kit] .fr-grid .fr-card.fr-press { display: block; border: 0; }
+html[data-skin] [data-make-kit] .fr-grid .fr-lead { font-size: 22px; line-height: 1; }
+html[data-skin] [data-make-kit] .mk-four { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; font-size: 13px; line-height: 16px; }
+html[data-skin] [data-make-kit] .mk-lab { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 650; }
+html[data-skin] [data-make-kit] .mk-say { font-size: 17px; line-height: 28px; color: var(--fr-ink); }
+html[data-skin] [data-make-kit] .mk-blank { padding: 1px 4px; border-radius: 6px; background: var(--fr-acc-t); color: var(--fr-acc); font-weight: 650; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+html[data-skin] [data-make-kit] .mk-blank-field { display: inline-block; width: 9.5em; max-width: 100%; margin-inline: 2px; padding: 0 6px; border: 0; outline: 0; font: inherit; font-weight: 650; line-height: 26px; vertical-align: baseline; box-shadow: inset 0 -2px 0 var(--fr-acc); }
+html[data-skin] [data-make-kit] .mk-blank-field::placeholder { color: var(--fr-faint); font-weight: 500; opacity: 1; }
+html[data-skin] [data-make-kit] .mk-finish { display: flex; align-items: center; gap: 6px; color: var(--fr-acc); font-size: 13px; font-weight: 650; }
+html[data-skin] [data-make-kit] .mk-mic { flex: none; align-self: flex-end; display: inline-flex; margin-block-end: 2px; }
+html[data-skin] [data-make-kit] .mk-mic-row { margin-inline-start: auto; }
+html[data-skin] [data-make-kit] .mk-mic button { color: var(--fr-mut); cursor: pointer; }
+html[data-skin] [data-make-kit] .mk-mic button[aria-pressed="true"] { background: var(--fr-bad-t); color: var(--fr-bad); }
+html[data-skin] [data-make-kit] .mk-mic [role="status"], html[data-skin] [data-make-kit] .mk-mic span:has(> [role="alert"]) { padding: 6px 10px; background: var(--fr-solid, var(--fr-surface)); color: var(--fr-ink); box-shadow: inset 0 0 0 1px var(--fr-line); }
+html[data-skin] [data-make-kit] .fr-inp.fr-area > textarea.fr-v { align-self: stretch; }
+html[data-skin] [data-make-kit] .mk-speed { display: flex; align-items: center; gap: 8px; padding: 0 4px; font-size: 14px; line-height: 1.4; color: var(--fr-mut); }
+html[data-skin] [data-make-kit] .mk-speed b { color: var(--fr-ink); font-weight: 650; }
+html[data-skin] [data-make-kit] .mk-error { padding: 0 4px; font-size: 14px; color: var(--fr-bad); }
+html[data-skin] [data-make-kit] .mk-status { display: flex; align-items: center; gap: 6px; }
+html[data-skin] [data-make-kit] .fr-bullets { list-style: disc; color: var(--fr-mut); border-top: 1px solid var(--fr-line2); padding-block-start: 10px; }
+html[data-skin] [data-make-kit] .fr-bullets b { color: var(--fr-ink); font-weight: 650; }
+html[data-skin] [data-make-kit] .fr-foot .fr-link { border: 0; background: none; font: inherit; font-size: 13px; font-weight: 600; }
+html[data-skin] [data-make-kit] .mk-after { box-sizing: border-box; width: 100%; max-width: 1136px; margin: -32px auto 0; padding: 0 32px 48px; }
+html[data-skin] [data-make-kit] .mk-after-narrow { max-width: 848px; }
+/* The import page is the kit's narrow page and 64px: the close control the standard form has stands at the head's end, and the title keeps its line. */
+html[data-skin] [data-make-frame="import"] > .fr-inner.fr-narrow { max-width: 848px; }
+html[data-skin] [data-make-kit] .mk-after > * { max-width: 720px; margin-top: 0; }
+html[data-skin] [data-make-kit] .mk-after:not(:has(> div > *)) { display: none; }
+@media (max-width: 767.98px) {
+  html[data-skin] [data-make-kit] .mk-after { margin-top: -16px; padding: 0 16px 32px; }
+}
 
 /* CHALLENGES (features/leaderboard/frame/challenges-frame.tsx). The kit's
    page is drawn first in the pane's grid; the standing card and the cards
