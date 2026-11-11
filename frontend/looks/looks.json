@@ -296,7 +296,7 @@
     }
   },
   "wear": {
-    "note": "What the product's own markup wears. A conversation is drawn by the product's renderer, not by kit components, so for each kit component named here (roots) every kit rule that mentions it is repeated for the product's class (to), with the component's inner classes swapped for the product's (parts: a kit class, or a state the kit writes as a class, to a product selector). skip lists tour selectors left out. A part only counts inside a rule that names its root. The composer's field is not worn: the kit draws a placeholder's words, not a field (app.css, THE FRAME IN THE SHELL). The stand-alone pages a visitor signs in on (features/auth: sign-in, register, the waitlist form, more ways) are the product's own forms and wear the title, the card and the button; their one accent-filled control is the primary button, a white or grey pill a quiet one. Settings' own grouped lists (@/components/ui/grouped-list, named ui-glist and ui-lrow) wear the card and the row inside #settings-section-content, scoped with :where() inside the compound so a rule naming the row twice (.row+.row) stays one selector. Edit profile (features/profile/profile-edit-sheet.tsx) is the product's dialog: its title, group labels, groups and Save wear the title, the cap, the card and the button; its rows are dressed by hand in app.css, since a field row is a label over its box, not the kit's one-line row. The bell's sheet (#notifications-sheet) stays the product's and wears the card on each of its cards and the look's tabs on its Unread and All (a tab that is on is the one aria-selected). An item's page (a request, a change: features/dev-board/topic) keeps the product's own discussion: the stream wears the card (\"also\": a second wearer written as a selector of its own, since it needs two ids to outweigh the standard look's rule and :is() would lift every other wearer with it), the line that counts the replies wears a section's label (cap, and sechead for the looks that draw a section's label larger; the section head's own box is skipped, the stream is not one), and a line of what happened wears the event (evt).",
+    "note": "What the product's own markup wears. A conversation is drawn by the product's renderer, not by kit components, so for each kit component named here (roots) every kit rule that mentions it is repeated for the product's class (to), with the component's inner classes swapped for the product's (parts: a kit class, or a state the kit writes as a class, to a product selector). skip lists tour selectors left out. A part only counts inside a rule that names its root. The composer's field is not worn: the kit draws a placeholder's words, not a field (app.css, THE FRAME IN THE SHELL). The stand-alone pages a visitor signs in on (features/auth: sign-in, register, the waitlist form, more ways) are the product's own forms and wear the title, the card and the button; their one accent-filled control is the primary button, a white or grey pill a quiet one. Settings (features/settings, looks v2) is the product's own screen wearing the kit everywhere inside #settings-root, scoped with :is(#settings-root *) inside the compound, so a rule naming the row twice (.row+.row) stays one selector and every worn rule outranks the standard sheet's own (which reach a heading with six classes): its head's title and purpose (the head's own box is laid by hand in app.css: as a root it would take the rules that dress a button in a kit page's head away from the other wearers of btn), the open page's name (the 22px sub-heading), the search field, and stable ui-* names in the shared markup that draw nothing in the standard look: ui-glist and ui-card the card; ui-lrow and ui-row the row (always the wrapping kind, so a switch's sentence is never cut; ui-row-sm and a menu row the 48px one, the open page the lit one); ui-sechead and ui-cap the small-caps label; ui-secblurb and ui-note the 13px note; un-switch the switch; ui-inp the field; ui-btn the button with its kinds; ui-link the link; ui-pill the pill. A part mapped to an empty string is a state every one of these carries. Where Settings shares a root with another page (cap, card, title, btn) it is a wearer of its own (\"also\"), so its id weighs on nobody else. Edit profile (features/profile/profile-edit-sheet.tsx) is the product's dialog: its title, group labels, groups and Save wear the title, the cap, the card and the button; its rows are dressed by hand in app.css, since a field row is a label over its box, not the kit's one-line row. The bell's sheet (#notifications-sheet) stays the product's and wears the card on each of its cards and the look's tabs on its Unread and All (a tab that is on is the one aria-selected). An item's page (a request, a change: features/dev-board/topic) keeps the product's own discussion: the stream wears the card (\"also\": a second wearer written as a selector of its own, since it needs two ids to outweigh the standard look's rule and :is() would lift every other wearer with it), the line that counts the replies wears a section's label (cap, and sechead for the looks that draw a section's label larger; the section head's own box is skipped, the stream is not one), and a line of what happened wears the event (evt). New message's own dialog (features/messages/create-dialog.tsx, the tour's s16) is the product's: its card is lifted out of its root when shown, so it is named by an attribute of its own ([data-new-message]), and its title, its Direct and Group switch and its two buttons wear the title, the look's tabs and the button, each as a further wearer; the rest is dressed by hand in app.css. In a reply thread's pane the line that counts the replies wears the day's label.",
     "roots": {
       "post": {
         "to": ".messages-message",
@@ -310,7 +310,12 @@
         ]
       },
       "day": {
-        "to": ".messages-day"
+        "to": ".messages-day",
+        "also": [
+          {
+            "to": ".messages-reply-pane > .messages-thread-scroll > .messages-reply-count"
+          }
+        ]
       },
       "dhead": {
         "to": ".messages-thread-header",
@@ -339,6 +344,9 @@
             "to": ":is(.dev-ws > [data-project-frame=\"all-items\"] ~ .dev-ws-tabbody [data-ws-themes-head],.dev-ws > [data-project-frame=\"all-items\"] ~ .dev-ws-tabbody .dev-ws-sort > .dev-ws-eyebrow)"
           },
           {
+            "to": ":is(.ui-sechead,.ui-cap):is(#settings-root *)"
+          },
+          {
             "to": "#auth-waiting-screen [data-waiting-invite] > h2"
           },
           {
@@ -347,29 +355,66 @@
         ]
       },
       "card": {
-        "to": ":is(.dev-request-ask,.dev-change-pair .dev-change-gate,.ui-glist:where(#settings-section-content *),:is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen),[data-sign-in-sheet]) .rounded-2xl.overflow-hidden,#auth-waiting-screen :is([data-waiting-queued],[data-waiting-invite]),#app-menu-homeroom-card,.un-group:where(#profile-edit-sheet *),.notifications-card:where(#notifications-sheet *),.dev-ws > [data-project-frame=\"all-items\"] ~ .dev-ws-tabbody .dev-ws-theme,.messages-starts-list:where(#ai-screen[data-frame-list] *))",
+        "to": ":is(.dev-request-ask,.dev-change-pair .dev-change-gate,:is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen),[data-sign-in-sheet]) .rounded-2xl.overflow-hidden,#auth-waiting-screen :is([data-waiting-queued],[data-waiting-invite]),#app-menu-homeroom-card,.un-group:where(#profile-edit-sheet *),.notifications-card:where(#notifications-sheet *),.dev-ws > [data-project-frame=\"all-items\"] ~ .dev-ws-tabbody .dev-ws-theme,.messages-starts-list:where(#ai-screen[data-frame-list] *))",
         "also": [
           {
             "to": "#dev-topic-thread .dev-request #gc-thread-messages:is([data-language=\"request\"],[data-language=\"change\"])"
+          },
+          {
+            "to": ":is(.ui-glist,.ui-card):is(#settings-root *)"
           }
         ]
       },
       "title": {
-        "to": ":is(.settings-page-title,#first-session-make-title,:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen,#auth-waiting-screen) h1,#profile-edit-sheet > div:first-child)"
+        "to": ":is(#first-session-make-title,:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen,#auth-waiting-screen) h1,#profile-edit-sheet > div:first-child)",
+        "also": [
+          {
+            "to": ".settings-frame-title"
+          },
+          {
+            "to": "[data-new-message] h2"
+          },
+          {
+            "to": "#auth-login-screen #recovery-view > h2"
+          }
+        ]
       },
       "btn": {
         "to": ":is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back]),[data-sign-in-sheet] [role=\"dialog\"] button.bg-violet-600,[data-public-profile-frame] button:is(.bg-violet-600,.bg-zinc-100),#improve-row-feedback,#profile-edit-save)",
         "parts": {
           "quiet": ":is(.bg-white,.bg-zinc-100)"
-        }
+        },
+        "also": [
+          {
+            "to": ":is(.ui-btn,:is(button,a,label):is(.bg-violet-600,.bg-zinc-100,.bg-zinc-900,.bg-red-500\\/10,.bg-red-50,.border:is(.rounded,.rounded-md,.rounded-lg,.rounded-full)):not(.ui-lrow,.ui-row,[role=\"radio\"],.ui-plain)):is(#settings-root *)",
+            "parts": {
+              "quiet": ":is(.bg-white,.bg-zinc-100,.border,.ui-btn-quiet):not(.border-red-400,.ui-btn-bad)",
+              "line": ".ui-btn-line",
+              "bad": ":is(.bg-red-500\\/10,.bg-red-50,.border-red-400,.ui-btn-bad)",
+              "sm": ":is(.text-xs,.text-sm:not(.w-full),.py-1,.py-0\\.5,.py-1\\.5,.ui-btn-sm)",
+              "block": ":is(.ui-btn-block,.w-full:not([class*=\":w-auto\"]))"
+            }
+          },
+          {
+            "to": "[data-new-message] .ms-auto > button",
+            "parts": {
+              "quiet": ".bg-zinc-100"
+            }
+          }
+        ]
       },
       "row": {
-        "to": ".ui-lrow:where(#settings-section-content *)",
+        "to": ":is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)",
         "parts": {
-          "tx": ".ui-lrow-tx",
-          "t": ".ui-lrow-t",
-          "s": ".ui-lrow-s",
-          "go": ".ui-lrow-go"
+          "tx": ":is(.ui-lrow-tx,.ui-row-tx)",
+          "t": ":is(.ui-lrow-t,.ui-row-t,.drawer-ver-label)",
+          "s": ":is(.ui-lrow-s,.ui-row-s)",
+          "go": ".ui-lrow-go",
+          "meta": ":is(.fr-meta,.ui-row-meta,.drawer-ver-value)",
+          "on": ":is([aria-current=\"page\"],.ui-row-on)",
+          "sm": ":is(.ui-row-sm,.settings-menu-row)",
+          "wrap": "",
+          "all": ""
         }
       },
       "tabs": {
@@ -378,13 +423,26 @@
           ".tabs .end",
           ".tabs .end .search",
           ".tabs .end .inp"
+        ],
+        "also": [
+          {
+            "to": "[data-new-message] [role=\"tablist\"]"
+          }
         ]
       },
       "tab": {
         "to": "#notifications-screen-tabs > [role=\"tab\"]",
         "parts": {
           "on": "[aria-selected=\"true\"]"
-        }
+        },
+        "also": [
+          {
+            "to": "[data-new-message] [role=\"tab\"]",
+            "parts": {
+              "on": "[aria-selected=\"true\"]"
+            }
+          }
+        ]
       },
       "evt": {
         "to": "#dev-topic-thread #gc-thread-messages .dev-request-event",
@@ -400,6 +458,59 @@
         "skip": [
           ".sechead"
         ]
+      },
+      "purpose": {
+        "to": ".settings-frame-purpose"
+      },
+      "sub22": {
+        "to": ".settings-page-title:is(#settings-root *)"
+      },
+      "search": {
+        "to": ".ui-search:is(#settings-root *)",
+        "parts": {
+          "inp": ".settings-filter",
+          "flush": ""
+        }
+      },
+      "inp": {
+        "to": ":is(.settings-filter,.ui-inp,:is(input:not([type=\"checkbox\"],[type=\"radio\"],[type=\"file\"],[type=\"range\"],[type=\"hidden\"]),select,textarea):is(#settings-section-content *)):is(#settings-root *)",
+        "parts": {
+          "code": ".ui-inp-code",
+          "focus": ":focus-within"
+        }
+      },
+      "tog": {
+        "to": ".un-switch:is(#settings-root *)",
+        "parts": {
+          "on": ":checked"
+        }
+      },
+      "pill": {
+        "to": ".ui-pill:is(#settings-root *)",
+        "parts": {
+          "ok": ".ui-pill-ok",
+          "wait": ".ui-pill-wait",
+          "bad": ".ui-pill-bad"
+        }
+      },
+      "link": {
+        "to": ":is(.ui-link,:is(button,a):is(.text-violet-600,.text-violet-700,.underline,.text-red-700:not(.bg-red-50,.bg-red-500\\/10,.w-full)):not(.ui-lrow,.ui-row,.border,.bg-violet-600,.bg-zinc-100,.ui-btn)):is(#settings-root *)",
+        "parts": {
+          "bad": ":is(.ui-link-bad,.text-red-700,.text-red-600)"
+        }
+      },
+      "secnote": {
+        "to": ":is(.ui-secblurb,.ui-note):is(#settings-root *)"
+      },
+      "chk": {
+        "to": ".ui-chk:is(#settings-root *)",
+        "parts": {
+          "on": ".ui-chk-on",
+          "round": ""
+        }
+      },
+      "fields": {
+        "to": ".ui-fields:is(#settings-root *)"
       }
     }
   }

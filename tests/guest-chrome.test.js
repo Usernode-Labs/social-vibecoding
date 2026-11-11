@@ -201,8 +201,11 @@ test('version 2: a stand-alone page reads title, fields, the other ways as rows,
   assert.match(read('frontend/src/features/auth/register.tsx'), /id="register-form"/);
   const waitlist = read('frontend/src/features/auth/waitlist.tsx');
   for (const id of ['waitlist-confirm-address', 'waitlist-confirm-email', 'waitlist-request-code', 'waitlist-have-code']) assert.match(waitlist, new RegExp(`id="${id}"`), id);
-  // The reset view's heading is not the screen's h1 (which the wear map dresses): it is given the kit title's size by hand.
-  has('G #recovery-view > h2 \\{ margin: 0 0 -4px; font-size: 28px; line-height: 1\\.15; font-weight: 700; letter-spacing: -0\\.02em; text-align: start; color: var\\(--fr-ink\\); \\}');
+  // The reset view's heading is not the screen's h1: it wears the title as a further wearer.
+  const looks = JSON.parse(read('frontend/looks/looks.json'));
+  const title = looks.wear.roots.title;
+  assert.ok([title.to, ...(title.also || []).map((w) => w.to)].includes('#auth-login-screen #recovery-view > h2'));
+  has('G #recovery-view > h2 \\{ margin: 0 0 -4px; text-align: start; \\}');
 });
 
 test('version 2: in the waiting room Look around goes last and the invite card\'s title is the label over it', () => {
@@ -215,7 +218,7 @@ test('version 2: in the waiting room Look around goes last and the invite card\'
   assert.match(hand, /\[data-waiting-invite\] \{ position: relative; overflow: visible !important; margin-top: 56px; \}/);
   assert.match(hand, /\[data-waiting-invite\] > h2 \{ position: absolute; inset-block-end: 100%; inset-inline-start: 4px; margin: 0 0 8px; \}/);
   const looks = JSON.parse(read('frontend/looks/looks.json'));
-  assert.ok(looks.wear.roots.cap.also.map((w) => w.to).includes('#auth-waiting-screen [data-waiting-invite] > h2'), 'the kit\'s label, whatever the look');
+  assert.ok([looks.wear.roots.cap.to, ...(looks.wear.roots.cap.also || []).map((w) => w.to)].includes('#auth-waiting-screen [data-waiting-invite] > h2'), 'the kit\'s label, whatever the look');
   const room = read('frontend/src/features/auth/waiting.tsx');
   assert.match(room, /className="mx-auto flex min-h-full w-full max-w-sm flex-col /, 'the room\'s column is a flex column, which `order` needs');
   assert.match(room, /<form\s+data-waiting-invite=""[\s\S]*?<h2 className="[^"]*">\{t\('auth:waiting\.invite\.title'\)\}<\/h2>/);
@@ -251,7 +254,7 @@ test('a dead invite link is a stand-alone page: the welcome over the title, what
   assert.match(hand, /\[data-landing-invite="dead"\] > img \{ display: none; \}/);
   assert.match(hand, /\[data-landing-invite-dead-continue\] \{[^}]*width: 100%; height: 44px;[^}]*background: var\(--fr-acc\); color: var\(--fr-acc-ink\);/);
   const looks = JSON.parse(read('frontend/looks/looks.json'));
-  assert.ok(looks.wear.roots.cap.also.map((w) => w.to).includes('#auth-landing-screen [data-landing-invite="dead"] > img + div'), '"Welcome to Homeroom" is the kit\'s label');
+  assert.ok([looks.wear.roots.cap.to, ...(looks.wear.roots.cap.also || []).map((w) => w.to)].includes('#auth-landing-screen [data-landing-invite="dead"] > img + div'), '"Welcome to Homeroom" is the kit\'s label');
   const card = read('frontend/src/features/auth/invite-card.tsx');
   assert.match(card, /<section data-landing-invite="dead" className="[^"]*flex grow flex-col[^"]*">/);
   assert.match(card, /<div className=\{`mt-4 \$\{SMALL_CAPS\}`\}>\{t\('auth:story\.welcome'\)\}<\/div>\s*<h1 data-landing-invite-dead-title=""/);

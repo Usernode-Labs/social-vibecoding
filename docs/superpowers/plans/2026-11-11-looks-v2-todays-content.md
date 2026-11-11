@@ -406,6 +406,177 @@ Left, and why:
   older-tab reload note, and a project in a community the person left (History). They are pinned in
   `tests/ai-frame-list.test.js` from fixtures instead.
 
+### Lane S, as built (11 Nov 2026)
+
+Settings stays the product's own screen: no kit page was written. The standard markup carries stable `ui-*`
+names and a few neutral wrappers that draw nothing in the standard look; `frontend/looks/looks.json` ("wear")
+gives each the kit's component inside `#settings-root`, so every look's own rules reach it; the SETTINGS
+block of app.css says the layout and what the wear cannot. The standard look and the New look were compared
+with a build of the base commit, page by page, desktop and phone: the same pixels (but the port in the MCP
+address and the build's version word, which differ between two builds).
+
+What each step draws under a look now:
+
+- **s56 the frame and the list**: a head ("Settings", "Your account, your preferences and your tools.",
+  `settings:frame.head.purpose`, the one new catalog entry) above two columns; the list first at 360px (the
+  kit's search field, a small-caps label over one card of 48px rows per group, glyph, name, the count or the
+  Beta pill, the open page lit), the open section at 680px under its name at 22px. The bar says
+  `Settings › <page>`, and `You › Settings` on the phone's list (`SettingsFrameCrumb`, settings-nav.tsx). On a
+  phone the list is the page, with the head; a section is its own page under the bar's arrow, named at 22px,
+  without the head. The nineteen `settings:frame.purpose.*` sentences are gone with their tests.
+- **s57 Account**: the profile card is one row (picture, name, Edit profile as a link, no chevron); Sign-in's
+  three cards with Change as links, their editors' fields and buttons the kit's; Delete account a full-width
+  bad button.
+- **s58 Linked accounts**: the page's label is not repeated; "Weekly credits" a small-caps label, the tier and
+  provider rows the kit's, Connected a pill, the two notes under the card.
+- **s59 Privacy**: the two choices are radio rows in a card; each switch is a row with its On or Off word and
+  the switch at the end; the texts line is a note under the card; Usage data is one card of the two lists, the
+  two closing lines its notes.
+- **s60 Linked devices**: Phones and Browsers are small-caps labels, each over one card of rows; Unlink and
+  Sign out are bad-toned links (the confirm step keeps its Cancel beside it); This browser is a pill.
+- **s61 AI usage & models** (partly, see below): the credit row, building time (label, card, the kit's 6px
+  meter, the request rows with their share, the note), the spend card, and the two keys as a field with its
+  button in a card each.
+- **s62 Connectors & CLI** (partly): the address as a field with Copy and Test connection, How it works as a
+  link, "Your AI tools" a label, each tool a card whose connections are rows with Disconnect; the CLI guide one
+  card of three numbered steps with their command lines; the credentials one card of rows with Revoke.
+- **s63 Agent instructions & skills**: each kind is a label with its Upload button over one card (the empty
+  line, or a row per file); the name form is a card of fields.
+- **s64 Appearance, s65 Accessibility**: the three choices are radio rows in a card (the segmented track's own
+  buttons, standing as rows, each with a radio mark the standard look never draws, `.ui-look-only`); the
+  sidebar switch (desktop only) and High contrast are switch rows in their own cards.
+- **s66 Language**: the select as the kit's field in a card.
+- **s67 Notifications**: one switch row with Send a test alert under it; the ten push categories one card of
+  switch rows; the per-app defaults one card of switch rows, then "Apps set differently" as a label over its
+  card or its empty line.
+- **s68 App permissions**: three labelled parts, each list one card (a grant: the app, Cap $ field, today's
+  spend in the mono face, Revoke).
+- **s69 Developer**: each part one card with one switch row; Admin preview draws nothing for a non-admin.
+- **s70 Welcome tour, s71 User guide, s72 About**: the button and its hint; the two labelled cards of wrapping
+  rows; the version rows in one card (mono values) and Legal as a card of four links.
+- **s73 Experimental**: the four switches are rows of one card, the Look menu a field in a second card with
+  its hint; the local agents part keeps its place.
+
+Rulings taken:
+
+- **No node is swapped by look.** Every pane, React-owned or static, keeps one markup for both looks; the
+  look is CSS alone. A switch row in a static pane is a `.ui-swrow` wrapper round the label and its sentence:
+  the label's box steps aside (`display: contents`) and a grid puts the switch at the end, so the input, its
+  id and its listener are untouched. Privacy's switch rows, whose whole row is the label, turn by
+  `flex-direction: row-reverse`.
+- **The wear is scoped with `:is(#settings-root *)`**, not `:where()`: the standard sheet's own rules reach a
+  heading with six classes, and a worn rule has to outrank them. A hand rule that must outrank a worn one
+  names `#settings-screen` as well. `hidden` is restated for the screen, since a worn `display` outranks the
+  utility and settings.js shows and hides by that class.
+- **Where Settings shares a root with another page** (cap, card, title, btn) it is a wearer of its own
+  (`"also"` in looks.json), so its id weighs on nobody else's rule; btn's Settings wearer has parts of its own
+  (quiet, bad, sm, block, line) and the auth pages, the sign-in sheet and Edit profile's Save keep theirs. The
+  head's box is laid by hand: as a root, `head` would take every rule that names the head before a button
+  away from the other wearers of btn.
+- **Fields, buttons and links are worn by the product's own classes** (an input, select or textarea inside a
+  section; a button with a fill or a border; a violet or red text button), so the shared primitives
+  (`button.tsx`, `input.tsx`, `select.tsx`, `switch.tsx`) are untouched. `ui-btn`, `ui-link`, `ui-inp` name
+  the few that have none of those classes.
+- **The list is part of the page** under a look: not a sticky sheet that scrolls on its own (the mockup's
+  columns). Its rows keep one line for the name and one for a phone subtitle.
+- **Crumbs**: `Settings › <page>` on a desktop always (the audit's question 3); `You › Settings` only on the
+  phone's list. The arrow is the shell's own back button.
+- **768 to 1023px** keeps the phone's two levels beside the frame's sidebar, as today.
+- **Homeroom Wallet and the Homeroom app page** have no mockup: they wear what the rest wears (labels,
+  switches, buttons, fields) and nothing was drawn for them. Neither can be opened in a desktop browser on the
+  local copy, so neither was seen.
+
+Left, and why:
+
+- **s61**: the OpenRouter part is not one card. The included-key box, the personal key card and the model
+  block (filter, Favorites, Refresh, the model select and its star, Reasoning effort, the two default buttons)
+  are separate cards; the model block is hidden on the local copy (no model list), so its wear was not seen.
+  settings.js toggles `hidden` on most of these ids, which is why they were not regrouped.
+- **s62**: a tool's guided set-up (the disclosure's inside: steps, code blocks, the naming and permission-rule
+  blocks) keeps the product's own boxes inside the kit's card; only its buttons and fields are worn.
+- **s63**: Upload stands on the label's line above the card, not at the end of a row inside it.
+- **s68**: a grant's row keeps the product's two-line shape (name and spend, then the cap and Revoke).
+- Inline links inside a sentence keep their underline. The radio mark is drawn by hand-set rules on the kit's
+  `chk` (no check glyph inside; a dot).
+- The filter's results and the recent searches wear the card and row; a look's own hover state for a list
+  row is not drawn (the kit has none).
+
+### Lane M, as built (11 Nov 2026)
+
+Messages (s15 to s20), on `redesign/skins-v2-m`, cut from `5f6faf062` (P0 and lanes Y, H, T, P, B).
+
+- **s15, the list** (`features/messages/frame-list.tsx`, fed by the frame branch of `index.tsx`
+  `ConversationList`). The head (Messages, "People and groups you talk to.", New message); People and Agents as
+  tabs, People counting the unread messages from people (the standard heading's count); the product's search
+  ("Search") under the tabs; then the tab's conversations as one card of rows. A group says how many are in it
+  after its name (a people glyph and the figure, the words to a screen reader), a bot's direct message keeps
+  its "AI" badge, an invitation's row says "Tap to review", a row ends in "N new" or its time. Offline, a failed
+  read with Try again, the first read, an empty inbox with New conversation, and a search that matched nothing
+  are the standard list's sentences. With nothing open the pane beside the list is the product's "Choose a
+  conversation".
+- **s20, Agents.** "Chats with coding agents." The standard section, folded by its own rule and state
+  (`shownInSection`, `agentsExpanded`): this week's chats, the open one and any that asks for you, then "N older
+  chats" as the card's centred link, which stays where it is with the older chats under it ("Hide older chats").
+  An agent chat's line is `MayorSessionRow`'s (the project and its change's state, or "No active change";
+  "Working…" while it works) and it ends in its date; a change in flight is `SessionRow`'s (project, what is
+  known, when) and ends in its state as the one pill, from `sessionRowState` (new, beside `stateOf` in
+  `features/improve/session-row.tsx`: the same word, and a kit tone). "Show archived" ends the card where the
+  standard list offers it and opens the archived chats under their own label.
+- **s16, New message** (`frame-new.tsx`). The kit's sheet with the standard menu's three choices (`NEW_CHOICES`):
+  Agent chat, Direct message, Group chat, each with its line. A press closes the sheet and calls `startNew`:
+  an agent chat starts; the other two open the product's create dialog on that tab. The dialog wears the look:
+  its card carries `data-new-message` (it is lifted out of its root when shown), its title, its Direct and
+  Group switch and its buttons wear the look's title, tabs and buttons through `looks.json`, its fields, found
+  people and blocked list are dressed by hand in app.css (NEW MESSAGE'S DIALOG).
+- **s17, s18, a conversation.** The product's renderer, as before. Added by hand in app.css (VERSION 2, s17 to
+  s19): a quoted reply and the reply staged over the composer are the kit's quote; reactions are the kit's
+  small pills; the thread card under a message and a thread's replies in the stream are one small surface
+  card, the open thread's with the accent's ring, the replies' glyph in the faces' column. These rules name
+  the renderer's own classes, so a project's channel and the bot's chat get them too.
+- **s19, the reply thread.** The product's pane, as ruled: beside the conversation (the list steps aside under
+  1600px, as in the standard look), a page on a phone. In Messages it is flat with one line between it and
+  the conversation, the kit's margins, and its count ("3 replies") is the day's label (a second wearer of `day`).
+
+Gone: the To field, the people rows, Start chat, "Or else", the sheet's Blocked people, groups named after
+their members, the "N older chats" label over Agents, the sentence sending new work to the bot's tab, a second
+search placeholder, and twenty `messages:frame.*` ids. Three stay: the two sentences under the title and an
+empty tab's line.
+
+Rulings taken:
+
+- **The search is under the tabs at every width** (audit, s15 point 2): the pane is 520px, and the mockup's own
+  picture draws it there.
+- **The empty pane keeps the product's two sentences** (question 6).
+- **An agent chat's line keeps the change's title** when it has one ("Homeroom · title · Ready"), as the standard
+  row does; the audit's shorter form would have dropped it.
+- **A change waiting on you is the blue pill**, the kit's colour for what waits on you; the standard row draws
+  it green like every settled state.
+- **Agents has no count on its tab.** The standard heading's "N working" is not a count that asks for you.
+- **An empty tab beside a full one says "Nothing here yet."** The standard list leaves the section out; a tab
+  cannot be left out without the tabs moving.
+- **The dialog's title wears the look's title** (a further wearer of `title`, added when the skins branch with
+  lane S was merged in), at a sheet's 24px by one hand rule; Brand kit's serif shows.
+- **The reply thread is a pane, not the kit's right sheet** (question 5, as ruled on 10 Nov).
+
+Fixed on the way: under a look a continuation row's words started 12px after the first line's (the time's
+gutter was 44px beside a 32px face; 38 and 26 in Workbench).
+
+Left, and why:
+
+- A change in flight's unread dot (the standard `SessionRow` reads the notifications store for it) is not on
+  the kit row.
+- The list does not hold its place across a live re-sort under a look (`list-place.ts` anchors the standard
+  scroller), and "Oldest chats" (`InboxToEnd`) is not offered.
+- The dialog's "Blocked people" link wraps to two lines on a phone beside Cancel and Create group.
+- In Paper a long Agents list runs past the page card's rounded bottom edge, as lane B noted for its list.
+- Not seen in a browser: an unread conversation (this copy has none), an invitation's row, a working agent,
+  the offline note, the failed and empty states, the archived group with rows (seen opened, at its end). They
+  are pinned in `tests/messages-frame-list.test.js`.
+
+Seen in a browser (local stack): the list, Agents folded and open with Show archived, the New message sheet,
+the dialog (Direct, Group, Blocked people), a direct message, a group and its reply thread, in Glass and Paper
+(desktop and phone), Workbench (desktop, dark), Glass dark on a phone, and the dialog in Brand kit. The
+standard list's capture is byte-identical before and after.
 ### Lane G, as built (11 Nov 2026)
 
 Signed out (o01 to o27) and the waitlist (w01 to w14), on `redesign/skins-v2-g`, cut from `5f6faf062`.
@@ -479,9 +650,8 @@ Left, and why:
   `link` likewise (question 5).
 - **The rows of a stand-alone page are drawn by hand** (the kit's surface and hairline, 20px corners), not
   through the wear map: the `row` root is Settings', and a row there is a link inside a wrapper. Under
-  Workbench their corners are rounder than the look's cards. The reset view's heading is given the kit
-  title's size by hand for the same reason (a second wearer of `title` changes a selector lane S's suite
-  pins).
+  Workbench their corners are rounder than the look's cards. (The reset view's heading wears the kit's
+  title as a further `title.also` wearer, since the merge with lanes S and M.)
 - **`display: contents` on the forms**: an old Safari (before 16) drops such a form from the accessibility
   tree.
 - **Not seen with a real account in line** (none can be made on the local copy without mail): w03's side

@@ -38,6 +38,8 @@ export function LanguageSection() {
         <SectionHeading title={t('settings:language.title')}>
           {t('settings:language.intro')}
         </SectionHeading>
+        {/* A neutral wrapper (looks v2): the kit's card round the field under a look. */}
+        <div className="ui-card ui-fields">
         <Select id="settings-locale" variant="plain">
           <option value="">
             {t('settings:language.auto')}
@@ -48,6 +50,7 @@ export function LanguageSection() {
             </option>
           ))}
         </Select>
+        </div>
         <StatusLine id="settings-locale-status" size="xs" />
       </div>
     </div>

@@ -239,7 +239,7 @@ test('the chassis gates the panes on the chunk, and init() runs where the panes 
 test('the boot-time triggers and the nav islands stay in the entry', () => {
   assert.match(indexTsx, /import '\.\/terms-first-run\.js';/, 'the first-run terms prompt listens for sv:authed at boot');
   assert.doesNotMatch(mountTs, /import '\.\/terms-first-run\.js';/, 'so it must not ride the chunk');
-  assert.match(indexTsx, /import \{ SettingsMobileMenu, SettingsNavDesktop, SettingsPageTitle \} from '\.\/settings-nav';/,
+  assert.match(indexTsx, /import \{ SettingsFrameCrumb, SettingsMobileMenu, SettingsNavDesktop, SettingsPageTitle \} from '\.\/settings-nav';/,
     'the two nav hosts are in the prerendered document and stay React-owned from the entry');
   // The idle prefetch: signed-in viewers only, never on a shot/demo route.
   const prefetch = facadeJs.slice(facadeJs.indexOf('export function prefetchSettings()'), facadeJs.indexOf('// ── The boot read'));

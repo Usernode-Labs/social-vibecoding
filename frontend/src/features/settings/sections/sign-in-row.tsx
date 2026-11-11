@@ -20,7 +20,7 @@ import { ListRow } from '@/components/ui/grouped-list';
 
 /** The Change / Add link at the end of a row: a button, because it opens a
  * form in place rather than going anywhere. */
-export const ROW_ACTION = 'shrink-0 -my-1 rounded-lg px-2 py-1 text-[15px] font-medium '
+export const ROW_ACTION = 'ui-link shrink-0 -my-1 rounded-lg px-2 py-1 text-[15px] font-medium '
   + 'text-violet-700 hover:text-violet-500 dark:text-violet-400 dark:hover:text-violet-300 '
   + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500';
 
@@ -31,7 +31,7 @@ export const ROW_EDITOR = 'border-t border-zinc-200 dark:border-zinc-800 px-4 pt
 export const EDITOR_TITLE = 'text-[15px] font-[650] text-zinc-900 dark:text-zinc-100';
 
 /** The small print under a form. */
-export const EDITOR_NOTE = 'text-xs text-zinc-500 dark:text-zinc-400';
+export const EDITOR_NOTE = 'ui-hint text-xs text-zinc-500 dark:text-zinc-400';
 
 /** Submit and Cancel, side by side and as wide as their words. */
 export const EDITOR_ACTIONS = 'flex flex-wrap items-center gap-2';

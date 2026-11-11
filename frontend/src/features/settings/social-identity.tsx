@@ -168,7 +168,7 @@ const DESTRUCTIVE_ACTION_SURFACE =
  * stacked in one list shout over the figures they sit beside.
  */
 const CONNECT_PILL =
-  'inline-flex h-[30px] shrink-0 items-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-3.5 text-[0.875rem] font-semibold text-violet-700 dark:text-violet-400';
+  'ui-btn ui-btn-sm inline-flex h-[30px] shrink-0 items-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-3.5 text-[0.875rem] font-semibold text-violet-700 dark:text-violet-400';
 
 const STATE_TONE = {
   amber: 'text-amber-800 dark:text-amber-400',
@@ -188,10 +188,10 @@ const STATE_TONE = {
  * text and a tint assembled at runtime never compiles.
  */
 const BADGE_BASE =
-  'shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[0.65rem] font-medium';
+  'shrink-0 ui-pill inline-flex items-center rounded-full px-2 py-0.5 text-[0.65rem] font-medium';
 const BADGE_TONE = {
-  emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
-  amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
+  emerald: 'ui-pill-ok bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  amber: 'ui-pill-wait bg-amber-500/10 text-amber-800 dark:text-amber-400',
 };
 
 /** A row's leading mark: ticked once it counts, a ring while it is to do. */
@@ -794,7 +794,7 @@ export function SocialIdentityView({ phase, message, tier, providers }: SocialId
   if (phase === 'loading' || phase === 'error') return <>{message}</>;
   return (
     <>
-      <h4 id="github-link-credits-label" className="px-4 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500">
+      <h4 id="github-link-credits-label" className="ui-cap px-4 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500">
         {t('settings:linkedAccounts.dailyCredits')}
       </h4>
       <GroupedList className="mx-0 py-1.5" role="group" aria-labelledby="github-link-credits-label">
@@ -802,7 +802,7 @@ export function SocialIdentityView({ phase, message, tier, providers }: SocialId
         {providers.map((row) => <ProviderRow key={row.provider} row={row} />)}
       </GroupedList>
       {tier?.note ? (
-        <p id="github-link-tier-note" className="px-4 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
+        <p id="github-link-tier-note" className="ui-note px-4 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
           {tier.note}
         </p>
       ) : null}
