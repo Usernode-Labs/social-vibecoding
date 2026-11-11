@@ -1102,3 +1102,17 @@ test('#6534: an HTML comparison is self-contained, and a stored one is an html a
   const both = await voice.runTool(pool, ctx, 'attach_files', { shots: true, design: 'mine' });
   assert.match(both.error, /one thing per call/);
 });
+
+// ── A start GitHub's outage stopped (#6598) ──────────────────────────────
+
+test('a start that could not run is said in plain words, never as an unreadable answer', () => {
+  const retrying = { action: 'start_retrying', handedOver: true };
+  const failed = { action: 'start_failed', why: "GitHub didn't answer when I tried to start, so nothing was changed", handedOver: true };
+  assert.deepEqual(voice.mustSay(retrying), ["GitHub didn't answer when I tried to start, so nothing was changed. I'll try again in a few minutes."]);
+  assert.deepEqual(voice.mustSay(failed), ["GitHub still didn't answer, so nothing was changed. Ask me again here when you'd like me to try."]);
+  assert.equal(voice.plainReport(retrying), "GitHub didn't answer when I tried to start, so nothing was changed. I'll try again in a few minutes.");
+  assert.equal(voice.plainReport(failed), "GitHub still didn't answer, so nothing was changed. Ask me again here when you'd like me to try.");
+  for (const line of [voice.plainReport(retrying), voice.plainReport(failed)]) {
+    assert.doesNotMatch(line, /on their hands|could not be read/i);
+  }
+});

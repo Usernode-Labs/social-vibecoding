@@ -679,7 +679,12 @@ test('#6282: a change with an update on its way is Updating, then Update queued'
   assert.deepEqual([running.work.stage, running.work.line], ['building', { code: 'revising' }]);
   assert.equal(running.ask, undefined);
   await pool.query(`UPDATE chat_sessions SET active_turn = NULL WHERE id = $1`, [change.id]);
-  // Its author sees the update instead of waiting on the vote.
+  // Proposing is never its author's yes: until bob taps his own, he owes the
+  // vote like ada, and the Needs you feed asks for it.
+  assert.deepEqual(await what(bob), []);
+  // Once he has said yes, his change is listed as up for a vote, and he sees
+  // the update instead of waiting on the vote.
+  await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [change.id, bob.id]);
   assert.deepEqual(await what(bob), ['up_for_vote']);
   const second = await ask('queued');
   assert.deepEqual(await what(bob), ['building:update_queued']);

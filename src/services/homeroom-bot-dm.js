@@ -1669,6 +1669,12 @@ function requestNews(kind, dm, context) {
     case 'proposal':
       // B7: the ready card, whose buttons say the rest (Try it, Approve).
       // A change part of which does not work says so first, plainly.
+      // #6407: one that does not match the plan it was built from says that
+      // first too.
+      if (dm.card && brokenWords(dm.card.offPlan?.misses).length) {
+        const said = brokenWords(dm.card.offPlan.misses).map((words) => words.replace(/[.\s]+$/, ''));
+        return `${line}\n\nIt's built, but it doesn't match the plan yet: ${said.join('; ')}. Try it, or say what to change.`;
+      }
       if (dm.card && brokenWords(dm.card.broken).length) {
         const said = brokenWords(dm.card.broken).map((words) => words.replace(/[.\s]+$/, ''));
         const what = said.length === 1
@@ -2152,6 +2158,10 @@ async function relayIssuePost({
         ...(Number.isInteger(dm.card.needed) ? { needed: Number(dm.card.needed) } : {}),
         // What its shots show not working (tellReady), said on the card.
         ...(brokenWords(dm.card.broken).length ? { broken: brokenWords(dm.card.broken) } : {}),
+        // #6407: what the plan it was built from draws and this change does
+        // not, said in red on the card.
+        ...(dm.card.offPlan && Array.isArray(dm.card.offPlan.misses) && dm.card.offPlan.misses.length
+          ? { offPlan: dm.card.offPlan } : {}),
       },
       sessionId: Number(dm.sessionId),
       epoch: Number(dm.epoch) || 0,
@@ -3070,6 +3080,15 @@ function brokenWords(broken) {
 }
 
 /**
+ * #6407: the short words a ready card uses for what the plan draws and the
+ * change does not, at most three. Pure.
+ */
+function offPlanWords(misses) {
+  return (Array.isArray(misses) ? misses : []).slice(0, 3)
+    .map((miss) => clip(String(miss || '').replace(/\s+/g, ' '), 200)).filter(Boolean);
+}
+
+/**
  * B4: one of the bot's changes is ready to try, for approval epoch `epoch`
  * (the bot's change machine decided it: src/workflow/bot-change/). Its
  * requester's card goes out once per epoch, saying what its shots show not
@@ -3081,7 +3100,7 @@ function brokenWords(broken) {
  * epoch moved on since it was decided (the machine decides again), or null
  * when there is nobody to tell.
  */
-async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], deps = {} } = {}) {
+async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], offPlan: offPlanMisses = [], deps = {} } = {}) {
   const id = Number(sessionId);
   if (!Number.isInteger(id) || id <= 0) return null;
   const state = await changeReadiness(pool, id);
@@ -3104,13 +3123,40 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
   // Homeroom bot parity (P4): ready for its yes; a batch's roll-up says so.
   require('./homeroom-bot-batches').noteRequestChanged(pool, run.id, Number(run.issue_number));
   const broken = brokenWords(brokenClaims);
+  // #6407: what the plan this change was built from draws and the change
+  // does not. The card says it in red, no approver is rung, and the person
+  // who asked for it hears it on the request's own page.
+  const misses = offPlanWords(offPlanMisses);
+  let offPlan = null;
+  if (misses.length) {
+    const { rows: [from] } = await pool.query(
+      `SELECT cs.built_from_version AS version, cs.reviewed_head_sha AS head, u.username AS author
+         FROM chat_sessions cs
+         LEFT JOIN chat_sessions ps ON ps.id = cs.built_from_session_id
+         LEFT JOIN users u ON u.id = ps.user_id
+        WHERE cs.id = $1`,
+      [id],
+    );
+    offPlan = {
+      author: from?.author || null,
+      version: from?.version == null ? null : Number(from.version),
+      misses,
+    };
+    await notePlanMiss(pool, {
+      appId: run.id, issueNumber: Number(run.issue_number), head: from?.head || null, offPlan, deps,
+    });
+  }
   const bot = deps.bot || await botAccount(pool);
   if (!bot) return null;
   const domain = deps.domain || require('./caddy').USERNODE_DOMAIN;
   const link = require('./homeroom-bot-live').proposalLink(domain, run.slug, id);
   // B7: what its asker can do on the card, and who else must approve it.
   const requester = await requesterOf(pool, run.id, Number(run.issue_number));
-  const approval = await approvalState(pool, { sessionId: id, userId: requester?.userId || null });
+  const approvalNow = await approvalState(pool, { sessionId: id, userId: requester?.userId || null });
+  // #6407: a change built from a person's plan that misses it is not put
+  // straight to the vote: its card says what the plan draws and it does
+  // not, and nobody else is asked to approve it until it does.
+  const approval = offPlan ? null : approvalNow;
   // #5506: a Yes from someone who does not build on the project is refused
   // by the session guard ("Session not found"), whatever its governance
   // says, so their card offers no Approve. Its Try it opens the look-only
@@ -3118,7 +3164,7 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
   const canBuild = await requesterCanBuild(pool, run.id, requester?.userId);
   // A first version goes live without a vote (D1): nobody is waited on,
   // and the card offers Try it and Change something, never Approve.
-  const noVote = !!approval?.firstVersion;
+  const noVote = !!approvalNow?.firstVersion;
   const waiting = approval && !noVote
     ? await usernamesOf(pool, await needsYesFrom(pool, approval, { except: requester?.userId ? [requester.userId] : [] }))
     : [];
@@ -3142,6 +3188,8 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
         ...(approval ? { missing: approval.missing, needed: approval.needed } : {}),
         // What its shots show not working, said on the card.
         ...(broken.length ? { broken } : {}),
+        // #6407: what the plan draws and it does not.
+        ...(offPlan ? { offPlan } : {}),
       },
     },
   });
@@ -3170,6 +3218,36 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
   // not its own passes now; its card says so (never throws).
   await require('./homeroom-bot-flaky-checks').noteGreen(pool, id, { deps });
   return told;
+}
+
+/**
+ * #6407: one line in the request's own thread saying a change built from
+ * its plan does not match that plan yet, tagging the person who posted the
+ * plan. Written once per head, so a retry or a second look says nothing
+ * twice. Never throws.
+ */
+async function notePlanMiss(pool, { appId, issueNumber, head = null, offPlan = null, deps = {} } = {}) {
+  const misses = offPlanWords(offPlan?.misses);
+  if (!misses.length || !appId || !Number(issueNumber)) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM chat_messages
+        WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2
+          AND metadata -> 'planMiss' ->> 'head' = $3 LIMIT 1`,
+      [Number(appId), Number(issueNumber), String(head || '')],
+    );
+    if (rows[0]) return null;
+    const who = offPlan.author ? `@${offPlan.author}` : 'The person who asked';
+    const version = Number(offPlan.version) > 0 ? ` (version ${Number(offPlan.version)})` : '';
+    const said = `${who}, this change doesn't match your plan${version} yet: ${misses.join(' ')}`;
+    const ws = deps.ws || require('./ws');
+    return await ws.sendSystemMessage(
+      pool, Number(appId), said, 'system', { planMiss: { head: String(head || '') } }, { type: 'issue', ref: Number(issueNumber) },
+    );
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not say a change does not match its plan', { appId, issueNumber, err: err.message });
+    return null;
+  }
 }
 
 /**
@@ -6545,6 +6623,8 @@ module.exports = {
   readyKey,
   changeReadiness,
   brokenWords,
+  offPlanWords,
+  notePlanMiss,
   tellReady,
   noteChangeStopped,
   needsLookText,
