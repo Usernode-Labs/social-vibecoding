@@ -1189,6 +1189,72 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     await pool.query('DELETE FROM chat_messages WHERE id = ANY($1::int[])', [[older.id, newer.id]]);
     await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [run.id]);
   });
+
+  // Step 5 (11 Nov 2026): a comment that does not change what a request
+  // asks for gets a reply, and is not read as a change; one the voice says
+  // changes it is read again, as changed:voice. The refresh reads what the
+  // voice judged off its turns (homeroom-bot.js unaddressedActivityByIssue).
+  await t.test('step 5: the voice judges whether a comment changes the ask, and the refresh reads its judgement', async () => {
+    const bot = require('../src/services/homeroom-bot');
+    const number = 6600;
+    const place = { type: 'issue', ref: number };
+    sent.length = 0;
+    const last = async () => (await pool.query(
+      'SELECT outcome, tools, addressed_ids, through_message_id FROM homeroom_bot_voice_turns WHERE place_key = $1 ORDER BY id DESC LIMIT 1',
+      [`${app.id}:issue:${number}`],
+    )).rows[0];
+    const queued = async () => (await pool.query(
+      'SELECT reason, changed_by, priority FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [app.id, number],
+    )).rows;
+    const activity = async () => (await bot.unaddressedActivityByIssue(pool, app.id, [number])).get(number) || null;
+    const at = async (id) => (await pool.query('SELECT created_at FROM chat_messages WHERE id = $1', [id])).rows[0].created_at;
+
+    // A status check: a reply, and nothing to read again.
+    const asked = await say(evan, '@homeroom_bot where is this at?', place);
+    assert.equal(await activity(), null, 'not judged yet: the refresh waits for the voice');
+    const status = await turn(place, scripted([{ tool: 'reply', args: withButtons({ text: 'I have not read it yet; it is in the queue.' }) }]),
+      { through: asked - 1, key: 'step5-status' });
+    assert.equal(status.outcome, 'replied');
+    const judged = await last();
+    assert.deepEqual(judged.addressed_ids, [asked], 'the turn keeps what it judged');
+    assert.ok(!judged.tools.includes('ask_changed'));
+    assert.deepEqual(await queued(), [], 'a question is not a change');
+    assert.deepEqual(await activity(), { lastAt: null, voiceAt: null }, 'what the voice answered is not activity');
+
+    // A change to the ask: read again, and said so.
+    const changed = await say(evan, '@homeroom_bot actually the footer should be blue too', place);
+    const asks = await turn(place, scripted([
+      { tool: 'ask_changed', args: { what: 'The footer should be blue as well as the header.' } },
+      { tool: 'reply', args: withButtons({ text: 'Got it: I will read it again with the footer in it.' }) },
+    ]), { through: status.throughId, key: 'step5-change' });
+    assert.equal(asks.outcome, 'replied');
+    const second = await last();
+    assert.deepEqual(second.addressed_ids, [changed]);
+    assert.ok(second.tools.includes('ask_changed'));
+    assert.deepEqual(await queued(), [{ reason: 'changed', changed_by: 'voice', priority: 2 }], 'read again, as the voice judged');
+    assert.equal(bot.readReasonOf({ reason: 'changed', changed_by: 'voice' }), 'changed:voice');
+    const changedAt = (await at(changed)).toISOString();
+    let seen = await activity();
+    assert.deepEqual([seen.lastAt?.toISOString(), seen.voiceAt?.toISOString()], [changedAt, changedAt],
+      'the refresh reads it as a change the voice judged');
+
+    // People talking among themselves: activity, once the voice has read
+    // past it (a reply to the bot's question still counts too: the voice
+    // never answers those).
+    const aside = await say(sam, 'I like the blue', place);
+    seen = await activity();
+    assert.equal(seen.lastAt.toISOString(), changedAt, 'not read by the voice yet: it waits');
+    const quiet = await turn(place, scripted([{ text: 'unused' }]), { through: asks.throughId, key: 'step5-aside' });
+    assert.equal(quiet.outcome, 'quiet');
+    assert.deepEqual((await last()).addressed_ids, [], 'nobody spoke to it');
+    seen = await activity();
+    assert.equal(seen.lastAt.toISOString(), (await at(aside)).toISOString(), 'what nobody said to the bot is a change, as before');
+    assert.equal(seen.voiceAt.toISOString(), changedAt);
+    assert.equal(bot.classifyIssue({
+      issue: { number, state: 'open', updatedAt: '2026-01-01T00:00:00Z' }, threadLastAt: changedAt, voiceAt: changedAt,
+      lastRun: { thread_seen_at: '2026-01-02T00:00:00Z' },
+    }).changedBy, 'voice');
+  });
 });
 
 // 3 Nov 2026 (#6213): one live set of suggested replies per thread. A newer

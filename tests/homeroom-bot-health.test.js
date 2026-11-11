@@ -169,6 +169,132 @@ test('plan cards: how many were fixed, kept their lines, fell back, and which ru
   assert.equal(health.shapeHealth(rows({ cards: { total: 4, fallback: 3 } })).watch.cardFallbacks, null, 'too few to judge');
 });
 
+// Step 5 of the bot's one model (11 Nov 2026): the numbers that say whether
+// it reads requests again less, and says less twice.
+const REREAD_ROWS = {
+  reads: { reads: 12, requests: 5, kinds: { fix: 3, sync: 1, hand_off: 2 } },
+  why: [
+    { week: '2026-11-09', code: 'changed:discussion', n: 4 },
+    { week: '2026-11-09', code: 'changed:voice', n: 2 },
+    { week: '2026-11-02', code: 'checks_failing', n: 3 },
+    { week: '2026-11-02', code: 'new', n: 3 },
+  ],
+  taps: [
+    { week: '2026-11-09', surface: 'thread', taps: 10, not_found: 1, gone: 2 },
+    { week: '2026-11-09', surface: 'chat', taps: 5, not_found: 0, gone: 1 },
+    { week: '2026-10-26', surface: 'card', taps: 3, not_found: 0, gone: 0 },
+  ],
+};
+
+test('step 5: reads per request, why it read by week, Main Chat repairs and dead taps, from their rows', () => {
+  const h = health.shapeHealth({ ...rows(), rereads: REREAD_ROWS });
+  const r = h.rereads;
+  assert.equal(r.days, 7);
+  assert.equal(r.weeks, health.WEEKS);
+  assert.deepEqual([r.reads, r.requests, r.perRequest], [12, 5, 12 / 5]);
+  assert.deepEqual(r.otherRuns, { fix: 3, sync: 1, hand_off: 2 }, 'the runs that read no request, by kind');
+  assert.deepEqual(r.byWeek.map((w) => w.week), ['2026-11-09', '2026-11-02', '2026-10-26'], 'newest first');
+  assert.deepEqual(r.byWeek[0], {
+    week: '2026-11-09', reads: 6, why: { 'changed:discussion': 4, 'changed:voice': 2 },
+    taps: 15, notFound: 1, gone: 3,
+    surfaces: { thread: { taps: 10, notFound: 1, gone: 2 }, chat: { taps: 5, notFound: 0, gone: 1 } },
+  });
+  assert.deepEqual(r.byWeek[2], { week: '2026-10-26', reads: 0, why: {}, taps: 3, notFound: 0, gone: 0, surfaces: { card: { taps: 3, notFound: 0, gone: 0 } } });
+  assert.deepEqual(r.claimRepair, { recovered: 2, turns: 30, rate: 2 / 30 }, 'the Main Chat answers of the same week');
+  assert.equal(r.duplicateNotes, null, 'counted once posts carry their said-once keys (step 4)');
+  const empty = health.shapeHealth({}).rereads;
+  assert.deepEqual([empty.reads, empty.requests, empty.perRequest, empty.byWeek, empty.claimRepair.rate], [0, 0, null, [], null]);
+});
+
+test('step 5: the re-read numbers are read off the runs that read, and the taps the routes record', async () => {
+  const asked = [];
+  const pool = {
+    query: async (sql, params) => {
+      asked.push({ sql: String(sql), params });
+      if (/AS requests/.test(sql)) return { rows: [REREAD_ROWS.reads] };
+      if (/AS code/.test(sql)) return { rows: REREAD_ROWS.why };
+      if (/bot_offer_tap/.test(sql)) return { rows: REREAD_ROWS.taps };
+      return { rows: [] };
+    },
+  };
+  const h = await health.rolloutHealth(pool, { botUsername: 'homeroom_bot' });
+  assert.equal(h.rereads.perRequest, 12 / 5);
+  assert.equal(h.rereads.byWeek.length, 3);
+  const reads = asked.find((q) => /AS requests/.test(q.sql));
+  assert.match(reads.sql, /COUNT\(DISTINCT \(app_id, issue_number\)\) FILTER \(WHERE look_kind IS NULL\)/, 'a request read twice is one request');
+  assert.match(reads.sql, /reused_run_id IS NULL/, 'a held verdict used again is no read');
+  assert.deepEqual(reads.params, [7]);
+  const why = asked.find((q) => /AS code/.test(q.sql));
+  assert.match(why.sql, /COALESCE\(read_reason, 'unknown'\)/);
+  assert.match(why.sql, /reused_run_id IS NULL AND look_kind IS NULL/, 'reads only');
+  assert.deepEqual(why.params, [health.WEEKS]);
+  const taps = asked.find((q) => /bot_offer_tap/.test(q.sql));
+  assert.match(taps.sql, /metadata->>'status' = '404'/);
+  assert.match(taps.sql, /metadata->>'status' = '410'/);
+  assert.equal(require('../src/services/events').EVENT_TYPES.BOT_OFFER_TAP, 'bot_offer_tap');
+  // Soft even where the watched figures are not: they watch nothing.
+  const broken = {
+    query: async (sql) => {
+      if (/AS requests|AS code|bot_offer_tap/.test(sql)) throw new Error('down');
+      return { rows: [] };
+    },
+  };
+  const soft = await health.rolloutHealth(broken, { botUsername: 'homeroom_bot', failSoft: false });
+  assert.equal(soft.rereads.reads, 0);
+});
+
+test('step 5: every tap on an offer or a card is recorded as its route answered it', async () => {
+  const events = require('../src/services/events');
+  const recorded = [];
+  await events.recordBotOfferTap({ query: async (sql, params) => { recorded.push(params); return { rows: [] }; } },
+    { surface: 'thread', status: 410, userId: 7, appId: 3 });
+  assert.deepEqual(recorded, [[7, 3, null, 'bot_offer_tap', JSON.stringify({ surface: 'thread', status: 410 })]]);
+  await events.recordBotOfferTap({ query: () => { throw new Error('down'); } }, { surface: 'chat', status: 404 });
+  const chat = read('src/routes/chat.js');
+  const conversations = read('src/routes/conversations.js');
+  const after = (src, call) => src.slice(src.indexOf(call), src.indexOf(call) + 700);
+  assert.match(after(chat, '.decideOffer(pool, config, {'), /recordBotOfferTap\(pool, \{\n\s+surface: 'thread', status: out\.ok \? 200 : out\.status \|\| 400,/);
+  assert.match(after(conversations, '.decideOfferTap(pool, config,'), /recordBotOfferTap\(pool, \{\n\s+surface: 'chat', status: out\.ok \? 200 : out\.status \|\| 400,/);
+  assert.match(after(conversations, "require('../services/homeroom-bot-cards').decide(pool, config, {"),
+    /recordBotOfferTap\(pool, \{\n\s+surface: 'card', status: out\.ok \? 200 : out\.status \|\| 400,/);
+});
+
+test('step 5: the panel says the re-read numbers, and that notes said twice are not counted yet', () => {
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { RolloutHealth, rereadRows, weekLabel } = loadPanel();
+  const h = health.shapeHealth({ ...rows(), rereads: REREAD_ROWS });
+  assert.equal(weekLabel('2026-11-09'), 'Week of 9 Nov');
+  const byKey = Object.fromEntries(rereadRows(h.rereads).map((r) => [r.key, r]));
+  assert.equal(byKey.reads.value, '2.4');
+  assert.deepEqual(byKey.reads.lines, [
+    '12 reads of 5 requests in the last 7 days. A held verdict used again without a read is not one.',
+    'Not reads: 3 fix rounds, 1 sync with main, 2 hand-offs.',
+  ]);
+  assert.equal(byKey.why.value, '6');
+  assert.deepEqual(byKey.why.lines, [
+    'Week of 9 Nov: changed:discussion 4, changed:voice 2.',
+    'Week of 2 Nov: checks_failing 3, new 3.',
+  ]);
+  assert.equal(byKey.repair.value, '7%');
+  assert.match(byKey.repair.lines[0], /^2 of 30 answers in the last 7 days were asked again before they were sent/);
+  assert.equal(byKey.taps.value, '4 of 15');
+  assert.equal(byKey.taps.lines[0], 'Week of 9 Nov: 1 found nothing to do (404), 3 found the offer gone (410), of 15 taps.');
+  assert.equal(byKey.notes.value, '–');
+  assert.match(byKey.notes.lines[0], /^Not counted yet/);
+  for (const r of Object.values(byKey)) assert.ok(!/—/.test(`${r.label}${r.value}${r.lines.join('')}`), r.key);
+
+  const html = renderToHtml(createElement(RolloutHealth, { health: h, failures: [] }));
+  assert.match(html, /id="admin-homeroom-bot-rereads"/);
+  assert.equal((html.match(/data-reread="/g) || []).length, 5);
+  assert.equal((html.match(/data-rollout="/g) || []).length, 6, 'the watched figures are as they were');
+  const none = renderToHtml(createElement(RolloutHealth, { health: { ...h, rereads: null }, failures: [] }));
+  assert.doesNotMatch(none, /admin-homeroom-bot-rereads/, 'an older payload shows no section');
+  const quiet = rereadRows(health.shapeHealth({}).rereads);
+  assert.deepEqual(quiet.find((r) => r.key === 'why').lines, ['No reads in the last 4 weeks.']);
+  assert.deepEqual(quiet.find((r) => r.key === 'taps').lines, ['No taps on its offers in the last 4 weeks.']);
+  assert.equal(quiet.find((r) => r.key === 'reads').value, '–');
+});
+
 test('the Overview tab shows it under the bot\'s card, and the declared check selects on it', () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(tsx, /<RolloutHealth health=\{payload\?\.health\} failures=\{payload\?\.dmChat\?\.recentFailures\} incidents=\{payload\?\.incidents\} \/>/);

@@ -1349,6 +1349,10 @@ function chatRoutes(config) {
         const out = await require('../services/homeroom-bot-voice').decideOffer(pool, config, {
           app, user: req.user, messageId: id, choice, rows,
         });
+        // Every tap as answered (events BOT_OFFER_TAP): rollout health counts the 404s and 410s.
+        void require('../services/events').recordBotOfferTap(pool, {
+          surface: 'thread', status: out.ok ? 200 : out.status || 400, userId: req.user.id, appId: app.id,
+        });
         if (!out.ok) {
           return res.status(out.status || 400).json({ error: out.error || 'That didn\'t work.', said: out.said || null });
         }

@@ -498,18 +498,6 @@ function heldKind(cap) {
   return `held_${cap}`;
 }
 
-/** The kind of the bot's newest post on this issue, or null. */
-async function lastPostKind(pool, appId, issueNumber) {
-  const { rows } = await pool.query(
-    `SELECT kind FROM homeroom_bot_posts
-      WHERE app_id = $1 AND issue_number = $2
-      ORDER BY created_at DESC, id DESC
-      LIMIT 1`,
-    [appId, issueNumber],
-  );
-  return rows[0]?.kind || null;
-}
-
 // #6313: "I couldn't finish building this: something went wrong during the
 // build. Reply here and I'll try again." was posted five times in 28 minutes
 // on one request (#6306). A failure line the bot's last post in the request's
@@ -6002,7 +5990,6 @@ module.exports = {
   retryCommentText,
   heldText,
   heldKind,
-  lastPostKind,
   _updateRepeatedBuildFailure: updateRepeatedBuildFailure,
   proposalLink,
   tagsPoster,

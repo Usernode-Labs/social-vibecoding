@@ -745,18 +745,33 @@ async function claim(pool, { appId, place, turnKey, trigger = 'message', speaker
   return rows[0]?.id || null;
 }
 
+// Step 5 (11 Nov 2026): the most messages a turn records as judged.
+const MAX_ADDRESSED_IDS = 50;
+
 async function finishTurn(pool, turnId, row) {
   await pool.query(
     `UPDATE homeroom_bot_voice_turns
         SET finished_at = NOW(), outcome = $2, through_message_id = $3, reply_message_id = $4, model = $5,
             rounds = $6, tools = $7, input_tokens = $8, output_tokens = $9, cost_usd = $10, error = $11,
-            failures = $12, speaker_id = COALESCE($13, speaker_id)
+            failures = $12, speaker_id = COALESCE($13, speaker_id), addressed_ids = $14
       WHERE id = $1`,
     [turnId, row.outcome || null, row.throughId || null, row.replyId || null, row.model || null,
       row.rounds || 0, (row.tools || []).slice(0, 30), row.inputTokens ?? null, row.outputTokens ?? null,
       row.costUsd ?? null, row.error ? clip(row.error, 300) : null, (row.failures || []).slice(0, 20),
-      row.speakerId || null],
+      row.speakerId || null, (row.addressedIds || []).slice(-MAX_ADDRESSED_IDS)],
   );
+}
+
+/**
+ * Pure (step 5): the messages a finished turn judged, as finishTurn keeps
+ * them. The people it answered, or chose to say nothing to: a turn that
+ * could not answer (a fallback, a failure) judged nothing, unless it asked
+ * for the request to be read again (ask_changed), which it did.
+ */
+function judgedIds(record, outcome) {
+  const ids = Array.isArray(record?.addressedIds) ? record.addressedIds : [];
+  const asked = Array.isArray(record?.tools) && record.tools.includes('ask_changed');
+  return outcome === 'replied' || outcome === 'quiet' || asked ? ids : [];
 }
 
 /** The newest message a finished turn in this place read, or 0. */
@@ -918,6 +933,7 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   const record = { outcome: 'quiet', tools: [], failures: [] };
   const finishWith = async (outcome) => {
     record.outcome = outcome;
+    record.addressedIds = judgedIds(record, outcome);
     await finishTurn(pool, turnId, record);
     noteStatus(true);
     return { outcome, throughId: record.throughId || null, replyId: record.replyId || null };
@@ -999,6 +1015,10 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
     await restOfChat();
     return finishWith('quiet');
   }
+  // Step 5 (11 Nov 2026): what this turn judges, kept with it (finishTurn).
+  // On a request, a message the voice answered is not read as a change to
+  // the request unless it said so (ask_changed): homeroom-bot.js refreshApp.
+  record.addressedIds = addressed.map((a) => Number(a.message.id));
   // 6 Nov 2026 (#6430): a go-ahead in the request's own discussion is
   // answered here, once, in the same fixed words the chat's start tool uses.
   // Nothing is being built, so the model never writes "I'm on it" or offers
@@ -1253,6 +1273,8 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     has('offer_withdraw') ? '- Offer to withdraw your change when the person who asked for its request, or the project\'s owner, wants it dropped (offer_withdraw). Nothing happens until they tap Withdraw it under your reply: say so.' : null,
     has('start_request') ? '- Start this request now, or read it again, when somebody asks you to build it (start_request). The result says what happens; say exactly that. When it gives a link or changeLink, include them as written. When its result has `said`, reply with that and nothing else.' : null,
     has('change_plan') ? '- Your plan for this request waits for its requester to say Build it. Them saying to build it or go ahead is start_request, which builds the plan as they saw it. Somebody asking for something in the plan to change is change_plan, which plans it again with their words. A question about the plan or where it stands is answered from the facts, and changes nothing.' : null,
+    // Step 5 (11 Nov 2026): only what changes the ask reads it again.
+    has('ask_changed') ? '- When somebody changes what this request asks for (something added, dropped or done differently), call ask_changed with what changed in one line: you read the request again soon, with their words. Say so, and never what that read will decide. A question, a status check or thanks gets a reply only: never ask_changed for those. Asking you to build it or start now is start_request.' : null,
     has('offer_close_request') ? (place.type === 'issue'
       ? '- Offer a vote on closing this request when somebody says it is done, a duplicate or not wanted (offer_close_request). When the person who asked for this request, or somebody who decides on the project, asks to close or withdraw it, offer the close vote with their words as why, and never start_request. It opens only when they tap Propose to close, and closes only if the group votes for it. Never start a request somebody asked you to close.'
       : '- Offer a vote on closing one of this project\'s requests, by its number, when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it.') : null,
@@ -1485,6 +1507,15 @@ function toolsFor(place, {
     // longer reads the request again by itself (homeroom-bot.js
     // unaddressedActivityByIssue): a change to the plan is asked for here.
     if (planWaiting) tools.push(fn('change_plan', 'Plan this request again with what they asked to change in your plan.', {}, []));
+    // Step 5 (11 Nov 2026): a comment is read as a change to the request
+    // only when the voice says it is one (homeroom-bot.js refreshApp); with
+    // a change of its up, update_change takes it, and under a plan waiting
+    // for Build it, change_plan.
+    if (!requestChange && !planWaiting) {
+      tools.push(fn('ask_changed', 'Read this request again soon, because what somebody just said changes what it asks for. Never for a question, a status check or thanks.', {
+        what: { type: 'string', description: 'What changed in what the request asks for, in one line of your own words.' },
+      }, ['what']));
+    }
     tools.push(fn('offer_close_request', 'Offer a vote on closing this request.', {
       why: { type: 'string', description: 'Why it should close, in their words.' },
     }, ['why']));
@@ -2317,6 +2348,9 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
       case 'change_plan':
         if (place.type !== 'issue') return { error: 'Not here.' };
         return await mayor.replanRequest(pool, ctx, { project: app.slug, number: place.ref });
+      case 'ask_changed':
+        if (place.type !== 'issue') return { error: 'Not here.' };
+        return await askChanged(pool, ctx, args);
       case 'offer_close_request': {
         if (!['issue', 'chat', 'category', 'message'].includes(place.type)) return { error: 'Not here.' };
         if (ctx.offer) return { error: 'One offer per reply.' };
@@ -2414,6 +2448,59 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
     log.warn('homeroom-bot-voice', 'A tool failed', { tool: name, app: app?.slug, err: err.message });
     return { error: 'That failed on Homeroom\'s side. Nothing was done.' };
   }
+}
+
+/**
+ * Step 5 (11 Nov 2026), `ask_changed`: what somebody said on a request
+ * changes what it asks for, so the request is read again as a change to it
+ * (its debt, and its read's read_reason, say changed:voice). A comment the
+ * voice answered without this is not read as a change at all
+ * (homeroom-bot.js refreshApp), so a question, a status check or thanks gets
+ * a reply and no new read. Once per reply. Refused, saying why, where no
+ * read would come of it: the bot not reading this project's requests now, a
+ * change of its for the request already up (update_change takes what
+ * changed), or its build already on its way from the request as it was read.
+ */
+async function askChanged(pool, ctx, args) {
+  const { app, place, settings, bot, deps } = ctx;
+  // A read queued is a start, as start_request's and change_plan's are.
+  if (ctx.started) return { ok: false, error: 'One start per turn: put everything that changed into one line.' };
+  const what = clip(withoutEmDashes(String(args?.what || '').replace(/\s+/g, ' ').trim()), 300);
+  if (what.length < 3) return { error: 'Say in one line what changed.' };
+  const live = liveModule(deps);
+  if (!live.isLiveFor(settings, app) || (settings?.pausedApps || []).includes(app.slug) || settings?.mode === 'off') {
+    return { ok: false, error: `You are not reading ${app.name || app.slug}'s requests right now, so it is not read again. Nothing was queued.` };
+  }
+  const issueNumber = Number(place.ref);
+  const open = await live.openBotProposal(pool, bot.id, app.id, issueNumber).catch(() => null);
+  if (open) {
+    return {
+      ok: false,
+      error: open.status === 'promoted'
+        ? 'Your change for it is up for a vote, so what changed is a change to that (update_change). Nothing was queued.'
+        : 'Your change for it was approved and is being merged, so it is not read again. A new request can change it once it is live. Nothing was queued.',
+    };
+  }
+  if (await mayorModule(deps).pendingBuild(pool, app.id, issueNumber).catch(() => false)) {
+    return { ok: false, error: 'Its build is already on its way, from the request as you read it, so what changed is not in it. Once its change is up for a vote, they can ask for it there. Nothing was queued.' };
+  }
+  const trigger = ctx.triggerMessage || {};
+  // Its instance's answer: owed and waiting its turn, or a read of it under
+  // way already, which reads what was just said (a message during a read
+  // starts it over, bot-request's interrupt).
+  const reply = await workflowModule(deps).botOwedAndWait({
+    appId: Number(app.id), issueNumber, reason: 'changed', priority: 2, changedBy: 'voice',
+    threadSeenAt: trigger.created_at ? new Date(trigger.created_at).toISOString() : null,
+    key: `voice-ask:${Number(app.id)}:${issueNumber}:${Number(trigger.id) || 0}`, source: 'voice',
+  });
+  ctx.started = app.name || app.slug;
+  ctx.askedChange = what;
+  return {
+    ok: true,
+    queued: reply?.looking
+      ? 'You are reading this request now, and what they said is read with it or right after. Say so in a few words. Never say what that read will decide, or that anything is built or changed yet.'
+      : 'You read this request again soon, with what they said. Say so in a few words. Never say what that read will decide, or that anything is built or changed yet.',
+  };
 }
 
 /** update_change: what somebody asked to change on one of the bot's changes, queued for its next update. */
@@ -3826,6 +3913,8 @@ module.exports = {
   connectorSkip,
   gate,
   runTurn,
+  judgedIds,
+  askChanged,
   goAheadCannotReply,
   replyOf,
   transcriptLine,

@@ -1800,6 +1800,8 @@ function toMs(value) {
  *
  *   issue        a normalized GitHub issue ({ number, updatedAt, ... })
  *   threadLastAt newest Homeroom discussion message on it, or null
+ *   voiceAt      newest of those the bot's voice judged to change the ask
+ *                (ask_changed, step 5), or null
  *   busy         true when a person has a live claim, session or proposal
  *                on it — the bot never competes with a human who started
  *   lastRun      the bot's most recent run on it ({ thread_seen_at,
@@ -1817,7 +1819,7 @@ function toMs(value) {
  * has seen only once it is over: read as a change, the request was read
  * again mid-build and built twice (Plant Pal #1 and #3, 2026-10-03).
  */
-function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = null, now = Date.now() }) {
+function classifyIssue({ issue, threadLastAt = null, voiceAt = null, busy = false, lastRun = null, now = Date.now() }) {
   if (!issue || !Number.isInteger(issue.number)) return { eligible: false, reason: 'invalid' };
   if (issue.state && issue.state !== 'open') return { eligible: false, reason: 'closed' };
   if (busy) return { eligible: false, reason: 'in_progress' };
@@ -1843,8 +1845,10 @@ function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = nul
     // What moved past the last read: the GitHub issue (any comment, edit or
     // label moves its updated_at) or a person's message on Homeroom. Kept
     // on the run as its read_reason, so a request read again and again says
-    // why.
-    const changedBy = toMs(threadLastAt) > lastSeenMs && toMs(threadLastAt) >= toMs(issue.updatedAt) ? 'discussion' : 'github';
+    // why. Step 5: a message the bot's voice judged to change the ask
+    // (`voiceAt`, its ask_changed) says so, as its own debt does.
+    const byThread = toMs(threadLastAt) > lastSeenMs && toMs(threadLastAt) >= toMs(issue.updatedAt);
+    const changedBy = !byThread ? 'github' : voiceAt && toMs(voiceAt) >= toMs(threadLastAt) ? 'voice' : 'discussion';
     return { eligible: true, reason: 'changed', priority: 2, threadSeenAt, changedBy };
   }
   return { eligible: true, reason: 'new', priority: 1, threadSeenAt };
@@ -2002,31 +2006,54 @@ async function threadActivityByIssue(pool, appId) {
 
 /**
  * Papote #3 (18 Oct 2026): threadActivityByIssue for `numbers`, without
- * what people said to the bot: a mention of it (homeroom-bot-holds.js
- * mentionPattern) or a Reply to one of its messages. The refresh reads it
- * for a request whose plan waits for Build it, with the bot's voice on in
- * requests' discussions: what is said to the bot there is the voice's to
+ * what the bot's voice answers there. The refresh reads it with the voice on
+ * in requests' discussions: what is said to the bot there is the voice's to
  * answer ("status?", Build it through start_request, a change to the plan
  * through change_plan). Read as a change to the request, "@Homeroom bot
  * status" started a new look that retired the plan and wrote it again.
+ *
+ * Step 5 (11 Nov 2026): for every request, by what the voice recorded
+ * judging (homeroom_bot_voice_turns.addressed_ids, homeroom-bot-voice.js
+ * finishTurn) rather than by the mention or Reply it was guessed from. A
+ * message a finished turn judged is not a change, unless that turn said it
+ * changes the ask (its ask_changed: `voice_at`, read as changed:voice). One
+ * it has yet to judge (past what its turns have read, inside the window it
+ * answers in) waits for it. A reply to the bot's question still counts: the
+ * voice never answers those (its not_an_answer rule), the read does.
+ * { lastAt, voiceAt } by request.
  */
-async function unaddressedActivityByIssue(pool, appId, numbers, botId) {
+const UNADDRESSED_ACTIVITY_SQL = `
+  WITH turns AS (
+    SELECT t.place_ref AS n, t.through_message_id, t.addressed_ids, ('ask_changed' = ANY(t.tools)) AS asked
+      FROM homeroom_bot_voice_turns t
+     WHERE t.place_key = ANY($3::text[]) AND t.finished_at IS NOT NULL
+  ), judged AS (
+    SELECT j.id, bool_or(t.asked) AS asked
+      FROM turns t CROSS JOIN LATERAL unnest(t.addressed_ids) AS j(id)
+     GROUP BY j.id
+  ), read_through AS (
+    SELECT n, MAX(through_message_id) AS through FROM turns GROUP BY n
+  )
+  SELECT m.thread_ref AS n,
+         MAX(m.created_at) FILTER (WHERE j.asked IS NOT FALSE) AS last_at,
+         MAX(m.created_at) FILTER (WHERE j.asked) AS voice_at
+    FROM chat_messages m
+    LEFT JOIN users u ON u.id = m.user_id
+    LEFT JOIN judged j ON j.id = m.id
+    LEFT JOIN read_through r ON r.n = m.thread_ref
+   WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = ANY($2::int[])
+     AND m.msg_type = 'message' AND u.is_synthetic IS NOT TRUE
+     AND NOT (m.id > COALESCE(r.through, 0) AND m.created_at > NOW() - make_interval(mins => $4))
+   GROUP BY m.thread_ref`;
+
+async function unaddressedActivityByIssue(pool, appId, numbers) {
   if (!numbers.length) return new Map();
-  const { rows } = await pool.query(
-    `SELECT m.thread_ref AS n, MAX(m.created_at) AS last_at
-       FROM chat_messages m
-       LEFT JOIN users u ON u.id = m.user_id
-       LEFT JOIN chat_messages q
-         ON (m.metadata->'quote'->>'refMsgId') ~ '^[0-9]+$'
-        AND q.id = (m.metadata->'quote'->>'refMsgId')::int
-      WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = ANY($2::int[])
-        AND m.msg_type = 'message' AND u.is_synthetic IS NOT TRUE
-        AND COALESCE(m.content, '') !~* $3
-        AND q.user_id IS DISTINCT FROM $4
-      GROUP BY m.thread_ref`,
-    [appId, numbers.map(Number), require('./homeroom-bot-holds').mentionPattern(), botId],
-  );
-  return new Map(rows.map((r) => [Number(r.n), r.last_at]));
+  const ns = numbers.map(Number);
+  const { rows } = await pool.query(UNADDRESSED_ACTIVITY_SQL, [
+    appId, ns, ns.map((n) => voiceModule(null).placeKey(appId, { type: 'issue', ref: n })),
+    require('./bot-profiles').THREAD_LIMITS.answerWindowMinutes,
+  ]);
+  return new Map(rows.map((r) => [Number(r.n), { lastAt: r.last_at || null, voiceAt: r.voice_at || null }]));
 }
 
 /**
@@ -2076,9 +2103,6 @@ function latestOf(a, b) {
  * (classifyIssue), as rules/bot-loop.ts READ_CANDIDATES_SQL reads it. One older than the window a
  * build from before builds were durable is asked for again in
  * (requeueLegacyBuilds) holds nothing.
- *
- * `plan_waiting`: that run's plan waits for its Build it (goAhead), which
- * the refresh reads what was said to the bot past (papote #3).
  */
 async function lastRunsByIssue(pool, appId) {
   const { rows } = await pool.query(
@@ -2086,8 +2110,6 @@ async function lastRunsByIssue(pool, appId) {
             (mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL
              AND (live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL)
              AND created_at > NOW() - make_interval(days => $2)) AS live_building,
-            (mode = 'live' AND awaiting_go_at IS NOT NULL AND build_ok IS NULL
-             AND build_session_id IS NULL) AS plan_waiting,
             -- Failed runs that read this same thread (RETRY_FAILED_REASON).
             (SELECT count(*)::int FROM homeroom_bot_runs f
               WHERE f.app_id = r.app_id AND f.issue_number = r.issue_number AND f.verdict = 'failed'
@@ -2248,20 +2270,19 @@ async function refreshApp(pool, app, {
     capRoom ? require('./homeroom-bot-dm').importedAt(pool, app.id).catch(() => null) : null,
   ]);
   const backlogUntil = toMs(importedAt);
-  // Papote #3: under a plan waiting for Build it, what people said to the
-  // bot is the voice's to answer, not a change that reads the request again
-  // (unaddressedActivityByIssue). With the voice off nobody answers it, so
+  // Papote #3, and step 5 for every request: what the bot's voice answers
+  // in a request's discussion is its to answer, not a change that reads the
+  // request again, unless it said it changes the ask (ask_changed:
+  // unaddressedActivityByIssue). With the voice off nobody answers it, so
   // it is read as before. Unreadable: read as before.
-  const planWaiting = new Set(capRoom && bot && voiceModule(null).voiceOn(settings, { type: 'issue' })
-    ? [...lastRuns.values()].filter((r) => r.plan_waiting === true).map((r) => Number(r.issue_number))
-    : []);
-  const unaddressed = planWaiting.size
-    ? await unaddressedActivityByIssue(pool, app.id, [...planWaiting], bot.id).catch((err) => {
+  const unaddressed = capRoom && bot && voiceModule(null).voiceOn(settings, { type: 'issue' })
+    ? await unaddressedActivityByIssue(pool, app.id, issues.map((issue) => Number(issue.number))).catch((err) => {
       log.warn('homeroom-bot', 'Could not read what people said apart from to the bot', { app: app.slug, err: err.message });
       return null;
     })
     : null;
-  const personAt = (n) => (unaddressed && planWaiting.has(n) ? unaddressed.get(n) || null : threads.get(n));
+  const personAt = (n) => (unaddressed ? unaddressed.get(n)?.lastAt || null : threads.get(n));
+  const voiceAt = (n) => (unaddressed ? unaddressed.get(n)?.voiceAt || null : null);
   // A failed read's retry that found nothing to answer is not offered again
   // for that run (its request's instance keeps it: bot-request spentRetry).
   const spentRetries = new Map((await pool.query(
@@ -2305,6 +2326,7 @@ async function refreshApp(pool, app, {
     const verdict = classifyIssue({
       issue,
       threadLastAt: latestOf(personAt(n), proposalThreads.get(n)),
+      voiceAt: voiceAt(n),
       busy: busy.has(n),
       lastRun,
     });
@@ -3105,8 +3127,8 @@ async function insertRunRow(pool, run) {
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
         input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id,
-        checks_head_sha, asked, asked_by, limit_stop, charged, payer_user_id, read_reason, builder)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
+        checks_head_sha, asked, asked_by, limit_stop, charged, payer_user_id, read_reason, builder, look_kind)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
@@ -3129,7 +3151,11 @@ async function insertRunRow(pool, run) {
       // 5 Nov 2026: who a hand-off named to build it, in the insert, so the
       // bell its stage rings knows at once that it asks nothing of the
       // requester (work-state.js quietBell).
-      run.builder || null],
+      run.builder || null,
+      // Step 5 (11 Nov 2026): a run that did not read its request (a fix
+      // round, a sync, a hand-off, a retry), so the reads per request count
+      // only reads. Null is a read.
+      run.lookKind || null],
   );
   const id = rows[0]?.id || null;
   // #3624: a question's suggested answers, beside the row rather than in
@@ -4172,6 +4198,18 @@ async function runTriage(pool, config, {
         app: app.slug, issueNumber, sessionId: open.id,
       });
       return { ran: false, reason: 'has_proposal' };
+    }
+    // Step 5 (11 Nov 2026): a look owed for its change's failing checks,
+    // with no change of the bot's up for a vote any more, has nothing to
+    // fix, and is not a read: its debt is spent and its change machine hears
+    // the fix was not taken. It used to read the whole request again.
+    if (item.reason === CHECKS_REASON) {
+      look.consume();
+      look.out.fix = { outcome: 'refused', why: 'no_change' };
+      log.info('homeroom-bot', 'Failing checks owed a look, but no change of the bot\'s is up; not reading the request', {
+        app: app.slug, issueNumber,
+      });
+      return { ran: false, reason: 'checks_no_change' };
     }
     // #4488: "build it" from its requester under a complicated change's plan
     // is Build it, not a new look: the build goes ahead from that plan.
@@ -5591,6 +5629,14 @@ async function runFollowUp(pool, config, {
     // What people wrote where the voice answers is the voice's; what they
     // asked it to change comes here as asks.
     found = found.filter((r) => r.via !== 'homeroom' || (r.where === 'proposal' ? !voiceOnChange : !voiceOnRequest));
+    // Step 5 (11 Nov 2026): a look owed for its failing checks fixes them
+    // first, while a fix is due: the replies, and the asks (left untaken),
+    // are the next look's (owed below), not a reason to read the request
+    // before the fix.
+    if (item.reason === CHECKS_REASON) {
+      const due = await checksToFix(pool, proposal.id);
+      if (due) return JSON.parse(JSON.stringify({ replies: [], asks: [], checks: due, left: found.map((r) => r.via) }));
+    }
     // 5 Nov 2026 (docs/plans/bot-one-model.md, step 2): one change-ask
     // queue, taken whatever the change voice's switch says. With it off, the
     // only asks recorded are the voice's own update_change ones (its words
@@ -5696,8 +5742,18 @@ async function runFollowUp(pool, config, {
   const mode = canRevise ? 'build' : 'scout';
 
   if (checks) {
+    // Step 5: what people said before a fix that went first is answered by
+    // the next look. The fix's run keeps the mark the replies are read from
+    // (repliesSince), so it does not count them as read, and the look owes
+    // their answer, and the asks waiting, once it ends.
+    const left = Array.isArray(decided.left) ? decided.left : [];
+    if (left.length) {
+      look.owe({ reason: 'changed', priority: 2, changedBy: left.includes('github') ? 'github' : 'discussion' });
+    }
+    if (item.reason === CHECKS_REASON) await requeueAsks();
     return runChecksFix(pool, config, {
-      bot, app, repo, item, issue, session, checks, canRevise, basis, mode, runMode, model, turnBudgetMs, startedMs,
+      bot, app, repo, item: left.length ? { ...item, thread_seen_at: since.sinceAt || null } : item,
+      issue, session, checks, canRevise, basis, mode, runMode, model, turnBudgetMs, startedMs,
       recordFailure, lastRun, seedReadAt, comments, issueThread, proposalThread, botLogin, deps, reasoningEffort,
     });
   }
@@ -6322,8 +6378,15 @@ async function runChecksFix(pool, config, {
   // How the fix its change asked for came out, for bot-change: the round
   // looked at the head (its run records it), or it was not taken.
   const roundEnded = () => { look.out.fix = { outcome: 'looked' }; };
-  // A note on its change, once across the look's attempts.
+  // A note on its change, once across the look's attempts. Step 5: and only
+  // when it says something new: the same kind and words as the bot's last
+  // note on the request are not said again (addressed.repeatsLastNote).
   const note = (kind, args) => look.once(`note:${kind}`, async () => {
+    const words = require('./homeroom-bot-words').firstPerson(args.text);
+    if (await addressedMod().repeatsLastNote(pool, { appId: app.id, issueNumber, kinds: [kind], text: words })) {
+      log.info('homeroom-bot', 'Checks note not repeated: the last note said the same', { app: app.slug, issueNumber, kind });
+      return false;
+    }
     await live.postOnProposal({ pool, ws: deps.ws, app, issueNumber, kind, bot, sessionId: session.id, ...args })
       .catch((err) => log.warn('homeroom-bot', 'Checks note failed', { app: app.slug, issueNumber, kind, err: err.message }));
     return true;
@@ -6373,7 +6436,7 @@ async function runChecksFix(pool, config, {
     if (synced?.synced) {
       runId = await insertRun(pool, {
         ...billingOf(item, runMode),
-        readReason: readReasonOf(item),
+        readReason: readReasonOf(item), lookKind: 'sync',
         appId: app.id, issueNumber, mode: runMode, verdict: 'answer',
         reason: 'Brought up to date with main before fixing its checks; its checks run again.',
         buildNote: 'Brought up to date with main before fixing its checks; its checks run again.',
@@ -6395,7 +6458,7 @@ async function runChecksFix(pool, config, {
     let syncWhy = null;
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
-      readReason: readReasonOf(item),
+      readReason: readReasonOf(item), lookKind: 'hand_off',
       appId: app.id, issueNumber, mode: runMode, verdict,
       reason: why, error: verdict === 'failed' ? `checks: ${why}` : null,
       threadSeenAt, model, durationMs: Date.now() - startedMs,
@@ -6493,6 +6556,21 @@ async function runChecksFix(pool, config, {
       });
       return { ran: true, verdict, runId, acted: 'checks_not_change' };
     }
+    const text = extra.limitStop && failing.length
+      ? followup.stoppedHandOffText({ failingCount: failing.length, tries })
+      : followup.checksPersonText({ why, prNumber, failingCount: failing.length, broken });
+    // Step 5 (11 Nov 2026): a hand-off that says what the bot's last note on
+    // the request already says is not said again (no post, tag or chat
+    // relay). Decided once across the look's attempts.
+    const repeated = await look.once('handOffRepeat', () => addressedMod().repeatsLastNote(pool, {
+      appId: app.id, issueNumber, kinds: ['followup_person'], text: require('./homeroom-bot-words').firstPerson(text),
+    }));
+    if (repeated) {
+      log.info('homeroom-bot', 'Checks hand-off not repeated: the last note said the same', {
+        app: app.slug, issueNumber, sessionId: session.id, head, runId,
+      });
+      return { ran: true, verdict, runId, acted: 'checks_person_unchanged' };
+    }
     const targets = await live.mentionTargets({
       pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
     }).catch(() => []);
@@ -6525,9 +6603,6 @@ async function runChecksFix(pool, config, {
         ],
       },
     } : null;
-    const text = extra.limitStop && failing.length
-      ? followup.stoppedHandOffText({ failingCount: failing.length, tries })
-      : followup.checksPersonText({ why, prNumber, failingCount: failing.length, broken });
     const posted = await postOnce(look, 'followup_person', () => live.post({
       pool, github, ws: deps.ws, app, repo, issueNumber, kind: 'followup_person', runId, text,
       sender: bot, senderId: bot.id, mentions: targets, notifications: deps.notifications || null,
@@ -6684,7 +6759,7 @@ async function runChecksFix(pool, config, {
   if (code && !turn.stopped && (turn.infra || INFRA_ERRORS.has(code) || code.startsWith('dispatch:'))) {
     // The platform's fault: the queue row is kept and retried, and the head
     // is not marked, so the retry can still fix it.
-    return recordFailure(code, { proposalSessionId: session.id, ...spent }, { infra: true });
+    return recordFailure(code, { proposalSessionId: session.id, lookKind: 'fix', ...spent }, { infra: true });
   }
 
   const parsed = turn.stopped || code ? null : followup.parseFollowUp(result.lastResultText);
@@ -6702,7 +6777,7 @@ async function runChecksFix(pool, config, {
       : 'It updated the change so its checks pass.');
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
-      readReason: readReasonOf(item),
+      readReason: readReasonOf(item), lookKind: 'fix',
       appId: app.id, issueNumber, mode: runMode, verdict: 'revise',
       reason: parsed?.reply || summary, buildNote: summary,
       threadSeenAt, model, durationMs: Date.now() - startedMs,
@@ -6740,7 +6815,7 @@ async function runChecksFix(pool, config, {
   if (turn.stopped && !await look.once('retried', () => checksRetried(pool, session.id, head))) {
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
-      readReason: readReasonOf(item),
+      readReason: readReasonOf(item), lookKind: 'retry',
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed',
       reason: 'its attempt to fix them ran out of time', error: checksRetryError(head),
       threadSeenAt, model, durationMs: Date.now() - startedMs,
@@ -7705,14 +7780,15 @@ async function actOnVerdict({
     })
     : { speak: true };
   // #6311: a re-read whose note would say the same thing as the last one it
-  // posted (same kind, same reason) says nothing. Only a look somebody asked
-  // for, or one the request's own changes started, can repeat.
+  // posted (same kind, same reason) says nothing. Step 5 (11 Nov 2026): on
+  // every look, a note is posted only when its verdict or its reason
+  // changed, but on a read somebody asked for again (askedAgain, #6399),
+  // which always says what it found.
   // #6321: an "already works" note is the same words under either verdict, so
   // `alsoKind` names the other one: a repeat gets no second set of buttons.
   const unchangedNote = async (kind, text, alsoKind = null) => {
-    if (!gated) return false;
-    const prev = await addressedMod().lastNoteText(pool, { appId: app.id, issueNumber });
-    return !!prev && (prev.kind === kind || prev.kind === alsoKind) && addressedMod().sameNote(prev.text, text);
+    if (askedAgain) return false;
+    return addressedMod().repeatsLastNote(pool, { appId: app.id, issueNumber, kinds: [kind, alsoKind], text });
   };
   // #6321: an "already works" note carries Propose to close and Keep it open,
   // for any member (for nobody in particular: bot-voice's tapGuard), unless a
@@ -7769,15 +7845,20 @@ async function actOnVerdict({
     }
   } else if (capSuppressed) {
     const kind = live.heldKind(capSuppressed);
-    const already = await live.lastPostKind(pool, app.id, issueNumber) === kind;
+    const limit = await heldLimit(pool, { capSuppressed, app, issueNumber, proposalCeiling });
+    const heldLine = live.heldText({ cap: capSuppressed, limit, project: app.name || app.slug });
+    // Step 5: the same text test as a note's. A held line has no words in
+    // the request's thread to compare, so its kind (the cap) is its reason.
+    const already = await addressedMod().repeatsLastNote(pool, {
+      appId: app.id, issueNumber, kinds: [kind], text: require('./homeroom-bot-words').firstPerson(heldLine), wordless: true,
+    });
     log.info('homeroom-bot', 'Live verdict held by a cap', {
       app: app.slug, issueNumber, verdict: parsed.verdict, cap: capSuppressed, noted: !already && !quietHold,
     });
     if (!already && !quietHold) {
-      const limit = await heldLimit(pool, { capSuppressed, app, issueNumber, proposalCeiling });
       // A held build is a quiet line in the request's thread too
       // (homeroom-bot-dm.js dmText), and its card says Waiting.
-      await say(kind, live.heldText({ cap: capSuppressed, limit, project: app.name || app.slug }), { dm: { limit } });
+      await say(kind, heldLine, { dm: { limit } });
     }
   } else if (parsed.verdict === 'question') {
     // #3624: `dm` carries the question to the requester's DM too, with the

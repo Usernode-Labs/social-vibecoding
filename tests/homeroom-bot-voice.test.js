@@ -345,7 +345,14 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false })),
     ['reply', 'stay_quiet', 'attach_files', 'request_detail', 'read_message', 'list_source', 'read_source', 'show_change', 'list_change_files'], 'somebody else\'s change: answer only');
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
-    ['reply', 'stay_quiet', 'attach_files', 'tell_me_when', 'start_request', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'show_change', 'list_change_files']);
+    ['reply', 'stay_quiet', 'attach_files', 'tell_me_when', 'start_request', 'ask_changed', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'show_change', 'list_change_files']);
+  // Step 5: a comment reads the request again only through ask_changed, so
+  // it is offered where nothing else takes a change to the ask: not with
+  // the bot's change up (update_change), nor under a plan waiting (change_plan).
+  assert.ok(!names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: true })).includes('ask_changed'));
+  for (const type of ['session', 'chat', 'message']) {
+    assert.ok(!names(voice.toolsFor({ type, ref: 1 }, {})).includes('ask_changed'), type);
+  }
   // #6534: pictures it makes itself are offered where the asker may pay for them.
   assert.ok(names(voice.toolsFor({ type: 'issue', ref: 1 }, { picturesAllowed: true })).includes('make_pictures'));
   assert.ok(!names(voice.toolsFor({ type: 'chat', ref: null }, { picturesAllowed: true })).includes('make_pictures'),
@@ -737,6 +744,86 @@ test('the DM, a chat\'s fix and a No vote\'s line become asks, and a merge drops
   assert.match(post, /messageId: Number\(posted\.message\?\.id\) \|\| null/);
   const merged = dm.slice(dm.indexOf('async function noteProposalMerged'));
   assert.match(merged.slice(0, 500), /\.dropAsks\(pool, session\.id, \{ strict: !!deps\.strict \}\)/, 'strict in the bot-change machine\'s durable work');
+});
+
+// ── Step 5 (11 Nov 2026): a comment that does not change the ask ─────────
+
+test('step 5: ask_changed owes the request a read as changed:voice, only where a read would come of it', async () => {
+  const owed = [];
+  const ctxOf = ({ open = null, pending = false, settings = { mode: 'live' }, looking = false } = {}) => ({
+    app: { id: 3, slug: 'todo', name: 'Todo' }, place: { type: 'issue', ref: 12 }, user: { id: 9, username: 'ada' },
+    bot: { id: 77 }, settings, triggerMessage: { id: 501, created_at: '2026-11-11T10:00:00Z' }, reads: 0,
+    deps: {
+      replies: { async botOwedAndWait(p) { owed.push(p); return { queued: !looking, looking, jobKey: null }; } },
+      liveSvc: { isLiveFor: (s) => s?.mode !== 'off', async openBotProposal() { return open; } },
+      mayor: { async pendingBuild() { return pending; } },
+    },
+  });
+  const ctx = ctxOf();
+  const out = await voice.runTool({}, ctx, 'ask_changed', { what: '  The footer\n should be blue too. ' });
+  assert.equal(out.ok, true);
+  assert.match(out.queued, /^You read this request again soon/);
+  assert.match(out.queued, /Never say what that read will decide/);
+  assert.deepEqual(owed, [{
+    appId: 3, issueNumber: 12, reason: 'changed', priority: 2, changedBy: 'voice',
+    threadSeenAt: '2026-11-11T10:00:00.000Z', key: 'voice-ask:3:12:501', source: 'voice',
+  }], 'a change the voice judged, keyed by the message it judged');
+  assert.equal(ctx.askedChange, 'The footer should be blue too.');
+  assert.equal(ctx.started, 'Todo', 'a read queued is a start, which backs saying it will be read');
+  assert.match((await voice.runTool({}, ctx, 'ask_changed', { what: 'and the header' })).error, /^One start per turn/);
+  assert.equal(owed.length, 1);
+  assert.match((await voice.runTool({}, ctxOf({ looking: true }), 'ask_changed', { what: 'blue footer' })).queued,
+    /^You are reading this request now/, 'a read under way reads it');
+  assert.match((await voice.runTool({}, ctxOf(), 'ask_changed', { what: '' })).error, /one line/);
+  owed.length = 0;
+  for (const [over, said] of [
+    [{ settings: { mode: 'off' } }, /not reading Todo's requests right now/],
+    [{ settings: { mode: 'live', pausedApps: ['todo'] } }, /not reading Todo's requests right now/],
+    [{ open: { id: 5, status: 'promoted' } }, /up for a vote, so what changed is a change to that \(update_change\)/],
+    [{ open: { id: 5, status: 'merging' } }, /being merged/],
+    [{ pending: true }, /build is already on its way/],
+  ]) {
+    const refused = await voice.runTool({}, ctxOf(over), 'ask_changed', { what: 'blue footer' });
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, said);
+    assert.match(refused.error, /Nothing was queued\.$/);
+  }
+  assert.deepEqual(owed, [], 'nothing owed where no read would come of it');
+  assert.deepEqual(await voice.runTool({}, { ...ctxOf(), place: { type: 'session', ref: 1 } }, 'ask_changed', { what: 'x' }), { error: 'Not here.' });
+});
+
+test('step 5: the voice is told a question, a status check or thanks gets a reply only', () => {
+  const tools = voice.toolsFor({ type: 'issue', ref: 3 }, {});
+  const ask = tools.find((t) => t.function.name === 'ask_changed');
+  assert.deepEqual(ask.function.parameters.required, ['what']);
+  const prompt = voice.systemPrompt({ app: { slug: 'papote', name: 'Papote' }, place: { type: 'issue', ref: 3 }, tools });
+  assert.match(prompt, /When somebody changes what this request asks for \(something added, dropped or done differently\), call ask_changed with what changed in one line/);
+  assert.match(prompt, /A question, a status check or thanks gets a reply only: never ask_changed for those\./);
+  assert.doesNotMatch(voice.systemPrompt({
+    app: { slug: 'papote' }, place: { type: 'issue', ref: 3 }, tools: voice.toolsFor({ type: 'issue', ref: 3 }, { requestChange: true }),
+  }), /ask_changed/);
+  const profiles = require('../src/services/bot-profiles');
+  assert.ok(profiles.profileOf('request').tools.includes('ask_changed'));
+  assert.ok(!profiles.profileOf('change').tools.includes('ask_changed'));
+});
+
+test('step 5: a turn keeps the messages it judged, unless it could not answer them', () => {
+  const record = { addressedIds: [41, 42], tools: ['reply'] };
+  assert.deepEqual(voice.judgedIds(record, 'replied'), [41, 42]);
+  assert.deepEqual(voice.judgedIds(record, 'quiet'), [41, 42], 'it chose to say nothing');
+  assert.deepEqual(voice.judgedIds(record, 'fallback'), [], 'it could not answer: not judged');
+  assert.deepEqual(voice.judgedIds(record, 'failed'), []);
+  assert.deepEqual(voice.judgedIds({ addressedIds: [43], tools: ['ask_changed'] }, 'fallback'), [43],
+    'a read it asked for was asked, whatever came of its reply');
+  assert.deepEqual(voice.judgedIds({}, 'replied'), []);
+  const src = read('src/services/homeroom-bot-voice.js');
+  assert.match(src, /failures = \$12, speaker_id = COALESCE\(\$13, speaker_id\), addressed_ids = \$14/);
+  assert.match(src, /record\.addressedIds = judgedIds\(record, outcome\);/);
+  // What it judges is set only once a turn will answer: never for the sorry
+  // line, nor for a place that has had its turns this hour.
+  const turn = src.slice(src.indexOf('async function runTurn('), src.indexOf('// What a turn says when it could not answer at all'));
+  assert.ok(turn.indexOf('record.addressedIds = addressed.map') > turn.indexOf("record.error = 'busy_place'"));
+  assert.ok(turn.indexOf('record.addressedIds = addressed.map') < turn.indexOf('const goAheadCannot = await goAheadCannotReply'));
 });
 
 test('a tap under an offer is the person\'s own, from their browser, and members only', () => {

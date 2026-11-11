@@ -939,16 +939,39 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     assert.ok((await runRow(run)).live_build_waiting_at);
   });
 
-  await t.test('papote #3: the refresh reads past what people said to the bot', async () => {
-    await fresh();
-    const bots = await said(homeroomBot, 'Its plan is ready.', { ago: 40 });
-    const plain = await said(sam, 'Looks good to me', { ago: 30 });
-    await said(sam, '@homeroom_bot status?', { ago: 20 });
-    await said(maya, 'And how long?', { metadata: { quote: { refMsgId: bots.id } }, ago: 10 });
-    const seen = await bot.unaddressedActivityByIssue(pool, app.id, [12], homeroomBot.id);
-    assert.equal(new Date(seen.get(12)).getTime(), new Date(plain.created_at).getTime(),
-      'a mention of the bot and a Reply to it are left out; the rest counts');
-    assert.deepEqual(await bot.unaddressedActivityByIssue(pool, app.id, [], homeroomBot.id), new Map());
+  // Step 5 (11 Nov 2026): for every request, by what the voice recorded
+  // judging (its turns' addressed_ids), not by the mention or Reply it was
+  // guessed from.
+  await t.test('papote #3 and step 5: the refresh reads past what the voice answered, and waits for what it has yet to read', async () => {
+    const n = 13;
+    const at = (who, content, { metadata = {}, ago = 0 } = {}) => pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata, created_at)
+       VALUES ($1, $2, $3, 'issue', $4, $5, NOW() - make_interval(secs => $6)) RETURNING id, created_at`,
+      [app.id, who.id, content, n, JSON.stringify(metadata), ago],
+    ).then((r) => r.rows[0]);
+    const turn = (through, addressed, tools = ['reply']) => pool.query(
+      `INSERT INTO homeroom_bot_voice_turns (app_id, place_type, place_ref, place_key, through_message_id, addressed_ids, tools, outcome, finished_at)
+       VALUES ($1, 'issue', $2, $3, $4, $5, $6, 'replied', NOW())`,
+      [app.id, n, `${app.id}:issue:${n}`, through, addressed, tools],
+    );
+    const seen = async () => (await bot.unaddressedActivityByIssue(pool, app.id, [n])).get(n) || null;
+    const ms = (v) => (v ? new Date(v).getTime() : null);
+    const old = await at(sam, 'Filed this a while ago', { ago: 2 * 3600 });
+    const bots = await at(homeroomBot, 'Its plan is ready.', { ago: 40 });
+    const plain = await at(sam, 'Looks good to me', { ago: 30 });
+    const status = await at(sam, '@homeroom_bot status?', { ago: 20 });
+    const reply = await at(maya, 'And how long?', { metadata: { quote: { refMsgId: bots.id } }, ago: 10 });
+    let s = await seen();
+    assert.equal(ms(s.lastAt), ms(old.created_at), 'what the voice has yet to read waits for it; older than its window, it counts');
+    await turn(reply.id, [status.id, reply.id]);
+    s = await seen();
+    assert.deepEqual([ms(s.lastAt), s.voiceAt], [ms(plain.created_at), null],
+      'what the voice answered is left out; what nobody said to it counts, and the bot\'s own words never do');
+    const asked = await at(maya, '@homeroom_bot the leaderboard should show weekly scores too', { ago: 5 });
+    await turn(asked.id, [asked.id], ['ask_changed', 'reply']);
+    s = await seen();
+    assert.deepEqual([ms(s.lastAt), ms(s.voiceAt)], [ms(asked.created_at), ms(asked.created_at)], 'a change it judged counts, as the voice\'s');
+    assert.deepEqual(await bot.unaddressedActivityByIssue(pool, app.id, []), new Map());
   });
 
   await t.test('papote #3: change_plan plans it again with their words, and its row says a newer plan replaced it', async () => {

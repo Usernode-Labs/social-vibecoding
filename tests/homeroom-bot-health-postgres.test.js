@@ -184,3 +184,69 @@ test('rollout health against the full PostgreSQL schema', { timeout: 120000 }, a
     assert.equal(h.watch.chatFailures, null, '5 answers is too few');
   });
 });
+
+// Step 5 of the bot's one model (11 Nov 2026): reads per request, why it
+// read by week, and the taps on its offers that found nothing (404) or an
+// offer gone (410), against the real schema.
+test('step 5: the re-read numbers against the full PostgreSQL schema', { timeout: 120000 }, async (t) => {
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
+  }
+  const name = 'bot_rereads_' + crypto.randomBytes(6).toString('hex');
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN); url.pathname = '/' + name;
+  const pool = new Pool({ connectionString: String(url), max: 4 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  const ada = (await pool.query(
+    `INSERT INTO users (username, password, has_platform_access) VALUES ('ada', 'x', TRUE) RETURNING id`,
+  )).rows[0].id;
+  const app = (await pool.query(
+    `INSERT INTO apps (name, slug, status, created_by, repo_url) VALUES ('Seed swap', 'seed-swap', 'running', $1, 'https://github.com/x/seed-swap') RETURNING id`,
+    [ada],
+  )).rows[0].id;
+  const run = async (n, why, { kind = null, hoursAgo = 1, reused = null } = {}) => (await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, read_reason, look_kind, reused_run_id, created_at)
+     VALUES ($1, $2, 'live', 'question', $3, $4, $5, NOW() - make_interval(hours => $6)) RETURNING id`,
+    [app, n, why, kind, reused, hoursAgo],
+  )).rows[0].id;
+  await run(1, 'changed:discussion');
+  await run(1, 'changed:discussion', { hoursAgo: 2 });
+  const held = await run(2, 'new');
+  await run(2, 'checks_failing', { kind: 'fix' });
+  await run(2, 'checks_failing', { kind: 'sync' });
+  await run(3, 'cap_freed', { reused: held });
+  await run(4, 'changed:voice', { hoursAgo: 24 * 9 });
+  const tap = (surface, status, hoursAgo = 1) => pool.query(
+    `INSERT INTO events (user_id, app_id, event_type, metadata, created_at)
+     VALUES ($1, $2, 'bot_offer_tap', $3, NOW() - make_interval(hours => $4))`,
+    [ada, app, { surface, status }, hoursAgo],
+  );
+  await tap('thread', 200);
+  await tap('thread', 410);
+  await tap('chat', 404);
+  await tap('card', 200);
+  await tap('thread', 410, 24 * 15);
+  await tap('chat', 404, 24 * 50);
+
+  const { rereads: r } = await health.rolloutHealth(pool, { botUsername: BOT_USERNAME });
+  assert.deepEqual([r.reads, r.requests, r.perRequest], [3, 2, 1.5],
+    'the week\'s reads: never a fix round, a sync or a held verdict used again');
+  assert.deepEqual(r.otherRuns, { fix: 1, sync: 1 });
+  const sum = (key) => r.byWeek.reduce((acc, w) => {
+    if (typeof w[key] === 'number') return acc + w[key];
+    for (const [k, n] of Object.entries(w[key])) acc[k] = (acc[k] || 0) + n;
+    return acc;
+  }, key === 'why' ? {} : 0);
+  assert.deepEqual(sum('why'), { 'changed:discussion': 2, new: 1, 'changed:voice': 1 }, 'four weeks of reads, by why');
+  assert.deepEqual([sum('taps'), sum('notFound'), sum('gone')], [5, 1, 2], 'four weeks of taps; older ones are not counted');
+  assert.ok(r.byWeek.every((w) => /^\d{4}-\d{2}-\d{2}$/.test(w.week)));
+  assert.equal(r.duplicateNotes, null);
+});

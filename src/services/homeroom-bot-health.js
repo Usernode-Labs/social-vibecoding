@@ -19,6 +19,14 @@
 //              reply-claims.js checkReply), and the ones nothing
 //              could answer at all.
 //
+// And beside them (`rereads`, step 5 of docs/plans/bot-one-model.md, 11
+// Nov 2026), the numbers that say whether it reads requests again less and
+// says less twice: its reads per request, why it read, by week, how often a
+// Main Chat answer had to be repaired, and the taps on its offers that found
+// nothing to do (404) or an offer gone (410), by week. Notes said twice per
+// request are counted once its posts carry their said-once keys (step 4):
+// null until then.
+//
 // No new tables, and never a person's words: counts, durations and codes.
 // A figure with too little behind it (under its threshold's `min`) shows its
 // counts and no verdict, so a quiet week does not read as a broken one.
@@ -26,6 +34,8 @@
 const log = require('./logger');
 
 const DAYS = 7;
+// The weeks `rereads` counts by week: this one and the three before it.
+const WEEKS = 4;
 
 const THRESHOLDS = Object.freeze({
   // Settled proposals (merged or closed) that merged.
@@ -70,8 +80,61 @@ function watchFor(h) {
   };
 }
 
+/**
+ * Step 5: the re-read numbers from their query rows (READS_SQL, one row;
+ * READ_WHY_SQL and OFFER_TAPS_SQL, a row per week and code or surface),
+ * with the Main Chat answers of the same window (`chat`, CHAT_SQL's
+ * figures as shapeHealth reads them). Weeks newest first, only those with
+ * something in them. Pure.
+ */
+function shapeRereads({ reads = {}, why = [], taps = [] } = {}, chat = {}, days = DAYS) {
+  const readCount = int(reads.reads);
+  const requests = int(reads.requests);
+  const kinds = reads.kinds && typeof reads.kinds === 'object' && !Array.isArray(reads.kinds) ? reads.kinds : {};
+  const weeks = new Map();
+  const weekOf = (w) => {
+    const key = String(w || '');
+    if (!weeks.has(key)) weeks.set(key, { week: key, reads: 0, why: {}, taps: 0, notFound: 0, gone: 0, surfaces: {} });
+    return weeks.get(key);
+  };
+  for (const r of Array.isArray(why) ? why : []) {
+    const w = weekOf(r.week);
+    const n = int(r.n);
+    w.why[String(r.code || 'unknown')] = n;
+    w.reads += n;
+  }
+  for (const r of Array.isArray(taps) ? taps : []) {
+    const w = weekOf(r.week);
+    const t = { taps: int(r.taps), notFound: int(r.not_found), gone: int(r.gone) };
+    w.taps += t.taps;
+    w.notFound += t.notFound;
+    w.gone += t.gone;
+    if (r.surface) w.surfaces[String(r.surface)] = t;
+  }
+  const recovered = int(chat.recovered);
+  const chatTurns = int(chat.turns);
+  return {
+    days,
+    weeks: WEEKS,
+    // Runs that read a request (a triage read, or a reply turn on its
+    // change), not a held verdict reused without a read, and of how many
+    // requests; the runs that did not read one, by kind (fix, sync,
+    // hand_off, retry: homeroom_bot_runs.look_kind).
+    reads: readCount,
+    requests,
+    perRequest: share(readCount, requests),
+    otherRuns: Object.fromEntries(Object.entries(kinds).map(([k, n]) => [k, int(n)])),
+    byWeek: [...weeks.values()].filter((w) => w.week).sort((a, b) => b.week.localeCompare(a.week)),
+    // Main Chat answers that were repaired: a request that failed or a claim
+    // caught, and asked again (homeroom_bot_dm_turns), of all of them.
+    claimRepair: { recovered, turns: chatTurns, rate: share(recovered, chatTurns) },
+    // Step 4 counts these from its said-once keys (kind:subject:version).
+    duplicateNotes: null,
+  };
+}
+
 /** The five figures from their query rows. Pure. */
-function shapeHealth({ proposals = {}, questions = {}, turns = {}, chat = {}, cards = {} } = {}, days = DAYS) {
+function shapeHealth({ proposals = {}, questions = {}, turns = {}, chat = {}, cards = {}, rereads = {} } = {}, days = DAYS) {
   const up = int(proposals.up);
   const merged = int(proposals.merged);
   const open = int(proposals.open);
@@ -122,7 +185,7 @@ function shapeHealth({ proposals = {}, questions = {}, turns = {}, chat = {}, ca
       kinds: cards.kinds && typeof cards.kinds === 'object' && !Array.isArray(cards.kinds) ? cards.kinds : {},
     },
   };
-  return { ...h, watch: watchFor(h), thresholds: THRESHOLDS };
+  return { ...h, watch: watchFor(h), thresholds: THRESHOLDS, rereads: shapeRereads(rereads, chat, days) };
 }
 
 // The bot's proposals put up in the window, as chat_sessions it owns that
@@ -216,41 +279,92 @@ const CHAT_SQL = `
     FROM homeroom_bot_dm_turns
    WHERE created_at >= NOW() - make_interval(days => $1::int)`;
 
+// Step 5: its reads over the window. A read is a run that read its request
+// (a triage read, or a reply turn on its change: look_kind is null), never a
+// held verdict reused without one (reused_run_id); with how many requests
+// they were of, and the runs that read none, by their kind.
+const READS_SQL = `
+  SELECT COUNT(*) FILTER (WHERE look_kind IS NULL)::int AS reads,
+         COUNT(DISTINCT (app_id, issue_number)) FILTER (WHERE look_kind IS NULL)::int AS requests,
+         COALESCE(
+           (SELECT jsonb_object_agg(kind, n)
+              FROM (SELECT k.look_kind AS kind, COUNT(*)::int AS n
+                      FROM homeroom_bot_runs k
+                     WHERE k.created_at >= NOW() - make_interval(days => $1::int)
+                       AND k.reused_run_id IS NULL AND k.look_kind IS NOT NULL
+                     GROUP BY k.look_kind) per_kind),
+           '{}'::jsonb) AS kinds
+    FROM homeroom_bot_runs
+   WHERE created_at >= NOW() - make_interval(days => $1::int)
+     AND reused_run_id IS NULL`;
+
+// Why it read, by week: each read's read_reason code (homeroom-bot.js
+// readReasonOf: checks_failing, changed:discussion, changed:voice, new, ...),
+// this week and the WEEKS - 1 before it.
+const READ_WHY_SQL = `
+  SELECT to_char(date_trunc('week', created_at), 'YYYY-MM-DD') AS week,
+         COALESCE(read_reason, 'unknown') AS code,
+         COUNT(*)::int AS n
+    FROM homeroom_bot_runs
+   WHERE created_at >= date_trunc('week', NOW()) - make_interval(weeks => $1::int - 1)
+     AND reused_run_id IS NULL AND look_kind IS NULL
+   GROUP BY 1, 2`;
+
+// The taps on its offers and cards, by week and where they were (events
+// BOT_OFFER_TAP, written by the three routes that take them), and those
+// answered 404 (nothing to decide) or 410 (the offer gone or expired).
+const OFFER_TAPS_SQL = `
+  SELECT to_char(date_trunc('week', created_at), 'YYYY-MM-DD') AS week,
+         COALESCE(metadata->>'surface', '') AS surface,
+         COUNT(*)::int AS taps,
+         COUNT(*) FILTER (WHERE metadata->>'status' = '404')::int AS not_found,
+         COUNT(*) FILTER (WHERE metadata->>'status' = '410')::int AS gone
+    FROM events
+   WHERE event_type = 'bot_offer_tap'
+     AND created_at >= date_trunc('week', NOW()) - make_interval(weeks => $1::int - 1)
+   GROUP BY 1, 2`;
+
 /**
  * The dashboard's rollout health. Each figure fails soft on its own, to
  * zeros, like the rest of the dashboard's reads. With `failSoft: false` a
  * failed read rejects instead: the platform signals' observer
  * (signal-observers/bot-health.js) must not read a zero it could not look
- * at as a figure back within its line.
+ * at as a figure back within its line. The re-read numbers watch nothing,
+ * so they always read soft.
  */
 async function rolloutHealth(pool, { botUsername, days = DAYS, failSoft = true } = {}) {
   // Each query names its SQL constant where it is called, so
   // scripts/check-sql.js resolves and checks it against the schema.
-  const read = async (name, query) => {
+  const read = async (name, query, { all = false, soft = failSoft } = {}) => {
     try {
       const { rows } = await query();
-      return rows[0] || {};
+      return all ? rows : rows[0] || {};
     } catch (err) {
       log.warn('homeroom-bot', 'Rollout health read failed', { figure: name, err: err.message });
-      if (!failSoft) throw err;
-      return {};
+      if (!soft) throw err;
+      return all ? [] : {};
     }
   };
-  const [proposals, questions, turns, chat, cards] = await Promise.all([
+  const [proposals, questions, turns, chat, cards, reads, why, taps] = await Promise.all([
     read('proposals', () => pool.query(PROPOSALS_SQL, [botUsername, days])),
     read('questions', () => pool.query(QUESTIONS_SQL, [days])),
     read('turns', () => pool.query(TURNS_SQL, [days])),
     read('chat', () => pool.query(CHAT_SQL, [days])),
     read('cards', () => pool.query(CARDS_SQL, [days])),
+    read('reads', () => pool.query(READS_SQL, [days]), { soft: true }),
+    read('read_why', () => pool.query(READ_WHY_SQL, [WEEKS]), { all: true, soft: true }),
+    read('offer_taps', () => pool.query(OFFER_TAPS_SQL, [WEEKS]), { all: true, soft: true }),
   ]);
-  return shapeHealth({ proposals, questions, turns, chat, cards }, days);
+  return shapeHealth({ proposals, questions, turns, chat, cards, rereads: { reads, why, taps } }, days);
 }
 
 module.exports = {
   DAYS,
+  WEEKS,
   THRESHOLDS,
   share,
   watchFor,
+  shapeRereads,
   shapeHealth,
   rolloutHealth,
 };

@@ -290,6 +290,11 @@
       "id": "work-state-standing",
       "sha256": "24a1d11510fd809c002d95f7a0abbd6a6ffbbb1cdf470b168cc5dcfd3560ba38",
       "schemaSha256": "6ab15343e4f4316fb33002817a304a39a384adb519997db8273475cec8949380"
+    },
+    {
+      "id": "bot-quieter-rereads",
+      "sha256": "64673847c891220f4327c0f71bf0210b409c01d05e8c73334a70d70143d7d8f2",
+      "schemaSha256": "2fd42ca6342c728f882ff6adf25704824e43c2ae881bb26fafc507d3b767bfc9"
     }
   ]
 }
