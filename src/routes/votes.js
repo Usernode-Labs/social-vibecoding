@@ -4215,6 +4215,8 @@ function voteRoutes(config) {
       // HELD_UNTIL_SQL in services/integration.js), read beside
       // integration_block_reasons, which carries the reason it explains.
       const heldUntilSql = require('../services/integration').HELD_UNTIL_SQL;
+      const heldAtSql = require('../services/integration').HELD_AT_SQL;
+      const heldSinceSql = require('../services/integration').HELD_SINCE_SQL;
       // An admin's force merge, from the proposal machine's instance state
       // (services/merge-requirements.js FORCE_SQL), so the card can say it is
       // queued, which step it waits on, and that it skips the vote.
@@ -4295,6 +4297,9 @@ function voteRoutes(config) {
            -- When the queue tries this change again after GitHub held its
            -- merge back (services/integration.js HELD_UNTIL_SQL).
            ${heldUntilSql} AS merge_held_until,
+           -- #6563: when Homeroom last tried it, and first met this hold.
+           ${heldAtSql} AS merge_held_at,
+           ${heldSinceSql} AS merge_held_since,
            ${forceSql} AS merge_force,
            ${forceDroppedSql} AS merge_force_dropped,
            cs.approval_epoch,

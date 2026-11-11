@@ -8883,14 +8883,6 @@
     "text": "Syncing with main: Homeroom asks for votes when it is caught up and its checks pass.",
     "description": "A change page's Votes card: the change conflicts with main and Homeroom is resolving that now, so nobody is asked to vote yet."
   },
-  "page.votes.note.githubChecks": {
-    "text": "Approved. It merges once GitHub's required checks pass.",
-    "description": "A change page's Votes card: the change has the yes it needs, and its merge waits for the required checks GitHub runs on it (still running, or being run again on today's main). \"GitHub\" is a product name and stays as it is."
-  },
-  "page.votes.note.githubChecksFailing": {
-    "text": "Approved, but GitHub's required checks failed again. It merges once they pass.",
-    "description": "A change page's Votes card: the change has the yes it needs, but the required checks GitHub runs on it failed again after Homeroom brought it up to date with main. \"GitHub\" is a product name and stays as it is."
-  },
   "page.votes.note.goingLive": {
     "text": "It’s going live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while the approved change is being applied to the running app."
@@ -9082,6 +9074,62 @@
   "page.testing.figure.passed": {
     "text": "All checks passed",
     "description": "The large figure on the Testing card of a change's page once every automated check passed."
+  },
+  "page.testing.figure.passedHomeroom": {
+    "text": "Homeroom's checks passed",
+    "description": "The large figure on the Testing card of a change's page once every automated check Homeroom runs passed, while GitHub's own required checks are what the merge still waits on. \"Homeroom\" is the product's own name and GitHub is a product name; both stay as they are."
+  },
+  "page.testing.label.passedHomeroom": {
+    "text": "Tested: Homeroom's checks passed",
+    "description": "Accessible description of the progress bar on the Testing card of a change's page once every automated check Homeroom runs passed, while GitHub's own required checks are still what the merge waits on."
+  },
+  "page.merge.name": {
+    "text": "Merging",
+    "description": "Title of the card under Votes and Tested on a change's page while an approved, tested change waits to be merged or is being merged."
+  },
+  "page.merge.figure.githubChecks": {
+    "text": "Waiting on GitHub's checks",
+    "description": "The large figure on the Merging card of a change's page while GitHub's own required checks are still running, or are being run again on today's main, before GitHub will merge the change. \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.figure.githubWait": {
+    "text": "Waiting on GitHub",
+    "description": "The large figure on the Merging card of a change's page when GitHub held the merge back for a moment (it was busy, or refused it for a reason nobody has to act on). \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.figure.failing": {
+    "text": "GitHub's checks failed",
+    "description": "The large figure on the Merging card of a change's page when GitHub's own required checks failed again after Homeroom brought the change up to date with main. \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.figure.merging": {
+    "text": "Merging now",
+    "description": "The large figure on the Merging card of a change's page while the merge itself is under way."
+  },
+  "page.merge.label.githubChecks": {
+    "text": "Merging: waiting on GitHub's checks",
+    "description": "Accessible description of the progress bar on the Merging card of a change's page while GitHub's own required checks are what the merge waits on. \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.label.githubWait": {
+    "text": "Merging: waiting on GitHub",
+    "description": "Accessible description of the progress bar on the Merging card of a change's page when GitHub held the merge back for a moment. \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.label.failing": {
+    "text": "Merging: GitHub's checks failed",
+    "description": "Accessible description of the progress bar on the Merging card of a change's page when GitHub's own required checks failed again after Homeroom brought the change up to date with main."
+  },
+  "page.merge.label.merging": {
+    "text": "Merging now",
+    "description": "Accessible description of the progress bar on the Merging card of a change's page while the merge itself is under way."
+  },
+  "page.merge.note.githubChecks": {
+    "text": "Approved and tested by Homeroom. GitHub runs its own required checks before it merges.",
+    "description": "The line under the Merging card of a change's page while GitHub's own required checks are what holds the merge. \"Homeroom\" is the product's own name and GitHub is a product name; both stay as they are."
+  },
+  "page.merge.note.githubWait": {
+    "text": "Approved and tested. GitHub held the merge back for a moment.",
+    "description": "The line under the Merging card of a change's page when GitHub held the merge back for a moment (it was busy, or refused it for a reason nobody has to act on). \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.note.failing": {
+    "text": "GitHub's required checks failed again after Homeroom brought the change up to date with main. Its author has to fix them, and it merges once they pass.",
+    "description": "The line under the Merging card of a change's page when GitHub's own required checks failed again after Homeroom brought the change up to date with main. \"GitHub\" is a product name and \"main\" is the name of the project's main line of code; both stay as they are. \"Its author\" is the person who made the change."
   },
   "page.testing.figure.skipped": {
     "text": "Not tested",

@@ -7861,6 +7861,9 @@ const AppView = {
       status: statusState && statusState.label ? statusState : null,
       votes: AppView._changeVotesView(item, card),
       testing: AppView._changeTestingView(item),
+      // #6563: the merge itself, as a third card under Votes and Tested. Null
+      // unless GitHub is holding the merge or it is under way.
+      merge: AppView._changeMergeView(item),
       shots: AppView._changeShotsView(kind, item),
       thanks: !AppView.readOnly && AppView._kudosOffered(item) && !['active', 'paused'].includes(item.status),
       // Its code did not come across from GitHub (_codeMissing): the page
@@ -7874,6 +7877,63 @@ const AppView = {
       // change has (_stackedOn): said in a notice above Votes and Testing,
       // with a door to the change it waits for.
       ...AppView._stackedView(kind, item),
+    };
+  },
+
+  // #6563: the merge step, a third card under Votes and Tested, while an
+  // approved change's merge is held by GitHub or is under way. It names what
+  // the merge waits on (GitHub's own required checks, a second set from
+  // Homeroom's), and carries the times the card counts (`wait`: the last try,
+  // the next one and the first held try). Once merged it says nothing and the
+  // page reads as before.
+  _changeMergeView(item) {
+    if (!item) return null;
+    const reasons = item.integration && Array.isArray(item.integration.blockReasons)
+      ? item.integration.blockReasons : [];
+    const moving = [{ weight: 1, pct: 60, state: 'moving' }];
+    if (item.status === 'merging') {
+      return {
+        name: PlatformI18n.t('changes:page.merge.name'),
+        figure: PlatformI18n.t('changes:page.merge.figure.merging'),
+        tone: 'muted', done: false, segments: moving,
+        label: PlatformI18n.t('changes:page.merge.label.merging'),
+        note: [], wait: null,
+      };
+    }
+    if (item.status !== 'promoted') return null;
+    const failing = reasons.indexOf('github_checks_failing') !== -1;
+    const waiting = reasons.indexOf('github_checks') !== -1;
+    const busy = reasons.indexOf('github_busy') !== -1 || reasons.indexOf('github_refused') !== -1;
+    if (!failing && !waiting && !busy) return null;
+    const integration = item.integration || {};
+    const wait = {
+      triedAt: integration.heldAt || null,
+      retryAt: integration.heldUntil || null,
+      since: integration.heldSince || null,
+    };
+    if (failing) {
+      return {
+        name: PlatformI18n.t('changes:page.merge.name'),
+        figure: PlatformI18n.t('changes:page.merge.figure.failing'),
+        tone: 'bad', done: false,
+        segments: [{ weight: 1, pct: 100, state: 'bad' }],
+        label: PlatformI18n.t('changes:page.merge.label.failing'),
+        note: [PlatformI18n.t('changes:page.merge.note.failing')],
+      };
+    }
+    return {
+      name: PlatformI18n.t('changes:page.merge.name'),
+      figure: PlatformI18n.t(waiting
+        ? 'changes:page.merge.figure.githubChecks'
+        : 'changes:page.merge.figure.githubWait'),
+      tone: 'muted', done: false, segments: moving,
+      label: PlatformI18n.t(waiting
+        ? 'changes:page.merge.label.githubChecks'
+        : 'changes:page.merge.label.githubWait'),
+      note: [PlatformI18n.t(waiting
+        ? 'changes:page.merge.note.githubChecks'
+        : 'changes:page.merge.note.githubWait')],
+      wait,
     };
   },
 
@@ -8042,13 +8102,8 @@ const AppView = {
     // #6531: a conflicting promoted change says what its conflict means for
     // the vote, in the same words as the Homeroom bot tab's row. A conflict
     // only its author can move keeps the integration line's own wording.
-    // #6546: approved, and GitHub's required checks are what hold its merge.
-    {
-      const held = item.status === 'promoted' && item.integration && Array.isArray(item.integration.blockReasons)
-        ? item.integration.blockReasons : [];
-      if (held.indexOf('github_checks') !== -1) note.push(PlatformI18n.t('changes:page.votes.note.githubChecks'));
-      else if (held.indexOf('github_checks_failing') !== -1) note.push(PlatformI18n.t('changes:page.votes.note.githubChecksFailing'));
-    }
+    // #6563: what GitHub's required checks mean for the merge moved to the
+    // Merging card (AppView._changeMergeView), so it is said once.
     if (!updateComing && item.status === 'promoted' && item.integration_merges_clean === false) {
       const blocked = item.integration && Array.isArray(item.integration.blockReasons) ? item.integration.blockReasons : [];
       const authors = ['unresolvable', 'fork_head', 'checks_failing', 'checks_error'];
@@ -8572,9 +8627,17 @@ const AppView = {
     }
     if (cs === 'passing') {
       const superseded = AppView._freshnessOf(item).baseVerdict === 'superseded';
+      // #6563: while GitHub's own required checks are what hold the merge,
+      // a second set is still running, so the card says whose checks passed
+      // instead of claiming all of them did.
+      const github = item.integration && Array.isArray(item.integration.blockReasons)
+        ? item.integration.blockReasons : [];
+      const homeroomOnly = github.indexOf('github_checks') !== -1 || github.indexOf('github_checks_failing') !== -1;
       return {
-        name: PlatformI18n.t('changes:page.testing.name.tested'), figure: PlatformI18n.t('changes:page.testing.figure.passed'), tone: 'done', done: true, segments: full('done'),
-        label: PlatformI18n.t('changes:page.testing.label.passed'),
+        name: PlatformI18n.t('changes:page.testing.name.tested'),
+        figure: PlatformI18n.t(homeroomOnly ? 'changes:page.testing.figure.passedHomeroom' : 'changes:page.testing.figure.passed'),
+        tone: 'done', done: true, segments: full('done'),
+        label: PlatformI18n.t(homeroomOnly ? 'changes:page.testing.label.passedHomeroom' : 'changes:page.testing.label.passed'),
         note: [cost(), superseded ? PlatformI18n.t('changes:page.testing.note.olderMain') : null].filter(Boolean), actions,
       };
     }

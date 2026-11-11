@@ -282,9 +282,14 @@
       "schemaSha256": "a427050558fdb8b26d311e317df9886d88b058ef12ae22b5c470acbbb246d059"
     },
     {
+      "id": "feedback-reports-thread",
+      "sha256": "e9d2b9b8a140ceac2577b17f5940b7fec9d96f4aec3f99c5bda3b36ca5dba6e5",
+      "schemaSha256": "8a7b5f32fc635f5c938941cc92dd1b66d5d167b88529e1ae688a5316f9f2c7cc"
+    },
+    {
       "id": "change-close-reason",
       "sha256": "eb3c93d285e4d76faa45b681de0b5851db785aba364c7df3d848bd6e49f8aaef",
-      "schemaSha256": "1984fd64dd9d5208bd78f18ea63875ed1577ee4ecca7da9d166f26b88e6adea8"
+      "schemaSha256": "1e7a71ef65e65dabadd62bde468ea14fd304f728d47c53382590f75054f7866e"
     }
   ]
 }

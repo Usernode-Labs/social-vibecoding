@@ -200,6 +200,13 @@ test('the gate pair paints plain and decides in the browser whether it sticks', 
   assert.doesNotMatch(plain, /dev-change-pair-mark|data-stick/);
   assert.match(plain, /^<div class="dev-change-pair">/);
   assert.ok(plain.indexOf('data-change-gate="votes"') < plain.indexOf('data-change-gate="testing"'), 'Votes leads');
+  // #6563: the Merging card is a third card, and only while a merge is held.
+  assert.doesNotMatch(plain, /data-change-gate="merge"/);
+  const withMerge = renderComponent('frontend/src/features/dev-board/topic/change-head.tsx', 'ChangeGates', {
+    id: 7, card: {}, v: { ...v, merge: gate('Merging', "Waiting on GitHub's checks", 'muted') },
+  });
+  const at = (side) => withMerge.indexOf(`data-change-gate="${side}"`);
+  assert.ok(at('merge') > at('testing') && at('testing') > at('votes'), 'Merging comes after Votes and Tested');
 });
 
 test('group-chat.js carries the change language from the mount to the shell and the transcript', () => {

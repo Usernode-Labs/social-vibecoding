@@ -204,7 +204,10 @@ export interface Data {
   // stays held until the head or main moves.
   // `checks` (#6546): the refusal was GitHub's required status checks, still
   // running ('pending') or failed ('failing').
-  refused?: { head: string | null; main: string | null; kind: string; at?: string; retryAt?: string | null; checks?: GithubChecks | null } | null;
+  // `since` (#6563): when the queue FIRST met this hold on this head, kept
+  // across the repeat refusals of one head (`at` is the last try), so the
+  // page can say how long it has waited and call an unusually long one out.
+  refused?: { head: string | null; main: string | null; kind: string; at?: string; retryAt?: string | null; checks?: GithubChecks | null; since?: string } | null;
   // #6546: GitHub's required checks failed on this approved change and it was
   // brought up to date with main so they run again on today's main: once per
   // approval epoch (a clean sync keeps the votes, so the epoch stays), so a
@@ -1147,6 +1150,14 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
       const retryAt = kind === 'github_busy' || (kind === 'blocked' && !r?.codeMissing)
         ? new Date(ctx.now.getTime() + REFUSAL_RETRY_MS).toISOString()
         : null;
+      // #6563: how long this head has been held. A repeat refusal of the same
+      // head keeps the first try; a new head, a cleared record or a refusal
+      // that is not retried starts the clock again.
+      const since = retryAt
+        ? (s.data.refused && s.data.refused.head === f.row!.head && s.data.refused.retryAt
+          ? (s.data.refused.since || s.data.refused.at || ctx.now.toISOString())
+          : ctx.now.toISOString())
+        : undefined;
       // Failed once more after Homeroom already brought this approval's head
       // up to date with main: its own, not a run against an older main.
       const failedAgain = checks === 'failing' && githubChecksTried(s.data, f.row!);
@@ -1161,6 +1172,7 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
         push: { mergeFailed: true, resolving: kind === 'conflict' },
         refused: kind === 'base_moved' ? null : {
           head: f.row!.head, main: f.row!.integrationMain, kind, at: ctx.now.toISOString(), retryAt, checks,
+          ...(since ? { since } : {}),
         },
       });
       return checks === 'failing' ? githubChecksSyncNow(out, f, ctx) : out;

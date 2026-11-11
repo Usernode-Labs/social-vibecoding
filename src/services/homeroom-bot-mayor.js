@@ -682,8 +682,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  in plain words, and say which file you read. Never quote secrets, and say plainly when the code you read does',
     '  not answer the question.',
     '- Tell the Homeroom team about a problem they hit that nothing above fixes, when they ask you to or say yes',
-    '  when you offer (report_problem). It is filed as a report from them where the team tracks problems, which',
-    '  anyone can read; the last few messages of this chat go only to the team, privately. Say so.',
+    '  when you offer (report_problem). It is filed as a request from them on Homeroom\'s requests board, where',
+    '  anyone can read it; the last few messages of this chat go only to the team, privately. Say so, and give the',
+    '  number the result returns: Filed as #N on Homeroom\'s requests board. If the same problem was already',
+    '  reported in this thread, nothing new is filed and the result gives that report: say Already filed as #N.',
     // Homeroom bot parity (P1-P9): what the thread tools add this turn (homeroom-bot-thread-tools/).
     ...extra,
     'Finish every turn by calling reply exactly once: plain text (short unless they asked for more), cards for up to 3 requests,',
@@ -1053,7 +1055,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'report_problem',
-      description: 'Tell the Homeroom team about a problem they hit with Homeroom or with you that nothing else you can do fixes (something broken, work stuck, a proposal that should not be there). Call it only when they ask you to tell the team, or say yes when you offer. It is filed as a report from them where the team tracks problems, which anyone can read: the summary, the details, the request it is about and your records of your work on it are public, and a private project is not named there. The last few messages of this chat go only to the team, privately: say so. Keep anything private out of the summary and details (a private project\'s name, anything about other people). One person can send only a few a day this way. The result says it was sent, or why not. One per turn.',
+      description: 'Tell the Homeroom team about a problem they hit with Homeroom or with you that nothing else you can do fixes (something broken, work stuck, a proposal that should not be there). Call it only when they ask you to tell the team, or say yes when you offer. It is filed as a request from them on Homeroom\'s requests board, where anyone can read it: the summary, the details, the request it is about and your records of your work on it are public, and a private project is not named there. The last few messages of this chat go only to the team, privately. Say so, and give the number the result returns: Filed as #N on Homeroom\'s requests board. If the same problem was already reported in this thread, nothing new is filed and the result gives that report: say Already filed as #N. Keep anything private out of the summary and details (a private project\'s name, anything about other people). One person can send only a few a day this way. The result says it was sent, or why not. One per turn.',
       parameters: {
         type: 'object',
         properties: {
@@ -1813,16 +1815,19 @@ const CLAIMS = Object.freeze([
   },
   {
     kind: 'withdrew',
-    // "I withdrew / closed the duplicate proposal", "it has been withdrawn".
-    re: /\bI(?:'ve| have)?(?: just| now| already)? (?:withdrawn|withdrew|closed|cancell?ed|taken down|took down) (?:the |your |its |that |this |my |both |one of the |a )?(?:duplicate |extra |second |other |old |older )?(?:proposals?|duplicates?|PRs?|pull requests?)\b|\b(?:has|have) been withdrawn\b/i,
+    // "I withdrew / closed the duplicate proposal", "the proposal has been
+    // withdrawn". #6566: a bare passive is about anything ("the window has
+    // been withdrawn"); only one that names a proposal, PR or #N counts.
+    re: /\bI(?:'ve| have)?(?: just| now| already)? (?:withdrawn|withdrew|closed|cancell?ed|taken down|took down) (?:the |your |its |that |this |my |both |one of the |a )?(?:duplicate |extra |second |other |old |older )?(?:proposals?|duplicates?|PRs?|pull requests?)\b|\b(?:(?:the|your|this|that|my|its) )?(?:duplicate )?(?:proposals?|PRs?|pull requests?)\s+(?:(?:has|have) been|was) withdrawn\b|\b#\d+\s+(?:(?:has|have) been|was) withdrawn\b/i,
     backed: (ctx) => !!ctx.withdrew,
     said: 'says a proposal was withdrawn',
     instead: 'I haven\'t withdrawn anything.',
   },
   {
     kind: 'moved',
-    // #4239: a request is moved only by its Move it to Homeroom tap.
-    re: /\bI(?:'ve| have)?(?: just| now| already)? moved (?:it|this|that|the request|your request|#\d+)\b|\b(?:has|have) been moved\b/i,
+    // #4239: a request is moved only by its Move it to Homeroom tap. #6566:
+    // a passive sentence counts only when it names what was moved.
+    re: /\bI(?:'ve| have)?(?: just| now| already)? moved (?:it|this|that|the request|your request|#\d+)\b|\b(?:(?:the|your|this|that) request(?: #\d+)?|#\d+)\s+(?:(?:has|have) been|was) moved\b/i,
     backed: () => false,
     said: 'says a request was moved',
     instead: 'I haven\'t moved it yet.',
@@ -1830,8 +1835,10 @@ const CLAIMS = Object.freeze([
   {
     kind: 'closed_request',
     // #4525: a request closes only when its group votes for it, so the bot
-    // never closes one: an offer only opens the vote.
-    re: /\bI(?:'ve| have)?(?: just| now| already)? closed (?:it|this|that|the request|your request|#\d+)\b|\b(?:has|have) been closed\b/i,
+    // never closes one: an offer only opens the vote. #6566: "after the app
+    // has been closed for a while" is not a claim; a passive sentence counts
+    // only when it names a request or #N.
+    re: /\bI(?:'ve| have)?(?: just| now| already)? closed (?:it|this|that|the request|your request|#\d+)\b|\b(?:(?:the|your|this|that) request(?: #\d+)?|#\d+)\s+(?:(?:has|have) been|was|is (?:now )?)\s*closed\b/i,
     backed: () => false,
     said: 'says a request was closed',
     instead: 'I haven\'t closed it. Its group decides that by a vote.',
@@ -1938,6 +1945,8 @@ async function unknownRequests(pool, ctx, numbers) {
 const PROJECT_NAME_STOPWORDS = new Set([
   'main chat', 'workshop', 'discover', 'messages', 'home', 'needs you', 'hub', 'all communities', 'settings',
   'homeroom bot', 'the app',
+  // #6566: "on Homeroom's requests board" names the platform, not a project.
+  'homeroom', 'homerooms', 'homeroom s',
 ]);
 // A sentence that speaks of a draft, a request or the next one is where a
 // project's name is expected.
@@ -2047,6 +2056,18 @@ async function unknownProjects(pool, ctx, text) {
 }
 
 /**
+ * #6566: the receipt a report's own reply may carry ("Filed as #6564 on
+ * Homeroom's requests board"), accepted only for the number this turn filed.
+ * The true sentence is blanked before the claims are tested, so `filed`
+ * does not fire on it; a different number is not accepted.
+ */
+function receiptPhrases(ctx) {
+  const number = Number(ctx?.reported?.number);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  return new RegExp(`(?:Already )?[Ff]iled as #${number} on Homeroom['’]s requests board`, 'i');
+}
+
+/**
  * Pure apart from the request lookup: what `text` claims that this turn did
  * not do, as [{ kind, said }], plus { kind: 'unknown', numbers } for request
  * numbers that do not exist and { kind: 'unknown_project', names } for
@@ -2056,9 +2077,15 @@ async function claimProblems(pool, ctx, text) {
   // Read as it would be sent: a leading note is taken off first.
   const body = cleanReply(text);
   if (!body) return [];
-  const out = CLAIMS.filter((c) => c.re.test(body) && !c.backed(ctx)).map((c) => ({ kind: c.kind, said: c.said }));
+  // #6566: the report's own receipt is true, so it is not read as a claim.
+  const receipt = receiptPhrases(ctx);
+  const claimBody = receipt ? body.replace(receipt, ' ') : body;
+  const out = CLAIMS.filter((c) => c.re.test(claimBody) && !c.backed(ctx)).map((c) => ({ kind: c.kind, said: c.said }));
   try {
-    const missing = await unknownRequests(pool, ctx, requestNumbers(body));
+    // #6566: the report just filed is a real request on Homeroom's board.
+    const filed = Number(ctx?.reported?.number);
+    const numbers = requestNumbers(body).filter((n) => !(Number.isInteger(filed) && n === filed));
+    const missing = await unknownRequests(pool, ctx, numbers);
     if (missing.length) out.push({ kind: 'unknown', numbers: missing, said: `names ${missing.map((n) => `request #${n}`).join(' and ')}, which no project of theirs has` });
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not check the requests a reply names', { err: err.message });
@@ -2122,12 +2149,15 @@ const DRAFT_PROMISE_RE = /\b(?:drafts?|drafted|drafting|File it)\b|\bnext one\b|
  * sending is left. A request that does not exist is said not to, and so is a
  * project no tool returned.
  */
-function stripClaims(text, problems) {
+function stripClaims(text, problems, ctx = null) {
   if (!problems?.length) return text;
   const kinds = new Set(problems.map((p) => p.kind));
   const res = CLAIMS.filter((c) => kinds.has(c.kind));
   const unknownProjectNames = (problems.find((p) => p.kind === 'unknown_project')?.names || []).map((n) => squashWords(n)).filter(Boolean);
+  // #6566: a report's own receipt is always true, whatever else is cut.
+  const receipt = receiptPhrases(ctx);
   const keeps = (sentence) => {
+    if (receipt && receipt.test(sentence)) return true;
     if (res.some((c) => c.re.test(sentence))) return false;
     if (kinds.has('drafted') && DRAFT_PROMISE_RE.test(sentence)) return false;
     if (unknownProjectNames.length && projectMentions(sentence).some((n) => {
@@ -2136,10 +2166,36 @@ function stripClaims(text, problems) {
     })) return false;
     return true;
   };
-  const kept = String(text || '').split('\n').map((line) => line
-    .split(/(?<=[.!?])\s+/)
-    .filter(keeps)
-    .join(' ')).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  // #6566: sentences are split within a paragraph, not per line, so a
+  // sentence wrapped over two lines is dropped whole, never left as a
+  // fragment. A list line is kept as it is.
+  const sentencesOf = (paragraph) => {
+    const out = [];
+    let buf = '';
+    for (const line of paragraph.split('\n')) {
+      if (/^\s*(?:[-*]|\d+\.)\s/.test(line)) {
+        if (buf) { out.push(buf); buf = ''; }
+        out.push(line);
+        continue;
+      }
+      buf = buf ? `${buf} ${line}` : line;
+      if (/[.!?:]\s*$/.test(line)) { out.push(buf); buf = ''; }
+    }
+    if (buf) out.push(buf);
+    return out.flatMap((piece) => (/^\s*(?:[-*]|\d+\.)\s/.test(piece)
+      ? [piece] : piece.split(/(?<=[.!?])\s+/)));
+  };
+  const kept = String(text || '').split(/\n{2,}/).map((paragraph) => {
+    let out = '';
+    let wasList = false;
+    for (const piece of sentencesOf(paragraph).filter(keeps)) {
+      const isList = /^\s*(?:[-*]|\d+\.)\s/.test(piece);
+      if (!out) out = piece;
+      else out += (isList || wasList ? '\n' : ' ') + piece;
+      wasList = isList;
+    }
+    return out;
+  }).filter(Boolean).join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
   const lines = res.map((c) => c.instead);
   if (kept.replace(/[^\w]/g, '').length >= 20) lines.push(kept);
   const unknown = problems.find((p) => p.kind === 'unknown');
@@ -3928,7 +3984,10 @@ async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
   if (ctx.withdrew || ctx.reported) {
     const done = [
       ctx.withdrew ? `I withdrew the ${ctx.withdrew.projectName} proposal${ctx.withdrew.title ? ` "${ctx.withdrew.title}"` : ''}.` : '',
-      ctx.reported ? 'I sent your report to the Homeroom team.' : '',
+      // #6566: the report's own number, so it is never asked for twice.
+      ctx.reported ? (Number(ctx.reported.number) > 0
+        ? `${ctx.reported.repeat ? 'Already filed' : 'Filed'} as #${ctx.reported.number} on Homeroom's requests board.`
+        : 'I sent your report to the Homeroom team.') : '',
     ].filter(Boolean).join(' ');
     return { fallback: 'done', text: done, cards: ctx.cards.slice(0, MAX_CARDS), defer: false };
   }
@@ -4397,7 +4456,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     log.info('homeroom-bot-mayor', 'Cut what a DM reply still claimed', {
       userId: user.id, messageId: message.id, kinds: ctx.checkedProblems.map((p) => p.kind),
     });
-    text = stripClaims(text, ctx.checkedProblems);
+    text = stripClaims(text, ctx.checkedProblems, ctx);
   }
   const html = replyHtmlFor(ctx, text);
   let cards = [];
@@ -6963,11 +7022,15 @@ async function withdrawFromCard(pool, { user, sessionId, deps = {} }) {
 // ── Telling the Homeroom team (#11, WP3) ──
 
 /**
- * The project and request a report is about: the one named, else the one
- * the bot's DM last said something about. With the bot's own records of its
- * work on it: its runs' ids and its proposals'.
+ * The project and request a report is about: the one named; else the
+ * request's thread this turn is in; else the private thread's own subject
+ * (private_threads.app_id and about_kind/about_number). #6566: never the
+ * bot's last news, which named whatever project it had just talked about.
+ * With the bot's own records of its work on it: its runs' ids and its
+ * proposals'.
  */
 async function reportSubject(pool, ctx, args) {
+  const deps = ctx.deps || {};
   let app = null;
   let issueNumber = null;
   if (args.project) {
@@ -6976,18 +7039,32 @@ async function reportSubject(pool, ctx, args) {
       app = named;
       issueNumber = Number.isInteger(Number(args.number)) && Number(args.number) > 0 ? Number(args.number) : null;
     }
-  } else {
+  }
+  // A request's thread knows its project and request.
+  if (!app && deps.threadRequest) {
+    const found = await findApp(pool, deps.threadRequest.appSlug);
+    if (found && await canView(pool, found, ctx.user)) {
+      app = found;
+      const n = Number(deps.threadRequest.issueNumber);
+      issueNumber = Number.isInteger(n) && n > 0 ? n : null;
+    }
+  }
+  // Any other private thread knows what it is about, and the project it is in.
+  if (!app && deps.threadRootId) {
     const { rows } = await pool.query(
-      `SELECT app_id, issue_number FROM homeroom_bot_dm_messages
-        WHERE user_id = $1 AND app_id IS NOT NULL ORDER BY message_id DESC LIMIT 1`,
-      [ctx.user.id],
+      `SELECT app_id, about_kind, about_number FROM private_threads
+        WHERE root_message_id = $1 AND user_id = $2`,
+      [deps.threadRootId, ctx.user.id],
     );
-    if (rows[0]) {
-      const { rows: apps } = await pool.query('SELECT slug FROM apps WHERE id = $1', [rows[0].app_id]);
+    const thread = rows[0];
+    if (thread?.app_id) {
+      const { rows: apps } = await pool.query('SELECT slug FROM apps WHERE id = $1', [thread.app_id]);
       const found = apps[0] ? await findApp(pool, apps[0].slug) : null;
       if (found && await canView(pool, found, ctx.user)) {
         app = found;
-        issueNumber = Number(rows[0].issue_number) || null;
+        // A change's number is not a request's.
+        const n = Number(thread.about_number);
+        issueNumber = thread.about_kind === 'request' && Number.isInteger(n) && n > 0 ? n : null;
       }
     }
   }
@@ -7030,9 +7107,13 @@ async function recentChat(pool, ctx) {
 function aboutLines(about, { named = false } = {}) {
   const lines = [];
   if (about.app) {
-    lines.push(named || about.app.view_visibility === 'public'
-      ? `**App:** ${about.app.name || about.app.slug} (${about.app.slug})`
-      : `**App:** a private project (app id ${about.app.id})`);
+    // #6566: Homeroom's own project is never named by a slug or hidden as
+    // private: it is "Homeroom" in both copies.
+    lines.push(about.app.self_hosted
+      ? '**App:** Homeroom'
+      : named || about.app.view_visibility === 'public'
+        ? `**App:** ${about.app.name || about.app.slug} (${about.app.slug})`
+        : `**App:** a private project (app id ${about.app.id})`);
   }
   if (about.issueNumber) lines.push(`**Request:** #${about.issueNumber}`);
   if (about.runs?.length) lines.push(`**Homeroom bot runs:** ${about.runs.join(', ')}`);
@@ -7086,6 +7167,32 @@ async function reportProblem(pool, ctx, args) {
     return { ok: false, error: 'Say what went wrong: a short sentence, and what happened. Nothing was sent.' };
   }
   const feedback = deps.feedbackSvc || require('./feedback-reports');
+  const moveSvc = require('./homeroom-bot-move');
+  const threadRootId = deps.threadRequest?.rootId || deps.threadRootId || null;
+  const platform = await moveSvc.platformApp(pool, deps).catch(() => null);
+  const linkFor = (number) => (platform && Number.isInteger(Number(number)) && Number(number) > 0
+    ? moveSvc.requestLink(domainOf(deps), platform.slug, Number(number)) : null);
+  // #6566: asked again in the same thread about the same problem (a link,
+  // say), it is the report already filed that answers, not a second one. A
+  // repeat files nothing, so it is answered before the daily limit.
+  const recent = typeof feedback.findRecentReport === 'function'
+    ? await feedback.findRecentReport(pool, {
+      userId: user.id, source: REPORT_SOURCE, conversationId: ctx.conversationId, threadRootId, title: summary, hours: 6,
+    }).catch(() => null)
+    : null;
+  if (recent && Number(recent.number) > 0) {
+    const number = Number(recent.number);
+    const link = linkFor(number);
+    ctx.reported = { title: summary, number, link, repeat: true };
+    if (platform) {
+      ctx.appIds.add(Number(platform.id));
+      ctx.cards.push({ type: 'issue', appId: Number(platform.id), issueNumber: number });
+    }
+    return {
+      ok: true, repeat: true, number, link, title: summary,
+      sent: `Already filed as #${number} on Homeroom's requests board. Nothing new was filed.`,
+    };
+  }
   const sent = await feedback.recentReports(pool, { userId: user.id, source: REPORT_SOURCE, hours: 24 });
   if (sent >= MAX_REPORTS_PER_DAY) {
     return {
@@ -7102,6 +7209,8 @@ async function reportProblem(pool, ctx, args) {
     description: reportReceipt({ details, about, chat: await recentChat(pool, ctx) }),
     source: REPORT_SOURCE,
     via: 'through Homeroom bot',
+    conversationId: ctx.conversationId,
+    threadRootId,
   });
   // Filed once per answer: a retry of the answer's work after a restart
   // (deps.once, its checkpoint) gets the report it filed, not a second one.
@@ -7109,11 +7218,22 @@ async function reportProblem(pool, ctx, args) {
   if (!filed.ok) {
     return { ok: false, error: 'It could not be sent just now. Nothing was sent. They can use Send feedback instead.' };
   }
-  ctx.reported = { title: summary, issueNumber: filed.issueNumber };
+  const number = Number(filed.issueNumber) > 0 ? Number(filed.issueNumber) : null;
+  const link = linkFor(number) || filed.url || null;
+  ctx.reported = { title: summary, number, link };
+  // #6566: the card under the reply opens the report on Homeroom's board.
+  if (platform && number) {
+    ctx.appIds.add(Number(platform.id));
+    ctx.cards.push({ type: 'issue', appId: Number(platform.id), issueNumber: number });
+  }
   return {
     ok: true,
-    sent: 'To the Homeroom team, as a report from them where the team tracks problems, which anyone can read. The last few messages of this chat went only to the team, privately.',
+    number,
+    link,
     title: summary,
+    sent: number
+      ? `Filed as #${number} on Homeroom's requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.`
+      : 'To the Homeroom team, as a report from them on Homeroom\'s requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.',
   };
 }
 

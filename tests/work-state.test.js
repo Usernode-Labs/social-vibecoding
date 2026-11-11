@@ -6,12 +6,33 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const ws = require('../src/services/work-state');
+const ROOT = path.join(__dirname, '..');
 
 const NOW = new Date('2026-11-05T12:00:00Z');
 const ago = (min) => new Date(NOW.getTime() - min * 60 * 1000).toISOString();
 const base = { app_id: 1, issue_number: 7, mode: 'live', run_at: ago(30), request_closed: false };
 const derive = (extra) => ws.derive({ ...base, ...extra }, { now: NOW });
+
+// #6563: an approved, tested change whose merge GitHub is holding is not
+// going live yet. Its stage word says so, and its second line says on what.
+test('an approved change whose merge GitHub holds says Waiting to merge', () => {
+  const held = { stage: 'going_live', line: { code: 'github_checks' } };
+  assert.equal(ws.stageSays(held), 'Waiting to merge');
+  assert.equal(ws.stageSays({ stage: 'going_live', line: { code: 'github_wait' } }), 'Waiting to merge');
+  assert.equal(ws.lineSays(held), "Waiting for GitHub's checks");
+  assert.equal(ws.lineSays({ stage: 'going_live', line: { code: 'github_wait' } }), 'Waiting on GitHub');
+  assert.equal(ws.stageSays({ stage: 'going_live' }), 'Going live', 'a plain merge keeps its word');
+  assert.equal(ws.WORDS['work.stage.waitingToMerge'], 'Waiting to merge');
+  const core = JSON.parse(fs.readFileSync(path.join(ROOT, 'frontend/locales/en/core.json'), 'utf8'));
+  assert.equal(core['work.stage.waitingToMerge'].text, ws.WORDS['work.stage.waitingToMerge'],
+    'the server and the browser say the same');
+  const ts = fs.readFileSync(path.join(ROOT, 'frontend/src/lib/work-state.ts'), 'utf8');
+  assert.match(ts, /stage === 'going_live' && \(code === 'github_checks' \|\| code === 'github_wait'\)/);
+  assert.match(ts, /core:work\.stage\.waitingToMerge/);
+});
 
 test('the ten stages, and nothing else, are what a request can be in', () => {
   assert.deepEqual(ws.STAGES, ['reading', 'planning', 'waiting_for_you', 'building', 'checking',

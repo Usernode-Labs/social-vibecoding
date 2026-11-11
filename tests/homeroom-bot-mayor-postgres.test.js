@@ -2345,7 +2345,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       summary: 'A build that never finishes', details: 'My request has been building for hours.', project: 'secret-diary', number: 2,
     });
     assert.equal(hidden.result.ok, true);
-    assert.match(hidden.result.sent, /which anyone can read\. The last few messages of this chat went only to the team, privately\.$/);
+    assert.match(hidden.result.sent, /on Homeroom's requests board, where anyone can read it; the last few messages of this chat went only to the team, privately\.$/);
     const privateBody = posted.at(-1).body;
     assert.match(privateBody, new RegExp(`\\*\\*App:\\*\\* a private project \\(app id ${diary.id}\\)\\n\\*\\*Request:\\*\\* #2\\n`));
     assert.match(privateBody, /My request has been building for hours\./);
@@ -2616,6 +2616,97 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       'SELECT id FROM issue_screenshots WHERE issue_number = $1', [once.issueNumber],
     );
     assert.equal(copies.length, 1, 'one copy for the one filing');
+  });
+
+  await t.test('#6566: a report names its thread\'s project, never the bot\'s last news, and a repeat files nothing', async (tt) => {
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
+    // Homeroom's own project, so the reply can carry its link and card.
+    const { rows: [platform] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, repo_url, view_visibility, collab_visibility, self_hosted)
+       VALUES ('Homeroom', 'usernode-2d5619', 'running', $1, 'https://github.com/usernode-labs/social-vibecoding', 'public', 'public', TRUE)
+       ON CONFLICT (slug) DO UPDATE SET self_hosted = TRUE
+       RETURNING id, slug, name, self_hosted, view_visibility`,
+      [ada.id],
+    );
+    const config = { ...CONFIG, platformRepoUrl: 'https://github.com/usernode-labs/social-vibecoding' };
+    const root = await say('a problem on my phone');
+    // The bot's newest news is about another project's request: never the subject.
+    const news = await say('News about Seed swap request #99');
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind)
+       VALUES ($1, $2, $3, $4, 99, 'progress')`,
+      [news.id, ada.id, opened.conversationId, seeds.id],
+    );
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, about_kind, about_number)
+       VALUES ($1, $2, $3, $4, NULL, NULL)`,
+      [ada.id, opened.conversationId, root.id, platform.id],
+    );
+    const threadCtx = (rootId) => ({
+      user: ada, deps: { domain: 'app.test', threadRootId: rootId }, config,
+      conversationId: opened.conversationId, appIds: new Set(), cards: [],
+    });
+    const before = created.length;
+    const args = { summary: 'Blank screen after the app was closed', details: 'It stays blank after a while.' };
+    const firstCtx = threadCtx(root.id);
+    const first = await mayor.reportProblem(pool, firstCtx, args);
+    assert.equal(first.ok, true);
+    assert.equal(first.repeat, undefined);
+    assert.equal(created.length - before, 1, 'filed once');
+    const body = created.at(-1).body;
+    assert.match(body, /\*\*App:\*\* Homeroom\n/, 'the thread about Homeroom names Homeroom');
+    assert.doesNotMatch(body, /Seed swap|seed-swap|#99/, 'never the bot\'s last news');
+    assert.equal(first.number, 40 + before + 1);
+    assert.equal(first.link, `https://app.test/#app/${platform.slug}/dev/issues/${first.number}`);
+    assert.deepEqual(firstCtx.cards, [{ type: 'issue', appId: platform.id, issueNumber: first.number }], 'a card opens the report');
+
+    // The same problem again in the same thread: the first report, nothing filed.
+    const again = await mayor.reportProblem(pool, threadCtx(root.id), args);
+    assert.equal(again.repeat, true);
+    assert.equal(again.number, first.number);
+    assert.equal(again.link, first.link);
+    assert.equal(created.length - before, 1, 'nothing new was filed');
+
+    // A different problem, and the same problem in another thread, each file.
+    const other = await mayor.reportProblem(pool, threadCtx(root.id), { summary: 'Messages do not send', details: 'The send button does nothing.' });
+    assert.equal(other.repeat, undefined);
+    assert.equal(created.length - before, 2, 'a different problem is its own report');
+    const root2 = await say('another problem');
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, about_kind, about_number)
+       VALUES ($1, $2, $3, $4, NULL, NULL)`,
+      [ada.id, opened.conversationId, root2.id, platform.id],
+    );
+    const elsewhere = await mayor.reportProblem(pool, threadCtx(root2.id), args);
+    assert.equal(elsewhere.repeat, undefined);
+    assert.equal(created.length - before, 3, 'another thread is another report');
+
+    // The next threads file new reports: clear the day's count so the limit
+    // does not answer for them.
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
+
+    // A thread about request #3 of Note board names it and #3.
+    const requestRoot = await say('a problem with my notes');
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, about_kind, about_number)
+       VALUES ($1, $2, $3, $4, 'request', 3)`,
+      [ada.id, opened.conversationId, requestRoot.id, notes.id],
+    );
+    await mayor.reportProblem(pool, threadCtx(requestRoot.id), { summary: 'Notes list is empty', details: 'The list shows nothing.' });
+    assert.match(created.at(-1).body, /\*\*App:\*\* Note board \(note-board\)\n\*\*Request:\*\* #3\n/);
+
+    // A thread about a change names its project and leaves the request out.
+    const changeRoot = await say('a problem with a change');
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, about_kind, about_number)
+       VALUES ($1, $2, $3, $4, 'change', 3)`,
+      [ada.id, opened.conversationId, changeRoot.id, notes.id],
+    );
+    await mayor.reportProblem(pool, threadCtx(changeRoot.id), { summary: 'Change preview will not open', details: 'The preview stays blank.' });
+    const changeBody = created.at(-1).body;
+    assert.match(changeBody, /\*\*App:\*\* Note board \(note-board\)/);
+    assert.doesNotMatch(changeBody, /\*\*Request:\*\*/, 'a change number is not a request\'s');
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
   });
 
 });

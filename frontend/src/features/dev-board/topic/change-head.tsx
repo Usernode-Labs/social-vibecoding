@@ -57,7 +57,7 @@ import { askToFit, upstreamAction } from '../../versions/upstream';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
-import type { ChangeGateView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
+import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { ThreadItems, pageSlug } from './thread-items';
@@ -249,7 +249,7 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
  * turn ends it reads "Fixing", with a door into that conversation.
  */
 export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
-  which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; closes?: ClosesRequest[];
+  which: 'votes' | 'testing' | 'merge'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; closes?: ClosesRequest[];
 }): ReactNode {
   const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
@@ -375,6 +375,66 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
       ) : null}
     </div>
   );
+}
+
+/** #6563: how long a held merge may wait before the card calls it out. */
+export const MERGE_WAIT_LONG_MS = 30 * 60 * 1000;
+/** #6563: how often the times under the Merging card are worded again. */
+export const MERGE_TICK_MS = 30 * 1000;
+
+const minutesBetween = (fromIso: string | null, toMs: number): number | null => {
+  if (!fromIso) return null;
+  const at = Date.parse(fromIso);
+  if (!Number.isFinite(at)) return null;
+  return Math.floor((toMs - at) / 60000);
+};
+
+/**
+ * #6563: the merge step, under Votes and Tested, while GitHub holds an
+ * approved change's merge or it is under way. It reuses GateCard: the same
+ * card, bar and grey line. Its one job is to say what the merge still waits
+ * on, so it carries the last try and the next one, counted from the viewer's
+ * own clock (a timer every MERGE_TICK_MS, started only in an effect so the
+ * first render matches what the view holds). A wait of MERGE_WAIT_LONG_MS or
+ * more turns amber and says how long and what to do; GitHub's checks failing
+ * again is red, with no times and no button.
+ */
+export function MergeCard({ g, id }: { g: ChangeMergeView; id: number | null }): ReactNode {
+  const t = useMessages('project');
+  const wait = g.wait || null;
+  const held = !!wait;
+  const [, setTick] = useState(0);
+  const now = Date.now();
+  useEffect(() => {
+    if (!held) return undefined;
+    const timer = window.setInterval(() => setTick((n) => n + 1), MERGE_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [held]);
+  const triedMin = minutesBetween(wait?.triedAt || null, now);
+  const retryAt = wait?.retryAt ? Date.parse(wait.retryAt) : NaN;
+  // A retry time that is missing or already past reads "Trying again now."
+  const nextMin = Number.isFinite(retryAt) && retryAt > now ? Math.max(1, Math.round((retryAt - now) / 60000)) : null;
+  const waitedMin = minutesBetween(wait?.since || null, now);
+  const long = wait?.since ? waitedMin != null && waitedMin * 60000 >= MERGE_WAIT_LONG_MS : false;
+  const note = [...g.note];
+  if (long) note.push(t('project:topic.change.gate.merge.long', { minutes: waitedMin ?? 0 }));
+  if (held && wait?.triedAt) {
+    note.push(triedMin == null || triedMin < 1
+      ? t('project:topic.change.gate.merge.triedJustNow')
+      : t(triedMin === 1 ? 'project:topic.change.gate.merge.tried_one' : 'project:topic.change.gate.merge.tried_other', { count: triedMin }));
+  }
+  if (held) {
+    note.push(nextMin == null
+      ? t('project:topic.change.gate.merge.nextNow')
+      : t(nextMin === 1 ? 'project:topic.change.gate.merge.next_one' : 'project:topic.change.gate.merge.next_other', { count: nextMin }));
+  }
+  const shown: ChangeGateView = {
+    ...g,
+    figure: long ? t('project:topic.change.gate.merge.longFigure') : g.figure,
+    tone: long ? 'warn' : g.tone,
+    note,
+  };
+  return <GateCard which="merge" g={shown} action={null} id={id} />;
 }
 
 /**
@@ -577,7 +637,7 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
     if (!el) return;
     if (!stuck) { full.current = el.offsetHeight; setGive(0); return; }
     setGive(Math.max(0, full.current - el.offsetHeight));
-  }, [stuck, v.votes, v.testing, stick]);
+  }, [stuck, v.votes, v.testing, v.merge, stick]);
   return (
     <>
       {stick ? <span ref={mark} className="dev-change-pair-mark" aria-hidden="true" /> : null}
@@ -590,6 +650,8 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
       >
         <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} closes={closes} />
         <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix || stopped ? testingActions : null} id={id} />
+        {/* #6563: the merge itself, while GitHub holds it or it is under way. */}
+        {v.merge ? <MergeCard g={v.merge} id={id} /> : null}
       </div>
     </>
   );

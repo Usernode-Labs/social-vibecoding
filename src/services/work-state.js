@@ -472,6 +472,7 @@ const WORDS = Object.freeze({
   'work.stage.syncing': 'Syncing with main',
   'work.stage.upForVote': 'Up for a vote',
   'work.stage.goingLive': 'Going live',
+  'work.stage.waitingToMerge': 'Waiting to merge',
   'work.stage.live': 'Live',
   'work.stage.stopped': 'Stopped',
   'work.stage.closed': 'Closed',
@@ -541,6 +542,9 @@ function stageSays(item, { yours = true } = {}) {
   // #6531: a conflicting change the lane is catching up says so in the stage
   // word itself ("Syncing with main", not "Checking"), and carries no line.
   if (item.stage === 'checking' && code === 'syncing') return fill('work.stage.syncing');
+  // #6563: an approved change whose merge GitHub holds is not going live yet;
+  // its word says so, and its second line says on what.
+  if (item.stage === 'going_live' && (code === 'github_checks' || code === 'github_wait')) return fill('work.stage.waitingToMerge');
   if (item.stage === 'reading' && NOT_STARTED.has(code)) return fill('work.stage.notStarted');
   if (item.stage === 'building' && READY.has(code)) return fill('work.stage.readyToBuild');
   return fill(`work.stage.${camel(item.stage)}`) || '';
