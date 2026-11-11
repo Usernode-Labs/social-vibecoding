@@ -27215,6 +27215,12 @@ html[data-skin] #ai-screen[data-frame-list] > .fr-pane { container: fr-botlist /
   html[data-skin] body:has(#ai-screen[data-frame-list]:not(.hidden)) .side-panel-ai-close { width: 36px; height: 36px; border-radius: 50%; background: var(--fr-surface); color: var(--fr-ink); box-shadow: inset 0 0 0 1px var(--fr-line); }
 }
 
+/* The × and the ⋯ of a private thread's head and of New thread's are the
+   same round buttons as Main Chat's and a request's (s12, s13): they were
+   the look's disc with no edge, bare on a pane of the same surface. Three
+   weights (the id), to outweigh each look's own disc. */
+html[data-skin] #ai-main-pane .messages-thread-header .messages-thread-action { background: var(--fr-surface); box-shadow: inset 0 0 0 1px var(--fr-line); }
+
 /* Version 2 (s13): New thread stays where the product opens it (the column;
    the whole screen on a phone) and wears the kit. Its five starts are
    single-line rows in one card (the card is worn, looks.json; the rows are
@@ -28290,6 +28296,13 @@ html[data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane { font: 15
 html[data-skin]:where(:not([data-skin="brand"])) .messages-layout:has(> [data-frame-list]) > .messages-reply-pane > .messages-thread-scroll { padding: 16px 24px; }
 html[data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane > .messages-thread-scroll > .messages-reply-count { padding: 8px 0; }
 html[data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane > .messages-thread-scroll > .messages-reply-count::after { flex: 1; background: var(--fr-line2); }
+/* The line is a sentence ("No replies yet", "3 replies"), as the standard
+   pane writes it: the day's label gives it its rule and its tone, not its
+   small capitals, and it starts at the pane's edge with the rule after it.
+   The attribute twice, to outweigh each look's own day (Workbench's and
+   Brand kit's mono). In Homeroom bot's private thread and in Messages. */
+html[data-skin][data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane > .messages-thread-scroll > .messages-reply-count { font: 500 13px/1.45 var(--fr-f); letter-spacing: normal; text-transform: none; color: var(--fr-mut); }
+html[data-skin][data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane > .messages-thread-scroll > .messages-reply-count::before { content: none; }
 html[data-skin]:where(:not([data-skin="brand"])) .messages-layout:has(> [data-frame-list]) > .messages-reply-pane { margin: 0; border-radius: 0; background: none; box-shadow: none; border-top: 0; }
 @media (min-width: 768px) {
   html[data-skin]:where(:not([data-skin="brand"])) .messages-layout:has(> [data-frame-list]) > .messages-reply-pane { border-inline-start: 1px solid var(--fr-line); }
@@ -29325,6 +29338,11 @@ html[data-skin] .fr-cart.fr-sm{width:var(--fr-cs,44px);height:var(--fr-cs,44px);
 html[data-skin] .fr-cart.fr-sm img{width:82%;height:82%}
 html[data-skin] .fr-row .fr-arr,html[data-skin]:where(:not([data-skin="brand"])) :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *) .fr-arr,html[data-skin]:where(:not([data-skin="brand"])) .rf-help-row .fr-arr,html[data-skin]:where(:not([data-skin="brand"])) .messages-object-card:is(.messages-message *) .fr-arr{width:32px;height:32px;border-radius:10px;background:var(--fr-sunk);color:var(--fr-mut);display:grid;place-items:center;flex:none}
 html[data-skin] .fr-row .fr-s .fr-bp,html[data-skin]:where(:not([data-skin="brand"])) :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *) :is(.ui-lrow-s,.ui-row-s) .fr-bp,html[data-skin]:where(:not([data-skin="brand"])) .rf-help-row .fr-s .fr-bp,html[data-skin]:where(:not([data-skin="brand"])) .messages-object-card:is(.messages-message *) .text-sm .fr-bp{display:block}
+html[data-skin] .fr-lookfold{position:relative;display:inline-flex;flex:none}
+html[data-skin] .fr-lookmenu{position:absolute;top:calc(100% + 8px);inset-inline-end:0;z-index:5;width:224px;padding:4px;border-radius:16px;background:var(--fr-solid,var(--fr-surface));box-shadow:0 0 0 1px var(--fr-line),var(--fr-sh);display:flex;flex-direction:column}
+html[data-skin] .fr-lookrow{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;padding:0 12px;border-radius:12px;font-size:15px;font-weight:550;color:var(--fr-ink);position:relative;width:100%;text-align:start}
+html[data-skin] .fr-lookrow .fr-v{color:var(--fr-mut);font-weight:500}
+html[data-skin] .fr-lookrow select{position:absolute;top:0;inset-inline-start:0;width:100%;height:100%;opacity:0}
 @media (min-width: 768px){
 html[data-skin][data-skin] .fr-p{display:none!important}
 }
