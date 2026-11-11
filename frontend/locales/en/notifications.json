@@ -9,11 +9,11 @@
   },
   "sheet.markAppRead": {
     "text": "Mark read",
-    "description": "Small button beside an app's name on the notifications sheet's Unread filter. It marks every unread notification from that app as read."
+    "description": "Small button beside a group's name on the notifications sheet's Unread filter: an app's name, or \"Across Homeroom\" for notifications that belong to no app. It marks every unread notification in that group as read."
   },
   "sheet.markAppReadLabel": {
     "text": "Mark all from {{app}} as read",
-    "description": "Accessible name of that button. {{app}} is the project's name."
+    "description": "Accessible name of that button. {{app}} is the group's name: a project's, or \"Across Homeroom\"."
   },
   "sheet.markOlder": {
     "text": "Mark everything older than a week as read",
@@ -218,42 +218,6 @@
   "sheet.tab.all": {
     "text": "All",
     "description": "Filter button at the top of the notifications sheet: shows every notification, read ones included."
-  },
-  "sheet.needsYou": {
-    "text": "Needs you",
-    "description": "Small label over the project groups on the notifications sheet's Unread tab that hold something waiting on the reader (an approval, a decision, a friend request), shown only when other groups follow under \"Everything else\"."
-  },
-  "sheet.everythingElse": {
-    "text": "Everything else",
-    "description": "Small label over the remaining project groups on the notifications sheet's Unread tab, under the \"Needs you\" groups: the rows that only tell the reader what happened."
-  },
-  "sheet.catchUp.needsYou_one": {
-    "text": "{{count}} needs you",
-    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab: one notification or invite is waiting on the reader. May stand alone."
-  },
-  "sheet.catchUp.needsYou_other": {
-    "text": "{{count}} need you",
-    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab: {{count}} notifications or invites are waiting on the reader. May stand alone."
-  },
-  "sheet.catchUp.needsYouAtLeast_one": {
-    "text": "At least {{count}} needs you",
-    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab, while older unread notifications have not loaded yet: one is known to wait on the reader and there may be more. May stand alone."
-  },
-  "sheet.catchUp.needsYouAtLeast_other": {
-    "text": "At least {{count}} need you",
-    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab, while older unread notifications have not loaded yet: {{count}} are known to wait on the reader and there may be more. May stand alone."
-  },
-  "sheet.catchUp.unread_one": {
-    "text": "{{count}} unread",
-    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab: how many notifications are unread in all, counting any that need the reader. May stand alone."
-  },
-  "sheet.catchUp.unread_other": {
-    "text": "{{count}} unread",
-    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab: how many notifications are unread in all, counting any that need the reader. May stand alone."
-  },
-  "sheet.catchUp.unreadCapped": {
-    "text": "99+ unread",
-    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab, when more than 99 are unread: the same capped number the bell's badge shows. May stand alone."
   },
   "sheet.today": {
     "text": "Today",
