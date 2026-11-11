@@ -368,6 +368,9 @@
           },
           {
             "to": ":is(.dev-ws-figs-head > h2,[data-topic-signals] > h2)"
+          },
+          {
+            "to": "#tc-se-detail-panel .ui-sechead"
           }
         ]
       },
@@ -400,6 +403,9 @@
           },
           {
             "to": ":is(.dev-ws-figs-card,[data-topic-signals] > .ui-glist)"
+          },
+          {
+            "to": "#tc-se-detail-panel .ui-glist"
           }
         ]
       },
@@ -423,6 +429,9 @@
           },
           {
             "to": ":is([data-make-rule-sheet],[data-make-more-sheet]) > [role=\"dialog\"] h2[id]"
+          },
+          {
+            "to": "#tc-se-detail-title"
           }
         ]
       },
@@ -477,6 +486,22 @@
             "to": ":is(#profile-week-share-send,#profile-week-share-copy)",
             "parts": {
               "quiet": "#profile-week-share-copy"
+            }
+          },
+          {
+            "to": "#tc-se-detail-panel :is(a,button):is(.bg-violet-600,.bg-zinc-100)",
+            "parts": {
+              "quiet": ".bg-zinc-100",
+              "block": "",
+              "off": ":disabled"
+            }
+          },
+          {
+            "to": "[data-first-session-made].platform-under-header button:is(.bg-violet-600,.bg-white)",
+            "parts": {
+              "quiet": ".bg-white",
+              "block": "",
+              "off": ":disabled"
             }
           }
         ]
