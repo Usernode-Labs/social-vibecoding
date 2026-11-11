@@ -460,16 +460,16 @@
     {
       "source": "src/routes/issues.js",
       "kind": "structural-template",
-      "fingerprint": "ddc8eea393265b6579ae",
+      "fingerprint": "d1370a75774417b16bfa",
       "count": 1,
-      "preview": "`SELECT id FROM chat_sessions WHERE app_id = $1 AND user_id = $2 AND created_from_issue_number = $3 AND status <> 'archived' AND NOT ${planRecordSql('')} ORDER "
+      "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.id = ANY($2::int[]) AND ${OWED_PROPOSALS_WHERE}`"
     },
     {
       "source": "src/routes/issues.js",
       "kind": "structural-template",
-      "fingerprint": "d1370a75774417b16bfa",
+      "fingerprint": "ddc8eea393265b6579ae",
       "count": 1,
-      "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.id = ANY($2::int[]) AND ${OWED_PROPOSALS_WHERE}`"
+      "preview": "`SELECT id FROM chat_sessions WHERE app_id = $1 AND user_id = $2 AND created_from_issue_number = $3 AND status <> 'archived' AND NOT ${planRecordSql('')} ORDER "
     },
     {
       "source": "src/routes/issues.js",

@@ -147,7 +147,7 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.equal(rows[4].plan, undefined);
   const index = read('frontend/src/features/ai/index.tsx');
   assert.doesNotMatch(index, /openBotRequest/, 'no row opens Main Chat at a plan');
-  assert.match(index, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}\s+openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/,
+  assert.match(index, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}\s+openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/,
     'every other row opens its own page, and opening it clears what is new');
   // Private threads: a lock on the tile, and where they stand.
   assert.deepEqual([rows[5].who, words(rows[5].sub)], ['solo', 'Only you · Not in a community yet']);
@@ -1475,7 +1475,7 @@ test('a thread opens on this page: beside the list in Main\'s place, or on its p
   assert.match(src, /const BOT_PAGE = BOT_TAB;/);
   assert.equal(loadTsx('frontend/src/features/ai/door.ts').BOT_TAB, '#homeroom-bot');
   // #6153: a request filed from a private thread opens that thread first.
-  assert.match(src, /const openThread = \(th: AiThread\) => \{(\s+\/\/[^\n]*)*\s+markThreadRead\(th\.threadId, th\.app\);(\s+\/\/[^\n]*)*\s+if \(th\.rootId\) \{\s+openPrivate\(th\.rootId\);\s+return;\s+\}\s+openPage\(th\.href, th\.app, th\.title, aboutRow\(th\)\);/,
+  assert.match(src, /const openThread = \(th: AiThread\) => \{(\s+\/\/[^\n]*)*\s+markThreadRead\(th\.threadId, th\.app, th\.rootId\);(\s+\/\/[^\n]*)*\s+if \(th\.rootId\) \{\s+openPrivate\(th\.rootId\);\s+return;\s+\}\s+openPage\(th\.href, th\.app, th\.title, aboutRow\(th\)\);/,
     'In progress, Waiting and Live this week');
   assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/, 'and Needs you');
   const { isTopicHref } = loadTsx(MODEL);
@@ -1485,7 +1485,7 @@ test('a thread opens on this page: beside the list in Main\'s place, or on its p
   assert.equal(isTopicHref('#app/garden/workshop'), false, 'a Workshop is no topic: the origin would wait for the next one');
   // A private thread is the column's: the panel gives its place back first (showAt).
   assert.match(src, /const openPrivate = \(rootId: number\) => \{\s+const next = \{ threadRootId: rootId, focusMessageId: null \};[\s\S]{0,160}showAt\(next\);\s+\};/);
-  assert.match(src, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}/);
+  assert.match(src, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}/);
   // The panel may stand beside the AI tab's page, and stays while it is up.
   const controller = read('frontend/src/features/side-panel/controller.ts');
   assert.match(controller, /const besideAi = typeof A\._isScreenVisible === 'function' && A\._isScreenVisible\('ai-screen'\);/);

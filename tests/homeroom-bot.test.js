@@ -1515,9 +1515,12 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
   assert.match(read('src/services/session-lifecycle.js'),
     /async function restSession[\s\S]*?if \(!now \|\| now\.status !== 'active'\) return false;[\s\S]*?pauseProposal\(\{ sessionId: Number\(sessionId\), reason: 'rest', from: 'active' \}\)/);
   // Defence in depth on the board's two derivations, and the global cap.
+  // #6604: a request's page reads its own row without the board, so it
+  // composes the same two derivations — headless and in_progress — for one
+  // number. All four skip synthetic authors, as the board's two do.
   const issues = read('src/routes/issues.js');
-  assert.equal((issues.match(/AND u\.is_synthetic IS NOT TRUE/g) || []).length, 2,
-    'headless and in_progress derivations both skip synthetic authors');
+  assert.equal((issues.match(/AND u\.is_synthetic IS NOT TRUE/g) || []).length, 4,
+    'headless and in_progress derivations, on the board and on a request\'s own page, all skip synthetic authors');
   // The global cap's one count leaves synthetic sessions out, and every
   // route that starts a session passes the gate that asks it (#2779; the
   // native proposal start once had a copy without the clause, 12 Oct 2026).
