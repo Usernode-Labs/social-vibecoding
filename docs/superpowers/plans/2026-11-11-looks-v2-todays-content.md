@@ -742,3 +742,62 @@ Left, and why:
   copy; the vote-kind chips on a project's page (only on `#needs`); dictation; the allowance row at its
   limit; a successful repo check (imports are paused on this copy); a real picture (this copy has no shots
   storage, so the stage's picture is its ground alone).
+
+### Fix pass, group 1 (Home, the bell, the Homeroom menu, Homeroom bot, the chrome; and the shared kit and frame)
+
+What the visual pass found (`visual/v1.md`, and the shared faults of v2 to v5) and what was done.
+
+**The chrome (`features/frame/frame-app.tsx`, kit.css, app.css "THE FRAME IN THE SHELL")**
+
+- The bar's last crumb is a box of its own (`.ci > .cw > .cn`), cut with an ellipsis before the bar's
+  buttons: a request's, a project's or a Settings section's name no longer runs under them on a phone, in any
+  look. `.crumb` itself is not restated (version 2 may only add).
+- On a phone the bar says the line the standard header has under Main Chat ("Only you can see this chat"):
+  it reads `nav-drawer/bot-drawer.ts`, the store the standard two-line title reads, as `.cs.p` under the name.
+  For an admin the look picker and the theme button leave about 85px for both lines, so the line is cut
+  ("Only you can …"); for a member the two buttons are not there.
+- The bar's first button, on a desktop, hides and shows the sidebar. It presses the standard header's own
+  `#sidebar-toggle`, and the frame reads the same fact (`navStore.railOpen`): folded, both layers are the
+  kit's `.noside` frame and the page area starts at the window's edge. There is no hover peek under a look.
+- The chrome starts under the offline strip ("Reconnecting to Homeroom"), as it did under the install strip:
+  the same five rules for `body.is-offline`, with `--browser-banner-h` so both strips together are counted.
+
+**The kit**
+
+- Mosaic's "a list is a grid of tiles" (`mosaic.css`) leaves out `.list` and any card holding `.tiles`, a
+  show-all row, or a one-line row of version 2 (`.item`, `.proj`, `.month`, `.th`, `.rk`) at any depth: Home's
+  Pinned apps and You's History tabs (rows inside a group per project) are plain cards again. A card of plain
+  rows with a lead (Communities to join, a Hub's For you) is still the mosaic.
+- The phone rule that wraps an item row is for a row outside a compact list (`.row.item:not(.list .row)`),
+  so the Workshop's "What happened" still wraps and Homeroom bot's rows are one line, as the standard list's.
+- `PageBody`/`Cols` have `tail`: the work column's last groups, put after the side column on a phone
+  (`.cols.mix`). Home's directory is its tail, so Next challenges comes before Communities to join.
+- `Bars`: a day with nothing in it is `.bcol.none`, a 2px baseline in `--faint`, not a stub of the accent.
+- A launcher tile's marks (`.at .tag`) take `--solid` where the look has one (Glass dark: a faint disc on a
+  white tile). `--solid` is allowed in version 2's rules by `tests/looks-css.test.js` beside `tc` and `bn`.
+- `scripts/build-looks-css.js` sets `--fr-page` on `<body>` for a look with a flat page (Brand kit). Make's
+  and Import's overlay paints `var(--fr-page, var(--home-wallpaper, var(--fr-ground)))`: the wallpaper's
+  washes where the look keeps the wallpaper, the flat page where it does not.
+
+**The pages**
+
+- Home in a narrow window (app.css "HOME UNDER A LOOK, IN A NARROW WINDOW"): the page is a container; under
+  912px of page it is one column in the phone's order, under 560px the tiles are four across. The kit's files
+  take no at-rules, so widths between the tour's 1440px and a phone are hand rules of the page.
+- Homeroom bot: the list's pane is a container; under 480px (beside an open chat in a 1024px window) the title
+  is the phone's 24px, the gutter 16px and a row gives up its number. The counts line breaks evenly. A project
+  tab has the project's tile. The phone's "Ask Homeroom bot" bar takes the look's opaque surface. A private
+  thread or New thread on a phone keeps a 16px gutter.
+- The Homeroom menu: a row's words take a second line before they are cut.
+
+**Left as they are, and why**
+
+- The tab bar's own see-through ground on a phone (Glass, Mosaic): the look's glass, as the tour drew it.
+- "Bot" on the phone's tab: the mockup's word. A decision for the owner.
+- Home: 12 apps folded (two rows of the kit's six, as the standard's two rows of four), a challenge row
+  without its picture and arrow (ruled: the row's line is its state), community tiles without the standard's
+  ring, the search field always on show on a phone (the mockup's page), Featured's two cards in three columns.
+- "No replies yet" in small capitals: the reply pane wears the kit's day rule (`looks.json`, the Messages
+  lane's wear, shared with Messages' own reply pane); changing it is that group's.
+- The list beside an open request scrolled past its head, and a private thread's title cut in the narrower
+  pane: the tour's 520px list and what is left for the column.

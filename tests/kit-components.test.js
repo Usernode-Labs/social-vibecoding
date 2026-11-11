@@ -105,7 +105,9 @@ test('the week\'s bars: one column a day, a picture with its words', () => {
   assert.match(out, /^<div class="fr-bars" role="img" aria-label="Time in apps, last 7 days">/);
   assert.equal((out.match(/class="fr-bcol/g) || []).length, 7);
   assert.match(out, /<div class="fr-bcol" aria-hidden="true"><span class="fr-bv">37m<\/span><i style="height:100%"><\/i><span class="fr-bl">Mon<\/span><\/div>/);
-  assert.match(out, /<span class="fr-bv"><\/span><i style="height:3%"><\/i><span class="fr-bl">Sat<\/span>/, 'an empty day keeps a sliver, so the row of days reads as one');
+  assert.match(out, /<div class="fr-bcol fr-none" aria-hidden="true"><span class="fr-bv"><\/span><i><\/i><span class="fr-bl">Sat<\/span>/, 'an empty day is a baseline (.none), not a stub of the accent');
+  assert.equal((out.match(/fr-none/g) || []).length, 1, 'only a day with nothing in it');
+  assert.ok(fs.readFileSync(path.join(ROOT, 'public/css/app.css'), 'utf8').includes('html[data-skin] .fr-bcol.fr-none i{height:2px;min-height:0;border-radius:1px;background:var(--fr-faint)}'));
   assert.match(out, /<div class="fr-bcol fr-now" aria-hidden="true">.*?<span class="fr-bl">Wed<\/span>/s);
   assert.match(html(h(K.Bars, { days: days.slice(0, 5), label: 'l' })), /style="--fr-bn:5"/, 'another count of columns is given to the grid');
 });

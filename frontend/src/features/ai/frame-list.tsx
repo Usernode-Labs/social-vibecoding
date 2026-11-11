@@ -316,6 +316,8 @@ export function AiFrameList({
             </button>
             {rail.map((app) => (
               <button key={app.slug} type="button" className={k('tab', picked.includes(app.slug) && 'on')} aria-pressed={picked.includes(app.slug)} onClick={() => toggle(app.slug)} data-ai-chip={app.slug}>
+                {/* The project's own tile before its name, as on the standard chip. */}
+                <Tile size={18} name={app.name || app.slug} src={app.icon_url} emoji={app.icon_emoji} />
                 {app.name || app.slug}{fresh(freshByApp[app.slug] || 0)}
               </button>
             ))}

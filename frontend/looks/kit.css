@@ -416,7 +416,7 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .at>span.atl{cursor:default}
 .at.dim .lead{opacity:.5}
 .at .corner.un{left:calc(50% - 36px);background:var(--ink);color:var(--surface);font-size:15px;font-weight:600;line-height:1}
-.at .tag{position:absolute;top:36px;width:20px;height:20px;border-radius:50%;background:var(--surface);color:var(--mut);display:grid;place-items:center;box-shadow:0 0 0 1px var(--line)}
+.at .tag{position:absolute;top:36px;width:20px;height:20px;border-radius:50%;background:var(--solid,var(--surface));color:var(--mut);display:grid;place-items:center;box-shadow:0 0 0 1px var(--line)}
 .at .tag.l{left:calc(50% - 32px)}.at .tag.r{left:calc(50% + 12px)}
 .at .live{position:absolute;top:-3px;left:calc(50% - 30px);width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 2px var(--surface)}
 .at .st{font-size:11px;font-weight:500;color:var(--mut)}.at .st.bad{color:var(--bad)}.at .st.wait{color:var(--wait)}
@@ -498,3 +498,5 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .phone .cols.mix>.stack>.tail{order:1}
 /* ---- v2, Homeroom bot (the fix pass): the counts under the title break evenly, never one number alone on a line ---- */
 .botpage .purpose{text-wrap:balance}
+/* ---- v2, the week's bars (the fix pass): a day with nothing in it is a baseline, as the standard chart draws it ---- */
+.bcol.none i{height:2px;min-height:0;border-radius:1px;background:var(--faint)}

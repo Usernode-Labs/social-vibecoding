@@ -53,7 +53,7 @@ test('the head: the bot\'s tile, the title with the counts, and two round button
 
 test('the projects are tabs that toggle, as the standard chips do: All, the busiest, then "N more"', () => {
   const html = render();
-  assert.deepEqual([...html.matchAll(/class="fr-tab[^"]*" aria-pressed="([a-z]+)"[^>]*>([^<]+)/g)].map((m) => [m[2], m[1]]), [['All', 'true'], ['Homeroom', 'false'], ['Game Corner', 'false']]);
+  assert.deepEqual([...html.matchAll(/class="fr-tab[^"]*" aria-pressed="([a-z]+)"[^>]*>(?:<span class="fr-tile"[^>]*>.*?<\/span>)?([^<]+)/g)].map((m) => [m[2], m[1]]), [['All', 'true'], ['Homeroom', 'false'], ['Game Corner', 'false']]);
   assert.doesNotMatch(html, /<button type="button" class="fr-tab fr-on" aria-pressed="true">All<span class="fr-n">/, 'All carries no count of what needs you');
   const fresh = render({ rows: [need('need:question:1', 'New here', corner, 402, { unread: 2 })] });
   assert.match(fresh, />All<span class="fr-n" aria-label="1 new">1<\/span>/, 'only what is new is counted on a tab (#6262)');
@@ -148,7 +148,7 @@ test('History: its kinds as small buttons inside the card, months as rows, Earli
 
 test('one project picked: the same lists narrowed to it, no project names over the rows, Main Chat still first', () => {
   const html = render({ picked: ['homeroom'] });
-  assert.match(html, /class="fr-tab fr-on" aria-pressed="true" data-ai-chip="homeroom">Homeroom</);
+  assert.match(html, /class="fr-tab fr-on" aria-pressed="true" data-ai-chip="homeroom"><span class="fr-tile" style="--fr-ts:18px[^"]*"[^>]*>.*?<\/span>Homeroom</, 'the project\'s tile before its name, as on the standard chip');
   assert.match(html, /data-ai-main-row/);
   assert.doesNotMatch(html, /data-ai-project-head|Which part should zoom in|Daily streaks/);
   assert.match(html, /<h2 class="fr-cap">Needs you · 1<\/h2>/, 'the group counts what is shown');

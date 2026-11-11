@@ -36,14 +36,15 @@ test('a kit selector is scoped to any look, a look\'s selector to its own flag',
 
 test('Mosaic lays a list out as tiles, never a card of launcher tiles or a list of one-line rows', () => {
   const mosaic = read('frontend', 'looks', 'mosaic.css');
-  const not = ':not(.list,:has(>.tiles,>.row.showall,>.row.item,>.row.proj,>.row.month,>.row.th,>.row.rk))';
+  const not = ':not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk))';
   // Every rule of the mosaic carries the same exceptions: Home's Pinned apps
   // (tiles, then "Show all N apps") and You's History (an item under its
-  // project's head row) were both laid out as two columns of tiles.
+  // project's head row) were both laid out as two columns of tiles. The
+  // rows are named at any depth: History's are inside a group per project.
   const all = mosaic.split('.cols>.stack:first-child .card:has(>.row)').length - 1;
   assert.ok(all >= 9);
   assert.equal(mosaic.split(`.cols>.stack:first-child .card:has(>.row)${not}`).length - 1, all);
-  assert.ok(read('public', 'css', 'app.css').includes('html[data-skin="mosaic"] .fr-cols>.fr-stack:first-child .fr-card:has(>.fr-row):not(.fr-list,:has(>.fr-tiles,>.fr-row.fr-showall,>.fr-row.fr-item,>.fr-row.fr-proj,>.fr-row.fr-month,>.fr-row.fr-th,>.fr-row.fr-rk)),'));
+  assert.ok(read('public', 'css', 'app.css').includes('html[data-skin="mosaic"] .fr-cols>.fr-stack:first-child .fr-card:has(>.fr-row):not(.fr-list,:has(>.fr-tiles,.fr-row.fr-showall,.fr-row.fr-item,.fr-row.fr-proj,.fr-row.fr-month,.fr-row.fr-th,.fr-row.fr-rk)),'));
 });
 
 test('on a phone only a card\'s own item rows wrap; a compact list\'s stay one line', () => {
@@ -220,7 +221,7 @@ test('version 2 is written with the kit\'s tokens only, and names no side', () =
   assert.doesNotMatch(body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, 'no literal colour: a look could not restyle it');
   const tokens = new Set([...kitSource().slice(0, kitSource().indexOf(V2_MARK)).matchAll(/--([a-z0-9-]+):/g)].map((m) => m[1]));
   for (const m of body.matchAll(/var\(--([a-z0-9-]+)/g)) {
-    assert.ok(tokens.has(m[1]) || ['tc', 'bn'].includes(m[1]), `--${m[1]} is not one of the kit's tokens (tc and bn are given by the data)`);
+    assert.ok(tokens.has(m[1]) || ['tc', 'bn', 'solid'].includes(m[1]), `--${m[1]} is not one of the kit's tokens (tc and bn are given by the data; solid is a see-through look's opaque surface, from looks.json)`);
   }
   assert.doesNotMatch(body, /box-shadow:inset -?[1-9]\d*px 0 0/, 'a line on one side is a border, which mirrors; an inset shadow does not');
 });

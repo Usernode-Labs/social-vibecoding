@@ -27,7 +27,7 @@ function stubs({ tab = 'app', suggest = true, place = null, page = { crumb: null
     '../dev-board/workshop/place-store': { placeStore: fixedStore({ slug: place ? 'game-corner' : null, place: place || 'status', owed: 0, unread: 0, tray: false }), openPlace() {} },
     '../dev-board/workshop/places': { placeName: (key) => ({ status: 'Hub', needs: 'Needs you', workshop: 'Workshop' }[key] || key) },
     './frame-page-store': { framePageStore: fixedStore(page) },
-    '../nav/nav-store.js': { navStore: fixedStore({ tab: null, screen: 'app-view', bot: false, messages: 0, ai: 0, viewer: 'snait' }) },
+    '../nav/nav-store.js': { navStore: fixedStore({ tab: null, screen: 'app-view', bot: false, messages: 0, ai: 0, railOpen: true, viewer: 'snait' }) },
     '../nav/rail-communities': { useRailCommunities: () => ['game-corner'] },
     '../workshop/community-scope': { communityScopeStore: fixedStore({ slug: 'game-corner', info: INFO, list: Object.keys(INFO) }), goToCommunity() {} },
     '../../lib/visibility-store': { useVisibility: (id, initial) => initial },
@@ -46,19 +46,19 @@ const bar = (state) => {
 
 test('beside a running app the bar says the project and "App", whatever place its page last said', () => {
   const html = bar({ place: 'workshop' });
-  assert.match(html, /<span class="fr-ci"><span class="fr-tile"[^>]*>.*?<\/span>Game Corner<\/span><svg[^>]*>.*?<\/svg><span class="fr-ci fr-here fr-keep">App<\/span>/s);
+  assert.match(html, /<span class="fr-ci"><span class="fr-tile"[^>]*>.*?<\/span><span class="fr-cw"><span class="fr-cn">Game Corner<\/span><\/span><\/span><svg[^>]*>.*?<\/svg><span class="fr-ci fr-here fr-keep"><span class="fr-cw"><span class="fr-cn">App<\/span><\/span><\/span>/s);
   assert.doesNotMatch(html, />Workshop</, 'the app tab publishes no place; a stale one is not read');
   const src = read(FRAME_APP);
   assert.match(src, /const onApp = !!inCommunity && improve\.target === 'app' && improve\.tab === 'app';/, 'the store the standard header reads, not App.currentTab');
   assert.match(src, /\.\.\.\(onApp \? \[\{ word: tProject\('project:places\.list\.app'\) \}\] : here && here !== 'status' \? \[\{ word: placeName\(here\) \}\] : \[\]\)/, 'the word the places list has for that row');
   assert.equal(JSON.parse(read('frontend/locales/en/project.json'))['places.list.app'].text, 'App');
   // On the project's own pages the trail is as before.
-  assert.match(bar({ tab: 'dev', place: 'workshop' }), /<span class="fr-ci fr-here fr-keep">Workshop<\/span>/);
+  assert.match(bar({ tab: 'dev', place: 'workshop' }), /<span class="fr-ci fr-here fr-keep"><span class="fr-cw"><span class="fr-cn">Workshop<\/span><\/span><\/span>/);
 });
 
 test('the way back beside a running app is the shell\'s own, not the project page\'s arrow up to the Hub', () => {
   assert.doesNotMatch(bar(), /aria-label="Back"/, 'the standard header shows none there on a desktop, and the stub shell has none');
-  assert.match(bar({ tab: 'dev', place: 'workshop' }), /^<header class="fr-bar"><button type="button" class="fr-ib" aria-label="Back">/);
+  assert.match(bar({ tab: 'dev', place: 'workshop' }), /^<header class="fr-bar"><button type="button" class="fr-ib fr-d" data-frame-sidebar=""[^>]*>.*?<\/button><button type="button" class="fr-ib" aria-label="Back">/);
   const src = read(FRAME_APP);
   assert.match(src, /const back = page\.crumb \? !!page\.onBack : inCommunity && !onApp \? true : shellBack;/);
   assert.match(src, /onClick=\{!page\.crumb && inCommunity && !onApp \? goUp : goBack\}/);

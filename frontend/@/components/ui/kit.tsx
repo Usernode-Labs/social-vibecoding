@@ -969,9 +969,10 @@ export function Bars({ days, label }: {
   return (
     <div className={k('bars')} style={style} role="img" aria-label={label}>
       {days.map((day, i) => (
-        <div className={k('bcol', day.now && 'now')} key={i} aria-hidden="true">
+        // A day with nothing in it is a baseline in the quiet ink (.none), not a stub of the accent.
+        <div className={k('bcol', day.now && 'now', !(day.value > 0) && 'none')} key={i} aria-hidden="true">
           <span className={k('bv')}>{day.text}</span>
-          <i style={{ height: `${Math.max(3, Math.min(100, Math.round((day.value || 0) * 100)))}%` }} />
+          <i style={day.value > 0 ? { height: `${Math.max(3, Math.min(100, Math.round(day.value * 100)))}%` } : undefined} />
           <span className={k('bl')}>{day.label}</span>
         </div>
       ))}
