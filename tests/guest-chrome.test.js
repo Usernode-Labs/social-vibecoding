@@ -162,3 +162,61 @@ test('the waiting room is a stand-alone page whose bar says whose it is and hold
   assert.ok(looks.wear.roots.card.to.includes('#auth-waiting-screen :is([data-waiting-queued],[data-waiting-invite])'));
   assert.ok(looks.wear.roots.title.to.includes('#auth-waiting-screen'));
 });
+
+test('version 2: a stand-alone page reads title, fields, the other ways as rows, the primary button last; by CSS alone, the nodes do not move', () => {
+  // The tour's o07 to o11. The forms' nodes and ids are in the shell
+  // baseline and the declared checks, so nothing is re-rendered: a form is
+  // `display: contents` in its column and `order` places what it holds.
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('Version 2 (11 Nov 2026) lays each stand-alone page out'), css.indexOf('/* THE WAITING ROOM'));
+  assert.ok(hand.length > 0);
+  const G = 'html\\[data-frame-chrome="guest"\\]';
+  const has = (re, why) => assert.match(hand, new RegExp(re.replace(/G /g, `${G} `)), why);
+  // o07 Sign in.
+  has('G #login-form:not\\(\\.hidden\\) \\{ display: contents; \\}', 'only while it shows: a hidden form stays hidden');
+  has('G #auth-login-screen #forgot-link-wrap \\{ order: 3; margin-top: 24px; \\}\\s*G #auth-login-screen #otp-link-wrap \\{ order: 4; margin-top: -1px; \\}\\s*G #login-form > button\\[type="submit"\\] \\{ order: 5; margin-top: 24px; \\}\\s*G #login-form > p \\{ order: 6;', 'the two ways over Sign in, the terms after it');
+  has('G #auth-login-screen #forgot-password-link \\{ border-end-start-radius: 0; border-end-end-radius: 0; \\}\\s*G #auth-login-screen #otp-link \\{ border-start-start-radius: 0; border-start-end-radius: 0; \\}', 'two rows of one card');
+  // o09 Sign in with email, its first step only.
+  has('G #otp-step-email:not\\(\\.hidden\\) \\{ display: contents; \\}');
+  has('G #otp-view:has\\(> #otp-step-email:not\\(\\.hidden\\)\\) > #btn-otp-back \\{ order: 3;', 'the way back to a password is a row over the button; the code and account steps keep theirs');
+  has('G #otp-step-email > #btn-otp-request \\{ order: 4;');
+  // o08 Reset your password.
+  has('G #recovery-email:not\\(\\.hidden\\) \\{ display: contents; \\}');
+  has('G #recovery-admin \\{ order: 3; \\}\\s*G #recovery-admin > hr \\{ display: none; \\}\\s*G #recovery-admin > div \\{[^}]*background: var\\(--fr-wait-t\\); color: var\\(--fr-wait\\);', 'the warning is the kit\'s note');
+  has('G #auth-login-screen #btn-recovery-back \\{ order: 4; \\}\\s*G #recovery-email > #btn-email-reset \\{ order: 5;', 'Back to login as a row, the button last');
+  // o10 Register.
+  has('G #register-form \\{ display: contents; \\}');
+  has('G #auth-register-screen h1 \\+ p \\+ p \\{[^}]*font-size: 15px; font-weight: 650; color: var\\(--fr-ink\\); \\}', '"Create your account" is the form\'s own heading');
+  has('G #auth-register-screen #register-form ~ p \\{ order: 3;[^}]*\\}\\s*G #register-form > button\\[type="submit"\\] \\{ order: 4;');
+  // o11 Check your status.
+  has('G #waitlist-confirm-address::before \\{ content: \'\'; grid-area: 1 / 1 / span 3 / auto;[^}]*background: var\\(--fr-surface\\);', 'the card is drawn behind the label, the field and its hint');
+  has('G #waitlist-confirm-address > #waitlist-request-code \\{ grid-row: 4;');
+  has('G #waitlist-have-code \\{[^}]*background: var\\(--fr-sunk\\);', 'the quiet button under the primary one');
+  assert.doesNotMatch(hand.replace(/\/\*[\s\S]*?\*\//g, ''), /#[0-9a-fA-F]{3,8}\b|rgba?\(|margin-(left|right)|padding-(left|right)|border-(top|bottom)-(left|right)-radius/, 'the kit\'s tokens and logical sides only');
+  // The ids those rules read are the forms' own.
+  const login = read('frontend/src/features/auth/login.tsx');
+  for (const id of ['login-form', 'forgot-link-wrap', 'forgot-password-link', 'otp-link-wrap', 'otp-link', 'otp-view', 'otp-step-email', 'btn-otp-request', 'btn-otp-back', 'recovery-view', 'recovery-email', 'recovery-email-input', 'recovery-admin', 'btn-recovery-back', 'btn-email-reset']) {
+    assert.match(login, new RegExp(`id="${id}"`), id);
+  }
+  assert.match(read('frontend/src/features/auth/register.tsx'), /id="register-form"/);
+  const waitlist = read('frontend/src/features/auth/waitlist.tsx');
+  for (const id of ['waitlist-confirm-address', 'waitlist-confirm-email', 'waitlist-request-code', 'waitlist-have-code']) assert.match(waitlist, new RegExp(`id="${id}"`), id);
+  // The reset view's heading is not the screen's h1 (which the wear map dresses): it is given the kit title's size by hand.
+  has('G #recovery-view > h2 \\{ margin: 0 0 -4px; font-size: 28px; line-height: 1\\.15; font-weight: 700; letter-spacing: -0\\.02em; text-align: start; color: var\\(--fr-ink\\); \\}');
+});
+
+test('version 2: in the waiting room Look around goes last and the invite card\'s title is the label over it', () => {
+  // The tour's w01 and w02 (and w04 to w09 and w14, which the router sends
+  // to this room). No account in line can be made on a local copy, so this
+  // is held here and by the room's own suites.
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('/* THE WAITING ROOM'), css.indexOf('/* THE SIGN-IN SHEET (features'));
+  assert.match(hand, /html\[data-frame-chrome="guest"\] #auth-waiting-screen \[data-waiting-look-around\] \{ order: 9; margin-top: 24px; \}/);
+  assert.match(hand, /\[data-waiting-invite\] \{ position: relative; overflow: visible !important; margin-top: 56px; \}/);
+  assert.match(hand, /\[data-waiting-invite\] > h2 \{ position: absolute; inset-block-end: 100%; inset-inline-start: 4px; margin: 0 0 8px; \}/);
+  const looks = JSON.parse(read('frontend/looks/looks.json'));
+  assert.ok(looks.wear.roots.cap.also.map((w) => w.to).includes('#auth-waiting-screen [data-waiting-invite] > h2'), 'the kit\'s label, whatever the look');
+  const room = read('frontend/src/features/auth/waiting.tsx');
+  assert.match(room, /className="mx-auto flex min-h-full w-full max-w-sm flex-col /, 'the room\'s column is a flex column, which `order` needs');
+  assert.match(room, /<form\s+data-waiting-invite=""[\s\S]*?<h2 className="[^"]*">\{t\('auth:waiting\.invite\.title'\)\}<\/h2>/);
+});
