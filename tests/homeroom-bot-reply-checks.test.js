@@ -32,7 +32,7 @@ function records(opts = {}) {
     [/SELECT github_issue_number AS n FROM issues/, (opts.closed || []).map((n) => ({ n }))],
     [/SELECT issue_number, created_at FROM feedback_reports/, opts.feedback || []],
     [/SELECT DISTINCT x\.n FROM/, (opts.known || []).map((n) => ({ n }))],
-    [/SELECT DISTINCT issue_number AS n FROM feedback_reports WHERE user_id/, (opts.platformReports || []).map((n) => ({ n }))],
+    [/SELECT DISTINCT issue_number AS n FROM feedback_reports\s+WHERE user_id/, (opts.platformReports || []).map((n) => ({ n }))],
     [/FROM apps a JOIN community_members/, opts.projects || []],
     [/FROM apps WHERE id = ANY/, []],
   ]);

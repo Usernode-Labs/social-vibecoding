@@ -2561,10 +2561,19 @@ function checkNote(problems, { tools = null } = {}) {
   const onlyUnknown = problems.length > 0 && problems.every((p) => p.kind === 'unknown' || p.kind === 'unknown_project');
   const unknownNumbers = problems.find((p) => p.kind === 'unknown')?.numbers || [];
   const lookupTools = names('request_detail', 'get_request');
-  const checkWith = lookupTools.length ? `check it with ${lookupTools[0]}${lookupTools[1] ? ` (or ${lookupTools[1]})` : ''}` : 'check it';
-  const unknownTail = unknownNumbers.length
-    ? ` Homeroom could not find ${unknownNumbers.map((n) => `request #${n}`).join(' or ')} in its records yet: ${checkWith}, and if a tool returns it, keep the number. If not, drop the sentence that names it. Never retract an earlier action in this conversation: something you filed earlier stays filed, so do not apologise for it or offer to file it again.`
+  const lookup = lookupTools.length
+    ? `${lookupTools[0]}${lookupTools[1] ? ` (or ${lookupTools[1]})` : ''}`
     : '';
+  const keepIt = 'and if a tool returns it, keep the number. If not, drop the sentence that names it.'
+    + ' Never retract an earlier action in this conversation: something you filed earlier stays filed, so do not apologise for it or offer to file it again.';
+  const found = unknownNumbers.map((n) => `request #${n}`).join(' or ');
+  // #6583: a note whose only reason is an unfound number asks for a lookup and
+  // never says anything did not happen.
+  const unknownTail = !unknownNumbers.length
+    ? ''
+    : onlyUnknown
+      ? ` Look the number up${lookup ? ` with ${lookup}` : ''}, ${keepIt}`
+      : ` Homeroom could not find ${found} in its records yet: check it${lookup ? ` with ${lookup}` : ''}, ${keepIt}`;
   const numberTools = names('my_work', 'request_detail', 'list_requests');
   const unknown = unknownNumbers.length
     ? (onlyUnknown || !numberTools.length ? unknownTail : ` Check request numbers with ${numberTools.slice(0, -1).join(', ')}${numberTools.length > 1 ? ' or ' : ''}${numberTools[numberTools.length - 1]}.${unknownTail}`)
@@ -2599,7 +2608,10 @@ function checkNote(problems, { tools = null } = {}) {
     ? `[Homeroom check, not from them: your reply ${list}.`
     : [
       `[Homeroom check, not from them: your reply ${list}.`,
-      'Nothing this turn did, and nothing in the stored records, shows that yet.',
+      // #6581: what this turn did is not the whole record; #6583: the note
+      // never tells the model to say the thing was not done.
+      'No tool you called in this turn did that.',
+      'If it happened earlier and the records show it, say when.',
       canDoLine,
       'If you cannot confirm it with a lookup, leave that sentence out.',
     ].filter(Boolean).join(' ');
@@ -4888,9 +4900,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         });
         const first = ctx.reply ? { ...ctx.reply } : { text: finalText, cards: [] };
         messages.push({ role: 'user', content: checkNote(problems, { tools: ctx.toolNames }) });
-        // P1: the next pass writes the answer again; what is already shown
-        // stays until the rewrite has caught up with it (#6405).
-        draft?.restart();
+        // P1, #6581: the next pass writes the answer again; no words are on
+        // the card to replace, only the step it named.
         ctx.reply = null;
         finalText = '';
         // #6307: the first pass's words beside its calls go too, so the second
