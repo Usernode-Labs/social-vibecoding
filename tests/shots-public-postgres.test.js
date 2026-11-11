@@ -135,6 +135,22 @@ test('public before & after stills against the full PostgreSQL schema', { timeou
     assert.equal(await publicStillBytes(pool, { slug: pub.slug, changeId: unsafe.id, artifactId: unsafe.ids['head:focus:phone'] }), null);
   });
 
+  await t.test('a change voted in and live: its after still, for the visitor\'s page, and never its before', async () => {
+    const live = await change(pub, { status: 'merged', stills: BOTH() });
+    await pool.query('UPDATE chat_sessions SET live_at = NOW(), merged_at = NOW() WHERE id = $1', [live.id]);
+    const got = await publicStillsFor(pool, [live.id, merged.id, good.id], { live: true });
+    assert.equal(got.get(live.id).after, live.ids['head:focus:phone']);
+    // Merged but not live yet, and one still up for a vote: neither.
+    assert.equal(got.has(merged.id), false);
+    assert.equal(got.has(good.id), false);
+    assert.ok(await publicStillBytes(pool, { slug: pub.slug, changeId: live.id, artifactId: live.ids['head:focus:phone'] }));
+    assert.equal(await publicStillBytes(pool, { slug: pub.slug, changeId: live.id, artifactId: live.ids['base:focus:phone'] }), null);
+    const overview = await loadProjectOverview(pool, pub.slug, { gh: { isEnabled: () => false } });
+    const row = overview.merged.find((m) => m.id === live.id);
+    assert.equal(row.picture, publicStillUrl(pub.slug, live.id, live.ids['head:focus:phone']));
+    assert.equal(typeof overview.activity.merged_month, 'number');
+  });
+
   await t.test('the project page\'s overview carries the addresses, and nothing for a change without', async () => {
     const overview = await loadProjectOverview(pool, pub.slug, { gh: { isEnabled: () => false } });
     const byId = new Map(overview.votes.map((v) => [v.id, v]));

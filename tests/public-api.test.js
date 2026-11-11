@@ -141,6 +141,10 @@ function makeMockPool() {
     if (/FROM chat_sessions cs/i.test(s) && /status = 'merged'/.test(s)) {
       return { rows: params[0] === 1 ? MERGED.map((r) => ({ ...r })) : [] };
     }
+    // The week's people and the month's changes, as numbers (communities.js activityCounts).
+    if (/AS active_week/.test(s) && /AS shipped_month/.test(s)) {
+      return { rows: [{ active_week: params[0] === 1 ? 14 : 0, shipped_month: params[0] === 1 ? 9 : 0 }] };
+    }
     if (/SELECT repo_url FROM apps WHERE id = \$1/i.test(s)) {
       return { rows: [{ repo_url: 'https://github.com/usernode-bot/app-one' }] };
     }
@@ -343,6 +347,10 @@ test('overview: the card, the votes with plain summaries and tallies, and the ch
     }]);
     assert.equal(body.merged[0].title, 'Swipe to archive');
     assert.equal(body.merged[0].summary, 'Swipe a done task away.');
+    // Its after still where anybody may see it: none here.
+    assert.equal(body.merged[0].picture, null);
+    // How many took part this week and went live this month: numbers, never who.
+    assert.deepEqual(body.activity, { active_week: 14, merged_month: 9 });
     // GitHub is not configured in the test process: the open requests are
     // unknown, which the page shows as nothing rather than "none".
     assert.equal(body.requests, null);

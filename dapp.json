@@ -5045,10 +5045,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out: a public project's page loads (#6003), with Pin beside Join, unpressed (One Home, #6361: it pins to this device's Home)",
+      "name": "Signed out: a public project's page loads (#6003) under the signed-out site's own bar, as one page with no tabs: the project card with Join then Share, and no Pin (the hand-off of 11 Nov 2026; #6433)",
       "path": "/app/staging-landing-open?shot=anon",
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-landing-open\"] [data-guest-join-project] + button[data-guest-pin-project][aria-pressed=\"false\"]",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header[data-guest-top] [data-landing-sign-in]:not(.hidden)) [data-guest-project=\"staging-landing-open\"]:not(:has([data-guest-pin-project], [data-guest-tab])) [data-guest-project-band] [data-project-card-actions] > [data-guest-join-project] + button[data-guest-share]",
       "allowConsoleErrors": true
     },
     {
