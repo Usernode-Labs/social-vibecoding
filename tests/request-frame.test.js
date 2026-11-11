@@ -239,7 +239,7 @@ test('the discussion is the product\'s stream in one card under its count, what 
   const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
   const P = 'html\\[data-skin\\]:where\\(:not\\(\\[data-skin="brand"\\]\\)\\) ';
   const STREAM = '#dev-topic-thread \\.dev-request > \\.dev-request-sheet #gc-thread-messages:is\\(\\[data-language="request"\\], \\[data-language="change"\\]\\)';
-  assert.match(hand, new RegExp(`${P}${STREAM} \\{ position: relative; margin-top: 56px; padding: 8px 0; overflow: visible; \\}`), 'room over the card for its label, which the card must not clip');
+  assert.match(hand, new RegExp(`${P}${STREAM} \\{ position: relative; margin-top: 56px; padding: 8px 0; overflow: visible; backdrop-filter: none; -webkit-backdrop-filter: none; \\}`), 'room over the card for its label, which the card must not clip; and no blur on a plane that scrolls under the frosted composer');
   assert.match(hand, new RegExp(`${P}${STREAM}:not\\(:has\\(> :not\\(\\.messages-reply-count\\)\\)\\) \\{ padding: 0; background: none; box-shadow: none;`), 'nothing but the count: no empty card');
   assert.match(hand, new RegExp(`${P}#dev-topic-thread \\.dev-request #gc-thread-messages > \\.messages-reply-count \\{ position: absolute; inset-block-end: 100%; inset-inline-start: 0;`));
   assert.match(hand, new RegExp(`${P}#dev-topic-thread \\.dev-request #gc-thread-messages > \\.messages-reply-count::after \\{ content: none; \\}`), 'a label has no rule after it');

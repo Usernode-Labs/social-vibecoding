@@ -27392,8 +27392,12 @@ html[data-skin]:where(:not([data-skin="brand"])) .dev-change-root .dev-change-pa
    happened (looks.json "wear": card, cap, sechead, evt). The label is the
    stream's first child, so it is lifted over the card, which leaves room
    for it and does not clip it. A stream with nothing in it but that line
-   draws no card. A row keeps its own 16px sides. */
-html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread .dev-request > .dev-request-sheet #gc-thread-messages:is([data-language="request"], [data-language="change"]) { position: relative; margin-top: 56px; padding: 8px 0; overflow: visible; }
+   draws no card. A row keeps its own 16px sides. The card takes a look's
+   fill and edge but never its blur: it is as long as the discussion and
+   scrolls under the composer, which is frosted itself (in a capture the
+   two blurs left the composer half drawn; the shell blurs no scrolling
+   plane for the same cost, --dc-frost). */
+html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread .dev-request > .dev-request-sheet #gc-thread-messages:is([data-language="request"], [data-language="change"]) { position: relative; margin-top: 56px; padding: 8px 0; overflow: visible; backdrop-filter: none; -webkit-backdrop-filter: none; }
 html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread .dev-request > .dev-request-sheet #gc-thread-messages:is([data-language="request"], [data-language="change"]):not(:has(> :not(.messages-reply-count))) { padding: 0; background: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; border: 0; }
 html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread .dev-request #gc-thread-messages > .messages-reply-count { position: absolute; inset-block-end: 100%; inset-inline-start: 0; margin: 0 0 8px; padding: 0 4px; }
 html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread .dev-request #gc-thread-messages > .messages-reply-count::after { content: none; }

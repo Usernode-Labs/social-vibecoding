@@ -159,6 +159,8 @@ Seen in a browser on the local copy, which does open a change's own page now
 (`/app/usernode-2d5619/dev/changes/6369`): the request and the change on a desktop in Glass,
 Paper (light and dark), Workbench (light and dark) and Today, and on a phone in Glass and
 Paper; the running app's bar in Glass and Workbench dark (the app itself does not load here).
-A capture taken while the stream is pinned to its foot can show the Glass composer half drawn;
-it is whole after any repaint (a headless capture's artifact, seen before this lane's work too
-on other pinned pages).
+The stream's card takes a look's fill and edge but not its blur: under Glass the blurred
+card scrolling under the frosted composer left the composer half drawn in captures (whole
+again after any repaint), and the shell blurs no scrolling plane anyway. A capture of a long
+discussion taken before it settles can still show the composer half drawn; two seconds later
+it is whole.
