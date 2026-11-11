@@ -37,6 +37,7 @@ import type { FriendState } from '../friends/api';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { Av, Card, GroupLink, PageBody, Row, Sec, Sub } from '@/components/ui/kit';
 import { isFrameSkin, useLiveSkin } from '../../lib/skin';
+import { useFrameFlag } from '../frame/frame-flag';
 
 function PublicAvatar({ profile }: { profile: any }): ReactNode {
   const { initial, url } = publicAvatarView(profile);
@@ -94,6 +95,8 @@ export function PublicProfileCard({
   // preview inside Edit profile (`preview`) keeps the standard card below: it
   // is a card in a dialog, not a page.
   const frame = isFrameSkin(useLiveSkin()) && !preview;
+  // While the page is up the screen gives it the frame's page area (app.css).
+  useFrameFlag('person-frame', frame);
   const { url: avatarUrl } = publicAvatarView(profile);
   if (frame) {
     const handle = `@${profile.username}`;

@@ -402,3 +402,13 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 
 /* ---- v2, lane Y: You, Challenges, Standings ---- */
 .facts.f1{grid-template-columns:minmax(0,1fr)}
+.sub15.mut b{color:var(--ink);font-weight:650}
+.card.progress{display:flex;flex-direction:column;gap:10px}
+.line13{font-size:13px;color:var(--mut);padding:0 4px;justify-content:space-between}
+.line13 .link{font-size:13px}
+.row.th{min-height:40px}
+.row.th .num,.row.th .t,.row.th .meta{font-size:13px;font-weight:500;color:var(--mut)}
+.row.rk .num,.row.th .num{width:44px}
+.row.rk .num{font-size:15px;color:var(--mut)}
+.row .meta.ink{color:var(--ink);font-size:15px;font-variant-numeric:tabular-nums}
+.row.you .t{font-variant-numeric:tabular-nums}

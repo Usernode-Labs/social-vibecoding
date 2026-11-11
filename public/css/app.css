@@ -27287,29 +27287,38 @@ html[data-skin][data-challenges-frame] #leaderboard-screen > div { max-width: no
 html[data-skin][data-challenges-frame] #standings-tabs { display: none; }
 html[data-skin][data-challenges-frame] #leaderboard-event-bar { box-sizing: border-box; max-width: 1136px; margin: 0 auto; padding: 0 32px; }
 html[data-skin][data-challenges-frame] #tc-se-grid > :not(.fr) { display: none; }
-/* Standings wears the same head and tabs; its board is the kit's rows
-   (StandingsFrameRows) in the content column's width, a row's details
-   under it on the card's own padding. */
+/* Standings wears the same head and tabs (version 2, the tour's s55). The
+   pane draws two frame roots: the head with the tabs, and the two columns
+   (the board, and the event's card beside it). The season picker is the
+   screen's own, written before the panes: the pane's children join the
+   screen's column and take their order from here, so the picker sits
+   between the tabs and the columns. Its hero is put away: the kit's Event
+   card says the same from the same store. */
 html[data-skin][data-standings-frame] #leaderboard-screen { padding-inline-start: var(--platform-rail-w, 0px) !important; padding-inline-end: 0 !important; }
-html[data-skin][data-standings-frame] #leaderboard-screen > div { max-width: none; padding: 0; }
+html[data-skin][data-standings-frame] #leaderboard-screen > div { max-width: none; padding: 0; display: flex; flex-direction: column; }
 html[data-skin][data-standings-frame] #standings-tabs { display: none; }
-html[data-skin][data-standings-frame] #leaderboard-event-bar,
-html[data-skin][data-standings-frame] #topochain-leaderboard-root > :not(.fr) { box-sizing: border-box; max-width: 1136px; margin-inline: auto; padding-inline: 32px; }
-html[data-skin][data-standings-frame] [data-standings-frame] > .fr-inner { padding-bottom: 16px; }
-/* The season picker is written before the panes, and the kit's head inside
-   the Standings pane: the head comes first on the page, so the pane's
-   children join the screen's column and take their order from here. */
-html[data-skin][data-standings-frame] #leaderboard-screen > div { display: flex; flex-direction: column; }
+html[data-skin][data-standings-frame] #leaderboard-event-bar { box-sizing: border-box; max-width: 1136px; margin-inline: auto; padding-inline: 32px; }
 html[data-skin][data-standings-frame] #topochain-leaderboard-root { display: contents; }
-html[data-skin][data-standings-frame] #topochain-leaderboard-root > .fr { order: 0; }
+html[data-skin][data-standings-frame] #topochain-leaderboard-root > [data-standings-frame] { order: 0; }
 html[data-skin][data-standings-frame] #leaderboard-screen > div > div:first-child { order: 1; }
-html[data-skin][data-standings-frame] #topochain-leaderboard-root > :not(.fr) { order: 2; width: 100%; }
-html[data-skin][data-standings-frame] #tc-lb-body > * { max-width: 720px; }
+html[data-skin][data-standings-frame] #topochain-leaderboard-root > [data-standings-cols] { order: 2; }
+html[data-skin][data-standings-frame] [data-standings-frame] > .fr-inner { padding-bottom: 0; }
+html[data-skin][data-standings-frame] [data-standings-frame] .fr-tabs { margin-bottom: 16px; }
+/* The room a kit page leaves under itself for the phone's tab bar belongs to the last root only. */
+html[data-skin][data-standings-frame] [data-standings-frame] > .fr-inner::after { display: none; }
+html[data-skin][data-standings-frame] [data-standings-cols] > .fr-inner { padding-top: 0; }
+html[data-skin][data-standings-frame] #tc-ev-hero { display: none; }
+/* The picker is a real <select> a declared check names: it wears the kit's
+   field (the tokens the kit's .inp is drawn with) where it stands. */
+html[data-skin][data-standings-frame] #leaderboard-event-bar > div { margin-bottom: 24px; }
+html[data-skin][data-standings-frame] #tc-ev-select { min-height: 44px; padding-block: 0; border: 0; border-radius: 12px; background: var(--fr-surface); color: var(--fr-ink); font: inherit; font-weight: 500; box-shadow: inset 0 0 0 1px var(--fr-line); }
+html[data-skin][data-standings-frame] #tc-ev-select + svg { color: var(--fr-mut); }
 html[data-skin] [data-standings-rows] > .fr-card > .fr-pad { padding: 0 16px 16px; }
+html[data-skin] [data-standings-cols] #tc-lb-body { display: flex; flex-direction: column; gap: 16px; }
+html[data-skin] [data-standings-cols] #tc-lb-disclaimer { margin: 0; padding-inline: 4px; color: var(--fr-mut); }
 @media (max-width: 767.98px) {
   html[data-skin][data-challenges-frame] #leaderboard-event-bar,
-  html[data-skin][data-standings-frame] #leaderboard-event-bar,
-  html[data-skin][data-standings-frame] #topochain-leaderboard-root > :not(.fr) { padding-inline: 16px; }
+  html[data-skin][data-standings-frame] #leaderboard-event-bar { padding-inline: 16px; }
 }
 
 /* THE YOU TAB (features/profile/frame/you-frame.tsx). The kit's page is
@@ -27319,6 +27328,13 @@ html[data-skin] [data-standings-rows] > .fr-card > .fr-pad { padding: 0 16px 16p
 html[data-skin][data-you-frame] #profile-screen { padding-inline-start: var(--platform-rail-w, 0px) !important; padding-inline-end: 0 !important; }
 html[data-skin][data-you-frame] #profile-screen > *,
 html[data-skin][data-you-frame] #profile-content { max-width: none; margin: 0; padding: 0; }
+/* Somebody's public profile (features/profile/public-profile-card.tsx) is a
+   page of the frame too (data-person-frame while it is up): the same page
+   area, and the standard card's narrow column gives way to the kit's. */
+html[data-skin][data-person-frame] #profile-screen { padding-inline-start: var(--platform-rail-w, 0px) !important; padding-inline-end: 0 !important; }
+html[data-skin][data-person-frame] #profile-screen > *,
+html[data-skin][data-person-frame] #profile-content,
+html[data-skin][data-person-frame] #profile-root > div { max-width: none; margin: 0; padding: 0; }
 /* Version 2: You has six tabs, more than a phone is wide: the row scrolls
    sideways there, with no bar of its own. A finished item's number has no
    room on a phone (the tour hides it there). */
@@ -28105,6 +28121,16 @@ html[data-skin] .fr-lone{padding:64px 16px;text-align:center;color:var(--fr-mut)
 html[data-skin] .fr-welcome{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding-top:8px}
 html[data-skin] .fr-welcome .fr-tile{margin-bottom:6px}
 html[data-skin] .fr-facts.fr-f1{grid-template-columns:minmax(0,1fr)}
+html[data-skin] .fr-sub15.fr-mut b{color:var(--fr-ink);font-weight:650}
+html[data-skin] .fr-card.fr-progress{display:flex;flex-direction:column;gap:10px}
+html[data-skin] .fr-line13{font-size:13px;color:var(--fr-mut);padding:0 4px;justify-content:space-between}
+html[data-skin] .fr-line13 .fr-link{font-size:13px}
+html[data-skin] .fr-row.fr-th{min-height:40px}
+html[data-skin] .fr-row.fr-th .fr-num,html[data-skin] .fr-row.fr-th .fr-t,html[data-skin] .fr-row.fr-th .fr-meta{font-size:13px;font-weight:500;color:var(--fr-mut)}
+html[data-skin] .fr-row.fr-rk .fr-num,html[data-skin] .fr-row.fr-th .fr-num{width:44px}
+html[data-skin] .fr-row.fr-rk .fr-num{font-size:15px;color:var(--fr-mut)}
+html[data-skin] .fr-row .fr-meta.fr-ink,html[data-skin]:where(:not([data-skin="brand"])) .ui-lrow:where(#settings-section-content *) .fr-meta.fr-ink{color:var(--fr-ink);font-size:15px;font-variant-numeric:tabular-nums}
+html[data-skin] .fr-row.fr-you .fr-t{font-variant-numeric:tabular-nums}
 @media (min-width: 768px){
 html[data-skin][data-skin] .fr-p{display:none!important}
 }
