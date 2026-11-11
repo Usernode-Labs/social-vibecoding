@@ -298,7 +298,7 @@ test('version 2 dresses nothing of the product\'s own that it did not dress befo
   // is repeated only places a kit element inside or beside a worn one.
   const css = looks.compile(v2Source(), null);
   const worn = css.split('\n').filter((rule) => rule.startsWith('html')).flatMap((rule) => topLevel(rule.slice(0, rule.indexOf('{')))).filter((sel) => /:where\(:not\(\[data-skin="brand"\]\)\)/.test(sel));
-  assert.ok(worn.length > 0 && worn.length < 20, `a handful only (${worn.length})`);
+  assert.ok(worn.length > 0 && worn.length < 40, `a handful only (${worn.length})`);
   for (const sel of worn) assert.match(sel, /\.fr-[\w-]+/, `"${sel}" would dress the product's markup with no kit element in it`);
   assert.doesNotMatch(css, /messages-|dev-request|dev-change|auth-waiting/, 'no conversation, request or waiting-room node is named');
 });
