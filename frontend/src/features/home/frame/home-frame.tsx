@@ -10,8 +10,9 @@
  * right: the title, one sentence saying what needs you, one primary action
  * (Make a project); then the main column — Pinned apps (tiles: an app is
  * the one thing you launch), Pinned communities (rows that say what is new
- * there), Featured (one row of picture cards) and Communities to join
- * (rows) — beside a 400px side column — Needs you (three rows, each ending
+ * there), Featured and Communities to join (the directory's rows, the same
+ * list the signed-out landing draws, #6609) — beside a 400px side column —
+ * Needs you (three rows, each ending
  * in the one word that says what to do), Live this week, Your week (three
  * figures) and the season row. Under both columns, the whole width, the
  * season's challenges as one sideways row of cards. On a phone the side
@@ -47,7 +48,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
-import { Btn, ChallengeCard, Facts, GroupLink, HRow, Meta, PageBody, PicCard, Pill, Row, Sec, Card, Tile, TileItem, Tiles, Lead, type PillKind } from '@/components/ui/kit';
+import { Btn, ChallengeCard, Facts, GroupLink, HRow, Meta, PageBody, Pill, Row, Sec, Card, Tile, TileItem, Tiles, Lead, type PillKind } from '@/components/ui/kit';
 import { TONE_FILL, resolveIllustration } from '../../../lib/challenge-illustrations';
 import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -58,6 +59,7 @@ import { MyStanding, myStandingStore, standingView } from '../../leaderboard/my-
 import { panelsStore, type HomePanelsState } from '../panels-store';
 import { HomeAllApps } from './home-all-apps';
 import { HomeAllCommunities, type OwedVote } from './home-all-communities';
+import { FrameCommunityList } from '../../guest/frame/community-list';
 
 /** How many rows a group shows before its link opens the rest (the tour's Home). */
 const NEEDS_SHOWN = 3;
@@ -469,53 +471,26 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
         </Sec>
       ) : null}
 
-      {featured.length > 0 ? (
-        <Sec label={t('home:join.featured')} id="home-frame-featured">
-          <HRow>
-            {featured.slice(0, FEATURED_SHOWN).map((a) => (
-              <PicCard
-                key={a.slug}
-                href={hubHref(a.slug)}
-                onClick={(event) => openHub(event, a.slug)}
-                cover={a.illustration_url}
-                darkCover={a.illustration_dark_url}
-                tile={<Tile size={56} name={a.name || a.slug} src={a.icon_url} emoji={a.icon_emoji} color={a.icon_color} />}
-                title={a.name || a.slug}
-                line={a.description || undefined}
-                meta={a.member_count ? t('home:join.members', { count: a.member_count }) : undefined}
-                word={t('home:frame.join')}
-              />
-            ))}
-          </HRow>
-        </Sec>
-      ) : null}
+      <FrameCommunityList
+        label={t('home:join.featured')}
+        id="home-frame-featured"
+        apps={featured}
+        href={hubHref}
+        onOpen={openHub}
+        limit={FEATURED_SHOWN}
+      />
 
-      {toJoin.length > 0 ? (
-        <Sec
-          label={t('home:frame.toJoin')}
-          id="home-frame-to-join"
-          action={toJoin.length > JOIN_SHOWN
-            ? <GroupLink onClick={() => { (window as any).Home?.showCommunitiesToJoin?.(); }}>{t('home:frame.browseAll')}</GroupLink>
-            : null}
-        >
-          <Card>
-            {/* The row is the door to the hub, where Join lives with what the
-                community is about; its word is Join, not a button inside the
-                link. */}
-            {toJoin.slice(0, JOIN_SHOWN).map((a) => (
-              <Row
-                key={a.slug}
-                href={hubHref(a.slug)}
-                onClick={(event) => openHub(event, a.slug)}
-                lead={<Tile name={a.name || a.slug} src={a.icon_url} emoji={a.icon_emoji} color={a.icon_color} />}
-                title={a.name || a.slug}
-                line={a.member_count ? t('home:join.members', { count: a.member_count }) : undefined}
-                right={<span className="fr-btn fr-sm">{t('home:frame.join')}</span>}
-              />
-            ))}
-          </Card>
-        </Sec>
-      ) : null}
+      <FrameCommunityList
+        label={t('home:frame.toJoin')}
+        id="home-frame-to-join"
+        apps={toJoin}
+        href={hubHref}
+        onOpen={openHub}
+        limit={JOIN_SHOWN}
+        action={toJoin.length > JOIN_SHOWN
+          ? <GroupLink onClick={() => { (window as any).Home?.showCommunitiesToJoin?.(); }}>{t('home:frame.browseAll')}</GroupLink>
+          : null}
+      />
     </PageBody>
   );
 }

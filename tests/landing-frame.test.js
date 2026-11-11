@@ -56,10 +56,12 @@ test('All: what an account adds, apps to try, communities to look at; what is he
   assert.deepEqual([...tiles.matchAll(/<span class="fr-nm">([^<]+)<\/span>/g)].map((m) => m[1]), ['Game Corner', 'The Best Color', 'Todo List']);
   assert.match(tiles, /<a class="fr-at" href="https:\/\/game-corner\.example">/);
   assert.match(html, /No account needed/);
-  // Every community is a row, the featured one under Featured, its people said in words, ending in Look.
+  // Every community is a row, the featured one under Featured, its people said
+  // in words, and nothing after the line: no Look word (#6609).
   const featured = html.slice(html.indexOf('Featured</h2>'), html.indexOf('Communities</h2>'));
   assert.deepEqual([...featured.matchAll(/<span class="fr-t">([^<]+)<\/span>/g)].map((m) => m[1]), ['Game Corner']);
-  assert.match(featured, /<a class="fr-row" href="\/app\/game-corner"[^>]*>.*?<span class="fr-s">89 members<\/span>.*?<span class="fr-btn fr-quiet fr-sm">Look<\/span><\/a>/s);
+  assert.match(featured, /<a class="fr-row" href="\/app\/game-corner"[^>]*>.*?<span class="fr-s">89 members<\/span><\/span><\/a>/s);
+  assert.doesNotMatch(featured, /fr-btn|Look/, 'no Look word on a row');
   const rows = html.slice(html.indexOf('Communities</h2>'), html.indexOf('Homeroom today'));
   assert.deepEqual([...rows.matchAll(/<span class="fr-t">([^<]+)<\/span>/g)].map((m) => m[1]), ['The Best Color', 'Community Tier Lists', 'Todo List']);
   assert.match(rows, /<span class="fr-s">1 member<\/span>/);
