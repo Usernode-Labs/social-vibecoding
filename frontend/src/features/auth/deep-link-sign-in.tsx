@@ -16,6 +16,7 @@
  * outline of a page (a header and a few cards) on the home wallpaper takes
  * its place, so the sheet still reads as standing over something.
  */
+import { useMessages } from '../../lib/i18n/react';
 
 /** The places a link can name that the sheet names back. */
 export type DeepLinkScreen = 'discover' | 'messages' | 'communities' | 'notifications' | 'settings';
@@ -99,6 +100,76 @@ export function deepLinkTitle(
     }
   }
   return t('auth:deepLinkSignIn.page');
+}
+
+/** One word of the bar for a gated address: a message id and its values. */
+export type GatePlaceWord = { id: string; values?: Record<string, string | number> };
+
+/**
+ * What the frame's bar says while a members' address is gated (under a
+ * look, ../frame/guest-chrome.tsx): the place's own name in the product's
+ * words, so the bar names where the link led while the sheet asks to sign
+ * in. `head` stands where the brand does (Messages, Homeroom bot, You,
+ * Settings, Challenges); `trail` follows the brand (a project's Workshop,
+ * then a request or a change by its number). A place with no name of its
+ * own leaves the bar its brand.
+ */
+const HEAD_WORD: Readonly<Record<string, string>> = Object.freeze({
+  messages: 'core:tabs.messages',
+  chat: 'core:tabs.messages',
+  'homeroom-bot': 'core:tabs.ai',
+  ai: 'core:tabs.ai',
+  profile: 'core:tabs.me',
+  me: 'core:tabs.me',
+  settings: 'core:tabs.settings',
+});
+
+export function gatePlaceWords(target: string): { head: GatePlaceWord | null; trail: GatePlaceWord[] } {
+  const raw = String(target || '');
+  const full = raw.startsWith('#') ? raw.slice(1) : raw.startsWith('/app/') ? raw.slice(1) : '';
+  const [route, query = ''] = full.split('?');
+  const parts = route.split('/');
+  const head = parts[0] || '';
+  if (head === 'leaderboard') {
+    return { head: !parts[1] || parts[1] === 'challenges' ? { id: 'leaderboard:tabs.challenges' } : null, trail: [] };
+  }
+  if (head !== 'app') {
+    const id = Object.prototype.hasOwnProperty.call(HEAD_WORD, head) ? HEAD_WORD[head] : null;
+    return { head: id ? { id } : null, trail: [] };
+  }
+  const workshop: GatePlaceWord = { id: 'project:places.list.workshop' };
+  if (parts[2] === 'workshop') {
+    // A bare link to a project's page opens its Workshop; `?ws=` names any other place.
+    const ws = new URLSearchParams(query).get('ws');
+    if (!ws || ws === 'workshop' || ws === 'all' || ws === 'bot') return { head: null, trail: [workshop] };
+    if (ws === 'needs') return { head: null, trail: [{ id: 'project:places.list.needsYou' }] };
+    return { head: null, trail: [] };
+  }
+  if (parts[2] === 'dev' && /^\d+$/.test(parts[4] || '')) {
+    const number = Number(parts[4]);
+    if (parts[3] === 'issues') return { head: null, trail: [workshop, { id: 'project:topic.request.bar.title', values: { number } }] };
+    if (parts[3] === 'changes') return { head: null, trail: [workshop, { id: 'project:topic.change.bar.titleNumbered', values: { number } }] };
+  }
+  return { head: null, trail: [] };
+}
+
+/**
+ * The gated place's words, for the frame's bar to read. Rendered by the
+ * landing inside its own header under a look only, unseen: the bar follows
+ * that header already (guest-chrome.tsx readLanding).
+ */
+export function GatePlace({ target }: { target: string }) {
+  const tc = useMessages('core');
+  const tp = useMessages('project');
+  const tl = useMessages('leaderboard');
+  const say = (word: GatePlaceWord) => (word.id.startsWith('project:') ? tp : word.id.startsWith('leaderboard:') ? tl : tc)(word.id, word.values);
+  const { head, trail } = gatePlaceWords(target);
+  return (
+    <>
+      {head ? <span hidden data-guest-place="head">{say(head)}</span> : null}
+      {trail.map((word) => <span key={word.id} hidden data-guest-place="trail">{say(word)}</span>)}
+    </>
+  );
 }
 
 /**

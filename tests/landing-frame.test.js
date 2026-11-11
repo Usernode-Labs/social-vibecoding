@@ -90,7 +90,7 @@ test('every class is the kit\'s', () => {
 
 test('the landing draws it ahead of its own page under a look, and app.css puts that page away', () => {
   const src = read('frontend/src/features/auth/landing.tsx');
-  assert.match(src, /\{frame && guestPages && !guestProject && !linkPending && !gate \? \(\s*<LandingFrame/, 'not under a members\' page, which has its own (tests/gated-frame.test.js)');
+  assert.match(src, /\{frame && guestPages && !guestProject && !linkPending && !gate \? \(\s*<LandingFrame/, 'not under a members\' address, which is the sheet over an outline (tests/deep-link-sign-in.test.js)');
   assert.match(src, /waiting=\{waitingGuest \? \{ email: sessionEmail\(\) \} : null\}/);
   assert.ok(src.indexOf('<LandingFrame') < src.indexOf('<GuestDiscover'), 'ahead of the standard page, which stays mounted');
   assert.match(src, /const frame = isFrameSkin\(useSkin\(\)\);/, 'standard until mount: the landing is prerendered');

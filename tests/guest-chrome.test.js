@@ -43,6 +43,24 @@ test('a screen with a way back says so first; an open app or project is named in
     'whatever the landing\'s own bar offers, in its order');
 });
 
+test('a members\' address a visitor opened: the bar names the place, in the brand\'s place or after it', () => {
+  // Version 2 of the looks (o12 to o25): the sheet opens by itself, as in
+  // the standard look, and the bar says where the link led.
+  const messages = view({ crumb: 'Messages', actions: [SIGN_IN, SIGN_UP] });
+  assert.match(messages, /<header class="fr-bar"><div class="fr-crumb"><span class="fr-ci fr-here fr-keep">Messages<\/span><\/div><span class="fr-sp"><\/span>/);
+  assert.doesNotMatch(messages, /fr-brand/);
+  const workshop = view({ trail: ['Workshop'] });
+  assert.match(workshop, /Homeroom<\/span><div class="fr-crumb"><span class="fr-ci fr-here fr-keep">Workshop<\/span><\/div>/, 'a project\'s place follows the brand');
+  const request = view({ trail: ['Workshop', 'Request #5998'] });
+  assert.match(request, /<div class="fr-crumb"><span class="fr-ci">Workshop<\/span><svg[^>]*>.*?<\/svg><span class="fr-ci fr-here fr-keep">Request #5998<\/span><\/div>/s, 'the last word is where you are: the one a phone keeps');
+  const tab = view({ back: true, crumb: 'Game Corner', trail: ['Workshop'] });
+  assert.match(tab, /<span class="fr-ci">Game Corner<\/span><svg[^>]*>.*?<\/svg><span class="fr-ci fr-here fr-keep">Workshop<\/span>/s, 'a public project\'s tab, after its name');
+  const src = read(CHROME);
+  assert.match(src, /root\.querySelectorAll\('#landing-header \[data-guest-place\]'\)/, 'read off the landing\'s own header, which the bar already follows');
+  const landing = read('frontend/src/features/auth/landing.tsx');
+  assert.match(landing, /\{frame && gate \? <GatePlace target=\{gate\.target\} \/> : null\}/, 'under a look only, never in the first render');
+});
+
 test('it is up for a visitor only: under a look, while an anonymous screen is, and never on the first render', () => {
   const src = read(CHROME);
   assert.equal(renderComponent(CHROME, 'GuestFrame', {}, { cache: false, stubs: { '../../lib/visibility-store': { useVisibility: (id, initial) => initial } } }), '');
@@ -59,7 +77,7 @@ test('a press is handed to the screen\'s own control, and the bar follows the sc
   assert.match(src, /const SOLO_BACK = '\[data-auth-back\], :scope > a\[href="#landing"\]';/, 'the shared disc, or the plain link "more ways" has');
   assert.match(read('frontend/src/features/auth/more.tsx'), /<a\s+href="#landing"\s+className="fixed start-4 z-10 /);
   assert.match(src, /pressIn\(screen, '\[data-landing-actions\] button', Number\(action\.key\)\)/, 'the landing\'s own button, by its place in the bar');
-  assert.match(src, /crumb: title && !title\.querySelector\('svg'\) \? \(title\.textContent \|\| ''\)\.trim\(\) : '',/, 'the wordmark is a picture, a name is words');
+  assert.match(src, /crumb: title && !title\.querySelector\('svg'\) \? \(title\.textContent \|\| ''\)\.trim\(\) : words\('head'\)\[0\] \|\| '',/, 'the wordmark is a picture, a name is words; else the place the landing names');
   // The landing's own hooks, which this reads: they must still be there.
   const landing = read('frontend/src/features/auth/landing.tsx');
   for (const hook of ['id="landing-header"', 'id="landing-back-btn"', 'id="landing-header-title"', 'data-landing-actions=""', 'data-landing-sign-in=""', 'data-landing-sign-up=""']) {

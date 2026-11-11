@@ -22,7 +22,7 @@
  * show it, so it keeps this bar, with its name on it and, in the waiting
  * room, Sign out.
  */
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Av, Btn, Frame, Icon, Tile, k } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
@@ -35,8 +35,12 @@ const MARK = '/brand/homeroom-mark.png';
 /** One of the landing bar's own buttons, as the kit's bar repeats it. */
 export type GuestAction = { key: string; label: string; primary: boolean; pressed: boolean | null };
 
-/** What the bar says, read off the screen that is up. `who` is an account still in line: signed in, not let in yet. */
-export type GuestBar = { back: boolean; crumb: string; actions: GuestAction[]; who?: string };
+/**
+ * What the bar says, read off the screen that is up. `who` is an account
+ * still in line: signed in, not let in yet. `trail` is what follows the
+ * brand or the name: a project's Workshop, then a request by its number.
+ */
+export type GuestBar = { back: boolean; crumb: string; trail?: string[]; actions: GuestAction[]; who?: string };
 
 const EMPTY: GuestBar = { back: false, crumb: '', actions: [] };
 
@@ -61,10 +65,15 @@ function readLanding(root: HTMLElement): GuestBar {
       actions.push({ key: String(i), label: (button.textContent || '').trim(), primary, pressed: pressed == null ? null : pressed === 'true' });
     });
   }
+  // A place the landing names for the bar alone (a gated address, a public
+  // project's tab): unseen words in its header, the head in the brand's place.
+  const places = [...root.querySelectorAll('#landing-header [data-guest-place]')];
+  const words = (kind: string) => places.filter((el) => el.getAttribute('data-guest-place') === kind).map((el) => (el.textContent || '').trim()).filter(Boolean);
   return {
     back: shown(root.querySelector('#landing-back-btn')),
     // The wordmark is a picture: the bar draws the brand itself then.
-    crumb: title && !title.querySelector('svg') ? (title.textContent || '').trim() : '',
+    crumb: title && !title.querySelector('svg') ? (title.textContent || '').trim() : words('head')[0] || '',
+    trail: words('trail'),
     actions,
     who: sessionName(),
   };
@@ -89,7 +98,7 @@ function readSolo(root: HTMLElement): GuestBar {
   return { back: !!root.querySelector(SOLO_BACK), crumb: '', actions: [] };
 }
 
-const same = (a: GuestBar, b: GuestBar) => a.back === b.back && a.crumb === b.crumb && (a.who || '') === (b.who || '') && a.actions.length === b.actions.length
+const same = (a: GuestBar, b: GuestBar) => a.back === b.back && a.crumb === b.crumb && (a.trail || []).join('\n') === (b.trail || []).join('\n') && (a.who || '') === (b.who || '') && a.actions.length === b.actions.length
   && a.actions.every((x, i) => x.label === b.actions[i].label && x.primary === b.actions[i].primary && x.pressed === b.actions[i].pressed);
 
 /** The bar of the screen with that id, followed as the screen changes it. */
@@ -185,6 +194,7 @@ export function GuestChromeView({ bar, onBack, onAction, areaRef }: {
   areaRef?: React.Ref<HTMLElement>;
 }) {
   const t = useMessages('core');
+  const trail = bar.trail || [];
   return (
     <>
       {/* Behind the screen: what a look gives the page column itself. */}
@@ -199,14 +209,24 @@ export function GuestChromeView({ bar, onBack, onAction, areaRef }: {
                 <Icon name="cl" />
               </button>
             ) : null}
-            {bar.crumb ? (
-              <div className={k('crumb')}><span className={k('ci here keep')}>{bar.crumb}</span></div>
-            ) : (
+            {bar.crumb ? null : (
               <span className={k('brand')} style={{ margin: 0, padding: 0 }}>
                 <Tile size={28} src={MARK} color="#0f1116" name={t('core:frame.brand')} />
                 {t('core:frame.brand')}
               </span>
             )}
+            {bar.crumb || trail.length ? (
+              <div className={k('crumb')}>
+                {/* Flat children: on a phone the kit keeps only the last one. */}
+                {bar.crumb ? <span className={k('ci', !trail.length && 'here keep')}>{bar.crumb}</span> : null}
+                {trail.map((word, i) => (
+                  <Fragment key={`${i}:${word}`}>
+                    {i > 0 || bar.crumb ? <Icon name="cr" size={14} /> : null}
+                    <span className={k('ci', i === trail.length - 1 && 'here keep')}>{word}</span>
+                  </Fragment>
+                ))}
+              </div>
+            ) : null}
             <span className={k('sp')} />
             {bar.who ? (
               <div className={k('crumb')}>

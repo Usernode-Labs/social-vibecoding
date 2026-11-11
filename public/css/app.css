@@ -27779,12 +27779,23 @@ body.has-install-strip .fr.fr-shell .fr-bar::before { content: none; }
    stays mounted and is put away. The kit's page brings its own margins and
    its own width, so the landing's column gives up its own. */
 html[data-skin] [data-landing-frame] ~ [data-guest-discover] { display: none; }
-/* A members' page opened by a visitor has a page of its own too
-   (features/guest/frame/gated-frame.tsx): no blurred stand-in behind a
-   sheet, the page is there. */
-html[data-skin] [data-gated-frame] ~ [data-guest-discover] { display: none; }
-html[data-skin] #auth-landing-screen:has([data-gated-frame]) [data-deep-link-backdrop] { display: none; }
-html[data-skin] #auth-landing-scroll > div:has(> :is([data-landing-frame], [data-gated-frame])) { max-width: none; padding-bottom: 0; }
+html[data-skin] #auth-landing-scroll > div:has(> [data-landing-frame]) { max-width: none; padding-bottom: 0; }
+/* A MEMBERS' ADDRESS OPENED BY A VISITOR is what it is in the standard
+   look (features/auth/deep-link-sign-in.tsx): the sign-in sheet, open by
+   itself, over an outline of a page. Under a look the bar names the place
+   (GatePlace), so the outline starts under the bar, on the look's own
+   ground, and is drawn with the kit's surfaces in place of the blur: a
+   title's bar, then cards. The landing's own page is not under it. */
+html[data-frame-chrome="guest"] #auth-landing-screen:has([data-deep-link-backdrop]) [data-guest-discover] { display: none; }
+html[data-frame-chrome="guest"] [data-deep-link-backdrop] { top: var(--fr-shell-top, 0px); z-index: 0; background: none !important; }
+html[data-frame-chrome="guest"] [data-deep-link-backdrop] > div { max-width: 784px; gap: 16px; padding: 32px 32px 0; opacity: 0.6; filter: none; }
+html[data-frame-chrome="guest"] [data-deep-link-backdrop] > div > div:first-child { padding: 0; }
+html[data-frame-chrome="guest"] [data-deep-link-backdrop] > div > div:first-child > div:first-child { display: none; }
+html[data-frame-chrome="guest"] [data-deep-link-backdrop] > div :is(.rounded-full, .rounded-\[20px\]) { background: var(--fr-surface); box-shadow: inset 0 0 0 1px var(--fr-line2); }
+html[data-frame-chrome="guest"] [data-deep-link-backdrop] > div .rounded-full { width: 220px; height: 28px; border-radius: 10px; }
+@media (max-width: 767.98px) {
+  html[data-frame-chrome="guest"] [data-deep-link-backdrop] > div { padding: 16px 16px 0; }
+}
 
 /* A PUBLIC COMMUNITY'S PAGE FOR A VISITOR (features/guest/frame/project
    -frame.tsx) is the kit's page too, with its own margins. A change's
