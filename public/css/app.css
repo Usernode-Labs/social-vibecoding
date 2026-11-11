@@ -28229,6 +28229,15 @@ html[data-frame-chrome] body { --platform-header-h: calc(var(--fr-shell-top) - v
    kit's bar stands for their header and their back. The chrome is drawn
    over them (41) and under their sheets and the install strip (45, 50). */
 html[data-skin] .fr.fr-app.fr-shell[data-frame-app="guest"] { z-index: 41; }
+/* …but the sign-in sheet is drawn INSIDE the anonymous screen that opened
+   it (auth/sign-in-sheet.tsx, `fixed inset-0 z-50` in a screen at 40), so
+   at 41 the bar stood over the sheet's dimming, lit, with Sign in and
+   Sign up at full brightness: the sheet read as opened under the bar.
+   While a sheet is up the chrome goes under the screens instead. The
+   screen starts below the bar and has no ground of its own under a look,
+   so the bar is still seen, through the sheet's dim, as the standard
+   header is. */
+html[data-frame-chrome="guest"]:has([data-sign-in-sheet]) .fr.fr-app.fr-shell[data-frame-app="guest"] { z-index: 39; }
 html[data-frame-chrome="guest"] #auth-landing-screen,
 html[data-frame-chrome="guest"] #auth-login-screen,
 html[data-frame-chrome="guest"] #auth-register-screen,
