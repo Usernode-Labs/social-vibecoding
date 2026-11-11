@@ -63,10 +63,17 @@ export interface GuestMerged {
   title: string | null;
   summary: string | null;
   merged_at: string | null;
+  /** Its after picture, where anybody may see it (src/services/shots-public.js); else null. */
+  picture?: string | null;
 }
 
 export interface GuestOverview {
   app: GuestApp & { builders: number };
+  /**
+   * How many took part this week and how many changes went live in the last
+   * thirty days: numbers, never who. Null when they could not be read.
+   */
+  activity?: { active_week: number; merged_month: number } | null;
   votes: GuestVote[];
   merged: GuestMerged[];
   requests: { total: number; more: boolean; items: { number: number; title: string }[] } | null;
