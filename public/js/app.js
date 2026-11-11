@@ -3629,6 +3629,17 @@ const App = {
             // 11 Nov 2026: the event carries the push, whose standing a
             // screen holding its item draws at once (lib/work-state.ts).
             window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed', { detail: data }));
+            // #6595: a work state also names the item whose stage moved, so
+            // a request or a change open on screen re-reads itself wherever
+            // it is shown. `dev: false`: the Workshop's own refresh is told
+            // nothing by a work state.
+            if (data.type === 'work_state') {
+              App._liveRefresh('work', data.item?.sessionId ?? null, {
+                appSlug: data.appSlug,
+                issueNumber: data.item?.issueNumber,
+                dev: false,
+              });
+            }
             break;
           case 'app_version_changed':
             // A new build of an app is live: its pills, its open change, and
@@ -4449,7 +4460,7 @@ const App = {
   // Refresh the relevant dev sub-tab when another user creates, votes on,
   // or closes an issue / governance proposal so everyone sees it live.
   handleIssueUpdate(data) {
-    App._liveRefresh('issue', null, { appSlug: data.appSlug });
+    App._liveRefresh('issue', null, { appSlug: data.appSlug, issueNumber: data.issueNumber });
   },
 
   // The Workshop's grouping for the open app moved server-side (cards
@@ -4510,6 +4521,11 @@ const App = {
     if (!b) {
       b = {
         kinds: new Set(), ids: new Set(), voteSlugs: new Set(),
+        // #6595: what a request or a change open anywhere re-reads itself
+        // from — every project the burst named (whether or not it is the
+        // app on screen), every request number it named, and whether any of
+        // its events named no session and no request (a close vote, say).
+        slugs: new Set(), numbers: new Set(), unnamed: false,
         unscoped: false, merged: false, home: false, dev: false, resolve: null,
       };
       b.promise = new Promise((resolve) => { b.resolve = resolve; });
@@ -4518,6 +4534,15 @@ const App = {
     }
     const ids = sessionIds == null ? [] : [].concat(sessionIds);
     const forThisApp = opts.appSlug == null || opts.appSlug === App.currentApp;
+    if (opts.appSlug) b.slugs.add(opts.appSlug);
+    if (opts.issueNumber != null) {
+      const number = Number(opts.issueNumber);
+      if (Number.isFinite(number)) b.numbers.add(number);
+    } else if (!ids.length) {
+      // Named neither a session nor a request: it may be about whatever is
+      // open, so the shown topic re-reads rather than guessing it is not.
+      b.unnamed = true;
+    }
     if (opts.dev !== false && forThisApp) {
       b.dev = true;
       b.kinds.add(kind);
@@ -4568,6 +4593,21 @@ const App = {
         chatRead = AppView.loadVoteState(chatSlug);
       } catch { chatRead = null; }
     }
+    // #6595: a request or a change open OUTSIDE the Workshop's own sub-view
+    // — the Homeroom bot tab's column, the platform side panel, the item's
+    // own page — re-reads itself for the same burst. refreshDevData above
+    // returns at once off the board, and even on it the thread read that
+    // draws a close vote's card is not part of that read. Routed by what is
+    // shown (AppView._devTopic), never by App.currentApp.
+    let shownRead = null;
+    if (typeof AppView !== 'undefined' && AppView.refreshShownTopic) {
+      try {
+        shownRead = AppView.refreshShownTopic({
+          kinds: b.kinds, ids: b.ids, numbers: b.numbers, slugs: b.slugs,
+          unnamed: b.unnamed, devRead: !!out,
+        });
+      } catch { shownRead = null; }
+    }
     // A change's page (topic-head.tsx's ChangeDetail) re-reads its row when
     // told to, rather than every ten seconds. The Workshop's own refresh
     // hands the open topic its row directly; every other mounted page for
@@ -4579,7 +4619,7 @@ const App = {
     }
     if (typeof AppView !== 'undefined' && AppView._liveHandedOff) AppView._liveHandedOff = null;
     if (b.home) App._refreshHomeLive();
-    Promise.all([out, chatRead]).then(() => b.resolve(out), () => b.resolve(undefined));
+    Promise.all([out, chatRead, shownRead]).then(() => b.resolve(out), () => b.resolve(undefined));
   },
   // The drawer and Home for a live burst. Home's grid is one request for
   // every app the viewer can see (670 KB on production), so a stream of

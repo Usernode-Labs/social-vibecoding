@@ -93,7 +93,7 @@ import {
   probeLayout,
 } from '../side-panel/resize';
 import { sidePanelStore } from '../side-panel/store.js';
-import { attachmentFor, columnAddress, columnKey, routeOf, type Column, type ColumnDetail, type ColumnHow } from './column';
+import { attachmentFor, columnAddress, columnKey, pageProject, routeOf, type Column, type ColumnDetail, type ColumnHow } from './column';
 import {
   BOT_TAB, botDetailAt, botItemFromRoute, botItemRoute, botTabAddress, botTabAt, knownBotConversation, noteBotConversation, useBotTabAsk,
   type BotAt, type BotItem,
@@ -609,7 +609,15 @@ export function AiScreen(): ReactNode {
     setWork((now) => applyWorkState(now, null, push).work);
     setNeeds((now) => applyWorkState(null, now, push).needs);
   }, []);
-  useLiveLists(() => setMoved((n) => n + 1), visible, { projects, botId }, applyPush);
+  // #6595: a request or a change open in the column is a page of its own
+  // project, so an update about that project re-reads the lists beside it
+  // even when nothing of it was listed. Never by App.currentApp: on this
+  // page that is null.
+  const shownProjects = useMemo(() => {
+    const slug = column?.at === 'page' ? pageProject(column.route) : null;
+    return slug && !projects.has(slug) ? new Set([...projects, slug]) : projects;
+  }, [projects, column]);
+  useLiveLists(() => setMoved((n) => n + 1), visible, { projects: shownProjects, botId }, applyPush);
   // HISTORY (./history.ts): read on each showing, and again when the
   // projects picked or its kind change.
   const [showings, setShowings] = useState(0);

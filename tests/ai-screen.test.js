@@ -624,7 +624,8 @@ test('each In progress and Waiting row says its stage and its second line, in th
     'Garden club · #7 · Building · Updating the change',
     'Garden club · #7 · Reading it',
     'Garden club · #7 · Reading it · Reading your reply',
-    'Garden club · #7 · Building', 'Garden club · #7 · Building',
+    'Garden club · #7 · Building · Homeroom bot is building it',
+    'Garden club · #7 · Building · You\'re building it',
     'Garden club · #7 · Building · snait is building it',
   ], 'a claim with no change yet names who has it');
   const waits = (what, extra = {}) => thread(1, 7, what, extra);
@@ -669,9 +670,9 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
     row('building', { by: 'someone' }), row('vote'), row('checking'), row('queued'), row('build_queued'),
     row('held'), row('held_turn'), row('on_hold'), row('not_picked_up'), row('build_stopped'),
   ].map((r) => words(shortWords(r))), [
-    'Going live', 'Homeroom bot', 'You', 'snait', 'Building', 'Up for a vote', 'Checking', 'Not started yet', 'Ready to build',
+    'Going live', 'Building', 'Building', 'Building', 'Building', 'Up for a vote', 'Checking', 'Not started yet', 'Ready to build',
     'Ready to build', 'Ready to build', 'Not started yet', 'Not started yet', 'Stopped: the build didn\'t finish',
-  ], 'the stage, in the words every screen uses; who is building it where that is the news');
+  ], 'the stage, in the words every screen uses');
   // Handed back by the bot: Needs Reply, Restart build and Retry the fix,
   // each saying its stage.
   const work = {
@@ -1928,8 +1929,9 @@ test('the page listens while it is shown: the socket through app.js, the bot\'s 
   // The page: each read it is asked for is the showing's read again, past
   // the worker's saved copy after the first, keeping the lists on a failure.
   const src = read('frontend/src/features/ai/index.tsx');
+  // #6595: the page open in the column adds its own project to that set.
   // 11 Nov 2026: and a work_state push is drawn in place first (applyWorkState).
-  assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects, botId \}, applyPush\);/);
+  assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects: shownProjects, botId \}, applyPush\);/);
   assert.match(src, /setWork\(\(now\) => applyWorkState\(now, null, push\)\.work\);\s+setNeeds\(\(now\) => applyWorkState\(null, now, push\)\.needs\);/);
   assert.match(live, /if \(isWorkStatePush\(event\)\) latest\.current\.apply\?\.\(event\);/);
   assert.match(src, /const init = again \? FRESH : undefined;/);
@@ -2234,4 +2236,20 @@ test('10 Nov 2026: `#homeroom-bot/new` is the "+" pressed for you, and may name 
   assert.match(thread, /export function startNewThread\(conversationId: number, fresh\?: NewThreadPreset \| null\): void \{\n\s+if \(!conversationId\) return;\n\s+closeThread\(\);\n\s+preset = fresh \|\| null;/, 'the "+" itself clears what an earlier door named');
   assert.match(thread, /const \[project, setProject\] = useState\(\(\) => preset\?\.project \|\| ''\);/);
   assert.match(thread, /const \[builder, setBuilder\] = useState<Builder>\(\(\) => preset\?\.builder \|\| 'homeroom'\);/);
+});
+
+test('#6595: pageProject reads the project off a page route, and only there', () => {
+  const column = loadTsx('frontend/src/features/ai/column.ts');
+  assert.equal(column.pageProject('app/garden/dev/issues/6580'), 'garden');
+  assert.equal(column.pageProject('/app/garden/dev/changes/12'), 'garden');
+  assert.equal(column.pageProject('app/garden?project=x'), 'garden');
+  assert.equal(column.pageProject('homeroom-bot'), null, 'the tab itself');
+  assert.equal(column.pageProject('app'), null);
+  assert.equal(column.pageProject('messages/12'), null);
+  assert.equal(column.pageProject(null), null);
+  // The page open in the column is added to what the lists are re-read for,
+  // so a project that moved there is not missed when it is not listed.
+  const index = read('frontend/src/features/ai/index.tsx');
+  assert.match(index, /column\?\.at === 'page' \? pageProject\(column\.route\)/);
+  assert.match(index, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects: shownProjects, botId \}\)/);
 });

@@ -51,6 +51,12 @@ export interface ThreadItem {
    * sent without it reads as live, as merge-status.js does.
    */
   liveAt?: string | null;
+  /**
+   * #6594: its votes are in, by its project's rule (the server's work state:
+   * it is approved and waiting on checks, or going live). A review change
+   * with this is not asked for a vote anywhere.
+   */
+  approved?: boolean;
   /** #6139, a change underway: built, with its checks passing on its current head and nothing working on it. */
   ready?: boolean;
   at?: string | null;
@@ -255,7 +261,8 @@ function standing(item: ThreadItem): Phrase | null {
   if (item.type === 'change') {
     return item.state === 'merged'
       ? { id: goingLive(item) ? 'project:topic.thread.state.goingLive' : 'project:topic.thread.state.live' }
-      : item.state === 'review' ? { id: 'project:topic.thread.state.voting' }
+      : item.state === 'review'
+        ? { id: item.approved ? 'project:topic.thread.state.approved' : 'project:topic.thread.state.voting' }
         : { id: item.ready ? 'project:topic.thread.state.ready' : 'project:topic.thread.state.underway' };
   }
   return { id: item.status === 'open' ? 'project:topic.thread.state.voting' : 'project:topic.thread.state.settled' };
@@ -510,7 +517,16 @@ export function requestPill(
   const shut = work && work.change && !work.change.voteOpen ? work.change.id : null;
   const review = layout.changes.filter((c) => c.state === 'review' && c.id !== shut).length;
   if (review >= 2 || (review >= 1 && close)) return { ...base, key: 'choosing', label: say('project:topic.thread.pill.choosing'), tone: 'neutral' };
-  if (review === 1) return { ...base, key: 'vote', label: say('project:topic.thread.pill.vote'), tone: 'neutral' };
+  // #6594: its votes are in: it is approved and waits on its checks, so the
+  // header does not ask for a vote it no longer needs. Approved takes Going
+  // live's look (the progress tone), as a work in flight.
+  if (review === 1) {
+    const only = layout.changes.find((c) => c.state === 'review');
+    if (only && only.approved) {
+      return { ...base, key: 'approved', label: say('project:topic.thread.pill.approved'), tone: 'progress', spinner: true };
+    }
+    return { ...base, key: 'vote', label: say('project:topic.thread.pill.vote'), tone: 'neutral' };
+  }
   if (close) return { ...base, key: 'close', label: say('project:topic.thread.pill.close'), tone: 'neutral' };
   const underway = layout.changes.filter((c) => c.state === 'underway');
   // #6532: a build waiting its turn is the server's Ready to build, not

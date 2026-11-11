@@ -1419,9 +1419,23 @@
     {
       "source": "src/services/homeroom-bot-mayor.js",
       "kind": "structural-template",
+      "fingerprint": "06643ba7b1cb8f91eecf",
+      "count": 1,
+      "preview": "`SELECT github_issue_number AS n FROM issues WHERE kind = 'general' AND status = 'closed'${filter} AND github_issue_number = ANY(${nParam}::int[]) UNION SELECT "
+    },
+    {
+      "source": "src/services/homeroom-bot-mayor.js",
+      "kind": "structural-template",
       "fingerprint": "7c68d039fac8e1650efb",
       "count": 1,
       "preview": "`SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`"
+    },
+    {
+      "source": "src/services/homeroom-bot-mayor.js",
+      "kind": "structural-template",
+      "fingerprint": "83bb072f4ad3f576a7e4",
+      "count": 1,
+      "preview": "`SELECT a.id, a.kind, a.status, a.issue_number FROM bot_cards a WHERE ${scope.where} AND ${where}`"
     },
     {
       "source": "src/services/homeroom-bot-mayor.js",
@@ -1944,9 +1958,9 @@
     {
       "source": "src/services/shots-public.js",
       "kind": "runtime-expression",
-      "fingerprint": "4e2eeb1379f378d39be7",
+      "fingerprint": "a2ab91727c9d261b8fff",
       "count": 1,
-      "preview": "stillsSql(OPEN_SCOPE)"
+      "preview": "stillsSql(live ? MERGED_SCOPE : OPEN_SCOPE)"
     },
     {
       "source": "src/services/shots-public.js",
@@ -2010,6 +2024,13 @@
       "fingerprint": "d664a2029343883317f2",
       "count": 1,
       "preview": "ITEMS_SQL"
+    },
+    {
+      "source": "src/services/threads.js",
+      "kind": "structural-template",
+      "fingerprint": "ceaf327ad2eb29657681",
+      "count": 1,
+      "preview": "`SELECT w.session_id FROM work_states w WHERE w.session_id = ANY($1::int[]) AND ${APPROVED_SQL('w')}`"
     },
     {
       "source": "src/services/topochain/challenge-onboarding.js",
@@ -2297,6 +2318,13 @@
       "fingerprint": "e291c7da7e5ce11b4cf9",
       "count": 1,
       "preview": "REQUEST_FACTS_SQL"
+    },
+    {
+      "source": "src/services/work-state.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "efa4a36d01d42c3c8181",
+      "count": 1,
+      "preview": "VOTES_IN_SQL"
     },
     {
       "source": "src/services/work-state.js",

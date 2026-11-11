@@ -54,6 +54,9 @@ test('castIssueVote does the same, only on an ok response', () => {
     '  async castIssueVote(issueId, vote, opts = null) {',
   );
   assert.match(fn, /window\.Leaderboard\?\.invalidateHistory\?\.\(\);/);
+  // #6595: the view the vote was cast from re-reads at once, in the same
+  // gathered burst as its broadcast.
+  assert.match(fn, /App\._liveRefresh\('vote', null, \{ appSlug: [^\n]*issueNumber: targetN \}\)/);
   const refused = fn.indexOf('PlatformUI.toast(PlatformI18n.errorText(data) ||');
   const called = fn.indexOf('Leaderboard?.invalidateHistory');
   const caught = fn.indexOf('} catch (err) {');

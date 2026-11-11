@@ -23,6 +23,7 @@ const { planRecordSql } = require('./request-specs');
 const issueRefs = require('./issue-proposal-ref');
 const { IN_PROGRESS_PAUSED_WINDOW_DAYS } = require('./issue-progress');
 const { workedOnSql } = require('../workflow/session-work.ts');
+const { APPROVED_SQL } = require('./work-state');
 
 const MARKER_KEY = 'threads_backfilled_v1';
 const MESSAGE_BATCH = 10000;
@@ -717,6 +718,19 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
   // One read over the changes this page draws.
   const changeIds = items.filter((i) => i.type === 'change').map((i) => i.id);
   if (changeIds.length) {
+    // #6594: a change whose votes are in is approved, not up for a vote.
+    // Its stored work state says so (the same gate every merge decision
+    // takes); a merging change is past approval too.
+    const { rows: approved } = await db.query(
+      `SELECT w.session_id FROM work_states w
+        WHERE w.session_id = ANY($1::int[]) AND ${APPROVED_SQL('w')}`,
+      [changeIds],
+    );
+    const approvedIds = new Set(approved.map((r) => Number(r.session_id)));
+    for (const item of items) {
+      if (item.type !== 'change') continue;
+      item.approved = approvedIds.has(item.id) || item.status === 'merging';
+    }
     const { rows: disputed } = await db.query(
       `SELECT session_id, request_number FROM change_request_claims
         WHERE session_id = ANY($1::int[]) AND disputed_at IS NOT NULL`,

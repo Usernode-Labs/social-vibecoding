@@ -120,6 +120,9 @@ function controller(): any {
  */
 export function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView }) {
   const [busy, setBusy] = useState(false);
+  // #6582: a refused tap says why, in a line under the buttons (the side
+  // panel beside Homeroom bot's page included), and is cleared by the next tap.
+  const [error, setError] = useState<string | null>(null);
   // #6305: a many-project offer's rows, ticked here and sent with the tap.
   const rows = (offer.rows || []) as unknown as FileManyRow[];
   const [ticked, setTicked] = useState<boolean[]>(() => rows.map((r) => r.ticked));
@@ -130,6 +133,7 @@ export function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOf
   // #6211: an overlap note's three choices include `first` (this one first).
   const decide = async (choice: 'yes' | 'no' | 'first') => {
     if (busy) return;
+    setError(null);
     setBusy(true);
     try {
       await controller()?.decideBotOffer?.(id, choice, many ? picks : undefined, offer.id);
@@ -167,6 +171,11 @@ export function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOf
           </Button>
         ))}
       </div>
+      {error ? (
+        <p className="mt-1 text-[12px] text-zinc-500 dark:text-zinc-400" role="status" data-gc-bot-offer-error="">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -671,6 +671,10 @@
     "text": "Up for a vote",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change is waiting for the group's votes."
   },
+  "work.stage.approved": {
+    "text": "Approved",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change has the votes its project's rule needs, and it is waiting on its own checks or on GitHub's required checks before it goes live."
+  },
   "work.stage.goingLive": {
     "text": "Going live",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change was approved and is being put live."
@@ -839,8 +843,20 @@
     "text": "Conflicts with main: Homeroom resolves it once you approve",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line of a change up for a vote that conflicts with main: a yes lets Homeroom resolve the conflict, re-run the checks and merge it without asking again."
   },
+  "work.line.approvedChecking": {
+    "text": "Checking the latest version",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Approved: the change has the votes its rule needs, and Homeroom's own checks are still running on its latest version. It goes live once they pass."
+  },
+  "work.line.earlierYes_one": {
+    "text": "Changed since its yes vote, which counts again once confirmed",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line of a change up for a vote again after a new version retired one earlier yes vote, which counts again once its voter confirms it."
+  },
+  "work.line.earlierYes_other": {
+    "text": "Changed since its {{count}} yes votes, which count again once each is confirmed",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line of a change up for a vote again after a new version retired several earlier yes votes, which count again once each voter confirms. {{count}} is how many yes votes stopped counting."
+  },
   "work.line.githubChecks": {
-    "text": "Waiting for GitHub's checks",
+    "text": "Waiting on GitHub's checks",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Going live: the change has the yes it needs, and GitHub has not merged it yet because the required checks GitHub runs on it are still running, or failed and are being run again on today's main. Homeroom merges it once they pass."
   },
   "work.line.githubChecksFailing": {

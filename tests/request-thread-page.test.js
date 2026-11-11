@@ -914,6 +914,35 @@ test('#6439 a request\'s page keeps the latest vote to close, open or ended', ()
   assert.equal(requestPill(live, null, (id) => id).key, 'close', 'the header says a vote is on');
 });
 
+// #6594: once a change has the votes its rule needs, the request's header
+// says Approved (in Going live's tone) instead of asking for a vote, and the
+// change's row in the thread says Approved too.
+test('#6594 an approved change says Approved in the header and the list', () => {
+  const { threadLayout, requestPill, threadRows } = loadTsx('frontend/src/features/dev-board/topic/thread-model.ts');
+  const here = { type: 'request', id: 1 };
+  const payload = (items) => ({
+    thread: { id: 1, number: 4417, kind: 'work', lead: 'request', title: 'Add topics', state: 'open' },
+    items, follow: null,
+  });
+  const change = {
+    type: 'change', id: 7, number: 6569, title: 'Sort every project', status: 'promoted',
+    state: 'review', replies: 0, approved: true, ready: true,
+  };
+  const layout = threadLayout(payload([change]), here);
+  const pill = requestPill(layout, null, (id) => id);
+  assert.equal(pill.key, 'approved');
+  assert.equal(pill.label, 'project:topic.thread.pill.approved');
+  assert.equal(pill.tone, 'progress', 'Approved takes Going live’s look');
+  assert.equal(pill.spinner, true);
+  const rows = threadRows(payload([change]), here);
+  assert.ok(rows[0].facts.some((f) => f.id === 'project:topic.thread.state.approved'), 'the row says Approved');
+  // A change still asking for its vote keeps today's pill and row.
+  const voting = threadLayout(payload([{ ...change, approved: false }]), here);
+  assert.equal(requestPill(voting, null, (id) => id).key, 'vote');
+  assert.ok(threadRows(payload([{ ...change, approved: false }]), here)[0].facts
+    .some((f) => f.id === 'project:topic.thread.state.voting'));
+});
+
 test('#6439 a close vote\'s home is its request, and a rename keeps its own page', async () => {
   const seen = [];
   const av = sandboxAppView({ hash: '#app/example/dev/workshop', pathname: '/app/example/dev/workshop' }, {}, async (url) => {

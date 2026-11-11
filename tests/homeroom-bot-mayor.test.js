@@ -1345,6 +1345,113 @@ test('#6581: a reply that fails a check shows no words first, and the checked an
   assert.equal(doings.filter((d) => d?.kind === 'writing').length, 1, 'one "Writing", across both passes');
 });
 
+test('#6581: a request this conversation filed or read is real, before any queue or issues row has it', async () => {
+  // The report the bot filed a turn earlier: a feedback_reports row with no
+  // app (Homeroom's board), and no issues or queue row until the bot picks it up.
+  const pool = {
+    query: async (sql) => (/FROM feedback_reports/.test(String(sql)) ? { rows: [{ n: 6580 }] } : { rows: [] }),
+  };
+  const ctx = { user: { id: 7 }, appIds: new Set(), conversationId: 41, bot: { id: 2 } };
+  const kinds = async (text) => (await mayor.claimProblems(pool, ctx, text)).map((p) => p.kind);
+  assert.deepEqual(await kinds('It is in its queue, just not reached yet: #6580 shows as not started.'), [],
+    'the report it filed a turn earlier is no unknown number');
+  assert.deepEqual(await kinds('There is already a request for this exact problem: #6564.'), ['unknown'],
+    'a number nothing filed, read or returned still is');
+
+  // A request card the bot put in this conversation.
+  const cardPool = {
+    query: async (sql) => (/conversation_message_objects/.test(String(sql)) ? { rows: [{ n: 6580 }] } : { rows: [] }),
+  };
+  const cardCtx = { user: { id: 7 }, appIds: new Set(), conversationId: 41, bot: { id: 2 } };
+  assert.deepEqual((await mayor.claimProblems(cardPool, cardCtx, 'Your report is #6580, still not started.')).map((p) => p.kind), [],
+    'a request card in the conversation says it is real');
+});
+
+test('#6581: a number a tool returned this turn is real, and an error result notes nothing', async () => {
+  const pool = { query: async () => ({ rows: [] }) };
+  const ctx = { user: { id: 7 }, appIds: new Set() };
+  const kinds = async (text, extra = {}) => (await mayor.claimProblems(pool, { ...ctx, ...extra }, text)).map((p) => p.kind);
+  assert.deepEqual(await kinds('It is #6580, still not started.'), ['unknown'], 'no tool returned it');
+  const seen = { ...ctx };
+  mayor.noteKnownRequests(seen, { project: 'note-board', projectName: 'Note board', number: 6580 });
+  assert.deepEqual(await kinds('It is #6580, still not started.', seen), [],
+    'a request_detail result this turn returned it');
+  assert.deepEqual(await kinds('Its pull request is #7001.', { knownRequests: new Set([7001]) }), [],
+    'an issueNumber counts the same');
+  mayor.noteKnownRequests(seen, { result: JSON.stringify({ requests: [{ number: 7002 }] }) });
+  assert.deepEqual(await kinds('That one is #7002.', seen), [], 'a platform tool\'s JSON answer counts too');
+  mayor.noteKnownRequests(seen, { error: 'No such request on a project they can see.' });
+  assert.deepEqual([...seen.knownRequests].sort((a, b) => a - b), [6580, 7002], 'an error result notes nothing');
+});
+
+test('#6581: a number Homeroom\'s own board has is real; one it does not is still unknown', async () => {
+  const platform = { id: 3, slug: 'usernode-2d5619', name: 'Homeroom', view_visibility: 'public', community_id: null };
+  const pool = {
+    query: async (sql) => {
+      const s = String(sql);
+      if (/FROM apps/.test(s)) return { rows: [platform] };
+      // The board lookup: this app's rows, and any report filed on Homeroom's board.
+      if (/FROM issues/.test(s) && /app_id = \$1/.test(s)) return { rows: [{ n: 6580 }] };
+      return { rows: [] };
+    },
+  };
+  const ctx = { user: { id: 7 }, appIds: new Set() };
+  const kinds = async (text) => (await mayor.claimProblems(pool, ctx, text)).map((p) => p.kind);
+  assert.deepEqual(await kinds('Your report is #6580.'), [], 'the board has it');
+  assert.deepEqual(await kinds('Your report is #7000.'), ['unknown'], 'an invented number is still cut');
+});
+
+test('#6581: the repair note for an unknown number never asks the model to undo an earlier filing', () => {
+  const note = mayor.checkNote([{ kind: 'unknown', numbers: [6580], said: 'names request #6580, which no project of theirs has' }]);
+  assert.match(note, /request_detail/, 'it checks the number');
+  assert.match(note, /keep/, 'and keeps it when a tool returns it');
+  assert.doesNotMatch(note, /has not been done|was not (done|filed)|did not happen|No tool you called/,
+    'nothing reads as "it did not happen"');
+  assert.match(note, /Never retract an earlier action in this conversation/);
+  assert.doesNotMatch(note, /—/);
+  // A mixed note still says what the turn did not do, and carries the same words.
+  const mixed = mayor.checkNote([
+    { kind: 'filed', said: 'says a request was filed' },
+    { kind: 'unknown', numbers: [14], said: 'names request #14, which no project of theirs has' },
+  ]);
+  assert.match(mixed, /No tool you called in this turn did that\./);
+  assert.match(mixed, /check it with request_detail/);
+  assert.doesNotMatch(mixed, /never name one that does not exist/);
+});
+
+test('#6581: no "I can\'t find" line for a number the conversation filed or a tool returned', () => {
+  const problems = [{ kind: 'unknown', numbers: [6580], said: 'names request #6580, which no project of theirs has' }];
+  const said = 'It is in its queue, just not reached yet: #6580 shows as not started.';
+  assert.equal(mayor.stripClaims(said, problems, { threadKnown: new Set([6580]) }), said, 'the thread filed it');
+  assert.equal(mayor.stripClaims(said, problems, { knownRequests: new Set([6580]) }), said, 'a tool returned it');
+  assert.equal(mayor.stripClaims(said, problems, { reported: { number: 6580 } }), said, 'this turn filed it');
+  assert.equal(mayor.stripClaims(said, problems, {}),
+    `${said}\n\n(I can't find request #6580 on your projects.)`, 'a number nothing knows still says so');
+});
+
+test('#6581: a reply that fails a check shows no words first, and the checked answer appears once', async () => {
+  const doings = [];
+  let first = true;
+  const words = 'Nothing has been filed yet. Tell me what you want filed.';
+  const chat = async (req) => {
+    // The transport calls onDelta as the reply's arguments arrive.
+    const reply = first ? "I've filed it for you." : words;
+    first = false;
+    const args = JSON.stringify({ text: reply });
+    for (const at of [10, args.length]) {
+      req.onDelta({ content: '', toolCalls: [{ index: 0, function: { name: 'reply', arguments: args.slice(0, at) } }] });
+    }
+    return { content: '', toolCalls: [callOf('r', 'reply', { text: reply })] };
+  };
+  const turn = chatTurn(chat, { extra: { doing: async (what) => { doings.push(what); } } });
+  await turn.run;
+  assert.equal(turn.sent.length, 1, 'one message, the checked one');
+  assert.equal(turn.sent[0].content, words);
+  assert.ok(doings.some((d) => d?.kind === 'writing'), 'the card said it was writing');
+  assert.ok(doings.every((d) => !d || d.text === undefined), 'no words were ever shown on the card');
+  assert.equal(doings.filter((d) => d?.kind === 'writing').length, 1, 'one "Writing", across both passes');
+});
+
 test('#6566: report_problem returns the report\'s number and link, with a card, and a repeat files nothing', async () => {
   const platform = { id: 9, slug: 'usernode-2d5619', name: 'Homeroom', self_hosted: true, view_visibility: 'public' };
   const pool = {

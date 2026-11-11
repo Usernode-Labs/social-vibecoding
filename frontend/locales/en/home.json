@@ -905,7 +905,7 @@
   },
   "join.more": {
     "text": "More communities",
-    "description": "Small heading over the rest of the community cards, after the Featured ones, in Communities to join on Home (signed in or out). Shown only when a kind other than All is chosen and Featured is shown above it."
+    "description": "Small heading over the community cards after Featured in Communities to join on Home (signed in or out): every community of the chosen kind that Featured does not show, most used first. Not shown while searching, with nothing featured, or when every community of the kind is featured."
   },
   "join.votes_one": {
     "text": "{{count}} up for a vote",
