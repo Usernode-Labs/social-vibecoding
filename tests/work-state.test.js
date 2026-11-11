@@ -236,6 +236,40 @@ test('a checking change words its wait: about N min left, or waiting to sync wit
   }, { now: NOW });
   assert.deepEqual([onYes.stage, onYes.line], ['up_for_vote', { code: 'conflict_on_yes' }]);
   assert.equal(ws.lineSays(onYes), 'Conflicts with main: Homeroom resolves it once you approve');
+  assert.equal(ws.voteOpenOf(onYes), true);
+  // ...but only once it could take one, as voteReadySql reads it: its checks
+  // passed on the head up for a vote, it is not a first version, and its
+  // shots are not still being taken. Until then it is checking, never open
+  // for votes.
+  const yesOnly = { status: 'promoted', integration_merges_clean: false, integration_block_reasons: ['awaiting_approval'] };
+  const notYet = (row) => {
+    const out = ws.deriveChange({ ...yesOnly, ...row }, { now: NOW });
+    assert.equal(ws.voteOpenOf(out), false, JSON.stringify(row));
+    return [out.stage, out.line];
+  };
+  assert.deepEqual(notYet({ check_state: 'pending' }), ['checking', { code: 'conflict_on_yes' }]);
+  assert.deepEqual(notYet({ check_state: 'running', check_phase: 'testing' }), ['checking', { code: 'conflict_on_yes' }]);
+  assert.deepEqual(notYet({ check_state: 'failing', failed_checks: 2 }), ['checking', { code: 'checks_failing', failing: 2 }]);
+  assert.deepEqual(notYet({ check_state: 'passing', reviewed_head_sha: 'new', checks_commit_sha: 'old' }),
+    ['checking', { code: 'conflict_on_yes' }], 'a pass of another head says nothing of this one');
+  assert.deepEqual(notYet({ check_state: 'passing', first_version: true }), ['checking', { code: 'conflict_on_yes' }]);
+  assert.deepEqual(notYet({
+    check_state: 'passing', reviewed_head_sha: 'h1', checks_commit_sha: 'h1', checks_at: NOW.toISOString(),
+    shots_state: 'exploring', shots_run_id: 'r'.repeat(32), shots_updated_at: NOW.toISOString(),
+    shots_detail: { headSha: 'h1', required: true },
+  }), ['checking', { code: 'conflict_on_yes' }], 'its shots are still being taken');
+  // A request's own step reads the same, from its facts row's columns.
+  const facts = { integration_merges_clean: false, integration_block_reasons: ['awaiting_approval'] };
+  const step = (stage, row) => {
+    const out = ws.fromStage({ stage, since: NOW.toISOString() }, { ...facts, ...row }, NOW);
+    return [out.stage, out.line];
+  };
+  assert.deepEqual(step('checks', { check_state: 'pending' }), ['checking', { code: 'conflict_on_yes' }]);
+  assert.deepEqual(step('checks_failed', { check_state: 'failing', failed_checks: 1 }), ['checking', { code: 'checks_failing', failing: 1 }]);
+  assert.deepEqual(step('checks', { check_state: 'passing', first_version: true }), ['checking', { code: 'conflict_on_yes' }]);
+  assert.deepEqual(step('checks', { check_state: 'passing', reviewed_head_sha: 'b', checks_sha: 'a' }), ['checking', { code: 'conflict_on_yes' }]);
+  assert.deepEqual(step('checks', { check_state: 'passing' }), ['up_for_vote', { code: 'conflict_on_yes' }]);
+  assert.deepEqual(step('vote', { check_state: 'passing' }), ['up_for_vote', { code: 'conflict_on_yes' }]);
   // A passing change that has since stopped merging cleanly moves back to
   // waiting, and is not up for a vote.
   const moved = ws.deriveChange({ status: 'promoted', check_state: 'passing',

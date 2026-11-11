@@ -253,6 +253,20 @@ test('Homeroom bot\'s cards, in one store', { timeout: 180000 }, async (t) => {
     assert.equal(cards.retireReason('post_design', at('closed')), null, 'a kind about words, not where the work stands');
     assert.equal(cards.moved(null, at('building')), false, 'nothing to compare: no move');
     assert.equal(cards.moved({ stage: 'building', why: null, reason: null, closeVote: false }, at('building')), false);
+    // Ready to build and waiting its turn (in the bot's line, or held) is not
+    // built yet: its overlap, copy, move and file buttons stay until a build
+    // really starts, and that start is a move of its own.
+    for (const code of ['queued', 'held_builds', 'held_waiting']) {
+      for (const kind of ['overlap', 'copy_request', 'move_request', 'file_request']) {
+        assert.equal(cards.retireReason(kind, at('building', { line: { code } })), null, `${kind} while ${code}`);
+      }
+    }
+    assert.equal(cards.retireReason('overlap', at('building', { line: { code: 'starting' } })), 'building');
+    assert.equal(cards.retireReason('overlap', at('building', { line: { code: 'claimed', by: 'ada' } })), 'building');
+    const was = (code) => ({ stage: 'building', why: null, reason: null, closeVote: false, line: { code } });
+    assert.equal(cards.moved(was('queued'), at('building', { line: { code: 'starting' } })), true, 'its build started');
+    assert.equal(cards.moved(was('queued'), at('building', { line: { code: 'held_builds' } })), false, 'still waiting its turn');
+    assert.equal(cards.moved(was('starting'), at('building', { line: { code: 'reviewing' } })), false);
 
     const ask = async (n) => {
       await pool.query('INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES ($1, $2, $3, $4)',
@@ -295,19 +309,81 @@ test('Homeroom bot\'s cards, in one store', { timeout: 180000 }, async (t) => {
       'everybody reading hears it when the transaction commits');
     const tapped = await voice.decideOffer(pool, {}, { app, user: { id: ada.id }, messageId: close.id, offerId: close.cardId, choice: 'yes', deps });
     assert.deepEqual([tapped.ok, tapped.status, tapped.code, tapped.reason], [false, 410, 'retired', 'close_vote']);
+    // Its row is derived again at once: its open cards no longer list it, and
+    // its push says so.
+    const stored21 = (await workState.forRequests(pool, app.id, [21])).get(21);
+    assert.deepEqual(stored21.asks.offers.map((o) => o.id).sort((a, b) => a - b), [overlap.cardId, file.cardId].sort((a, b) => a - b));
+    const again = voted.pushes.filter((p) => p.data.type === 'work_state' && p.data.item.ref === 21);
+    assert.equal(again.length, 2, 'the move, then the row without the retired card');
+    assert.deepEqual([again[1].data.state.asks.offers, again[1].data.state.asks.openOffers], [[], 2],
+      'the push counts its cards and names none (anybody may read it)');
 
-    // Its build starts (held for the project's build slots): the overlap question goes; another request's stays.
+    // Ready to build, held for the project's build slots: nothing is being
+    // built yet, so the overlap question and the request to file stay.
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 21', [app.id]);
-    await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cap_suppressed) VALUES ($1, 21, 'live', 'ready', 'builds_per_app')`,
+    const ready = await one(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cap_suppressed) VALUES ($1, 21, 'live', 'ready', 'builds_per_app')
+       RETURNING id`,
       [app.id]);
+    const held = await move(21);
+    assert.deepEqual([held.changed[0].state.stage, held.changed[0].state.line.code], ['building', 'held_builds']);
+    assert.equal((await status(overlap.cardId)).status, 'open', 'held for its turn: not built yet');
+    assert.equal((await status(file.cardId)).status, 'open');
+    // Its build starts: the overlap question goes; another request's stays.
+    await pool.query('UPDATE homeroom_bot_runs SET cap_suppressed = NULL WHERE id = $1', [ready.id]);
     const built = await move(21);
-    assert.equal(built.changed[0].state.stage, 'building');
+    assert.deepEqual([built.changed[0].state.stage, built.changed[0].state.line.code], ['building', 'starting']);
     assert.deepEqual(await status(overlap.cardId), { status: 'retired', retired_reason: 'building' });
     assert.deepEqual(await status(file.cardId), { status: 'retired', retired_reason: 'building' });
     assert.equal((await status(otherOverlap.cardId)).status, 'open', 'another request\'s question is untouched');
     const overlapMeta = (await one('SELECT metadata FROM chat_messages WHERE id = $1', [overlap.id])).metadata;
     assert.deepEqual([overlapMeta.homeroomBot.offer.status, overlapMeta.homeroomBot.actions], ['retired', []]);
+  });
+
+  await t.test('a retire marks nothing; the posting function\'s retire marks its item; the drain never waits on a tapped card', async () => {
+    const marks = async () => (await pool.query(
+      'SELECT app_id, issue_number, session_id FROM work_state_dirty ORDER BY id')).rows
+      .map((r) => (r.session_id ? `s${r.session_id}` : `${r.issue_number}`));
+    const a = await noteWith({ kind: 'close_request', forUserId: null, args: { issueNumber: 41 } }, 41);
+    await pool.query('DELETE FROM work_state_dirty');
+    await cards.retireCards(pool, [{ id: a.cardId, kind: 'close_request', place: 'thread', chat_message_id: a.id }], 'moved_on');
+    assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [a.cardId])).status, 'retired');
+    assert.deepEqual(await marks(), [], 'a card only retired marks nothing (the deadlock with the drain)');
+    const older = await noteWith({ kind: 'try_again', forUserId: ada.id, args: { issueNumber: 41 } }, 41);
+    const newer = await noteWith({ kind: 'try_again', forUserId: ada.id, args: { issueNumber: 41 } }, 41);
+    await pool.query('DELETE FROM work_state_dirty');
+    await cards.retireFor(pool, { appId: app.id, issueNumber: 41, keep: [newer.cardId] });
+    assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [older.cardId])).status, 'retired');
+    assert.deepEqual(await marks(), ['41'], 'a supersede marks its request, so its open cards catch up');
+
+    // A tap holds a card (deciding, its transaction still open) while its
+    // request's build starts. The drain takes the mark, stores the move and
+    // commits, then leaves the held card to the tap rather than wait on it.
+    await pool.query('INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES ($1, 42, $2, $3)', [app.id, 'Request 42', ada.id]);
+    await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, asked_text) VALUES ($1, 42, $2, $3)',
+      [app.id, ada.id, 'Request 42']);
+    await workState.refresh(pool, [{ appId: app.id, issueNumber: 42 }]);
+    const held = await noteWith({ kind: 'overlap', forUserId: ada.id, args: { issueNumber: 42, other: 41, overlap: 'part_of' } }, 42);
+    const loose = await noteWith({ kind: 'copy_request', forUserId: ada.id, args: { issueNumber: 42 } }, 42);
+    await require('./lib/work-states').settleWorkStates(pool);
+    await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 42, 'live', 'ready')`, [app.id]);
+    const tap = await pool.connect();
+    try {
+      await tap.query('BEGIN');
+      await tap.query(`UPDATE bot_cards SET status = 'deciding', decided_key = 'held' WHERE id = $1`, [held.cardId]);
+      let deadline;
+      const drained = await Promise.race([
+        workState.drainDirty(pool),
+        // fixed wait: a deadline the drain must beat (it never sleeps through it), not a pause
+        new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('the drain waited on the tapped card')), 10000); }),
+      ]).finally(() => clearTimeout(deadline));
+      assert.ok(drained.changed.some((c) => c.kind === 'request' && c.ref === 42 && c.state.stage === 'building'));
+      assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [loose.cardId])).status, 'retired', 'the loose card goes');
+      await tap.query('ROLLBACK');
+    } finally {
+      tap.release();
+    }
+    assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [held.cardId])).status, 'open', 'the tapped one was left to its tap');
   });
 
   await t.test('step 3: a newer card of the same kind supersedes an older one, kept by id (the posting function\'s)', async () => {

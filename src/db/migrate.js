@@ -422,11 +422,37 @@ async function migrate(config) {
   await backfillFiledDraftCards(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
+  // After the staging fixtures: the changes they made (and any other) up
+  // for a vote or merging with no work state yet are marked for the drain.
+  await markChangesWithoutWorkState(pool);
   await migrateAppDbsToPerRole(pool, config);
   finishPhase('maintenanceMs');
   timings.totalMs = Date.now() - startedAt;
   log.info('db', 'Migration phases complete', timings);
   return timings;
+}
+
+// 11 Nov 2026 (docs/plans/bot-one-model.md): Needs you and the vote digest
+// ask for a vote only off a change's own work state (work_states.vote_open),
+// and the work states are staging:private, so a staging copy starts with
+// none while its changes are there. Every change up for a vote or merging
+// with no row yet is marked (work_state_dirty), and the work-state drain
+// makes its row within seconds; production's were marked once by migration
+// work-state-backfill-and-indexes, and this finds any since. Idempotent: a
+// change marked already, or with its row, is skipped. Never fails a boot.
+async function markChangesWithoutWorkState(pool) {
+  try {
+    const { rowCount } = await pool.query(
+      `INSERT INTO work_state_dirty (session_id)
+       SELECT cs.id FROM chat_sessions cs
+        WHERE cs.status IN ('promoted', 'merging') AND cs.is_headless IS NOT TRUE
+          AND NOT EXISTS (SELECT 1 FROM work_states ws WHERE ws.item_kind = 'change' AND ws.session_id = cs.id)
+       ON CONFLICT (session_id) WHERE session_id IS NOT NULL DO NOTHING`,
+    );
+    if (rowCount) log.info('db', 'Marked changes with no work state for the drain', { count: rowCount });
+  } catch (err) {
+    log.warn('db', 'Marking changes with no work state failed', { message: err.message });
+  }
 }
 
 // Proposal authorship predates proposal-level assignee votes, so existing
@@ -19405,6 +19431,7 @@ async function seedStagingPlatformMail(pool) {
 // meant to be called from anywhere else in the app.
 module.exports = {
   migrateAppDbsToPerRole,
+  markChangesWithoutWorkState,
   seedStagingTranslations,
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
   seedStagingProfileCustomization,

@@ -604,7 +604,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const card = await planMessage(third);
     assert.equal(card.meta.status, 'closed');
     // Step 3: its Build it card retires with the request's move off its plan
-    // (bot-cards.js retireFor, from the standing), as the drain finds it.
+    // (bot-cards.js retireOnMove, from the standing), as the drain finds it.
     await settleWorkStates(pool);
     const { rows: [action] } = await pool.query('SELECT status, retired_reason FROM bot_cards WHERE id = $1', [card.meta.actionId]);
     assert.equal(action.status, 'retired');

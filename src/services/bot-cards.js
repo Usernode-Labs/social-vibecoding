@@ -26,7 +26,7 @@
 // homeroom_bot_voice_offers until answered or 14 days old (voice OFFERS_SQL).
 // A card is open 14 days (`expires_at`), and a tap after that is refused and
 // its buttons go. Its buttons also go when what it is about moves on
-// (retireFor, from the standing). At most MAX_PER_REPLY cards go under one
+// (retireOnMove, from the standing). At most MAX_PER_REPLY cards go under one
 // reply.
 
 const log = require('./logger');
@@ -176,12 +176,21 @@ const RETIRED_REASONS = Object.freeze(['close_vote', 'closed', 'building', 'move
 
 // The stages a request is in before anybody builds it.
 const NOT_UNDER_WAY = new Set(['reading', 'planning', 'waiting_for_you', 'stopped']);
+// A request ready to build that waits its turn: in the bot's line, or held
+// for the project's builds or its changes up for a vote (work-state.js
+// READY, "Ready to build"). Nothing is being built yet.
+const WAITS_TO_BUILD = new Set(['queued', 'held_builds', 'held_waiting']);
 // The stages in which a change is past withdrawing.
 const PAST_CHANGING = new Set(['going_live', 'live', 'closed']);
 
 const closeVoteOf = (s) => !!(s && s.standing && s.standing.asks && s.standing.asks.closeVote);
+/** Pure: whether nobody is building a request yet, by its standing (it may wait its turn to be built). */
+function notBuildingYet(s) {
+  if (!s) return false;
+  return NOT_UNDER_WAY.has(s.stage) || (s.stage === 'building' && WAITS_TO_BUILD.has(s.line && s.line.code));
+}
 const notYetBuilt = {
-  keep: (s) => NOT_UNDER_WAY.has(s.stage),
+  keep: notBuildingYet,
   why: (s) => (s.stage === 'closed' ? 'closed' : 'building'),
 };
 
@@ -218,14 +227,16 @@ const STILL_WORTH = Object.freeze({
 
 /**
  * Pure: whether an item's standing moved since `prev` (its stage, why or
- * reason, or a vote on closing it opened). Buttons are judged on a move
- * only, so a card made a moment before its item's stage catches up is not
- * taken back for a stage it was never meant for.
+ * reason, a vote on closing it opened, or a build that waited its turn
+ * started: building, ready to build, to building under way). Buttons are
+ * judged on a move only, so a card made a moment before its item's stage
+ * catches up is not taken back for a stage it was never meant for.
  */
 function moved(prev, s) {
   if (!prev || !s) return false;
   return prev.stage !== s.stage || (prev.why || null) !== (s.why || null) || (prev.reason || null) !== (s.reason || null)
-    || (!prev.closeVote && closeVoteOf(s));
+    || (!prev.closeVote && closeVoteOf(s))
+    || (prev.line !== undefined && notBuildingYet(prev) !== notBuildingYet(s));
 }
 
 /** Pure: why a card on an item standing at `s` should go, or null while it stays. */
@@ -271,14 +282,27 @@ async function openCardsOf(db, { appId, issueNumber, sessionId }) {
  * to publish once that transaction commits (work-state.js publish).
  */
 async function retireCards(db, cards, reason) {
+  return (await retireCounted(db, cards, reason)).pushes;
+}
+
+/**
+ * retireCards, and the ids of the cards it retired. A card somebody's tap holds
+ * this moment is left to that tap (SKIP LOCKED): it is being decided, and
+ * waiting on it could close a circle of waits with the work-state drain (a
+ * tap's own mark waits on the drain's taken marks).
+ */
+async function retireCounted(db, cards, reason) {
   const pushes = [];
+  const retired = [];
   for (const card of cards) {
     const { rows: [done] } = await db.query(
       `UPDATE bot_cards SET status = 'retired', retired_reason = $2
-        WHERE id = $1 AND status = 'open' RETURNING id`,
+        WHERE id = (SELECT c.id FROM bot_cards c WHERE c.id = $1 AND c.status = 'open' FOR UPDATE SKIP LOCKED)
+        RETURNING id`,
       [Number(card.id), reason],
     );
     if (!done) continue;
+    retired.push(Number(card.id));
     if (card.place === 'thread' && card.chat_message_id) {
       const { rows: [m] } = await db.query(
         `UPDATE chat_messages
@@ -323,7 +347,7 @@ async function retireCards(db, cards, reason) {
     }
     log.info('bot-cards', 'A card\'s buttons went: what it is about moved on', { cardId: Number(card.id), kind: card.kind, reason });
   }
-  return pushes;
+  return { pushes, retired };
 }
 
 /**
@@ -341,14 +365,44 @@ async function retireCards(db, cards, reason) {
  * a request (`appId`, `issueNumber`), or a change (`sessionId`) for its
  * cards that name no request. Resolves the pushes that tell everybody
  * reading, to publish once `db`'s transaction commits.
+ *
+ * A retire marks nothing by itself (the work-state trigger skips it), so
+ * this marks the items of the cards it retired: their standings list their
+ * open cards (asks.offers), and the drain derives them again. The standing's
+ * own move retires through retireOnMove instead, which derives them at once.
  */
-async function retireFor(db, {
+async function retireFor(db, opts = {}) {
+  const out = await retireOf(db, opts);
+  if (out.cards.length) {
+    await db.query(
+      `SELECT work_state_mark(c.app_id, ${CARD_REQUEST_SQL}, NULL) AS request,
+              work_state_mark(NULL, NULL, COALESCE(c.session_id,
+                CASE WHEN (c.args->>'sessionId') ~ '^[0-9]{1,9}$' THEN (c.args->>'sessionId')::int END)) AS change
+         FROM bot_cards c WHERE c.id = ANY($1::int[])`,
+      [out.cards],
+    );
+  }
+  return out.pushes;
+}
+
+/**
+ * retireFor for an item's own move (work-state.js settleCards): the same
+ * table, marking nothing. Resolves { pushes, retired } (how many cards went),
+ * so the caller derives the item again when any did.
+ */
+async function retireOnMove(db, opts = {}) {
+  const out = await retireOf(db, opts);
+  return { pushes: out.pushes, retired: out.cards.length };
+}
+
+async function retireOf(db, {
   appId = null, issueNumber = null, sessionId = null, standing = null, prev = null, keep = null, messageIds = null,
 } = {}) {
+  const none = { pushes: [], cards: [] };
   const kept = new Set((Array.isArray(keep) ? keep : []).map(Number).filter((id) => id > 0));
   const older = (Array.isArray(messageIds) ? messageIds : []).map(Number).filter((id) => Number.isSafeInteger(id) && id > 0);
   const judge = standing && moved(prev, standing);
-  if (!judge && !kept.size && !older.length) return [];
+  if (!judge && !kept.size && !older.length) return none;
   const cards = await openCardsOf(db, { appId, issueNumber, sessionId });
   if (older.length) {
     // The older notes' own cards, about this item or not (a card that names
@@ -362,7 +416,7 @@ async function retireFor(db, {
     );
     for (const card of onThem) if (!cards.some((c) => Number(c.id) === Number(card.id))) cards.push(card);
   }
-  if (!cards.length) return [];
+  if (!cards.length) return none;
   const olderSet = new Set(older);
   const byReason = new Map();
   const add = (reason, card) => {
@@ -381,8 +435,13 @@ async function retireFor(db, {
     else if (superseding.has(card.kind) || olderSet.has(Number(card.chat_message_id))) add('superseded', card);
   }
   const pushes = [];
-  for (const [reason, list] of byReason) pushes.push(...await retireCards(db, list, reason));
-  return pushes;
+  const gone = [];
+  for (const [reason, list] of byReason) {
+    const out = await retireCounted(db, list, reason);
+    pushes.push(...out.pushes);
+    gone.push(...out.retired);
+  }
+  return { pushes, cards: gone };
 }
 
 module.exports = {
@@ -401,4 +460,5 @@ module.exports = {
   retireReason,
   retireCards,
   retireFor,
+  retireOnMove,
 };

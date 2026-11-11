@@ -138,14 +138,52 @@ function checksLine(row, now) {
   return { code: 'checks_running', minutes: Math.max(1, Math.ceil(remaining / 60000)) };
 }
 
+/**
+ * Pure (#6531, 11 Nov 2026): a change that conflicts with main where only a
+ * yes can move it (syncStand 'vote'). It is up for a vote, and so open for
+ * votes, only while it could take one, as voteReadySql reads it: its checks
+ * passed (or had nothing to test) on the head up for a vote, it is not its
+ * project's first version, and its before & after shots are not still being
+ * taken. Until then it is checking: its failing checks when they fail, else
+ * what a yes will do once it can be given. `onHead` and `held` are the
+ * caller's (a request's facts row and a change's name their columns
+ * differently).
+ */
+function yesOnlyState(row, since, { onHead, held }) {
+  const passed = row.check_state === 'passing' || row.check_state === 'skipped';
+  if (passed && onHead && row.first_version !== true && !held) {
+    return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
+  }
+  if (row.check_state === 'failing' || row.check_state === 'error') {
+    const failing = Number(row.failed_checks ?? progress.failedCount(row.test_results)) || 0;
+    return state('checking', { since, line: { code: 'checks_failing', ...(failing ? { failing } : {}) } });
+  }
+  return state('checking', { since, line: { code: 'conflict_on_yes' } });
+}
+
+/** Pure: whether a request's facts row's shots still hold its change's vote (stageOf's own reading). */
+function requestShotsHeld(row, now) {
+  if (!row || !row.shots_detail) return false;
+  const head = (row.proposal_source === 'imported' ? row.imported_pr_head_sha : row.reviewed_head_sha) || row.checks_sha;
+  return heldUntil({
+    shots_state: row.shots_state, shots_run_id: row.shots_run_id, shots_detail: row.shots_detail,
+    shots_updated_at: row.shots_updated_at, checks_checked_at: row.checks_at,
+  }, head, now.getTime()) != null;
+}
+
+/** Pure: a request's facts row whose change waits only for a yes on a conflict (yesOnlyState). */
+function requestOnYes(row, since, now) {
+  return yesOnlyState(row, since, { onHead: progress.checksOnHead(row), held: requestShotsHeld(row, now) });
+}
+
 /** The stage word plus the two lines a checking change can carry (#6402). */
-function checkingState(row, since, now) {
+function checkingState(row, since, now, onYes = requestOnYes) {
   // #6531: what a conflicting change waits on decides where it shows and
-  // what it says. A yes-only conflict is up for a vote; one the lane is
-  // resolving says "Syncing with main"; one only its author can move keeps
-  // the old wording.
+  // what it says. A yes-only conflict is up for a vote once it could take
+  // one (yesOnlyState); one the lane is resolving says "Syncing with main";
+  // one only its author can move keeps the old wording.
   const stand = syncStand(row);
-  if (stand === 'vote') return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
+  if (stand === 'vote') return onYes(row, since, now);
   if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
   if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
   const line = checksLine(row, now);
@@ -262,7 +300,7 @@ function fromStage(s, row, now = new Date()) {
       // #6531: a conflicting head the lane is catching up (or that only a yes
       // can move) is not yet its author's failing verdict.
       const stand = syncStand(row);
-      if (stand === 'vote') return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
+      if (stand === 'vote') return requestOnYes(row, since, now);
       if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
       const failing = Number(row.failed_checks ?? progress.failedCount(row.test_results)) || 0;
       return state('checking', { since, line: { code: 'checks_failing', ...(failing ? { failing } : {}) } });
@@ -276,7 +314,7 @@ function fromStage(s, row, now = new Date()) {
       // #6531: unless it conflicts and only a yes can move it.
       {
         const stand = syncStand(row);
-        if (stand === 'vote') return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
+        if (stand === 'vote') return requestOnYes(row, since, now);
         if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
         if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
       }
@@ -448,13 +486,19 @@ function deriveChange(row, { now = new Date() } = {}) {
   return state('building', { since: row.last_activity_at || row.created_at, whoseMove: 'builder' });
 }
 
+/** Pure: a change's own facts row that waits only for a yes on a conflict (yesOnlyState). */
+function changeOnYes(row, since, now) {
+  return yesOnlyState(row, since, { onHead: changeChecksOnHead(row), held: shotsHeld(row, now) });
+}
+
 function promotedChange(row, now) {
   const since = row.checks_at || row.promoted_at;
   // #6531: a conflicting change is where its conflict stand puts it, before
-  // its stale verdict is read as final: only a yes can move it (vote), the
-  // lane is catching it up (syncing), or it is its author's (author).
+  // its stale verdict is read as final: only a yes can move it (vote, once
+  // it could take one: yesOnlyState), the lane is catching it up (syncing),
+  // or it is its author's (author).
   const stand = syncStand(row);
-  if (stand === 'vote') return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
+  if (stand === 'vote') return changeOnYes(row, since, now);
   if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
   if (stand === 'author') {
     const failed = row.check_state === 'failing' || row.check_state === 'error';
@@ -472,7 +516,7 @@ function promotedChange(row, now) {
     }
     // #6402: deferred or conflicting heads wait to sync with main; a run in
     // flight says about how long it has left.
-    return checkingState(row, since, now);
+    return checkingState(row, since, now, changeOnYes);
   }
   // N5: a verdict about another commit than the one up for a vote says
   // nothing about it: its own checks are still to come.
@@ -817,8 +861,10 @@ const CHANGE_FACTS_SQL = `
            WHERE pv.session_id = cs.id AND ${currentVotePredicateSql('pv', 'cs')})::int AS votes_yes,
          (SELECT COUNT(*) FILTER (WHERE pv.vote = 'no') FROM pr_votes pv
            WHERE pv.session_id = cs.id AND ${currentVotePredicateSql('pv', 'cs')})::int AS votes_no,
+         -- Each run column on its own index (one OR would read every run).
          (cardinality(COALESCE(cs.linked_issues, '{}'::int[])) > 0
-          OR EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.proposal_session_id = cs.id OR r.build_session_id = cs.id)) AS has_requests,
+          OR EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.proposal_session_id = cs.id)
+          OR EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.build_session_id = cs.id)) AS has_requests,
          -- Its open cards (one of Homeroom bot's offers on it).
          COALESCE((SELECT jsonb_agg(jsonb_build_object('id', c.id, 'kind', c.kind, 'expiresAt', c.expires_at) ORDER BY c.id)
                      FROM bot_cards c
@@ -901,20 +947,26 @@ const STANDING_SQL = `
        ORDER BY p.created_at DESC, p.id DESC LIMIT 1
     ) sd ON TRUE`;
 
-// Every live run of the requests named by ($1 app ids, $2 numbers), newest
-// first: what their tries count, and why a build stopped.
+// The live runs of each request named by ($1 app ids, $2 numbers), newest
+// first, at most 200 of each: what their tries count, and why a build
+// stopped. The limit is per request, so one request with many runs never
+// takes another's out of a batch (its tries and its cause read from its own
+// newest runs, whatever else is refreshed with it).
 const STANDING_RUNS_SQL = `
-  SELECT r.id, r.app_id, r.issue_number, r.verdict, r.cap_suppressed, r.awaiting_go_at, r.proposal_session_id,
-         r.build_ok, r.build_error, r.build_session_id, r.error, r.created_at,
-         r.build_no_change->'turns'->-1->>'said' AS no_change_said,
-         (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
-           AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only
-    FROM homeroom_bot_runs r
-    JOIN (SELECT DISTINCT x.app_id, x.issue_number FROM unnest($1::int[], $2::int[]) AS x(app_id, issue_number)) it
-      ON it.app_id = r.app_id AND it.issue_number = r.issue_number
-   WHERE r.mode = 'live'
-   ORDER BY r.id DESC
-   LIMIT 2000`;
+  SELECT r.*
+    FROM (SELECT DISTINCT x.app_id, x.issue_number FROM unnest($1::int[], $2::int[]) AS x(app_id, issue_number)) it
+    CROSS JOIN LATERAL (
+      SELECT r.id, r.app_id, r.issue_number, r.verdict, r.cap_suppressed, r.awaiting_go_at, r.proposal_session_id,
+             r.build_ok, r.build_error, r.build_session_id, r.error, r.created_at,
+             r.build_no_change->'turns'->-1->>'said' AS no_change_said,
+             (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
+               AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only
+        FROM homeroom_bot_runs r
+       WHERE r.app_id = it.app_id AND r.issue_number = it.issue_number AND r.mode = 'live'
+       ORDER BY r.id DESC
+       LIMIT 200
+    ) r
+   ORDER BY r.id DESC`;
 
 // Who shipped a closed request: the newest merged change linked to it that
 // is not the bot's. `$1`/`$2` the requests as parallel arrays of project
@@ -934,9 +986,12 @@ const DONE_BY_SQL = `
  * request, which is its own item.
  */
 async function requestsOfSession(db, sessionId) {
+  // One branch per run column, so each reads its own index (an OR of the
+  // two would read every run); UNION drops the repeats.
   const { rows } = await db.query(
-    `SELECT DISTINCT r.app_id, r.issue_number FROM homeroom_bot_runs r
-      WHERE r.proposal_session_id = $1 OR r.build_session_id = $1
+    `SELECT r.app_id, r.issue_number FROM homeroom_bot_runs r WHERE r.proposal_session_id = $1
+     UNION
+     SELECT r.app_id, r.issue_number FROM homeroom_bot_runs r WHERE r.build_session_id = $1
      UNION
      SELECT cs.app_id, n AS issue_number FROM chat_sessions cs, unnest(cs.linked_issues) AS n
       WHERE cs.id = $1`,
@@ -1210,10 +1265,25 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
   }
 
   // The changes' own rows: every change named, and each request's change
-  // once it is up for a vote or past it. Never a headless session's.
+  // once it is up for a vote or past it. Never a headless session's. A row
+  // a change already has is always derived again (a change built for a
+  // request that went back to Underway, or was closed, must not keep saying
+  // it is open for votes, and the sweep must find it checked), and one whose
+  // change is gone or headless is removed.
+  const existing = new Set();
+  if (ids.length) {
+    // A change's row carries its own id as its session (work_states_session_idx).
+    const { rows: had } = await db.query(
+      `SELECT item_ref FROM work_states WHERE session_id = ANY($1::int[]) AND item_kind = 'change'`, [ids]);
+    for (const r of had) existing.add(Number(r.item_ref));
+  }
+  const gone = [...existing].filter((id) => !facts.has(id) || facts.get(id).is_headless === true);
+  if (gone.length) {
+    await db.query(`DELETE FROM work_states WHERE session_id = ANY($1::int[]) AND item_kind = 'change'`, [gone]);
+  }
   const own = [...facts.values()]
     .filter((f) => f.is_headless !== true && (changes.has(Number(f.id)) || leads.has(Number(f.id))))
-    .filter((f) => f.has_requests !== true || CHANGE_ROW_STATUSES.has(f.status))
+    .filter((f) => existing.has(Number(f.id)) || f.has_requests !== true || CHANGE_ROW_STATUSES.has(f.status))
     .sort((a, b) => Number(a.id) - Number(b.id));
   for (const f of own) {
     const st = changeStates.get(Number(f.id));
@@ -1350,14 +1420,17 @@ function shapeOf(item) {
   return out;
 }
 
-/** The push a changed row is carried by, to everyone who may view its app: the whole row (shapeOf). */
+/**
+ * The push a changed row is carried by, to everyone who may view its app:
+ * the whole row (shapeOf) as anybody but its requester reads it (publicOf).
+ */
 function pushOf(row) {
-  const state = shapeOf({
+  const state = publicOf(shapeOf({
     ...row.state,
     appId: row.appId, kind: row.kind, ref: row.ref, issueNumber: row.issueNumber, sessionId: row.sessionId,
     app: row.appSlug ? { slug: row.appSlug, name: row.appName || row.appSlug } : null,
     updatedAt: row.updatedAt || new Date(),
-  });
+  }));
   return {
     kind: 'scoped',
     routing: { appId: row.appId, appSlug: row.appSlug || null },
@@ -1534,33 +1607,47 @@ async function withdrawReady(db, changed) {
 }
 
 /**
- * Step 3 (11 Nov 2026): the buttons of Homeroom bot's cards about a row that
- * moved, which its new standing no longer keeps (bot-cards.js retireFor, the
- * one table), retired in the same transaction. Resolves the pushes of the
- * messages they were under.
+ * Step 3 (11 Nov 2026): the buttons of Homeroom bot's cards about rows that
+ * moved, which their new standings no longer keep (bot-cards.js
+ * retireOnMove, the one table), retired; and each item whose cards went
+ * derived again at once, so its standing no longer lists them among its
+ * open cards (a retire marks nothing: migration
+ * work-state-backfill-and-indexes). Resolves the pushes of the messages
+ * they were under and of the rows derived again. Inside a transition this
+ * is its transaction's; the drain runs it after its own commits
+ * (drainDirty).
  */
-async function retiredCards(db, changed) {
+async function settleCards(db, changed, depth = 0) {
   const cards = require('./bot-cards');
   const pushes = [];
+  const again = [];
   for (const row of changed || []) {
-    pushes.push(...await cards.retireFor(db, {
-      appId: row.appId,
-      ...(row.kind === 'request' ? { issueNumber: row.issueNumber } : { sessionId: row.sessionId }),
-      standing: row.state, prev: row.prev,
-    }));
+    // Buttons are judged on a move only (bot-cards.js moved).
+    if (!cards.moved(row.prev, row.state)) continue;
+    const item = row.kind === 'request' ? { appId: row.appId, issueNumber: row.issueNumber } : { sessionId: row.sessionId };
+    const out = await cards.inTransaction(db, (tx) => cards.retireOnMove(tx, { ...item, standing: row.state, prev: row.prev }));
+    pushes.push(...out.pushes);
+    if (out.retired) again.push(item);
+  }
+  if (again.length) {
+    // Its open cards changed and nothing else did, unless a write landed
+    // meanwhile: a move found here rings and retires like any other, once
+    // more at most.
+    const moved = await refresh(db, again);
+    pushes.push(...await pushesOf(db, moved, { cards: false }));
+    if (depth < 1) pushes.push(...await settleCards(db, moved, depth + 1));
   }
   return pushes;
 }
 
 /**
  * The pushes changed rows are carried by: their work_state, the bell of each
- * that rang, each ready one withdrawn, and the cards their move retired.
+ * that rang, each ready one withdrawn, and the cards their move retired
+ * (settleCards; `cards: false` leaves those to the caller).
  */
-async function pushesOf(db, changed) {
-  return [
-    ...changed.map(pushOf), ...(await bellPushes(db, changed)), ...(await withdrawReady(db, changed)),
-    ...(await retiredCards(db, changed)),
-  ];
+async function pushesOf(db, changed, { cards = true } = {}) {
+  const pushes = [...changed.map(pushOf), ...(await bellPushes(db, changed)), ...(await withdrawReady(db, changed))];
+  return cards ? [...pushes, ...(await settleCards(db, changed))] : pushes;
 }
 
 /**
@@ -1655,12 +1742,44 @@ function fromRow(r) {
 }
 
 /**
+ * Pure (11 Nov 2026): a row as anybody but its requester may read it. What
+ * is asked of its requester is said as whether it is, never with what is
+ * theirs alone: no message of their chat with Homeroom bot (its open
+ * question), no private thread of theirs (a plan they are drafting), none of
+ * its cards (one in their chat is theirs; `openOffers` counts them), and
+ * nobody's id. The scoped push carries this shape to every viewer of the
+ * project (pushOf); a reader hands the whole row to its requester only
+ * (forViewer).
+ */
+function publicOf(row) {
+  if (!row) return null;
+  const asks = row.asks && typeof row.asks === 'object' ? row.asks : NO_ASKS;
+  const offers = Array.isArray(asks.offers) ? asks.offers : [];
+  return {
+    ...row,
+    requesterId: null,
+    asks: {
+      question: asks.question ? { messageId: null, at: asks.question.at || null } : null,
+      plan: asks.plan || null,
+      closeVote: asks.closeVote || null,
+      draft: asks.draft ? { threadId: null } : null,
+      offers: [],
+      openOffers: offers.length,
+      reports: Number(asks.reports) || 0,
+    },
+  };
+}
+
+/**
  * Pure: a row as one viewer reads it, with the per-viewer facts the store
  * never holds: `mine` (they asked for it, or decide on its project) and
  * `voteOwed` (its change is open for votes, and they still owe a vote).
+ * Anybody but its requester (`viewerId`) reads it as publicOf says.
  */
-function forViewer(row, { mine = false, voteOwed = false } = {}) {
-  return row ? { ...row, mine: !!mine, voteOwed: !!voteOwed } : null;
+function forViewer(row, { mine = false, voteOwed = false, viewerId = null } = {}) {
+  if (!row) return null;
+  const theirs = viewerId != null && row.requesterId != null && Number(row.requesterId) === Number(viewerId);
+  return { ...(theirs ? row : publicOf(row)), mine: !!mine, voteOwed: !!voteOwed };
 }
 
 // ── The sweep ────────────────────────────────────────────────────────────
@@ -1673,9 +1792,15 @@ function forViewer(row, { mine = false, voteOwed = false } = {}) {
 // longest unchecked first, and seeds a row for each request the bot knows
 // that has none yet (its first run after the table exists).
 async function sweep(db, { olderThanMs = 2 * 60 * 1000, limit = 100, seed = 100 } = {}) {
+  // A request nobody has started on (reading, waiting to be read) is left
+  // out: it moves only when one of its records is written, which marks it
+  // (work_state_dirty), and a list makes one of those for every request it
+  // shows. The same test as work_states_sweep_moving_idx's, word for word.
   const { rows } = await db.query(
     `SELECT app_id, item_kind, item_ref FROM work_states
-      WHERE stage <> 'closed' AND checked_at < NOW() - make_interval(secs => $1)
+      WHERE stage <> 'closed'
+        AND NOT (item_kind = 'request' AND stage = 'reading' AND COALESCE(line->>'code', '') = 'waiting')
+        AND checked_at < NOW() - make_interval(secs => $1)
         AND NOT (stage = 'live' AND since < NOW() - make_interval(days => $3))
       ORDER BY checked_at ASC LIMIT $2`,
     [Math.round(olderThanMs / 1000), limit, LIVE_DAYS + 1],
@@ -1721,10 +1846,12 @@ async function sweep(db, { olderThanMs = 2 * 60 * 1000, limit = 100, seed = 100 
  * a work state is derived from, wherever it was made), at most `limit` at a
  * time, and resolve the changed rows. The marks are taken and the items
  * refreshed in one transaction, so a mark made meanwhile waits for it and
- * stays for the next run; a failure leaves them marked. `db` is a pool.
+ * stays for the next run; a failure leaves them marked. The cards their
+ * moves retire go after that commit (settleCards). `db` is a pool.
  */
 async function drainDirty(pool, { limit = 200 } = {}) {
   const client = await pool.connect();
+  let out;
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
@@ -1737,15 +1864,27 @@ async function drainDirty(pool, { limit = 200 } = {}) {
       ? { sessionId: Number(r.session_id) }
       : { appId: Number(r.app_id), issueNumber: Number(r.issue_number) }))) : [];
     // Each moment's bell is rung with the stage, in this transaction.
-    const pushes = await pushesOf(client, changed);
+    const pushes = await pushesOf(client, changed, { cards: false });
     await client.query('COMMIT');
-    return { taken: rows.length, changed, pushes };
+    out = { taken: rows.length, changed, pushes };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
     client.release();
   }
+  // The cards their moves retired, once the taken marks are let go: a tap
+  // on one of them holds its card and then marks its request, so a drain
+  // still holding the marks and reaching for the card would wait on the
+  // tap while the tap waits on it. A failure here leaves the rows stored.
+  if (out.changed.length) {
+    try {
+      out.pushes.push(...await settleCards(pool, out.changed));
+    } catch (err) {
+      require('./logger').warn('work-state', 'Retiring the cards of moved rows failed', { message: err.message });
+    }
+  }
+  return out;
 }
 
 /**
@@ -1800,6 +1939,7 @@ module.exports = {
   changeStandingOf,
   requestStandingOf,
   shapeOf,
+  publicOf,
   forViewer,
   forChanges,
   ensureChanges,
@@ -1819,6 +1959,7 @@ module.exports = {
   bellSaid,
   bellPushes,
   pushesOf,
+  settleCards,
   quietBell,
   publish,
   touched,

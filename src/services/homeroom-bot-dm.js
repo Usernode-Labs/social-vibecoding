@@ -2533,7 +2533,7 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
     let sender = bot;
     for (const row of rows) {
       // Its Build it card goes with the request's move out of waiting for
-      // its plan (bot-cards.js retireFor, from the standing); the card's
+      // its plan (bot-cards.js retireOnMove, from the standing); the card's
       // message says how it stopped.
       await setQuestionState(pool, Number(row.message_id), stopped ? { status: 'closed', stopped: true } : { status: 'closed' }, {
         ws, conversationId: row.conversation_id, userId: row.user_id,

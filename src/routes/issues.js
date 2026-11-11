@@ -232,7 +232,12 @@ async function standingsFor(pool, { app, numbers, viewer, askers = null }) {
       const asker = askers?.get(n);
       const mine = !!viewer?.id && (Number(row.requesterId) === Number(viewer.id)
         || (asker && Number(asker.userId) === Number(viewer.id)) || !!owner);
-      out.set(n, workState.forViewer(row, { mine, voteOwed: !!(row.change && owed.has(Number(row.change.id))) }));
+      // What is asked of its requester (their chat's question, a plan they
+      // are drafting, their cards) is theirs alone: anybody else reads only
+      // that something is asked, and nobody's id (work-state.js publicOf).
+      out.set(n, workState.forViewer(row, {
+        mine, voteOwed: !!(row.change && owed.has(Number(row.change.id))), viewerId: viewer?.id ?? null,
+      }));
     }
   } catch (err) {
     log.warn('issues', 'Failed to read where requests stand', { message: err.message });

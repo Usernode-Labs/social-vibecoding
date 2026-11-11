@@ -8379,6 +8379,14 @@
     "text": "{{stage}}. {{said}}",
     "description": "The status card of a request's page, when Homeroom bot handed the request back with a reason of its own: the stage, as a sentence, then the bot's reason. {{stage}} is already translated (for example Waiting for you to decide). {{said}} is \"Homeroom bot:\" followed by the bot's own sentence, already ending in its own full stop."
   },
+  "request.status.lead.upForVoteNeeds_one": {
+    "text": "Up for a vote: needs 1 more yes.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and up for the group's vote; it needs one more yes vote. English spells the one out; a translation may use {{count}}."
+  },
+  "request.status.lead.upForVoteNeeds_other": {
+    "text": "Up for a vote: needs {{count}} more yes.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and up for the group's vote; it needs {{count}} more yes votes. \"Yes\" is the vote, as a noun."
+  },
   "request.status.lead.reviewYours": {
     "text": "Your change for this is waiting for approval.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. The viewer's own change (a proposal that fulfils the request) is up for the group's vote. \"Change\" is a noun."

@@ -6623,6 +6623,24 @@ const AppView = {
     return { says: true, words: AppView._standingWords(s), act };
   },
 
+  // The status card's count for a change up for a vote with nothing else to
+  // say (no second line): how many more yes it needs, from the vote panel's
+  // own reading of its change (AppView.voteState, statusPillState), or 0
+  // when that is not here yet or it has them. The standing says which
+  // change (its `change`, else the request's change reference).
+  _yesStillNeeded(standing, ref) {
+    if (!standing || standing.stage !== 'up_for_vote' || (standing.line && standing.line.code)) return 0;
+    const id = Number(standing.change && standing.change.id) || Number(ref && ref.sessionId) || 0;
+    const votes = AppView.voteState || {};
+    const item = id && votes.bySession ? votes.bySession[String(id)] : null;
+    if (!item || typeof AppView.statusPillState !== 'function') return 0;
+    let pill = {};
+    try { pill = AppView.statusPillState(item, {}) || {}; } catch { pill = {}; }
+    const yes = Number(pill.yes) || 0;
+    const majority = Number(pill.majority) || 0;
+    return majority > yes ? majority - yes : 0;
+  },
+
   // The one step that unblocks Homeroom bot's wait on a request: answer its
   // question, Go ahead, reply to its note, or ask it to read a reason that
   // is out of date. A reply goes to its note: its open question, else the
@@ -6683,8 +6701,12 @@ const AppView = {
     // (AppView.REQUEST_WORKING_IDS).
     const whoKey = who === 'you' ? 'you' : (who ? 'named' : 'someone');
     const people = (ids) => t(ids[whoKey][others ? 'others' : 'alone'], { username: who, count: others });
+    // Up for a vote: how many more yes its change still needs, when the vote
+    // panel's reading of it is here (AppView._yesStillNeeded).
+    const needs = card.says ? AppView._yesStillNeeded(standing, ref) : 0;
     let lead;
-    if (card.says) lead = AppView._standingSays(card.words);
+    if (needs) lead = t('changes:request.status.lead.upForVoteNeeds', { count: needs });
+    else if (card.says) lead = AppView._standingSays(card.words);
     else if (merged) lead = t('changes:request.status.lead.live');
     else if (!st) lead = t('changes:request.status.lead.nobody');
     else if (st.key === 'in_review') {

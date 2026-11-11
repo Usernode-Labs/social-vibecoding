@@ -99,6 +99,9 @@ test('the standing\'s words are drawn as the server sent them, and kept through 
   assert.equal(work.asks.plan.version, 2);
   assert.equal(work.said.messageId, 12);
   assert.equal(work.junk, undefined);
+  // Anybody but its requester gets its cards counted, none named (work-state.js publicOf).
+  const counted = normalizeWorkState({ stage: 'reading', asks: asks({ question: { messageId: null, at: null }, openOffers: 2 }) });
+  assert.deepEqual(plain(counted.asks), { ...asks({ question: { messageId: null, at: null } }), openOffers: 2 });
   // A payload with no words (an older server) says its plain stage word, and no line.
   const bare = normalizeWorkState({ stage: 'waiting_for_you', why: 'plan', line: { code: 'reason', text: 'x' } });
   assert.deepEqual(plain(stageWords(bare)), { id: 'core:work.stage.waitingForYou' });
@@ -245,6 +248,31 @@ test('the request card\'s words are the standing\'s phrase ids', () => {
   for (const gone of ['botQueued', 'botHeld', 'botHeldTurn', 'botReading', 'botBuilding', 'upForVote', 'botWaitsPlan', 'waitingDecide']) {
     assert.equal(changes[`request.status.lead.${gone}`], undefined, gone);
   }
+});
+
+test('a request up for a vote says how many more yes its change needs, from the vote panel\'s reading', () => {
+  const { av } = appView();
+  const up = (extra = {}) => issue({
+    standing: standing('up_for_vote', { change: change({ votes: { yes: 1, no: 0 } }), ...extra }),
+    addressed_by: { sessionId: 51, state: 'review', prNumber: 8, title: 'A' },
+  });
+  // The vote panel's row is not here yet: the standing's own words.
+  assert.equal(av._requestStatusView(up()).lead, `${message('core:work.stage.upForVote')}.`);
+  av.voteState = { bySession: { 51: { id: 51 } }, byPrNumber: {} };
+  let pill = { yes: 1, majority: 3 };
+  av.statusPillState = () => pill;
+  assert.equal(av._requestStatusView(up()).lead, message('changes:request.status.lead.upForVoteNeeds', { count: 2 }));
+  assert.equal(av._requestStatusView(up()).lead, 'Up for a vote: needs 2 more yes.');
+  pill = { yes: 2, majority: 3 };
+  assert.equal(av._requestStatusView(up()).lead, 'Up for a vote: needs 1 more yes.');
+  pill = { yes: 3, majority: 3 };
+  assert.equal(av._requestStatusView(up()).lead, `${message('core:work.stage.upForVote')}.`, 'it has them: nothing more is needed');
+  // A second line (a conflict only a yes resolves) keeps the standing's words.
+  pill = { yes: 0, majority: 2 };
+  const onYes = up({ line: { code: 'conflict_on_yes' } });
+  assert.match(av._requestStatusView(onYes).lead, /Conflicts with main/);
+  // Checking is not up for a vote: no count.
+  assert.equal(av._requestStatusView(issue({ standing: standing('checking', { change: change() }) })).lead, `${message('core:work.stage.checking')}.`);
 });
 
 // ── A push is drawn where a screen holds its item ────────────────────────

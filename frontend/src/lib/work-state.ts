@@ -79,13 +79,20 @@ export interface StandingChange {
   update: 'queued' | 'running' | null;
 }
 
-/** What the standing asks of people. */
+/**
+ * What the standing asks of people. What is its requester's alone (their
+ * chat's question, the private thread holding their plan, their cards) is
+ * named only to them: anybody else gets the question's and the thread's ids
+ * as null, no cards, and how many are open (`openOffers`).
+ */
 export interface StandingAsks {
   question: { messageId: number | null; at: string | null } | null;
   plan: { version: number | null; sessionId: number | null; at: string | null; waitingGo: boolean } | null;
   closeVote: { issueId: number; yes: number; no: number } | null;
   draft: { threadId: number | null } | null;
   offers: { id: number; kind: string; expiresAt: string | null }[];
+  /** Open cards, counted, for a viewer who is not its requester. */
+  openOffers?: number;
   reports: number;
 }
 
@@ -271,6 +278,7 @@ function asksOf(input: unknown): StandingAsks | null {
     draft: draft ? { threadId: idOf(draft.threadId) } : null,
     offers: offers.map(recordOf).filter((o): o is Record<string, unknown> => !!o && !!idOf(o.id)).slice(0, 20)
       .map((o) => ({ id: idOf(o.id) as number, kind: text(o.kind).slice(0, 40), expiresAt: text(o.expiresAt) || null })),
+    ...(count(row.openOffers) ? { openOffers: count(row.openOffers) } : {}),
     reports: count(row.reports),
   };
 }

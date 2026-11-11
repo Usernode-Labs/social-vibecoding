@@ -305,6 +305,11 @@
       "id": "bot-posts",
       "sha256": "a2f9eb96bd1cb019c7b420f4963041a7c3a03d45b46a1f797a9623ca170e28d6",
       "schemaSha256": "483dd2f33cbb39a9161ef437a12b1b918c8072ea10b2da1599f846b279e24d87"
+    },
+    {
+      "id": "work-state-backfill-and-indexes",
+      "sha256": "33513d01944cb62b790adf11e7851ad7f41d5723b989be9aabd5b7ad4a811b93",
+      "schemaSha256": "26984e82d1fe504887acf25516600c10391ea8004055398f7997543861eda787"
     }
   ]
 }
