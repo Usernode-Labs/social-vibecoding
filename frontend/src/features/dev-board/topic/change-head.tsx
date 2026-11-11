@@ -39,7 +39,7 @@
  * clashes with the version's own changes, Ask Homeroom bot to fit it.
  */
 
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
@@ -248,8 +248,10 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
  * beside it (`fix`, `rerun`). From the tap until the build conversation's
  * turn ends it reads "Fixing", with a door into that conversation.
  */
-export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
+export function GateCard({ which, g, action, rerun = null, id, closes = [], line = false }: {
   which: 'votes' | 'testing' | 'merge'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; closes?: ClosesRequest[];
+  /** #6615: one of the pair's one-line rows, drawn in the strip that floats under the sheet's header. */
+  line?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
@@ -288,10 +290,15 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
     : (release ? [...shown.note, t('project:topic.change.gate.release', { release })] : shown.note);
   const note = sentences(lines);
   const door = <button type="button" className="dev-change-gate-link" onClick={open} />;
+  // #6615: the strip's rows carry `data-change-gate-line` instead of
+  // `data-change-gate`, so declared checks and `holdVotesInView` (which
+  // queries `[data-change-gate="votes"]`) see only the cards in the page's
+  // flow.
   return (
     <div
       className="dev-change-gate"
-      data-change-gate={which}
+      data-change-gate={line ? undefined : which}
+      data-change-gate-line={line ? which : undefined}
       data-done={shown.done ? 'true' : 'false'}
       data-tone={shown.tone}
       data-change-fixing={fixing ? '' : undefined}
@@ -401,7 +408,7 @@ const minutesBetween = (fromIso: string | null, toMs: number): number | null => 
  * or more turns amber and says how long and what to do; GitHub's checks
  * failing again is red, with no times and no button.
  */
-export function MergeCard({ g, id }: { g: ChangeMergeView; id: number | null }): ReactNode {
+export function MergeCard({ g, id, line = false }: { g: ChangeMergeView; id: number | null; line?: boolean }): ReactNode {
   const t = useMessages('project');
   const wait = g.wait || null;
   const held = !!wait;
@@ -439,7 +446,7 @@ export function MergeCard({ g, id }: { g: ChangeMergeView; id: number | null }):
     tone: long ? 'warn' : g.tone,
     note,
   };
-  return <GateCard which="merge" g={shown} action={null} id={id} />;
+  return <GateCard which="merge" g={shown} action={null} id={id} line={line} />;
 }
 
 /**
@@ -585,16 +592,17 @@ function gateActions(card: DevCardModel, v: ChangeThreadView) {
  * button, so there is one way to vote.
  *
  * 6 Nov 2026 (#6419): on the change's own page this same pair stays caught
- * under the sheet's header as the reader scrolls, instead of a second Votes
- * card appearing above the replies (#5725, removed). It is the pair, not the
- * Votes card alone, that sticks: a sticky box travels only within its
- * parent, and the Votes card's parent is this pair, exactly as tall as the
- * two cards. The pair's parent is the article's content column, which ends
- * with the change's own content, above the replies, so the pair lets go there
- * with no extra code, and the real Testing card rides under the Votes card,
- * so the checks' state is always in sight. The page that holds the pair
- * decides it: only the change's own article carries `dev-change-root`, so a
- * change section on a request's page draws the pair as before.
+ * under the sheet's header as the reader scrolls. #6615 (11 Nov 2026): the
+ * cards keep their full size where they are, and the one-line Votes and
+ * Testing rows float under the header in a strip drawn outside the page's
+ * flow, so nothing above or below the reader changes height when the strip
+ * appears or goes (the first version shrank the pair in place and gave the
+ * lost height back as a margin, which made the page jump while the change
+ * updated). The zero-height sticky holder travels within the article's
+ * content column, which ends with the change's own content, above the
+ * replies, so the strip lets go there. The page that holds the pair decides
+ * it: only the change's own article carries `dev-change-root`, so a change
+ * section on a request's page draws the pair as before, and never a strip.
  */
 export const ChangeGates = forwardRef<HTMLDivElement, {
   id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean; closes?: ClosesRequest[];
@@ -604,10 +612,6 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
   const mark = useRef<HTMLSpanElement>(null);
   const [stick, setStick] = useState(false);
   const [stuck, setStuck] = useState(false);
-  // What the pair gives up when it shrinks, kept as margin so the words under
-  // it do not jump up and the page's scroll height does not change.
-  const [give, setGive] = useState(0);
-  const full = useRef(0);
   const setPair = useCallback((node: HTMLDivElement | null) => {
     pair.current = node;
     if (typeof ref === 'function') ref(node);
@@ -622,7 +626,7 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
   // Stuck is where the mark above the pair has left the top of the thread's
   // own scroller. The scroller is found from the mark itself, never by a
   // document-wide id: another pane can hold the same id (#4640). A browser
-  // without an observer leaves the pair at full size; it still sticks.
+  // without an observer leaves the pair at full size and draws no strip.
   useEffect(() => {
     if (!stick) return;
     const el = mark.current;
@@ -636,23 +640,26 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
     io.observe(el);
     return () => io.disconnect();
   }, [id, stick]);
-  useLayoutEffect(() => {
-    if (!stick) return;
-    const el = pair.current;
-    if (!el) return;
-    if (!stuck) { full.current = el.offsetHeight; setGive(0); return; }
-    setGive(Math.max(0, full.current - el.offsetHeight));
-  }, [stuck, v.votes, v.testing, v.merge, stick]);
   return (
     <>
       {stick ? <span ref={mark} className="dev-change-pair-mark" aria-hidden="true" /> : null}
-      <div
-        ref={setPair}
-        className="dev-change-pair"
-        data-stick={stick ? '' : undefined}
-        data-stuck={stick && stuck ? '' : undefined}
-        style={stick && give ? { marginBlockEnd: give } : undefined}
-      >
+      {/* #6615: the one-line rows, out of the page's flow under the sheet's
+          header. The holder is always here while the page is a change's own,
+          so adding the strip to it never moves anything; its zero height
+          keeps the page's scroll height the same whether the strip shows or
+          not. */}
+      {stick ? (
+        <div className="dev-change-pair-float">
+          {stuck ? (
+            <div className="dev-change-pair" data-stuck="">
+              <GateCard line which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} />
+              <GateCard line which="testing" g={v.testing} action={null} id={id} />
+              {v.merge ? <MergeCard line g={v.merge} id={id} /> : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <div ref={setPair} className="dev-change-pair" data-stick={stick ? '' : undefined}>
         <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} closes={closes} />
         <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix || stopped ? testingActions : null} id={id} />
         {/* #6563: the merge itself, while GitHub holds it or it is under way. */}

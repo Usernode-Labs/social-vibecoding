@@ -159,11 +159,13 @@ test('the shell draws a change page as the request page’s sheet, with Messages
   assert.doesNotMatch(request, /gc-thread-pin/, 'a request page has no pin host');
 });
 
-// #6419 (replacing #5725's repeat): on a long change page the real Votes
-// and Testing card pair sticks under the sheet's header and shrinks to one
-// line each, and lets go at the end of the change's own content, above the
-// replies. There is no second Votes card any more.
-test('a change page’s gate pair sticks and shrinks instead of repeating', () => {
+// #6419 (replacing #5725's repeat): on a long change page the real Votes and
+// Testing card pair stays in sight under the sheet's header. #6615: it does
+// that without resizing anything in the page's flow — the cards keep their
+// full size where they are, and the one-line rows float in a strip drawn
+// outside the flow — so the page no longer jumps while the change updates.
+// There is no second Votes card any more.
+test('a change page keeps its gate pair at full size and floats the one-line rows', () => {
   const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
   assert.doesNotMatch(src, /dev-change-gate-repeat|topInView|gc-thread-pin/);
   assert.doesNotMatch(src, /repeat\?: boolean/);
@@ -177,10 +179,19 @@ test('a change page’s gate pair sticks and shrinks instead of repeating', () =
   assert.match(src, /const scroller = el \? el\.closest<HTMLElement>\('#gc-thread-scroll'\) : null;/);
   assert.match(src, /\{ root: scroller, rootMargin: '4px 0px 0px 0px' \}/);
   assert.doesNotMatch(src, /document\.getElementById\('gc-thread-(scroll|pin)'\)/);
+  // #6615: the pair never shrinks in place and no margin gives height back.
+  assert.doesNotMatch(src, /marginBlockEnd|setGive|full\.current/);
+  assert.match(src, /<div className="dev-change-pair-float">/);
   const css = read('public/css/app.css');
-  assert.match(css, /\.dev-change-pair\[data-stick\] \{ position: sticky; top: -4px; z-index: 10; \}/);
+  // The cards stay where they are, in the flow, and opt out of scroll anchoring.
+  assert.match(css, /\.dev-change-pair\[data-stick\] \{ overflow-anchor: none; \}/);
+  assert.doesNotMatch(css, /\.dev-change-pair\[data-stick\] \{ position: sticky;/);
+  // The zero-height sticky holder, and the strip absolutely positioned in it.
+  assert.match(css, /\.dev-change-pair-float \{ position: sticky; top: -4px; z-index: 10; height: 0; overflow-anchor: none; \}/);
+  assert.match(css, /\.dev-change-pair-float > \.dev-change-pair \{ position: absolute; inset-inline: 0; top: 0; margin-top: 0; \}/);
   assert.match(css, /\.dev-change-pair\[data-stuck\] \{[^}]*background-color: var\(--dc-sheet-solid\);[^}]*\}/);
   assert.match(css, /\.dev-change-pair\[data-stuck\] :is\([^)]*\.dev-change-bar[^)]*\) \{ display: none; \}/);
+  assert.match(css, /\.dev-change-pair\[data-stuck\] \[data-change-gate-line="testing"\] \.dev-change-gate-act \{ display: none; \}/);
   assert.doesNotMatch(css, /\.dev-change-gate-repeat|#gc-thread-pin/);
 });
 
@@ -197,7 +208,7 @@ test('the gate pair paints plain and decides in the browser whether it sticks', 
   const plain = renderComponent('frontend/src/features/dev-board/topic/change-head.tsx', 'ChangeGates', {
     id: 7, card: {}, v,
   });
-  assert.doesNotMatch(plain, /dev-change-pair-mark|data-stick/);
+  assert.doesNotMatch(plain, /dev-change-pair-mark|data-stick|dev-change-pair-float/);
   assert.match(plain, /^<div class="dev-change-pair">/);
   assert.ok(plain.indexOf('data-change-gate="votes"') < plain.indexOf('data-change-gate="testing"'), 'Votes leads');
   // #6563: the Merging card is a third card, and only while a merge is held.
@@ -303,7 +314,10 @@ test('a moving bar is the lit ink, a finished one green with its check, and AGEN
 // checks run on a page nobody scrolled).
 test('a gate card always carries its own data-change-gate, and nothing selects the stuck form', () => {
   const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
-  assert.match(src, /data-change-gate=\{which\}/);
+  // #6615: the strip's one-line rows carry `data-change-gate-line` instead,
+  // so the card itself is the only `data-change-gate`.
+  assert.match(src, /data-change-gate=\{line \? undefined : which\}/);
+  assert.match(src, /data-change-gate-line=\{line \? which : undefined\}/);
   const dapp = JSON.parse(read('dapp.json'));
   const selectors = dapp.tests.map((t) => t.expectSelector).filter(Boolean);
   assert.ok(selectors.some((s) => String(s).includes('[data-change-gate=')), 'declared checks read the attribute');
