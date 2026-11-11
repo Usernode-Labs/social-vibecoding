@@ -2715,4 +2715,44 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
   });
 
+  await t.test('#6581: a report filed on Homeroom\'s board is real in the thread that filed it', async (tt) => {
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
+    // Homeroom's own project, so the board lookup has somewhere to look.
+    await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, repo_url, view_visibility, collab_visibility, self_hosted)
+       VALUES ('Homeroom', 'usernode-2d5619', 'running', $1, 'https://github.com/usernode-labs/social-vibecoding', 'public', 'public', TRUE)
+       ON CONFLICT (slug) DO UPDATE SET self_hosted = TRUE`,
+      [ada.id],
+    );
+    // What report_problem writes: a feedback_reports row with no app, and no
+    // issues or queue row until the bot reaches it.
+    await pool.query(
+      `INSERT INTO feedback_reports (user_id, target, app_id, issue_number, title, description, source)
+       VALUES ($1, 'platform', NULL, 6580, 'Blank screen after a while', 'It stays blank.', 'homeroom_bot')`,
+      [ada.id],
+    );
+    const ctx = { user: ada, bot, appIds: new Set(), conversationId: opened.conversationId, deps: {} };
+    const kinds = async (text) => (await mayor.claimProblems(pool, ctx, text)).map((p) => p.kind);
+    assert.deepEqual(await kinds('It is in its queue, just not reached yet: #6580 shows as not started.'), [],
+      'the report this person filed through the bot is real');
+
+    // A request card the bot put in this conversation counts too. A fresh
+    // turn: this turn's known numbers are read once, as the real one is.
+    const card = await conversations.sendMessage(pool, bot, opened.conversationId, { content: 'Your report is #6581.' });
+    await pool.query(
+      `INSERT INTO conversation_message_objects (message_id, object_type, app_id, object_ref)
+       VALUES ($1, 'github_issue', $2, 6581)`,
+      [card.message.id, notes.id],
+    );
+    const cardCtx = { user: ada, bot, appIds: new Set(), conversationId: opened.conversationId, deps: {} };
+    assert.deepEqual((await mayor.claimProblems(pool, cardCtx, 'Your report is #6581.')).map((p) => p.kind), [],
+      'a request card in the thread says it is real');
+
+    // An invented number is still unknown, even with the board reachable.
+    const otherCtx = { user: ada, bot, appIds: new Set(), conversationId: opened.conversationId, deps: {} };
+    assert.deepEqual((await mayor.claimProblems(pool, otherCtx, 'Your report is #987654.')).map((p) => p.kind), ['unknown'],
+      'a number nobody filed is still cut');
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
+  });
+
 });

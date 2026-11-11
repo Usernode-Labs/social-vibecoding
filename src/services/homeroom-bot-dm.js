@@ -918,7 +918,9 @@ function typingDoing(what) {
     return page ? { kind: 'capturing', page } : { kind: 'capturing' };
   }
   if (what.kind === 'writing') {
-    const tail = typeof what.text === 'string' ? draftTail(what.text) : { text: '', from: 0 };
+    // #6581: no words are carried any more, so a bare `writing` says "Writing".
+    if (typeof what.text !== 'string') return { kind: 'writing' };
+    const tail = draftTail(what.text);
     // `from` only when the text was cut, so a whole answer keeps its own start.
     return tail.text ? { kind: 'writing', text: tail.text, ...(tail.from > 0 ? { from: tail.from } : {}) } : null;
   }

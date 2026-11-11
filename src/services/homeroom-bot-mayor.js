@@ -1972,9 +1972,60 @@ function usedAsRequest(before, after) {
   return true;
 }
 
+/**
+ * #6581: the request numbers this conversation already knows: the bot's own
+ * request cards in it, and the reports it filed for this person, on any
+ * project, Homeroom's own board included (feedback_reports.app_id is null
+ * there, so the query above never matched one). Read once a turn and kept
+ * on ctx.threadKnown. Best-effort: a read that fails caches an empty set and
+ * the reply is checked as it was.
+ */
+async function threadRequestNumbers(pool, ctx) {
+  if (!ctx) return new Set();
+  if (ctx.threadKnown) return ctx.threadKnown;
+  const known = new Set();
+  ctx.threadKnown = known;
+  const add = (value) => {
+    const n = Number(value);
+    if (Number.isInteger(n) && n > 0) known.add(n);
+  };
+  const conversationId = Number(ctx.conversationId);
+  const botId = Number(ctx.bot?.id);
+  const userId = Number(ctx.user?.id);
+  try {
+    if (Number.isInteger(conversationId) && conversationId > 0 && Number.isInteger(botId) && botId > 0) {
+      const { rows } = await pool.query(
+        `SELECT DISTINCT o.object_ref AS n
+           FROM conversation_message_objects o
+           JOIN conversation_messages m ON m.id = o.message_id
+          WHERE m.conversation_id = $1 AND m.sender_id = $2 AND o.object_type = 'github_issue'`,
+        [conversationId, botId],
+      );
+      for (const row of rows) add(row?.n);
+    }
+    if (Number.isInteger(userId) && userId > 0) {
+      const { rows } = await pool.query(
+        `SELECT DISTINCT issue_number AS n FROM feedback_reports
+          WHERE user_id = $1 AND issue_number IS NOT NULL AND issue_number > 0`,
+        [userId],
+      );
+      for (const row of rows) add(row?.n);
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not read the requests this conversation knows', { err: err.message });
+  }
+  return known;
+}
+
 /** The numbers among `numbers` that are no request on any project this person or this turn touches. */
 async function unknownRequests(pool, ctx, numbers) {
   if (!numbers.length) return [];
+  // #6581: what this conversation filed or read is real, whether or not a
+  // queue or issues row exists yet.
+  const known = new Set([...(ctx?.knownRequests || []), ...(ctx?.seenRequests?.keys?.() || [])]);
+  for (const n of await threadRequestNumbers(pool, ctx)) known.add(Number(n));
+  const asked = numbers.filter((n) => !known.has(Number(n)));
+  if (!asked.length) return [];
   const { rows } = await pool.query(
     `SELECT DISTINCT x.n FROM (
        SELECT github_issue_number AS n, app_id FROM issues WHERE github_issue_number = ANY($2::int[])
@@ -1993,21 +2044,42 @@ async function unknownRequests(pool, ctx, numbers) {
         UNION SELECT r.app_id FROM homeroom_bot_requesters r WHERE r.user_id = $1
         UNION SELECT unnest($3::int[])
       )`,
-    [ctx.user.id, numbers, [...(ctx.appIds || [])]],
+    [ctx.user.id, asked, [...(ctx.appIds || [])]],
   );
   const found = new Set(rows.map((r) => Number(r.n)));
-  // #6583: a platform report has no app_id (feedback-reports.js filePlatformReport
-  // records app: null), so it never resolved through the app filter above.
+  const missing = asked.filter((n) => !found.has(n));
+  if (!missing.length) return [];
+  // #6581: a report filed on Homeroom's own board has no queue row yet. Look
+  // the rest up there (at most three) before calling any of them unknown: a
+  // row on the board is proof the number is real, whatever project it is on.
+  // requestDetail is no use here: it answers for any number on an app they
+  // can see, so it would call an invented number real.
+  let platform = null;
   try {
-    const { rows: reports } = await pool.query(
-      'SELECT DISTINCT issue_number AS n FROM feedback_reports WHERE user_id = $1 AND issue_number = ANY($2::int[])',
-      [ctx.user.id, numbers],
-    );
-    for (const row of reports) found.add(Number(row.n));
-  } catch (err) {
-    log.warn('homeroom-bot-mayor', 'Could not check the platform reports a reply names', { err: err.message });
+    platform = await require('./homeroom-bot-move').platformApp(pool, ctx.deps || {});
+  } catch {
+    platform = null;
   }
-  return numbers.filter((n) => !found.has(n));
+  if (!platform) return missing;
+  const batch = missing.slice(0, 3);
+  let onBoard;
+  try {
+    const { rows: board } = await pool.query(
+      `SELECT DISTINCT x.n FROM (
+         SELECT github_issue_number AS n FROM issues WHERE app_id = $1 AND github_issue_number = ANY($2::int[])
+         UNION ALL SELECT issue_number FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = ANY($2::int[])
+         UNION ALL SELECT issue_number FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = ANY($2::int[])
+         UNION ALL SELECT issue_number FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = ANY($2::int[])
+         UNION ALL SELECT issue_number FROM feedback_reports WHERE issue_number = ANY($2::int[])
+       ) x`,
+      [platform.id, batch],
+    );
+    onBoard = new Set(board.map((r) => Number(r.n)));
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not look a request number up on Homeroom\'s board', { err: err.message });
+    return missing;
+  }
+  return [...batch.filter((n) => !onBoard.has(Number(n))), ...missing.slice(3)];
 }
 
 // ── The projects a reply names (#6307) ─────────────────────────────────────
@@ -2123,6 +2195,40 @@ async function personProjectNames(pool, ctx) {
     log.warn('homeroom-bot-mayor', 'Could not read the projects a reply may name', { err: err.message });
   }
   return known;
+}
+
+
+/**
+ * #6581: note every request number a tool returned this turn (request_detail,
+ * list_requests, get_request, my_work, my_projects, progress), so a reply
+ * naming one is not called unknown. Platform tools included: their results
+ * are plain JSON with the number in it.
+ */
+function noteKnownRequests(ctx, result) {
+  if (!ctx || !result || typeof result !== 'object' || result.error) return;
+  if (!ctx.knownRequests) ctx.knownRequests = new Set();
+  const walk = (value, depth) => {
+    if (!value || typeof value !== 'object' || depth > 6) return;
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, depth + 1);
+      return;
+    }
+    for (const key of ['number', 'issueNumber']) {
+      const n = Number(value[key]);
+      if (Number.isInteger(n) && n > 0) ctx.knownRequests.add(n);
+    }
+    for (const item of Object.values(value)) {
+      // A platform tool's answer is JSON text ({ result }).
+      if (typeof item === 'string' && /^\s*[[{]/.test(item)) {
+        try {
+          walk(JSON.parse(item), depth + 1);
+          continue;
+        } catch { /* not JSON: nothing to read */ }
+      }
+      walk(item, depth + 1);
+    }
+  };
+  walk(result, 0);
 }
 
 /** The projects this turn's tools returned and this person can see, squashed. */
@@ -2448,15 +2554,20 @@ function checkNote(problems, { tools = null } = {}) {
     offered('withdraw_proposal') ? 'withdraw_proposal withdraws one of your proposals' : null,
     offered('report_problem') ? 'report_problem tells the Homeroom team' : null,
   ].filter(Boolean);
-  const unknownTools = names('request_detail');
-  const alsoUnknownTools = names('my_work', 'list_requests');
-  const unknownHint = unknownTools.length
-    ? `${unknownTools.join(', ')}${alsoUnknownTools.length ? ` (or ${alsoUnknownTools.join(' / ')})` : ''}`
-    : alsoUnknownTools.join(' / ');
-  const unknown = problems.some((p) => p.kind === 'unknown')
-    ? (unknownHint
-      ? ` Look the number up with ${unknownHint} before naming it.`
-      : ' Look the number up before naming it.')
+  // #6581: a number Homeroom cannot find yet is not a thing that did not
+  // happen. When that is all that is wrong, the note never says the turn did
+  // nothing and never lists the doing-tools: it asks the model to check the
+  // number and keep it if a tool returns it.
+  const onlyUnknown = problems.length > 0 && problems.every((p) => p.kind === 'unknown' || p.kind === 'unknown_project');
+  const unknownNumbers = problems.find((p) => p.kind === 'unknown')?.numbers || [];
+  const lookupTools = names('request_detail', 'get_request');
+  const checkWith = lookupTools.length ? `check it with ${lookupTools[0]}${lookupTools[1] ? ` (or ${lookupTools[1]})` : ''}` : 'check it';
+  const unknownTail = unknownNumbers.length
+    ? ` Homeroom could not find ${unknownNumbers.map((n) => `request #${n}`).join(' or ')} in its records yet: ${checkWith}, and if a tool returns it, keep the number. If not, drop the sentence that names it. Never retract an earlier action in this conversation: something you filed earlier stays filed, so do not apologise for it or offer to file it again.`
+    : '';
+  const numberTools = names('my_work', 'request_detail', 'list_requests');
+  const unknown = unknownNumbers.length
+    ? (onlyUnknown || !numberTools.length ? unknownTail : ` Check request numbers with ${numberTools.slice(0, -1).join(', ')}${numberTools.length > 1 ? ' or ' : ''}${numberTools[numberTools.length - 1]}.${unknownTail}`)
     : '';
   // #6307: a project named that no tool returned (a garbled name, a guessed one).
   const projectTools = names('my_work', 'list_requests');
@@ -2484,11 +2595,16 @@ function checkNote(problems, { tools = null } = {}) {
   const canDoLine = canDo.length
     ? `If they want it done now, call the tool that does it: ${canDo.join(', ')}.`
     : '';
+  const lead = onlyUnknown
+    ? `[Homeroom check, not from them: your reply ${list}.`
+    : [
+      `[Homeroom check, not from them: your reply ${list}.`,
+      'Nothing this turn did, and nothing in the stored records, shows that yet.',
+      canDoLine,
+      'If you cannot confirm it with a lookup, leave that sentence out.',
+    ].filter(Boolean).join(' ');
   return [
-    `[Homeroom check, not from them: your reply ${list}.`,
-    'Nothing this turn did, and nothing in the stored records, shows that yet.',
-    canDoLine,
-    'If you cannot confirm it with a lookup, leave that sentence out.',
+    lead,
     `${promised}${drafted}${drawing}${noControl}${unknown}${unknownProject} Then call reply again.]`,
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
@@ -2560,7 +2676,15 @@ function stripClaims(text, problems, ctx = null) {
   const lines = res.filter((c) => proofOf(c.kind) !== 'records' || c.kind === 'drafted').map((c) => c.instead);
   if (kept.replace(/[^\w]/g, '').length >= 20) lines.push(kept);
   const unknown = problems.find((p) => p.kind === 'unknown');
-  if (unknown) lines.push(`(I can't find ${unknown.numbers.map((n) => `request #${n}`).join(' or ')} on your projects.)`);
+  if (unknown) {
+    // #6581: a number this conversation filed or read is never said not to
+    // exist, even when the lookup that flagged it could not see it.
+    const known = new Set([...(ctx?.knownRequests || []), ...(ctx?.seenRequests?.keys?.() || []), ...(ctx?.threadKnown || [])]);
+    const filed = Number(ctx?.reported?.number);
+    if (Number.isInteger(filed) && filed > 0) known.add(filed);
+    const missing = unknown.numbers.map(Number).filter((n) => !known.has(n));
+    if (missing.length) lines.push(`(I can't find ${missing.map((n) => `request #${n}`).join(' or ')} on your projects.)`);
+  }
   const unknownProject = problems.find((p) => p.kind === 'unknown_project');
   if (unknownProject) lines.push(`(I can't find ${unknownProject.names.map((n) => `a project called "${n}"`).join(' or ')}.)`);
   return lines.join('\n\n');
@@ -2750,17 +2874,14 @@ function sayDoing(pool, ctx, name, args = {}) {
 
 // ── The answer as it is written (Homeroom bot parity, P1) ──────────────────
 //
-// While the model writes its answer, the person sees it appear: the working
-// card (homeroom-bot-dm.js typingDoing, kind 'writing') shows the words so
-// far. The answer almost always arrives as the reply tool's `text`, so the
-// round's request is streamed (openrouter.js streamChat's onDelta) and that
-// argument is read as it grows (partialTextField); words with no tool call
-// are shown once they are longer than a preamble can be (announcesOnly), so
-// "Let me look at the code." never flashes up and goes. At most one update
-// every DRAFT_EVERY_MS, the newest words each time, in order with what the
-// card says the bot is doing (ctx.saying). What is shown is only a preview:
-// the message sent at the end (checked, and cut where it claimed too much)
-// takes the card's place, as it always has.
+// 11 Nov 2026 (#6581): the words of an answer are never shown while it is
+// written. The draft used to stream onto the working card, and a reply that
+// failed a check was then swapped for the repaired one under the person's
+// eyes: a correct answer about a report it had filed vanished and came back
+// as "I cannot confirm a report was filed". A sent message never changes, so
+// the card carries only the step ("Writing…", "Reading request #6580…") and
+// the checked answer appears once, when it is sent. draftOf still reads the
+// round as writing an answer, which is what says "Writing".
 
 const DRAFT_EVERY_MS = 250;
 
@@ -2815,66 +2936,47 @@ function draftOf({ content = '', toolCalls = [] } = {}) {
 }
 
 /**
- * What shows the answer as it is written, for one turn: `onDelta` for the
- * transport, `restart()` before a pass that writes it again, `close()` once
- * the turn's own message is on its way. Null when nothing can show it (no
- * working card: deps.doing). Never rejects.
+ * #6581: says "Writing" once when the model starts its answer, for one turn:
+ * `onDelta` for the transport, `close()` once the turn's own message is on
+ * its way. No words are carried: the checked answer appears once, as the
+ * message, and nothing on screen ever changes. Null when nothing can show it
+ * (no working card: deps.doing). Never rejects.
  */
 function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); }) } = {}) {
   const doing = ctx?.deps?.doing;
   if (typeof doing !== 'function') return null;
-  let latest = '';
-  let shown = '';
-  // #6405: after `restart()`, the words already on the card stay until the
-  // rewritten answer has caught up with them, so it never shrinks or streams
-  // again from its first word.
-  let floor = 0;
   let queued = false;
   let closed = false;
+  let said = false;
   let lastAt = 0;
   const run = async () => {
     const gap = lastAt + every - Date.now();
     if (gap > 0) await wait(gap);
     queued = false;
-    // A round that calls another tool writes no answer: say nothing and keep
-    // the words on the card, instead of dropping it back to "Thinking".
-    if (closed || !latest || latest === shown) return;
-    shown = latest;
+    if (closed || said) return;
+    said = true;
     lastAt = Date.now();
     ctx.doingNamed = true;
-    await doing({ kind: 'writing', text: shown });
+    await doing({ kind: 'writing' });
   };
-  const set = (text) => {
-    if (closed) return;
-    if (floor) {
-      // A rewritten answer shows only once it is at least as long as what is
-      // already on the card.
-      if (!text || text.length < floor) return;
-      floor = 0;
-    }
-    latest = text;
-    if (queued || latest === shown) return;
+  const set = () => {
+    // One "Writing" a turn, once the answer's words start; a later tool's
+    // sayDoing may name another step.
+    if (closed || said || queued) return;
     queued = true;
     ctx.saying = (ctx.saying || Promise.resolve()).then(run).catch((err) => {
-      log.warn('homeroom-bot-mayor', 'Could not show the answer as it was written', { err: clip(err?.message, 200) });
+      log.warn('homeroom-bot-mayor', 'Could not say the bot is writing', { err: clip(err?.message, 200) });
     });
   };
   return {
-    onDelta(state) {
-      const text = draftOf(state);
-      // 2 Nov 2026: the words already kept from earlier rounds stay on the card (answerText).
-      if (text !== null) set(text && ctx.besides?.length ? answerText(ctx.besides, text) : text);
-    },
-    // #6405: the correction pass writes the answer again. What is shown stays,
-    // and the rewrite takes over only once it has caught up with it (or with
-    // the longer update still on its way to the card).
-    restart() { floor = Math.max(shown.length, latest.length); },
-    // `clear`: what was shown goes too (the turn found no answer to send).
+    // A round that calls another tool writes no answer (draftOf ''), and says
+    // nothing: the step it named stays.
+    onDelta(state) { if (draftOf(state)) set(); },
+    // `clear`: a turn that found no answer to send drops the card again.
     close({ clear = false } = {}) {
       if (closed) return;
       closed = true;
-      if (clear && shown) {
-        shown = '';
+      if (clear && said) {
         ctx.saying = (ctx.saying || Promise.resolve()).then(() => doing(null)).catch(() => {});
       }
     },
@@ -2886,11 +2988,12 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
 // 2 Nov 2026 (#6097 tested in a browser): the cheap model often writes its
 // whole answer as plain words in a round that also calls a tool
 // (offer_request, list_requests), then sends a short reply that assumes those
-// words were read. They were shown as they were written (draftOf) and then
-// dropped: a long walkthrough appeared on the working card, and what arrived
-// was "Short version: …", or only "To be clear: nothing has been filed".
-// Now words beside a call that are longer than a preamble are the start of
-// the answer: kept in order (ctx.besides), the model is told so once
+// words were read. They were shown as they were written and then dropped: a
+// long walkthrough appeared on the working card, and what arrived was
+// "Short version: …", or only "To be clear: nothing has been filed".
+// (Since #6581 the card shows no words, but the words are still part of the
+// answer.) Now words beside a call that are longer than a preamble are the
+// start of the answer: kept in order (ctx.besides), the model is told so once
 // (BESIDE_NOTE), and the reply's text follows them (answerText).
 
 /** Pure: a round's words beside its calls, when they are part of the answer (longer than a preamble), else null. */
@@ -4534,7 +4637,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   };
   // #6346: a stand-in refused by its reply tool is recorded with the turn.
   ctx.failures = t.failures;
-  // P1: the answer, shown on the working card as the model writes it.
+  // P1, #6581: the working card only says "Writing" while the answer is
+  // written; the checked answer appears once, as the message.
   const draft = deps.streamDraft === false ? null : draftWriter(ctx);
   if (draft) t.onDelta = draft.onDelta;
   // 31 Oct 2026: earlier messages of theirs this answer owes too (owedNote).
@@ -4743,6 +4847,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
             })
             : await runTool(pool, ctx, name, args);
           if (!onPlatform) noteRequests(ctx, result);
+          // #6581: any number a tool returned is a real request, platform tools included.
+          noteKnownRequests(ctx, result);
           // P1: what it read, for the reply's "Looked at" line.
           noteLookup(ctx, name, args, result);
           // #6307: the projects the tools returned, which a reply may name.
@@ -7570,6 +7676,8 @@ async function reportProblem(pool, ctx, args) {
     const number = Number(recent.number);
     const link = linkFor(number);
     ctx.reported = { title: summary, number, link, repeat: true };
+    // #6581: the number is real from here on, in this thread.
+    noteKnownRequests(ctx, { number });
     if (platform) {
       ctx.appIds.add(Number(platform.id));
       ctx.cards.push({ type: 'issue', appId: Number(platform.id), issueNumber: number });
@@ -7607,6 +7715,8 @@ async function reportProblem(pool, ctx, args) {
   const number = Number(filed.issueNumber) > 0 ? Number(filed.issueNumber) : null;
   const link = linkFor(number) || filed.url || null;
   ctx.reported = { title: summary, number, link };
+  // #6581: the report the turn just filed is a real request, kept for this reply.
+  noteKnownRequests(ctx, { number });
   // #6566: the card under the reply opens the report on Homeroom's board.
   if (platform && number) {
     ctx.appIds.add(Number(platform.id));
@@ -7763,6 +7873,9 @@ module.exports = {
   unknownRequests,
   projectMentions,
   noteKnownProjects,
+  // #6581: the requests a turn's tools returned, and the ones this thread knows.
+  noteKnownRequests,
+  threadRequestNumbers,
   unknownProjects,
   dropRepeatedParagraphs,
   dropDraftEcho,

@@ -163,22 +163,13 @@ test('"Waiting for your approval" heads the list above a newer "On hold"', () =>
   const order = [...html.matchAll(/data-notif-app-group="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(order, ['other', 'a:1']);
   assert.ok(html.indexOf(message('notifications:row.voteDigest.label')) < html.indexOf(message('notifications:row.bot.label.onHold')));
-  // #5929 item 1: with both kinds on the tab, "Needs you" labels the groups
-  // that wait on the reader and "Everything else" the rest, as siblings of
-  // the stacks (never inside one), each before its groups.
-  assert.equal(message('notifications:sheet.needsYou'), 'Needs you');
-  assert.equal(message('notifications:sheet.everythingElse'), 'Everything else');
-  const needs = html.indexOf('data-notif-groups-head="needs"');
-  const rest = html.indexOf('data-notif-groups-head="rest"');
-  assert.ok(needs >= 0 && rest > needs, 'both labels, Needs you first');
-  assert.ok(needs < html.indexOf('data-notif-app-group="other"'), 'Needs you sits before the group that waits on the reader');
-  assert.ok(html.indexOf('data-notif-app-group="other"') < rest && rest < html.indexOf('data-notif-app-group="a:1"'),
-    'Everything else sits between the two kinds');
-  assert.match(html, /data-notif-groups-head="needs">Needs you<\/div>/);
-  assert.doesNotMatch(html, /data-notif-stack="[^"]*"[^>]*>\s*<div[^>]*data-notif-groups-head/, 'a label is never a stack\'s first child');
+  // #6579: the urgency order still holds, but the tab tells the kinds apart
+  // by nothing but their order — the #5929 "Needs you" / "Everything else"
+  // labels were reversed on purpose.
+  assert.doesNotMatch(html, /data-notif-groups-head/, 'no section labels over the groups');
 });
 
-test('one kind of group alone gets no label', () => {
+test('no group ever gets a label', () => {
   const calm = [
     botRow(1, 1, { moment: 'on_hold', said: 'allowance', appName: 'Homeroom' }, { appName: 'Homeroom' }),
     row(2, 30, { kind: 'pr_merged', appId: 2, appName: 'Polls', appSlug: 'polls', sessionId: 7 }),
@@ -188,7 +179,7 @@ test('one kind of group alone gets no label', () => {
   const asking = [
     row(1, 30, { kind: 'vote_digest', appId: null, appName: null, appSlug: null, sessionId: null, detail: '37', digestWaiting: 37 }),
   ].map(N._rowView);
-  assert.doesNotMatch(renderWithoutWindow(asking), /data-notif-groups-head/, 'every group waits on the reader: no label either');
+  assert.doesNotMatch(renderWithoutWindow(asking), /data-notif-groups-head/, 'nor with every group waiting on the reader');
 });
 
 // ── #5929 items 4, 5 and 12: the status chip and its reason ─────────────

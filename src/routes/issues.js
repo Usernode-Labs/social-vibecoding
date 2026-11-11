@@ -473,6 +473,15 @@ function stagingMockIssues(repoUrl) {
     mk(9115, 'Staging demo: a plan row opens Main Chat',
       'Staging demo: obviously fake. One piece of the larger request.\n\n'
       + '**Source:** Homeroom user (usernode-capture)', 30),
+    // #6581: the request whose build failed twice, with a reply under its
+    // first failure note (seedStagingBotFailureNotes in src/db/migrate.js
+    // stores the thread). A staging copy has no GitHub to read the request
+    // from, so its page's own fetch finds it here, and only the after copy
+    // has it: the change keeps the first note and posts the second below.
+    mk(9116, 'Staging demo: a request whose build failed twice',
+      'Staging demo: obviously fake. Its build failed, so the bot said so, '
+      + 'and it failed again after somebody replied.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 3),
   ];
 }
 
