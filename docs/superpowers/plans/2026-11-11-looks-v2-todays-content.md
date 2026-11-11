@@ -500,3 +500,86 @@ Left, and why:
   `chk` (no check glyph inside; a dot).
 - The filter's results and the recent searches wear the card and row; a look's own hover state for a list
   row is not drawn (the kit has none).
+
+### Lane K, as built (11 Nov 2026)
+
+Needs you (s26), then Make and Import (s42, s43), on `redesign/skins-v2-k` (cut from `cbfa34ecd`: P0 and
+lanes Y, H, T, P, B, S).
+
+What each step draws under a look now:
+
+- **s26 Needs you, a project's.** The head is the kit's title, sentence ("What waits for your vote in
+  <project>.") and the places as tabs, with no button: the first tour's Invite and Ask for a change are gone
+  with `useActs`, `onAsk` and the two catalog ids (`project:frame.ask`, `frame.invite`), so no place's head
+  but the Hub's has buttons. Under it the review stage is the product's (`features/review-flow/`), not
+  redrawn and not told about the look. It wears it: the wear map makes the change's page the look's card
+  (and the help rows' group), its back and its ⌄ the round button, its title the 17px heading, Skip, Next,
+  Send, "Open the change page", the reason chips, the vote-kind chips and the end's buttons the button (quiet
+  until chosen), a help row the 48px row, the reason's field the field. One block of hand rules in app.css
+  (NEEDS YOU, THE REVIEW STAGE) maps the stage's own `--rf-*` colours to the kit's tokens, makes Yes | No's
+  chosen side the accent, and keeps what a worn rule would undo. It sets no width, height or position of the
+  page, the picture, the strip or the sheet: the stage measures and animates itself as before.
+- **`#needs`, the cross-project page**, shares the stage, so it wears the same. It has no head of its own
+  (the bar says Needs you), as on the standard page.
+- **s43 Import** (`features/first-session/frame/make-frame.tsx` `ImportFrame`): the title and its sentence in
+  the head with Import it, "Describe a new project instead" beside it on a desktop and the close control at
+  its end; one narrow column: Repository, one card of the two fields (the address with Check or Re-check
+  beside its box and the status line under it, the name), then the note about the repo, the error, and the
+  link back to describing on a phone.
+- **s42 Make** (`MakeFrame`): the question in the head with Make it, "Import from a GitHub repo" (a link
+  under the form on a phone) and the close control; Start from an idea as four cards (the picked one ringed;
+  the fourth opens the same sheet and is taken over by a pick from it); Your idea, one card of the two fields
+  with the microphone inside the box, or a picked idea's sentence with its blank, its choices as small
+  buttons, Write it yourself and the game's own box; the line about speed under the card; Who can change it
+  in the side column as two rows (the rule with Change, which opens the line's own sheet; What happens next,
+  which opens the note's four lines in place). The bar says Home › New project and its arrow leaves the way
+  the close control does.
+
+How Make is built: one branch in `MakeScreen`, before the standard render (`if (kit)`), and one in
+`ImportForm` (`if (frame)`), hand the screen's own state, refs and handlers to the presentational file. The
+root, the scroller, every id and `data-*` name are the standard screen's, so the page lock, the keyboard
+surface, the kept draft, dictation and the request are unchanged. `kit` is true only from Create, under a
+look, below the frame's bar; the first session's Make keeps the whole screen and the standard form. The
+standard render was not edited: captures of `look=standard` before and after are the same pixels (Make and
+Import, desktop and phone, compared pixel by pixel).
+
+Rulings taken:
+
+- **"Make keeps its form" (the first programme, 10 Nov) is overturned**: version 2 draws Make and Import in
+  the kit's layout. The second render branch was chosen over a `useMakeForm` hook because it leaves every
+  pinned line of the standard path where it is.
+- **Needs you is worn, not redrawn**, as ruled; the s26 mockup followed an old capture and was redrawn from
+  the product (see below). Its purpose line keeps today's words.
+- **The stage's card is solid** under a see-through look (as the item page's stream is): a change slides in
+  over the one that leaves. Paper's is the sunk tone with white controls, as Paper draws a card.
+- **The stage keeps its place**: a centred 520px column, on a desktop and a phone, as on the standard page.
+- **The close control is kept** on Make and Import (the mockup has none): the round button at the head's end.
+  The import page is 64px wider than the kit's narrow page so its title keeps one line beside it.
+- **What happens next** (audit c, question 7) opens in place under its row; a row cannot hover.
+- **A picked idea's sentence** (question 8) is kept inside "Your idea", with its chips as the kit's small
+  buttons.
+- **The allowance row** is the product's own block, so it stands outside the frame root, under the page.
+- Three labels are new words, all layout labels of the first tour: "Your idea", "Who can change it"
+  (`onboarding:firstSession.make.frame.*`) and "Repository" (`…import.frame.repository`).
+
+The s26 mockup (`skins-tour-v2/tour-v2/screens_b.py`, the `s26-needs` entry only) is redrawn to what the
+product shows: the head and tabs, then one card with the back, the title and ⌄, the line, the picture with
+its caption and switch, the strip, and Yes | No with Skip. Checked with `check.py` and rendered; not combined
+and not published.
+
+Left, and why:
+
+- **On a phone, Make it is in the head**, above the fields, as the mockup has it; Return in the name still
+  submits. The standard form has it under the fields.
+- **The made screen after Make** is still the standard screen in the frame's page area.
+- **The sheets** (the rule's presets, Something else…, the stage's vote sheet) are the product's own sheets,
+  solid under a look, not the kit's `Sheet`.
+- **On the phone emulation used here the stage's vote row sits under the tab bar** on `#needs`, in the
+  standard look as well (the "Add it to your home screen" strip is not counted in the stage's height
+  there). Not changed: the stage's height is its own.
+- **Workbench keeps the picture's 32px corners** inside its 10px card: the stage opens a screen onto those
+  corners from code.
+- Not seen in a browser: a vote cast (Yes, No and its reason sheet, Next), since a vote writes to the shared
+  copy; the vote-kind chips on a project's page (only on `#needs`); dictation; the allowance row at its
+  limit; a successful repo check (imports are paused on this copy); a real picture (this copy has no shots
+  storage, so the stage's picture is its ground alone).
