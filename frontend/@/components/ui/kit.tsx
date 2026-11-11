@@ -642,7 +642,7 @@ export function ChallengeArt({ src, tone, icon, size = 44 }: {
   if (src && lost !== src) {
     return (
       <span className={`${k('cart', 'sm')}${tone ? ` ${tone}` : ''}`} style={{ ...style, background: 'var(--tint-art)' }} aria-hidden="true">
-        <img src={src} alt="" decoding="async" draggable={false} onError={() => setLost(src)} />
+        <img src={src} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setLost(src)} />
       </span>
     );
   }

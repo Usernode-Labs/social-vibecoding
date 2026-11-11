@@ -240,6 +240,33 @@ test('an event line: a small glyph, then the words', () => {
 
 // ── The file's own rules ─────────────────────────────────────────────────
 
+// ── The left-overs pass (group A) ────────────────────────────────────────
+
+test('a challenge\'s picture as a row\'s lead, and the arrow that ends its row (shared by Home and the Challenges page)', () => {
+  assert.equal(html(h(K.ChallengeArt, { src: '/illustrations/challenges/x.svg', tone: 'home-tone-mint', icon: '🏆' })),
+    '<span class="fr-cart fr-sm home-tone-mint" style="--fr-cs:44px;background:var(--tint-art)" aria-hidden="true"><img src="/illustrations/challenges/x.svg" alt="" loading="lazy" decoding="async" draggable="false"/></span>');
+  assert.equal(html(h(K.ChallengeArt, { icon: '🏆', size: 40 })), '<span class="fr-cart fr-sm" style="--fr-cs:40px" aria-hidden="true">🏆</span>', 'no illustration: its emoji');
+  assert.match(html(h(K.ChallengeArt, {})), /^<span class="fr-cart fr-sm" style="--fr-cs:44px" aria-hidden="true"><svg class="fr-ic" width="20" height="20"/, 'neither: the trophy');
+  assert.match(html(h(K.RowArrow)), /^<span class="fr-arr" aria-hidden="true"><svg class="fr-ic" width="16" height="16"[^>]*>.*<\/svg><\/span>$/);
+});
+
+test('a tile waits for its picture in the look\'s sunk tone, not as a blank white square', () => {
+  assert.match(html(h(K.Tile, { src: '/i.png', name: 'A' })), /^<span class="fr-tile" style="--fr-ts:40px;--fr-tc:var\(--fr-sunk\)" aria-hidden="true"><img src="\/i\.png"/);
+  assert.match(html(h(K.Tile, { emoji: '🎮', name: 'A' })), /--fr-tc:#fff" aria-hidden="true">🎮</, 'an emoji is there at once: white, as before');
+  assert.match(html(h(K.Tile, { src: '/i.png', color: '#123456', name: 'A' })), /--fr-tc:#123456"/, 'a colour of its own is its ground from the start');
+  const src = fs.readFileSync(path.join(ROOT, KIT_FILE), 'utf8');
+  assert.match(src, /onLoad=\{\(\) => setSeen\(picture\)\}\s*onError=\{\(\) => setLost\(picture\)\}/, 'white once it has loaded; its letter if it never does');
+});
+
+test('a picture card: its tile on the community\'s colour, a sentence on two lines, and the note that ends a list', () => {
+  assert.equal(html(h(K.PicCard, { href: '/app/x', tile: 'TILE', color: '#224466', title: 'X', line: 'Says.', two: true, flag: 'New', label: 'X, 5 people' })),
+    '<a class="fr-card fr-fcard" href="/app/x" aria-label="X, 5 people"><span class="fr-fcover fr-tc" style="--fr-tc:#224466">TILE<span class="fr-pill fr-new">New</span></span><span class="fr-fbody"><span class="fr-t">X</span><span class="fr-s fr-two">Says.</span></span></a>');
+  assert.equal(html(h(K.PicCard, { href: '/app/x', cover: '/c.png', title: 'X' })),
+    '<a class="fr-card fr-fcard" href="/app/x"><span class="fr-fcover"><img src="/c.png" alt="" loading="lazy" class="fr-sun"/></span><span class="fr-fbody"><span class="fr-t">X</span></span></a>', 'as it was, with a picture');
+  assert.equal(html(h(K.SecNote, { end: true }, 'That is all.')), '<p class="fr-secnote fr-end">That is all.</p>');
+  assert.equal(html(h(K.SecNote, {}, 'A note.')), '<p class="fr-secnote">A note.</p>');
+});
+
 test('the kit carries kit classes only: no utility class, no colour of its own', () => {
   const src = fs.readFileSync(path.join(ROOT, KIT_FILE), 'utf8');
   const v2 = src.slice(src.indexOf('/* ── Version 2 (11 Nov 2026)'));
