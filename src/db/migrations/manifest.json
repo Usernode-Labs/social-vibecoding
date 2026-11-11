@@ -300,6 +300,11 @@
       "id": "work-state-votes",
       "sha256": "35fe59fc0cc0a553f996638dfef0e6cfc949196053cf57883ca86e212abe8123",
       "schemaSha256": "5b0a205d5965ba2fd2434cc0e45865f319d27d99b640b1607f42bce395663dc7"
+    },
+    {
+      "id": "change-thread-follows-links",
+      "sha256": "0e23cc37ac0c9b8d6fa9445e6bad4b4e0e7eab0a20ed87d4a81e621f545eec98",
+      "schemaSha256": "77f5d67faccbeee7f4acda802f6fb3464c1a2dc1f6db151861fee92f0408ff79"
     }
   ]
 }

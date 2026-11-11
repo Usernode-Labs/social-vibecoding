@@ -538,7 +538,8 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
        -- Homeroom bot built, the requester it was built for.
        (SELECT COALESCE(jsonb_agg(jsonb_build_object(
                  'number', c.n, 'title', r.title, 'by', COALESCE(ru.username, r.author_login),
-                 'filerId', r.created_by, 'builtFor', c.n = cs.created_from_issue_number) ORDER BY c.n), '[]'::jsonb)
+                 'filerId', r.created_by, 'builtFor', c.n = cs.created_from_issue_number,
+                 'closed', r.state = 'closed') ORDER BY c.n), '[]'::jsonb)
           FROM (SELECT DISTINCT unnest(COALESCE(cs.linked_issues, '{}'::int[])) AS n) c
           LEFT JOIN requests r ON r.app_id = cs.app_id AND r.number = c.n
           LEFT JOIN users ru ON ru.id = r.created_by
@@ -624,6 +625,8 @@ function closesRequests(rows, builtForUserId) {
       title: row.title == null ? null : String(row.title),
       by: row.by == null ? null : String(row.by),
       confirmed: row.builtFor === true || (filerId != null && author != null && filerId === author),
+      // #6605: the request is already closed, so this is not open work.
+      closed: row.closed === true,
     });
   }
   return out.sort((a, b) => a.number - b.number);
@@ -828,6 +831,8 @@ const ELSEWHERE_SQL = `
 SELECT cs.id, cs.pr_number, COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, '')) AS title,
        cs.pr_summary_md, cs.user_id AS builder_id, rq.created_by AS requester_id,
        (c.disputed_at IS NOT NULL) AS disputed,
+       rq.state = 'closed' AS request_closed, cs.status,
+       (n.number = cs.linked_issues[array_lower(cs.linked_issues, 1)]) AS first,
        t.number AS home, n.number AS request
   FROM chat_sessions cs
   JOIN threads t ON t.id = cs.thread_id
@@ -873,6 +878,12 @@ async function changesElsewhere(db, { thread, numbers, viewerId = null }) {
     const builderId = row.builder_id == null ? null : Number(row.builder_id);
     const mine = viewerId != null && requesterId != null && requesterId === Number(viewerId);
     const disputed = row.disputed === true;
+    // #6605: a request that is already closed is not open work; and when the
+    // change belongs in this request's thread but stayed because people have
+    // voted on it, say why rather than only where it is.
+    const live = row.status !== 'merging' && row.status !== 'merged';
+    const closed = row.request_closed === true && live;
+    const stays = row.first === true && live;
     out.push({
       id: Number(row.id),
       number: row.pr_number == null ? null : Number(row.pr_number),
@@ -882,9 +893,12 @@ async function changesElsewhere(db, { thread, numbers, viewerId = null }) {
       request: Number(row.request),
       disputed,
       mine,
+      closed,
+      stays,
       // Only the requester is asked, and not when the change is their own:
-      // the notice still shows, but there is nothing to answer.
-      ask: mine && requesterId !== builderId && !disputed,
+      // the notice still shows, but there is nothing to answer. A closed
+      // request has nothing left to close, so it is never asked.
+      ask: mine && requesterId !== builderId && !disputed && !closed,
     });
   }
   return out;

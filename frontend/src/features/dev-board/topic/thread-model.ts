@@ -33,6 +33,8 @@ export interface ClosesRequest {
   title: string | null;
   by: string | null;
   confirmed: boolean;
+  /** #6605: the request is already closed, so the change is not open work. */
+  closed?: boolean;
 }
 
 export interface ThreadItem {
@@ -144,6 +146,10 @@ export interface ThreadElsewhere {
   ask?: boolean;
   /** #6420: the viewer asked for this request, so the after-press line is theirs to read. */
   mine?: boolean;
+  /** #6605: the request is already closed; the card says so and offers nothing to press. */
+  closed?: boolean;
+  /** #6605: this is the request whose thread the change belongs in, but votes kept it here. */
+  stays?: boolean;
 }
 
 /** D4: the changes for request `number` that live on another request's page. Pure. */

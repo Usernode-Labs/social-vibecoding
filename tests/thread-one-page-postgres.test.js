@@ -167,7 +167,7 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
     assert.ok(!page.items.some((i) => i.type === 'change'), 'it is not in #11\'s thread');
     assert.deepEqual(page.elsewhere, [{
       id: Number(pin.id), number: 12, title: 'Pin it', summary: null, on: 10, request: 11,
-      disputed: false, mine: true, ask: true,
+      disputed: false, mine: true, closed: false, stays: false, ask: true,
     }]);
     const first = await threads.threadPage(pool, { thread: await threads.threadForNumber(pool, { appId: app.id, number: 10 }), viewerId: ana.id });
     assert.deepEqual(first.elsewhere, [], 'the first request\'s page has it in its own thread');
@@ -195,22 +195,22 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
     const of = (id) => page.items.find((i) => i.type === 'change' && i.id === Number(id)).closesRequests;
 
     assert.deepEqual(of(human.id), [
-      { number: 10, title: 'Pin a message', by: 'op_ana', confirmed: true },
-      { number: 11, title: 'Pin in DMs', by: 'op_ana', confirmed: false },
-      { number: 13, title: 'Sidebar rows too tight', by: 'op_maya', confirmed: false },
-      { number: 99, title: null, by: null, confirmed: false },
+      { number: 10, title: 'Pin a message', by: 'op_ana', confirmed: true, closed: false },
+      { number: 11, title: 'Pin in DMs', by: 'op_ana', confirmed: false, closed: false },
+      { number: 13, title: 'Sidebar rows too tight', by: 'op_maya', confirmed: false, closed: false },
+      { number: 99, title: null, by: null, confirmed: false, closed: false },
     ], 'built for #10, whoever filed it; the rest not agreed to; a number with no request is bare');
 
     assert.deepEqual(of(authored.id), [
-      { number: 10, title: 'Pin a message', by: 'op_ana', confirmed: true },
-      { number: 11, title: 'Pin in DMs', by: 'op_ana', confirmed: true },
-      { number: 13, title: 'Sidebar rows too tight', by: 'op_maya', confirmed: false },
+      { number: 10, title: 'Pin a message', by: 'op_ana', confirmed: true, closed: false },
+      { number: 11, title: 'Pin in DMs', by: 'op_ana', confirmed: true, closed: false },
+      { number: 13, title: 'Sidebar rows too tight', by: 'op_maya', confirmed: false, closed: false },
     ], 'a change its author filed requests for: those are confirmed');
 
     assert.deepEqual(of(bots.id), [
-      { number: 10, title: 'Pin a message', by: 'op_ana', confirmed: false },
-      { number: 13, title: 'Sidebar rows too tight', by: 'op_maya', confirmed: true },
-      { number: 14, title: 'Another one', by: 'op_maya', confirmed: true },
+      { number: 10, title: 'Pin a message', by: 'op_ana', confirmed: false, closed: false },
+      { number: 13, title: 'Sidebar rows too tight', by: 'op_maya', confirmed: true, closed: false },
+      { number: 14, title: 'Another one', by: 'op_maya', confirmed: true, closed: false },
     ], 'Homeroom bot\'s change is the requester it was built for: that person\'s requests are confirmed');
 
     assert.deepEqual(of(pin.id).map((r) => r.confirmed), [false, false],
