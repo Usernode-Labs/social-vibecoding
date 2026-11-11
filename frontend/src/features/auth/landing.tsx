@@ -880,6 +880,9 @@ export function LandingScreen() {
   // link stays remembered, so a sign-in from the story still lands on it.
   // Under a look it is the same sheet over the same outline (version 2 of
   // the looks), with the place named in the frame's bar (GatePlace below).
+  // The tab a public project's page is on, which the frame's bar names
+  // under a look (../guest/guest-project.tsx says it).
+  const [projectTab, setProjectTab] = useState<'hub' | 'workshop' | 'discussion'>('hub');
   const closeGate = useCallback(() => {
     setDeepLink(null);
     closeSheet();
@@ -1053,6 +1056,8 @@ export function LandingScreen() {
   const linkedSlug = deepPlace?.kind === 'project' ? deepPlace.slug : null;
   const linkedApp = linkedSlug && apps ? apps.find((a) => a.slug === linkedSlug) ?? null : null;
   const guestProject = guestOn ? linkedApp : null;
+  const guestProjectSlug = guestProject?.slug ?? null;
+  useEffect(() => { if (!guestProjectSlug) setProjectTab('hub'); }, [guestProjectSlug]);
   // Until the directory is read, a project link is neither public nor not,
   // so neither its page nor the sheet shows yet.
   const linkPending = guestOn && !!linkedSlug && apps === null && !appsFailed;
@@ -1749,6 +1754,10 @@ export function LandingScreen() {
         {/* Under a look, the place a gated link was for, for the frame's bar
             (./deep-link-sign-in.tsx GatePlace). Never in the first render. */}
         {frame && gate ? <GatePlace target={gate.target} /> : null}
+        {/* …and a public project's tab, after its name, when it is not the Hub. */}
+        {frame && guestPages && guestProject && projectTab !== 'hub' ? (
+          <span hidden data-guest-place="trail">{projectTab === 'workshop' ? t('auth:guest.project.tab.workshop') : t('auth:guest.project.tab.discussion')}</span>
+        ) : null}
         {/*
             THE ONE WAY IN THE BAR CARRIES (the guest Discover, 21 Oct 2026):
             a quiet "Sign in", for somebody who has an account and is looking
@@ -2263,6 +2272,7 @@ export function LandingScreen() {
               startOnWorkshop={!!deepLink && linksToWorkshop(deepLink.target)}
               signedIn={waitingGuest}
               primaryClass={PRIMARY_PILL}
+              onPlace={setProjectTab}
               onIntent={askFor}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onShare={shareProject}

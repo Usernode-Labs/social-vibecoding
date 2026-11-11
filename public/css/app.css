@@ -28477,6 +28477,18 @@ html[data-skin] .fr-list .fr-txt{margin:0;padding:10px 16px;font-size:14px;line-
 html[data-skin] .fr-list .fr-txt .fr-link{font-size:14px}
 html[data-skin] .fr-rowx:has(>.fr-row.fr-on){background:var(--fr-lit-t)}
 html[data-skin] .fr-rowx>.fr-row.fr-on{background:none}
+html[data-skin] .fr-ballot.fr-visit{gap:10px}
+html[data-skin] .fr-ballot.fr-visit h3{margin:0}
+html[data-skin] .fr-ballot .fr-sum{margin:4px 0 0;font-size:13px;color:var(--fr-mut);line-height:1.45}
+html[data-skin] .fr-ballot.fr-visit .fr-line1 .fr-btn,html[data-skin]:where(:not([data-skin="brand"])) .fr-ballot.fr-visit .fr-line1 :is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back]),[data-sign-in-sheet] [role="dialog"] button.bg-violet-600,[data-public-profile-frame] button:is(.bg-violet-600,.bg-zinc-100),#improve-row-feedback,#profile-edit-save),html[data-skin] .fr-ballot .fr-later{margin-inline-start:auto}
+html[data-skin] .fr-ballot .fr-later{font-weight:600}
+html[data-skin] .fr-purpose .fr-sub13{display:block}
+html[data-skin] .fr-cover img.fr-moon{display:none}
+html[data-skin].dark .fr-cover img.fr-moon{display:block}
+html[data-skin].dark .fr-cover img.fr-sun:has(+ img.fr-moon){display:none}
+html[data-skin] .fr-cardnote.fr-last{border-bottom:0;border-top:1px solid var(--fr-line2)}
+html[data-skin] .fr-cover:has(>img){position:relative}
+html[data-skin] .fr-cover>img{position:absolute;top:0;inset-inline-start:0}
 @media (min-width: 768px){
 html[data-skin][data-skin] .fr-p{display:none!important}
 }
