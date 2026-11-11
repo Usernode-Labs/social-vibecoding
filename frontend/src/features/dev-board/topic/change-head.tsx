@@ -71,7 +71,7 @@ import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topi
 import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
 import { useFramePage } from '../../frame/frame-page-store';
 import { placeName } from '../workshop/places';
-import { TopicFrameAbout, TopicFrameHead, TopicFrameStatus } from './frame/topic-frame';
+import { TopicFrameHead, TopicFrameStatus } from './frame/topic-frame';
 import { useSideStack } from './frame/side-stack';
 import { changeStop, dotLine, pillKind, topicBack } from './frame/topic-page';
 
@@ -99,9 +99,9 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null }: {
   // them is all this does there; nowhere else does it publish anything.
   usePanelHead({ kind: 'change', pill: v.status || null, menuKey: menuKey || null });
   // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
-  // s34): the change's title and one line saying what it is, with this menu.
+  // s34): what it is in a small line over the change's title, with this menu.
   const frame = isFrameSkin(useLiveSkin());
-  if (frame) return <TopicFrameHead title={name || title} purpose={dotLine([title, v.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.change.bar.more') } : null} />;
+  if (frame) return <TopicFrameHead title={name || title} over={dotLine([title, v.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.change.bar.more') } : null} />;
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
@@ -671,12 +671,12 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
 }): ReactNode {
   const t = useMessages('project');
   // Under one of the frame's looks the page tells the bar its trail (the
-  // Workshop, then this change) and stands its votes and checks, and About,
-  // in the context column beside its words (./frame/side-stack.ts).
+  // Workshop, then this change) and stands its status, votes and checks in
+  // the context column beside its words (./frame/side-stack.ts).
   const frame = isFrameSkin(useLiveSkin());
   const trail = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
   useFramePage(frame ? [placeName('workshop'), trail] : null, topicBack);
-  useSideStack(frame, `[data-change-root="${id ?? ''}"] > [data-image-viewer-scope]`, ['.dev-change-status', '.dev-change-pair', '.fr-topicside']);
+  useSideStack(frame, `[data-change-root="${id ?? ''}"] > [data-image-viewer-scope]`, ['.dev-change-status', '.dev-change-pair']);
   const tc = useMessages('changes');
   const images = useInlineImageViewer();
   const thanks = v.thanks && id ? <span className="contents" data-kudos-host={id} data-kudos-face="thread"></span> : null;
@@ -774,16 +774,6 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
             voting={!!v.votes.facts?.length}
             botAtWork={v.testing.botFix === 'fixing' || v.testing.botFix === 'queued'}
           />
-          {frame ? (
-            <TopicFrameAbout
-              label={t('project:frame.topic.about')}
-              asker={v.author}
-              color={swatchFor(v.author)}
-              line={dotLine([v.time, v.via])}
-              topic={v.category}
-              topicLine={t('project:frame.topic.topic')}
-            />
-          ) : null}
         </div>
       </article>
     </>

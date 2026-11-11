@@ -27322,14 +27322,17 @@ html[data-skin][data-you-frame] #profile-content { max-width: none; margin: 0; p
 
 /* A REQUEST'S PAGE (features/dev-board/topic/request-head.tsx). The page
    is the product's; under a look it is laid out as the kit's item page (the
-   tour's s32): the head is the kit's (drawn in the bar's place), the bar
-   over the page has the way back, the page takes the kit's column, and its
-   status, progress and About stand in a 320px context column beside the
-   words and the discussion. Those three are separate children the page
-   writes in its own order, so each is placed from the height measured for
-   the ones before it (./frame/side-stack.ts: --fr-side-top, --fr-side-h).
-   The words and the status wear the look's card (looks.json "wear"). On a
-   phone nothing is placed: one column, in the page's order. */
+   tour's s32 to s35, holding what the standard page says: version 2): the
+   head is the kit's (drawn in the bar's place), the bar over the page has
+   the way back, the page takes the kit's column, and where the item stands
+   (a request's Status; a change's Status, Votes and Tested) is a 320px
+   context column beside the words and the discussion. Those are separate
+   children the page writes in its own order, so each is placed from the
+   height measured for the ones before it (./frame/side-stack.ts:
+   --fr-side-top, --fr-side-h), and a page with none of them has no column
+   (--fr-side-w). The words and the cards wear the look's card (looks.json
+   "wear"). On a phone nothing is placed: one column, where it stands
+   first. */
 /* THE BOARD IS THE STRIP (board-frame.tsx): the product's frosted plane
    rising under the header, with its top hairline, 28px shoulders and
    shadow. The tour's project pages sit flat under the header, so under a
@@ -27354,27 +27357,28 @@ html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-ga
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-figure { white-space: nowrap; }
 @media (min-width: 768px) {
-  html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] { position: relative; min-height: var(--fr-side-h, 0px); padding-inline-end: 352px; }
-  html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] > :is(.dev-request-status, .dev-request-track, .dev-change-status, .dev-change-pair, .fr-topicside) { position: absolute; top: var(--fr-side-top, 0px); inset-inline-end: 0; width: 320px; margin: 0; }
+  html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] { position: relative; min-height: var(--fr-side-h, 0px); padding-inline-end: var(--fr-side-w, 352px); }
+  html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] > :is(.dev-request-status, .dev-request-track, .dev-change-status, .dev-change-pair) { position: absolute; top: var(--fr-side-top, 0px); inset-inline-end: 0; width: 320px; margin: 0; }
   /* The discussion follows the words in their column. It is the article's
      next sibling, not its child, so it is drawn up beside the context
      column by what that column stands taller than the words (--fr-side-
-     pull, said on the scroller), and never ends above the column's foot. */
+     pull, said on the scroller), and what it lacks of the column's foot is
+     left as room under it (--fr-side-tail). */
   html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread .dev-request #gc-thread-head { margin-bottom: calc(-1 * var(--fr-side-pull, 0px)); }
-  html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread .dev-request #gc-thread-messages { box-sizing: border-box; width: calc(100% - 352px); max-width: calc(100% - 352px); min-height: var(--fr-side-pull, 0px); margin-inline: 0; }
-  html[data-skin]:where(:not([data-skin="brand"])) .dev-request > .dev-request-sheet > .messages-composer { box-sizing: border-box; max-width: calc(100% - 352px); }
+  html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread .dev-request #gc-thread-messages { box-sizing: border-box; width: calc(100% - var(--fr-side-w, 352px)); max-width: calc(100% - var(--fr-side-w, 352px)); margin-inline: 0; margin-bottom: var(--fr-side-tail, 0px); }
+  html[data-skin]:where(:not([data-skin="brand"])) .dev-request > .dev-request-sheet > .messages-composer { box-sizing: border-box; max-width: calc(100% - var(--fr-side-w, 352px)); }
 }
 @media (max-width: 767.98px) {
-  /* The head stays over the page while it scrolls, so on a phone it is kept
-     to two lines of title beside its menu; the bar already says which
-     request this is. The attribute is said twice, as the kit's own phone
-     rules say it, so these come after them at the same weight. */
+  /* The head stays over the page while it scrolls, as the standard page's
+     bar does, so on a phone it is kept as that bar is: the small line, then
+     two lines of title beside its menu. The attribute is said twice, as the
+     kit's own phone rules say it, so these come after them at the same
+     weight. */
   html[data-skin][data-skin]:where(:not([data-skin="brand"])) [data-topic-frame-head] > .fr-head { flex-direction: row; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
   html[data-skin][data-skin]:where(:not([data-skin="brand"])) [data-topic-frame-head] > .fr-head > .fr-acts { width: auto; flex: none; }
   html[data-skin][data-skin]:where(:not([data-skin="brand"])) [data-topic-frame-head] .fr-title { font-size: 20px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  html[data-skin][data-skin]:where(:not([data-skin="brand"])) [data-topic-frame-head] .fr-purpose { display: none; }
+  html[data-skin][data-skin]:where(:not([data-skin="brand"])) [data-topic-frame-head] .fr-cap.fr-over { margin-bottom: 4px; }
   html[data-skin]:where(:not([data-skin="brand"])) .dev-request { padding-inline: 16px; }
-  html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] > .fr-topicside { margin-top: 16px; }
   html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] > .dev-change-status { margin-top: 12px; }
 }
 

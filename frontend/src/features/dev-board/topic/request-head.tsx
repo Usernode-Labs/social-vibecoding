@@ -70,9 +70,8 @@ import { usePanelHead } from '../../side-panel/head-store';
 import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
 import { useFramePage } from '../../frame/frame-page-store';
 import { placeName } from '../workshop/places';
-import { TopicFrameAbout, TopicFrameHead, TopicFrameStatus } from './frame/topic-frame';
+import { TopicFrameHead, TopicFrameStatus } from './frame/topic-frame';
 import { useSideStack } from './frame/side-stack';
-import { useFollowRow } from './frame/topic-follow';
 import { dotLine, frameStop, topicBack } from './frame/topic-page';
 
 function appView(): any {
@@ -132,10 +131,12 @@ export function RequestBar({ r, pill = null, threadMenu = false }: {
   const menuKey = r.menuKey || threadMenu ? requestMenuKey(r.menuKey, r.number) : null;
   usePanelHead({ kind: 'request', pill, menuKey });
   // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
-  // s32): the title and one line saying what it is, with this menu. The
-  // bar above it carries the trail and the way back (RequestHead below).
+  // s32): what it is in a small line over its full title, with this menu.
+  // The topic it is filed under rides that line, as it sits under the
+  // standard bar's title. The bar above it carries the trail and the way
+  // back (RequestHead below).
   const frame = isFrameSkin(useLiveSkin());
-  if (frame) return <TopicFrameHead title={r.title} purpose={dotLine([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
+  if (frame) return <TopicFrameHead title={r.title} over={dotLine([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
@@ -522,13 +523,13 @@ export function plansByChange(
 
 export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // Under one of the frame's looks the page tells the bar its trail (the
-  // Workshop, then this request) and lays its status, progress and About
-  // beside its words (./frame/side-stack.ts says why by measuring).
+  // Workshop, then this request) and lays its status and progress beside
+  // its words (./frame/side-stack.ts says why by measuring).
   const frame = isFrameSkin(useLiveSkin());
   const tFrame = useMessages('project');
   const kicker = tFrame('project:topic.request.bar.title', { number: r.number });
   useFramePage(frame ? [placeName('workshop'), kicker] : null, topicBack);
-  useSideStack(frame, `[data-request-root="${r.number}"] > [data-image-viewer-scope]`, ['.dev-request-status', '.dev-request-track', '.fr-topicside']);
+  useSideStack(frame, `[data-request-root="${r.number}"] > [data-image-viewer-scope]`, ['.dev-request-status', '.dev-request-track']);
   const thread = useStoreState(requestThreadStore);
   const specs = thread.number === r.number ? thread.specs : [];
   const [editing, setEditing] = useState(false);
@@ -627,7 +628,6 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     }] : []),
   ]);
   const threadMenu = ownAgent || agentSession || !!threadRead.data?.follow;
-  const followRow = useFollowRow(threadRead.data || null, threadRead.reread);
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
@@ -712,17 +712,6 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             <ChangeSectionSkeleton />
           ) : null}
           <ThreadItems slug={slug} number={r.number} here={here} payload={threadRead.data} items={layout.listed} onChanged={threadRead.reread} menuKey={menuKey} />
-          {frame ? (
-            <TopicFrameAbout
-              label={t('project:frame.topic.about')}
-              asker={r.asker}
-              color={swatchFor(r.asker)}
-              line={r.askedTime ? t('project:frame.topic.asked', { when: r.askedTime }) : null}
-              topic={r.category}
-              topicLine={t('project:frame.topic.topic')}
-              follow={followRow ? { title: t('project:frame.topic.follow'), line: t('project:frame.topic.followLine'), ...followRow } : null}
-            />
-          ) : null}
         </div>
       </article>
     </>
