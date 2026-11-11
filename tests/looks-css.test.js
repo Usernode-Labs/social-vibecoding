@@ -170,6 +170,142 @@ test('compiled, the worn selector rides on the kit\'s own rule, in the same plac
   assert.match(css, /html\[data-skin\] \.fr-tile \.fr-t\{font-weight:650\}/);
 });
 
+// ── Version 2: what today's content needs of the kit ─────────────────────
+
+// The block at the end of kit.css (11 Nov 2026): the pieces the looks need
+// to draw the product's own content in the first tour's layout. It only
+// adds: each rule names a class, or a pairing, that nothing drew before.
+const V2_MARK = '/* ==== version 2 (11 Nov 2026)';
+const kitSource = () => read('frontend', 'looks', 'kit.css');
+const v2Source = () => kitSource().slice(kitSource().indexOf(V2_MARK));
+
+test('version 2 is one block at the end of kit.css, and nothing above it changed with it', () => {
+  const src = kitSource();
+  const at = src.indexOf(V2_MARK);
+  assert.ok(at > 0 && src.indexOf(V2_MARK, at + 1) < 0, 'one marked block');
+  assert.match(src.slice(0, at), /\.nv\.all \.nm\{color:var\(--mut\)\}\n\n$/, 'it starts after the tour\'s own last rule');
+  // The sideways row of picture cards and the two-line wrapping row were
+  // there before it; version 2 adds a modifier beside each instead of
+  // changing them under the pages that use them.
+  assert.match(src.slice(0, at), /\.hrow\{display:flex;gap:10px;padding:2px 0 4px;overflow-x:auto;/);
+  assert.match(src.slice(0, at), /\.row\.wrap \.s\{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;/);
+});
+
+test('version 2 is written with the kit\'s tokens only, and names no side', () => {
+  const body = v2Source().replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, 'no literal colour: a look could not restyle it');
+  const tokens = new Set([...kitSource().slice(0, kitSource().indexOf(V2_MARK)).matchAll(/--([a-z0-9-]+):/g)].map((m) => m[1]));
+  for (const m of body.matchAll(/var\(--([a-z0-9-]+)/g)) {
+    assert.ok(tokens.has(m[1]) || ['tc', 'bn'].includes(m[1]), `--${m[1]} is not one of the kit's tokens (tc and bn are given by the data)`);
+  }
+  assert.doesNotMatch(body, /box-shadow:inset -?[1-9]\d*px 0 0/, 'a line on one side is a border, which mirrors; an inset shadow does not');
+});
+
+test('version 2 names no class the kit already styled on its own, so no page drawn before it changes', () => {
+  const src = kitSource();
+  const before = src.slice(0, src.indexOf(V2_MARK)).replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = (text) => [...text.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{[^{}]*\}/g)].flatMap((m) => m[1].split(',').map((s) => s.trim()));
+  const old = new Set(rules(before));
+  for (const sel of rules(v2Source())) assert.ok(!old.has(sel), `"${sel}" is already a rule of the kit: version 2 may not restate it`);
+  // A bare class of version 2 is a new name (a bare .quiet or .more would
+  // have dressed the quiet button and the "+3" face).
+  const oldNames = new Set([...before.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1]));
+  for (const sel of rules(v2Source())) {
+    const bare = /^\.([a-zA-Z][\w-]*)$/.exec(sel);
+    if (bare && oldNames.has(bare[1])) assert.ok(['acc'].includes(bare[1]), `.${bare[1]} is a class the kit already uses in a pairing`);
+  }
+});
+
+test('version 2, compiled: each piece under any look, phone rules in the phone block, sides mirrored', () => {
+  const css = looks.compile(v2Source(), null);
+  const has = (text, why) => assert.ok(css.includes(text), why || text);
+  // The page, its head, its tabs.
+  has('html[data-skin] .fr-inner.fr-narrow{max-width:784px}');
+  has('html[data-skin] .fr-cols.fr-flip{grid-template-columns:360px minmax(0,680px)}');
+  has('html[data-skin] .fr-head>.fr-tile,html[data-skin] .fr-head>.fr-av,html[data-skin] .fr-head>.fr-lead{margin-top:2px}');
+  has('html[data-skin] .fr-cap.fr-over{margin-bottom:8px}');
+  has('html[data-skin] .fr-cap.fr-sub{padding:4px 4px 0}');
+  has('html[data-skin] .fr-sub13{font-size:13px;color:var(--fr-mut);margin-top:4px}');
+  has('html[data-skin] .fr-sub15{font-size:15px;line-height:1.45}');
+  has('html[data-skin] .fr-sub22{font-size:22px;font-weight:700;letter-spacing:-.02em}');
+  has('html[data-skin] .fr-mut{color:var(--fr-mut);font-weight:500}');
+  has('html[data-skin] .fr-secnote{font-size:13px;color:var(--fr-mut);padding:0 4px}');
+  has('html[data-skin] .fr-tabs .fr-end{margin-inline-start:auto;display:flex;align-items:center;gap:8px;flex:none}', 'the tabs\' end slot, at the row\'s end either way round');
+  has('html[data-skin] .fr-tabs.fr-seg .fr-tab{flex:1;justify-content:center}');
+  has('html[data-skin] .fr-link.fr-bad{color:var(--fr-bad)}');
+  // Rows.
+  has('html[data-skin] .fr-row.fr-wrap.fr-all .fr-t,html[data-skin] .fr-row.fr-wrap.fr-all .fr-s{white-space:normal;overflow:visible}', 'a switch\'s sentence is never cut');
+  has('html[data-skin] .fr-row.fr-wrap.fr-all .fr-s{display:block;-webkit-line-clamp:none;');
+  has('html[data-skin] .fr-row.fr-showall{justify-content:center}');
+  has('html[data-skin] .fr-row.fr-showall .fr-t{color:var(--fr-acc);font-size:13px;font-weight:600}');
+  has('html[data-skin] .fr-row.fr-headrow .fr-link{flex:none;white-space:nowrap}');
+  has('html[data-skin] .fr-row.fr-week .fr-t{font-weight:700}');
+  has('html[data-skin] .fr-row.fr-item .fr-t{font-weight:500}');
+  has('html[data-skin] .fr-row .fr-num,');
+  has('html[data-skin] .fr-row .fr-ei,');
+  has('html[data-skin] .fr-list .fr-row.fr-sm{min-height:40px;padding-top:4px;padding-bottom:4px}');
+  has('html[data-skin] .fr-list .fr-row.fr-more{padding-inline-start:52px}');
+  has('html[data-skin] .fr-pill.fr-mini{height:20px;padding:0 8px;margin-inline-start:8px;vertical-align:1px;font-weight:600}');
+  // Tiles.
+  has('html[data-skin] .fr-tiles.fr-t8{grid-template-columns:repeat(8,minmax(0,1fr))}');
+  has('html[data-skin] .fr-at.fr-dim .fr-tile,html[data-skin] .fr-at.fr-dim .fr-nm{opacity:.5}');
+  has('html[data-skin] .fr-at .fr-corner{position:absolute;top:-6px;inset-inline-start:calc(50% + 14px);');
+  has('html[data-skin] .fr-lead.fr-dash{background:transparent;border:1.5px dashed var(--fr-faint);color:var(--fr-mut)}');
+  // Numbers, bars, progress.
+  has('html[data-skin] .fr-fact .fr-l.fr-sub{font-size:12px;color:var(--fr-faint);white-space:normal}');
+  has('html[data-skin] .fr-facts.fr-inset .fr-fact+.fr-fact{border-inline-start:0}');
+  has('html[data-skin] .fr-facts+.fr-bars{border-top:1px solid var(--fr-line2)}');
+  has('html[data-skin] .fr-bars{display:grid;grid-template-columns:repeat(var(--fr-bn,7),1fr);');
+  has('html[data-skin] .fr-bcol.fr-now .fr-bl{color:var(--fr-ink);font-weight:700}');
+  has('html[data-skin] .fr-foot.fr-left{text-align:start;padding:4px 16px 16px;font-size:12px}');
+  has('html[data-skin] .fr-prog i{display:block;height:100%;border-radius:3px;background:var(--fr-lit)}', 'a bar still moving is drawn in the lit ink');
+  has('html[data-skin] .fr-prog.fr-done i{background:var(--fr-ok)}', 'and a finished one may be green');
+  has('html[data-skin] .fr-prog.fr-meter{margin:8px 0}');
+  // Cards side by side, a grid of cards, pictures.
+  has('html[data-skin] .fr-hrow.fr-even{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:12px;padding:0;overflow:visible}');
+  has('html[data-skin] .fr-hcard{display:flex;flex-direction:column;gap:6px}');
+  has('html[data-skin] .fr-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}');
+  has('html[data-skin] .fr-card.fr-on{box-shadow:inset 0 0 0 2px var(--fr-acc)}');
+  has('html[data-skin] .fr-fcover .fr-pill{position:absolute;inset-inline-start:8px;bottom:8px;background:var(--fr-surface);color:var(--fr-ink)}');
+  has('html[data-skin] .fr-cover{aspect-ratio:16/10;border-radius:20px;background:var(--fr-tc,var(--fr-sunk));');
+  // Fields.
+  has('html[data-skin] .fr-field label.fr-lab{display:flex;justify-content:space-between;align-items:baseline;gap:8px}');
+  has('html[data-skin] .fr-fieldrow .fr-inp{flex:1}');
+  has('html[data-skin] .fr-inp>textarea.fr-v{flex:1;min-width:0;min-height:64px;border:0;outline:0;background:none;font:inherit;');
+  has('html[data-skin] .fr-inp>select.fr-v{flex:1;min-width:0;min-height:44px;margin-inline-end:-26px;padding-inline-end:26px;', 'the select reaches under its chevron, so a press there opens it');
+  has('html[data-skin] .fr-bullets{padding-block:4px 12px;padding-inline:34px 16px;font-size:14px;line-height:1.6}');
+  // A thread's small parts.
+  has('html[data-skin] .fr-quote{border-inline-start:3px solid var(--fr-acc);');
+  has('html[data-skin] .fr-byline b{color:var(--fr-ink);font-weight:650;font-size:15px}');
+  has('html[data-skin] .fr-lone{padding:64px 16px;text-align:center;color:var(--fr-mut)}');
+  // A phone.
+  const phone = css.slice(css.indexOf('@media (max-width: 767.98px){'));
+  for (const rule of [
+    'html[data-skin][data-skin] .fr-cols.fr-flip{grid-template-columns:minmax(0,1fr)}',
+    'html[data-skin][data-skin] .fr-tabs .fr-end{display:none}',
+    'html[data-skin][data-skin] .fr-list .fr-row.fr-sm{min-height:44px}',
+    'html[data-skin][data-skin] .fr-tiles.fr-t8,html[data-skin][data-skin] .fr-inner.fr-narrow .fr-tiles.fr-t8{grid-template-columns:repeat(4,minmax(0,1fr))}',
+    'html[data-skin][data-skin] .fr-hrow.fr-even{grid-auto-columns:240px;overflow-x:auto;margin-inline-end:-16px}',
+    'html[data-skin][data-skin] .fr-grid{grid-template-columns:repeat(2,minmax(0,1fr))}',
+    'html[data-skin][data-skin] .fr-shots.fr-s3{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:200px;overflow-x:auto}',
+  ]) assert.ok(phone.includes(rule), `${rule} belongs to a phone`);
+});
+
+test('version 2 dresses nothing of the product\'s own that it did not dress before', () => {
+  // A kit rule naming a worn component is repeated for the product's markup
+  // (looks.json "wear"). A state the kit writes as a class (.card.on,
+  // .card.press, .row.showall, .btn.chip, .ib.more) never reaches it; what
+  // is repeated only places a kit element inside or beside a worn one.
+  const css = looks.compile(v2Source(), null);
+  const worn = css.split('\n').filter((rule) => rule.startsWith('html')).flatMap((rule) => topLevel(rule.slice(0, rule.indexOf('{')))).filter((sel) => /:where\(:not\(\[data-skin="brand"\]\)\)/.test(sel));
+  assert.ok(worn.length > 0 && worn.length < 20, `a handful only (${worn.length})`);
+  for (const sel of worn) assert.match(sel, /\.fr-[\w-]+/, `"${sel}" would dress the product's markup with no kit element in it`);
+  assert.doesNotMatch(css, /messages-|dev-request|dev-change|auth-waiting/, 'no conversation, request or waiting-room node is named');
+  // The event line is not worn yet: the request page's own lines would
+  // change under every look. The lane that redraws that page adds the root.
+  assert.equal(looks.config.wear.roots.evt, undefined);
+});
+
 // ── The committed section ────────────────────────────────────────────────
 
 const BEGIN = '/* looks:begin';

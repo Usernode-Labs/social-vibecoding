@@ -106,10 +106,17 @@ export function Av({ size = 32, name, src, color }: { size?: number; name: strin
 }
 
 /** A glyph or a number in the picture's place. */
-export function Lead({ icon, tone, size, children }: { icon?: string; tone?: 'acc' | 'ok' | 'wait' | 'bad'; size?: number; children?: React.ReactNode }) {
+export function Lead({ icon, tone, size, dash, children }: {
+  icon?: string;
+  tone?: 'acc' | 'ok' | 'wait' | 'bad';
+  size?: number;
+  /** An outline only: something to add (New community). */
+  dash?: boolean;
+  children?: React.ReactNode;
+}) {
   // A lead in a grid of tiles is the tiles' size, with their corner.
   const style = size ? { width: size, height: size, borderRadius: Math.round(size * 0.29) } : undefined;
-  return <span className={k('lead', tone)} style={style} aria-hidden={icon ? 'true' : undefined}>{icon ? <Icon name={icon} size={size ? Math.round(size * 0.42) : 20} /> : children}</span>;
+  return <span className={k('lead', tone, dash && 'dash')} style={style} aria-hidden={icon ? 'true' : undefined}>{icon ? <Icon name={icon} size={size ? Math.round(size * 0.42) : 20} /> : children}</span>;
 }
 
 export type PillKind = 'act' | 'wait' | 'ok' | 'bad' | '';
@@ -124,9 +131,19 @@ function saysNothing(children: React.ReactNode): boolean {
  * for you), `wait` amber (on others), `ok` green (done), `bad` red, none
  * grey. Zero or empty renders nothing.
  */
-export function Pill({ kind = '', children }: { kind?: PillKind; children?: React.ReactNode }) {
+export function Pill({ kind = '', mini, href, onClick, children }: {
+  kind?: PillKind;
+  /** The small one that sits in a row's title, after its words. */
+  mini?: boolean;
+  /** A pill that is a door (a verified account's page). */
+  href?: string;
+  onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+  children?: React.ReactNode;
+}) {
   if (saysNothing(children)) return null;
-  return <span className={k('pill', kind)} data-kind={kind || 'none'}>{children}</span>;
+  const cls = k('pill', kind, mini && 'mini');
+  if (href) return <a className={cls} data-kind={kind || 'none'} href={href} onClick={onClick}>{children}</a>;
+  return <span className={cls} data-kind={kind || 'none'}>{children}</span>;
 }
 
 /** A count that asks for you. Zero renders nothing. */
@@ -154,9 +171,9 @@ export function Btn({ kind = '', icon, small, block, className, type = 'button',
 }
 
 /** Grey words at the end of a row: a time, an amount. */
-export function Meta({ children }: { children?: React.ReactNode }) {
+export function Meta({ tone, children }: { tone?: 'ok'; children?: React.ReactNode }) {
   if (saysNothing(children)) return null;
-  return <span className={k('meta')}>{children}</span>;
+  return <span className={k('meta', tone)}>{children}</span>;
 }
 
 export interface RowProps {
@@ -173,8 +190,20 @@ export interface RowProps {
   on?: boolean;
   /** 48px, for a single line. Defaults to "no line". */
   sm?: boolean;
-  /** The name and line may wrap to two lines. */
-  wrap?: boolean;
+  /** The name and line may wrap to two lines; `'all'` shows every line of both (a switch's sentence is never cut). */
+  wrap?: boolean | 'all';
+  /**
+   * A row with a job of its own (version 2): `showall` the centred link that ends a card, `headrow` a card's
+   * first row with its link, `week` a week's bold name, `item` a lighter name, `act` an action in the accent,
+   * `proj` a project's name over its items, `month` a month's, `more` a compact list's "more" row.
+   */
+  kind?: 'showall' | 'headrow' | 'week' | 'item' | 'act' | 'proj' | 'month' | 'more';
+  /** A number in a fixed column before the name (#6412); `'mono'` sets it in the mono face. */
+  num?: React.ReactNode;
+  numMono?: boolean;
+  /** A small glyph before the name, where a 40px picture would be too much (a compact list). */
+  glyph?: string;
+  glyphTone?: 'acc';
   href?: string;
   onClick?: (event: React.MouseEvent<HTMLElement>) => void;
   /** Said to a screen reader where the visible row would be ambiguous. */
@@ -188,11 +217,13 @@ export interface RowProps {
  * in that order. A row with an `href` is a link (a door: cmd-click keeps
  * the address); with only `onClick` a button; else plain.
  */
-export function Row({ lead, title, line, right, go, on, sm, wrap, href, onClick, label, pressed }: RowProps) {
-  const cls = k('row', (sm ?? !line) && 'sm', on && 'on', wrap && 'wrap');
+export function Row({ lead, title, line, right, go, on, sm, wrap, kind, num, numMono, glyph, glyphTone, href, onClick, label, pressed }: RowProps) {
+  const cls = k('row', (sm ?? !line) && 'sm', on && 'on', wrap && 'wrap', wrap === 'all' && 'all', kind);
   const body = (
     <>
       {lead}
+      {glyph ? <span className={k('ei', glyphTone)} aria-hidden="true"><Icon name={glyph} size={16} /></span> : null}
+      {saysNothing(num) ? null : <span className={k('num', numMono && 'mono')}>{num}</span>}
       <span className={k('tx')}>
         <span className={k('t')}>{title}</span>
         {line ? <span className={k('s')}>{line}</span> : null}
@@ -207,14 +238,35 @@ export function Row({ lead, title, line, right, go, on, sm, wrap, href, onClick,
 }
 
 /** A group's surface: rows, or any one block. */
-export function Card({ pad, className, children }: { pad?: boolean; className?: string; children?: React.ReactNode }) {
-  return <div className={k('card', pad && 'pad', className)}>{children}</div>;
+export function Card({ pad, className, text, on, onClick, label, children }: {
+  pad?: boolean;
+  className?: string;
+  /** A padded card of sentences (`.txt` inside it is the small grey one). */
+  text?: boolean;
+  /** Picked: the accent's ring. With `onClick` the card is a button and says so. */
+  on?: boolean;
+  onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+  label?: string;
+  children?: React.ReactNode;
+}) {
+  const cls = k('card', pad && 'pad', text && 'text', on && 'on', onClick && 'press', className);
+  if (onClick) return <button type="button" className={cls} onClick={onClick} aria-pressed={on === undefined ? undefined : on} aria-label={label}>{children}</button>;
+  return <div className={cls}>{children}</div>;
 }
 
 /** A group's link, at the end of its label: "All 18", "Edit". */
-export function GroupLink({ href, onClick, children }: { href?: string; onClick?: (event: React.MouseEvent<HTMLElement>) => void; children: React.ReactNode }) {
-  if (href) return <a className={k('link')} href={href} onClick={onClick}>{children}</a>;
-  return <button type="button" className={k('link')} onClick={onClick}>{children}</button>;
+export function GroupLink({ href, onClick, disabled, bad, children }: {
+  href?: string;
+  onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+  /** Nothing to do yet ("Mark all seen" with nothing new): a button that is off. */
+  disabled?: boolean;
+  /** In red: Report, Delete. */
+  bad?: boolean;
+  children: React.ReactNode;
+}) {
+  const cls = k('link', bad && 'bad', disabled && 'off');
+  if (href && !disabled) return <a className={cls} href={href} onClick={onClick}>{children}</a>;
+  return <button type="button" className={cls} onClick={onClick} disabled={disabled || undefined}>{children}</button>;
 }
 
 /** A labelled group: the label, at most one link, then one block. */
@@ -233,37 +285,91 @@ export function Sec({ label, action, id, children, ...props }: { label?: React.R
 }
 
 /** Things you open, as a grid of tiles: apps, and only apps. */
-export function Tiles({ children }: { children?: React.ReactNode }) {
-  return <Card><div className={k('tiles')}>{children}</div></Card>;
+export function Tiles({ cols, after, children }: {
+  /** Eight across on a desktop (six in a narrow page), four on a phone; the kit's own is six and four. */
+  cols?: 8;
+  /** Rows under the grid, in the same card: a <ShowAll/>. */
+  after?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return <Card><div className={k('tiles', cols === 8 && 't8')}>{children}</div>{after}</Card>;
 }
 
 /** One tile of the grid, with its name under it and a count if it asks for you. */
-export function TileItem({ tile, name, count, href, onClick }: {
+export function TileItem({ tile, name, count, href, onClick, dim, lit, pressed, corner }: {
   tile: React.ReactNode;
   name: React.ReactNode;
   count?: number;
   href?: string;
   onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+  /** Faded: there, but not yours yet (a community you have not pinned). */
+  dim?: boolean;
+  /** Its <Lead/> is lit: the tile that is open (All communities). */
+  lit?: boolean;
+  pressed?: boolean;
+  /**
+   * A control of its own on the tile's corner (pin, unpin): a button with the kit class `corner`. The tile is
+   * then a group holding its door and that button side by side, since a button may not sit inside a link.
+   */
+  corner?: React.ReactNode;
 }) {
   const body = (<>{tile}<Count>{count}</Count><span className={k('nm')}>{name}</span></>);
-  if (href) return <a className={k('at')} href={href} onClick={onClick}>{body}</a>;
-  return <button type="button" className={k('at')} onClick={onClick}>{body}</button>;
+  const cls = k('at', dim && 'dim', lit && 'lit');
+  if (corner) {
+    return (
+      <div className={cls}>
+        {href
+          ? <a className={k('atl')} href={href} onClick={onClick}>{body}</a>
+          : <button type="button" className={k('atl')} onClick={onClick} aria-pressed={pressed}>{body}</button>}
+        {corner}
+      </div>
+    );
+  }
+  if (href) return <a className={cls} href={href} onClick={onClick}>{body}</a>;
+  return <button type="button" className={cls} onClick={onClick} aria-pressed={pressed}>{body}</button>;
 }
 
 /** Up to five numbers said in words. */
-export function Facts({ items }: { items: Array<{ value: React.ReactNode; label: React.ReactNode; tone?: 'acc' | 'ok' | 'wait' }> }) {
-  return (
-    <Card>
-      <div className={k('facts', `f${items.length}`)}>
-        {items.map((f, i) => (
+export interface FactItem {
+  value: React.ReactNode;
+  label: React.ReactNode;
+  tone?: 'acc' | 'ok' | 'wait';
+  /** A second, fainter line under the label ("7 on you"). */
+  sub?: React.ReactNode;
+  /** A figure that opens something: a link with `href`, else a button. */
+  href?: string;
+  onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+}
+
+/**
+ * Up to five numbers said in words. `bare` leaves out the card, for figures that share one with rows, a second
+ * strip or the week's bars (the kit draws the hairline between them); `inset` is the smaller strip inside such
+ * a card.
+ */
+export function Facts({ items, bare, inset }: { items: FactItem[]; bare?: boolean; inset?: boolean }) {
+  const strip = (
+    <div className={k('facts', `f${items.length}`, inset && 'inset')}>
+      {items.map((f, i) => {
+        const body = (
+          <>
+            <span className={k('v', f.tone)}>{f.value}</span>
+            <span className={k('l')}>{f.label}</span>
+            {f.sub ? <span className={k('l', 'sub')}>{f.sub}</span> : null}
+          </>
+        );
+        if (f.href) return <a className={k('fact')} key={i} href={f.href} onClick={f.onClick}>{body}</a>;
+        if (f.onClick) return <button type="button" className={k('fact')} key={i} onClick={f.onClick}>{body}</button>;
+        return (
           <div className={k('fact')} key={i}>
             <div className={k('v', f.tone)}>{f.value}</div>
             <div className={k('l')}>{f.label}</div>
+            {f.sub ? <div className={k('l', 'sub')}>{f.sub}</div> : null}
           </div>
-        ))}
-      </div>
-    </Card>
+        );
+      })}
+    </div>
   );
+  return bare || inset ? strip : <Card>{strip}</Card>;
 }
 
 /**
@@ -321,11 +427,24 @@ export function Note({ tone = '', icon = 'info', children }: { tone?: '' | 'wait
 }
 
 /** The page's head: its title, one sentence saying what it is for, at most one primary action. */
-export function Head({ title, purpose, acts }: { title: React.ReactNode; purpose?: React.ReactNode; acts?: React.ReactNode }) {
+export function Head({ title, purpose, acts, over, lead, under }: {
+  title: React.ReactNode;
+  purpose?: React.ReactNode;
+  acts?: React.ReactNode;
+  /** A small-caps line over the title: what kind of thing this is ("Request #5998"). */
+  over?: React.ReactNode;
+  /** The picture before the title: a project's <Tile/>, a person's <Av/>. */
+  lead?: React.ReactNode;
+  /** A 13px grey line right under the title: who and how many. */
+  under?: React.ReactNode;
+}) {
   return (
     <div className={k('head')}>
+      {lead}
       <div className={k('tx')}>
+        {over ? <div className={k('cap', 'over')}>{over}</div> : null}
         <h1 className={k('title')}>{title}</h1>
+        {under ? <div className={k('sub13')}>{under}</div> : null}
         {purpose ? <p className={k('purpose')}>{purpose}</p> : null}
       </div>
       {acts ? <div className={k('acts')}>{acts}</div> : null}
@@ -334,13 +453,20 @@ export function Head({ title, purpose, acts }: { title: React.ReactNode; purpose
 }
 
 /** The page's views, as tabs. */
-export function Tabs({ tabs, current, onPick }: {
+export function Tabs({ tabs, current, onPick, end, flush, seg, label }: {
   tabs: Array<{ key: string; label: React.ReactNode; count?: number; href?: string }>;
   current: string;
   onPick?: (key: string, event: React.MouseEvent<HTMLElement>) => void;
+  /** At the row's end, on a desktop only: a <Search/>. A phone has no room there; give it the field under the tabs (<Search only="p"/>). */
+  end?: React.ReactNode;
+  /** No margin of its own: tabs inside a group or a sheet. */
+  flush?: boolean;
+  /** A switch: the tabs share the whole width, each centred (a sheet's Sign in · Create account). */
+  seg?: boolean;
+  label?: string;
 }) {
   return (
-    <nav className={k('tabs')}>
+    <nav className={k('tabs', flush && 'flush', seg && 'seg')} aria-label={label}>
       {tabs.map((tab) => {
         const cls = k('tab', tab.key === current && 'on');
         const body = (<>{tab.label}<Count>{tab.count}</Count></>);
@@ -348,6 +474,7 @@ export function Tabs({ tabs, current, onPick }: {
           ? <a key={tab.key} className={cls} href={tab.href} aria-current={tab.key === current ? 'page' : undefined} onClick={(e) => onPick?.(tab.key, e)}>{body}</a>
           : <button key={tab.key} type="button" className={cls} aria-pressed={tab.key === current} onClick={(e) => onPick?.(tab.key, e)}>{body}</button>;
       })}
+      {end ? <div className={k('end')}>{end}</div> : null}
     </nav>
   );
 }
@@ -356,7 +483,22 @@ export function Tabs({ tabs, current, onPick }: {
  * The page's body: work in the 720px column, context in the 320px column
  * beside it, which goes below on a phone (above with `sideFirst`).
  */
-export function Cols({ side, sideFirst, wide, children }: { side?: React.ReactNode; sideFirst?: boolean; wide?: boolean; children?: React.ReactNode }) {
+export function Cols({ side, sideFirst, wide, flip, children }: {
+  side?: React.ReactNode;
+  sideFirst?: boolean;
+  wide?: boolean;
+  /** Flipped: the side column leads, 360px, and the work is the 680px column after it (a list of panes, then the pane). */
+  flip?: boolean;
+  children?: React.ReactNode;
+}) {
+  if (flip && side) {
+    return (
+      <div className={k('cols', 'flip')}>
+        <div className={k('stack')}>{side}</div>
+        <div className={k('stack')}>{children}</div>
+      </div>
+    );
+  }
   return (
     <div className={k('cols', !side && 'one', wide && 'wide')}>
       <div className={k('stack')}>{children}</div>
@@ -370,10 +512,18 @@ export function Cols({ side, sideFirst, wide, children }: { side?: React.ReactNo
  * columns. The sidebar, bar and tab bar around it are the shell's
  * (features/frame/frame-app.tsx).
  */
-export function PageBody({ title, purpose, acts, tabs, side, sideFirst, wide, below, children, ...props }: {
+export function PageBody({ title, purpose, acts, over, lead, under, tabs, side, sideFirst, wide, flip, narrow, below, children, ...props }: {
   title: React.ReactNode;
   purpose?: React.ReactNode;
   acts?: React.ReactNode;
+  /** The head's own slots (see <Head/>): a line over the title, a picture before it, a line under it. */
+  over?: React.ReactNode;
+  lead?: React.ReactNode;
+  under?: React.ReactNode;
+  /** The side column leads (see <Cols/>). */
+  flip?: boolean;
+  /** One narrow page (784px): a form. */
+  narrow?: boolean;
   tabs?: React.ReactNode;
   side?: React.ReactNode;
   sideFirst?: boolean;
@@ -385,10 +535,10 @@ export function PageBody({ title, purpose, acts, tabs, side, sideFirst, wide, be
 } & Omit<React.HTMLAttributes<HTMLElement>, 'title'>) {
   return (
     <Frame {...props}>
-      <div className={k('inner')}>
-        <Head title={title} purpose={purpose} acts={acts} />
+      <div className={k('inner', narrow && 'narrow')}>
+        <Head title={title} purpose={purpose} acts={acts} over={over} lead={lead} under={under} />
         {tabs}
-        <Cols side={side} sideFirst={sideFirst} wide={wide}>{children}</Cols>
+        <Cols side={side} sideFirst={sideFirst} wide={wide} flip={flip}>{children}</Cols>
         {below ? <div className={k('stack', 'wide')}>{below}</div> : null}
       </div>
     </Frame>
@@ -396,8 +546,12 @@ export function PageBody({ title, purpose, acts, tabs, side, sideFirst, wide, be
 }
 
 /** Cards side by side in one row that scrolls sideways: challenges, featured communities. */
-export function HRow({ children }: { children?: React.ReactNode }) {
-  return <div className={k('hrow')}>{children}</div>;
+export function HRow({ even, children }: {
+  /** Equal columns that fill the row (text cards: challenges, communities to join); on a phone 240px each, scrolling sideways. */
+  even?: boolean;
+  children?: React.ReactNode;
+}) {
+  return <div className={k('hrow', even && 'even')}>{children}</div>;
 }
 
 /**
@@ -443,7 +597,11 @@ export function ChallengeCard({ href, onClick, art, icon, title, line, state, la
  * its tile large on the cover; its name, one sentence, who is there, and
  * the row's one word.
  */
-export function PicCard({ href, onClick, cover, darkCover, tile, title, line, meta, word }: {
+export function PicCard({ href, onClick, cover, darkCover, tile, title, line, meta, word, badge, flag }: {
+  /** On the cover's lower corner: who is there (a people glyph and a number, with its words for a screen reader). */
+  badge?: React.ReactNode;
+  /** On the cover's upper corner: "New". */
+  flag?: React.ReactNode;
   href: string;
   onClick?: (event: React.MouseEvent<HTMLElement>) => void;
   cover?: string | null;
@@ -459,6 +617,8 @@ export function PicCard({ href, onClick, cover, darkCover, tile, title, line, me
       <span className={k('fcover')}>
         {cover ? <img src={cover} alt="" loading="lazy" className={k('sun')} /> : tile}
         {cover && darkCover ? <img src={darkCover} alt="" loading="lazy" className={k('moon')} /> : null}
+        {flag ? <span className={k('pill', 'new')}>{flag}</span> : null}
+        {badge ? <span className={k('pill')}>{badge}</span> : null}
       </span>
       <span className={k('fbody')}>
         <span className={k('t')}>{title}</span>
@@ -475,20 +635,36 @@ export function PicCard({ href, onClick, cover, darkCover, tile, title, line, me
  * live, every stop green); `state` is how the current one stands: under
  * way, or waiting on others. `mini` is the wordless strip on a row.
  */
-export function Track({ at, state = 'now', mini, words }: { at: number; state?: 'now' | 'wait'; mini?: boolean; words: readonly [string, string, string, string, string] }) {
+export function Track({ at, state = 'now', mini, words, stops }: {
+  at: number;
+  state?: 'now' | 'wait';
+  mini?: boolean;
+  words: readonly [string, string, string, string, string];
+  /** Each stop's own state, where the caller already knows them (the bot's track); it replaces what `at` and `state` would draw. */
+  stops?: ReadonlyArray<'done' | 'now' | 'wait' | 'live' | ''>;
+}) {
   return (
     <span className={k('track', mini && 'mini')} role="img" aria-label={words[Math.min(Math.max(at, 0), 4)]}>
       {words.map((word, i) => (
-        <span key={word} className={k('st', at >= 5 ? 'live' : i < at ? 'done' : i === at ? state : '')} aria-hidden="true">{word}</span>
+        <span key={word} className={k('st', stops ? stops[i] : at >= 5 ? 'live' : i < at ? 'done' : i === at ? state : '')} aria-hidden="true">{word}</span>
       ))}
     </span>
   );
 }
 
 /** The page's search field, under its tabs: one real input in the kit's field. */
-export function Search({ value, onChange, placeholder, label }: { value: string; onChange: (next: string) => void; placeholder: string; label?: string }) {
+export function Search({ value, onChange, placeholder, label, flush, only }: {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder: string;
+  label?: string;
+  /** No margin under it (in a sheet, or right over a list). */
+  flush?: boolean;
+  /** Drawn on a desktop only (`d`) or a phone only (`p`): the pair of a field at the tabs' end. */
+  only?: 'd' | 'p';
+}) {
   return (
-    <div className={k('search')}>
+    <div className={k('search', flush && 'flush', only)}>
       <label className={k('inp', value && 'val')}>
         <Icon name="search" size={18} />
         <input
@@ -514,23 +690,39 @@ export function Fields({ children }: { children?: React.ReactNode }) {
  * drawn inside the box ahead of what is typed (the people already picked).
  * The box is lit while its input has the focus (app.css), red with `bad`.
  */
-export function Field({ label, icon, before, hint, tone, bad, ...input }: {
+export function Field({ label, icon, before, hint, tone, bad, area, count, end, after, afterWraps, ...input }: {
   label?: React.ReactNode;
   icon?: string;
   before?: React.ReactNode;
   hint?: React.ReactNode;
   tone?: 'bad' | 'ok';
   bad?: boolean;
+  /** Several lines: the box is a <textarea> (it takes the same props an input would). */
+  area?: boolean;
+  /** At the label's end: how much is used ("52/280"). */
+  count?: React.ReactNode;
+  /** Inside the box, after what is typed: show the password, the microphone. */
+  end?: React.ReactNode;
+  /** Beside the box, on its line: a button that acts on the field (Check, Save). `afterWraps` lets it drop under on a narrow page. */
+  after?: React.ReactNode;
+  afterWraps?: boolean;
 } & React.InputHTMLAttributes<HTMLInputElement>) {
   const id = React.useId();
+  const box = (
+    <div className={k('inp', Boolean(input.value || before) && 'val', bad && 'err', area && 'area')}>
+      {icon ? <Icon name={icon} size={18} /> : null}
+      {before}
+      {area
+        ? <textarea id={id} className={k('v')} rows={3} {...(input as unknown as React.TextareaHTMLAttributes<HTMLTextAreaElement>)} />
+        : <input id={id} className={k('v')} {...input} />}
+      {end}
+    </div>
+  );
   return (
     <div className={k('field')}>
-      {label ? <label htmlFor={id}>{label}</label> : null}
-      <div className={k('inp', (input.value || before) && 'val', bad && 'err')}>
-        {icon ? <Icon name={icon} size={18} /> : null}
-        {before}
-        <input id={id} className={k('v')} {...input} />
-      </div>
+      {label && saysNothing(count) ? <label htmlFor={id}>{label}</label> : null}
+      {label && !saysNothing(count) ? <label htmlFor={id} className={k('lab')}><span>{label}</span><span className={k('count')}>{count}</span></label> : null}
+      {after ? <div className={k('fieldrow', afterWraps && 'wrap')}>{box}{after}</div> : box}
       {hint ? <span className={k('hint', tone)}>{hint}</span> : null}
     </div>
   );
@@ -563,7 +755,9 @@ export function Tog({ on, onChange, label, disabled, ...props }: { on: boolean; 
  * the chrome and the screens (app.css gives its host the layer); where
  * there is no document (the render tests) it renders in place.
  */
-export function Sheet({ kind = '', title, purpose, onClose, closeLabel, primary, secondary, foot, children }: {
+export function Sheet({ kind = '', title, purpose, onClose, closeLabel, primary, secondary, foot, top, children }: {
+  /** Between the head and the groups: a switch (<Tabs seg/>), a <Search flush/>. */
+  top?: React.ReactNode;
   kind?: '' | 'right' | 'pop';
   title: React.ReactNode;
   purpose?: React.ReactNode;
@@ -603,6 +797,7 @@ export function Sheet({ kind = '', title, purpose, onClose, closeLabel, primary,
               {purpose ? <p className={k('purpose')}>{purpose}</p> : null}
             </div>
           </div>
+          {top}
           {children ? <div className={k('stack')}>{children}</div> : null}
           {primary || secondary ? (
             <div className={k('btnrow')} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
@@ -618,3 +813,199 @@ export function Sheet({ kind = '', title, purpose, onClose, closeLabel, primary,
   return typeof document === 'undefined' ? sheet : createPortal(sheet, document.body);
 }
 
+
+/* ── Version 2 (11 Nov 2026): what today's content needs of the kit ──────
+   The looks draw the product's own content in the first tour's layout
+   (docs/superpowers/plans/2026-11-11-looks-v2-todays-content.md). These are
+   the pieces that content needed and the kit lacked; their rules are the
+   "version 2" block at the end of frontend/looks/kit.css. Additions go
+   below, at the end of the file. */
+
+/** A heading inside a page or a card: 22px a name, 17px a card's title, 15px a sentence with a bold lead, 13px a grey line. */
+export function Sub({ size, as: Tag = 'div', children }: { size: 13 | 15 | 17 | 22; as?: 'div' | 'h2' | 'h3' | 'p' | 'span'; children?: React.ReactNode }) {
+  return <Tag className={k(`sub${size}`)}>{children}</Tag>;
+}
+
+/** Grey words beside darker ones, in a title or a sentence ("· 10 of 11 done"). */
+export function Mut({ children }: { children?: React.ReactNode }) {
+  return <span className={k('mut')}>{children}</span>;
+}
+
+/** One grey sentence under a group's card: what the group does not say itself. */
+export function SecNote({ children }: { children?: React.ReactNode }) {
+  if (saysNothing(children)) return null;
+  return <p className={k('secnote')}>{children}</p>;
+}
+
+/** A label inside a group, over one part of it ("Featured" over its cards). */
+export function CapSub({ children }: { children?: React.ReactNode }) {
+  return <h3 className={k('cap', 'sub')}>{children}</h3>;
+}
+
+/**
+ * The centred link that ends a card: "Show all 96 apps", "Earlier weeks".
+ * `go` adds the chevron when it opens a page rather than more of the card.
+ */
+export function ShowAll({ href, onClick, go, children }: { href?: string; onClick?: (event: React.MouseEvent<HTMLElement>) => void; go?: boolean; children: React.ReactNode }) {
+  return <Row kind="showall" sm title={children} go={go} href={href} onClick={onClick} />;
+}
+
+/** A card's first row: its name, and the link that opens all of it ("All items · See all"). */
+export function HeadRow({ title, link, href, onClick }: { title: React.ReactNode; link?: React.ReactNode; href?: string; onClick?: (event: React.MouseEvent<HTMLElement>) => void }) {
+  return <Row kind="headrow" sm title={title} right={link ? <span className={k('link')}>{link}</span> : null} go href={href} onClick={onClick} />;
+}
+
+/** A week in a list of weeks: its name in bold, what happened in it, and its one status. */
+export function WeekRow({ title, line, right, go, on, href, onClick }: Pick<RowProps, 'title' | 'line' | 'right' | 'go' | 'on' | 'href' | 'onClick'>) {
+  return <Row kind="week" title={title} line={line} right={right} go={go} on={on} href={href} onClick={onClick} />;
+}
+
+/** People as overlapping faces: the first few, then how many more. */
+export function Avs({ people, size = 28, max = 5, more, label }: {
+  people: Array<{ name: string; src?: string | null; color?: string | null }>;
+  size?: number;
+  /** How many faces are drawn before the rest become a number. */
+  max?: number;
+  /** How many more there are than `people` holds (the caller knows the whole count). */
+  more?: number;
+  /** Said to a screen reader in place of the faces ("26 active this week"). */
+  label?: string;
+}) {
+  const shown = people.slice(0, max);
+  const rest = people.length - shown.length + (more || 0);
+  if (!shown.length && rest <= 0) return null;
+  const style: Custom = { '--fr-as': `${size}px` };
+  return (
+    <span className={k('avs')} role={label ? 'img' : undefined} aria-label={label}>
+      {shown.map((person, i) => <Av key={i} size={size} name={person.name} src={person.src} color={person.color} />)}
+      {rest > 0 ? <span className={k('av', 'more')} style={style} aria-hidden="true">+{rest}</span> : null}
+    </span>
+  );
+}
+
+/**
+ * One picture of a change: the shot, named in its corner. A picture that
+ * cannot be read (the file gone, a copy with no media) is dropped, leaving
+ * the figure's own ground and its name rather than the browser's broken
+ * picture.
+ */
+export function Shot({ src, label }: { src: string; label: React.ReactNode }) {
+  const [bad, setBad] = React.useState(false);
+  return <figure>{bad ? null : <img src={src} alt="" loading="lazy" onError={() => setBad(true)} />}<figcaption>{label}</figcaption></figure>;
+}
+
+/** A change's pictures side by side (before and after); three across with `cols={3}`, a sideways strip on a phone. */
+export function Shots({ cols, children }: { cols?: 3; children?: React.ReactNode }) {
+  return <div className={k('shots', cols === 3 && 's3')}>{children}</div>;
+}
+
+/** Cards in a grid: three across (two on a phone) for picture cards, `cols={2}` for two equal columns of small cards. */
+export function Grid({ cols, children }: { cols?: 2; children?: React.ReactNode }) {
+  return <div className={k('grid', cols === 2 && 'g2')}>{children}</div>;
+}
+
+/** A project's large cover where it has no picture: its emoji on its colour, or its picture. */
+export function Cover({ src, color, children }: { src?: string | null; color?: string | null; children?: React.ReactNode }) {
+  const style: Custom | undefined = color ? { '--fr-tc': color } : undefined;
+  return <div className={k('cover')} style={style} aria-hidden="true">{src ? <img src={src} alt="" loading="lazy" /> : children}</div>;
+}
+
+/**
+ * A card of words in a sideways row (<HRow even/>) or a grid: its picture
+ * and its one status or button on the first line, its name, then one line
+ * and, if it has more to say, two clamped lines.
+ */
+export function HCard({ top, end, title, line, more, foot, href, onClick, label }: {
+  /** The picture: a <Tile/>, a <Lead/>. */
+  top?: React.ReactNode;
+  /** The one status or button, at the first line's end. */
+  end?: React.ReactNode;
+  title: React.ReactNode;
+  line?: React.ReactNode;
+  /** A longer sentence, clamped to two lines. */
+  more?: React.ReactNode;
+  /** A last line of its own: faces and a link. */
+  foot?: React.ReactNode;
+  href?: string;
+  onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+  label?: string;
+}) {
+  const body = (
+    <>
+      {top || end ? <span className={k('hc-top')}>{top}{end}</span> : null}
+      <span className={k('t2')}>{title}</span>
+      {line ? <span className={k('s2')}>{line}</span> : null}
+      {more ? <span className={k('s2', 'two')}>{more}</span> : null}
+      {foot}
+    </>
+  );
+  const cls = k('card', 'pad', 'hcard', !href && onClick && 'press');
+  if (href) return <a className={cls} href={href} onClick={onClick} aria-label={label}>{body}</a>;
+  if (onClick) return <button type="button" className={cls} onClick={onClick} aria-label={label}>{body}</button>;
+  return <div className={cls}>{body}</div>;
+}
+
+/**
+ * The week as bars, one a day: how tall each is (`value`, 0 to 1 of the
+ * tallest), the words over the one worth naming, the day under it. The
+ * chart is a picture to a screen reader; `label` says what it shows.
+ */
+export function Bars({ days, label }: {
+  days: Array<{ label: React.ReactNode; value: number; text?: React.ReactNode; now?: boolean }>;
+  label: string;
+}) {
+  const style: Custom | undefined = days.length === 7 ? undefined : { '--fr-bn': days.length };
+  return (
+    <div className={k('bars')} style={style} role="img" aria-label={label}>
+      {days.map((day, i) => (
+        <div className={k('bcol', day.now && 'now')} key={i} aria-hidden="true">
+          <span className={k('bv')}>{day.text}</span>
+          <i style={{ height: `${Math.max(3, Math.min(100, Math.round((day.value || 0) * 100)))}%` }} />
+          <span className={k('bl')}>{day.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A thin bar of how far along something is (`value`, 0 to 1). `meter` is
+ * the same bar with room over and under it, between a figure and its
+ * sentence (storage used). `done` turns a finished one green.
+ */
+export function Prog({ value, meter, done, label }: { value: number; meter?: boolean; done?: boolean; label?: string }) {
+  const pct = Math.max(0, Math.min(100, Math.round((value || 0) * 100)));
+  return (
+    <div className={k('prog', meter && 'meter', done && 'done')} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label={label}>
+      <i style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+/** A choice from a short list, in the kit's field: a real <select> with the kit's chevron. */
+export function Select({ label, hint, tone, bad, options, ...select }: {
+  label?: React.ReactNode;
+  hint?: React.ReactNode;
+  tone?: 'bad' | 'ok';
+  bad?: boolean;
+  options: Array<{ value: string; label: string; disabled?: boolean }>;
+} & React.SelectHTMLAttributes<HTMLSelectElement>) {
+  const id = React.useId();
+  return (
+    <div className={k('field')}>
+      {label ? <label htmlFor={id}>{label}</label> : null}
+      <div className={k('inp', 'val', 'sel', bad && 'err')}>
+        <select id={id} className={k('v')} {...select}>
+          {options.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
+        </select>
+        <Icon name="cd" size={18} />
+      </div>
+      {hint ? <span className={k('hint', tone)}>{hint}</span> : null}
+    </div>
+  );
+}
+
+/** One line of what happened in a thread: a small glyph, then the words (a <b> in them is the name). */
+export function Evt({ icon, children }: { icon: string; children?: React.ReactNode }) {
+  return <div className={k('evt')}><span className={k('ei')} aria-hidden="true"><Icon name={icon} size={16} /></span><span>{children}</span></div>;
+}

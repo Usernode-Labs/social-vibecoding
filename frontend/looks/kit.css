@@ -261,3 +261,141 @@
 .pane .head .acts .btn{height:36px;padding:0 16px;font-size:14px}
 
 .nv.all .nm{color:var(--mut)}
+
+/* ==== version 2 (11 Nov 2026): what today's content needs of the kit ====
+   Additions only. Every rule below names a class, or a pairing of classes, that no page drew before it, so what was
+   drawn stays as it was. Taken from the version 2 mockups' own extra rules (tour-v2 kit.py KIT_CSS and
+   screens_a … screens_g), their group prefixes dropped. Kit tokens only; add after the last line, never above. */
+
+/* ---- v2: the page, its head, its tabs ---- */
+.inner.narrow{max-width:784px}
+.cols.flip{grid-template-columns:360px minmax(0,680px)}
+.phone .cols.flip{grid-template-columns:minmax(0,1fr)}
+.head>.tile,.head>.av,.head>.lead{margin-top:2px}
+.cap.over{margin-bottom:8px}
+.cap.sub{padding:4px 4px 0}
+.sub13{font-size:13px;color:var(--mut);margin-top:4px}
+.sub15{font-size:15px;line-height:1.45}.sub15 b{font-weight:650}
+.sub22{font-size:22px;font-weight:700;letter-spacing:-.02em}
+.mut{color:var(--mut);font-weight:500}
+.acc{color:var(--acc)}
+.secnote{font-size:13px;color:var(--mut);padding:0 4px}
+.secnote .link{font-size:13px}.secnote b{color:var(--ink);font-weight:650}
+.inl{display:inline-flex;align-items:center;gap:4px}
+.link.bad{color:var(--bad)}.link.off{opacity:.45}
+.ib.more{background:var(--sunk)}
+.tabs.flush{margin:0}
+.tabs.seg{margin:0;width:100%}.tabs.seg .tab{flex:1;justify-content:center}
+.tabs .end{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
+.tabs .end .search{margin-bottom:0}
+.tabs .end .inp{min-height:32px;width:240px;padding:0 12px}
+.phone .tabs .end{display:none}
+.search.flush{margin-bottom:0}
+
+/* ---- v2: rows ---- */
+.row.wrap.all{align-items:flex-start;padding-top:12px;padding-bottom:12px}
+.row.wrap.all .t,.row.wrap.all .s{white-space:normal;overflow:visible}
+.row.wrap.all .s{display:block;-webkit-line-clamp:none;line-height:1.45;margin-top:2px}
+.row.wrap.all .tog,.row.wrap.all .chk{margin-top:2px}
+.row.showall{justify-content:center}.row.showall .tx{flex:none}.row.showall .t{color:var(--acc);font-size:13px;font-weight:600}.row.showall .go{color:var(--acc)}
+.tiles+.row{border-top:1px solid var(--line2)}
+.row.headrow .link{flex:none;white-space:nowrap}
+.row.week .t{font-weight:700}
+.row.item .t{font-weight:500}.row.item.on .t{font-weight:650}
+.row.act .t{color:var(--acc);font-weight:600}
+.row.proj{min-height:40px}.row.proj .t{font-size:13px;font-weight:650}
+.row.month .t{font-size:13px;font-weight:700;color:var(--ink)}
+.row .meta.ok{color:var(--ok);font-weight:650}
+.row .s.ok{color:var(--ok);white-space:normal}
+.row .ei{width:24px;height:24px;display:grid;place-items:center;flex:none;color:var(--mut)}.row .ei.acc{color:var(--acc)}
+.row .num{width:52px;flex:none;font-size:13px;color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap}
+.row .num.mono{width:56px;font:12px var(--fm);color:var(--mut)}
+.pill.mini{height:20px;padding:0 8px;margin-left:8px;vertical-align:1px;font-weight:600}
+
+/* ---- v2: a compact list in a card (one line each, no hairlines) ---- */
+.list{padding:4px 0 8px}
+.list .row+.row{border-top:0}
+.list .row.sm{min-height:40px;padding-top:4px;padding-bottom:4px}
+.phone .list .row.sm{min-height:44px}
+.list .row.proj{min-height:36px;padding-top:10px}.list .row.proj .t{color:var(--mut)}
+.list .row.on .t{color:var(--lit);font-weight:650}
+.list .row.more{padding-left:52px}
+.list .row.more .t{color:var(--acc);font-size:13px;font-weight:600}.list .row.more .ic{color:var(--acc)}
+.list .btnrow{padding:12px 16px 4px}
+
+/* ---- v2: tiles ---- */
+.tiles.t8{grid-template-columns:repeat(8,minmax(0,1fr))}
+.inner.narrow .tiles.t8{grid-template-columns:repeat(6,minmax(0,1fr))}
+.phone .tiles.t8,.phone .inner.narrow .tiles.t8{grid-template-columns:repeat(4,minmax(0,1fr))}
+.at>.atl{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0;max-width:100%;color:inherit;text-decoration:none}
+.at.dim .tile,.at.dim .nm{opacity:.5}
+.at .corner{position:absolute;top:-6px;left:calc(50% + 14px);width:22px;height:22px;border-radius:50%;background:var(--surface);color:var(--acc);display:grid;place-items:center;box-shadow:0 0 0 1px var(--line)}
+.at.lit .lead{background:var(--lit-t);color:var(--lit)}
+.lead.dash{background:transparent;border:1.5px dashed var(--faint);color:var(--mut)}
+
+/* ---- v2: numbers, the week's bars, progress ---- */
+button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text-decoration:none}
+.fact>span{display:block}
+.fact .l.sub{font-size:12px;color:var(--faint);white-space:normal}
+.facts+.row,.row+.facts,.facts+.facts,.facts+.bars{border-top:1px solid var(--line2)}
+.facts.inset .fact{padding:12px 16px}.facts.inset .fact+.fact{border-left:0}.facts.inset+.facts.inset{border-top:0}
+.facts.inset .fact .v{font-size:18px;white-space:nowrap}
+.bars{display:grid;grid-template-columns:repeat(var(--bn,7),1fr);gap:8px;height:120px;padding:16px 16px 8px;align-items:end}
+.bcol{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;height:100%;font-size:12px;color:var(--mut)}
+.bcol i{display:block;width:70%;border-radius:4px 4px 0 0;background:var(--acc);min-height:3px}
+.bcol .bv{font-size:11px;min-height:14px}.bcol.now .bl{color:var(--ink);font-weight:700}
+.foot.left{text-align:left;padding:4px 16px 16px;font-size:12px}
+.prog{height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}
+.prog i{display:block;height:100%;border-radius:3px;background:var(--lit)}
+.prog.done i{background:var(--ok)}
+.prog.meter{margin:8px 0}
+
+/* ---- v2: cards side by side, a grid of cards, pictures ---- */
+.hrow.even{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:12px;padding:0;overflow:visible}
+.phone .hrow.even{grid-auto-columns:240px;overflow-x:auto;margin-right:-16px}
+.hcard{display:flex;flex-direction:column;gap:6px}
+.hc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.t2{font-weight:650}.s2{font-size:13px;color:var(--mut)}.s2.two{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.grid.g2{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.phone .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.grid+.cap.sub,.grid+.grid{margin-top:12px}
+.card.press{width:100%;text-align:left;color:inherit;font:inherit}
+.card.on{box-shadow:inset 0 0 0 2px var(--acc)}
+.card.text{padding:16px;display:flex;flex-direction:column;gap:8px}.card.text .txt{font-size:13px;color:var(--mut);line-height:1.5}
+.cardcap{font-size:13px;font-weight:650;padding:12px 16px 0}
+.cardnote{font-size:13px;color:var(--mut);padding:14px 16px;border-bottom:1px solid var(--line2)}
+.fcover:has(>.pill){position:relative}
+.fcover .pill{position:absolute;left:8px;bottom:8px;background:var(--surface);color:var(--ink)}
+.fcover .pill.new{bottom:auto;top:8px}
+.cover{aspect-ratio:16/10;border-radius:20px;background:var(--tc,var(--sunk));display:grid;place-items:center;font-size:64px;line-height:1;box-shadow:inset 0 0 0 1px var(--line);overflow:hidden}
+.cover img{width:100%;height:100%;object-fit:cover;display:block}
+.phone .shots.s3{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:200px;overflow-x:auto}
+
+/* ---- v2: buttons in a row, fields ---- */
+.btnrow.chips{padding:0 0 4px}
+.btnrow.even .btn{flex:1}
+.btn.chip{gap:6px}
+.field label.lab{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.count{font-size:13px;color:var(--mut);font-weight:500;font-variant-numeric:tabular-nums}
+.fieldrow{display:flex;align-items:center;gap:8px;min-width:0}
+.fieldrow .inp{flex:1}
+.fieldrow.wrap{flex-wrap:wrap}.fieldrow.wrap .inp{min-width:160px}
+.inp>textarea.v{flex:1;min-width:0;min-height:64px;border:0;outline:0;background:none;font:inherit;line-height:1.45;color:var(--ink);resize:none}
+.inp>textarea.v::placeholder{color:var(--faint);opacity:1}
+.inp>select.v{flex:1;min-width:0;min-height:44px;margin-right:-26px;padding-right:26px;border:0;outline:0;background:none;font:inherit;color:var(--ink);appearance:none;-webkit-appearance:none}
+.inp.sel{color:var(--mut)}.inp.sel .ic{pointer-events:none}
+.mono.ink{font-size:13px;color:var(--ink)}
+.bullets{padding:4px 16px 12px 34px;font-size:14px;line-height:1.6}
+
+/* ---- v2: a thread's small parts ---- */
+.thread.flat{padding:0}
+.byline{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mut);padding:16px 16px 0}.byline b{color:var(--ink);font-weight:650;font-size:15px}
+.links{display:flex;gap:16px;padding:0 16px 16px;font-size:13px;font-weight:600;color:var(--mut)}
+.quote{border-left:3px solid var(--acc);padding:2px 0 2px 9px;margin:6px 0 4px;font-size:13px;line-height:1.45;color:var(--mut)}
+.quote i{display:block;font-style:normal;color:var(--acc);font-weight:650}
+.rx{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.rx span{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:999px;background:var(--sunk);font-size:13px;font-weight:600;color:var(--mut)}
+.rx span.on{background:var(--acc-t);color:var(--acc)}
+.lone{padding:64px 16px;text-align:center;color:var(--mut)}
+.welcome{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding-top:8px}.welcome .tile{margin-bottom:6px}
