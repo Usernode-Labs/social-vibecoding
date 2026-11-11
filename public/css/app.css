@@ -27702,9 +27702,12 @@ html[data-skin] [data-make-kit] .fr-bullets { list-style: disc; color: var(--fr-
 html[data-skin] [data-make-kit] .fr-bullets b { color: var(--fr-ink); font-weight: 650; }
 html[data-skin] [data-make-kit] .fr-foot .fr-link { border: 0; background: none; font: inherit; font-size: 13px; font-weight: 600; }
 html[data-skin] [data-make-kit] .mk-after { box-sizing: border-box; width: 100%; max-width: 1136px; margin: -32px auto 0; padding: 0 32px 48px; }
-html[data-skin] [data-make-kit] .mk-after-narrow { max-width: 848px; }
-/* The import page is the kit's narrow page and 64px: the close control the standard form has stands at the head's end, and the title keeps its line. */
-html[data-skin] [data-make-frame="import"] > .fr-inner.fr-narrow { max-width: 848px; }
+html[data-skin] [data-make-kit] .mk-after-narrow { max-width: 1024px; }
+/* The import page is wider than the kit's narrow page (784px): its head
+   holds the title and its sentence beside two buttons and the close control
+   the standard form has, and at 960px of head each keeps one line in every
+   look (the widest measured: a 498px sentence beside 439px of buttons). */
+html[data-skin] [data-make-frame="import"] > .fr-inner.fr-narrow { max-width: 1024px; }
 html[data-skin] [data-make-kit] .mk-after > * { max-width: 720px; margin-top: 0; }
 html[data-skin] [data-make-kit] .mk-after:not(:has(> div > *)) { display: none; }
 @media (max-width: 767.98px) {
@@ -27784,6 +27787,26 @@ html[data-skin][data-person-frame] #profile-root > div { max-width: none; margin
 }
 /* A verified account under the head is a door to it: the pill, as a link. */
 html[data-skin] [data-you-frame] a.fr-pill { text-decoration: none; }
+/* Changes, Requests and Votes draw the bot's History rows (features/ai/
+   frame-list.tsx Groups) in a card of ordinary rows, not its compact list:
+   a hairline over each project after the first, and a project's "Show N
+   more" in the accent, under its titles. */
+html[data-skin] [data-you-history-month] .fr-row { width: 100%; }
+html[data-skin] [data-you-history-month] .fr-row .fr-t,
+html[data-skin] [data-you-history-month] .fr-row .fr-s { text-align: start; }
+html[data-skin] [data-you-history-month] [data-ai-group] + [data-ai-group],
+html[data-skin] [data-you-history-month] [data-ai-group] + .fr-row { border-top: 1px solid var(--fr-line2); }
+html[data-skin] [data-you-history-month] .fr-row.fr-more { border-top: 1px solid var(--fr-line2); color: var(--fr-acc); }
+html[data-skin] [data-you-history-month] .fr-row.fr-more .fr-t { color: var(--fr-acc); font-size: 13px; font-weight: 600; }
+html[data-skin] [data-you-history-month] .fr-row.fr-more .fr-tx { padding-inline-start: 36px; }
+/* On a phone a row keeps how it ended beside its title, as History's own row
+   does: dropped to a line of its own under a wrapped title it read as a
+   second item. The title wraps; the project and number are its second line. */
+@media (max-width: 767.98px) {
+  html[data-skin][data-skin] [data-you-history-month] .fr-row.fr-item { flex-wrap: nowrap; }
+  html[data-skin][data-skin] [data-you-history-month] .fr-row.fr-item .fr-tx { flex: 1 1 0; }
+  html[data-skin][data-skin] [data-you-history-month] .fr-row.fr-item .fr-tx ~ * { margin: 0; }
+}
 /* The Friends tab's username search is the product's own field and result
    list (features/friends/friend-search.tsx), wearing the kit's field and
    card: the same tokens the kit's .inp and .card are drawn with. */
@@ -27793,6 +27816,20 @@ html[data-skin] [data-you-friends-search] #profile-friend-search-input::placehol
 html[data-skin] [data-you-friends-search] #profile-friend-search-input:focus { outline: 0; box-shadow: inset 0 0 0 2px var(--fr-acc); }
 html[data-skin] [data-you-friends-search] #profile-friend-search-results { border-radius: 20px; background: var(--fr-surface); color: var(--fr-ink); box-shadow: inset 0 0 0 1px var(--fr-line); }
 html[data-skin] [data-you-friends-search] #profile-friend-search-results > * { border-color: var(--fr-line2); }
+/* The kit's page resets every margin and padding inside it, so the result
+   list's own utilities say nothing there: its card, rows, picture and friend
+   button are spelt here, as the Friends card just below draws its own (the
+   kit's .row, .av and .btn.sm). The buttons of an act (Add friend, Accept)
+   keep the accent; a state (Friends, Requested) and Decline are quiet. */
+html[data-skin] [data-you-friends-search] #profile-friend-search-results { margin-top: 12px; }
+html[data-skin] [data-you-friends-search] [data-friend-search-result] { gap: 12px; min-height: 60px; padding: 8px 16px; }
+html[data-skin] [data-you-friends-search] [data-friend-search-result] + * { border-top: 1px solid var(--fr-line2); }
+html[data-skin] [data-you-friends-search] [data-friend-search-result] > span { width: 40px; height: 40px; background: var(--fr-sunk); color: var(--fr-mut); font-size: 16px; }
+html[data-skin] [data-you-friends-search] [data-friend-search-result] > a { color: var(--fr-ink); font-size: 15px; font-weight: 650; }
+html[data-skin] [data-you-friends-search] #profile-friend-search-results > p { padding: 16px; color: var(--fr-mut); font-size: 13px; }
+html[data-skin] [data-you-friends-search] [data-friend-button] > button { height: 32px; padding: 0 14px; border-radius: 999px; background: var(--fr-sunk); color: var(--fr-ink); font-size: 13px; font-weight: 650; white-space: nowrap; }
+html[data-skin] [data-you-friends-search] [data-friend-button] > button:is([data-friend-action="request"], [data-friend-action="accept"]) { background: var(--fr-acc); color: var(--fr-acc-ink); }
+html[data-skin] [data-you-friends-search] [data-friend-button] > p { margin-top: 4px; padding: 4px 8px; background: var(--fr-solid); color: var(--fr-bad); }
 html[data-skin] [data-you-friends] .fr-row .fr-t a,
 html[data-skin] [data-you-friends-sent] .fr-row .fr-t a { color: inherit; text-decoration: none; }
 
@@ -27819,6 +27856,11 @@ html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet .un-group-row .roun
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet :is(input, textarea).bg-transparent { color: var(--fr-ink); font-size: 15px; }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet :is(input, textarea).bg-transparent::placeholder { color: var(--fr-faint); opacity: 1; }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet #profile-edit-username { color: var(--fr-mut); }
+/* Display name and Bio are fields to type in: the kit's sunk field under the
+   label, so an empty one still shows where the words go. */
+html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet :is(#profile-edit-name, #profile-edit-bio) { box-sizing: border-box; margin: 6px 0 4px; padding: 8px 12px; border-radius: 10px; background: var(--fr-sunk); }
+html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet :is(#profile-edit-name, #profile-edit-bio):focus { background: var(--fr-surface); box-shadow: inset 0 0 0 2px var(--fr-acc); outline: 0; }
+html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet .un-group-row:has(> :is(#profile-edit-name, #profile-edit-bio)):focus-within { background: none; }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet #profile-edit-preview > div { background: var(--fr-sunk); color: var(--fr-ink); }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet #profile-edit-save { display: flex; width: 100%; }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet #profile-edit-save ~ button { color: var(--fr-mut); font-weight: 600; }
@@ -27862,6 +27904,10 @@ html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-ga
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-act { order: 1; flex-wrap: wrap; margin-top: 10px; }
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-figure { white-space: nowrap; }
+/* The card's buttons (Open app; an act in the accent's tint) are the kit's
+   small ones, as "Ask Homeroom bot privately" beside the words is. */
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-act .gc-vote-btn { height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--fr-sunk); color: var(--fr-ink); font: 650 13px/1 var(--fr-f); }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-act .gc-vote-btn.gc-vote-btn-accent { background: var(--fr-acc-t); color: var(--fr-acc); }
 /* VERSION 2 (11 Nov 2026): the first tour's layout, today's content.
    A small label stands over the page's own cards ("The request", "The
    change", and Votes and Tested over a change's two cards, each card's name
@@ -27908,6 +27954,11 @@ html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread .dev-request 
    small quiet glyph there, so the emoji is drawn small and without its
    colours. */
 html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph { font-size: 14px; filter: grayscale(1); opacity: .7; }
+/* The reply box is as wide as the cards it answers: the standard thread
+   insets it (12px of bar, 32px of card margin), which under a look left it
+   floating 44px inside the column on each side. */
+html[data-skin]:where(:not([data-skin="brand"])) .dev-request > .dev-request-sheet > .messages-composer { padding-inline: 0; }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-request > .dev-request-sheet > .messages-composer > .messages-composer-card { margin-inline: 0; }
 @media (min-width: 768px) {
   html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] { position: relative; min-height: var(--fr-side-h, 0px); padding-inline-end: var(--fr-side-w, 352px); }
   html[data-skin]:where(:not([data-skin="brand"])) .dev-request-root > [data-image-viewer-scope] > :is(.dev-request-track, .dev-request-at, .dev-change-status, .dev-change-pair) { position: absolute; top: var(--fr-side-top, 0px); inset-inline-end: 0; width: 320px; margin: 0; }

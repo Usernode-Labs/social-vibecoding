@@ -1058,9 +1058,5 @@
   "frame.allProjects": {
     "text": "All projects",
     "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On the Changes, Requests and Votes tabs: the first choice in the list of projects, which shows finished work from every project."
-  },
-  "frame.projectLeft": {
-    "text": "{{project}} · You left",
-    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On the Changes, Requests and Votes tabs: a project's name over its finished items, when the person has since left that private project; {{project}} is the project's name."
   }
 }
