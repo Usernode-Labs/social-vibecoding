@@ -196,7 +196,9 @@ test('#3047: the expander appears for the tile alone, naming every app', () => {
   const HOME = HOME_SRC;
   // #4669 added the `!editing` half: edit mode shows every tile and its
   // trailing tile, so the collapsed-grid gates step aside while it holds.
-  assert.match(HOME, /const createHidden = !editing && !Home\._appsExpanded\s*&& HomeLayout\.createTileCollapsed\(shown, cols, rowBound\);/);
+  // ONE PINNED GRID: Needs you and All communities (trailingCells) come
+  // before the tile, so it follows them.
+  assert.match(HOME, /const createHidden = !editing && !Home\._appsExpanded\s*&& HomeLayout\.createTileCollapsed\(\[\.\.\.shown, \.\.\.trailingCells\], cols, rowBound\);/);
   assert.match(HOME, /const collapsed = hiddenRows \|\| createHidden;/);
   assert.match(HOME, /moreCount = collapsed \? \(canvas\.length \+ HomeLayout\.overflowItems\(layout\)\.length\) : 0;/);
   // #4757: a held-back tile is no longer dropped — the view is pushed with
@@ -274,8 +276,8 @@ test('the compact entry keeps its light-button treatment, label and ids', () => 
   assert.doesNotMatch(html, /border-dashed/, 'the compact entry drops the dashed face');
   assert.match(html, /data-panel-slot="create"/);
   assert.match(html, /data-create-enabled="true"/);
-  assert.match(html, /title="Start a project: an app for you or for a community"/);
-  assert.match(html, />New project</, 'the tile\'s own label');
+  assert.match(html, /title="Start a community and its app"/);
+  assert.match(html, />New community</, 'the tile\'s own label');
   assert.doesNotMatch(html, /<button[^>]*\sdisabled/, 'never the disabled attribute');
 });
 
@@ -285,7 +287,7 @@ test('the compact entry draws the locked treatment, and opens the same dialog', 
   assert.ok(entry, 'the locked entry is still there');
   assert.doesNotMatch(entry[1], /violet/, 'locked ink, no accent — as the locked tile');
   assert.match(off, /data-create-enabled="false"/);
-  assert.match(off, /aria-label="New project\. View app quota\. View your app allowance or request more slots\."/,
+  assert.match(off, /aria-label="New community\. View app quota\. View your app allowance or request more slots\."/,
     'the locked name starts with the visible label, then says what a tap does');
   assert.doesNotMatch(off, /<button[^>]*\sdisabled/);
 
@@ -377,14 +379,14 @@ test('the tile draws both states, and never the disabled attribute', () => {
   const { CreateTile } = loadTsx(TILE);
   const on = renderToHtml(createElement(CreateTile, { view: { ...CREATE, enabled: true } }));
   assert.match(on, /id="home-create-tile"/);
-  assert.match(on, />New project</, 'the create dialog\'s own title (communities, stage 4)');
+  assert.match(on, />New community</, 'the create dialog\'s own title (communities, stage 4)');
   assert.match(on, /data-create-enabled="true"/);
-  assert.match(on, /title="Start a project: an app for you or for a community"/);
+  assert.match(on, /title="Start a community and its app"/);
   assert.doesNotMatch(on, /aria-label=/, 'its name is its visible label');
 
   const off = renderToHtml(createElement(CreateTile, { view: { ...CREATE, enabled: false } }));
   assert.match(off, /data-create-enabled="false"/);
-  assert.match(off, /aria-label="New project\. View app quota\. View your app allowance or request more slots\."/,
+  assert.match(off, /aria-label="New community\. View app quota\. View your app allowance or request more slots\."/,
     'the locked name starts with the visible label, then says what a tap does');
   // NOT the disabled ATTRIBUTE: that would swallow the tap that opens the
   // dialog with the quota in it.
@@ -450,23 +452,23 @@ test('the Create section is retired everywhere it was mounted', () => {
   assert.doesNotMatch(read('scripts/audit-react-ownership.mjs'), /sel: '#home-create-section'/);
 });
 
-test('the declared Create checks select both New project and New community, in their two places (#6522)', () => {
+test('the declared Create checks select the one Pinned grid\'s New community entry, in both treatments (#6522; one Pinned grid)', () => {
   const declared = JSON.parse(read('dapp.json')).tests || [];
   const creates = declared.filter((t) => /data-panel-slot=\\?"create\\?"|data-panel-slot="create"/.test(t.expectSelector || ''));
   assert.equal(creates.length, 2, 'the enabled and the locked treatment');
   for (const t of creates) {
-    // The New community tile is still the last of Pinned communities…
-    assert.match(t.expectSelector, /#home-communities-section:not\(\[hidden\]\) #home-new-community\[data-panel-slot="create"\]\[data-create-enabled="(true|false)"\]/);
-    assert.match(t.expectSelector, /:last-child/);
+    // The grid's own trailing tile (or its compact entry on the heading,
+    // which carries the same id) is Home's one create entry: Pinned
+    // communities and its New community tile are tiles of this grid now.
+    assert.match(t.expectSelector, /#home-apps-section:not\(\[hidden\]\) #home-create-tile\[data-panel-slot="create"\]\[data-create-enabled="(true|false)"\]/);
+    assert.doesNotMatch(t.expectSelector, /#home-new-community/);
     assert.equal(t.expectText, 'New community');
   }
   const paths = creates.map((t) => t.path).sort();
   assert.deepEqual(paths, ['/?demo=1&shot=create-disabled', '/?demo=1&shot=create-enabled']);
-  // …and the enabled check folds in the grid's own trailing tile, which is
-  // back on My apps (#6522), without a :not(:has()) guard asserting it gone.
+  // …and the enabled check asserts the second section gone.
   const enabled = creates.find((t) => t.path === '/?demo=1&shot=create-enabled');
-  assert.match(enabled.expectSelector,
-    /#home-apps-section:not\(\[hidden\]\):has\(#home-create-tile\[data-panel-slot="create"\]\[data-create-enabled="true"\]\)/);
+  assert.match(enabled.expectSelector, /#home-body:not\(:has\(#home-communities-section\)\)/);
   assert.doesNotMatch(enabled.expectSelector, /:not\(:has\(#home-create-tile\)\)/);
   // No check still anchors on the retired section (a :not(:has()) guard that
   // says it is gone is the one allowed mention).
@@ -498,7 +500,7 @@ test('while editing, the trailing tile is still the Create tile, as at rest', ()
   assert.equal(tile.attrs['data-panel-slot'], 'create',
     'the declared checks still select the Create entry by this hook');
   assert.equal(tile.attrs['data-create-enabled'], 'true');
-  assert.match(html, />New project</);
+  assert.match(html, />New community</);
   // The grid itself is marked for the wiggle's CSS.
   assert.match(html, /data-editing="true"/);
 });
@@ -515,20 +517,16 @@ test('not editing, the trailing tile is the Create tile as before', () => {
   assert.doesNotMatch(renderGrid({}), /home-create-tile|data-editing/);
 });
 
-test('#6372: the − and + corner discs sit above the tile\'s own hit area', () => {
-  // TILE carries un-touch-target, whose ::after (native.css) covers the tile
-  // and paints after its children. The discs live in the face's wrapper,
-  // which the edit-mode wiggle (a transform) makes a stacking context, so the
-  // lift must be on that wrapper: a z-index on a disc cannot leave it
-  // (checked by hit-testing in Chromium when this was fixed).
+test('#6372: Pinned communities\' own tiles, and the corner discs #6372 lifted, are retired with the section (one Pinned grid)', () => {
+  // The − and + discs #6372 lifted above the tile's hit area belonged to
+  // Pinned communities' own tiles. Those are tiles of the one Pinned grid
+  // now, whose edit mode draws `.app-card-remove` (app-grid.tsx); what the
+  // file keeps is the face and the disc colours the guest Home draws with.
   const src = read('frontend/src/features/home/pinned-communities.tsx');
-  assert.match(src, /const TILE = '[^']*\bun-touch-target\b/);
-  assert.match(read('public/usernode-native/v1/native.css'), /\.un-touch-target::after \{[^}]*position: absolute;/);
-  const wrap = src.match(/const FACE_WRAP = '([^']*)'/);
-  assert.ok(wrap, 'FACE_WRAP is one literal');
-  assert.match(wrap[1], /\brelative\b/);
-  assert.match(wrap[1], /\bz-\[1\]/, 'the wrapper is lifted above the ::after');
-  assert.match(src, /<span className=\{editing \? `\$\{FACE_WRAP\} \$\{WIGGLE\}` : FACE_WRAP\}>/, 'both branches use it');
-  assert.match(src, /className=\{`\$\{CORNER\} -start-1\.5 \$\{CORNER_UNPIN\}`\}/);
-  assert.match(src, /className=\{`\$\{CORNER\} -end-1\.5 \$\{CORNER_PIN\}`\}/);
+  assert.doesNotMatch(src, /function PinTile\b/);
+  assert.doesNotMatch(src, /export function PinnedCommunities\b/);
+  assert.match(src, /export const CORNER_UNPIN = /);
+  assert.match(src, /export function CommunityTileFace\b/);
+  assert.match(read('frontend/src/features/guest/guest-discover.tsx'),
+    /import \{ CORNER_UNPIN, CommunityTileFace, MinusGlyph \} from '\.\.\/home\/pinned-communities';/);
 });

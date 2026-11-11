@@ -5441,6 +5441,19 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
   pointer-events: none;
   opacity: 0.4;
 }
+/* ONE PINNED GRID: Needs you and All communities, which end the grid before
+   the Create tile (features/home/app-grid.tsx TrailingTile), take the Create
+   tile's three rules for the same reasons: derived per paint, never in the
+   layout, so a drop onto one of their cells is a drop into an empty cell. */
+#app-list > .home-trailing-tile {
+  position: relative;
+  z-index: 1;
+  align-self: start;
+}
+#app-list.un-reordering > .home-trailing-tile {
+  pointer-events: none;
+  opacity: 0.4;
+}
 /* Keyboard focus draws the ring the challenge cards draw
    (`.home-challenge-card[role="button"]:focus-visible`). */
 .home-create-btn:focus-visible {
@@ -5769,6 +5782,12 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   position: absolute;
   top: -2px;
   inset-inline-end: -2px;
+}
+/* A tile wearing its votes number (the one Pinned grid) keeps the dot in the
+   other top corner, so neither covers the other. */
+.app-card-live-dot.app-card-live-dot-start {
+  inset-inline-end: auto;
+  inset-inline-start: -2px;
 }
 
 /* ── APPS KEPT ALIVE BEHIND THE ONE ON SCREEN (#2902) ──────────────────

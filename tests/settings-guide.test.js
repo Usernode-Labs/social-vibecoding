@@ -89,11 +89,13 @@ test('the words stay true: the tabs as the bar names them, and no rule it did no
   // apps is the apps you pin or build (Home.isYours), not every app of your
   // communities.
   assert.doesNotMatch(all, /Communities tab/);
-  assert.match(message('settings:guide.place.communities.body'), /Yours are on Home, under Pinned communities and All communities/);
+  // ONE PINNED GRID: your communities are tiles of Pinned, and All
+  // communities ends it.
+  assert.match(message('settings:guide.place.communities.body'), /Yours are on Home, under Pinned and in All communities at its end/);
   assert.match(message('settings:guide.vote.up.body'), /listed under Needs you\./);
   // Home's Needs you tile shows only while a vote waits; the list holds more.
   assert.match(message('settings:guide.term.needsYou.body'), /Home shows a shortcut to it while a vote waits/);
-  assert.match(message('settings:guide.place.apps.body'), /holds the apps you pin and the ones you help build/);
+  assert.match(message('settings:guide.place.apps.body'), /holds the apps and communities you pin and the apps you help build/);
   assert.doesNotMatch(all, /apps from your communities/);
   // Codex review: joining pins the community, not its app; a member is
   // needed to take part but is not always enough; one request can hold
@@ -106,9 +108,11 @@ test('the words stay true: the tabs as the bar names them, and no rule it did no
   assert.match(message('settings:guide.term.justYou.body'), /someone you invite joins/);
   assert.doesNotMatch(all, /Inviting someone makes it/);
   // The names it quotes are the screen's own.
-  assert.equal(message('home:communities.heading'), 'Pinned communities');
+  assert.equal(message('home:grid.heading'), 'Pinned');
   assert.equal(message('home:communities.all'), 'All communities');
-  assert.equal(message('home:communities.new'), 'New community');
+  assert.equal(message('home:create.label'), 'New community');
+  assert.equal(message('home:chooser.openApp'), 'Open app');
+  assert.equal(message('home:chooser.community'), 'Go to community');
   assert.equal(message('home:join.heading'), 'Communities to join');
   assert.equal(message('home:communities.needs'), 'Needs you');
   assert.equal(message('project:communityCard.openApp'), 'Open app');

@@ -130,6 +130,13 @@ const INITIAL: CommunityScopeState = {
 
 export const communityScopeStore = createStore(INITIAL);
 
+if (typeof window !== 'undefined') {
+  // Home's one Pinned grid ends on a Needs you tile while a vote waits on you
+  // (features/home/home.js, `Home.trailingTiles`), counted by `badgeNeeds`.
+  // home.js is not an importer of this module, so it reads the store here.
+  (window as unknown as { CommunityScopeStore?: unknown }).CommunityScopeStore = communityScopeStore;
+}
+
 /**
  * The two sums over every community you are in: every vote owed, which the
  * switcher's All communities line says, and the votes that ask for you,

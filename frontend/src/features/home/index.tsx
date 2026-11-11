@@ -97,7 +97,6 @@ import { AppsMore } from './apps-more';
 import { CreateCompact } from './create-tile';
 import { ChallengesSection } from './panels/sections';
 import { HomeJoin } from './home-join';
-import { PinnedCommunities } from './pinned-communities';
 import { SectionHeading } from './panels/ui';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
@@ -138,10 +137,12 @@ export function HomeScreen() {
   const frame = isFrameSkin(skin) && viewer;
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
-  // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
-  // member meets their communities first, and the second kind of pin when
-  // they choose it (the app's Pin to Home, the hub's ⋯, "Pin its app too").
-  // My apps is hidden only when the loaded grid has nothing at all to show:
+  // ONE PINNED GRID: Pinned is the one section of pins, the apps you pinned
+  // and the communities you pinned together (home.js `Home.onHome`), so a new
+  // member's first join already puts a tile here. It was Pinned apps over
+  // Pinned communities, two sections, until a tap on a tile learned to ask
+  // which of the two you meant (./pin-chooser.tsx).
+  // It is hidden only when the loaded grid has nothing at all to show:
   // an account at rest with no apps still draws the trailing New project tile
   // (#6522), so an empty grid whose create view Home.render() hands it keeps
   // the section — a private member, who gets no create view, is the case that
@@ -423,7 +424,12 @@ export function HomeScreen() {
             model now feeds both, rather than a second pass copying one to
             the other.
         */}
-        <PinnedCommunities />
+        {/*
+            ONE PINNED GRID: Pinned communities stood here, a second grid of
+            pins under the first. Its tiles are the Pinned grid's above now,
+            and its Needs you and All communities end that grid
+            (./app-grid.tsx TrailingTile).
+        */}
         {/*
             A PRIVATE MEMBER'S WAITLIST CARD (./waitlist-card.tsx): an invite
             link let them into their group's apps, and this is where they join

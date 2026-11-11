@@ -359,9 +359,13 @@ test('nothing on the home screen is an innerHTML host any more', () => {
   // empty <section> left for a module to find by id and fill.
   const island = read('frontend/src/features/home/index.tsx');
   for (const tag of ['<AppGrid />', '<AppsMore />', '<WidgetStrip />',
-    '<PinnedCommunities />', '<ChallengesSection />', '<HomeJoin />']) {
+    '<ChallengesSection />', '<HomeJoin />']) {
     assert.ok(island.includes(tag), `the island mounts ${tag}`);
   }
+  // ONE PINNED GRID: Pinned communities is no host of its own any more: its
+  // tiles are #app-list's, rendered by AppGrid from the grid model
+  // (tests/home-one-pinned-grid.test.js).
+  assert.ok(!island.includes('<PinnedCommunities />'), 'the Pinned communities section is retired');
   // One Home (#6361): Discover's lane and the continue card left Home; its
   // Communities to join is the directory now.
   assert.ok(!island.includes('<DiscoverSection />'), 'no Discover lane on Home');

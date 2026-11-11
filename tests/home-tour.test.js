@@ -115,15 +115,16 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // on the heading the step is about (#3240); the grid is the fallback.
   assert.deepEqual([...byId.apps.targets], ['#home-apps-section', '#app-list']);
   assert.match(message(byId.apps.body), /select New community/,
-    'the step names the tile that starts one, as Pinned communities labels it (One Home, #6361)');
-  assert.ok(message(byId.apps.body).includes(message('home:communities.new')));
+    'the step names the tile that starts one, as the one Pinned grid labels it (One Home, #6361)');
+  assert.ok(message(byId.apps.body).includes(message('home:create.label')));
   // The way into Settings is the Me tab, whose screen carries
   // #profile-row-settings (#2718) — on a phone it is the only entrance,
   // since the phone has no sidebar gear to point the tour at.
   assert.deepEqual([...byId.settings.targets], ['#platform-tab-me']);
-  // #3567, moved by One Home (#6361): Home's Pinned communities, with
-  // Communities to join while nothing is pinned. No Communities tab.
-  assert.deepEqual([...byId.communities.targets], ['#home-communities-section', '#home-join-section']);
+  // #3567, moved by One Home (#6361): Home's pinned communities, with
+  // Communities to join while nothing is pinned. No Communities tab. They are
+  // tiles of the one Pinned grid now.
+  assert.deepEqual([...byId.communities.targets], ['#home-apps-section', '#home-join-section']);
   // #4604, moved by #6019: the bot's own tab. It left the Messages list for
   // that tab, so a stop pointing at Messages pointed at a screen without it.
   assert.deepEqual([...byId['meet-bot'].targets], ['#platform-tab-ai']);
@@ -460,7 +461,7 @@ test('Finish ends on your communities, Skip stays on Home\'s top (#5528; One Hom
   assert.match(helperBody, /home\?\.showCommunities\?\.\(\);/);
   assert.doesNotMatch(helperBody, /#communities/);
   assert.doesNotMatch(OVERLAY_SRC, /goToCommunity\(/);
-  assert.match(read('frontend/src/features/home/home.js'), /showCommunities\(\{ all = false \} = \{\}\) \{[\s\S]*?document\.getElementById\('home-communities-section'\);/);
+  assert.match(read('frontend/src/features/home/home.js'), /showCommunities\(\{ all = false \} = \{\}\) \{[\s\S]*?document\.getElementById\('home-apps-section'\);/);
   // Either way the screen under the tour is Home, so its step is re-reported.
   assert.equal((fbody.match(/_renotifyNavigation/g) || []).length, 1);
   const main = fbody.slice(fbody.indexOf('clearStep(userId);'));

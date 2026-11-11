@@ -136,7 +136,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     id: 'communities',
     title: 'onboarding:tour.step.communities.title',
     body: 'onboarding:tour.step.communities.body',
-    targets: ['#home-communities-section', '#home-join-section'],
+    // ONE PINNED GRID: the communities you pin are tiles of Pinned now.
+    targets: ['#home-apps-section', '#home-join-section'],
   },
   {
     // The Pinned apps section, heading and grid together, so the card never

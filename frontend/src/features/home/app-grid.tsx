@@ -60,7 +60,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 
-import { CopyIcon, LockIcon, UserGroupIcon } from '@/components/ui/icons';
+import { CopyIcon, LockIcon, SpeechCheckIcon, Squares2X2Icon, UserGroupIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
@@ -70,8 +70,11 @@ import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-app
 import { AppsLoadError } from '../apps/load-error';
 import { TileSkeleton } from '../apps/tile-skeleton';
 import { buildLineTileClass } from '../first-session/build-line-words.js';
+import { openAddAppsSheet } from './add-apps-sheet';
 import { CreateTile } from './create-tile';
-import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
+import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView, type TrailingTileView } from './grid-store';
+import { importDevicePins, loadHomePins, wireHomePins } from './home-pins-store';
+import { openPinChooser, PinChooser } from './pin-chooser';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
@@ -164,10 +167,18 @@ const RETRY_BTN = 'retry-btn relative inline-flex items-center rounded-full bg-v
   + "before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] "
   + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1';
 
+// ONE PINNED GRID: the blue number a tile wears for the votes its community
+// waits on you for, and Needs you wears for all of them: the badge the
+// Pinned communities tiles drew. Defined here, above the tiles, like
+// RETRY_BTN.
+const VOTES_BADGE = 'absolute -top-1.5 -end-2 flex h-[22px] min-w-[22px] items-center justify-center rounded-full '
+  + 'bg-violet-600 px-1.5 text-xs font-extrabold tabular-nums text-white shadow-[0_0_0_2px_var(--dc-sheet-solid)]';
+
 function AppCardTile({ app, style, yours, live, editing }: {
   app: HomeAppView; style?: string; yours: boolean; live: boolean; editing: boolean;
 }) {
   const t = useMessages('home');
+  const tc = useMessages('communities');
   const node = useRef<HTMLDivElement | null>(null);
   const wireRef = useCallback((el: HTMLDivElement | null) => {
     node.current = el;
@@ -181,6 +192,12 @@ function AppCardTile({ app, style, yours, live, editing }: {
     if (!node.current) return;
     return controller()?._wireCardLongPressMenu?.(node.current);
   }, [app.slug, app.demo, yours]);
+
+  // ONE PINNED GRID: a tap asks which you meant, the app or its community
+  // (./pin-chooser.tsx), on every tile alike.
+  const choose = (el: HTMLElement) => {
+    openPinChooser({ slug: app.slug, name: app.name, votes: app.votes }, el);
+  };
 
   // See the header note: the cell is an attribute so the CSSOM cannot fold
   // `grid-column` + `grid-row` into a `grid-area` shorthand. Layout effect,
@@ -213,7 +230,11 @@ function AppCardTile({ app, style, yours, live, editing }: {
       data-locked={String(app.locked)}
       tabIndex={0}
       role="button"
-      aria-label={live ? listText([app.name, liveAppLabel()]) : app.name}
+      aria-label={listText([
+        app.name,
+        ...(app.votes > 0 ? [tc('communities:row.toVote', { count: app.votes })] : []),
+        ...(live ? [liveAppLabel()] : []),
+      ])}
       aria-haspopup="menu"
       title={t('home:grid.tile.tip', { app: app.name })}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
@@ -260,7 +281,7 @@ function AppCardTile({ app, style, yours, live, editing }: {
           e.preventDefault();
           // #4669: while the grid is being arranged, a tile's own activation
           // is off — arranging must never open an app by mistake.
-          if (!e.repeat && app.clickable && !editing) (window as any).App?.navigateToApp(app.slug);
+          if (!e.repeat && app.clickable && !editing) choose(e.currentTarget);
         }
       }}
       onClick={(e) => {
@@ -277,7 +298,7 @@ function AppCardTile({ app, style, yours, live, editing }: {
         // a door.
         if (editing) return;
         if (!app.clickable) return;
-        (window as any).App?.navigateToApp(app.slug);
+        choose(e.currentTarget);
       }}
     >
       <div className={app.showRetry ? 'relative w-14 h-14 shrink-0 grayscale-[0.75]' : 'relative w-14 h-14 shrink-0'}>
@@ -352,8 +373,26 @@ function AppCardTile({ app, style, yours, live, editing }: {
             <CopyIcon className="w-3 h-3" aria-hidden="true" />
           </span>
         ) : null}
-        {/* #2902: still loaded — opening it resumes it as it was left. */}
-        {live ? <LiveAppDot className="app-card-live-dot" /> : null}
+        {/* #2902: still loaded — opening it resumes it as it was left. A
+            tile wearing its votes number moves the dot to the other top
+            corner, which only the remove badge of edit mode uses, and edit mode
+            hides the number. */}
+        {live ? <LiveAppDot className={app.votes > 0 && !editing ? 'app-card-live-dot app-card-live-dot-start' : 'app-card-live-dot'} /> : null}
+        {/*
+            ONE PINNED GRID: the votes its community waits on you for, the blue
+            number the Pinned communities tiles wore (the name of the tile says it in
+            words to a screen reader). Not while arranging: the tile is a
+            thing being moved then.
+        */}
+        {app.votes > 0 && !editing ? (
+          <span
+            className={`app-card-votes z-[2] ${VOTES_BADGE}`}
+            data-votes={String(app.votes)}
+            aria-hidden="true"
+          >
+            {app.votes > 99 ? '99+' : app.votes}
+          </span>
+        ) : null}
         {/*
             WHERE IT LIVES (communities, stage 4): people for a Private
             community, a lock for a project that is Just you, and nothing for
@@ -412,6 +451,67 @@ function AppCardTile({ app, style, yours, live, editing }: {
   );
 }
 
+// ONE PINNED GRID: the tiles Pinned communities ended on end this grid now,
+// between the last tile and New project (home.js `Home.trailingTiles`). They
+// keep the ids of that section, its `data-home-needs` and the Needs you link, and
+// they draw at the size of the Create tile, in its lane: `home-trailing-tile` is
+// the twin in app.css of the three `.home-create-tile` rules (above the drag
+// overlay, top of the row, out of the way while a tile is lifted). Neither is
+// an `.app-card`, so the drag recognizer never picks one up.
+const TRAILING = 'home-trailing-tile home-create-btn group relative flex select-none flex-col items-center '
+  + 'gap-1.5 rounded-xl p-2 text-center transition-colors sm:p-3';
+const TRAILING_FACE = 'relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl';
+const TRAILING_LABEL = 'app-card-title text-zinc-600 dark:text-zinc-300';
+
+function TrailingTile({ tile }: { tile: TrailingTileView }) {
+  const t = useMessages('home');
+  const node = useRef<HTMLElement | null>(null);
+  const style = placementStyle(tile.placement);
+  // The cell is an attribute, for the reason the header gives.
+  useIsomorphicLayoutEffect(() => {
+    const el = node.current;
+    if (!el) return;
+    if (style) el.setAttribute('style', style);
+    else el.removeAttribute('style');
+  }, [style]);
+  if (tile.kind === 'needs') {
+    // A link to the page (`#needs`), so a modified click opens it in a new
+    // tab, wearing the one count of votes waiting on you.
+    return (
+      <a
+        ref={(el) => { node.current = el; }}
+        href="#needs"
+        id="home-needs-tile"
+        className={TRAILING}
+        data-home-needs={String(tile.count)}
+        aria-label={t('home:communities.needsNamed', { count: tile.count })}
+      >
+        <span className={`${TRAILING_FACE} bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300`} aria-hidden="true">
+          <SpeechCheckIcon className="h-7 w-7" />
+          <span className={VOTES_BADGE}>
+            {tile.count > 99 ? '99+' : tile.count}
+          </span>
+        </span>
+        <span className={TRAILING_LABEL}>{t('home:communities.needs')}</span>
+      </a>
+    );
+  }
+  return (
+    <button
+      ref={(el) => { node.current = el; }}
+      type="button"
+      id="home-all-communities"
+      className={TRAILING}
+      onClick={() => { openAddAppsSheet(); }}
+    >
+      <span className={`${TRAILING_FACE} bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200`} aria-hidden="true">
+        <Squares2X2Icon className="h-[30px] w-[30px]" />
+      </span>
+      <span className={TRAILING_LABEL}>{t('home:communities.all')}</span>
+    </button>
+  );
+}
+
 /**
  * "Your apps" with nothing in it says nothing (the owner, 6 October 2026): a
  * new account's Home is the New project tile alone, which says what to do,
@@ -426,6 +526,18 @@ export function AppGrid() {
   const state = useStoreState(gridStore);
   const live = useLiveAppSlugs();
   const listRef = useRef<HTMLDivElement | null>(null);
+
+  // ONE PINNED GRID: the pins this grid draws beside the apps are read here
+  // now, where Pinned communities read them: after a join or a leave, once
+  // signed in, and on every refresh of Home (./home-pins-store.ts). The pins a
+  // device kept signed out move to the account first, once. Each landing repaints
+  // the grid through home.js (`Home._wirePinStores`).
+  useEffect(() => {
+    const moved = (count: number) => t('home:devicePins.moved', { count });
+    const unwire = wireHomePins(moved);
+    if ((window as any).App?.user) void importDevicePins(moved).then(() => loadHomePins());
+    return unwire;
+  }, []);
 
   // `grid-template-rows` is written to the ELEMENT rather than rendered as a
   // style prop for one reason: app.css's `grid-auto-rows` must remain the only
@@ -468,6 +580,7 @@ export function AppGrid() {
   });
 
   return (
+    <>
     <div
       ref={listRef}
       id="app-list"
@@ -541,9 +654,15 @@ export function AppGrid() {
           on the "Show all N apps" line before), outside this canvas, so the
           markup in every state is what it was.
       */}
+      {(state.trailing || []).map((tile) => <TrailingTile key={`trailing:${tile.kind}`} tile={tile} />)}
       {state.create && !state.create.heldBack ? (
         <CreateTile view={state.create} style={placementStyle(state.create.placement)} />
       ) : null}
     </div>
+    {/* The chooser a tap opens (./pin-chooser.tsx): nothing while closed, and a
+        portal to the body or the kit sheet while open, so the children of
+        the grid are what they were. */}
+    <PinChooser />
+    </>
   );
 }

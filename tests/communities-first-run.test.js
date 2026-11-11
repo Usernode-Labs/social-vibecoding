@@ -210,7 +210,7 @@ test('Home has no Getting started card, and the server no longer draws one', () 
 // the Discover and Challenges areas use, and its catalog entry with it.
 // The set keeps its one name everywhere else ("Add to My apps", the browse
 // badge, the tour card).
-test('the Home apps section opens with its "Pinned apps" heading, and the catalog entry is back', () => {
+test('the Home apps section opens with its "Pinned" heading, and the catalog entry is back', () => {
   const section = HOME_SRC.slice(
     HOME_SRC.indexOf('<section id="home-apps-section"'),
     HOME_SRC.indexOf('<AppsMore />'));
@@ -220,8 +220,8 @@ test('the Home apps section opens with its "Pinned apps" heading, and the catalo
   assert.notEqual(grid, -1, 'the grid is here');
   assert.ok(heading < grid, 'the heading sits above the grid');
   assert.match(section, /\{t\('home:grid\.heading'\)\}/, 'and the heading asks for its text');
-  assert.equal(JSON.parse(read('frontend/locales/en/home.json'))['grid.heading'].text, 'Pinned apps',
-    'the catalog entry is back, in the set\'s one name (Pinned apps since One Home, #6361)');
+  assert.equal(JSON.parse(read('frontend/locales/en/home.json'))['grid.heading'].text, 'Pinned',
+    'the catalog entry is back, in the set\'s one name (Pinned apps since One Home, #6361; Pinned since the one Pinned grid took its communities in)');
 });
 
 // ── the tile mark (stage 4) ────────────────────────────────────────────

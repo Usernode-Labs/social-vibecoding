@@ -1,6 +1,14 @@
 /**
- * HOME'S PINNED COMMUNITIES (One Home, #6361): what the grid draws, and the
- * reads behind it.
+ * HOME'S PINNED COMMUNITIES (One Home, #6361): the reads behind the
+ * communities Home keeps a tile for.
+ *
+ * ONE PINNED GRID: these used to fill a second section of their own, Pinned
+ * communities, under Pinned apps. They are tiles of the one Pinned grid now
+ * (`#app-list`, ./home.js `Home.onHome`): a community pinned here puts its
+ * app's tile beside the apps you pinned, and a tap on any tile asks which you
+ * meant, the app or its community (./pin-chooser.tsx). home.js reads this
+ * store through `window.HomePinsStore` (published at the bottom), the way
+ * tests and the legacy half reach `HomeGridStore`.
  *
  *   pins    GET /api/me/home-pins (src/services/home-pins.js), the account's
  *           list in its order. A community can be pinned without joining.
@@ -156,7 +164,11 @@ export async function setHomePin(pin: Omit<HomePin, 'member'> & { member?: boole
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
     if (Array.isArray(body?.pins)) homePinsStore.set({ pins: body.pins });
-    toast(on ? say.pinned : say.unpinned);
+    // An empty sentence says nothing: the one Pinned grid takes a tile off
+    // with both of its pins at once (Home.takeOffHome), and the app's own
+    // toast already says so.
+    const said = on ? say.pinned : say.unpinned;
+    if (said) toast(said);
     return true;
   } catch (err) {
     homePinsStore.set({ pins: before });
@@ -218,11 +230,30 @@ export function wireHomePins(moveMessage?: (count: number) => string): () => voi
   // The legacy screens reach the refresh through the bridge, as they reach
   // every island: Home._loadOnce and app.js's Home pull (request 6500).
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
-  (host.UsernodeReact ||= {}).homePins = { refresh: refreshHomePins };
+  // `unpin` is the one Pinned grid's (Home.takeOffHome): a tile that is on
+  // Home because its community is pinned comes off by unpinning it. `say`
+  // carries the toast's words; empty ones say nothing.
+  (host.UsernodeReact ||= {}).homePins = {
+    refresh: refreshHomePins,
+    unpin: (slug: string, say: { unpinned: string; failed: (reason: string) => string }) => {
+      const pin = homePinsStore.get().pins.find((p) => p.slug === slug);
+      if (!pin) return Promise.resolve(true);
+      return setHomePin(pin, false, { pinned: '', unpinned: say.unpinned, failed: say.failed });
+    },
+  };
   return () => {
     document.removeEventListener('sv:membership-changed', reload);
     document.removeEventListener('sv:session', reload);
     const bridge = (window as unknown as { UsernodeReact?: Record<string, unknown> }).UsernodeReact;
     if (bridge?.homePins) delete bridge.homePins;
   };
+}
+
+if (typeof window !== 'undefined') {
+  // ONE PINNED GRID: home.js reads the pins (which communities have a tile
+  // on Home, and the votes each one waits on you for) off this global at call
+  // time, as it reads `HomeGridStore`'s sibling globals: it is imported by
+  // index.tsx rather than importing this module back, and a test sandbox that
+  // loads home.js alone has no such global, which reads as "no pins".
+  (window as unknown as { HomePinsStore?: unknown }).HomePinsStore = homePinsStore;
 }

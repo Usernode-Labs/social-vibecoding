@@ -2091,7 +2091,9 @@ test('#2902: the green dot reads the frame store, on Home tiles and the desktop 
     'the dot is derived from the frames actually loaded');
   const grid = read('frontend/src/features/home/app-grid.tsx');
   assert.match(grid, /live=\{live\.includes\(item\.app\.slug\)\}/);
-  assert.match(grid, /\{live \? <LiveAppDot className="app-card-live-dot" \/> : null\}/);
+  // ONE PINNED GRID: a tile wearing its votes number keeps the dot in the
+  // other top corner (app.css .app-card-live-dot-start).
+  assert.match(grid, /\{live \? <LiveAppDot className=\{app\.votes > 0 && !editing \? 'app-card-live-dot app-card-live-dot-start' : 'app-card-live-dot'\} \/> : null\}/);
   // Recents (#2802) and the strip's recent apps (#4417) are retired; a
   // community's App row in the sidebar carries the dot.
   const rail = read('frontend/src/features/nav/rail-communities.tsx');
