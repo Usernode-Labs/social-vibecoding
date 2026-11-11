@@ -656,8 +656,8 @@
     "description": "Error shown in place of the list in Settings > App AI permissions when it could not be loaded."
   },
   "grants.empty": {
-    "text": "No apps have asked to use AI yet.",
-    "description": "Shown in place of the list in Settings > App AI permissions when no app has ever asked for permission."
+    "text": "No apps can use AI on your behalf yet. When you let an app use AI, it appears here with its spending cap, and you can revoke it at any time.",
+    "description": "Shown in place of the list in Settings > App AI permissions when no app has ever been allowed to use AI: says what will appear here and that it can be revoked."
   },
   "grants.revoked": {
     "text": "Revoked",
@@ -1936,8 +1936,8 @@
     "description": "Error in Settings > App device permissions when the list could not be fetched."
   },
   "appPermissions.empty": {
-    "text": "No app has asked for your camera, microphone, location or devices yet.",
-    "description": "Shown in Settings > App device permissions when no app has been granted anything."
+    "text": "No apps can use your camera, microphone, location, screen or devices yet. When you allow an app one of these, it appears here and you can revoke it at any time.",
+    "description": "Shown in Settings > App device permissions when no app has been granted anything: says what will appear here and that it can be revoked."
   },
   "appPermissions.reEnable": {
     "text": "Re-enable",
@@ -1964,8 +1964,8 @@
     "description": "Error in Settings > Blocked apps when the list could not be fetched and the server gave no reason."
   },
   "blockedApps.empty": {
-    "text": "You haven’t blocked any apps.",
-    "description": "Shown in Settings > Blocked apps when the list is empty."
+    "text": "You haven’t blocked any apps. An app you block appears here, and you can unblock it at any time.",
+    "description": "Shown in Settings > Blocked apps when the list is empty: says what will appear here and that it can be undone."
   },
   "blockedApps.unblock": {
     "text": "Unblock",
