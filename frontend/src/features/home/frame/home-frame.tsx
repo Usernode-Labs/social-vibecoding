@@ -46,16 +46,17 @@ import { Btn, Card, CapSub, Count, GroupLink, HCard, Icon, Lead, Mut, Note, Page
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { liveAppLabel, useLiveAppSlugs } from '../../app-frame/live-apps';
-import { featuredApps, presentCategories, type GuestApp } from '../../guest/guest-data';
+import { type GuestApp } from '../../guest/guest-data';
 import { communityScopeStore } from '../../workshop/community-scope';
 import { openAddAppsSheet } from '../add-apps-sheet';
 import { chromeStore } from '../chrome-store';
-import { JOIN_PAGE, joinOrder, readDirectory, scrollParent } from '../communities-to-join';
+import { readDirectory } from '../communities-to-join';
 import { gridStore, type HomeAppView, type IconView } from '../grid-store';
 import { homePinsStore, setHomePin, type HomePin } from '../home-pins-store';
 import { panelsStore, type HomePanelsState } from '../panels-store';
 import { HOME_SEARCH_SHORTCUT_KEYS } from '../search-shortcut';
 import { matchesQuery, useHomeQuery } from '../use-home-query';
+import { ToJoinView } from './to-join';
 
 /** A tile's picture in the grids of this page. */
 const FACE = 52;
@@ -414,18 +415,13 @@ function PinnedCommunities({ query }: { query: string }) {
   );
 }
 
-/** Communities to join: the public directory, less the ones already on this Home. */
+/** Communities to join: the public directory, less the ones already on this Home (./to-join.tsx draws it). */
 function ToJoin({ query, initialDirectory }: { query: string; initialDirectory: GuestApp[] | null }) {
   const t = useMessages('home');
-  const ta = useMessages('auth');
   const pins = useStoreState(homePinsStore);
   const [apps, setApps] = useState<GuestApp[] | null>(initialDirectory);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [kind, setKind] = useState<string | null>(null);
-  const [shown, setShown] = useState(JOIN_PAGE);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const sentinel = useRef<HTMLDivElement | null>(null);
 
   // The directory, read as ../home-join.tsx reads it: null is one that could
   // not be read, which says so and offers to try again.
@@ -442,37 +438,7 @@ function ToJoin({ query, initialDirectory }: { query: string; initialDirectory: 
   }, [pins.ready, attempt]);
 
   const exclude = useMemo(() => new Set([...pins.joined.map((c) => c.slug), ...pins.pins.map((p) => p.slug)]), [pins.joined, pins.pins]);
-  // What follows is ../communities-to-join.tsx's own list: Featured first
-  // (left out while a search is typed), then the rest, a page at a time.
-  const pool = useMemo(() => (apps || []).filter((a) => !exclude.has(a.slug)), [apps, exclude]);
-  const kinds = useMemo(() => presentCategories(pool), [pool]);
-  const featured = useMemo(() => (query ? [] : featuredApps(pool).filter((a) => !kind || a.category === kind)), [pool, kind, query]);
-  const list = useMemo(() => {
-    const lead = new Set(featured.map((a) => a.slug));
-    return joinOrder(pool)
-      .filter((a) => !lead.has(a.slug))
-      .filter((a) => !kind || a.category === kind)
-      .filter((a) => matchesQuery(query, a.name, a.slug, a.description));
-  }, [pool, featured, kind, query]);
-  useEffect(() => { setShown(JOIN_PAGE); }, [kind, query]);
-  const more = list.length > shown;
-
-  useEffect(() => {
-    const el = sentinel.current;
-    if (!el || !more || typeof IntersectionObserver === 'undefined') return undefined;
-    const root = scrollParent(el);
-    let timer = 0;
-    const io = new IntersectionObserver((entries) => {
-      if (!entries.some((e) => e.isIntersecting) || timer) return;
-      setLoadingMore(true);
-      timer = window.setTimeout(() => { timer = 0; setShown((n) => n + JOIN_PAGE); setLoadingMore(false); }, 250);
-    }, { root, rootMargin: '0px 0px 600px 0px' });
-    io.observe(el);
-    return () => { io.disconnect(); if (timer) window.clearTimeout(timer); };
-  }, [more, shown]);
-
   if (!pins.ready) return null;
-  if (query && !list.length) return null;
 
   const meta = (app: GuestApp) => (app.open_votes
     ? t('home:join.votes', { count: app.open_votes })
@@ -488,62 +454,22 @@ function ToJoin({ query, initialDirectory }: { query: string; initialDirectory: 
     </Btn>
   );
   const door = (app: GuestApp) => <a className={k('door')} href={hubHref(app.slug)} onClick={(event) => openHub(event, app.slug)}>{app.name || app.slug}</a>;
-  const face = (app: GuestApp, size: number) => <Tile size={size} name={app.name || app.slug} src={app.icon_url} emoji={app.icon_emoji} color={app.icon_color} />;
 
   return (
-    <Sec label={t('home:join.heading')} id="home-frame-to-join" aria-busy={apps ? undefined : true}>
-      {!query && kinds.length ? (
-        <div className={k('btnrow', 'chips')} role="group" aria-label={ta('auth:guest.categories.label')}>
-          <Btn small kind={kind ? 'quiet' : ''} aria-pressed={!kind} data-home-join-kind="all" onClick={() => setKind(null)}>
-            {ta('auth:guest.category.all')}
-          </Btn>
-          {kinds.map((name) => (
-            <Btn key={name} small kind={kind === name ? '' : 'quiet'} aria-pressed={kind === name} data-home-join-kind={name} onClick={() => setKind(kind === name ? null : name)}>
-              {ta(`auth:guest.category.${name}`)}
-            </Btn>
-          ))}
-        </div>
-      ) : null}
-      {featured.length ? (
-        <>
-          <CapSub>{t('home:join.featured')}</CapSub>
-          <div className={k('grid', 'across')} data-home-join-featured="">
-            {featured.map((app) => (
-              <HCard key={app.slug} top={face(app, 44)} end={join(app)} title={door(app)} line={meta(app)} more={app.description || undefined} />
-            ))}
-          </div>
-        </>
-      ) : null}
-      {failed ? (
-        <Card pad>
-          <Note tone="bad" icon="alert">{t('home:join.failed')}</Note>
-          <div className={k('btnrow')}>
-            <Btn small kind="quiet" data-home-join-retry="" onClick={() => { setApps(null); setAttempt((n) => n + 1); }}>{t('home:join.retry')}</Btn>
-          </div>
-        </Card>
-      ) : !apps ? (
-        <SecNote>{ta('auth:guest.loading')}</SecNote>
-      ) : list.length ? (
-        <>
-          {kind && featured.length ? <CapSub>{t('home:join.more')}</CapSub> : null}
-          <Card>
-            {list.slice(0, shown).map((app) => (
-              <Row key={app.slug} lead={face(app, 40)} title={door(app)} line={meta(app)} right={join(app)} />
-            ))}
-          </Card>
-        </>
-      ) : featured.length ? null : (
-        <SecNote>{!pool.length && !kind && !query ? t('home:join.empty') : t('home:join.allJoined')}</SecNote>
-      )}
-      {more ? (
-        <>
-          {loadingMore ? <SecNote>{t('home:join.loadingMore')}</SecNote> : null}
-          <div ref={sentinel} data-home-join-more="" style={{ height: 1 }} />
-        </>
-      ) : list.length > JOIN_PAGE ? (
-        <SecNote>{kind ? t('home:join.endKind') : t('home:join.end')}</SecNote>
-      ) : null}
-    </Sec>
+    <ToJoinView
+      apps={apps}
+      failed={failed}
+      onRetry={() => { setApps(null); setAttempt((n) => n + 1); }}
+      exclude={exclude}
+      query={query}
+      heading={t('home:join.heading')}
+      id="home-frame-to-join"
+      title={door}
+      cardEnd={join}
+      cardLine={meta}
+      rowEnd={join}
+      rowLine={meta}
+    />
   );
 }
 

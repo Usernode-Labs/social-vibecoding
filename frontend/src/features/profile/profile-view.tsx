@@ -25,6 +25,7 @@
 import { type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { k } from '@/components/ui/kit';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { useMessages } from '../../lib/i18n/react';
@@ -495,6 +496,8 @@ export function ProfileRoot(): ReactNode {
     );
   }
   if (view.kind === 'publicNotFound') {
+    // Under a look the one line is the kit's lone line (the tour's o26).
+    if (frame) return <div className={k('lone')} data-profile-unavailable="">{t('profile:public.unavailable')}</div>;
     return (
       <div className="text-sm text-zinc-500 py-12 text-center dark:text-zinc-400 lg:max-w-2xl lg:mx-auto">{t('profile:public.unavailable')}</div>
     );

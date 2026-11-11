@@ -472,3 +472,16 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .list .txt{margin:0;padding:10px 16px;font-size:14px;line-height:1.45;color:var(--mut)}
 .list .txt .link{font-size:14px}
 .rowx:has(>.row.on){background:var(--lit-t)}.rowx>.row.on{background:none}
+/* ---- v2, lane G (signed out): a change up for a vote as a visitor reads it, a project's picture in both themes, the facts under a sentence ---- */
+.ballot.visit{gap:10px}
+.ballot.visit h3{margin:0}
+.ballot .sum{margin:4px 0 0;font-size:13px;color:var(--mut);line-height:1.45}
+.ballot.visit .line1 .btn,.ballot .later{margin-left:auto}
+.ballot .later{font-weight:600}
+.purpose .sub13{display:block}
+.cover img.moon{display:none}
+.dark .cover img.moon{display:block}
+.dark .cover img.sun:has(+ img.moon){display:none}
+.cardnote.last{border-bottom:0;border-top:1px solid var(--line2)}
+.cover:has(>img){position:relative}
+.cover>img{position:absolute;top:0;left:0}

@@ -501,6 +501,165 @@ Left, and why:
 - The filter's results and the recent searches wear the card and row; a look's own hover state for a list
   row is not drawn (the kit has none).
 
+### Lane M, as built (11 Nov 2026)
+
+Messages (s15 to s20), on `redesign/skins-v2-m`, cut from `5f6faf062` (P0 and lanes Y, H, T, P, B).
+
+- **s15, the list** (`features/messages/frame-list.tsx`, fed by the frame branch of `index.tsx`
+  `ConversationList`). The head (Messages, "People and groups you talk to.", New message); People and Agents as
+  tabs, People counting the unread messages from people (the standard heading's count); the product's search
+  ("Search") under the tabs; then the tab's conversations as one card of rows. A group says how many are in it
+  after its name (a people glyph and the figure, the words to a screen reader), a bot's direct message keeps
+  its "AI" badge, an invitation's row says "Tap to review", a row ends in "N new" or its time. Offline, a failed
+  read with Try again, the first read, an empty inbox with New conversation, and a search that matched nothing
+  are the standard list's sentences. With nothing open the pane beside the list is the product's "Choose a
+  conversation".
+- **s20, Agents.** "Chats with coding agents." The standard section, folded by its own rule and state
+  (`shownInSection`, `agentsExpanded`): this week's chats, the open one and any that asks for you, then "N older
+  chats" as the card's centred link, which stays where it is with the older chats under it ("Hide older chats").
+  An agent chat's line is `MayorSessionRow`'s (the project and its change's state, or "No active change";
+  "Working…" while it works) and it ends in its date; a change in flight is `SessionRow`'s (project, what is
+  known, when) and ends in its state as the one pill, from `sessionRowState` (new, beside `stateOf` in
+  `features/improve/session-row.tsx`: the same word, and a kit tone). "Show archived" ends the card where the
+  standard list offers it and opens the archived chats under their own label.
+- **s16, New message** (`frame-new.tsx`). The kit's sheet with the standard menu's three choices (`NEW_CHOICES`):
+  Agent chat, Direct message, Group chat, each with its line. A press closes the sheet and calls `startNew`:
+  an agent chat starts; the other two open the product's create dialog on that tab. The dialog wears the look:
+  its card carries `data-new-message` (it is lifted out of its root when shown), its title, its Direct and
+  Group switch and its buttons wear the look's title, tabs and buttons through `looks.json`, its fields, found
+  people and blocked list are dressed by hand in app.css (NEW MESSAGE'S DIALOG).
+- **s17, s18, a conversation.** The product's renderer, as before. Added by hand in app.css (VERSION 2, s17 to
+  s19): a quoted reply and the reply staged over the composer are the kit's quote; reactions are the kit's
+  small pills; the thread card under a message and a thread's replies in the stream are one small surface
+  card, the open thread's with the accent's ring, the replies' glyph in the faces' column. These rules name
+  the renderer's own classes, so a project's channel and the bot's chat get them too.
+- **s19, the reply thread.** The product's pane, as ruled: beside the conversation (the list steps aside under
+  1600px, as in the standard look), a page on a phone. In Messages it is flat with one line between it and
+  the conversation, the kit's margins, and its count ("3 replies") is the day's label (a second wearer of `day`).
+
+Gone: the To field, the people rows, Start chat, "Or else", the sheet's Blocked people, groups named after
+their members, the "N older chats" label over Agents, the sentence sending new work to the bot's tab, a second
+search placeholder, and twenty `messages:frame.*` ids. Three stay: the two sentences under the title and an
+empty tab's line.
+
+Rulings taken:
+
+- **The search is under the tabs at every width** (audit, s15 point 2): the pane is 520px, and the mockup's own
+  picture draws it there.
+- **The empty pane keeps the product's two sentences** (question 6).
+- **An agent chat's line keeps the change's title** when it has one ("Homeroom · title · Ready"), as the standard
+  row does; the audit's shorter form would have dropped it.
+- **A change waiting on you is the blue pill**, the kit's colour for what waits on you; the standard row draws
+  it green like every settled state.
+- **Agents has no count on its tab.** The standard heading's "N working" is not a count that asks for you.
+- **An empty tab beside a full one says "Nothing here yet."** The standard list leaves the section out; a tab
+  cannot be left out without the tabs moving.
+- **The dialog's title wears the look's title** (a further wearer of `title`, added when the skins branch with
+  lane S was merged in), at a sheet's 24px by one hand rule; Brand kit's serif shows.
+- **The reply thread is a pane, not the kit's right sheet** (question 5, as ruled on 10 Nov).
+
+Fixed on the way: under a look a continuation row's words started 12px after the first line's (the time's
+gutter was 44px beside a 32px face; 38 and 26 in Workbench).
+
+Left, and why:
+
+- A change in flight's unread dot (the standard `SessionRow` reads the notifications store for it) is not on
+  the kit row.
+- The list does not hold its place across a live re-sort under a look (`list-place.ts` anchors the standard
+  scroller), and "Oldest chats" (`InboxToEnd`) is not offered.
+- The dialog's "Blocked people" link wraps to two lines on a phone beside Cancel and Create group.
+- In Paper a long Agents list runs past the page card's rounded bottom edge, as lane B noted for its list.
+- Not seen in a browser: an unread conversation (this copy has none), an invitation's row, a working agent,
+  the offline note, the failed and empty states, the archived group with rows (seen opened, at its end). They
+  are pinned in `tests/messages-frame-list.test.js`.
+
+Seen in a browser (local stack): the list, Agents folded and open with Show archived, the New message sheet,
+the dialog (Direct, Group, Blocked people), a direct message, a group and its reply thread, in Glass and Paper
+(desktop and phone), Workbench (desktop, dark), Glass dark on a phone, and the dialog in Brand kit. The
+standard list's capture is byte-identical before and after.
+### Lane G, as built (11 Nov 2026)
+
+Signed out (o01 to o27) and the waitlist (w01 to w14), on `redesign/skins-v2-g`, cut from `5f6faf062`.
+
+- **Members' addresses opened signed out (o12 to o15, o17, o22 to o25).** As ruled, they behave as in the
+  standard look: the sign-in sheet opens by itself over the outline of a page. The first tour's page
+  (`guest/frame/gated-frame.tsx`), its suite and its 28 catalog entries are gone. Under a look the outline
+  (`DeepLinkBackdrop`) starts under the frame's bar, on the look's ground, drawn with the kit's surface in
+  place of the blur (app.css, A MEMBERS' ADDRESS OPENED BY A VISITOR), and the bar names the place:
+  `gatePlaceWords` (`auth/deep-link-sign-in.tsx`) gives Messages, Homeroom bot, You, Settings or Challenges in
+  the brand's place, or after the brand a project's Workshop (Needs you), then "Request #N" or "Change #N".
+  The landing renders those words unseen in its own header under a look (`GatePlace`), which the bar already
+  reads (`guest-chrome.tsx` `readLanding`, `trail`).
+- **The landing (o01 to o03) and an account in line looking around (w03),** `guest/frame/landing-frame.tsx`.
+  The head is the welcome over the headline, its sentence and the one button (Join the waitlist, or Sign up);
+  the three points are one card in the side column, first on a phone; then the search (kept on the history
+  entry, as the standard page keeps it), this device's Pinned apps (a tile opens the app, its corner unpins)
+  and Pinned communities, and Communities. Communities is drawn by the one view Home has for it under a look,
+  lifted out of `home-frame.tsx` into `home/frame/to-join.tsx` (`ToJoinView`): the kinds, Featured as cards,
+  the rest as rows, the standard paging and lines. A visitor's card has no button: tile, "New", how many
+  people used it lately, name, sentence, and the whole card or row is the link. w03 is the same page under
+  Home's title and sentence, the search under the head, with "You're on the waitlist" (the standard card's
+  sentence and "Your spot on the waitlist") as the side column. Gone: Try an app first, Try an app now, Look,
+  Homeroom today, With an account as a labelled group, and 14 `auth:frame.landing.*` entries.
+- **A public project's page (o20, o21, w12, w13),** `guest/frame/project-frame.tsx`: the icon, the name,
+  "Public community", the sentence and the facts line by the standard band's minimums; Try it, Join, Pin,
+  Share. Each change up for a vote is a card (before and after, name, sentence, the share of yeses, the
+  tally, Vote or "once you're in"). Beside the Hub: the picture (the illustration and its dark twin, else the
+  icon on the community's colour), What's happening, People and From the chat; on a phone the picture and
+  What's happening lead and People and the chat come last. Beside the Workshop: Requests. The guest banner
+  and `auth:frame.project.guest` are gone. The bar names the tab after the project when it is not the Hub.
+- **The sign-in sheet (o04 to o06).** Under a look the first step, the phone step and the password step are
+  laid out as the kit's sheet by a branch of the sheet's own render (`kitSteps`, a hoisted function after
+  the standard render, called inside the sheet's own shell): the field's card, the other ways as rows in one
+  card under "or", the primary button, the terms as the foot, the Email code | Password switch as the look's
+  tabs. Fields, ids, refs, handlers and every `data-sign-in-*` hook are the sheet's own. The other steps
+  keep wearing the look.
+- **The stand-alone pages (o07 to o11) and the waiting room (w01, w02; w04 to w09 and w14 are sent to it by
+  the router).** CSS only, no node or id moved: a form is `display: contents` in its column and `order`
+  places what it holds (app.css, "Version 2 (11 Nov 2026) lays each stand-alone page out"). Title, fields in
+  a card, the other ways as rows, the primary button last, the terms. In the waiting room Look around goes
+  last and the invite card's title is the label over it.
+- **A profile signed out (o26):** the guest's bar comes up for `#profile/<name>` with nobody let in, naming
+  it, with Sign in (the landing's sheet over that address) and Sign up (the landing); the page is the kit's
+  lone line. **A dead invite link (o27):** the landing's own section laid out as a stand-alone page.
+
+Rulings taken:
+
+- **One drawing of Communities, Home's.** o01 to o03 draw Featured as the kit's text cards and the rest as
+  rows, as the signed-in Home does under a look and as w03's mockup does; o01's mockup drew picture cards
+  with covers. The owner's ruling for this lane was to reuse Home's sections; a visitor therefore sees no
+  cover pictures on the landing under a look.
+- **The switch wins over "Use a password"** (audit question 6): from the bar's Sign in and from Join the
+  waitlist the product puts Email code | Password on the first step, so there is no such row; an invite's
+  sheet, which has no switch, keeps its own ways (a phone number, email) as rows and its "Already on
+  Homeroom?" line in the foot.
+- **One layout for o20 and w12** (question 3): What's happening stands beside the page for both.
+- **Today's chrome for an account in line** (question 1, as ruled): the guest's bar; no sidebar, no tab bar.
+- **Homeroom's own project signed out** (question 2): it is not in the public directory on this copy, so a
+  visitor gets the sheet (o22 to o25) and a waiting account, which is never asked to sign in, gets the
+  landing; the code's one rule for both is untouched.
+- **The phone's bar keeps one way in** (question 4), as before: Sign up is the page's own button there.
+- A search with no match shows nothing under the field, as the standard page does (the first tour's "No
+  communities match that." is gone with its entry).
+
+Left, and why:
+
+- **A gated address's sheet opens on the email step when Apple and Google are not known yet** (it did on the
+  local copy, where the options were injected late): that step is not one of the three laid out as the
+  kit's sheet, so it wears the look as before. `code`, `phone-code`, `forgot`, `username`, `account` and
+  `link` likewise (question 5).
+- **The rows of a stand-alone page are drawn by hand** (the kit's surface and hairline, 20px corners), not
+  through the wear map: the `row` root is Settings', and a row there is a link inside a wrapper. Under
+  Workbench their corners are rounder than the look's cards. (The reset view's heading wears the kit's
+  title as a further `title.also` wearer, since the merge with lanes S and M.)
+- **`display: contents` on the forms**: an old Safari (before 16) drops such a form from the accessibility
+  tree.
+- **Not seen with a real account in line** (none can be made on the local copy without mail): w03's side
+  column and head, w12 and w13's "once you're in" words, and the account's name in the bar are held by
+  render tests; the waiting room's layout was seen signed out, by calling `AuthScreens.showWaiting()`.
+- A change's before and after pictures did not load on the local copy (its storage answers 500), so the vote
+  card's pictures were seen as empty frames with their captions.
+
 ### Lane K, as built (11 Nov 2026)
 
 Needs you (s26), then Make and Import (s42, s43), on `redesign/skins-v2-k` (cut from `cbfa34ecd`: P0 and

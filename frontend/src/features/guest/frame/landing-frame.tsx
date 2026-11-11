@@ -1,46 +1,54 @@
 /**
- * The landing in the one frame, as the 2026-11-06 screen tour draws it (its
- * steps o01 to o03, `landing()` in the tour's screens/out.mjs), under any of
- * the nine looks: the product's own frame for a visitor, so nothing on it
- * is a layout a member will not see again inside.
+ * The landing in the one frame, under any of the nine looks: version 2 of
+ * the screen tour's steps o01 to o03 and w03 (docs/superpowers/plans/
+ * 2026-11-11-looks-v2-todays-content.md). The first tour's layout (the
+ * kit's head with one primary button, its two columns, its tiles, cards
+ * and rows) holding today's signed-out Home (../guest-discover.tsx under
+ * the story's short version, ../../auth/story.tsx), section for section:
  *
- * Drawn with the kit (frontend/@/components/ui/kit.tsx): the title, one
- * sentence, one primary button (Join the waitlist, or Sign up where
- * accounts open at once); the kinds of community as the page's tabs; then,
- * in the 720px column, what an account adds, apps to try with no account,
- * and every public community as a row ending in Look; with what is here
- * today in the 320px column beside it.
- *
- * The landing (../../auth/landing.tsx) mounts this ahead of its own guest
- * Discover (../guest-discover.tsx) when the device's look is one of the
- * frame's; the standard page stays mounted, put away by app.css. Its data
- * is the same public directory the standard page reads (GET
- * /api/public/apps, through the landing), and every press does what the
- * standard page's does: the primary button opens the landing's own sheet,
- * a tile opens the app in the landing's viewer, a row opens the community's
- * public page.
+ *   the head              "Welcome to Homeroom" over the headline and its
+ *                         sentence, and the one button: Join the waitlist,
+ *                         or Sign up where accounts open at once
+ *   the three points      what an account adds, in the side column (first
+ *                         on a phone)
+ *   the search field      one search over the pins and the communities,
+ *                         kept on the history entry as the standard page
+ *                         keeps it
+ *   Pinned apps           this device's (../device-pins.ts), once it has
+ *                         pinned one; a tile opens the app, its corner
+ *                         takes it off
+ *   Pinned communities    this device's, a tile opens the community's page
+ *   Communities           the public directory, the one drawing Home has
+ *                         for it under a look (../../home/frame/to-join
+ *                         .tsx): the kinds, Featured as cards, then the
+ *                         rest as rows. A visitor's card has no button: it
+ *                         is its picture, "New", how many people used it
+ *                         lately, its name and its sentence, and the whole
+ *                         card opens the community's page.
  *
  * AN ACCOUNT STILL IN LINE looks around on the same page (`waiting`, the
- * tour's w03): signed in and not let in yet, it has no member's Home to be
- * shown, so the page says where it stands, leads back to the waiting room,
- * and opens every app.
+ * tour's w03): the title is Home's, and the side column says where the
+ * account stands and leads back to the waiting room, in place of the
+ * three points and the button (../waitlist-card.tsx is the standard's).
  *
- * NOT DRAWN: the tour's "Happening now" (one real vote, open now). The
- * public directory says how many votes a community has open, not which, so
- * there is no vote to show without asking each community in turn.
+ * The landing (../../auth/landing.tsx) mounts this ahead of its own guest
+ * Discover when the device's look is one of the frame's; the standard page
+ * stays mounted, put away by app.css. Nothing here fetches or words
+ * anything of its own.
  */
 import { useEffect, useMemo, useState } from 'react';
 
-import { Btn, Card, Facts, Note, PageBody, Row, Search, Sec, Tabs, Tile, TileItem, Tiles, Lead, k } from '@/components/ui/kit';
+import { Btn, Card, CardNote, Icon, Lead, Note, PageBody, Pill, Row, Search, Sec, Tile, TileItem, Tiles, k } from '@/components/ui/kit';
 import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { noteSignUpFrom } from '../../auth/sign-up-from';
-import { devicePinsStore, loadDevicePins } from '../device-pins';
-import { joinOrder } from '../../home/communities-to-join';
-import { type GuestApp, canTryHere, featuredApps, filterApps, inHomeroomApp, presentCategories, projectHash, projectPath } from '../guest-data';
+import { ToJoinView } from '../../home/frame/to-join';
+import { matchesQuery } from '../../home/use-home-query';
+import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../device-pins';
+import { type GuestApp, MIN_PEOPLE, isNew, projectHash, projectPath } from '../guest-data';
+import { guestSearchFrom, withGuestSearch } from '../search-history';
 
-/** How many apps the "Try an app now" group offers. */
-const TRY_SHOWN = 11;
+const NONE: ReadonlySet<string> = new Set();
 
 /** A plain click opens the community's page in place; a cmd-click or middle-click keeps the address. */
 function openProject(event: React.MouseEvent<HTMLElement>, slug: string) {
@@ -51,19 +59,17 @@ function openProject(event: React.MouseEvent<HTMLElement>, slug: string) {
 }
 
 /** `initial*` seed the state a render test cannot reach through a press. */
-export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, onStart, onOpenInside, initialKind = null, initialQuery = '' }: {
+export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, welcomeEmail = null, onStart, onOpenInside, initialKind = null, initialQuery = '' }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   failed: boolean;
   onRetry?: () => void;
   /** New accounts wait in line: the primary button says so. */
   waitlist: boolean;
-  /**
-   * An account still in line, looking around (the tour's w03): signed in,
-   * not let in yet. The page says where it stands in place of the pitch,
-   * its one button goes back to the waiting room, and every app opens.
-   */
+  /** An account still in line, looking around (the tour's w03): signed in, not let in yet. */
   waiting?: { email: string | null } | null;
+  /** The address a "You're in" mail's link names, greeted under the headline. */
+  welcomeEmail?: string | null;
   /** The landing's own way in (its start sheet). */
   onStart: () => void;
   /** Open an app in the landing's viewer. */
@@ -73,166 +79,145 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, 
 }) {
   const t = useMessages('auth');
   const th = useMessages('home');
-  const [kind, setKind] = useState<string | null>(initialKind);
   const [query, setQuery] = useState(initialQuery);
+  // The project page replaces this one: the query stays on Home's history
+  // entry, so Back restores this visit (../guest-discover.tsx).
+  useEffect(() => {
+    const kept = guestSearchFrom(window.history.state);
+    if (kept) setQuery(kept);
+    const onPop = () => setQuery(guestSearchFrom(window.history.state));
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  const changeQuery = (value: string) => {
+    setQuery(value);
+    try { window.history.replaceState(withGuestSearch(window.history.state, value), ''); } catch { /* History unavailable: search still works. */ }
+  };
   const device = useStoreState(devicePinsStore);
   useEffect(() => { loadDevicePins(); }, []);
 
   const all = apps || [];
-  const kinds = useMemo(() => presentCategories(all), [all]);
-  const inApp = inHomeroomApp();
-  const tryable = (app: GuestApp) => !!waiting || canTryHere(app, inApp);
-  const q = query.trim();
-  const listed = useMemo(() => filterApps(joinOrder(all), q, kind), [all, q, kind]);
-  // The platform's featured communities lead under their own label (as
-  // Home draws them); the rest follow as Communities. A search lists all.
-  const featured = useMemo(() => (q ? [] : listed.filter((a) => a.featured)), [listed, q]);
-  const rows = useMemo(() => (q ? listed : listed.filter((a) => !a.featured)), [listed, q]);
-  const toTry = listed.filter(tryable);
   const bySlug = useMemo(() => new Map(all.map((a) => [a.slug, a])), [all]);
-  const pinned = !kind && !q ? device.apps.map((s) => bySlug.get(s)).filter((a): a is GuestApp => !!a) : [];
-  const front = !kind && !q && !waiting;
+  const q = query.trim();
+  const pinnedOf = (slugs: readonly string[]) => slugs.map((s) => bySlug.get(s)).filter((a): a is GuestApp => !!a && matchesQuery(q, a.name, a.slug, a.description));
+  const pinnedApps = pinnedOf(device.apps);
+  const pinnedCommunities = pinnedOf(device.communities);
+  const face = (app: GuestApp) => <Tile size={52} name={app.name || app.slug} src={app.icon_url} emoji={app.icon_emoji} color={app.icon_color} />;
 
-  const tryApp = (event: React.MouseEvent<HTMLElement>, app: GuestApp) => {
-    // An app that asks for no account opens here, in the landing's viewer;
-    // any other keeps its own address (../guest-discover.tsx TryLink).
-    if (!waiting && app.requires_login !== false) return;
-    event.preventDefault();
-    onOpenInside(app);
+  // What a visitor's card says of a community: "New" for its first 30
+  // days, and how many people used it lately once that is worth saying.
+  // Unseen by a screen reader, which hears the number with the name.
+  const people = (app: GuestApp) => app.active_users || 0;
+  const says = (app: GuestApp) => {
+    const fresh = isNew(app);
+    const used = people(app) >= MIN_PEOPLE;
+    if (!fresh && !used) return null;
+    return (
+      <span className={k('btnrow')} aria-hidden="true">
+        {fresh ? <Pill>{t('auth:guest.card.new')}</Pill> : null}
+        {used ? <Pill><Icon name="users" size={14} />{people(app).toLocaleString()}</Pill> : null}
+      </span>
+    );
   };
-  const tile = (app: GuestApp) => (
-    <TileItem
-      key={app.slug}
-      href={app.url}
-      onClick={(event) => tryApp(event, app)}
-      tile={<Tile size={52} name={app.name} src={app.icon_url} emoji={app.icon_emoji} color={app.icon_color} />}
-      name={app.name}
-    />
-  );
+  const search = <Search value={query} onChange={changeQuery} placeholder={th('home:search.placeholder')} label={th('home:search.label')} />;
 
-  const side = (
-    <>
-    {waiting ? (
-      <Sec label={t('auth:frame.landing.spot')}>
-        <Card>
-          <Row lead={<Lead icon="clock" tone="wait" />} title={t('auth:landing.backToWaiting')} href="#waiting" go sm />
-        </Card>
-      </Sec>
-    ) : null}
-    <Sec label={t('auth:frame.landing.today')}>
-      <Facts
-        items={[
-          { value: all.length, label: t('auth:frame.landing.factCommunities', { count: all.length }) },
-          { value: all.filter(tryable).length, label: t('auth:frame.landing.factApps', { count: all.filter(tryable).length }) },
-        ]}
-      />
+  const side = waiting ? (
+    <Sec label={t('auth:waiting.title')} data-guest-waitlist="">
+      <Card>
+        <CardNote>{waiting.email ? t('auth:guest.waitlist.leadEmail', { email: waiting.email }) : t('auth:guest.waitlist.lead')}</CardNote>
+        <Row title={t('auth:landing.backToWaiting')} href="#waiting" go sm />
+      </Card>
     </Sec>
-    </>
+  ) : (
+    <Card>
+      <Row lead={<Lead icon="vote" />} title={t('auth:guest.join.vote.title')} line={t('auth:guest.join.vote.body')} wrap />
+      <Row lead={<Lead icon="spark" />} title={t('auth:guest.join.ask.title')} line={t('auth:guest.join.ask.body')} wrap />
+      <Row lead={<Lead icon="plus" />} title={t('auth:guest.join.make.title')} line={t('auth:guest.join.make.body')} wrap />
+    </Card>
   );
 
   return (
     <PageBody
-      data-landing-frame=""
-      title={waiting ? t('auth:waiting.title') : t('auth:story.headline')}
-      purpose={waiting ? (waiting.email ? t('auth:guest.waitlist.leadEmail', { email: waiting.email }) : t('auth:guest.waitlist.lead')) : t('auth:guest.hero.line')}
-      acts={waiting ? (
-        <a className={k('btn')} href="#waiting" data-guest-waitlist-room="">{t('auth:landing.backToWaiting')}</a>
-      ) : (
-        <>
-          <Btn kind="line" icon="play" onClick={() => { document.getElementById('landing-frame-try')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
-            {t('auth:frame.landing.tryFirst')}
-          </Btn>
-          <Btn data-landing-frame-join="" onClick={() => { noteSignUpFrom('hero'); onStart(); }}>
-            {waitlist ? t('auth:guest.hero.joinWaitlist') : t('auth:guest.hero.signUp')}
-          </Btn>
-        </>
+      data-landing-frame={waiting ? 'waiting' : ''}
+      over={waiting ? undefined : t('auth:story.welcome')}
+      title={waiting ? th('home:frame.title') : t('auth:story.headline')}
+      under={!waiting && welcomeEmail ? welcomeEmail : undefined}
+      purpose={waiting ? th('home:frame.purpose') : t('auth:guest.hero.line')}
+      acts={waiting ? undefined : (
+        <Btn data-landing-frame-join="" onClick={() => { noteSignUpFrom('hero'); onStart(); }}>
+          {waitlist ? t('auth:guest.hero.joinWaitlist') : t('auth:guest.hero.signUp')}
+        </Btn>
       )}
-      tabs={kinds.length ? (
-        <Tabs
-          tabs={[{ key: '', label: t('auth:guest.category.all') }, ...kinds.map((c) => ({ key: c, label: t(`auth:guest.category.${c}` as 'auth:guest.category.other') }))]}
-          current={kind || ''}
-          onPick={(key) => setKind(key || null)}
-        />
-      ) : null}
-      side={apps ? side : null}
+      tabs={waiting ? search : undefined}
+      side={side}
+      sideFirst
     >
-      <Search value={query} onChange={setQuery} placeholder={th('home:search.placeholder')} label={th('home:search.label')} />
+      {waiting ? null : search}
 
-      {front ? (
-        <Sec label={t('auth:frame.landing.account')}>
-          <Card>
-            <Row lead={<Lead icon="vote" />} title={t('auth:guest.join.vote.title')} line={t('auth:guest.join.vote.body')} />
-            <Row lead={<Lead icon="spark" />} title={t('auth:guest.join.ask.title')} line={t('auth:guest.join.ask.body')} />
-            <Row lead={<Lead icon="plus" />} title={t('auth:guest.join.make.title')} line={t('auth:guest.join.make.body')} />
-          </Card>
-        </Sec>
-      ) : null}
-
-      {pinned.length ? (
-        <Sec label={th('home:grid.heading')}>
-          <Tiles>{pinned.map(tile)}</Tiles>
-        </Sec>
-      ) : null}
-
-      {!apps ? (
-        failed ? (
-          <Note tone="bad" icon="alert">
-            <span className={k('btnrow')}>
-              <span>{t('auth:guest.loadFailed')}</span>
-              {onRetry ? <Btn kind="quiet" small onClick={onRetry}>{t('auth:guest.retry')}</Btn> : null}
-            </span>
-          </Note>
-        ) : <Card pad>{t('auth:frame.landing.loading')}</Card>
-      ) : null}
-
-      {toTry.length ? (
-        <Sec label={t('auth:frame.landing.try')} id="landing-frame-try" action={<span className={k('link')}>{t('auth:frame.landing.noAccount')}</span>}>
+      {pinnedApps.length ? (
+        <Sec label={th('home:grid.heading')} data-guest-pinned-apps="">
           <Tiles>
-            {toTry.slice(0, TRY_SHOWN).map(tile)}
+            {pinnedApps.map((app) => (
+              <TileItem
+                key={app.slug}
+                href={app.url}
+                onClick={(event) => {
+                  // An app that asks for no account opens here, in the landing's
+                  // viewer, and every app does for an account in line; any
+                  // other keeps its own address (../guest-discover.tsx TryLink).
+                  if (!waiting && app.requires_login !== false) return;
+                  event.preventDefault();
+                  onOpenInside(app);
+                }}
+                tile={face(app)}
+                name={app.name}
+                corner={(
+                  <button type="button" className={k('corner', 'un')} aria-label={th('home:guest.unpinApp', { app: app.name })} onClick={() => { toggleDevicePin('apps', app.slug); }}>
+                    <span aria-hidden="true">&minus;</span>
+                  </button>
+                )}
+              />
+            ))}
           </Tiles>
         </Sec>
       ) : null}
 
-      {featured.length ? (
-        <Sec label={th('home:join.featured')}>
-          <Card>
-            {featured.map((a) => (
-              <Row
-                key={a.slug}
-                href={projectPath(a.slug)}
-                onClick={(event) => openProject(event, a.slug)}
-                lead={<Tile name={a.name || a.slug} src={a.icon_url} emoji={a.icon_emoji} color={a.icon_color} />}
-                title={a.name || a.slug}
-                line={a.member_count ? th('home:join.members', { count: a.member_count }) : (a.description || undefined)}
-                right={<span className="fr-btn fr-quiet fr-sm">{t('auth:frame.landing.look')}</span>}
-              />
+      {pinnedCommunities.length ? (
+        <Sec label={th('home:communities.heading')} data-guest-pinned-communities="">
+          <Tiles>
+            {pinnedCommunities.map((app) => (
+              <TileItem key={app.slug} href={projectPath(app.slug)} onClick={(event) => openProject(event, app.slug)} tile={face(app)} name={app.name} />
             ))}
-          </Card>
+          </Tiles>
         </Sec>
       ) : null}
 
-      {apps ? (
-        <Sec label={t('auth:frame.landing.communities')}>
-          {rows.length ? (
-            <Card>
-              {/* The row is the door to the community's public page; its word
-                  is Look, the guest's version of Join, not a button inside
-                  the link. */}
-              {rows.map((a) => (
-                <Row
-                  key={a.slug}
-                  href={projectPath(a.slug)}
-                  onClick={(event) => openProject(event, a.slug)}
-                  lead={<Tile name={a.name || a.slug} src={a.icon_url} emoji={a.icon_emoji} color={a.icon_color} />}
-                  title={a.name || a.slug}
-                  line={a.member_count ? th('home:join.members', { count: a.member_count }) : (a.description || undefined)}
-                  right={<span className="fr-btn fr-quiet fr-sm">{t('auth:frame.landing.look')}</span>}
-                />
-              ))}
-            </Card>
-          ) : <Card pad>{t('auth:frame.landing.none')}</Card>}
-        </Sec>
-      ) : null}
+      {failed ? (
+        <Note tone="bad" icon="alert">
+          <span className={k('btnrow')}>
+            <span>{t('auth:guest.loadFailed')}</span>
+            {onRetry ? <Btn kind="quiet" small data-guest-retry="" onClick={onRetry}>{t('auth:guest.retry')}</Btn> : null}
+          </span>
+        </Note>
+      ) : (
+        <ToJoinView
+          apps={apps}
+          failed={false}
+          exclude={NONE}
+          query={q}
+          heading={th('home:join.headingSignedOut')}
+          title={(app) => app.name || app.slug}
+          link={(app) => ({
+            href: projectPath(app.slug),
+            onClick: (event) => openProject(event, app.slug),
+            label: people(app) >= MIN_PEOPLE ? t('auth:guest.card.peopleLabel', { name: app.name, count: people(app) }) : undefined,
+          })}
+          cardEnd={says}
+          rowEnd={says}
+          rowLine={(app) => app.description || undefined}
+          initialKind={initialKind}
+        />
+      )}
     </PageBody>
   );
 }

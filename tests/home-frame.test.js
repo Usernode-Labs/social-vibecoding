@@ -228,10 +228,13 @@ test('Communities to join: the kind filter, Featured as cards, then the rest as 
   assert.equal(count(g, />Moon</g), 1, 'a featured community is not listed twice');
   assert.doesNotMatch(g, /fr-fcard|Browse all|Public community/, 'no picture cards, no Browse all');
   assert.match(SRC, /void win\(\)\?\.Home\?\.setMembership\?\.\(app\.slug, true\)/, 'Join is Home.setMembership, which joins and pins');
-  assert.match(SRC, /setShown\(\(n\) => n \+ JOIN_PAGE\)/, 'more as the reader reaches the end, by the standard page');
-  assert.match(SRC, /kind \? t\('home:join\.endKind'\) : t\('home:join\.end'\)/);
-  assert.match(SRC, /t\('home:join\.failed'\)/);
-  assert.match(SRC, /t\('home:join\.empty'\) : t\('home:join\.allJoined'\)/);
+  // The list itself is drawn by ./to-join.tsx, the one drawing Home shares with the landing (looks v2, lane G).
+  const JOIN = read('frontend/src/features/home/frame/to-join.tsx');
+  assert.match(SRC, /<ToJoinView\s+apps=\{apps\}/);
+  assert.match(JOIN, /setShown\(\(n\) => n \+ JOIN_PAGE\)/, 'more as the reader reaches the end, by the standard page');
+  assert.match(JOIN, /kind \? t\('home:join\.endKind'\) : t\('home:join\.end'\)/);
+  assert.match(JOIN, /t\('home:join\.failed'\)/);
+  assert.match(JOIN, /t\('home:join\.empty'\) : t\('home:join\.allJoined'\)/);
   const searched = group(render({ initialDirectory: dir }, homeStubs({ query: 'star' })), 'home-frame-to-join');
   assert.doesNotMatch(searched, /Featured|fr-chips/, 'a search leaves Featured and the filter out: its matches are the list');
   assert.match(searched, /<span class="fr-t"><a class="fr-door" href="\/app\/star\/workshop\?ws=status">Star<\/a>/);

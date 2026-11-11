@@ -187,7 +187,7 @@ function Row({ children, onClick, last }: { children: ReactNode; onClick?: () =>
   );
 }
 
-export function GuestProject({ app, primaryClass, onIntent, onOpenInside, onShare, startOnWorkshop = false, signedIn = false }: {
+export function GuestProject({ app, primaryClass, onIntent, onOpenInside, onShare, onPlace, startOnWorkshop = false, signedIn = false }: {
   /** The project's card from the public directory. */
   app: GuestApp;
   /**
@@ -202,6 +202,8 @@ export function GuestProject({ app, primaryClass, onIntent, onOpenInside, onShar
   onIntent: (intent: GuestIntent) => void;
   onOpenInside: (app: GuestApp) => void;
   onShare: (app: GuestApp) => void;
+  /** The tab that is up, for the frame's bar to name under a look (landing.tsx). */
+  onPlace?: (tab: 'hub' | 'workshop' | 'discussion') => void;
 }) {
   const t = useMessages('auth');
   const th = useMessages('home');
@@ -216,6 +218,7 @@ export function GuestProject({ app, primaryClass, onIntent, onOpenInside, onShar
   const [tab, setTab] = useState<Tab>(startOnWorkshop ? 'workshop' : 'hub');
   const [overview, setOverview] = useState<GuestOverview | null>(null);
   const [loaded, setLoaded] = useState(false);
+  useEffect(() => { onPlace?.(tab); }, [tab, onPlace]);
 
   useEffect(() => {
     let live = true;
@@ -265,6 +268,7 @@ export function GuestProject({ app, primaryClass, onIntent, onOpenInside, onShar
         pinned={pinnedHere}
         onPin={() => { toggleDevicePin('communities', app.slug); }}
         canTry={canTryHere(app, inHomeroomApp())}
+        color={color}
         onIntent={onIntent}
         onOpenInside={onOpenInside}
         onShare={onShare}

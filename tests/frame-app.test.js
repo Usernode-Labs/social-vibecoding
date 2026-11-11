@@ -276,7 +276,8 @@ test('the bell\'s sheet is the product\'s own, wearing the look', () => {
   assert.ok(looks.wear.roots.card.to.includes('.notifications-card:where(#notifications-sheet *)'), 'each of its cards is the look\'s card');
   assert.equal(looks.wear.roots.tabs.to, '#notifications-screen-tabs', 'Unread and All are the look\'s tabs');
   assert.deepEqual(looks.wear.roots.tabs.skip, ['.tabs .end', '.tabs .end .search', '.tabs .end .inp'], 'less the end slot, which the sheet does not have');
-  assert.deepEqual(looks.wear.roots.tab, { to: '#notifications-screen-tabs > [role="tab"]', parts: { on: '[aria-selected="true"]' } }, 'and the one that is on is the one selected');
+  // (New message's dialog is a second wearer of the tab, "also": tests/messages-frame-new.test.js.)
+  assert.deepEqual({ to: looks.wear.roots.tab.to, parts: looks.wear.roots.tab.parts }, { to: '#notifications-screen-tabs > [role="tab"]', parts: { on: '[aria-selected="true"]' } }, 'and the one that is on is the one selected');
   const css = read('public/css/app.css');
   const hand = css.slice(css.indexOf('THE BELL\'S SHEET'), css.indexOf('/* looks:begin'));
   assert.ok(hand.length > 500, 'located the block');

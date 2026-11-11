@@ -43,12 +43,30 @@ test('a screen with a way back says so first; an open app or project is named in
     'whatever the landing\'s own bar offers, in its order');
 });
 
+test('a members\' address a visitor opened: the bar names the place, in the brand\'s place or after it', () => {
+  // Version 2 of the looks (o12 to o25): the sheet opens by itself, as in
+  // the standard look, and the bar says where the link led.
+  const messages = view({ crumb: 'Messages', actions: [SIGN_IN, SIGN_UP] });
+  assert.match(messages, /<header class="fr-bar"><div class="fr-crumb"><span class="fr-ci fr-here fr-keep">Messages<\/span><\/div><span class="fr-sp"><\/span>/);
+  assert.doesNotMatch(messages, /fr-brand/);
+  const workshop = view({ trail: ['Workshop'] });
+  assert.match(workshop, /Homeroom<\/span><div class="fr-crumb"><span class="fr-ci fr-here fr-keep">Workshop<\/span><\/div>/, 'a project\'s place follows the brand');
+  const request = view({ trail: ['Workshop', 'Request #5998'] });
+  assert.match(request, /<div class="fr-crumb"><span class="fr-ci">Workshop<\/span><svg[^>]*>.*?<\/svg><span class="fr-ci fr-here fr-keep">Request #5998<\/span><\/div>/s, 'the last word is where you are: the one a phone keeps');
+  const tab = view({ back: true, crumb: 'Game Corner', trail: ['Workshop'] });
+  assert.match(tab, /<span class="fr-ci">Game Corner<\/span><svg[^>]*>.*?<\/svg><span class="fr-ci fr-here fr-keep">Workshop<\/span>/s, 'a public project\'s tab, after its name');
+  const src = read(CHROME);
+  assert.match(src, /root\.querySelectorAll\('#landing-header \[data-guest-place\]'\)/, 'read off the landing\'s own header, which the bar already follows');
+  const landing = read('frontend/src/features/auth/landing.tsx');
+  assert.match(landing, /\{frame && gate \? <GatePlace target=\{gate\.target\} \/> : null\}/, 'under a look only, never in the first render');
+});
+
 test('it is up for a visitor only: under a look, while an anonymous screen is, and never on the first render', () => {
   const src = read(CHROME);
   assert.equal(renderComponent(CHROME, 'GuestFrame', {}, { cache: false, stubs: { '../../lib/visibility-store': { useVisibility: (id, initial) => initial } } }), '');
   assert.match(src, /const SCREENS = \['auth-landing-screen', 'auth-login-screen', 'auth-register-screen', 'auth-waitlist-screen', 'auth-more-screen', 'auth-waiting-screen'\] as const;/,
     'the anonymous shell\'s six screens: an account still in line has no member\'s chrome to be shown');
-  assert.match(src, /return isFrameSkin\(skin\) && at > -1 \? <GuestChrome screen=\{SCREENS\[at\]\} \/> : null;/);
+  assert.match(src, /if \(!isFrameSkin\(skin\)\) return null;\s*if \(at > -1\) return <GuestChrome screen=\{SCREENS\[at\]\} \/>;\s*return profile \? <GuestChrome screen=\{PROFILE\} \/> : null;/, 'an anonymous screen first; else a profile opened with nobody let in');
   assert.match(read('frontend/src/features/frame/frame-app.tsx'), /return on \? <FrameChrome \/> : <GuestFrame \/>;/, 'one or the other, never both');
   assert.match(src, /root\.setAttribute\('data-frame-chrome', 'guest'\);/, 'app.css knows which chrome is up');
 });
@@ -59,7 +77,7 @@ test('a press is handed to the screen\'s own control, and the bar follows the sc
   assert.match(src, /const SOLO_BACK = '\[data-auth-back\], :scope > a\[href="#landing"\]';/, 'the shared disc, or the plain link "more ways" has');
   assert.match(read('frontend/src/features/auth/more.tsx'), /<a\s+href="#landing"\s+className="fixed start-4 z-10 /);
   assert.match(src, /pressIn\(screen, '\[data-landing-actions\] button', Number\(action\.key\)\)/, 'the landing\'s own button, by its place in the bar');
-  assert.match(src, /crumb: title && !title\.querySelector\('svg'\) \? \(title\.textContent \|\| ''\)\.trim\(\) : '',/, 'the wordmark is a picture, a name is words');
+  assert.match(src, /crumb: title && !title\.querySelector\('svg'\) \? \(title\.textContent \|\| ''\)\.trim\(\) : words\('head'\)\[0\] \|\| '',/, 'the wordmark is a picture, a name is words; else the place the landing names');
   // The landing's own hooks, which this reads: they must still be there.
   const landing = read('frontend/src/features/auth/landing.tsx');
   for (const hook of ['id="landing-header"', 'id="landing-back-btn"', 'id="landing-header-title"', 'data-landing-actions=""', 'data-landing-sign-in=""', 'data-landing-sign-up=""']) {
@@ -121,7 +139,7 @@ test('the sign-in sheet is the kit\'s sheet: the look\'s surface, title, field a
   assert.ok(css.includes('THE SIGN-IN SHEET'));
   assert.match(hand, /\[data-sign-in-sheet\] > \[role="dialog"\] \{[^}]*background: var\(--fr-solid, var\(--fr-ground\)\);[^}]*box-shadow: var\(--fr-sh\), inset 0 0 0 1px var\(--fr-line\);/);
   assert.match(hand, /#sign-in-sheet-title \{ font-size: 24px; line-height: 1\.15; font-weight: 700; letter-spacing: -0\.02em; color: var\(--fr-ink\); \}/);
-  assert.match(hand, /\[data-sign-in-sheet-method\] \{ background: var\(--fr-sunk\); \}/, 'the two ways are the look\'s own switch');
+  assert.match(hand, /\[data-sign-in-sheet-method\]:not\(\.fr-tabs\) \{ background: var\(--fr-sunk\); \}/, 'the two ways are the look\'s own switch (the kit\'s tabs on the three steps laid out as the kit\'s sheet: tests/sign-in-sheet-kit.test.js)');
   const sheet = read('frontend/src/features/auth/sign-in-sheet.tsx');
   for (const hook of ['data-sign-in-sheet={step}', 'role="dialog"', 'id="sign-in-sheet-title"', 'data-sign-in-sheet-method=""', 'role="radio"']) assert.ok(sheet.includes(hook), hook);
 });
@@ -143,4 +161,102 @@ test('the waiting room is a stand-alone page whose bar says whose it is and hold
   const looks = JSON.parse(read('frontend/looks/looks.json'));
   assert.ok(looks.wear.roots.card.to.includes('#auth-waiting-screen :is([data-waiting-queued],[data-waiting-invite])'));
   assert.ok(looks.wear.roots.title.to.includes('#auth-waiting-screen'));
+});
+
+test('version 2: a stand-alone page reads title, fields, the other ways as rows, the primary button last; by CSS alone, the nodes do not move', () => {
+  // The tour's o07 to o11. The forms' nodes and ids are in the shell
+  // baseline and the declared checks, so nothing is re-rendered: a form is
+  // `display: contents` in its column and `order` places what it holds.
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('Version 2 (11 Nov 2026) lays each stand-alone page out'), css.indexOf('/* THE WAITING ROOM'));
+  assert.ok(hand.length > 0);
+  const G = 'html\\[data-frame-chrome="guest"\\]';
+  const has = (re, why) => assert.match(hand, new RegExp(re.replace(/G /g, `${G} `)), why);
+  // o07 Sign in.
+  has('G #login-form:not\\(\\.hidden\\) \\{ display: contents; \\}', 'only while it shows: a hidden form stays hidden');
+  has('G #auth-login-screen #forgot-link-wrap \\{ order: 3; margin-top: 24px; \\}\\s*G #auth-login-screen #otp-link-wrap \\{ order: 4; margin-top: -1px; \\}\\s*G #login-form > button\\[type="submit"\\] \\{ order: 5; margin-top: 24px; \\}\\s*G #login-form > p \\{ order: 6;', 'the two ways over Sign in, the terms after it');
+  has('G #auth-login-screen #forgot-password-link \\{ border-end-start-radius: 0; border-end-end-radius: 0; \\}\\s*G #auth-login-screen #otp-link \\{ border-start-start-radius: 0; border-start-end-radius: 0; \\}', 'two rows of one card');
+  // o09 Sign in with email, its first step only.
+  has('G #otp-step-email:not\\(\\.hidden\\) \\{ display: contents; \\}');
+  has('G #otp-view:has\\(> #otp-step-email:not\\(\\.hidden\\)\\) > #btn-otp-back \\{ order: 3;', 'the way back to a password is a row over the button; the code and account steps keep theirs');
+  has('G #otp-step-email > #btn-otp-request \\{ order: 4;');
+  // o08 Reset your password.
+  has('G #recovery-email:not\\(\\.hidden\\) \\{ display: contents; \\}');
+  has('G #recovery-admin \\{ order: 3; \\}\\s*G #recovery-admin > hr \\{ display: none; \\}\\s*G #recovery-admin > div \\{[^}]*background: var\\(--fr-wait-t\\); color: var\\(--fr-wait\\);', 'the warning is the kit\'s note');
+  has('G #auth-login-screen #btn-recovery-back \\{ order: 4; \\}\\s*G #recovery-email > #btn-email-reset \\{ order: 5;', 'Back to login as a row, the button last');
+  // o10 Register.
+  has('G #register-form \\{ display: contents; \\}');
+  has('G #auth-register-screen h1 \\+ p \\+ p \\{[^}]*font-size: 15px; font-weight: 650; color: var\\(--fr-ink\\); \\}', '"Create your account" is the form\'s own heading');
+  has('G #auth-register-screen #register-form ~ p \\{ order: 3;[^}]*\\}\\s*G #register-form > button\\[type="submit"\\] \\{ order: 4;');
+  // o11 Check your status.
+  has('G #waitlist-confirm-address::before \\{ content: \'\'; grid-area: 1 / 1 / span 3 / auto;[^}]*background: var\\(--fr-surface\\);', 'the card is drawn behind the label, the field and its hint');
+  has('G #waitlist-confirm-address > #waitlist-request-code \\{ grid-row: 4;');
+  has('G #waitlist-have-code \\{[^}]*background: var\\(--fr-sunk\\);', 'the quiet button under the primary one');
+  assert.doesNotMatch(hand.replace(/\/\*[\s\S]*?\*\//g, ''), /#[0-9a-fA-F]{3,8}\b|rgba?\(|margin-(left|right)|padding-(left|right)|border-(top|bottom)-(left|right)-radius/, 'the kit\'s tokens and logical sides only');
+  // The ids those rules read are the forms' own.
+  const login = read('frontend/src/features/auth/login.tsx');
+  for (const id of ['login-form', 'forgot-link-wrap', 'forgot-password-link', 'otp-link-wrap', 'otp-link', 'otp-view', 'otp-step-email', 'btn-otp-request', 'btn-otp-back', 'recovery-view', 'recovery-email', 'recovery-email-input', 'recovery-admin', 'btn-recovery-back', 'btn-email-reset']) {
+    assert.match(login, new RegExp(`id="${id}"`), id);
+  }
+  assert.match(read('frontend/src/features/auth/register.tsx'), /id="register-form"/);
+  const waitlist = read('frontend/src/features/auth/waitlist.tsx');
+  for (const id of ['waitlist-confirm-address', 'waitlist-confirm-email', 'waitlist-request-code', 'waitlist-have-code']) assert.match(waitlist, new RegExp(`id="${id}"`), id);
+  // The reset view's heading is not the screen's h1: it wears the title as a further wearer.
+  const looks = JSON.parse(read('frontend/looks/looks.json'));
+  const title = looks.wear.roots.title;
+  assert.ok([title.to, ...(title.also || []).map((w) => w.to)].includes('#auth-login-screen #recovery-view > h2'));
+  has('G #recovery-view > h2 \\{ margin: 0 0 -4px; text-align: start; \\}');
+});
+
+test('version 2: in the waiting room Look around goes last and the invite card\'s title is the label over it', () => {
+  // The tour's w01 and w02 (and w04 to w09 and w14, which the router sends
+  // to this room). No account in line can be made on a local copy, so this
+  // is held here and by the room's own suites.
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('/* THE WAITING ROOM'), css.indexOf('/* THE SIGN-IN SHEET (features'));
+  assert.match(hand, /html\[data-frame-chrome="guest"\] #auth-waiting-screen \[data-waiting-look-around\] \{ order: 9; margin-top: 24px; \}/);
+  assert.match(hand, /\[data-waiting-invite\] \{ position: relative; overflow: visible !important; margin-top: 56px; \}/);
+  assert.match(hand, /\[data-waiting-invite\] > h2 \{ position: absolute; inset-block-end: 100%; inset-inline-start: 4px; margin: 0 0 8px; \}/);
+  const looks = JSON.parse(read('frontend/looks/looks.json'));
+  assert.ok([looks.wear.roots.cap.to, ...(looks.wear.roots.cap.also || []).map((w) => w.to)].includes('#auth-waiting-screen [data-waiting-invite] > h2'), 'the kit\'s label, whatever the look');
+  const room = read('frontend/src/features/auth/waiting.tsx');
+  assert.match(room, /className="mx-auto flex min-h-full w-full max-w-sm flex-col /, 'the room\'s column is a flex column, which `order` needs');
+  assert.match(room, /<form\s+data-waiting-invite=""[\s\S]*?<h2 className="[^"]*">\{t\('auth:waiting\.invite\.title'\)\}<\/h2>/);
+});
+
+test('a profile opened signed out: the bar names it and holds the two ways in, and the page is its one line', () => {
+  // The tour's o26. Today a visitor's #profile/<name> answers "This profile
+  // is unavailable." under the member's chrome; under a look it is the
+  // guest's bar, since the frame's own chrome needs somebody let in.
+  const html = view({ crumb: '@evan', actions: [{ key: 'signin', label: 'Sign in', primary: false, pressed: null }, { key: 'signup', label: 'Sign up', primary: true, pressed: null }] });
+  assert.match(html, /<header class="fr-bar"><div class="fr-crumb"><span class="fr-ci fr-here fr-keep">@evan<\/span><\/div><span class="fr-sp"><\/span><button type="button" class="fr-btn fr-line fr-sm">Sign in<\/button><span class="fr-d"><button type="button" class="fr-btn fr-sm">Sign up<\/button><\/span><\/header>/);
+  const src = read(CHROME);
+  assert.match(src, /const profile = useVisibility\(PROFILE, false\);/, 'one more hook, every render');
+  assert.match(src, /const PROFILE = 'profile-screen';/);
+  assert.match(src, /crumb: name \? `@\$\{name\}` : '',\s*actions: who \? \[\] : \[/, 'an account still in line is signed in already: its name, no ways in');
+  assert.match(src, /if \(screens\?\.showSignInFor\) screens\.showSignInFor\(location\.hash\);/, 'Sign in is the landing\'s sheet over the page asked for, which signing in lands on');
+  assert.match(src, /action\.key === 'signup' \? \(location\.hash = '#landing'\)/, 'Sign up is the landing, where the way in for somebody new is');
+  assert.match(read('public/js/auth-screens.js'), /showSignInFor\(fullHash\) \{/);
+  const profile = read('frontend/src/features/profile/profile-view.tsx');
+  assert.match(profile, /if \(frame\) return <div className=\{k\('lone'\)\} data-profile-unavailable="">\{t\('profile:public\.unavailable'\)\}<\/div>;/, 'the kit\'s lone line');
+  assert.ok(profile.indexOf("data-profile-unavailable") < profile.indexOf('className="text-sm text-zinc-500 py-12 text-center'), 'ahead of the standard line, which stands under the standard look');
+  const css = read('public/css/app.css');
+  assert.match(css, /html\[data-frame-chrome="guest"\]:has\(:is\(#auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waitlist-screen, #auth-more-screen, #auth-waiting-screen\):not\(\.hidden\)\) #profile-screen \{ display: none; \}/, 'not under the landing its Sign in brings up');
+});
+
+test('a dead invite link is a stand-alone page: the welcome over the title, what to do, one button across the column', () => {
+  // The tour's o27, every reason a link can be dead for. The section's
+  // nodes are the product's; the picture is not drawn.
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('/* A dead invite link'), css.indexOf('/* THE WAITING ROOM'));
+  assert.ok(hand.length > 0);
+  assert.match(hand, /\[data-landing-invite="dead"\] \{ flex-grow: 0; align-items: stretch; justify-content: flex-start; max-width: 504px; margin-inline: auto; padding: 64px 32px 48px; text-align: start; \}/, 'the stand-alone column');
+  assert.match(hand, /\[data-landing-invite="dead"\] > img \{ display: none; \}/);
+  assert.match(hand, /\[data-landing-invite-dead-continue\] \{[^}]*width: 100%; height: 44px;[^}]*background: var\(--fr-acc\); color: var\(--fr-acc-ink\);/);
+  const looks = JSON.parse(read('frontend/looks/looks.json'));
+  assert.ok([looks.wear.roots.cap.to, ...(looks.wear.roots.cap.also || []).map((w) => w.to)].includes('#auth-landing-screen [data-landing-invite="dead"] > img + div'), '"Welcome to Homeroom" is the kit\'s label');
+  const card = read('frontend/src/features/auth/invite-card.tsx');
+  assert.match(card, /<section data-landing-invite="dead" className="[^"]*flex grow flex-col[^"]*">/);
+  assert.match(card, /<div className=\{`mt-4 \$\{SMALL_CAPS\}`\}>\{t\('auth:story\.welcome'\)\}<\/div>\s*<h1 data-landing-invite-dead-title=""/);
+  assert.match(card, /<a href="\/" data-landing-invite-dead-continue="" className=\{primaryClass\}>/);
 });
