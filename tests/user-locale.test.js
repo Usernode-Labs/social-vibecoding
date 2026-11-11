@@ -237,6 +237,108 @@ test('#6479: Settings › Language renders the Time zone list with Auto alone, a
   assert.equal(message('settings:timezone.title'), 'Time zone');
 });
 
+// ── 1c. The Time zone list's controller (settings.js) ────────────────────
+
+function sliceSettingsMethod(src, name) {
+  const m = src.match(new RegExp(`\\n    (async )?${name}\\(`));
+  assert.ok(m, `${name} exists`);
+  let i = m.index + m[0].length;
+  let depth = 0;
+  let started = false;
+  for (; i < src.length; i++) {
+    if (src[i] === '{') { depth++; started = true; } else if (src[i] === '}') { depth--; }
+    if (started && depth === 0) { i++; break; }
+  }
+  return src.slice(m.index + 1, i).trim();
+}
+
+// The controller's three methods over a fake select, status line and i18n:
+// what #settings-timezone does in the page, without a browser.
+function zoneController({ save, zones = ['Asia/Tokyo', 'Europe/Paris'] } = {}) {
+  const src = read('frontend/src/features/settings/settings.js');
+  const methods = ['_renderTimeZoneSection', '_labelTimeZoneAuto', '_saveTimeZone']
+    .map((n) => sliceSettingsMethod(src, n)).join(',\n');
+  const options = [{ value: '', textContent: '' }];
+  const select = {
+    options, value: '', disabled: false,
+    appendChild(node) { for (const o of node.children || [node]) options.push(o); },
+  };
+  const status = {
+    textContent: '', hidden: true,
+    classList: { add(...c) { if (c.includes('hidden')) status.hidden = true; }, remove(...c) { if (c.includes('hidden')) status.hidden = false; } },
+  };
+  const document = {
+    getElementById: (id) => ({ 'settings-timezone': select, 'settings-timezone-status': status }[id] || null),
+    createDocumentFragment: () => ({ children: [], appendChild(o) { this.children.push(o); } }),
+    createElement: () => ({ value: '', textContent: '' }),
+  };
+  let language = 'en';
+  const i18n = {
+    t: (id, v) => `${language}:${id}:${v && v.zone ? v.zone : ''}`,
+    timeZoneLabel: (z) => z.split('/').join(' / '),
+    deviceTimeZone: () => 'Europe/London',
+    saveAccountTimeZone: save,
+  };
+  const Intl = { supportedValuesOf: () => zones };
+  const Settings = new Function('document', 'window', 'Intl', `return ({ state: { timeZone: null }, ${methods} });`)(
+    document, { PlatformI18n: i18n }, Intl);
+  return { Settings, select, status, setLanguage: (l) => { language = l; } };
+}
+
+test('#6479: the list offers UTC, which the browsers\' zone list leaves out', () => {
+  const { Settings, select } = zoneController({ save: async (v) => v });
+  Settings._renderTimeZoneSection();
+  const values = select.options.map((o) => o.value);
+  assert.deepEqual(values, ['', 'Asia/Tokyo', 'Europe/Paris', 'UTC']);
+  assert.equal(select.options[0].textContent, 'en:settings:timezone.auto:Europe / London');
+});
+
+test('#6479: one save at a time, so the list never shows a pick a late answer overwrote', async () => {
+  const pending = [];
+  const { Settings, select, status } = zoneController({ save: (v) => new Promise((resolve) => pending.push(() => resolve(v))) });
+  Settings._renderTimeZoneSection();
+  const first = Settings._saveTimeZone('Europe/Paris');
+  assert.equal(select.disabled, true, 'the list waits for the server');
+  await Settings._saveTimeZone('Asia/Tokyo');
+  assert.equal(pending.length, 1, 'a second pick while the first is saving sends nothing');
+  pending[0]();
+  await first;
+  assert.equal(select.disabled, false);
+  assert.equal(Settings.state.timeZone, 'Europe/Paris');
+  assert.equal(select.value, 'Europe/Paris');
+  assert.equal(status.textContent, 'en:settings:timezone.saved:Europe / Paris');
+});
+
+test('#6479: a failed save puts the list back and says so from the catalog, never a client-made English line', async () => {
+  const { Settings, select, status } = zoneController({ save: async () => { throw new Error('Network error: offline'); } });
+  Settings._renderTimeZoneSection();
+  await Settings._saveTimeZone('Asia/Tokyo');
+  assert.equal(select.value, '');
+  assert.equal(select.disabled, false);
+  assert.equal(status.textContent, 'en:settings:timezone.saveFailed:');
+  assert.equal(message('settings:timezone.saveFailed'), 'Could not save the time zone. Try again.');
+});
+
+test('#6479: a new language rewrites the Auto option and leaves the status line alone', async () => {
+  const { Settings, select, status, setLanguage } = zoneController({ save: async (v) => v });
+  Settings._renderTimeZoneSection();
+  await Settings._saveTimeZone('Asia/Tokyo');
+  const said = status.textContent;
+  setLanguage('fr');
+  Settings._labelTimeZoneAuto();
+  assert.equal(select.options[0].textContent, 'fr:settings:timezone.auto:Europe / London');
+  assert.equal(status.textContent, said);
+  assert.equal(status.hidden, false);
+  assert.match(read('frontend/src/features/settings/settings.js'),
+    /homeroom:language-changed'[\s\S]{0,700}Settings\._labelTimeZoneAuto\(\)/,
+    'the language listener repaints it');
+});
+
+test('#6479: both Settings state objects carry timeZone', () => {
+  assert.match(read('frontend/src/features/settings/facade.js'), /state\.timeZone = u\.timeZone \|\| null/);
+  assert.match(read('frontend/src/features/settings/settings.js'), /locale: null, timeZone: null \}/);
+});
+
 // ── 2. Iframe-token mint source guards (server.js — guarded code) ───────
 
 test('iframe-token mint selects the locale column alongside the pubkey', () => {

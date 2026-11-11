@@ -187,6 +187,15 @@
   const OFFLINE_LOGOUT_TIMEOUT_MS = 2000;
   const WEB_LOGOUT_TIMEOUT_MS = 15000;
 
+  // #6479: formatter options in the zone picked in Settings › Language, or
+  // unchanged (the device's zone) under Auto or where the runtime predates it.
+  // A function rather than an import: this file also runs as a classic script.
+  const inZone = (options = {}) => {
+    const timeZone = typeof window !== 'undefined' && window.PlatformI18n?.timeZone
+      ? window.PlatformI18n.timeZone() : undefined;
+    return timeZone ? { ...options, timeZone } : options;
+  };
+
   const Settings = {
     // Planted by ./mount.ts, never imported: this file is a classic IIFE that
     // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
@@ -197,7 +206,7 @@
     // use below goes through `?.` for exactly that reason.
     _store: null,
     _footerHome: null,
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null, timeZone: null },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -2090,13 +2099,15 @@
       if (!select) return;
       const i18n = window.PlatformI18n;
       const label = (zone) => (i18n.timeZoneLabel ? i18n.timeZoneLabel(zone) : zone);
-      const auto = select.options[0];
-      if (auto) auto.textContent = i18n.t('settings:timezone.auto', { zone: label(i18n.deviceTimeZone ? i18n.deviceTimeZone() : '') });
+      this._labelTimeZoneAuto();
       if (select.options.length <= 1) {
         let zones = [];
         try { zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : []; } catch { zones = []; }
+        // The browsers' list leaves UTC out (it is no region's zone), and
+        // somebody who keeps their clock in it must be able to pick it.
+        const all = [...new Set(['UTC', ...zones])].sort();
         const frag = document.createDocumentFragment();
-        for (const zone of [...zones].sort()) {
+        for (const zone of all) {
           const opt = document.createElement('option');
           opt.value = zone;
           opt.textContent = label(zone);
@@ -2104,6 +2115,8 @@
         }
         select.appendChild(frag);
       }
+      // A save in flight decides what the list shows when it lands.
+      if (this._timeZoneSaving) return;
       const value = this.state.timeZone || '';
       if (value && ![...select.options].some((o) => o.value === value)) {
         const opt = document.createElement('option');
@@ -2114,6 +2127,18 @@
       select.value = value;
       const status = document.getElementById('settings-timezone-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
+    },
+
+    // The Auto option's words, with the device's zone in them. The option is
+    // the pane's own (rendered empty, so the first render is the same on every
+    // device); this writes its text, again whenever the language changes,
+    // and touches nothing else, so a status line under the list stays.
+    _labelTimeZoneAuto() {
+      const auto = document.getElementById('settings-timezone')?.options[0];
+      if (!auto) return;
+      const i18n = window.PlatformI18n;
+      const device = i18n.deviceTimeZone ? i18n.deviceTimeZone() : '';
+      auto.textContent = i18n.t('settings:timezone.auto', { zone: i18n.timeZoneLabel ? i18n.timeZoneLabel(device) : device });
     },
 
     // A language the server's translation cache offers that this build's
@@ -2273,7 +2298,7 @@
         // format it uses.
         params.product = connection.client_name || tr('settings:connectors.test.unknownProduct');
         if (connection.last_used_at) {
-          params.lastUsed = new Date(connection.last_used_at).toLocaleString();
+          params.lastUsed = new Date(connection.last_used_at).toLocaleString(undefined, inZone());
           id = 'settings:connectors.test.result.okUsed';
         } else {
           id = 'settings:connectors.test.result.ok';
@@ -2619,7 +2644,7 @@
     // known, in the date format this page uses everywhere.
     _connectorRowView(connector) {
       const stamp = (value) => (value && Number.isFinite(Date.parse(value))
-        ? new Date(value).toLocaleString() : null);
+        ? new Date(value).toLocaleString(undefined, inZone()) : null);
       const expired = !this._connectorIsLive(connector);
       const connected = stamp(connector.connected_at);
       const lastUsed = stamp(connector.last_used_at);
@@ -2718,7 +2743,7 @@
         // Two whole sentences: how often the tip was sent, then why it is not
         // showing now. Each is one message; hint.summaryAndAdvice orders them.
         const summary = Number.isFinite(Date.parse(hint.lastShownAt))
-          ? tr('settings:connectors.hint.sent', { count: shown, days, when: new Date(hint.lastShownAt).toLocaleString() })
+          ? tr('settings:connectors.hint.sent', { count: shown, days, when: new Date(hint.lastShownAt).toLocaleString(undefined, inZone()) })
           : tr('settings:connectors.hint.sentWhenUnknown', { count: shown, days });
         let advice;
         // Three different answers to "why am I not seeing it", and they are
@@ -2741,9 +2766,13 @@
           // concludes the window has already passed. A day word settles it,
           // and anything further out gets the whole stamp.
           const end = new Date(quietUntil);
-          advice = end.toDateString() === new Date().toDateString()
-            ? tr('settings:connectors.hint.quietUntilToday', { minutes: cooldown, time: end.toLocaleTimeString() })
-            : tr('settings:connectors.hint.quietUntilDate', { minutes: cooldown, when: end.toLocaleString() });
+          const dayOf = (d) => {
+            const z = window.PlatformI18n?.zonedDay ? window.PlatformI18n.zonedDay(d) : null;
+            return z ? `${z.year}-${z.month}-${z.day}` : d.toDateString();
+          };
+          advice = dayOf(end) === dayOf(new Date())
+            ? tr('settings:connectors.hint.quietUntilToday', { minutes: cooldown, time: end.toLocaleTimeString(undefined, inZone()) })
+            : tr('settings:connectors.hint.quietUntilDate', { minutes: cooldown, when: end.toLocaleString(undefined, inZone()) });
         } else {
           advice = tr('settings:connectors.hint.openNewConversation');
         }
@@ -3178,7 +3207,7 @@
           : (link.linked ? { text: tr('settings:socialIdentity.badge.connected'), tone: 'emerald' } : null),
         state,
         linkedAt: link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
-          ? tr('settings:socialIdentity.row.linkedAt', { when: new Date(link.linkedAt).toLocaleString() })
+          ? tr('settings:socialIdentity.row.linkedAt', { when: new Date(link.linkedAt).toLocaleString(undefined, inZone()) })
           : null,
         noToken: link.linked && link.access === 'identity'
           ? (provider === 'github'
@@ -3427,9 +3456,9 @@
           // One whole line per combination of what is known. `status` is the
           // server's own word for the credential's state.
           const created = Number.isFinite(Date.parse(token.created_at))
-            ? new Date(token.created_at).toLocaleString() : null;
+            ? new Date(token.created_at).toLocaleString(undefined, inZone()) : null;
           const lastUsed = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
-            ? new Date(token.last_used_at).toLocaleString() : null;
+            ? new Date(token.last_used_at).toLocaleString(undefined, inZone()) : null;
           const state = token.status || tr('settings:cliTokens.row.statusUnknown');
           let detail;
           if (created && lastUsed) detail = tr('settings:cliTokens.row.createdUsed', { status: state, created, lastUsed });
@@ -3515,6 +3544,9 @@
       }
     },
 
+    // One save at a time: the list is disabled until the server answers, so
+    // what it shows is always what was stored (a late answer to an earlier
+    // pick can no longer land after a later one).
     async _saveTimeZone(value) {
       const select = document.getElementById('settings-timezone');
       const status = document.getElementById('settings-timezone-status');
@@ -3525,12 +3557,18 @@
         status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
         status.classList.add(...(ok ? ['text-emerald-700', 'dark:text-emerald-400'] : ['text-red-700', 'dark:text-red-400']));
       };
+      if (this._timeZoneSaving) return;
+      this._timeZoneSaving = true;
+      if (select) select.disabled = true;
       let saved;
       try {
         saved = await i18n.saveAccountTimeZone(value || null);
-      } catch (err) {
+      } catch {
         if (select) select.value = this.state.timeZone || '';
-        return paint(err.message || i18n.t('settings:timezone.saveFailed'), false);
+        return paint(i18n.t('settings:timezone.saveFailed'), false);
+      } finally {
+        this._timeZoneSaving = false;
+        if (select) select.disabled = false;
       }
       this.state.timeZone = saved;
       if (select) select.value = saved || '';
@@ -6076,7 +6114,7 @@
     // than the shared helper because a diagnostics line elides nothing and
     // this module cannot import (see _localAgentView).
     _widgetIconTime(ms) {
-      try { return new Date(ms).toLocaleString(); } catch (_) { return String(ms); }
+      try { return new Date(ms).toLocaleString(undefined, inZone()); } catch (_) { return String(ms); }
     },
 
     // One line per pinned entry: what the widget says it holds, and
@@ -7501,6 +7539,8 @@
       repaint(() => Settings._syncChrome());
       repaint(() => Settings._normalizeOpenRouterCopy());
       repaint(() => Settings._renderBody());
+      // #6479: the Time zone list's Auto option is written here, not by React.
+      repaint(() => Settings._labelTimeZoneAuto());
       repaint(() => { if (Settings._connectors.length) Settings._renderConnectors(); });
       repaint(() => Settings._renderConnectorProgress());
       repaint(() => { if (Settings._githubLink) Settings._renderGithubLink(); });

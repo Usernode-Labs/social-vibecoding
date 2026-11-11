@@ -286,7 +286,8 @@
     if (status === 'promoted' && held) {
       var until = integ && integ.heldUntil ? Date.parse(integ.heldUntil) : NaN;
       var soon = !Number.isFinite(until) || until <= Date.now();
-      var time = soon ? null : new Date(until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      var zone = typeof PlatformI18n !== 'undefined' && PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+      var time = soon ? null : new Date(until).toLocaleTimeString([], zone ? { timeZone: zone, hour: '2-digit', minute: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
       var title = held === 'github_busy'
         ? t(soon ? 'session:merge.title.githubBusySoon' : 'session:merge.title.githubBusy', { time: time })
         : held === 'github_checks'

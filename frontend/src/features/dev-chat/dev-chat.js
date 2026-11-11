@@ -12396,9 +12396,12 @@ const DevChat = {
       // rather than imported for the reason above.
       const builtAt = v.built_at ? new Date(v.built_at) : null;
       const built = builtAt && !Number.isNaN(builtAt.getTime())
-        ? builtAt.toLocaleString([], builtAt.getFullYear() === new Date().getFullYear()
-          ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
-          : { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        ? builtAt.toLocaleString([], {
+          // #6479: in the zone picked in Settings › Language, else the device's.
+          ...(window.PlatformI18n?.timeZone?.() ? { timeZone: window.PlatformI18n.timeZone() } : {}),
+          ...(builtAt.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }),
+          month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+        })
         : '';
       const isThisLatest = latest && v.version === latest.version;
       // The latest option carries the 'latest' value so re-selecting it

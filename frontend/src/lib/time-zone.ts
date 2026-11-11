@@ -52,6 +52,14 @@ export function getTimeZone(): string | undefined {
   return zone;
 }
 
+/**
+ * `options` with the picked zone added, for a formatter that writes an
+ * instant's time or day. Unchanged under Auto, so the device's zone stands.
+ */
+export function inZone<T extends Intl.DateTimeFormatOptions>(options: T): T {
+  return zone ? { ...options, timeZone: zone } : options;
+}
+
 /** For useSyncExternalStore: a string that changes when the zone does. */
 export function getTimeZoneSnapshot(): string {
   return zone || '';
@@ -107,22 +115,19 @@ declare const App: ShellApp | undefined;
 
 /**
  * Saves the signed-in person's zone (POST /api/me/timezone) and shows times
- * in it at once. Rejects with a message fit to show beside the control.
+ * in it at once. Rejects when it was not saved; the caller says so in its
+ * own words (settings:timezone.saveFailed), since nothing a person can act on
+ * differs between a lost connection and a refusal here.
  */
 export async function saveAccountTimeZone(value: string | null): Promise<string | null> {
-  let response: Response;
-  try {
-    response = await fetch('/api/me/timezone', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ timeZone: value || null }),
-    });
-  } catch (err) {
-    throw new Error(`Network error: ${(err as Error).message}`);
-  }
+  const response = await fetch('/api/me/timezone', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ timeZone: value || null }),
+  });
   const body = await response.json().catch(() => ({})) as { timeZone?: string | null; error?: string };
-  if (!response.ok) throw new Error(body.error || 'Failed to save.');
+  if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
   const saved = body.timeZone || null;
   if (typeof App !== 'undefined' && App?.user) App.user.timeZone = saved;
   setTimeZone(saved);

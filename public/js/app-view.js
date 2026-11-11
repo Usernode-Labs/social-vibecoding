@@ -8246,7 +8246,10 @@ const AppView = {
     }
     // A change has no fixed deadline, only these two clocks (statusPillState).
     if ((pill.key === 'merge_countdown' || pill.key === 'reject_countdown') && Number.isFinite(pill.countdown)) {
+      // In the zone picked in Settings › Language (#6479), else the device's.
+      const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
       const when = new Intl.DateTimeFormat(PlatformI18n.dateLocale(), {
+        ...(timeZone ? { timeZone } : {}),
         weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
       }).format(new Date(pill.countdown));
       facts.push({ key: 'ends', text: PlatformI18n.t('changes:page.votes.facts.ends', { when }) });
@@ -25608,7 +25611,8 @@ const AppView = {
     // detail differs.
     const heldUntil = p.integration && p.integration.heldUntil ? Date.parse(p.integration.heldUntil) : NaN;
     const heldSoon = !Number.isFinite(heldUntil) || heldUntil <= Date.now();
-    const heldTime = heldSoon ? null : new Date(heldUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const heldZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+    const heldTime = heldSoon ? null : new Date(heldUntil).toLocaleTimeString([], { ...(heldZone ? { timeZone: heldZone } : {}), hour: '2-digit', minute: '2-digit' });
     if (served.includes('github_busy')) {
       out.push({
         key: 'github_busy',

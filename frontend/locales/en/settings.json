@@ -28,7 +28,7 @@
     "description": "Heading of the Time zone section in Settings, under the Language section, where the person picks the time zone Homeroom shows times in."
   },
   "timezone.intro": {
-    "text": "The times Homeroom shows you, on every device you sign in on. Auto follows this device's clock.",
+    "text": "The time zone Homeroom uses for the times it shows you, on every device you sign in on. Auto follows this device's clock.",
     "description": "Explanation under the Time zone heading in Settings: the choice is saved to the account, and Auto uses the phone's or computer's own time zone."
   },
   "timezone.auto": {
@@ -36,12 +36,12 @@
     "description": "First option in the Time zone list in Settings: follow the phone's or computer's own time zone. {{zone}} is that zone's name, for example \"Europe / Paris\"."
   },
   "timezone.saved": {
-    "text": "✓ Saved. Times now show in {{zone}}.",
+    "text": "✓ Saved: {{zone}}",
     "description": "Status line under the Time zone list in Settings after the choice was saved. {{zone}} is the chosen zone's name, for example \"America / New York\", or the device's zone when Auto was chosen. Keep the check mark."
   },
   "timezone.saveFailed": {
-    "text": "Failed to save.",
-    "description": "Status line under the Time zone list in Settings when the choice could not be saved and the server gave no reason."
+    "text": "Could not save the time zone. Try again.",
+    "description": "Status line under the Time zone list in Settings when the choice could not be saved (no connection, or the server refused it)."
   },
   "connectors.title": {
     "text": "Connectors",

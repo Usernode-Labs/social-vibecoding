@@ -46,7 +46,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
-const { englishPlatformI18n } = require('./lib/platform-i18n');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -510,4 +510,24 @@ test('#6479: a zone this engine does not know falls back to the device, never th
   assert.equal(zone.getTimeZone(), undefined);
   assert.equal(zone.validTimeZone('asia/tokyo'), 'Asia/Tokyo');
   assert.equal(zone.timeZoneLabel('America/Los_Angeles'), 'America / Los Angeles');
+});
+
+test('#6479: the transcript\'s day separators group by the picked zone, as its stamps do', () => {
+  const zone = loadTsx('frontend/src/lib/time-zone.ts', { cache: false });
+  const { dayKey, dayLabel } = loadTsx('frontend/src/features/messages/index.tsx', { cache: false, stubs: { '../../lib/time-zone': zone } });
+  // 14:30 UTC and 15:30 UTC on 10 Nov: the 10th and the 11th in Tokyo.
+  const a = { createdAt: '2026-11-10T14:30:00Z' };
+  const b = { createdAt: '2026-11-10T15:30:00Z' };
+  const now = new Date('2026-11-11T03:00:00Z'); // the 11th in Tokyo, noon
+  try {
+    zone.setTimeZone('Asia/Tokyo');
+    assert.notEqual(dayKey(a), dayKey(b), 'two days in Tokyo, so two separators');
+    assert.equal(dayLabel(b, now), message('messages:thread.day.today'));
+    assert.equal(dayLabel(a, now), message('messages:thread.day.yesterday'));
+    zone.setTimeZone('Europe/London');
+    assert.equal(dayKey(a), dayKey(b), 'one day in London');
+    assert.equal(dayLabel(a, now), message('messages:thread.day.yesterday'));
+  } finally {
+    zone.setTimeZone(null);
+  }
 });
