@@ -42,6 +42,11 @@ test('without a display name the username is the title; no bio, no About; your o
   const html = render({ profile: { ...PROFILE, displayName: null, bio: null }, allowReport: false, allowMessage: false, friendship: null });
   assert.match(html, /<h1 class="fr-title">evan<\/h1><p class="fr-purpose">@evan<\/p>/, 'as the standard card says it: the name, then the handle');
   assert.doesNotMatch(html, /fr-acts|>About<|public-profile-report/);
+  // No bio: nothing for the verified accounts to stand beside, so they lead one column.
+  assert.match(html, /<div class="fr-cols fr-one"><div class="fr-stack"><section class="fr-sec"><div class="fr-sechead"><h2 class="fr-cap">Verified<\/h2>/);
+  const other = render({ profile: { ...PROFILE, bio: null } });
+  assert.match(other, /<div class="fr-cols fr-one">.*<h2 class="fr-cap">Verified<\/h2>.*<div id="public-profile-report">/s, 'someone else\'s: their accounts, then Report user, in the one column');
+  assert.match(render(), /<div class="fr-cols"><div class="fr-stack"><section class="fr-sec"><div class="fr-sechead"><h2 class="fr-cap">About<\/h2>/, 'with a bio the accounts stay beside it');
 });
 
 test('under the standard look, and in Edit profile\'s preview under any look, the card is as it was', () => {
