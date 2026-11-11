@@ -1479,3 +1479,30 @@ test('#3426: a request with a screenshot tells each bot turn to look at it, and 
   assert.match(BOT_SRC, /seed, live\.screenshotNote\(seed\)\.join\('\\n'\)\.trim\(\), triagePrompt\(\)/, 'and the triage');
   assert.ok(!live.buildPrompt({ seed: 'Issue #3', buildNote: 'x' }).includes('Download each one'));
 });
+
+test('#6407: a build from a posted plan is told whose plan, which version, and to say where it departed', () => {
+  const fromPlan = { sessionId: 44, version: 3, author: 'evan', variant: 'With date headings' };
+  const lines = live.fromPlanLines(fromPlan).join('\n');
+  assert.match(lines, /This SPEC is @evan's plan, version 3, posted on the request/);
+  assert.match(lines, /build only "With date headings"/);
+  assert.match(lines, /Where what you build departs from the plan, say where and why/);
+  assert.ok(live.buildPrompt({ seed: 'Issue #6351', buildNote: 'x', fromPlan }).includes('build only "With date headings"'));
+  assert.ok(!live.buildPrompt({ seed: 'Issue #1', buildNote: 'x' }).includes('This SPEC is'), 'nothing said without a plan');
+  assert.deepEqual(live.fromPlanLines(null), []);
+  assert.match(live.buildDescriptionLines(null, fromPlan).join('\n'), /opens by naming that plan/);
+  assert.ok(!live.buildDescriptionLines(null).join('\n').includes('opens by naming that plan'));
+});
+
+test('#6407: withPlanLine names the plan once, and leaves one that already does alone', () => {
+  const fromPlan = { sessionId: 44, version: 3, author: 'evan' };
+  assert.equal(
+    live.withPlanLine('History is one list per project.', fromPlan),
+    "Built from @evan's plan (version 3). History is one list per project.",
+  );
+  assert.equal(
+    live.withPlanLine("Built from @evan's plan, version 3. It follows the plan.", fromPlan),
+    "Built from @evan's plan, version 3. It follows the plan.",
+  );
+  assert.equal(live.withPlanLine('', fromPlan), '');
+  assert.equal(live.withPlanLine('Some words.', null), 'Some words.');
+});

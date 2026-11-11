@@ -947,12 +947,14 @@ function teeProgress(progress, onProgress) {
 // `platformStyles` says whose stylesheet its screens draw with. The markdown
 // wording below stays the spec for every other case.
 /** The plan as the spec reads it: for a first version, a first sketch, with what its creator approved apart. Pure. */
-function specPlanLines(buildNote, firstVersion = false) {
+function specPlanLines(buildNote, firstVersion = false, fromPlan = null) {
+  const variant = fromPlanLines(fromPlan).filter((line) => line.includes('more than one version'));
   if (!firstVersion) {
     return [
       'You are the Homeroom bot. Your triage of this request concluded it is ready to build, with this plan:',
       '',
       clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
+      ...variant,
     ];
   }
   const { sketch, approved } = splitApprovedPlan(buildNote);
@@ -961,6 +963,7 @@ function specPlanLines(buildNote, firstVersion = false) {
     'FIRST VERSION, and this is the triage\'s plan for it, a first sketch written before anyone looked closely:',
     '',
     clipSketch(sketch, 4000) || '(no plan recorded: work from the request itself)',
+    ...variant,
     ...(approved ? [
       '',
       'WHAT ITS CREATOR APPROVED, below, binds the spec as the request does: never contradict it.',
@@ -970,6 +973,26 @@ function specPlanLines(buildNote, firstVersion = false) {
       '',
       approved,
     ] : []),
+  ];
+}
+
+/**
+ * #6407 (6 Nov 2026): what a build is told of the plan a person posted on
+ * the request it is built from, when the triage read one as marked: whose
+ * plan and which version, which version of its after screen to build, and
+ * that it must say where it departed and why. Empty for no plan. Pure.
+ */
+function fromPlanLines(fromPlan) {
+  if (!fromPlan || !(Number(fromPlan.sessionId) > 0)) return [];
+  const whose = fromPlan.author ? `@${fromPlan.author}'s plan` : 'the plan posted on the request';
+  const version = Number(fromPlan.version) > 0 ? `, version ${Number(fromPlan.version)},` : '';
+  return [
+    '',
+    `This SPEC is ${whose}${version} posted on the request. Build to it.`,
+    ...(fromPlan.variant ? [
+      `Its after side draws more than one version: build only "${fromPlan.variant}"; the others are there to compare.`,
+    ] : []),
+    'Where what you build departs from the plan, say where and why.',
   ];
 }
 
@@ -1557,7 +1580,7 @@ function buildDescription({ text, spec = null }) {
  * Best-effort: a proposal that cannot be named or described still goes up,
  * under the fallback name. Resolves { title, description }; never throws.
  */
-async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = '', model = null, checkedFirst = false }) {
+async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = '', model = null, checkedFirst = false, fromPlan = null }) {
   const title = proposalTitle(spec);
   if (title) {
     try {
@@ -1580,6 +1603,9 @@ async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = 
   const credited = built.description && askedBy ? creditedDescription(built.description, askedBy) : built.description;
   // #4488: and a complicated change says its plan was checked with them.
   const description = credited && checkedFirst ? checkedDescription(credited, askedBy) : credited;
+  // #6407: a change built from a person's plan names that plan first, and
+  // says where it departed when the model left that out.
+  const proposalDescription = withPlanLine(description, fromPlan);
   if (ccOutput) {
     try {
       await pool.query(
@@ -1587,7 +1613,7 @@ async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = 
          VALUES ($1, 'system', $2, $3)`,
         [Number(sessionId), 'Homeroom bot finished building', JSON.stringify({
           ccOutput,
-          ...(description ? { proposalDescription: description } : {}),
+          ...(proposalDescription ? { proposalDescription } : {}),
           ccOutcome: 'success',
           agentBackend: 'codex_openrouter',
           agentModel: model || null,
@@ -1599,7 +1625,7 @@ async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = 
       });
     }
   }
-  return { title, description };
+  return { title, description: proposalDescription };
 }
 
 /**
@@ -2904,7 +2930,7 @@ function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null })
 // reads it. The language rule it ends with is the change's one wording rule
 // (localeRule): a description is for the group, so it reads English unless
 // a DM context is carrying the requester's locale.
-function buildDescriptionLines(locale = null) {
+function buildDescriptionLines(locale = null, fromPlan = null) {
   return [
     '',
     'After the summary the rules above ask for, end your final message with a description of the change for the',
@@ -2917,8 +2943,29 @@ function buildDescriptionLines(locale = null) {
     '',
     'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
     'test results: those belong in the summary above it. No em dashes: use a comma, a colon or a full stop.',
+    ...(fromPlan && Number(fromPlan.sessionId) > 0 ? [
+      '',
+      'This change is built from a plan a person posted. Its description opens by naming that plan, its version, and',
+      'the version of the plan\'s screen it built, then says either that it follows the plan as drawn, or where it',
+      'departs from the plan and why.',
+    ] : []),
     `${localeRule(locale)} Skip the block only if you changed nothing.`,
   ];
+}
+
+/**
+ * #6407: a description built from a person's plan always names that plan,
+ * even when the model left it out: "Built from @evan's plan (version 3)."
+ * goes first. A description that already names the plan is left alone. Pure.
+ */
+function withPlanLine(description, fromPlan) {
+  const text = String(description || '').trim();
+  if (!text || !fromPlan || !(Number(fromPlan.sessionId) > 0)) return description;
+  const first = text.split(/\n\s*\n/)[0] || text;
+  if (/\bplan\b/i.test(first)) return description;
+  const whose = fromPlan.author ? `@${fromPlan.author}'s plan` : 'the plan posted on the request';
+  const version = Number(fromPlan.version) > 0 ? ` (version ${Number(fromPlan.version)})` : '';
+  return `Built from ${whose}${version}. ${text}`;
 }
 
 // #4487: the bot's proposals get before/after shots on the exact builds, as
@@ -3626,6 +3673,9 @@ function buildPrompt({
   // Run five, item 8: the spec's screens, already written into the
   // repository (services/spec-screens-start.js startFromScreens), or null.
   startingScreens = null,
+  // #6407: the plan a person posted that this build is built from, and the
+  // version of its after screen the triage named, or null.
+  fromPlan = null,
 }) {
   const on = (t) => firstVersion && Array.isArray(tweaks) && tweaks.includes(t);
   const oneLook = reviewed && on('one_look');
@@ -3665,6 +3715,7 @@ function buildPrompt({
     '',
     planNoteText(buildNote, firstVersion),
     ...specBlock,
+    ...fromPlanLines(fromPlan),
     ...((on('starter_inline') || on('one_go')) && starterSnapshot ? starterLines(starterSnapshot, { claudeMdLoaded }) : []),
     ...(firstVersion ? firstVersionDesignLines(starter, { oneLook }) : []),
     ...(firstVersion ? startingScreensLines(startingScreens) : []),
@@ -3690,7 +3741,7 @@ function buildPrompt({
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
     ...(firstVersion ? [] : buildVisibleChangesLines(locale)),
-    ...buildDescriptionLines(locale),
+    ...buildDescriptionLines(locale, fromPlan),
   ].join('\n');
 }
 
@@ -4865,6 +4916,9 @@ async function buildAndPropose({
   // starts from that change's head (session-lifecycle.ensureSessionBranch)
   // and the request's page links them.
   fromSessionId = null,
+  // #6407: the plan a person posted that this build is built from (with the
+  // version of its after screen the triage named), or null.
+  fromPlan = null,
   // #6423: the change touching the same files this one is built on top of
   // (`{ sessionId, branch }`): its branch is this change's base, and it
   // waits for it the way a stacked import does.
@@ -5283,6 +5337,7 @@ async function buildAndPropose({
     tweaks: buildTweaks,
     starterSnapshot, claudeMdLoaded,
     startingScreens,
+    fromPlan,
   });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
@@ -5591,7 +5646,7 @@ async function buildAndPropose({
   await steps.once('prepared', async () => {
     await prepareProposal({
       pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
-      buildText: result.lastResultText, model, checkedFirst,
+      buildText: result.lastResultText, model, checkedFirst, fromPlan,
     });
     return true;
   });
@@ -6036,6 +6091,8 @@ module.exports = {
   startingScreensLines,
   buildVisibleChangesLines,
   buildDescriptionLines,
+  fromPlanLines,
+  withPlanLine,
   localeRule,
   clockLines,
   BUILD_SOFT_BUDGET_MS,
