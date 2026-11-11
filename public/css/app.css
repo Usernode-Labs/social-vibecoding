@@ -27305,7 +27305,7 @@ html[data-skin][data-standings-frame] #topochain-leaderboard-root > [data-standi
 html[data-skin][data-standings-frame] [data-standings-frame] > .fr-inner { padding-bottom: 0; }
 html[data-skin][data-standings-frame] [data-standings-frame] .fr-tabs { margin-bottom: 16px; }
 /* The room a kit page leaves under itself for the phone's tab bar belongs to the last root only. */
-html[data-skin][data-standings-frame] [data-standings-frame] > .fr-inner::after { display: none; }
+html[data-skin][data-standings-frame] .fr[data-standings-frame] > .fr-inner::after { display: none; }
 html[data-skin][data-standings-frame] [data-standings-cols] > .fr-inner { padding-top: 0; }
 html[data-skin][data-standings-frame] #tc-ev-hero { display: none; }
 /* The picker is a real <select> a declared check names: it wears the kit's
