@@ -74,6 +74,11 @@ test('every phrase an item can carry is in the core catalog', () => {
   assert.deepEqual(ws.phrasesOf({ stage: 'checking', line: { code: 'checks_failing', failing: 2 } }).line,
     { id: 'core:work.line.checksFailingCount', values: { count: 2 } });
   assert.equal(ws.stageSays({ stage: 'waiting_for_you', why: 'plan' }, { yours: false }), core['work.whyOthers.plan'].text);
+  // 11 Nov 2026 (one model): the browser words nothing itself; it draws the
+  // words the server sends with the standing.
+  const ts = fs.readFileSync(path.join(ROOT, 'frontend/src/lib/work-state.ts'), 'utf8');
+  assert.match(ts, /const said = words \? \(yours \? words\.stage : words\.stageOthers\) : null;/);
+  assert.doesNotMatch(ts, /github_checks|waitingToMerge/);
 });
 
 test('the ten stages, and nothing else, are what a request can be in', () => {

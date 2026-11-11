@@ -40,6 +40,7 @@ const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
 const { message } = require('./lib/platform-i18n');
+const { withWords } = require('./lib/work-words');
 
 const MODEL = 'frontend/src/features/ai/model.ts';
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
@@ -89,7 +90,8 @@ const thread = (threadId, number, what, extra = {}) => {
   return {
     threadId, number, kind: 'work', title: `T${threadId}`, app, change: null,
     href: `#app/garden/dev/issues/${number}`, group: 'waiting', at: null,
-    work: { why: null, reason: null, line: null, since: null, ...(WORK[what] || { stage: what }), ...(given || {}) },
+    // 11 Nov 2026: with the words the server sends with it (tests/lib/work-words.js).
+    work: withWords({ why: null, reason: null, line: null, since: null, ...(WORK[what] || { stage: what }), ...(given || {}) }),
     ...rest,
   };
 };
@@ -1926,7 +1928,10 @@ test('the page listens while it is shown: the socket through app.js, the bot\'s 
   // The page: each read it is asked for is the showing's read again, past
   // the worker's saved copy after the first, keeping the lists on a failure.
   const src = read('frontend/src/features/ai/index.tsx');
-  assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects, botId \}\);/);
+  // 11 Nov 2026: and a work_state push is drawn in place first (applyWorkState).
+  assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects, botId \}, applyPush\);/);
+  assert.match(src, /setWork\(\(now\) => applyWorkState\(now, null, push\)\.work\);\s+setNeeds\(\(now\) => applyWorkState\(null, now, push\)\.needs\);/);
+  assert.match(live, /if \(isWorkStatePush\(event\)\) latest\.current\.apply\?\.\(event\);/);
   assert.match(src, /const init = again \? FRESH : undefined;/);
   assert.match(src, /readJson<AiWork>\(`\/api\/ai\/work\$\{qs\}`, init\)/);
   // A failed read keeps what is drawn (offline test, 2 Nov 2026: and with

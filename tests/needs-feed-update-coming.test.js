@@ -209,8 +209,10 @@ test('#6282: the AI tab says an update on its way in the stage words, with what 
     threadId: 1, number: 12, kind: 'change', title: 'Bigger buttons', app, change: { id: 42, number: 12 },
     href: '#app/garden/dev/changes/12', group: 'next', work, at: null, ...extra,
   });
-  const revising = { stage: 'building', line: { code: 'revising' } };
-  const queued = { stage: 'up_for_vote', line: { code: 'update_queued' } };
+  // 11 Nov 2026: in the words the server sends with it (tests/lib/work-words.js).
+  const { withWords } = require('./lib/work-words');
+  const revising = withWords({ stage: 'building', line: { code: 'revising' } });
+  const queued = withWords({ stage: 'up_for_vote', line: { code: 'update_queued' } });
   assert.equal(words(nextWords(thread(revising, { ask: ASK }))), 'Garden · #12 · Building · Updating the change');
   assert.equal(words(nextWords(thread(queued))), 'Garden · #12 · Up for a vote · An update is on its way');
   assert.equal(words(threadWhy(thread(revising, { ask: ASK }))), `Asked: ${ASK}`, 'what was asked is its second line');

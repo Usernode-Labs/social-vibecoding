@@ -3626,7 +3626,9 @@ const App = {
             // the chat draw (React, features/messages/bot-work.tsx) are read
             // again under the viewer's own session; nothing here writes the
             // DOM. The Homeroom bot tab hears the same push (features/ai/live.ts).
-            window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed'));
+            // 11 Nov 2026: the event carries the push, whose standing a
+            // screen holding its item draws at once (lib/work-state.ts).
+            window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed', { detail: data }));
             break;
           case 'app_version_changed':
             // A new build of an app is live: its pills, its open change, and

@@ -112,9 +112,10 @@ import { AiDrawer, MainPane, usePhone } from './phone-drawer';
 import { closeDetail, detailLayout, openDetail, useDetail, THREE_COLUMNS } from './detail';
 import { DetailPane } from '../detail/detail-pane';
 import {
-  freshCount, heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
+  applyWorkState, freshCount, heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
   type AiApp, type AiThread, type AiWork, type NeedItem, type WorkRow,
 } from './model';
+import type { WorkStatePush } from '../../lib/work-state';
 
 // 1 Nov 2026: the column is docked from 768px, where a phone's drawer ends.
 const WIDE = '(min-width: 768px)';
@@ -602,7 +603,13 @@ export function AiScreen(): ReactNode {
     () => new Set(rankProjects(rows, progress, waiting, live).map((p) => p.app.slug)),
     [rows, progress, waiting, live],
   );
-  useLiveLists(() => setMoved((n) => n + 1), visible, { projects, botId });
+  // A work_state push is drawn at once where the lists hold its item
+  // (./model.ts applyWorkState); the read after it puts the row in its list.
+  const applyPush = useCallback((push: WorkStatePush) => {
+    setWork((now) => applyWorkState(now, null, push).work);
+    setNeeds((now) => applyWorkState(null, now, push).needs);
+  }, []);
+  useLiveLists(() => setMoved((n) => n + 1), visible, { projects, botId }, applyPush);
   // HISTORY (./history.ts): read on each showing, and again when the
   // projects picked or its kind change.
   const [showings, setShowings] = useState(0);

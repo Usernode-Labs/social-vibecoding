@@ -273,6 +273,10 @@ test('work state: an approved change GitHub holds is going live, with what it wa
     assert.equal(phrase.id, `core:${key}`);
     assert.equal(ws.english(phrase), core[key].text, `${key}: the server and the browser say the same`);
   }
+  // 11 Nov 2026 (one model): the browser draws the line the server words
+  // (lib/work-state.ts lineWords reads the standing's `words`).
+  const lines = read('frontend/src/lib/work-state.ts');
+  assert.match(lines, /return \(state\.words && state\.words\.line\) \|\| null;/);
 });
 
 test('work state: the bot\'s own change at its vote step reads the same', () => {
