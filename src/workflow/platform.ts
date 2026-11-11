@@ -1574,6 +1574,37 @@ export async function withdrawProposal(issue: { id: number; app_id: number; stat
   return failed(outcome) || { status: 200, body: { ok: true } };
 }
 
+// #6601: a waiting featured-illustration change was replaced in place. The
+// route has already committed the new pending bytes and cleared the old
+// votes; the machine writes the new record onto the issue row (it owns
+// payload) and re-evaluates the gate. A refusal here must not be thrown back
+// as if the replace failed: log it and leave the committed data as it is
+// (the same stance as a vote's event).
+export async function reviseProposal(
+  issue: { id: number; app_id: number; status: string }, user: { id: number; username: string },
+  record: { title: string; description: string; payload: Json },
+): Promise<Reply | null> {
+  const warn = (detail: Record<string, Json>) =>
+    (log ?? legacy('services/logger')).warn('workflow', 'Replacing the waiting illustration was not recorded', detail);
+  try {
+    const outcome = await appendFiled(issue, {
+      type: 'Revise', payload: {
+        userId: user.id, username: user.username,
+        title: record.title, description: record.description, payload: record.payload,
+      },
+    }, { requestKey: `revise:${issue.id}:${randomUUID()}`, source: { kind: 'route', name: 'revise' }, actor: `user:${user.id}` });
+    const refused = failed(outcome);
+    if (refused) {
+      warn({ issueId: issue.id, status: refused.status });
+      return null;
+    }
+    return { status: 200, body: { ok: true } };
+  } catch (err) {
+    warn({ issueId: issue.id, message: (err as Error).message });
+    return null;
+  }
+}
+
 export async function adminApplyProposal(
   issue: { id: number; app_id: number; kind: string; status: string }, user: { id: number; username: string }, requestKey?: string,
 ): Promise<Reply> {

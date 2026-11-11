@@ -128,7 +128,7 @@ test('the tools are offered to an external client only, a read as a read and the
 });
 
 test('get_featured_illustration shows the card\'s picture, framing and any pending change', async (t) => {
-  const c = connector(t, { respond: () => ({ body: { ...CURRENT, pending: { id: 900, href: '#app/patch-741877/dev/governance/900' } } }) });
+  const c = connector(t, { respond: () => ({ body: { ...CURRENT, pending: { id: 900, href: '#app/patch-741877/dev/governance/900', mine: false } } }) });
   const out = await c.handlers.get('get_featured_illustration')({ slug: 'patch-741877' });
   assert.equal(out.isError, undefined, JSON.stringify(out.structuredContent));
   assert.deepEqual(c.calls.map((x) => `${x.method} ${x.pathname}`), ['GET /api/apps/patch-741877/featured-illustration']);
@@ -136,7 +136,7 @@ test('get_featured_illustration shows the card\'s picture, framing and any pendi
   assert.deepEqual(s.illustration, {
     url: `${ORIGIN}/app-illustrations/${'d'.repeat(32)}`, darkUrl: null, zoom: 1.4, x: -10, y: 20, tint: 'mint', previewUrl: null,
   });
-  assert.deepEqual(s.pending, { id: 900, url: `${ORIGIN}/#app/patch-741877/dev/governance/900` });
+  assert.deepEqual(s.pending, { id: 900, url: `${ORIGIN}/#app/patch-741877/dev/governance/900`, mine: false });
   assert.match(s.nextStep, /already up for the group's vote/);
   assert.equal(z.object(c.specs.get('get_featured_illustration').outputSchema).safeParse(s).success, true);
   assert.equal((await c.handlers.get('get_featured_illustration')({ slug: '../admin' })).structuredContent.code, 'invalid_request');
@@ -158,6 +158,28 @@ test('a proposal sends both pictures as the editor\'s PUT does, keeps the card\'
   const used = c.queries.find((q) => q.sql.includes('DELETE FROM connector_uploads WHERE id = ANY'));
   assert.deepEqual(used.params, [[81, 82], 7]);
   assert.equal(z.object(c.specs.get('propose_featured_illustration').outputSchema).safeParse(out.structuredContent).success, true);
+});
+
+test('replacePending reads the waiting change, keeps its framing, and sends replace: true', async (t) => {
+  const proposed = { url: `/app-illustrations/${'e'.repeat(32)}`, darkUrl: `/app-illustrations/${'f'.repeat(32)}`,
+    zoom: 1.7, x: 8, y: -9, tint: 'mint', preview: { url: `/app-previews/${'a'.repeat(32)}`, type: 'video/mp4' } };
+  const c = connector(t, { respond: answers({
+    current: { illustration: CURRENT.illustration, pending: { id: 900, href: '#app/patch-741877/dev/governance/900', mine: true, proposed } },
+    put: { status: 200, body: { illustration: CURRENT.illustration, proposal: PROPOSED.proposal, replaced: true } },
+  }) });
+  const out = await c.handlers.get('propose_featured_illustration')({ slug: 'patch-741877', lightUploadId: 81, replacePending: true });
+  assert.equal(out.isError, undefined, JSON.stringify(out.structuredContent));
+  assert.deepEqual(c.calls.map((x) => `${x.method} ${x.pathname}`), [
+    'GET /api/apps/patch-741877/featured-illustration',
+    'PUT /api/apps/patch-741877/featured-illustration',
+  ]);
+  assert.deepEqual(c.calls[1].body, {
+    replace: true, light: LIGHT.toString('base64'), zoom: 1.7, x: 8, y: -9,
+  });
+  assert.equal(out.structuredContent.replaced, true);
+  assert.match(out.structuredContent.nextStep, /votes cast on the old one were cleared/);
+  const used = c.queries.find((q) => q.sql.includes('DELETE FROM connector_uploads WHERE id = ANY'));
+  assert.deepEqual(used.params, [[81], 7]);
 });
 
 test('framing and colour given are sent as given, a card with none starts centred, and null drops the dark picture', async (t) => {
@@ -205,11 +227,11 @@ test('the route\'s own refusals come back with their reason: not a manager, a ch
 
   const waiting = connector(t, { respond: answers({ put: { status: 409, body: {
     error: 'A change to this illustration is already waiting for its vote.',
-    pending: { id: 900, href: '#app/patch-741877/dev/governance/900' },
+    pending: { id: 900, href: '#app/patch-741877/dev/governance/900', mine: false },
   } } }) });
   const busy = await waiting.handlers.get('propose_featured_illustration')({ slug: 'patch-741877', lightUploadId: 81 });
   assert.equal(busy.structuredContent.code, 'conflict');
-  assert.deepEqual(busy.structuredContent.pending, { id: 900, url: `${ORIGIN}/#app/patch-741877/dev/governance/900` });
+  assert.deepEqual(busy.structuredContent.pending, { id: 900, url: `${ORIGIN}/#app/patch-741877/dev/governance/900`, mine: false });
   assert.ok(!waiting.queries.some((q) => q.sql.includes('DELETE FROM connector_uploads')), 'a refused proposal keeps the uploads');
 });
 
