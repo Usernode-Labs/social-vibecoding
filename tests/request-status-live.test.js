@@ -26,12 +26,16 @@ const SRC = fs.readFileSync(path.join(ROOT, 'public/js/app-view.js'), 'utf8');
 function makeAppView() {
   const fetches = [];
   const renders = [];
+  const resyncs = [];
   const listeners = {};
   const sandbox = {
     console,
     relTime: () => ({ text: 'just now', title: '' }),
-    App: { user: { id: 42, username: 'me' }, currentTab: 'homeroom-bot', currentSubTab: 'forum', switchTab: () => {} },
+    App: { user: { id: 42, username: 'me' }, currentApp: null, currentTab: 'homeroom-bot', currentSubTab: 'forum', switchTab: () => {} },
     Kudos: { renderButton: () => '', attach: () => {} },
+    UsernodeReact: {
+      liveReads: { resync: (reason, url) => { resyncs.push({ reason, url }); } },
+    },
     document: {
       getElementById: () => null, querySelector: () => null, querySelectorAll: () => ({ forEach: () => {} }),
       addEventListener: () => {}, createElement: () => ({ style: {}, classList: { add: () => {}, remove: () => {} } }),
@@ -69,7 +73,7 @@ function makeAppView() {
   AppView._govProposals = [];
   AppView.appData = { slug: 'demo', can_collaborate: true };
   AppView._renderTopicHead = (t) => renders.push(t);
-  return { AppView, sandbox, fetches, renders, listeners };
+  return { AppView, sandbox, fetches, renders, resyncs, listeners };
 }
 
 const baseIssue = (over) => ({
@@ -229,4 +233,132 @@ test('#6390: a burst of work events is one fetch, with one more queued behind it
   pending.shift()();
   await first;
   assert.equal(fetches.length, 2);
+});
+
+// #6595: the request open in the side panel (or the Homeroom bot tab's
+// column) re-reads itself when a live burst about its project arrives. On
+// that screen App.currentApp is null, so the dev refresh returns at once;
+// the burst's own project slug is what routes it.
+test('#6595: an issue update for a project that is not App.currentApp refreshes the open side-panel request', async () => {
+  const { AppView, sandbox, fetches, renders, resyncs } = makeAppView();
+  AppView.appData = { slug: 'other', can_collaborate: true };
+  sandbox.App.currentApp = null;
+  sandbox.App.currentTab = 'homeroom-bot';
+  const stale = baseIssue({ number: 6580 });
+  const fresh = baseIssue({
+    number: 6580,
+    in_progress: { count: 1, users: [], mine: false, claims: [] },
+  });
+  sandbox.answer = async () => ({ ok: true, json: async () => ({ issue: fresh }) });
+  AppView._devTopic = { kind: 'issue', id: 6580 };
+  AppView._devTopicInPanel = true;
+  AppView._ghIssues = [stale];
+  AppView._devDataSlug = 'other';
+
+  const shown = AppView.refreshShownTopic({
+    slugs: new Set(['other']), kinds: new Set(['issue']),
+    ids: new Set(), numbers: new Set(), unnamed: true, devRead: false,
+  });
+  assert.equal(shown, true, 'the burst reached what is shown');
+  await AppView._requestRowRefresh.done;
+  assert.deepEqual(fetches.map((f) => f.url), ['/api/apps/other/github-issues/6580'], 'the panel read its own row');
+  assert.deepEqual(resyncs, [{ reason: 'thread', url: '/api/apps/other/threads/6580' }],
+    'and the thread that draws the vote card');
+  assert.equal(renders.length, 1, 'the head repaints from the fresh row');
+});
+
+test('#6595: an update that did not move the request repaints nothing', async () => {
+  const { AppView, sandbox, fetches, renders, resyncs } = makeAppView();
+  AppView.appData = { slug: 'other', can_collaborate: true };
+  sandbox.App.currentApp = null;
+  const row = baseIssue({ number: 6580 });
+  sandbox.answer = async () => ({ ok: true, json: async () => ({ issue: plain(row) }) });
+  AppView._devTopic = { kind: 'issue', id: 6580 };
+  AppView._devTopicInPanel = true;
+  AppView._ghIssues = [row];
+  AppView._devDataSlug = 'other';
+
+  AppView.refreshShownTopic({
+    slugs: new Set(['other']), kinds: new Set(['issue']),
+    ids: new Set(), numbers: new Set(), unnamed: true, devRead: false,
+  });
+  await AppView._requestRowRefresh.done;
+  assert.equal(fetches.length, 1, 'one GET');
+  assert.equal(renders.length, 0, 'the equal row is not painted again');
+  assert.deepEqual(resyncs, [{ reason: 'thread', url: '/api/apps/other/threads/6580' }],
+    'the thread still re-reads: a vote card is not in the row');
+});
+
+test('#6595: a burst about another project, or naming another request, reads nothing', async () => {
+  const { AppView, sandbox, fetches, resyncs } = makeAppView();
+  AppView.appData = { slug: 'other', can_collaborate: true };
+  sandbox.App.currentApp = null;
+  AppView._devTopic = { kind: 'issue', id: 6580 };
+  AppView._devTopicInPanel = true;
+
+  assert.equal(AppView.refreshShownTopic({
+    slugs: new Set(['elsewhere']), kinds: new Set(['issue']),
+    ids: new Set(), numbers: new Set(), unnamed: true, devRead: false,
+  }), false, 'another project is not what is shown');
+  assert.equal(AppView.refreshShownTopic({
+    slugs: new Set(['other']), kinds: new Set(['issue']),
+    ids: new Set(), numbers: new Set([12]), unnamed: false, devRead: false,
+  }), false, 'a named, different request is skipped');
+  // Nothing is open, so the same burst still reads nothing.
+  AppView._devTopic = null;
+  assert.equal(AppView.refreshShownTopic({
+    slugs: new Set(['other']), kinds: new Set(['issue']),
+    ids: new Set(), numbers: new Set(), unnamed: true, devRead: false,
+  }), false);
+  assert.deepEqual(fetches, []);
+  assert.deepEqual(resyncs, []);
+});
+
+test('#6595: a change open in the panel tells its page and re-reads its thread', () => {
+  const { AppView, sandbox, resyncs } = makeAppView();
+  AppView.appData = { slug: 'other', can_collaborate: true };
+  sandbox.App.currentApp = null;
+  AppView._devTopic = { kind: 'proposal', id: 9 };
+  AppView._devTopicInPanel = true;
+  const told = [];
+  AppView._tellChangePage = (detail) => told.push(detail);
+
+  const shown = AppView.refreshShownTopic({
+    slugs: new Set(['other']), kinds: new Set(['vote']),
+    ids: new Set(), numbers: new Set(), unnamed: true, devRead: false,
+  });
+  assert.equal(shown, true);
+  assert.deepEqual(told, [9], 'the flush named no change, so its page is told here');
+  assert.deepEqual(resyncs, [{ reason: 'thread', url: '/api/apps/other/threads/change/9' }]);
+
+  // When the burst named it, the flush has already told its page.
+  told.length = 0;
+  AppView.refreshShownTopic({
+    slugs: new Set(['other']), kinds: new Set(['vote']),
+    ids: new Set([9]), numbers: new Set(), unnamed: false, devRead: false,
+  });
+  assert.deepEqual(told, [], 'told once, not twice');
+  assert.deepEqual(resyncs, [
+    { reason: 'thread', url: '/api/apps/other/threads/change/9' },
+    { reason: 'thread', url: '/api/apps/other/threads/change/9' },
+  ]);
+});
+
+test('#6595: the topic sub-view leaves the row to the dev refresh it already made', async () => {
+  const { AppView, sandbox, fetches, resyncs } = makeAppView();
+  AppView.appData = { slug: 'other', can_collaborate: true };
+  sandbox.App.currentApp = 'other';
+  sandbox.App.currentTab = 'dev';
+  sandbox.App.currentSubTab = 'topic';
+  AppView._devTopic = { kind: 'issue', id: 6580 };
+  AppView._devTopicInPanel = false;
+
+  AppView.refreshShownTopic({
+    slugs: new Set(['other']), kinds: new Set(['issue']),
+    ids: new Set(), numbers: new Set(), unnamed: true, devRead: true,
+  });
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(fetches, [], 'refreshDevData already re-read the row');
+  assert.deepEqual(resyncs, [{ reason: 'thread', url: '/api/apps/other/threads/6580' }],
+    'but the thread read is still this entry\'s');
 });

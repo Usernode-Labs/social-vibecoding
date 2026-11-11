@@ -138,14 +138,18 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const work = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
   // 5 Nov 2026: each row says its stored work state's stage (services/work-state.js).
   const titles = (list) => list.map((r) => `${r.title}:${r.work.stage}`);
-  assert.deepEqual(titles(work.next), ['Digest:going_live', 'Calendar:building'], 'hers only, being worked on, soonest first');
+  assert.deepEqual(titles(work.next), ['Filters:going_live', 'Digest:going_live', 'Calendar:building'],
+    'hers, being worked on, soonest first');
   assert.equal(work.next.find((r) => r.title === 'Calendar').by, 'bot', 'Homeroom bot is building it');
   assert.ok(!work.next.some((r) => r.title === 'Print view'), 'a posted plan is not a change being built');
-  // Up next: hers waiting on other people's votes first, then the requests nobody has picked up.
-  assert.equal(titles(work.waiting)[0], 'Filters:up_for_vote');
-  assert.equal(work.waiting[0].myVote, 'yes');
-  assert.equal(titles(work.waiting)[1], 'Check pending:checking', 'its checks have not passed: it says checks, not votes');
-  assert.deepEqual(titles(work.waiting).slice(2).sort(), ['Print view:reading', 'Tags:reading'].sort());
+  // Waiting: a change still waiting on its checks first, then the requests
+  // nobody has picked up.
+  // #6594: Filters has the yes its rule needs, so it is going live (In
+  // progress), not waiting to be voted on; Check pending is approved too and
+  // its line says what it waits on.
+  assert.equal(titles(work.waiting)[0], 'Check pending:checking', 'its checks have not passed: it says checks, not votes');
+  assert.deepEqual(work.waiting[0].work.line, { code: 'approved_checking' }, 'approved, and waiting on its own checks');
+  assert.deepEqual(titles(work.waiting).slice(1).sort(), ['Print view:reading', 'Tags:reading'].sort());
   assert.deepEqual(work.waiting.find((r) => r.title === 'Tags').work.line, { code: 'waiting' }, 'nobody has started on it');
   assert.deepEqual(work.needs, [], 'no plan of the bot\'s waits for her');
   assert.deepEqual(titles(work.live), ['Badges:live']);
@@ -168,7 +172,8 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const onGitHost = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
   assert.equal(onGitHost.next[0].app.changesOnGithub, false, 'Homeroom\'s git host');
   await pool.query(`UPDATE apps SET repo_url = NULL WHERE id = $1`, [app.id]);
-  assert.equal(work.next[0].href, '#app/aw-seeds/dev/issues/6', 'a request\'s thread opens on its page');
+  assert.equal(work.next.find((r) => r.title === 'Digest').href, '#app/aw-seeds/dev/issues/6',
+    'a request\'s thread opens on its page');
 
   // 30 Oct 2026: a decision up for the group's vote has nothing to build. Hers
   // waits for votes; one she voted on and follows says how she voted; one
@@ -290,7 +295,9 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.ok(page.needsYou.some((r) => r.number === 2 && r.says === 'waits for their vote'), 'Bob\'s change, by her request\'s number');
   assert.ok(page.needsYou.some((r) => r.title === 'Rename to Seed Shop' && r.says === 'waits for their vote'), 'and the decision she owes');
   assert.ok(page.inProgress.some((r) => r.title === 'Sound toggle' && r.says === 'Building · aw_bob is building it'));
-  assert.ok(page.waiting.some((r) => r.title === 'Filters' && r.says === 'Up for a vote; they voted Yes'));
+  // #6594: Filters has the yes its rule needs, so the bot's answer puts it
+  // in progress, going live, not among the votes she is waiting on.
+  assert.ok(page.inProgress.some((r) => r.title === 'Filters' && r.says === 'Going live'));
   assert.deepEqual(page.liveThisWeek.map((r) => r.title), ['Badges']);
   assert.equal(page.counts.inProgress, page.inProgress.length);
 
@@ -443,7 +450,9 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const mergedRow = [...withGathered.next, ...withGathered.waiting].find((r) => r.threadId === Number(held.thread_id));
   assert.equal(mergedRow.requests, 2, 'one row for the thread, with its count');
   assert.equal(mergedRow.title, 'Water at dawn', 'called by its change');
-  assert.equal(withGathered.waiting.filter((r) => Number(r.threadId) === Number(held.thread_id)).length, 1, 'not one row per request');
+  // #6594: its yes is the one it needs, so it is going live (in progress)
+  // rather than waiting; either way it is one row for the thread.
+  assert.equal([...withGathered.next, ...withGathered.waiting].filter((r) => Number(r.threadId) === Number(held.thread_id)).length, 1, 'not one row per request');
 
   // The route: signed in only.
   const httpApp = express();

@@ -440,11 +440,11 @@ function shell(t, { offline = false, builds = {}, stored = {}, frame = null } = 
 
 const CHORES = { slug: 'chores', url: 'https://chores.apps.example', offline_cache: true };
 
-test('an offline app is framed at one address: token and theme after #', (t) => {
-  shell(t, { builds: { chores: 'b1' }, stored: { chores: { at: Date.now(), build: 'b1' } } });
+test('an offline app is framed at one address per build: token and theme after #', (t) => {
+  shell(t, { builds: { chores: 'b1' }, stored: { chores: { at: Date.now(), build: 'b1', addressed: true } } });
   AppView.appData = CHORES;
   const src = new URL(AppView.buildAppIframeSrc());
-  assert.equal(src.search, '', 'nothing in the query: the browser keeps the page under the bare address');
+  assert.equal(src.search, '?un-build=b1', 'only the build in the query: the browser keeps each build\'s page apart');
   const own = new URLSearchParams(src.hash.slice(1));
   assert.equal(own.get('un-token'), 'tok');
   assert.equal(own.get('un-theme'), 'light');
@@ -457,9 +457,11 @@ test('an offline app is framed at one address: token and theme after #', (t) => 
 });
 
 test('a new build, or none kept yet, asks the bridge to refresh; offline never does', (t) => {
-  const s = shell(t, { builds: { chores: 'b2' }, stored: { chores: { at: Date.now(), build: 'b1' } } });
+  const s = shell(t, { builds: { chores: 'b2' }, stored: { chores: { at: Date.now(), build: 'b1', addressed: true } } });
   AppView.appData = CHORES;
-  assert.equal(new URLSearchParams(new URL(AppView.buildAppIframeSrc()).hash.slice(1)).get('un-refresh'), '1');
+  const next = new URL(AppView.buildAppIframeSrc());
+  assert.equal(next.searchParams.get('un-build'), 'b2', 'the new build is a new address, with no copy kept');
+  assert.equal(new URLSearchParams(next.hash.slice(1)).get('un-refresh'), '1', 'and its files are fetched again');
   localStorage.removeItem('usernode:offline-cache');
   assert.equal(new URLSearchParams(new URL(AppView.buildAppIframeSrc()).hash.slice(1)).get('un-refresh'), '1');
   global.Offline.isOffline = () => true;
@@ -476,8 +478,42 @@ test('a deep link that is an app\'s own # route keeps today\'s address', (t) => 
   assert.equal(src.hash, '#/week/3');
 });
 
+test('a copy kept at the bare address, before addresses named a build, is refreshed once', (t) => {
+  // The bug this guards: a page kept fresh for 30 days at `/` survived every
+  // merge after it, because the shell had recorded the live build against it.
+  const s = shell(t, { builds: { chores: 'b2' }, stored: { chores: { at: Date.now(), build: 'b2' } } });
+  AppView.appData = CHORES;
+  const src = new URL(AppView.buildAppIframeSrc());
+  assert.equal(src.searchParams.get('un-build'), 'b2');
+  assert.equal(new URLSearchParams(src.hash.slice(1)).get('un-refresh'), '1');
+  s.storage.setItem('usernode:offline-cache', JSON.stringify({ chores: { at: Date.now(), build: 'b2', addressed: true } }));
+  assert.equal(new URLSearchParams(new URL(AppView.buildAppIframeSrc()).hash.slice(1)).get('un-refresh'), null,
+    'once recorded at its own address, it is not refreshed again');
+});
+
+test('a long build id is shortened in the address, and an odd one is left out', (t) => {
+  shell(t, { builds: { chores: '3eb26f6a0b1c2d3e4f5061728394a5b6c7d8e9f0', odd: 'a b' } });
+  AppView.appData = CHORES;
+  assert.equal(new URL(AppView.buildAppIframeSrc()).searchParams.get('un-build'), '3eb26f6a0b1c');
+  AppView.appData = { ...CHORES, slug: 'odd' };
+  assert.equal(new URL(AppView.buildAppIframeSrc()).searchParams.get('un-build'), null);
+});
+
+test('reloading the frame in place opens the live build, not the one it was opened on', (t) => {
+  shell(t, { builds: { chores: 'b2' }, stored: { chores: { at: Date.now(), build: 'b1', addressed: true } } });
+  const live = new URL(AppView._offlineCacheLiveSrc('https://chores.apps.example/?un-build=b1#un-token=tok&un-theme=light', 'chores'));
+  assert.equal(live.searchParams.get('un-build'), 'b2');
+  const own = new URLSearchParams(live.hash.slice(1));
+  assert.equal(own.get('un-token'), 'tok');
+  assert.equal(own.get('un-refresh'), '1');
+  const plain = 'https://chores.apps.example/?token=tok&un-theme=light';
+  assert.equal(AppView._offlineCacheLiveSrc(plain, 'chores'), plain, 'any other address is left alone');
+  assert.match(read('public/js/app-view.js'), /const src = el && el\.src \? AppView\._offlineCacheLiveSrc\(el\.src, slug\) : '';/,
+    'reloadAppFrame goes through it');
+});
+
 test('the shell records the build only from a fresh open of its own frame, online', (t) => {
-  const frame = { contentWindow: {} };
+  const frame = { contentWindow: {}, src: 'https://chores.apps.example/?un-build=b2#un-token=tok&un-theme=light' };
   const s = shell(t, { builds: { chores: 'b2' }, frame });
   AppView.appData = CHORES;
   AppView.handleOfflineCacheMessage({ data: { __usernode_offline_cache: 'open', fresh: false }, source: frame.contentWindow });
@@ -486,7 +522,19 @@ test('the shell records the build only from a fresh open of its own frame, onlin
   assert.deepEqual(s.stored(), {}, 'another window');
   AppView.handleOfflineCacheMessage({ data: { __usernode_offline_cache: 'open', fresh: true }, source: frame.contentWindow });
   assert.equal(s.stored().chores.build, 'b2');
+  assert.equal(s.stored().chores.addressed, true, 'kept at that build\'s own address');
   assert.equal(AppView.offlineCacheOpenable(CHORES), true, 'so it opens offline from now on');
+});
+
+test('a frame opened at another build\'s address is never recorded as the live build', (t) => {
+  const frame = { contentWindow: {}, src: 'https://chores.apps.example/?un-build=b1#un-token=tok&un-theme=light' };
+  const s = shell(t, { builds: { chores: 'b2' }, frame });
+  AppView.appData = CHORES;
+  AppView.handleOfflineCacheMessage({ data: { __usernode_offline_cache: 'open', fresh: true }, source: frame.contentWindow });
+  assert.deepEqual(s.stored(), {}, 'b1\'s page, opened before b2 landed');
+  frame.src = 'https://chores.apps.example/#un-token=tok&un-theme=light';
+  AppView.handleOfflineCacheMessage({ data: { __usernode_offline_cache: 'open', fresh: true }, source: frame.contentWindow });
+  assert.deepEqual(s.stored(), {}, 'nor a bare address, which names no build');
 });
 
 test('offline, only an app opened at its cacheable address on this device opens', (t) => {
@@ -496,10 +544,15 @@ test('offline, only an app opened at its cacheable address on this device opens'
   assert.equal(AppView.offlineCacheOpenable({ ...CHORES, offline_cache: false }), false);
   AppView.appData = CHORES;
   AppView.tokenForSlug = () => null; // nothing can be minted offline
-  const own = new URLSearchParams(new URL(AppView.buildAppIframeSrc()).hash.slice(1));
+  const bare = new URL(AppView.buildAppIframeSrc());
+  assert.equal(bare.searchParams.get('un-build'), null, 'a copy kept before addresses named a build: the bare address');
+  const own = new URLSearchParams(bare.hash.slice(1));
   assert.equal(own.get('un-token'), null);
   assert.equal(own.get('un-theme'), 'light', 'the same address as online, less the token');
   assert.equal(own.get('un-refresh'), null);
+  localStorage.setItem('usernode:offline-cache', JSON.stringify({ chores: { at: Date.now(), build: 'b1', addressed: true } }));
+  AppView.buildFor = () => 'b2'; // a newer build is live, but this device has no copy of it
+  assert.equal(new URL(AppView.buildAppIframeSrc()).searchParams.get('un-build'), 'b1', 'offline: the build this device kept');
 });
 
 test('a page that never says it opened falls back: the old address online, the placeholder offline', async (t) => {
@@ -539,15 +592,19 @@ test('sign-out forgets it with the offline-ready map', (t) => {
   assert.equal(s.storage.getItem('usernode:offline-cache'), null);
 });
 
-test('sameFrameSrc ignores the theme and the refresh flag after #, in both copies, and nothing else', async () => {
+test('sameFrameSrc ignores the theme, the refresh flag and an offline address\'s build, in both copies, and nothing else', async () => {
   const policy = await import(
     new URL('../frontend/src/features/app-frame/app-frame-policy.js', `file://${__filename}`).href
   );
   assert.equal(policy.FRAME_REFRESH_PARAM, AppView.REFRESH_PARAM, 'one parameter name');
+  assert.equal(policy.FRAME_BUILD_PARAM, AppView.BUILD_PARAM, 'and one for the build');
   const table = [
     ['https://a.example/#un-token=t&un-theme=dark', 'https://a.example/#un-token=t&un-theme=light', true],
     ['https://a.example/#un-token=t&un-theme=dark&un-refresh=1', 'https://a.example/#un-token=t&un-theme=dark', true],
     ['https://a.example/#un-token=t&un-theme=dark', 'https://a.example/#un-token=u&un-theme=dark', false],
+    ['https://a.example/?un-build=b1#un-token=t', 'https://a.example/?un-build=b2#un-token=t', true],
+    ['https://a.example/?un-build=b1&view=x#un-token=t', 'https://a.example/?un-build=b1&view=y#un-token=t', false],
+    ['https://a.example/?un-build=b1', 'https://a.example/?un-build=b2', false],
     ['https://a.example/#un-token=t', 'https://a.example/?token=t', false],
     ['https://a.example/x#/route', 'https://a.example/x#/other', false],
   ];

@@ -5091,18 +5091,6 @@
     "text": "Reload",
     "description": "The AI tab's main view: the word at the right end of a Live this week row that the page open in this tab is too old to show, and the button under that list which reloads the page onto the running version."
   },
-  "ai.short.bot": {
-    "text": "Homeroom bot",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: who is building it, Homeroom bot."
-  },
-  "ai.short.you": {
-    "text": "You",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: who is building it, the person themselves."
-  },
-  "ai.short.claimed": {
-    "text": "{{username}}",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: who claimed it and is building it, by username."
-  },
   "ai.short.private": {
     "text": "Only you",
     "description": "Homeroom bot tab: the word on the right of a private thread's row (only the person can see it), and the heading, beside a lock, over private ideas that are in no project yet."
@@ -5833,11 +5821,11 @@
   },
   "ai.why.botBuilding": {
     "text": "Homeroom bot is building it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line: Homeroom bot, the platform's builder bot (a name), is making the change."
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line, and the last part of an In progress or Waiting row's whole line (its tooltip and screen-reader text): Homeroom bot, the platform's builder bot (a name), is making the change."
   },
   "ai.why.youBuilding": {
     "text": "You're building it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line: the person is making the change themselves."
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line, and the last part of an In progress or Waiting row's whole line (its tooltip and screen-reader text): the person is making the change themselves."
   },
   "welcome.title": {
     "text": "Welcome back",

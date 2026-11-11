@@ -3055,6 +3055,10 @@
     "text": "Up for a vote",
     "description": "Where a change, a vote to close or a decision in the list stands: people are voting on it now."
   },
+  "topic.thread.state.approved": {
+    "text": "Approved",
+    "description": "Where a change in the list stands: it has the votes its project's rule needs, and it waits for its checks to pass before it goes live."
+  },
   "topic.thread.state.live": {
     "text": "Live",
     "description": "Where a change in the list stands: it was voted in and is running in production now."
@@ -6390,6 +6394,10 @@
   "topic.thread.pill.vote": {
     "text": "Up for a vote",
     "description": "Status pill beside a request's number in its page's header: a change built for it is up for a vote."
+  },
+  "topic.thread.pill.approved": {
+    "text": "Approved",
+    "description": "Status pill beside a request's number in its page's header: the change built for it has the votes its project's rule needs, and it waits for its checks before it goes live."
   },
   "topic.thread.pill.close": {
     "text": "Vote to close",

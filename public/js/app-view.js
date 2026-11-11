@@ -1864,13 +1864,21 @@ const AppView = {
   // open offline there (docs/plans/project-apps-offline.md).
   //
   // Three things make it work, all here and in the bridge:
-  //   * ONE address per app, whatever the token: buildAppIframeSrc puts the
-  //     token and the theme after `#`, and the bridge moves them into the
-  //     query before the app's code runs.
+  //   * ONE address per app and build, whatever the token: buildAppIframeSrc
+  //     puts the token and the theme after `#`, and the bridge moves them
+  //     into the query before the app's code runs. The build goes in the
+  //     query (`un-build`), so each build's page is its own cached copy. A
+  //     page kept fresh for 30 days at one bare address outlived every merge
+  //     after it: the bridge's refetch below never replaced the copy the
+  //     frame itself navigates to (Chrome keeps a frame's document apart from
+  //     a fetch of the same address), and Homeroom showed an app's old
+  //     version while its own domain showed the new one. Offline, the address
+  //     is the build this device kept (_offlineCacheAddressBuild).
   //   * A copy that keeps up: when the app's build differs from the one this
   //     device last opened, the address carries `un-refresh`, and the bridge
   //     downloads the app's files and page again, past the cache, and
-  //     reloads. Online only.
+  //     reloads. Online only. The files keep one address across builds, so
+  //     this is still what brings them up to date.
   //   * A way back: the frame must say it opened (the bridge's
   //     `__usernode_offline_cache: 'open'`). Online, a page that never says so
   //     (one that needs the token to load, or loads no bridge) is framed the
@@ -1935,13 +1943,51 @@ const AppView = {
   },
 
   // The copy this device keeps is of another build than the one live now
-  // (or of none it knows), so the bridge refreshes it. Never offline.
+  // (or of none it knows), so the bridge refreshes it. Never offline. A copy
+  // recorded before the address named its build (no `addressed`) is
+  // refreshed once too: its files may be as old as its page was.
   _offlineCacheNeedsRefresh(slug) {
     if (window.Offline && Offline.isOffline()) return false;
     const build = AppView.buildFor(slug);
     if (!build) return false;
     const entry = AppView._offlineCacheEntry(slug);
-    return !entry || entry.build !== build;
+    return !entry || entry.build !== build || !entry.addressed;
+  },
+
+  // A build as it goes in the address: short, and only characters a query
+  // value carries as they are. '' for none.
+  _addressBuild(sha) {
+    const s = String(sha || '').trim();
+    return /^[A-Za-z0-9._-]{1,64}$/.test(s) ? s.slice(0, 12) : '';
+  },
+
+  // The build whose address the frame opens (`un-build`). Online, the live
+  // one. Offline, the one this device kept, since that is the address its
+  // page is cached under; a copy kept before addresses named a build was
+  // kept at the bare address, so that one opens with none ('').
+  _offlineCacheAddressBuild(slug) {
+    const entry = AppView._offlineCacheEntry(slug);
+    if (window.Offline && Offline.isOffline() && entry && entry.build) {
+      return entry.addressed ? AppView._addressBuild(entry.build) : '';
+    }
+    return AppView._addressBuild(AppView.buildFor(slug));
+  },
+
+  // `src` at the address of the build live now, for a frame reloaded in
+  // place (reloadAppFrame): re-applying its own src would open the build it
+  // was opened on. Anything but an offline app's address is returned as is.
+  _offlineCacheLiveSrc(src, slug) {
+    let url;
+    try { url = new URL(src); } catch { return src; }
+    if (!url.hash.startsWith('#un-') || !url.searchParams.has(AppView.BUILD_PARAM)) return src;
+    const build = AppView._offlineCacheAddressBuild(slug);
+    if (!build) return src;
+    url.searchParams.set(AppView.BUILD_PARAM, build);
+    const own = new URLSearchParams(url.hash.slice(1));
+    if (AppView._offlineCacheNeedsRefresh(slug)) own.set(AppView.REFRESH_PARAM, '1');
+    else own.delete(AppView.REFRESH_PARAM);
+    url.hash = own.toString();
+    return url.toString();
   },
 
   _offlineCacheWatch: null,
@@ -2019,11 +2065,17 @@ const AppView = {
     if (watch && watch.slug === slug) watch.opened = true;
     if (data.fresh !== true) return;
     if (window.Offline && Offline.isOffline()) return;
-    // Online: the copy the browser now keeps is of the build live now.
+    // Online: the copy the browser now keeps is of the build live now, but
+    // only when the frame was opened at that build's own address. A frame
+    // opened before the build changed holds the page of the build before;
+    // recording the new build against it would mean never refreshing it.
     const build = AppView.buildFor(slug);
     if (!build) return;
+    let opened = '';
+    try { opened = new URL(appIframe.src).searchParams.get(AppView.BUILD_PARAM) || ''; } catch { opened = ''; }
+    if (!opened || opened !== AppView._addressBuild(build)) return;
     const map = AppView._readOfflineCache();
-    map[slug] = { at: Date.now(), build };
+    map[slug] = { at: Date.now(), build, addressed: true };
     AppView._writeOfflineCache(map);
   },
 
@@ -2079,7 +2131,10 @@ const AppView = {
       // so the page the browser kept is the page asked for, online or not.
       // The token and the theme go after `#`, which is never sent and is not
       // part of the cache key; the bridge moves them into the query before
-      // the app's own code reads them.
+      // the app's own code reads them. The build goes in the query, so a
+      // new build is an address the browser has no copy of yet.
+      const build = AppView._offlineCacheAddressBuild(slug);
+      if (build) url.searchParams.set(AppView.BUILD_PARAM, build);
       const own = new URLSearchParams();
       if (token) own.set('un-token', token);
       own.set(AppView.THEME_PARAM, AppView.resolvedTheme());
@@ -2627,12 +2682,14 @@ const AppView = {
     const frame = AppView._appFrame();
     if (!frame || !frame.hasFrame()) return false;
     const el = frame.frame();
-    const src = el && el.src;
+    const slug = typeof frame.slug === 'function' ? frame.slug() : '';
+    // An offline app's address names its build: reload onto the live one's.
+    const src = el && el.src ? AppView._offlineCacheLiveSrc(el.src, slug) : '';
     if (!src) return false;
     const granted = typeof AppView._grantedNow === 'function' ? AppView._grantedNow() : [];
     // The build it reloads onto, so the frame is not taken for the old one
     // when it is next left and resumed (see buildFor).
-    const build = AppView.buildFor(typeof frame.slug === 'function' ? frame.slug() : '');
+    const build = AppView.buildFor(slug);
     frame.setOnLoad(() => {
       frame.setOnLoad(null);
       setTimeout(() => { frame.setSrc(src, { granted, build }); }, AppView.APP_RELOAD_SETTLE_MS);
@@ -7013,7 +7070,7 @@ const AppView = {
     const mergedIds = AppView.HERO_MERGED_IDS[settled];
     const status = underway
       ? (item.shared_at ? PlatformI18n.t('changes:page.hero.status.visibleToGroup') : PlatformI18n.t('changes:page.hero.status.notShared'))
-      : item.status === 'promoted' ? AppView._waitingWords(item)
+      : item.status === 'promoted' ? AppView._promotedWords(item)
         : item.status === 'merging' ? PlatformI18n.t('changes:page.hero.status.merging')
           : item.status === 'merged' ? (included
             ? (included.number
@@ -7586,7 +7643,7 @@ const AppView = {
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
     body.workspace = mine && item.source !== 'imported' ? item.id : null;
     body.discussion = underway && !item.shared_at ? PlatformI18n.t('changes:page.discussion.shareFirst') : null;
-    card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? PlatformI18n.t('changes:card.meta.visibleToGroup') : PlatformI18n.t('changes:card.meta.notShared')) : (item.status === 'promoted' ? AppView._waitingWords(item) : item.status) }];
+    card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? PlatformI18n.t('changes:card.meta.visibleToGroup') : PlatformI18n.t('changes:card.meta.notShared')) : (item.status === 'promoted' ? AppView._promotedWords(item) : item.status) }];
     // The Preview pill on the card says whether there is one to open, and
     // the checks row says what ran on it, so a "Preview: available" row was
     // the same fact a third time. The row stays for a preview that FAILED,
@@ -7902,7 +7959,7 @@ const AppView = {
       return {
         name: PlatformI18n.t('changes:page.merge.name'),
         figure: PlatformI18n.t('changes:page.merge.figure.merging'),
-        tone: 'muted', done: false, segments: moving,
+        tone: 'muted', done: false, segments: moving, hold: 'merging',
         label: PlatformI18n.t('changes:page.merge.label.merging'),
         note: [], wait: null,
       };
@@ -7922,11 +7979,25 @@ const AppView = {
       return {
         name: PlatformI18n.t('changes:page.merge.name'),
         figure: PlatformI18n.t('changes:page.merge.figure.failing'),
-        tone: 'bad', done: false,
+        tone: 'bad', done: false, hold: 'failing',
         segments: [{ weight: 1, pct: 100, state: 'bad' }],
         label: PlatformI18n.t('changes:page.merge.label.failing'),
         note: [PlatformI18n.t('changes:page.merge.note.failing')],
       };
+    }
+    // #6593: GitHub's required checks are building and scanning the release
+    // images, which takes a few minutes and is not a failed attempt. The
+    // count is drawn only when the server could read it (`githubChecks`), so
+    // the card never guesses a number.
+    const note = [PlatformI18n.t(waiting
+      ? 'changes:page.merge.note.githubChecks'
+      : 'changes:page.merge.note.githubWait')];
+    const progress = waiting ? integration.githubChecks : null;
+    if (progress && Number.isInteger(progress.total) && progress.total > 0
+      && Number.isInteger(progress.done) && progress.done >= 0 && progress.done <= progress.total) {
+      note.push(PlatformI18n.t('changes:page.merge.note.githubChecksProgress', {
+        done: progress.done, total: progress.total,
+      }));
     }
     return {
       name: PlatformI18n.t('changes:page.merge.name'),
@@ -7934,12 +8005,11 @@ const AppView = {
         ? 'changes:page.merge.figure.githubChecks'
         : 'changes:page.merge.figure.githubWait'),
       tone: 'muted', done: false, segments: moving,
+      hold: waiting ? 'github_checks' : 'github_wait',
       label: PlatformI18n.t(waiting
         ? 'changes:page.merge.label.githubChecks'
         : 'changes:page.merge.label.githubWait'),
-      note: [PlatformI18n.t(waiting
-        ? 'changes:page.merge.note.githubChecks'
-        : 'changes:page.merge.note.githubWait')],
+      note,
       wait,
     };
   },
@@ -10912,6 +10982,61 @@ const AppView = {
     })();
     AppView._requestRowRefresh = entry;
     return entry.done;
+  },
+
+  // #6595: a request or a change open on screen re-reads itself when a live
+  // burst about its project arrives, wherever it is shown — the Workshop's
+  // side panel, the Homeroom bot tab's column, the platform side panel's own
+  // document, or the item's full page. `refreshDevData` already re-reads the
+  // Workshop's topic sub-view, and even there it does not read the thread
+  // that draws a close vote's card; this is the one entry every surface goes
+  // through, routed by what is SHOWN (AppView._devTopic), never by
+  // App.currentApp.
+  //
+  // `live` names what the burst was about: { kinds, ids, numbers, slugs,
+  // unnamed, devRead }. `devRead` is true when refreshDevData already
+  // re-read the topic's own row, so the row is not fetched twice.
+  //
+  // Returns true when what is shown was one of those things (whether or not
+  // a read was needed), so the flush knows the burst reached a surface.
+  refreshShownTopic(live) {
+    if (!live) return false;
+    const t = AppView._devTopic;
+    if (!t) return false;
+    const onPage = typeof App !== 'undefined' && App.currentTab === 'dev' && App.currentSubTab === 'topic';
+    if (!AppView._devTopicInPanel && !onPage) return false;
+    const slug = (AppView.appData && AppView.appData.slug) || null;
+    const slugs = live.slugs;
+    if (!slug || !slugs || typeof slugs.has !== 'function' || !slugs.has(slug)) return false;
+    const id = Number(t.id);
+    if (!Number.isFinite(id)) return false;
+    const liveReads = typeof window !== 'undefined' && window.UsernodeReact
+      && window.UsernodeReact.liveReads;
+    const threadRead = (path) => {
+      if (liveReads && typeof liveReads.resync === 'function') liveReads.resync('thread', path);
+    };
+    const enc = encodeURIComponent(slug);
+    if (t.kind === 'issue') {
+      // An event that named another request is not this one; one that named
+      // no request at all re-reads it, and nothing repaints if it did not move.
+      const numbers = live.numbers;
+      if (numbers && numbers.size && !numbers.has(id) && !live.unnamed) return false;
+      if (!live.devRead) AppView._refreshOpenRequestRow();
+      threadRead(`/api/apps/${enc}/threads/${id}`);
+      return true;
+    }
+    if (t.kind === 'proposal' || t.kind === 'session') {
+      // Same rule by session id: another change's event is skipped unless the
+      // burst also carried one that named no row.
+      const ids = live.ids;
+      if (ids && ids.size && !ids.has(id) && !live.unnamed) return false;
+      // The flush's own loop tells every change page by its id; when this one
+      // was not named, tell it here so its page re-reads.
+      if (!ids || !ids.has(id)) AppView._tellChangePage(id);
+      threadRead(`/api/apps/${enc}/threads/change/${id}`);
+      return true;
+    }
+    return false;
   },
 
   // #6001: a release finished for `slug`. A change it carries that is open —
@@ -15595,7 +15720,8 @@ const AppView = {
       if (kind === 'proposal') {
         // Same condition as the card's pulsing "Vote" badge (isUnvoted). A
         // project's first version needs nobody's vote (D1).
-        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true)) return false;
+        // #6594: its votes are in, so it asks nobody for one.
+        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true && it.votes_in !== true)) return false;
       } else if (kind === 'gov') {
         if (it.my_vote) return false;
       } else {
@@ -18697,6 +18823,21 @@ const AppView = {
     // A project's first version is not put to a vote (D1).
     if (pr && pr.first_version === true) return PlatformI18n.t('changes:card.waiting.noVote');
     return AppView._approveSolo(pr) ? PlatformI18n.t('changes:card.waiting.yourApproval') : PlatformI18n.t('changes:card.waiting.approval');
+  },
+
+  // #6594: what a promoted change is called once its votes are in. It is no
+  // longer waiting for approval; it says it is approved and what it waits
+  // on: its own checks, GitHub's required ones, or a failing verdict.
+  // `votes_in` is the server's gate (routes/votes.js), the same rule every
+  // merge decision takes.
+  _promotedWords(pr) {
+    if (!pr || pr.votes_in !== true) return AppView._waitingWords(pr);
+    const reasons = Array.isArray(pr.integration_block_reasons) ? pr.integration_block_reasons.map(String) : [];
+    if (reasons.includes('github_checks')) return PlatformI18n.t('changes:page.hero.status.approvedGithub');
+    if (pr.check_state === 'failing' || pr.check_state === 'error' || reasons.includes('github_checks_failing')) {
+      return PlatformI18n.t('changes:page.hero.status.approvedFailing');
+    }
+    return PlatformI18n.t('changes:page.hero.status.approvedChecking');
   },
 
   // The card's Yes/No pair, and ONLY that pair. Preview, Retry and Admin
@@ -24762,6 +24903,12 @@ const AppView = {
         AppView._repaintCards();
         if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
       }
+      // #6595: the view this was claimed from re-reads at once. The
+      // optimistic patch above is the board's row; a side panel or the bot
+      // tab's column reads its own, and waits on the broadcast otherwise.
+      if (typeof App !== 'undefined' && App._liveRefresh) {
+        App._liveRefresh('issue', null, { appSlug: slug, issueNumber });
+      }
     } catch (err) {
       PlatformUI.toast(PlatformI18n.t('changes:issue.claim.failedWith', { error: err.message }));
     }
@@ -24802,6 +24949,11 @@ const AppView = {
         }
         AppView._repaintCards();
         if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
+      }
+      // #6595: as markIssueInProgress — the view this was released from
+      // re-reads at once, not only the board's cached row.
+      if (typeof App !== 'undefined' && App._liveRefresh) {
+        App._liveRefresh('issue', null, { appSlug: slug, issueNumber });
       }
     } catch (err) {
       PlatformUI.toast(PlatformI18n.t('changes:issue.claim.clearFailedWith', { error: err.message }));
@@ -25646,13 +25798,15 @@ const AppView = {
     // #6546: GitHub's required checks held it back: still running, or failed
     // and being run again on today's main (amber, Homeroom acts), or failed
     // again after that (its author's to fix).
+    // #6593: while they are still running, the tooltip says what GitHub is
+    // doing and roughly how long it takes, not when Homeroom asks again:
+    // those tries are bookkeeping, and naming one made a normal wait read as
+    // a failed attempt.
     if (served.includes('github_checks')) {
       out.push({
         key: 'github_checks',
         label: PlatformI18n.t('changes:badge.reason.githubChecks.label'),
-        detail: heldSoon
-          ? PlatformI18n.t('changes:badge.reason.githubChecks.detailSoon')
-          : PlatformI18n.t('changes:badge.reason.githubChecks.detail', { time: heldTime }),
+        detail: PlatformI18n.t('changes:badge.reason.githubChecks.detail'),
         waiting: true,
       });
     }
@@ -29220,6 +29374,13 @@ const AppView = {
       // toast — the refreshed card's tally / countdown pill says it all.
 
       AppView.refreshDevData('vote');
+      // #6595: the view this vote came from re-reads itself at once — the
+      // side panel or the bot tab's column, where refreshDevData does
+      // nothing, and the request's thread beside the row. The burst gathers
+      // this with the vote_update broadcast, so the board still reads once.
+      if (typeof App !== 'undefined' && App._liveRefresh) {
+        App._liveRefresh('vote', null, { appSlug: AppView.appData && AppView.appData.slug, issueNumber: targetN });
+      }
       // Voting clears this proposal's nudge server-side; re-pull so the
       // unread badge drops it. Never optimistic — only on an ok response.
       window.Notifications?.refresh?.();
@@ -31616,6 +31777,8 @@ const AppView = {
   THEME_PARAM: 'un-theme',
   // An offline app's one-off "refresh your copies" flag, after `#`.
   REFRESH_PARAM: 'un-refresh',
+  // The build an offline app's address names, in its query (cache key).
+  BUILD_PARAM: 'un-build',
 
   // A staging preview shown as of a chosen moment (src/services/preview-
   // clock.js). The ensure answer's `previewAt` ({ at, label }) becomes
@@ -31652,8 +31815,11 @@ const AppView = {
         url.searchParams.delete(AppView.THEME_PARAM);
         // An offline app's address (buildAppIframeSrc) carries the platform's
         // parameters after `#`: its theme is ignored like the query's, and so
-        // is the one-off refresh flag.
+        // is the one-off refresh flag. So is the build in its query: a build
+        // that lands under an open app is the reload Improve offers, never
+        // one a render makes on its own (evictKeptApp, markStale).
         if (url.hash.startsWith('#un-')) {
+          url.searchParams.delete(AppView.BUILD_PARAM);
           const own = new URLSearchParams(url.hash.slice(1));
           own.delete(AppView.THEME_PARAM);
           own.delete(AppView.REFRESH_PARAM);

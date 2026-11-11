@@ -1130,6 +1130,12 @@
       "expectText": "Re-run checks"
     },
     {
+      "name": "#6593: an approved change held on GitHub's required checks says GitHub is building and scanning the release images, not that a try failed",
+      "path": "/#app/usernode-2d5619/dev/changes/900099",
+      "expectSelector": "[data-change-gate=\"merge\"] .dev-change-gate-note",
+      "expectText": "building and scanning the release images"
+    },
+    {
       "name": "#4455: one row under the summary: \"Built for\", then the request as a chip with its number bold and its title after it",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000013",
       "expectSelector": "#gc-thread-head .dev-change-root .dev-request-ask ~ .dev-change-addresses > .dev-change-chips > .dev-change-chips-lead + .dev-change-chips-first > a.dev-ws-chip.dev-topic-issue[href*=\"/dev/issues/900017\"] > b + span",
