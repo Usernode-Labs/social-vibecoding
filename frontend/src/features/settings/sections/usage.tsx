@@ -44,7 +44,7 @@ export function UsageSection() {
           that fetch has answered with nothing to show.
       */}
       {/* The allowance, as the first row of a card. */}
-      <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden mb-3">
+      <div className="ui-card rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden mb-3">
         <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
           <AiBudgetRow />
         </div>
@@ -64,10 +64,10 @@ export function UsageSection() {
           week's platform spend beside a day's own-key spend.
       */}
       <div id="settings-spend" className="hidden mb-3">
-        <div className="px-1 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
+        <div className="ui-cap px-1 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
           {t('settings:usage.spend.heading')}
         </div>
-        <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
+        <div className="ui-card rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex justify-between gap-3 text-[17px] text-zinc-900 dark:text-zinc-100">
             <span>
               {t('settings:usage.spend.platform')}

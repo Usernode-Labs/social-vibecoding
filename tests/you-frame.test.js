@@ -176,7 +176,7 @@ test('the profile draws the kit\'s page under a look, from its own view, with it
 test('Edit profile is the product\'s dialog wearing the look: nothing rebuilt, its parts worn through the wear map', () => {
   const looks = JSON.parse(read('frontend/looks/looks.json')).wear.roots;
   assert.ok(looks.card.to.includes('.un-group:where(#profile-edit-sheet *)'), 'a group is the kit\'s card');
-  assert.equal(looks.cap.to, '.un-group-header:where(#profile-edit-sheet *)', 'a group\'s label is the kit\'s');
+  assert.match(looks.cap.to, /^:is\(\.un-group-header:where\(#profile-edit-sheet \*\),/, 'a group\'s label is the kit\'s');
   assert.ok(looks.title.to.includes('#profile-edit-sheet > div:first-child'), 'the title is the kit\'s');
   assert.ok(looks.btn.to.includes('#profile-edit-save'), 'Save is the kit\'s button');
   const css = read('public/css/app.css');

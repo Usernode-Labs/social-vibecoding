@@ -78,15 +78,22 @@ export function ExperimentalSection() {
         <SectionHeading title={t('settings:experimental.title')}>
           {t('settings:experimental.intro')}
         </SectionHeading>
+        {/* Two neutral wrappers (looks v2), nothing in the standard look:
+            ui-card round the four switches, one card under a look, and
+            ui-swrow round each switch with its sentence, a row of it with
+            the switch at the end (app.css, SETTINGS). */}
+        <div className="ui-card">
         <InterfaceModeControl />
-        <SwitchRow id="ai-progress-estimate">
-          {t('settings:experimental.progressEstimate.label')}
-        </SwitchRow>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          {t('settings:experimental.progressEstimate.description')}
-        </p>
-        <StatusLine id="ai-progress-estimate-status" size="xs" />
-        <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+        <div className="ui-swrow">
+          <SwitchRow id="ai-progress-estimate">
+            {t('settings:experimental.progressEstimate.label')}
+          </SwitchRow>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+            {t('settings:experimental.progressEstimate.description')}
+          </p>
+          <StatusLine id="ai-progress-estimate-status" size="xs" />
+        </div>
+        <div className="ui-swrow mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
           <SwitchRow id="session-bridge-enabled">
             {t('settings:experimental.sessionBridge.label')}
           </SwitchRow>
@@ -98,7 +105,7 @@ export function ExperimentalSection() {
           </p>
           <StatusLine id="session-bridge-status" size="xs" />
         </div>
-        <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+        <div className="ui-swrow mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
           <SwitchRow id="new-look-enabled">
             {t('settings:experimental.newLook.label')}
           </SwitchRow>
@@ -106,7 +113,8 @@ export function ExperimentalSection() {
             {t('settings:experimental.newLook.description')}
           </p>
         </div>
-        <div id="settings-look-section" className="hidden mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+        </div>
+        <div id="settings-look-section" className="hidden ui-card ui-fields mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
           <Label className="mb-1" htmlFor="settings-look">{t('settings:experimental.look.label')}</Label>
           <Select id="settings-look" variant="plain">
             <option value="">{t('settings:experimental.look.standard')}</option>
@@ -120,7 +128,7 @@ export function ExperimentalSection() {
             <option value="today">{t('settings:experimental.look.today')}</option>
             <option value="playground">{t('settings:experimental.look.playground')}</option>
           </Select>
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+          <p className="ui-hint text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
             {t('settings:experimental.look.description')}
           </p>
         </div>
@@ -133,7 +141,7 @@ export function ExperimentalSection() {
             components={[<span className="font-mono" />]}
           />
         </SectionHeading>
-        <div id="settings-local-agents-list" className="space-y-2">
+        <div id="settings-local-agents-list" className="ui-card space-y-2">
           <LocalAgentsList />
         </div>
         <StatusLine id="settings-local-agents-status" size="xs" />

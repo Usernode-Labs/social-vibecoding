@@ -158,7 +158,7 @@ test('a kit rule for a worn component also names the product\'s own markup for i
 test('a class the map does not name stays the kit\'s, and a rule for anything else is not repeated', () => {
   assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-post .fr-av'), 'html[data-skin="workbench"] .messages-message .fr-av', 'the avatar in a message is the kit\'s own');
   assert.equal(looks.wornSelector('html[data-skin] .fr-tile .fr-t'), null, 'a tile is drawn by the kit: nothing to repeat');
-  assert.equal(looks.wornSelector('html[data-skin] .fr-row+.fr-row'), 'html[data-skin]:where(:not([data-skin="brand"])) .ui-lrow:where(#settings-section-content *)+.ui-lrow:where(#settings-section-content *)', 'Settings\' rows wear the row, the scope inside each compound');
+  assert.equal(looks.wornSelector('html[data-skin] .fr-row+.fr-row'), 'html[data-skin]:where(:not([data-skin="brand"])) :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)+:is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)', 'Settings\' rows wear the row, the scope inside each compound');
   assert.equal(looks.wornSelector('html[data-skin] .fr-status .fr-txt'), null, 'a part only counts inside its own component');
   assert.equal(looks.wornSelector('html[data-skin] .fr-post .fr-txt b'), null, 'left out by name: a bold word a person wrote is not an accent');
 });
@@ -218,11 +218,17 @@ test('version 2 names no class the kit already styled on its own, so no page dra
 
 test('version 2, compiled: each piece under any look, phone rules in the phone block, sides mirrored', () => {
   const css = looks.compile(v2Source(), null);
-  const has = (text, why) => assert.ok(css.includes(text), why || text);
+  // A piece Settings wears (looks.json "wear") carries the worn selectors
+  // beside the kit's own: the rule is read with those taken out.
+  const kitOnly = css.split('\n').filter((rule) => rule.startsWith('html')).map((rule) => {
+    const at = rule.indexOf('{');
+    return topLevel(rule.slice(0, at)).filter((sel) => !/:where\(:not\(\[data-skin="brand"\]\)\)/.test(sel)).join(',') + rule.slice(at);
+  }).join('\n');
+  const has = (text, why) => assert.ok(css.includes(text) || kitOnly.includes(text), why || text);
   // The page, its head, its tabs.
   has('html[data-skin] .fr-inner.fr-narrow{max-width:784px}');
   has('html[data-skin] .fr-cols.fr-flip{grid-template-columns:360px minmax(0,680px)}');
-  has('html[data-skin] .fr-head>.fr-tile,html[data-skin] .fr-head>.fr-av,html[data-skin] .fr-head>.fr-lead{margin-top:2px}');
+  assert.match(css, /html\[data-skin\] \.fr-head>\.fr-tile,[^{]*html\[data-skin\] \.fr-head>\.fr-av,[^{]*html\[data-skin\] \.fr-head>\.fr-lead[^{]*\{margin-top:2px\}/, 'the head\'s picture (Settings\' own head wears the head too, so the rule is repeated for it)');
   has('html[data-skin] .fr-cap.fr-over{margin-bottom:8px}');
   has('html[data-skin] .fr-cap.fr-sub{padding:4px 4px 0}');
   has('html[data-skin] .fr-sub13{font-size:13px;color:var(--fr-mut);margin-top:4px}');
@@ -279,7 +285,8 @@ test('version 2, compiled: each piece under any look, phone rules in the phone b
   has('html[data-skin] .fr-byline b{color:var(--fr-ink);font-weight:650;font-size:15px}');
   has('html[data-skin] .fr-lone{padding:64px 16px;text-align:center;color:var(--fr-mut)}');
   // A phone.
-  const phone = css.slice(css.indexOf('@media (max-width: 767.98px){'));
+  const phone = kitOnly.slice(kitOnly.indexOf('html[data-skin][data-skin]'));
+  assert.ok(css.indexOf('@media (max-width: 767.98px){') > 0 && css.indexOf('@media (max-width: 767.98px){') < css.indexOf('html[data-skin][data-skin]'), 'the doubled flag is the phone block\'s');
   for (const rule of [
     'html[data-skin][data-skin] .fr-cols.fr-flip{grid-template-columns:minmax(0,1fr)}',
     'html[data-skin][data-skin] .fr-tabs .fr-end{display:none}',
@@ -298,8 +305,13 @@ test('version 2 dresses nothing of the product\'s own that it did not dress befo
   // is repeated only places a kit element inside or beside a worn one.
   const css = looks.compile(v2Source(), null);
   const worn = css.split('\n').filter((rule) => rule.startsWith('html')).flatMap((rule) => topLevel(rule.slice(0, rule.indexOf('{')))).filter((sel) => /:where\(:not\(\[data-skin="brand"\]\)\)/.test(sel));
-  assert.ok(worn.length > 0 && worn.length < 20, `a handful only (${worn.length})`);
-  for (const sel of worn) assert.match(sel, /\.fr-[\w-]+/, `"${sel}" would dress the product's markup with no kit element in it`);
+  // Settings is the one screen that wears version 2's own pieces (lane S: its
+  // head, the 22px name, the note, the link's bad tone, the wrapping row):
+  // every such selector is held inside Settings by name.
+  const SETTINGS = /#settings-root|\.settings-(frame|page|filter)/;
+  const elsewhere = worn.filter((sel) => !SETTINGS.test(sel));
+  assert.ok(worn.length > 0 && elsewhere.length < 20, `a handful only outside Settings (${elsewhere.length})`);
+  for (const sel of elsewhere) assert.match(sel, /\.fr-[\w-]+/, `"${sel}" would dress the product's markup with no kit element in it`);
   assert.doesNotMatch(css, /messages-|dev-request|dev-change|auth-waiting/, 'no conversation, request or waiting-room node is named');
   // The event line is not worn yet: the request page's own lines would
   // change under every look. The lane that redraws that page adds the root.

@@ -40,7 +40,7 @@ export function GuideSection() {
         <SectionHeading title={t('settings:guide.title')}>
           {t('settings:guide.intro')}
         </SectionHeading>
-        <SectionHeader className="px-0 pt-2">{t('settings:guide.places.heading')}</SectionHeader>
+        <SectionHeader className="ui-cap px-0 pt-2">{t('settings:guide.places.heading')}</SectionHeader>
         <GroupedList className="mx-0">
           <Row title={t('settings:guide.place.communities.title')} body={t('settings:guide.place.communities.body')} />
           <Row title={t('settings:guide.place.apps.title')} body={t('settings:guide.place.apps.body')} />
@@ -49,7 +49,7 @@ export function GuideSection() {
           <Row title={t('settings:guide.place.bot.title')} body={t('settings:guide.place.bot.body')} />
           <Row title={t('settings:guide.place.you.title')} body={t('settings:guide.place.you.body')} />
         </GroupedList>
-        <SectionHeader className="px-0">{t('settings:guide.vote.heading')}</SectionHeader>
+        <SectionHeader className="ui-cap px-0">{t('settings:guide.vote.heading')}</SectionHeader>
         <GroupedList id="settings-guide-voting" className="mx-0">
           <Row title={t('settings:guide.vote.build.title')} body={t('settings:guide.vote.build.body')} />
           <Row title={t('settings:guide.vote.up.title')} body={t('settings:guide.vote.up.body')} />

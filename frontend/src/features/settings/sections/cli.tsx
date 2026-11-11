@@ -23,7 +23,7 @@ export function CliSection() {
           {t('settings:cli.intro')}
         </SectionHeading>
         <CliSetupGuide />
-        <div id="cli-tokens-list" className="space-y-2">
+        <div id="cli-tokens-list" className="ui-card space-y-2">
           <CliTokensList />
         </div>
         <button

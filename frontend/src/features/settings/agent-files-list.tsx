@@ -44,7 +44,7 @@ function controller(): any {
  * ground (#eaeaea) in this palette — the fill did nothing and the border was
  * the only thing drawing the row. Same correction as the grants rows.
  */
-const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
+const ROW_CLASS = 'ui-mini rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
 
 /**
  * The `<pre>`'s id, unique per file: kind and name with every character an id

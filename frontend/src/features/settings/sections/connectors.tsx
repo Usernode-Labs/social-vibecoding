@@ -287,9 +287,9 @@ function GuideProgress({ guide, total }: { guide: string; total: number }) {
 }
 
 /** The grey label a grouped card sits under, in the sheet's 15px. */
-const GROUP_LABEL = 'px-4 pb-2 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500';
+const GROUP_LABEL = 'ui-cap px-4 pb-2 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500';
 /** The one line a grouped card may carry under it. */
-const GROUP_NOTE = 'px-4 pt-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400';
+const GROUP_NOTE = 'ui-note px-4 pt-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400';
 /** Body copy inside an open disclosure. Shared, so the two screens match. */
 const BODY = CONNECTOR_BODY;
 /** Inline marks the pane's sentences carry; the catalog numbers them. */
@@ -388,7 +388,7 @@ export function ConnectorsSection() {
             needs a second one.
         */}
         <details className="group/help">
-          <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-1 px-1 text-[0.9375rem] font-medium text-violet-700 dark:text-violet-400">
+          <summary className="ui-link flex min-h-[44px] cursor-pointer list-none items-center gap-1 px-1 text-[0.9375rem] font-medium text-violet-700 dark:text-violet-400">
             {t('settings:connectors.howItWorks.summary')}
             <ChevronRightIcon aria-hidden="true" className="h-4 w-4 shrink-0 transition-transform group-open/help:rotate-90" />
           </summary>
@@ -774,7 +774,7 @@ export function ConnectorsSection() {
             the connector did in your last chat, which is news rather than
             reference, and dapp.json reads it as rendered text.
         */}
-        <p id="connector-hint-status" className="hidden px-4 pt-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400"></p>
+        <p id="connector-hint-status" className="hidden ui-note px-4 pt-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400"></p>
         <StatusLine id="connectors-status" size="xs" />
       </div>
     </div>

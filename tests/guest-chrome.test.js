@@ -91,7 +91,7 @@ test('a stand-alone page is the kit\'s one column: the product\'s own form, wear
   assert.ok(looks.wear.roots.card.to.includes(`:is(${AUTH},[data-sign-in-sheet]) .rounded-2xl.overflow-hidden`));
   assert.ok(looks.wear.roots.btn.to.includes(`${AUTH} :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back])`),
     'the one accent-filled control is the primary button; a white or grey pill is a quiet one');
-  assert.deepEqual(looks.wear.roots.btn.parts, { quiet: ':is(.bg-white,.bg-zinc-100)' });
+  assert.match(looks.wear.roots.btn.parts.quiet, /^:is\(\.bg-white,\.bg-zinc-100,/, 'a white or grey pill is the quiet one (Settings adds its own kinds, tests/settings-frame.test.js)');
   const css = read('public/css/app.css');
   const hand = css.slice(css.indexOf('A STAND-ALONE PAGE'), css.indexOf('/* looks:begin'));
   assert.match(hand, /:is\(\.max-w-sm, \.max-w-2xl\) \{ max-width: 504px; padding: 64px 32px 48px !important; \}/, 'the tour\'s column');
