@@ -78,8 +78,15 @@ test('an update on its way leaves the Needs you feed, and comes back', { timeout
     [app.id, by.id, linked, pr, `Change ${pr}`, reviewedHeadSha, importedHeadSha, source])).rows[0];
   const a = await change(bob, 20, [7]);
 
+  // 11 Nov 2026: whether a change is open for votes is its stored work
+  // state (services/work-state.js vote_open), derived again from what the
+  // triggers mark; read once the drain has run, as its clock does.
+  const ws = require('../src/services/work-state');
+  const settle = async () => { while ((await ws.drainDirty(pool)).taken) { /* until none is left */ } };
+  // What lapses with time alone, as the sweep reads it again.
+  const lapse = (sessionId) => ws.refresh(pool, [{ sessionId }]);
   // What the three readers say about the change for ada, who owes its vote.
-  const feed = async () => (await pool.query(
+  const feed = async () => (await settle(), await pool.query(
     overview.NEEDS_FEED_SQL, [ada.id, false, false, overview.NEEDS_FEED_MAX])).rows
     .filter((r) => Number(r.app_id) === Number(app.id) && r.kind === 'proposal')
     .map((r) => Number(r.id));
@@ -93,6 +100,7 @@ test('an update on its way leaves the Needs you feed, and comes back', { timeout
     return row ? Number(row.waiting) : 0;
   };
   const everywhere = async () => {
+    await settle();
     const [f, c, w] = await Promise.all([feed(), counts(), waiting()]);
     return { feed: f, needs: c.needs, owed: c.owed, waiting: w };
   };
@@ -142,12 +150,15 @@ test('an update on its way leaves the Needs you feed, and comes back', { timeout
     // Taken four hours ago: past the bot's own STALE_ASK_HOURS (3), which is
     // when takeAsks would put it back to queued.
     await pool.query(`UPDATE homeroom_bot_change_asks SET taken_at = NOW() - INTERVAL '4 hours' WHERE id = $1`, [stale.id]);
+    // Time passing moves no row: the work-state sweep derives it again.
+    await lapse(a.id);
     assert.equal((await everywhere()).needs, 1, 'a taken ask older than STALE_ASK_HOURS holds nothing');
     await pool.query(`UPDATE homeroom_bot_change_asks SET status = 'queued', taken_at = NULL WHERE id = $1`, [stale.id]);
     // ...and once requeued it holds again, as queued.
     assert.equal((await everywhere()).needs, 0);
     // A queued ask older than the sweep's week is not an update any more.
     await pool.query(`UPDATE homeroom_bot_change_asks SET created_at = NOW() - INTERVAL '8 days' WHERE id = $1`, [stale.id]);
+    await lapse(a.id);
     assert.equal((await everywhere()).needs, 1);
     await pool.query(`DELETE FROM homeroom_bot_change_asks WHERE id = $1`, [stale.id]);
   });
@@ -198,6 +209,7 @@ test('an update on its way leaves the Needs you feed, and comes back', { timeout
     assert.ok(!(await feed()).includes(c.id), 'a turn 10 minutes in is an update on its way');
     await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`,
       [c.id, turn(7 * 60 * 60 * 1000)]);
+    await lapse(c.id);
     assert.ok((await feed()).includes(c.id), 'a turn 7 hours old cannot still be running');
     await pool.query(`UPDATE chat_sessions SET active_turn = NULL WHERE id = $1`, [c.id]);
   });

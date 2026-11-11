@@ -219,10 +219,10 @@ const held = (s: VState, e: Event<any>, _f: Facts, ctx: TransitionContext): Outc
   const out = owe(s, e, {
     kind: WORK.post, key,
     input: { appId: e.payload.appId, issueNumber: e.payload.place.ref, kind: e.payload.kind, text: e.payload.text,
-      mention: e.payload.mention, mentions: e.payload.mentions, key },
+      mention: e.payload.mention, mentions: e.payload.mentions, mentionId: e.payload.mentionId, key },
   });
   if (!out.work?.length) return out;
-  return { ...out, writes: [{ type: 'heldPost', appId: e.payload.appId, issueNumber: e.payload.place.ref, kind: e.payload.kind, at: ctx.now.toISOString() }] };
+  return { ...out, writes: [{ type: 'heldPost', appId: e.payload.appId, issueNumber: e.payload.place.ref, kind: e.payload.kind, mentionId: e.payload.mentionId, at: ctx.now.toISOString() }] };
 };
 
 // A note's result, kept (so the same work owed again is owed once). An act
@@ -314,12 +314,17 @@ export function botVoice(): Machine<VState, Facts> {
       HeldAnswer: system,
     },
     writes: {
-      // The held answer's post row, pending until voice.post has said it
-      // (homeroom-bot-live.js post, which takes it up by its kind).
+      // The held answer's post, claimed pending until voice.post has said it
+      // (services/bot-post.js: its key, `<kind>:request:<app>-<n>:mention-<id>`,
+      // which homeroom-bot-live.js post takes up).
       heldPost: async (tx, w) => {
+        const subject = `request:${Number(w.appId)}-${Number(w.issueNumber)}`;
+        const version = `mention-${Number(w.mentionId)}`;
         await tx.query(
-          `INSERT INTO homeroom_bot_posts (app_id, issue_number, kind, pending, created_at) VALUES ($1, $2, $3, TRUE, $4)`,
-          [w.appId, w.issueNumber, w.kind, w.at]);
+          `INSERT INTO bot_posts (said_key, kind, subject, version, place_type, app_id, place_ref, issue_number, created_at)
+           VALUES ($1, $2, $3, $4, 'issue', $5, $6::int, $6::int, $7)
+           ON CONFLICT (said_key) DO NOTHING`,
+          [`${w.kind}:${subject}:${version}`, w.kind, subject, version, w.appId, w.issueNumber, w.at]);
       },
     },
     transitions: {

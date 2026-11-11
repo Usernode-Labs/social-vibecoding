@@ -284,7 +284,7 @@ const READABLE_COLUMNS = Object.freeze(Object.fromEntries(Object.entries({
     'build_at', 'build_attempts', 'build_cost_usd', 'build_session_id', 'live_build_waiting_at',
     'go_ahead_at', 'awaiting_go_at', 'go_ahead_decides', 'charged', 'payer_user_id'],
   work_states: ['app_id', 'item_kind', 'item_ref', 'issue_number', 'session_id', 'stage', 'why',
-    'reason', 'whose_move', 'requester_id', 'since', 'updated_at', 'checked_at'],
+    'reason', 'whose_move', 'requester_id', 'since', 'updated_at', 'checked_at', 'vote_open', 'lead_change_id'],
   requests: ['id', 'app_id', 'number', 'state', 'state_reason', 'created_by', 'created_at',
     'updated_at', 'closed_at', 'closed_by', 'source', 'recovered_partial', 'thread_id', 'part_of'],
 }).map(([table, columns]) => [table, Object.freeze(columns)])));

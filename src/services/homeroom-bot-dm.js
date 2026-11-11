@@ -660,12 +660,23 @@ async function storyAppId(pool, metadata, root) {
 
 async function sendDm(pool, {
   bot, userId, content, metadata = null, idempotencyKey = null, objects = null, replyToId = null, withoutCards = null,
-  moment = undefined, threadRootId = undefined, hello = null,
+  moment = undefined, threadRootId = undefined, hello = null, card = null, postKind = null,
 }) {
   if (!bot?.id || !userId) return null;
+  // Step 4 (11 Nov 2026): this is the bot's posting function's transport for
+  // a person's chat with it (services/bot-post.js): every message, and every
+  // one its rules refuse, is recorded there, keyed by its idempotency key in
+  // this chat (which also says it once). A message sent is recorded in its
+  // own transaction (afterInsert, below: the two commit together); a
+  // duplicate's ask, and a refusal, after.
+  const record = (outcome, messageId = null, conversationId = null, db = pool, strict = false) => require('./bot-post').recordDm(db, {
+    userId, conversationId, kind: postKind || metadata?.kind || 'dm', key: conversations.normalizeIdempotencyKey(idempotencyKey),
+    messageId, words: content, outcome,
+    appId: null, issueNumber: Number(metadata?.issueNumber) || null,
+  }, { strict });
   // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news is
   // not a message. It is said on the request's own page (its question or
-  // plan, built and up for a vote, one failure updated in place, live), and
+  // plan, built and up for a vote, a failure note, live), and
   // its requester's bell rings from its stage (services/work-state.js).
   // Nothing about it goes into Main Chat, a request card's thread or a
   // private thread. A first version's news is the exception: it has no
@@ -674,6 +685,7 @@ async function sendDm(pool, {
     log.info('homeroom-bot-dm', 'A request\'s news is said on its page, not sent', {
       userId, kind: metadata?.kind || null, issueNumber: metadata?.issueNumber || null,
     });
+    await record('refused');
     return null;
   }
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, userId);
@@ -759,24 +771,47 @@ async function sendDm(pool, {
   // chose for their own: owed in the message's own transaction.
   const opens = story === 'live' && !!metadata?.firstVersion && !!metadata?.appSlug;
   let toldOpen = [];
+  const greet = hello?.kind ? async (db) => {
+    const { rows: claimed } = await db.query(CLAIM_HELLO_SQL, [Number(userId), Number(bot.id), String(hello.kind)]);
+    greeted = claimed[0]?.kind === hello.kind;
+    if (!greeted) return hello.content ? null : { refuse: true };
+    return hello.content
+      ? { content: clip(hello.content, conversations.MAX_MESSAGE_LENGTH || 8000), metadata: helloStored ? { [META]: helloStored } : null }
+      : null;
+  } : null;
+  // Step 3 (11 Nov 2026, services/bot-cards.js): an offer's card, written in
+  // the message's own transaction: before the message, its id put in the
+  // message's metadata (`actionId`, what a tap names); after it, the
+  // message's id put on the card. A duplicate (the same key, sent before)
+  // writes none: its card was written with it. `card.onInsert(db, { cardId,
+  // messageId })` is the caller's own write in that transaction.
+  let cardId = null;
+  const withCard = card ? async (db) => {
+    const instead = greet ? await greet(db) : null;
+    if (instead?.refuse) return instead;
+    const made = await require('./bot-cards').insertCard(db, {
+      ...card, place: 'dm', userId, conversationId: opened.conversationId,
+    });
+    cardId = Number(made.id);
+    const base = instead && 'metadata' in instead ? instead.metadata : (stored ? { [META]: stored } : null);
+    const bot0 = base && base[META] && typeof base[META] === 'object' ? base[META] : {};
+    return { ...(instead || {}), metadata: { ...(base || {}), [META]: { ...bot0, actionId: cardId } } };
+  } : null;
+  let recorded = false;
   const hooks = {
-    ...(hello?.kind ? {
-      prepare: async (db) => {
-        const { rows: claimed } = await db.query(CLAIM_HELLO_SQL, [Number(userId), Number(bot.id), String(hello.kind)]);
-        greeted = claimed[0]?.kind === hello.kind;
-        if (!greeted) return hello.content ? null : { refuse: true };
-        return hello.content
-          ? { content: clip(hello.content, conversations.MAX_MESSAGE_LENGTH || 8000), metadata: helloStored ? { [META]: helloStored } : null }
-          : null;
-      },
-    } : {}),
-    ...(hello?.kind || mail || opens ? {
-      afterInsert: async (db, { messageId: id }) => {
-        if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
-        if (mail) await require('../workflow/platform.ts').dmMailOwed(db, { userId: Number(userId), messageId: id, mail });
-        if (opens) toldOpen = await require('./project-opened').oweTold(db, { appSlug: metadata.appSlug, makerId: userId });
-      },
-    } : {}),
+    ...(greet || withCard ? { prepare: withCard || greet } : {}),
+    afterInsert: async (db, { messageId: id }) => {
+      if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
+      if (cardId) {
+        await db.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [cardId, id]);
+        if (typeof card.onInsert === 'function') await card.onInsert(db, { cardId, messageId: id, conversationId: opened.conversationId });
+      }
+      if (mail) await require('../workflow/platform.ts').dmMailOwed(db, { userId: Number(userId), messageId: id, mail });
+      if (opens) toldOpen = await require('./project-opened').oweTold(db, { appSlug: metadata.appSlug, makerId: userId });
+      // Its record (services/bot-post.js), committed with it.
+      await record('said', id, opened.conversationId, db, true);
+      recorded = true;
+    },
   };
   const send = (withCards) => conversations.sendMessage(pool, { id: bot.id }, opened.conversationId,
     withCards.length
@@ -799,6 +834,8 @@ async function sendDm(pool, {
     return null;
   }
   const messageId = result.messageId ?? result.message?.id ?? null;
+  // A duplicate (its key sent before) wrote nothing: it is asked again.
+  if (!recorded) await record('said', messageId, opened.conversationId);
   // #4396: after the commit, the bells of the members its "live" told
   // (their notices, phone pushes and emails are owed in the message's own
   // transaction: afterInsert).
@@ -822,6 +859,7 @@ async function sendDm(pool, {
     duplicate: !!result.duplicate,
     threadRootId: root || null,
     ...(hello?.kind ? { hello: greeted } : {}),
+    ...(cardId ? { cardId } : {}),
   };
 }
 
@@ -865,41 +903,13 @@ const typingSends = new Map();
 // (frontend/locales/en/messages.json `thread.botWorking.*`), as the agent
 // session's activity line does from a tool's name. No `doing` is "Thinking".
 // A person's typing event (routes/conversations.js) never carries one.
-// Homeroom bot parity, P1: 'writing' carries the answer as it is written
-// (homeroom-bot-mayor.js draftWriter), its own words and the only `text`
-// a typing event has: the newest MAX_DRAFT_CHARS of it, so the event fits
-// the bus between servers (ws-bus.js: 8000 bytes, or it becomes a nudge to
-// reload) and the card stays a card. The message sent takes its place.
+// 'writing': the model is writing its answer (homeroom-bot-mayor.js
+// draftWriter). #6581, step 4 (11 Nov 2026): no words travel with it, ever:
+// the card says "Writing", and the answer appears once, whole, as the
+// bot's message, so nothing shown is ever replaced or wiped.
 // 'looking': a helper sent to look into a project's code (P3, look_into).
 const DOING_KINDS = Object.freeze(['progress', 'request', 'code', 'drawing', 'capturing', 'designing', 'drafting', 'writing', 'looking']);
 const MAX_DOING_PROJECT = 60;
-const MAX_DRAFT_CHARS = 1800;
-const MAX_DRAFT_BYTES = 5600;
-
-/**
- * Pure: the end of an answer being written, as a typing event carries it:
- * '…' and the newest words when it is long, and where that tail starts in
- * the whole answer (`from`; 0 when nothing was cut), so the screen can stitch
- * the tail under the words it already holds instead of sliding them (#6405).
- */
-function draftTail(text) {
-  let out = String(text || '').replace(/\r/g, '').trim();
-  if (!out) return { text: '', from: 0 };
-  // `from` travels beside the text, so the byte budget leaves room for it.
-  const fits = (value) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= MAX_DRAFT_BYTES - 16;
-  if (out.length <= MAX_DRAFT_CHARS && fits(out)) return { text: out, from: 0 };
-  let keep = MAX_DRAFT_CHARS;
-  let tail = out.slice(-keep);
-  while (keep > 100 && !fits(`… ${tail}`)) {
-    keep = Math.floor(keep * 0.8);
-    tail = out.slice(-keep);
-  }
-  // From a word, not the middle of one.
-  const space = tail.search(/\s/);
-  if (space > 0 && space < 40) tail = tail.slice(space + 1);
-  const words = tail.trimStart();
-  return { text: `… ${words}`, from: out.length - words.length };
-}
 
 /** Pure: `what` as a typing event carries it ({ kind, number?, project? }), or null for "thinking". */
 function typingDoing(what) {
@@ -917,13 +927,7 @@ function typingDoing(what) {
     const page = typeof what.page === 'string' ? clip(what.page.replace(/\s+/g, ' ').trim(), MAX_DOING_PROJECT) : '';
     return page ? { kind: 'capturing', page } : { kind: 'capturing' };
   }
-  if (what.kind === 'writing') {
-    // #6581: no words are carried any more, so a bare `writing` says "Writing".
-    if (typeof what.text !== 'string') return { kind: 'writing' };
-    const tail = draftTail(what.text);
-    // `from` only when the text was cut, so a whole answer keeps its own start.
-    return tail.text ? { kind: 'writing', text: tail.text, ...(tail.from > 0 ? { from: tail.from } : {}) } : null;
-  }
+  // 'writing' and the rest: the kind alone, never words.
   return { kind: what.kind };
 }
 
@@ -1999,7 +2003,7 @@ async function cardShown(pool, userId, appId, issueNumber) {
 const MOVES_CHAT_CARD = new Set(['spec', 'build_failed', 'blocked', 'person', 'empty']);
 
 async function relayIssuePost({
-  pool, ws = null, app, issueNumber, kind, runId = null, postId = null, bot, dm, ready = false, key = null, strict = false,
+  pool, ws = null, app, issueNumber, kind, runId = null, postKey = null, bot, dm, ready = false, key = null, strict = false,
 }) {
   if (MOVES_CHAT_CARD.has(kind) && app?.id) {
     await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber });
@@ -2079,7 +2083,7 @@ async function relayIssuePost({
     // One story: in the request's thread, a quiet line.
     const line = shown ? await stepLine(pool, {
       bot, userId: requester.userId, app, issueNumber, context, content, card: shown, step: kind,
-      key: postId ? `hrbot-post-${postId}` : key,
+      key: postKey || key,
       actions: kind === 'spec' && !dm.retry ? [readPlanAction(app.slug, issueNumber)] : null,
     }) : null;
     log.info('homeroom-bot-dm', line ? 'A quiet line in the request\'s thread' : 'On the card, not a message', { app: app.slug, issueNumber, kind });
@@ -2193,6 +2197,7 @@ async function relayIssuePost({
     kind: offerKind, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason, runId,
   }) : null;
   if (offer) Object.assign(metadata, offer.metadata);
+  // Step 3: its card is written with the message (sendDm `card`).
   const started = shown ? null : await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber });
   const sent = await sendDm(pool, {
     bot,
@@ -2200,7 +2205,7 @@ async function relayIssuePost({
     content,
     withoutCards: dmText(kind, { ...dm, sessionId: null }, context),
     metadata,
-    idempotencyKey: sendKey || (postId ? `hrbot-post-${postId}` : null),
+    idempotencyKey: sendKey || postKey || null,
     // B7: a ready card's Try it is its way to the change; it carries no card.
     objects: dm.card ? [] : cardsFor(kind, dm, app, issueNumber).filter((c) => !(shown && c.type === 'issue')),
     // #3707: news about a request they started here points back at it.
@@ -2211,6 +2216,7 @@ async function relayIssuePost({
     // try, and a request that names who builds it. Its card and the bot's
     // Needs you list still show what it waits on.
     ...(dm.quiet ? { moment: null } : {}),
+    ...(offer ? { card: offer.card } : {}),
   });
   await move.foldedOfferSent(pool, offer, sent);
   if (!sent?.messageId) {
@@ -2449,20 +2455,19 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
   if (plan.complicated === true) return { messageId: null, stop: 'on_request' };
   const name = app.name || app.slug;
   const questions = (plan.questions || []).slice(0, 2);
-  const { rows: [action] } = await pool.query(
-    `INSERT INTO bot_cards (user_id, app_id, kind, title)
-     VALUES ($1, $2, 'build_plan', $3) RETURNING id`,
-    [requester.userId, app.id, clip(`The plan for ${name}`, 200)],
-  );
   // #4488: a complicated change on an existing project: not a first version,
   // with its spec (read on the request, whose card goes under the plan).
   const complicated = plan.complicated === true;
   const planStarted = await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber });
+  // Step 3 (11 Nov 2026): Build it's card, written with the plan's message
+  // (sendDm `card`); it names its request, whose standing retires it once
+  // the plan stops waiting (bot-cards.js retireFor).
   const sent = await sendDm(pool, {
     bot,
     userId: requester.userId,
     content: planCardText({ appName: name, plan: { bullets: plan.bullets, questions, complicated }, issueNumber }),
     idempotencyKey: `hrbot-plan-${runId}`,
+    card: { kind: 'build_plan', appId: app.id, title: clip(`The plan for ${name}`, 200), sourceIssueNumber: Number(issueNumber) },
     metadata: {
       kind: PLAN_KIND, appSlug: app.slug, appName: name, issueNumber: Number(issueNumber),
       // #5582: a complicated plan on an existing project names its request
@@ -2474,7 +2479,7 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
         bullets: plan.bullets, questions,
         ...(complicated ? { complicated: true, ...(plan.spec ? { spec: plan.spec } : {}), ...(plan.card ? { card: plan.card } : {}) } : {}),
       },
-      actionId: Number(action.id), status: 'open',
+      actionId: null, status: 'open',
     },
     ...(complicated ? { objects: cardsFor(PLAN_KIND, {}, app, issueNumber) } : {}),
     // 13 Oct 2026: a plan its maker already decided on the made screen
@@ -2488,23 +2493,19 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
     // askThreadId).
     ...await outsideCardThread(pool, planStarted),
   });
-  if (!sent?.messageId) {
-    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'not_sent']);
-    return null;
-  }
-  await pool.query(
-    'UPDATE bot_cards SET message_id = $2, conversation_id = $3 WHERE id = $1',
-    [action.id, sent.messageId, sent.conversationId],
-  ).catch(() => {});
+  if (!sent?.messageId) return null;
   if (sent.duplicate) return sent;
   try {
-    // Older plans for it give way to this one, and a question it had is done.
+    // Older plans for it give way to this one: their Build it is retired
+    // (bot-cards.js retireFor: a newer card of the same kind supersedes it),
+    // and one that had already stopped asking reads "Replaced" too. A
+    // question it had is done.
+    const work = require('./work-state');
+    await work.publish(pool, await require('./bot-cards').retireFor(pool, {
+      appId: app.id, issueNumber, keep: [sent.cardId],
+    }));
     for (const card of await planCards(pool, { userId: requester.userId, appId: app.id, issueNumber })) {
       if (Number(card.message_id) === Number(sent.messageId) || card.meta?.status === 'answered' || card.meta?.replaced) continue;
-      await pool.query(
-        'UPDATE bot_cards SET status = \'declined\', decided_at = NOW(), error = \'replaced\' WHERE message_id = $1 AND status = \'open\'',
-        [card.message_id],
-      );
       await setQuestionState(pool, Number(card.message_id), { status: 'closed', replaced: true }, {
         ws, conversationId: card.conversation_id, userId: requester.userId,
       });
@@ -2546,10 +2547,9 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
     );
     let sender = bot;
     for (const row of rows) {
-      await pool.query(
-        'UPDATE bot_cards SET status = \'declined\', decided_at = NOW(), error = $2 WHERE message_id = $1 AND status = \'open\'',
-        [row.message_id, stopped ? 'stopped' : 'closed'],
-      );
+      // Its Build it card goes with the request's move out of waiting for
+      // its plan (bot-cards.js retireOnMove, from the standing); the card's
+      // message says how it stopped.
       await setQuestionState(pool, Number(row.message_id), stopped ? { status: 'closed', stopped: true } : { status: 'closed' }, {
         ws, conversationId: row.conversation_id, userId: row.user_id,
       });
@@ -5129,7 +5129,10 @@ async function askBotToBuild(pool, { app, user, issueNumber, deps = {}, readAgai
   if (!require('./homeroom-bot-live').isLiveFor(settings, app)) {
     return { ok: false, status: 409, error: 'Homeroom bot does not build on this project.', code: 'not_building' };
   }
-  const busy = (await require('./homeroom-bot-progress').botWorkByIssue(pool, app.id)).get(n);
+  // Where it stands, as its page reads it (services/work-state.js botWorkOf).
+  const workState = require('./work-state');
+  const [standing] = await workState.forItems(pool, [{ appId: app.id, issueNumber: n }]);
+  const busy = workState.botWorkOf(standing);
   if (busy) return { ok: false, status: 409, error: 'Homeroom bot is already on it.', code: 'already_building' };
   // #6399: "Ask Homeroom bot to read this again", offered when the reason its
   // last read handed the request back is one a later release removed
@@ -6646,9 +6649,6 @@ module.exports = {
   startTyping,
   whileTyping,
   typingDoing,
-  draftTail,
-  MAX_DRAFT_CHARS,
-  MAX_DRAFT_BYTES,
   DOING_KINDS,
   recordRequester,
   requesterOf,

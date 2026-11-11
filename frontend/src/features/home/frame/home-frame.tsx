@@ -51,6 +51,8 @@ import { Btn, ChallengeCard, Facts, GroupLink, HRow, Meta, PageBody, PicCard, Pi
 import { TONE_FILL, resolveIllustration } from '../../../lib/challenge-illustrations';
 import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
+import { withoutClosedVote } from '../../../lib/work-state';
+import { WORK_CHANGED_EVENT } from '../../messages/bot-shared';
 import { readDirectory } from '../communities-to-join';
 import { gridStore, type IconView } from '../grid-store';
 import { homePinsStore, loadHomePins, type HomePin, type JoinedCommunity } from '../home-pins-store';
@@ -219,6 +221,15 @@ export function HomeFrame({ initialFeed = null, initialQuestions = null, initial
     readJson('/api/workshop/live-feed').then((b) => (Array.isArray(b?.items) ? b.items : [])).catch(() => []).then(set(setLive, [] as LiveRow[]));
     readDirectory().then((apps) => { if (on) setDirectory((apps || []) as DirectoryApp[]); });
     return () => { on = false; };
+  }, []);
+
+  // 11 Nov 2026 (one model): a change whose vote a work_state push says
+  // closed (merged, held, closed) leaves Needs you at once
+  // (lib/work-state.ts withoutClosedVote).
+  useEffect(() => {
+    const drop = (event: Event) => setFeed((now) => withoutClosedVote(now, (event as CustomEvent).detail));
+    window.addEventListener(WORK_CHANGED_EVENT, drop);
+    return () => window.removeEventListener(WORK_CHANGED_EVENT, drop);
   }, []);
 
   // ── Needs you: what the bot asked first (an answer unblocks a build),

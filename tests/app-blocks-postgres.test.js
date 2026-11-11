@@ -78,6 +78,7 @@ test('personal app blocks isolate viewers, preserve contributors, suppress alert
     assert.equal(await appAccess.checkAppAccess(pool,app,alice),false);
     assert.ok(!(await discussions()).rows.some(row=>row.slug===app.slug),'blocked app channel hidden');
     assert.equal((await bookmarks.listForUser(pool,alice.id)).length,0,'saved app messages hidden while blocked');
+    await require('./lib/work-states').settleWorkStates(pool);
     assert.equal((await pool.query(require('../src/services/vote-digest').PENDING_SQL,['24'])).rows.some(row=>row.user_id===alice.id),false,'daily digest excludes blocked apps');
     assert.equal(await appAccess.checkAppAccess(pool,app,{...alice,isAdmin:true}),false,'personal block also applies to admin viewers');
     assert.equal(await appAccess.checkAppAccess(pool,app,bob),true);
@@ -130,6 +131,7 @@ test('personal app blocks isolate viewers, preserve contributors, suppress alert
     assert.equal(await appAccess.checkAppAccess(pool,app,alice),true);
     assert.ok((await discussions()).rows.some(row=>row.slug===app.slug),'app channel returns');
     assert.equal((await bookmarks.listForUser(pool,alice.id)).length,1,'saved messages return without losing bookmarks');
+    await require('./lib/work-states').settleWorkStates(pool);
     assert.ok((await pool.query(require('../src/services/vote-digest').PENDING_SQL,['24'])).rows.some(row=>row.user_id===alice.id),'digest eligibility returns after unblock');
     assert.ok((await (await request('/api/apps')).json()).apps.some(row=>row.id===app.id));
     assert.ok(!(await notifications.listForUser(pool,alice.id)).some(row=>row.app_id===app.id),'suppressed alerts do not return after unblock');

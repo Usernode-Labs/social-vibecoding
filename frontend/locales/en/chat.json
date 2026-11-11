@@ -1414,5 +1414,45 @@
   "group.botOffer.goneClose": {
     "text": "This offer is no longer available. You can still propose closing it from the request’s ⋯ menu.",
     "description": "Where an \"already works\" note's Propose to close buttons were, once the offer behind them no longer exists; the request's ⋯ menu still has its own Propose to close."
+  },
+  "group.botOffer.expired": {
+    "text": "This offer has expired.",
+    "description": "Where an offer's buttons were, under Homeroom bot's message in a chat, once the offer is more than 14 days old and can no longer be chosen."
+  },
+  "group.botOffer.refused.alreadyDecided": {
+    "text": "That was already decided.",
+    "description": "The line under Homeroom bot's offer in a chat when a Yes or No was pressed after the offer had already been answered, here or on another device."
+  },
+  "group.botOffer.refused.notForYou": {
+    "text": "Only the person it was offered to can choose this.",
+    "description": "The line under Homeroom bot's offer in a chat when someone pressed a Yes or No meant for another person."
+  },
+  "group.botOffer.refused.notThisMessage": {
+    "text": "These buttons belong to another message. Reload to see them where they are.",
+    "description": "The line under Homeroom bot's offer in a chat when the offer a button named is shown under a different message, which happens on a screen that has not caught up."
+  },
+  "group.botOffer.retired.closeVote": {
+    "text": "No longer needed: a vote on closing this request is open.",
+    "description": "Where an offer's buttons were, under Homeroom bot's message in a chat, once a vote on closing the request it was about has opened, so proposing to close it again is not needed."
+  },
+  "group.botOffer.retired.closed": {
+    "text": "No longer needed: this is closed.",
+    "description": "Where an offer's buttons were, under Homeroom bot's message in a chat, once the request or change it was about has been closed."
+  },
+  "group.botOffer.retired.building": {
+    "text": "No longer needed: building it has started.",
+    "description": "Where an offer's buttons were, under Homeroom bot's message in a chat, once the request it was about started being built, so the choice it offered no longer applies."
+  },
+  "group.botOffer.retired.movedOn": {
+    "text": "No longer needed: things have moved on since.",
+    "description": "Where an offer's buttons were, under Homeroom bot's message in a chat, once the request or change it was about moved to a stage where the choice no longer applies."
+  },
+  "group.botOffer.retired.superseded": {
+    "text": "No longer needed: a newer note replaced this one.",
+    "description": "Where an offer's buttons were, under Homeroom bot's message in a chat, once a newer message from the bot about the same thing offered the same choice again."
+  },
+  "group.botOffer.retired.other": {
+    "text": "No longer needed.",
+    "description": "Where an offer's buttons were, under Homeroom bot's message in a chat, once the offer no longer applies, when no more specific reason is known."
   }
 }

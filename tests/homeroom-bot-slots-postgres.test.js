@@ -194,14 +194,15 @@ test('the bot\'s slots on a project count its builds under way, against the full
     assert.equal(six.track.work.line.place, 1);
     assert.equal(view.slots.find((s) => s.issueNumber === 7).track.work.stage, 'planning', 'its build session is open; no plan posted yet');
     assert.deepEqual(view.waiting.map((w) => [w.issueNumber, w.position, w.limit, w.title]), [[8, 1, 'slots', 'Repotting reminders']]);
-    assert.deepEqual(view.waiting[0].track.work.line, { code: 'held_waiting' });
+    // 11 Nov 2026: its place in that line is on its stored row's line.
+    assert.deepEqual(view.waiting[0].track.work.line, { code: 'held_waiting', position: 1 });
     assert.deepEqual(view.waiting[0].track.held, { limit: 'slots', position: 1, until: null });
     assert.equal(view.week, null, 'nobody signed in, no week');
     // #6156: one held because the builds are all in use waits in a line of its own, for the bot's turn.
     await run(17, { waiting: true, cap: 'builds_per_app', ago: 0 });
     const turn = await track.slotsView(pool, { app: { id: app.id, slug: 'plant-pal', name: 'Plant Pal' }, settings, deps: { liveSvc } });
     assert.deepEqual(turn.waiting.map((w) => [w.issueNumber, w.position, w.limit]), [[8, 1, 'slots'], [17, 1, 'builds']]);
-    assert.deepEqual(turn.waiting[1].track.work.line, { code: 'held_builds' });
+    assert.deepEqual(turn.waiting[1].track.work.line, { code: 'held_builds', position: 1 });
     assert.deepEqual(turn.waiting[1].track.held, { limit: 'builds', position: 1, until: null });
     await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 17', [app.id]);
 
