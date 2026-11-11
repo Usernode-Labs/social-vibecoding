@@ -733,6 +733,16 @@ export interface ChangeGateView {
   release?: unknown;
 }
 
+/**
+ * #6563: the merge step under Votes and Tested, while GitHub holds the merge
+ * or it is under way. `wait` carries the times the card counts in the
+ * viewer's own clock: when Homeroom last tried, when it tries next, and when
+ * it first met this hold on this head (AppView._changeMergeView).
+ */
+export type ChangeMergeView = ChangeGateView & {
+  wait?: { triedAt: string | null; retryAt: string | null; since: string | null } | null;
+};
+
 /** #4455: what a change's page says about the change itself, as the thread's root post. */
 export interface ChangeThreadView {
   /** The pull request's number, for "Change #N"; null before it has one. */
@@ -752,6 +762,11 @@ export interface ChangeThreadView {
   via: string | null;
   votes: ChangeGateView;
   testing: ChangeGateView;
+  /**
+   * #6563: the merge step, under Votes and Tested, while GitHub holds the
+   * merge or it is under way. Null once merged or when nothing holds it.
+   */
+  merge?: ChangeMergeView | null;
   /** The Before and after card, or null when there is nothing to show. */
   shots: {
     state: string; html: string; line: string | null; waiting?: boolean;
