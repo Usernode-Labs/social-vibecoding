@@ -85,6 +85,7 @@ const { governanceKindsSql } = require('../services/governance-kinds');
 const { threadsInSql } = require('../services/ai-work');
 const { updateComingSql } = require('../services/homeroom-bot-progress');
 const { voteReadySql, awaitingYesSql } = require('../services/vote-ready');
+const { APPROVED_SQL } = require('../services/work-state');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
 const codeMissing = require('../services/code-missing');
@@ -205,6 +206,13 @@ const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
        -- by services/work-state.js. Voting early stays possible on the
        -- change's own page.
        AND ${voteReadySql('cs')}
+       -- #6594 (11 Nov 2026): a change whose votes are in asks nothing of
+       -- anyone, not only of the person who voted. Its stored work state is
+       -- Approved (waiting on its checks) or Going live, so it leaves the
+       -- feed, the counts and the ballot rows alike.
+       AND NOT EXISTS (
+             SELECT 1 FROM work_states w
+              WHERE w.session_id = cs.id AND ${APPROVED_SQL('w')})
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
              SELECT 1 FROM chat_sessions ru
               WHERE ${RIVAL_SQL('cs', 'ru')}

@@ -7006,7 +7006,7 @@ const AppView = {
     const mergedIds = AppView.HERO_MERGED_IDS[settled];
     const status = underway
       ? (item.shared_at ? PlatformI18n.t('changes:page.hero.status.visibleToGroup') : PlatformI18n.t('changes:page.hero.status.notShared'))
-      : item.status === 'promoted' ? AppView._waitingWords(item)
+      : item.status === 'promoted' ? AppView._promotedWords(item)
         : item.status === 'merging' ? PlatformI18n.t('changes:page.hero.status.merging')
           : item.status === 'merged' ? (included
             ? (included.number
@@ -7579,7 +7579,7 @@ const AppView = {
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
     body.workspace = mine && item.source !== 'imported' ? item.id : null;
     body.discussion = underway && !item.shared_at ? PlatformI18n.t('changes:page.discussion.shareFirst') : null;
-    card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? PlatformI18n.t('changes:card.meta.visibleToGroup') : PlatformI18n.t('changes:card.meta.notShared')) : (item.status === 'promoted' ? AppView._waitingWords(item) : item.status) }];
+    card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? PlatformI18n.t('changes:card.meta.visibleToGroup') : PlatformI18n.t('changes:card.meta.notShared')) : (item.status === 'promoted' ? AppView._promotedWords(item) : item.status) }];
     // The Preview pill on the card says whether there is one to open, and
     // the checks row says what ran on it, so a "Preview: available" row was
     // the same fact a third time. The row stays for a preview that FAILED,
@@ -15585,7 +15585,8 @@ const AppView = {
       if (kind === 'proposal') {
         // Same condition as the card's pulsing "Vote" badge (isUnvoted). A
         // project's first version needs nobody's vote (D1).
-        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true)) return false;
+        // #6594: its votes are in, so it asks nobody for one.
+        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true && it.votes_in !== true)) return false;
       } else if (kind === 'gov') {
         if (it.my_vote) return false;
       } else {
@@ -18687,6 +18688,21 @@ const AppView = {
     // A project's first version is not put to a vote (D1).
     if (pr && pr.first_version === true) return PlatformI18n.t('changes:card.waiting.noVote');
     return AppView._approveSolo(pr) ? PlatformI18n.t('changes:card.waiting.yourApproval') : PlatformI18n.t('changes:card.waiting.approval');
+  },
+
+  // #6594: what a promoted change is called once its votes are in. It is no
+  // longer waiting for approval; it says it is approved and what it waits
+  // on: its own checks, GitHub's required ones, or a failing verdict.
+  // `votes_in` is the server's gate (routes/votes.js), the same rule every
+  // merge decision takes.
+  _promotedWords(pr) {
+    if (!pr || pr.votes_in !== true) return AppView._waitingWords(pr);
+    const reasons = Array.isArray(pr.integration_block_reasons) ? pr.integration_block_reasons.map(String) : [];
+    if (reasons.includes('github_checks')) return PlatformI18n.t('changes:page.hero.status.approvedGithub');
+    if (pr.check_state === 'failing' || pr.check_state === 'error' || reasons.includes('github_checks_failing')) {
+      return PlatformI18n.t('changes:page.hero.status.approvedFailing');
+    }
+    return PlatformI18n.t('changes:page.hero.status.approvedChecking');
   },
 
   // The card's Yes/No pair, and ONLY that pair. Preview, Retry and Admin

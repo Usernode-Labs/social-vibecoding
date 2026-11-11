@@ -1391,7 +1391,7 @@ test('#4455: the Votes card: one part per yes, the figure in the accent when the
   const reached = votes({ ...PR, yes_count: 2, check_state: 'pending' }, { yesNames: ['jo', 'cilokman'], earlierYes: [], earlierNo: [], approvers: 0 });
   assert.equal(reached.figure, message('changes:page.votes.figure.reached', { count: 2, needed: 2 }));
   assert.equal(reached.done, true);
-  assert.deepEqual(reached.note, ['jo and cilokman said yes.', 'It goes live once testing passes.']);
+  assert.deepEqual(reached.note, ['jo and cilokman said yes.', message('changes:page.votes.note.liveOnceTested')]);
   // Run four (13 Oct): the reader is "You", never their own username, and
   // the others keep their names.
   const yours = (names, item = { ...PR, yes_count: 2, check_state: 'passing' }) => votes(item, { yesNames: names, earlierYes: [], earlierNo: [], approvers: 0 }).note[0];
@@ -1407,6 +1407,20 @@ test('#4455: the Votes card: one part per yes, the figure in the accent when the
   // The roster keeps the names the card reads.
   const src = read('public/js/app-view.js');
   assert.match(src, /earlierYes,\n\s+earlierNo,\n\s+yesNames: Array\.isArray\(data\.yes\) \? data\.yes\.slice\(\) : \[\],\n\s+approvers: Array\.isArray\(data\.approvers\) \? data\.approvers\.length : 0,/);
+});
+
+// #6594 (11 Nov 2026): once a change has the votes its rule needs, its page
+// says Approved and what it waits on, never "Waiting for approval".
+test('#6594: a change whose votes are in says Approved, and what it waits on', () => {
+  const av = context();
+  const status = (over) => av._topicViewFor('proposal', { ...PR, votes_in: true, ...over }).body.hero.status;
+  assert.equal(status({ check_state: 'pending' }), 'Approved · checking the latest version');
+  assert.equal(status({ check_state: 'passing', integration_block_reasons: ['github_checks'] }),
+    "Approved · waiting on GitHub's checks");
+  assert.equal(status({ check_state: 'failing' }), 'Approved · checks failing');
+  assert.equal(status({ check_state: 'error' }), 'Approved · checks failing');
+  // Without its votes it still waits for approval, as before.
+  assert.equal(av._topicViewFor('proposal', { ...PR, check_state: 'passing' }).body.hero.status, 'Waiting for approval');
 });
 
 // #6140: a request's page draws a change's two cards from the row
@@ -1465,8 +1479,8 @@ test('#6389: the Votes card names who fixes a failing change that has its votes'
   assert.match(note({ external_agent: null }), /once you fix it and the fix passes testing/);
   assert.match(note({ user_id: 7, username: 'snait' }), /once snait fixes it/);
   assert.match(note({ user_id: 7, username: 'homeroom_bot' }), /once a fix passes testing/);
-  // Passing checks still say testing passes, not a fix.
-  assert.match(note({ check_state: 'pending' }), /once testing passes/);
+  // Passing checks still say the checks decide, not a fix.
+  assert.match(note({ check_state: 'pending' }), /once its checks pass/);
 });
 
 // #6521: a pass earned before the change's latest version does not count as

@@ -295,6 +295,11 @@
       "id": "app-inferred-categories",
       "sha256": "4514f6d7424e0356b702bbf9a29ed6e3bfa2667a5511ea217030f4b3f9e71507",
       "schemaSha256": "ac3199877069149ff6adf3926e80d5b8755b026598b60100c194517ec84b1aaf"
+    },
+    {
+      "id": "work-state-votes",
+      "sha256": "35fe59fc0cc0a553f996638dfef0e6cfc949196053cf57883ca86e212abe8123",
+      "schemaSha256": "5b0a205d5965ba2fd2434cc0e45865f319d27d99b640b1607f42bce395663dc7"
     }
   ]
 }

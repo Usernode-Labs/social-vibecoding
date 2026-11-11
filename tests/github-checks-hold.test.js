@@ -256,7 +256,7 @@ test('work state: an approved change GitHub holds is going live, with what it wa
   assert.deepEqual([change(['github_busy']).stage, change(['github_busy']).line], ['going_live', { code: 'github_wait' }]);
   assert.deepEqual([change(['github_checks_failing']).stage, change(['github_checks_failing']).line], ['checking', { code: 'github_checks_failing' }]);
   assert.equal(change([]).stage, 'up_for_vote', 'nothing held: still up for a vote');
-  assert.equal(ws.WORDS['work.line.githubChecks'], "Waiting for GitHub's checks");
+  assert.equal(ws.WORDS['work.line.githubChecks'], "Waiting on GitHub's checks");
   assert.equal(ws.WORDS['work.line.githubChecksFailing'], "GitHub's checks are failing");
   assert.equal(ws.WORDS['work.line.githubWait'], 'Waiting on GitHub');
   const core = JSON.parse(read('frontend/locales/en/core.json'));
