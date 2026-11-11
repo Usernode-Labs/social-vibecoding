@@ -70,10 +70,10 @@ import { usePanelHead } from '../../side-panel/head-store';
 import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
 import { useFramePage } from '../../frame/frame-page-store';
 import { placeName } from '../workshop/places';
-import { TopicFrameAbout, TopicFrameHead, TopicFrameStatus } from './frame/topic-frame';
+import { TopicFrameBy, TopicFrameHead, TopicFrameLabel, TopicFrameStatus } from './frame/topic-frame';
+import { TopicTrackStatus } from './frame/topic-track';
 import { useSideStack } from './frame/side-stack';
-import { useFollowRow } from './frame/topic-follow';
-import { dotLine, frameStop, topicBack } from './frame/topic-page';
+import { dotLine, firstSentence, frameStop, threadPillKind, topicBack } from './frame/topic-page';
 
 function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -132,10 +132,12 @@ export function RequestBar({ r, pill = null, threadMenu = false }: {
   const menuKey = r.menuKey || threadMenu ? requestMenuKey(r.menuKey, r.number) : null;
   usePanelHead({ kind: 'request', pill, menuKey });
   // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
-  // s32): the title and one line saying what it is, with this menu. The
-  // bar above it carries the trail and the way back (RequestHead below).
+  // s32): what it is in a small line over its full title, with this menu.
+  // The topic it is filed under rides that line, as it sits under the
+  // standard bar's title. The bar above it carries the trail and the way
+  // back (RequestHead below).
   const frame = isFrameSkin(useLiveSkin());
-  if (frame) return <TopicFrameHead title={r.title} purpose={dotLine([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
+  if (frame) return <TopicFrameHead title={r.title} over={dotLine([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
@@ -373,7 +375,6 @@ function RequestStatus({ s, specs, tracked = false, frame = false }: {
   frame?: boolean;
 }): ReactNode {
   const t = useMessages('project');
-  const tc = useMessages('changes');
   const stage = requestStage(s.stage, specs.length);
   const at = STAGES.findIndex((step) => step.key === stage);
   // Voted in is the end: every stop is done.
@@ -386,18 +387,21 @@ function RequestStatus({ s, specs, tracked = false, frame = false }: {
   const say = sentences([s.lead, s.note || specLine]);
   const a = s.action;
   if (frame) {
-    const stop = s.closed || tracked ? null : frameStop(stage);
+    // In the words' column, after the request: the sentence, the claim's
+    // small words and the one action. Its pill and its five stops are the
+    // context column's Status (RequestHead below), so they are said once.
+    const words = s.closed || say || null;
     return (
       <div className="dev-request-status" role="group" aria-label={t('project:topic.request.status.label')} data-request-stage={stage}>
-        <TopicFrameStatus
-          pill={s.closed ? null : { word: t(STAGES[at].label), kind: a && !a.disabled ? 'act' : '' }}
-          at={stop ? stop.at : null}
-          state={stop ? stop.state : 'now'}
-          words={[tc('changes:track.plan'), tc('changes:track.build'), tc('changes:track.checks'), tc('changes:track.vote'), tc('changes:track.live')]}
-          say={s.closed || say || null}
-          fine={s.fine}
-          action={a ? { label: a.label, title: a.title, disabled: a.disabled, href: a.href, onClick: () => { if (a.act) call(a.act.fn, a.act.args || []); } } : null}
-        />
+        {words || s.fine || a ? (
+          <TopicFrameStatus
+            big
+            say={words}
+            lead={s.closed ? null : firstSentence(s.lead)}
+            fine={s.fine}
+            action={a ? { label: a.label, title: a.title, disabled: a.disabled, href: a.href, act: a.act?.fn, onClick: () => { if (a.act) call(a.act.fn, a.act.args || []); } } : null}
+          />
+        ) : null}
       </div>
     );
   }
@@ -520,15 +524,37 @@ export function plansByChange(
   return { plans, unbuilt };
 }
 
+/**
+ * Under one of the frame's looks, with no progress card of Homeroom bot's:
+ * the stage as a pill over the kit's five stops (./frame/topic-page.ts
+ * frameStop says where a stage lands on them).
+ */
+function RequestAt({ s, specs, label }: { s: RequestStatusView; specs: RequestSpecCard[]; label: string }): ReactNode {
+  const t = useMessages('project');
+  const tc = useMessages('changes');
+  const stage = requestStage(s.stage, specs.length);
+  const at = STAGES.findIndex((step) => step.key === stage);
+  const stop = frameStop(stage);
+  return (
+    <TopicFrameStatus
+      label={label}
+      pill={{ word: t(STAGES[at].label), kind: s.action && !s.action.disabled ? 'act' : '' }}
+      at={stop.at}
+      state={stop.state}
+      words={[tc('changes:track.plan'), tc('changes:track.build'), tc('changes:track.checks'), tc('changes:track.vote'), tc('changes:track.live')]}
+    />
+  );
+}
+
 export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // Under one of the frame's looks the page tells the bar its trail (the
-  // Workshop, then this request) and lays its status, progress and About
-  // beside its words (./frame/side-stack.ts says why by measuring).
+  // Workshop, then this request) and stands its Status in the context
+  // column beside its words (./frame/side-stack.ts says why by measuring).
   const frame = isFrameSkin(useLiveSkin());
   const tFrame = useMessages('project');
   const kicker = tFrame('project:topic.request.bar.title', { number: r.number });
   useFramePage(frame ? [placeName('workshop'), kicker] : null, topicBack);
-  useSideStack(frame, `[data-request-root="${r.number}"] > [data-image-viewer-scope]`, ['.dev-request-status', '.dev-request-track', '.fr-topicside']);
+  useSideStack(frame, `[data-request-root="${r.number}"] > [data-image-viewer-scope]`, ['.dev-request-track', '.dev-request-at']);
   const thread = useStoreState(requestThreadStore);
   const specs = thread.number === r.number ? thread.specs : [];
   const [editing, setEditing] = useState(false);
@@ -627,7 +653,6 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     }] : []),
   ]);
   const threadMenu = ownAgent || agentSession || !!threadRead.data?.follow;
-  const followRow = useFollowRow(threadRead.data || null, threadRead.reread);
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
@@ -667,6 +692,11 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               </p>
             );
           })()}
+          {/* Under a look: "The request" over its card, and who asked and
+              when at the card's top (the head above, which the kit's page
+              puts away with the title). */}
+          {frame ? <TopicFrameLabel>{t('project:frame.topic.theRequest')}</TopicFrameLabel> : null}
+          {frame ? <TopicFrameBy name={r.asker} color={swatchFor(r.asker)} line={r.askedTime || null} title={r.askedTitle} at={r.askedAt} /> : null}
           {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : (
             <RequestWords
               html={bodyHtml}
@@ -689,7 +719,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           {/* #6207/#6210: Homeroom bot's plan, public, with Build it for any member. */}
           {working || r.status.closed || !slug ? null : <RequestPlan slug={slug} number={r.number} specs={specs} />}
           {ownAgent && agentOpen ? <OwnAgentLink slug={agentSlug} number={r.number} startOpen onClose={() => setAgentOpen(false)} /> : null}
-          {track && !working ? (
+          {track && !working && !frame ? (
             // 16 Oct 2026 (C4, V3): the same card a request's thread leads
             // with, where it is and why, its bar and its pictures, in place
             // of having to open the chat to find out. Drawn from the board's
@@ -697,6 +727,25 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             // and says where the work is once the fresh row lands.
             <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.work.stage} inert={!!r.trackPending}>
               <TrackCard track={track} title={r.title} links={trackLinks(track, { request: false })} pictures />
+            </div>
+          ) : null}
+          {/* Under a look the same host, holding its place the same way,
+              has the kit's Status card: what the progress card says, read
+              from the same track (./frame/topic-track.tsx). */}
+          {track && !working && frame ? (
+            <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.work.stage} inert={!!r.trackPending}>
+              <TopicTrackStatus track={track} label={t('project:frame.topic.status')} links={trackLinks(track, { request: false })} />
+            </div>
+          ) : null}
+          {/* Under a look, with no progress card: the context column's
+              Status says the stage and its five stops; once a change is
+              built for it, the pill the standard bar wears beside its
+              number. A closed request has neither, as the standard page. */}
+          {frame && !(track && !working) && !r.status.closed && (!working || pill) ? (
+            <div className="dev-request-at" data-request-at={working ? pill?.key : requestStage(r.status.stage, specs.length)}>
+              {working
+                ? <TopicFrameStatus label={t('project:frame.topic.status')} pill={pill ? { word: pill.label, kind: threadPillKind(pill) } : null} />
+                : <RequestAt s={r.status} specs={specs} label={t('project:frame.topic.status')} />}
             </div>
           ) : null}
           {unbuilt.length ? (
@@ -712,17 +761,6 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             <ChangeSectionSkeleton />
           ) : null}
           <ThreadItems slug={slug} number={r.number} here={here} payload={threadRead.data} items={layout.listed} onChanged={threadRead.reread} menuKey={menuKey} />
-          {frame ? (
-            <TopicFrameAbout
-              label={t('project:frame.topic.about')}
-              asker={r.asker}
-              color={swatchFor(r.asker)}
-              line={r.askedTime ? t('project:frame.topic.asked', { when: r.askedTime }) : null}
-              topic={r.category}
-              topicLine={t('project:frame.topic.topic')}
-              follow={followRow ? { title: t('project:frame.topic.follow'), line: t('project:frame.topic.followLine'), ...followRow } : null}
-            />
-          ) : null}
         </div>
       </article>
     </>

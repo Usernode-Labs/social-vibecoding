@@ -27,6 +27,8 @@ const roots = looks.wear.roots;
 const ANY = 'html\\[data-skin\\]:where\\(:not\\(\\[data-skin="brand"\\]\\)\\)';
 const WORN = 'html[data-skin]:where(:not([data-skin="brand"]))';
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// Every wearer of a root: its own, then the second wearers ("also"), each a selector of its own.
+const wearers = (root) => [root.to, ...(root.also || []).map((w) => w.to)];
 const section = (name) => read('frontend/src/features/settings/sections', name);
 
 test('on a wide window the list of sections comes first at 360px, the open section after it at 680px', () => {
@@ -42,10 +44,10 @@ test('a head stands above the two columns under a look, and the standard look ne
   assert.match(src, /<header className="settings-frame-head">\s*<div className="settings-frame-head-tx">\s*<h1 className="settings-frame-title">\{t\('settings:screen\.title'\)\}<\/h1>\s*<p className="settings-frame-purpose">\{t\('settings:frame\.head\.purpose'\)\}<\/p>/);
   assert.doesNotMatch(src, /isFrameSkin|useLiveSkin|useSkin/, 'the chassis is in the prerender: the same markup whatever the look');
   assert.match(css, /\n\.settings-frame-head \{ display: none; \}/, 'the standard look has no head');
-  assert.deepEqual(roots.head, { to: '.settings-frame-head', parts: { tx: '.settings-frame-head-tx' } });
+  assert.equal(roots.head, undefined, 'the head is no root: as one it would take `.head .acts .btn` away from the other pages\' buttons');
   assert.deepEqual(roots.purpose, { to: '.settings-frame-purpose' });
-  assert.match(roots.title.to, /\.settings-frame-title/);
-  assert.match(css, new RegExp(`${ANY} \\.settings-frame-head\\{display:flex;align-items:flex-start;gap:16px;margin-bottom:24px\\}`));
+  assert.ok(wearers(roots.title).includes('.settings-frame-title'), 'the title is a wearer of its own');
+  assert.match(settings, new RegExp(`${ANY} \\.settings-frame-head \\{ display: flex; align-items: flex-start; gap: 16px; margin-bottom: 24px; \\}`), 'the kit\'s head, laid by hand');
   assert.match(settings, new RegExp(`@media \\(max-width: 1023\\.98px\\) \\{\\s+${ANY} #settings-root:has\\(#settings-section-content:not\\(\\.hidden\\)\\) > \\.settings-frame-head \\{ display: none; \\}`), 'a section opened on a phone is its own page, without the head');
   const { message } = require('./lib/platform-i18n');
   assert.equal(message('settings:frame.head.purpose'), 'Your account, your preferences and your tools.');
@@ -53,7 +55,7 @@ test('a head stands above the two columns under a look, and the standard look ne
 
 test('the open page is named at 22px, on a phone too, and no sentence of the look\'s own follows', () => {
   assert.deepEqual(roots.sub22, { to: '.settings-page-title:is(#settings-root *)' });
-  assert.doesNotMatch(roots.title.to, /settings-page-title/, 'it is a sub-heading now, not the kit\'s title');
+  assert.ok(!wearers(roots.title).some((to) => /settings-page-title/.test(to)), 'it is a sub-heading now, not the kit\'s title');
   assert.match(css, new RegExp(`${ANY} \\.settings-page-title:is\\(#settings-root \\*\\)\\{font-size:22px;font-weight:700;letter-spacing:-\\.02em\\}`));
   assert.match(settings, new RegExp(`${ANY} #settings-screen \\.settings-page-title \\{ display: block; margin: 0 0 24px;`));
   const nav = read('frontend/src/features/settings/settings-nav.tsx');
@@ -91,19 +93,25 @@ test('the list of sections carries the names a look dresses: search, cards of ro
 
 test('the wear map dresses Settings\' own markup, inside #settings-root and nowhere else', () => {
   const S = ':is(#settings-root *)';
-  assert.match(roots.card.to, new RegExp(esc(`:is(.ui-glist,.ui-card)${S}`)));
+  assert.ok(wearers(roots.card).includes(`:is(.ui-glist,.ui-card)${S}`), 'a wearer of its own, so Settings\' id weighs on no other page\'s card');
+  assert.doesNotMatch(roots.card.to, /settings|ui-glist/);
   assert.equal(roots.row.to, `:is(.ui-lrow,.ui-row,.drawer-ver-row)${S}`);
   assert.deepEqual(roots.row.parts, {
     tx: ':is(.ui-lrow-tx,.ui-row-tx)', t: ':is(.ui-lrow-t,.ui-row-t,.drawer-ver-label)', s: ':is(.ui-lrow-s,.ui-row-s)', go: '.ui-lrow-go',
     meta: ':is(.fr-meta,.ui-row-meta,.drawer-ver-value)', on: ':is([aria-current="page"],.ui-row-on)', sm: ':is(.ui-row-sm,.settings-menu-row)', wrap: '', all: '',
   }, 'every row here is the wrapping kind (a switch\'s sentence is never cut), and the open page is the lit one');
-  assert.match(roots.cap.to, new RegExp(esc(`:is(.ui-sechead,.ui-cap)${S}`)));
+  assert.ok(wearers(roots.cap).includes(`:is(.ui-sechead,.ui-cap)${S}`));
+  assert.doesNotMatch(roots.cap.to, /settings|ui-/);
   assert.equal(roots.secnote.to, `:is(.ui-secblurb,.ui-note)${S}`);
   assert.deepEqual(roots.tog, { to: `.un-switch${S}`, parts: { on: ':checked' } });
   assert.deepEqual(roots.chk, { to: `.ui-chk${S}`, parts: { on: '.ui-chk-on', round: '' } });
   assert.deepEqual(roots.search, { to: `.ui-search${S}`, parts: { inp: '.settings-filter', flush: '' } });
   assert.match(roots.inp.to, /^:is\(\.settings-filter,\.ui-inp,:is\(input:not\(/);
-  assert.match(roots.btn.to, new RegExp(esc(`:not(.ui-lrow,.ui-row,[role="radio"],.ui-plain))${S})`) + '$'));
+  const btn = (roots.btn.also || []).find((w) => /#settings-root/.test(w.to));
+  assert.ok(btn && btn.to.startsWith(':is(.ui-btn,:is(button,a,label):is(.bg-violet-600,') && btn.to.endsWith(`:not(.ui-lrow,.ui-row,[role="radio"],.ui-plain))${S}`), 'Settings\' buttons are a wearer of their own');
+  assert.deepEqual(Object.keys(btn.parts).sort(), ['bad', 'block', 'line', 'quiet', 'sm'], 'with kinds of their own');
+  assert.deepEqual(roots.btn.parts, { quiet: ':is(.bg-white,.bg-zinc-100)' }, 'and the other pages\' buttons keep theirs');
+  assert.doesNotMatch(roots.btn.to, /settings|ui-btn/);
   assert.equal(roots.pill.to, `.ui-pill${S}`);
   assert.equal(roots.fields.to, `.ui-fields${S}`);
   // One selector for a rule that names the row twice, outranking the standard sheet's own rules.

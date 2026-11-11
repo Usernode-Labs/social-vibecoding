@@ -162,6 +162,249 @@ Left, and why:
   kit's.
 - The bar's crumb on Challenges and Standings is the shell's ("Challenges", "Standings"), not "You › Challenges".
 - The loading skeleton of You before its data is the standard one.
+### Lane H, as built (11 Nov 2026)
+
+**Home (s01 to s04), `features/home/frame/home-frame.tsx`.** One kit page: the head ("Home", "Your apps and
+your communities.", no button), the search field, then the tour's 720 + 320 columns.
+
+- *Search.* The kit field writes each change into `#home-search-input` and dispatches `input`, so
+  `Home._wireSearch` and `use-home-query.ts` stay the one owner; Escape clears. `Home._searchField()` (new,
+  `home.js`) returns the kit field under a look, and `Home.focusSearch`, Ctrl+K and `/` use it.
+- *Pinned apps.* `gridStore` tiles with the standard tile's marks (made from, who it is for, still open), a
+  status line and Retry, the tile menu on right-click; Edit, Add other apps, Done and New project under the
+  standard heading's rules; "Show all N apps" (`chromeStore.moreCount`) unfolds the grid in place, which then
+  ends in the New project tile. s03's page (`home-all-apps.tsx`) is deleted.
+- *Pinned communities.* Tiles from `homePinsStore.pins` with `owed`, then Needs you, All communities and New
+  community in the standard order and under its conditions; Edit puts a − on each pin; All communities (and
+  a search, and `home:show-all-communities`) shows the unpinned ones faded with a +. s04's page
+  (`home-all-communities.tsx`) is deleted. `Home.showCommunities` scrolls to `#home-frame-communities`.
+- *Communities to join.* The kind filter, Featured as text cards (a grid of three; a sideways row on a
+  phone), the rest as rows, each with a real Join (`Home.setMembership`), the standard paging, end line,
+  failed + Try again, and empty lines. The line under a name is the standard's (votes, else members).
+- *Next challenges.* The side column, one row per `panelsStore.challenges.rows`; a row's line is
+  `stateLabel` (open question 2: the row view has no description); the one-line note is one card.
+- Gone: the Needs you rows, Live this week, Your week, the season row, picture cards, the challenge cards
+  under the columns, their four reads, and 68 `home:frame.*` ids (`frame.title` stays, `frame.purpose` is new).
+
+**Rulings taken.** App tiles carry no count (question 1: the standard tile has none). Editing Pinned apps
+removes tiles and adds others; **dragging to rearrange is left**: PlatformUI's gesture measures the hidden
+standard grid's four-column cells, and the kit grid is six columns of flow. A hold on a touch screen does
+not open the tile menu either (the hold recogniser is the same gesture); right-click does, and Edit is the
+heading's link. The kit tile's menu has no "Edit My apps" item (it is offered only on `.app-card[data-yours]`).
+
+**Left (question 8).** The waitlist card, the verify card and the iOS widget strip are not drawn under a
+look: they are the standard components, and inside `.fr` the kit's reset would undress them. An account
+they apply to does not see them on Home under a look. They need a wear pass of their own.
+
+**Notifications (s05, s06).** The bar's bell calls `NotificationsSheet.toggle()`: the product's sheet, whole.
+It wears the look by one hand-written block in app.css (THE BELL'S SHEET) and the wear map: `card` gained
+`.notifications-card:where(#notifications-sheet *)`, and two new roots, `tabs` and `tab`, map the kit's tabs
+onto `#notifications-screen-tabs` (so Glass draws its capsule, Workbench its box). Mark all read stays where
+the product has it, in the sheet's head (question 5). `frame-sheets.tsx`, its suite and
+`notifications:frame.*` are deleted.
+
+**The Homeroom menu (s07).** Unchanged in content; drawn closer to the mockup by hand rules after THE
+HOMEROOM MENU: the title at 24px, Suggest an improvement the whole width, the rows as one card. The kit's
+account menu and `core:frame.menu.*` are deleted.
+
+**Chrome.** As ruled: the mark and the look picker stay at the bar's end. The sidebar's You row opens the
+profile and its glyph `#settings`; a phone's avatar is a link to You; the bar's search calls
+`Home.focusSearch()`. The sidebar's pins and the App row's dot (question 9) are not carried over: not ruled,
+and not in the mockup's frame.
+
+**Seen in a browser** (local stack, account with 98 pinned communities and no unread notifications): Home in
+Glass, Paper and Workbench, desktop and phone, light and dark; search, Show all, Edit and All communities
+pressed; the bell's sheet with older notifications open in Glass, Paper, Workbench (desktop, phone, dark);
+the menu in Glass (desktop) and Paper (phone, dark); the chrome's four presses on both widths. Not seen: an
+unread notification's row (the copy has none for this account), a locked or failed app tile, the waitlist
+states.
+### Lane T, as built (11 Nov)
+
+A request and a change (s32 to s35) and the running app (s38), on `redesign/skins-v2-t`
+(`5a04e2738` to `92561bff2`). The pages are still the product's (`features/dev-board/topic/
+request-head.tsx`, `change-head.tsx`); what a look changes is added beside their own lines.
+
+- **The head (s32 to s35):** "Request #5998" (or "Change #6369") is a small line over the full
+  title, with the page's ⋯. About and the Follow switch are gone with their hook, their five
+  catalog entries and their rules; following stays a row of ⋯.
+- **A change's page (s34, s35):** "The change" is a labelled card starting with who put it up,
+  when and what built it. The context column is Status (the pill alone, with its counted vote
+  once live), Votes and Tested: the product's own cards, each card's name the kit's label over
+  it. "Ask Homeroom bot privately" is the kit's quiet small button.
+- **A request's page (s32, s33):** "The request" is a labelled card starting with who asked and
+  when. After it, in the words: the sentence (first sentence bold), the claim's small words and
+  the one action. In the context column, under Status: the pill, the five stops and one line,
+  drawn by the kit from Homeroom bot's own track when it has one (`topic/frame/topic-track.tsx`,
+  through `bot-track.tsx`'s helpers), else the stage, else (a change built for it) the pill the
+  standard bar wears beside the number.
+- **The discussion (both pages)** is the product's stream, dressed by the wear map: its count
+  is the section's label, the stream one card, what happened the kit's event line (`evt`, with
+  `cap` and `sechead` for the label, and a second wearer of `card`: `"also"`, new in
+  `scripts/build-looks-css.js`).
+- **On a phone** where it stands leads the page, then the words; the head stays over the page.
+- **A running app (s38):** on a desktop the bar says the project and "App" and carries Suggest.
+
+Rulings taken (each the option closest to today's product):
+
+- **Who asked** (audit c, question 1) is kept, as the by-line at the top of "The request".
+- **The topic** (question 2) is kept on the small line over the title ("Request #5998 · topic").
+- **A request with no bot track** (question 3) keeps the kit's five stops (`frameStop`), since
+  one line for progress is drawn the same wherever a request appears; the standard page draws
+  four of its own (Asked, Spec, Built, Voted in).
+- **A change inside a request's page** (question 4) keeps the standard section.
+- **A running app on a phone** (question 5) is not changed: the app has the whole screen.
+- **Suggest** (question 6) follows the standard header's rule, so the frame's bar has it on a
+  project's pages as well as beside its app. One condition (`onApp`) limits it to the app.
+- **On a phone the head keeps two lines of title**, as the standard bar does: it stays over the
+  page while it scrolls, and a full four-line title there would take a third of the screen.
+- **What happened is said with the product's emoji**, drawn small and grey: the icons of the
+  mockup would need the stream itself redrawn (transcript.tsx, not this lane's).
+- **A page with nothing in its context column** (a closed request) is one column.
+
+Left: the standard change section on a request's page (its Votes and Tested stay in the words'
+column, in the standard pair); a spec card, the plan card and "Before and after" keep the
+standard look's surfaces inside the kit's column; s38's back arrow (the standard header shows
+none beside a running app on a desktop, so neither does the bar).
+
+Seen in a browser on the local copy, which does open a change's own page now
+(`/app/usernode-2d5619/dev/changes/6369`): the request and the change on a desktop in Glass,
+Paper (light and dark), Workbench (light and dark) and Today, and on a phone in Glass and
+Paper; the running app's bar in Glass and Workbench dark (the app itself does not load here).
+The stream's card takes a look's fill and edge but not its blur: under Glass the blurred
+card scrolling under the frosted composer left the composer half drawn in captures (whole
+again after any repaint), and the shell blurs no scrolling plane anyway. A capture of a long
+discussion taken before it settles can still show the composer half drawn; two seconds later
+it is whole.
+### Lane P, as built (11 Nov)
+
+A project's pages under a look (`features/dev-board/workshop/frame/project-frame.tsx`, fed by the frame
+closures of `workshop.tsx`). Needs you (s26) is untouched: its head keeps Invite and Ask for a change until
+lane K takes the page.
+
+- **Hub (s23, s24, s36).** The head is the hero's: tile, name, description, Open app (not on Homeroom's own
+  page), Invite, Join; the hero's own ⋯ still stands at its end. For you: Needs you while any vote is owed
+  (the pill for the unseen ones, "N skipped" otherwise, "Join to vote on these." for a non-member), else the
+  quiet line with the requests nobody has picked up as its link; Workshop for anyone signed in; Discussion
+  #general with its last line, the time never cut. Recently live is three picture cards (the project's tile
+  where a change has no picture; the app itself before anything went live). The side column is People alone,
+  with this week's faces, first on a phone. A phone also lists the topics (six, then Show N more). Gone: Ask
+  for a change, the Your work row, Recently live as rows, the three-topic group, How a change goes live, The app.
+- **Topics (s25).** The places list's own rows (`placeRows`): the topics in the work column, the channels
+  beside them, each by its name with its unread count. Gone: Propose a topic, About topics, the lines.
+- **Workshop (s27, s28, s37).** Overview: All items with See all (and the dot when a filter waits there) and
+  the four figures with their lines, each opening what it counts; then the Your work card, or the product's
+  first-change card for a newcomer. What happened: Mark all seen, this week's rows (new, You, Going live, a
+  stuck merge, Build it), All of this week, the weeks before, Earlier weeks or when the project started.
+  Beside them Homeroom bot's slots and Who decides. An admin's private requests stay under What happened.
+  Gone: the head's buttons, the ballot, Recently live, the four week rows, Nobody is on these.
+- **#general (s31).** The product's sentence under the title, the room in the content column and This
+  channel beside it (members and Mute), drawn by `channel-head.tsx` from its one state. A reply thread
+  beside the room takes the width back. A quoted reply in a project's channel wears the kit's quote.
+- **All items (s29, s30).** The kit draws the head, the two groupings as tabs with the board's search at
+  their end, and the side column (Show: Filters with its count and the active chips, Assigned to you, Yours;
+  Order categories). The list is the product's own, laid in the kit's content column and wearing the look
+  (wear map: `card` for a category's card, a new `cap` root for its two labels; hand rules for its inside).
+  By stage the board has the page's width and keeps its filter chips over the columns. s30 needs nothing of
+  its own: the Workshop's votes figure already routes.
+
+Rulings taken:
+
+- **Who decides** says the product's short sentence (`communityCard.lineShort.*`: "Goes live when its checks
+  pass and evan or snait says yes.") with the wait as its line. The mockup's shorter form has no catalog id.
+- **All items' categories are worn, not redrawn.** A second drawing would lose the lanes a card opens to,
+  the order held across a re-sort (`themesRef`) and the panel's lit row. So a card keeps the product's
+  parts (number over label, the chips, the faces' roster) in the kit's card.
+- **The kit's search drives the board's own box**, which stays mounted behind it (`#dev-kanban-search`,
+  `AppView._onKanbanSearchInput`), so comments and `#` are searched as on the standard page.
+- **By stage has no side column**: the board takes the width, and the product's chip row stays over it.
+- The second quick filter keeps the product's word, "Yours".
+- Two labels are new words, both layout labels of the first tour: "This channel" (`frame.channel.this`) and
+  #general's sentence as a sentence (`frame.place.general`, the standard line plus its full stop).
+- No project page head but the Hub's (and Needs you's, see above) has buttons.
+
+Left, and why:
+
+- **What happened's item rows were not seen in a browser**: this copy of the database has no rows since the
+  last visit on the projects tried. They are pinned by the suite only.
+- **Topics still has no address** under a look (a reload lands on the Hub), and Propose a topic is reachable
+  from Settings & rules only, as on the standard page.
+- **A week's page, the bot's slots page and a topic's channel** are the standard bodies under the kit's head.
+- **A place's own body is 32px from the page's edge** in every look but Workbench; Paper (40px) and Today
+  (36px) set their head a few pixels further in.
+- On a phone the channel's fitted box runs under the tab bar while the "changes are paused" banner is up
+  (the box is measured without the banner); it does so before this lane's change too.
+
+Learned:
+
+- The scratchpad is shared by every lane's agent: keep scripts and logs in a folder of your own.
+- `Btn` prefixes its `className` (`className="chip"`, not `k('chip')`).
+- A v2 kit rule may not restate an old selector or use an old bare name (`tests/looks-css.test.js`): the
+  picture card is `.shotc` inside `.shots.cards`.
+
+### Lane B, as built (11 Nov 2026)
+
+**The shared row model first** (`features/ai/lines.ts`, `useAiLines`). The `Line` objects `AiLists` built inline
+moved there whole, with the chips' projects (`ranked`, `rail`, `past`, `toggle`), what a search keeps, the fresh
+counts, the counts over each list, `heads`, `nothingHere` and `noMatches`. A glyph is a name (`Glyph`); each face
+has its own icon for it (`GLYPHS` in `lists.tsx`, `ICON` in `frame-list.tsx`). The standard list renders the same
+markup; `tests/ai-screen.test.js` changed only where it read the moved lines out of `lists.tsx` (four reads now
+name `lines.ts`, and the "works" glyph is pinned as a name plus the standard face's icon map).
+
+**s08, s09, s14, the lists** (`features/ai/frame-list.tsx`, rewritten). The head: the bot's tile, the title, the
+counts sentence, and two round buttons (search, which opens the field under the head and Escape closes; the +).
+The projects as tabs: All, the rail's projects, "N more" opening the product's `ProjectPicker`. Main Chat as one
+small row in its own card. Then four groups of one card each, in the standard order: Needs you, Waiting & in
+progress (with "Not moving · N" as its last row, opening its rows in place), Live this week (with the older-tab
+reload note), History (its kinds as small buttons inside the card, months as rows, "Earlier months" last). A row
+is one line: glyph (accent when it asks for you), the number in mono from 768px, the title (with "· N requests"),
+then a blue pill or grey words; a private row ends in the product's ⋯ (`ThreadDoneMenu`, Mark done); on a phone a
+second line where it is news. Folding is `groupRows`, so the lit row and a new row are never folded away; Needs
+you holds its order under the pointer (`holdOrder`). The loading line, the failed note with Try again, "nothing
+of yours in <project>", and "No threads match" are the standard's. With one project picked the lists are
+narrowed, project names are not repeated, and Main Chat stays. The phone's Ask Homeroom bot bar is back over the
+tab bar, wearing the kit's composer. Alone, the list is the kit's narrow page (784px, centred). Gone: the group
+per project, the five-stop line on rows, second lines on a desktop, the labelled New thread button, the count on
+All, and all fifteen `messages:frame.bot.*` ids.
+
+**s10 Main Chat.** The kit head got the standard head's lock before "Only you can see this chat". The
+conversation is the product's, worn, as before.
+
+**s11 a request in the column.** Only the pane, as assigned: the shell's side-panel head beside the bot page is
+dressed as the kit's open-item head (68px, 32px gutter, 40px tile, 17px name over the 13px line, the ⋯ and × as
+round buttons). On a phone, a request opened from the lists keeps the standard page's pair of chips (Homeroom
+bot, Workshop) at its top: `#gc-thread-back` is shown again there when it holds the pair, as small quiet buttons.
+
+**s12 a private thread.** Already the product's pane, worn. Its row in the list is lit together with its ⋯, and
+the ⋯ menu is dressed (it sits inside `.fr`, whose reset had undressed it).
+
+**s13 New thread.** As ruled, the product's pane in the column (the whole screen on a phone), with today's
+content. The five starts are rows in one card (the list wears the kit's card through `looks.json`; the rows and
+their 40px glyph tile are hand rules in app.css), the two chips are small quiet buttons.
+
+Rulings taken:
+
+- **Project tabs toggle like the standard chips** (audit question 7): several may be picked, All means none, and
+  a tab carries its count of new threads. Closest to today, and what the address (`?project=`) already carries.
+- **Day dividers and the "Earlier" line stay** inside a project's rows (Needs you, Waiting & in progress), as
+  small caps with a rule. The mockup's sample has none, but the standard list has had them since 6 Nov and #6262.
+- The fresh pill beside "Needs you · N" and on a project's name, and the dot before a new row, are kept.
+- The loading state is the standard's spoken words ("Loading…") as a grey line, not skeleton bars (the kit has none).
+- A request's back chips show on a phone only when the page has the pair; a page with the one chip keeps the
+  bar's arrow alone, as every kit page does.
+
+Left, and why:
+
+- **Main Chat's request cards and the bot's bulleted lines** (s10) are the product's own drawing, not the kit's
+  rows in one card and small event lines. Wearing them means adding the ref cards to the wear map's `card` and
+  `row`; the `row` root is Settings' (lane S), so it was left for after the merge.
+- **The lock as a private thread's head lead** (s12): the product's head has no lead, and the lock is already
+  before its line.
+- **The "N more" picker and the chips' pickers** open the product's own menus and sheets, not the kit's sheet.
+- The order inside a request's page in the column (Status first) is lane T's.
+- In Paper, the list beside an open item runs past the page card's rounded bottom edge (it did before this lane).
+- Not seen in a browser: a new (unread) Needs you row with the Earlier line, the failed and loading notes, the
+  older-tab reload note, and a project in a community the person left (History). They are pinned in
+  `tests/ai-frame-list.test.js` from fixtures instead.
 
 ### Lane S, as built (11 Nov 2026)
 
@@ -225,6 +468,11 @@ Rulings taken:
   heading with six classes, and a worn rule has to outrank them. A hand rule that must outrank a worn one
   names `#settings-screen` as well. `hidden` is restated for the screen, since a worn `display` outranks the
   utility and settings.js shows and hides by that class.
+- **Where Settings shares a root with another page** (cap, card, title, btn) it is a wearer of its own
+  (`"also"` in looks.json), so its id weighs on nobody else's rule; btn's Settings wearer has parts of its own
+  (quiet, bad, sm, block, line) and the auth pages, the sign-in sheet and Edit profile's Save keep theirs. The
+  head's box is laid by hand: as a root, `head` would take every rule that names the head before a button
+  away from the other wearers of btn.
 - **Fields, buttons and links are worn by the product's own classes** (an input, select or textarea inside a
   section; a button with a fill or a border; a violet or red text button), so the shared primitives
   (`button.tsx`, `input.tsx`, `select.tsx`, `switch.tsx`) are untouched. `ui-btn`, `ui-link`, `ui-inp` name

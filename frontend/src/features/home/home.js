@@ -384,7 +384,8 @@ const Home = {
       try { document.dispatchEvent(new CustomEvent(Home.SHOW_ALL_COMMUNITIES)); } catch (err) { /* the section opens on its own press */ }
     }
     const scroll = () => {
-      const el = document.getElementById('home-communities-section');
+      // Under a look the kit page draws the section (frame/home-frame.tsx).
+      const el = document.getElementById('home-frame-communities') || document.getElementById('home-communities-section');
       if (el && !el.hidden) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
     };
     requestAnimationFrame(() => requestAnimationFrame(scroll));
@@ -393,10 +394,15 @@ const Home = {
   // The sidebar's search glyph (features/nav/rail-communities.tsx): Home,
   // with its search box focused, which finds your apps and communities by
   // name. It opened the Communities screen's search until One Home (#6361).
+  // The field a person types in: Home's own, or, under a look, the kit
+  // page's (frame/home-frame.tsx HomeSearch), which writes into Home's own.
+  _searchField() {
+    return document.querySelector('[data-home-frame-search] input') || document.getElementById('home-search-input');
+  },
   focusSearch() {
     if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
     const focus = () => {
-      const input = document.getElementById('home-search-input');
+      const input = Home._searchField();
       if (!input) return;
       try { input.focus({ preventScroll: false }); input.select?.(); } catch (err) { /* nothing to focus */ }
     };
@@ -408,7 +414,7 @@ const Home = {
   showCommunitiesToJoin() {
     if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
     const scroll = () => {
-      const el = document.getElementById('home-join-section');
+      const el = document.getElementById('home-frame-to-join') || document.getElementById('home-join-section');
       if (el && !el.hidden) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
     };
     requestAnimationFrame(() => requestAnimationFrame(scroll));
@@ -2202,7 +2208,8 @@ const Home = {
     installHomeSearchShortcut({
       doc: document,
       open: (showing) => {
-        if (!showing) { Home.focusSearch(); return; }
+        // Under a look the field on screen is the kit page's: focusSearch finds it.
+        if (!showing || Home._searchField() !== input) { Home.focusSearch(); return; }
         try {
           input.focus({ preventScroll: false });
           input.select?.();

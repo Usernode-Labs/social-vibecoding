@@ -305,17 +305,45 @@ test('version 2 dresses nothing of the product\'s own that it did not dress befo
   // is repeated only places a kit element inside or beside a worn one.
   const css = looks.compile(v2Source(), null);
   const worn = css.split('\n').filter((rule) => rule.startsWith('html')).flatMap((rule) => topLevel(rule.slice(0, rule.indexOf('{')))).filter((sel) => /:where\(:not\(\[data-skin="brand"\]\)\)/.test(sel));
-  // Settings is the one screen that wears version 2's own pieces (lane S: its
-  // head, the 22px name, the note, the link's bad tone, the wrapping row):
-  // every such selector is held inside Settings by name.
-  const SETTINGS = /#settings-root|\.settings-(frame|page|filter)/;
+  // Settings is the one screen that wears version 2's own pieces (lane S: the
+  // 22px name, the note, the link's bad tone, the wrapping row): every such
+  // selector is held inside Settings by name. Anywhere else a worn rule only
+  // places a kit element inside or beside a worn one, and they stay a handful.
+  const SETTINGS = /#settings-root|#settings-section-content|\.settings-(frame|page|filter)/;
   const elsewhere = worn.filter((sel) => !SETTINGS.test(sel));
-  assert.ok(worn.length > 0 && elsewhere.length < 20, `a handful only outside Settings (${elsewhere.length})`);
+  assert.ok(worn.length > 0 && elsewhere.length < 40, `a handful only outside Settings (${elsewhere.length} of ${worn.length})`);
   for (const sel of elsewhere) assert.match(sel, /\.fr-[\w-]+/, `"${sel}" would dress the product's markup with no kit element in it`);
   assert.doesNotMatch(css, /messages-|dev-request|dev-change|auth-waiting/, 'no conversation, request or waiting-room node is named');
-  // The event line is not worn yet: the request page's own lines would
-  // change under every look. The lane that redraws that page adds the root.
-  assert.equal(looks.config.wear.roots.evt, undefined);
+});
+
+test('an item\'s page keeps the product\'s discussion and dresses it: the stream a card, its count a section\'s label, what happened an event line', () => {
+  // Lane T of version 2 (a request's and a change's page). P0 left the
+  // event line out of the map on purpose; the lane that redraws the page
+  // adds it, with the stream's card and its label.
+  const roots = looks.config.wear.roots;
+  assert.deepEqual(roots.evt, { to: '#dev-topic-thread #gc-thread-messages .dev-request-event', parts: { ei: '.dev-request-event-glyph' } },
+    'two ids: the standard look\'s rule for the line names both, and a worn rule must outweigh it');
+  assert.equal(looks.wornSelector('html[data-skin] .fr-evt .fr-ei'), 'html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph');
+  assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-evt b'), 'html[data-skin="workbench"] #dev-topic-thread #gc-thread-messages .dev-request-event b');
+  // The stream wears the card as a second wearer, a selector of its own:
+  // inside the first's :is() its two ids would lift every other card.
+  assert.doesNotMatch(roots.card.to, /gc-thread-messages/);
+  assert.deepEqual(roots.card.also[0], { to: '#dev-topic-thread .dev-request #gc-thread-messages:is([data-language="request"],[data-language="change"])' });
+  const card = looks.wornSelector('html[data-skin] .fr-card');
+  // Every wearer in turn (Settings' cards are a third, tests/settings-frame.test.js), each a selector of its own.
+  assert.equal(card, [roots.card, ...roots.card.also].map((w) => `html[data-skin]:where(:not([data-skin="brand"])) ${w.to}`).join(','));
+  assert.ok(card.startsWith(`html[data-skin]:where(:not([data-skin="brand"])) ${roots.card.to},html[data-skin]:where(:not([data-skin="brand"])) ${roots.card.also[0].to}`));
+  assert.equal(looks.wornSelector('html[data-skin] .fr-card.fr-pad'), null, 'a state neither wearer carries is still left out');
+  // The line that counts the replies is the section's label: the kit's
+  // .cap, and .sechead .cap for the looks that draw a section's label
+  // larger (Today, Playground). The section head's own box is not worn.
+  assert.equal(looks.wornSelector('html[data-skin="paper"] .fr-cap').split(',')[0], 'html[data-skin="paper"] #dev-topic-thread .dev-request .messages-reply-count');
+  assert.equal(looks.wornSelector('html[data-skin="today"] .fr-sechead .fr-cap', '.sechead .cap'), 'html[data-skin="today"] #dev-topic-thread .dev-request #gc-thread-messages .messages-reply-count');
+  assert.equal(looks.wornSelector('html[data-skin] .fr-sechead', '.sechead'), null);
+  assert.equal(looks.wornSelector('html[data-skin] .fr-cap.fr-over'), null);
+  const css = section();
+  assert.ok(css.includes('html[data-skin="today"] .fr-sechead .fr-cap,html[data-skin="today"] #dev-topic-thread .dev-request #gc-thread-messages .messages-reply-count{font-size:22px;'));
+  assert.ok(css.includes(',html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--fr-mut);min-width:0}'));
 });
 
 // ── The committed section ────────────────────────────────────────────────
@@ -341,7 +369,7 @@ test('the section sits just before the New look\'s block, which stays last', () 
 });
 
 // The product's classes looks.json "wear" names: the only ones the section may carry.
-const WORN = new Set(Object.values(looks.config.wear.roots).flatMap((root) => [root.to, ...Object.values(root.parts || {})])
+const WORN = new Set(Object.values(looks.config.wear.roots).flatMap((root) => [root.to, ...(root.also || []).flatMap((w) => [w.to, ...Object.values(w.parts || {})]), ...Object.values(root.parts || {})])
   .flatMap((sel) => sel.match(/\.[a-zA-Z][\w-]*/g) || []));
 
 // A rule's selectors: split at the commas outside every bracket (a worn
@@ -447,5 +475,8 @@ test('a worn rule that could match nothing is left out', () => {
   }
   assert.ok(seen > 100, `the worn rules are there (${seen})`);
   const btn = looks.config.wear.roots.btn;
-  assert.ok(text.includes(`${btn.to}${btn.parts.quiet}{background:var(--fr-sunk)`), 'a state the map names is kept: the quiet button');
+  // The quiet button, for the first wearer by its own part and for Settings' buttons by theirs, one rule.
+  const quiet = text.split('\n').find((rule) => rule.includes(`${btn.to}${btn.parts.quiet},`) && rule.includes('{background:var(--fr-sunk)'));
+  assert.ok(quiet, 'a state the map names is kept: the quiet button');
+  for (const wearer of btn.also || []) assert.ok(quiet.includes(`${wearer.to}${wearer.parts.quiet}{`), 'and each second wearer\'s, by its own part');
 });

@@ -1,10 +1,13 @@
 // All items in the one frame (frontend/src/features/dev-board/workshop/frame/
-// project-frame.tsx ProjectAllItemsFrame), as the 2026-11-06 screen tour
-// draws it (s29): the Workshop's own page of every open request and change,
-// the stages as the page's tabs, one row per item with the five-stop line
-// and the word that says where it stands, Show beside them. The board's own
-// columns (../card/cards-store.ts devKanbanStore) are its data; the Workshop
-// page hands them in.
+// project-frame.tsx ProjectAllItemsFrame), version 2 of the screen tour's s29
+// and s30: the kit's head, tabs and side column around today's page. The
+// tabs are its two groupings with the board's own search at their end; Show
+// (Filters, the active chips, the two quick filters) and Order categories
+// stand beside the list. The list is the product's own (a card per
+// category opening to its lanes, or the board by stage), laid in the kit's
+// content column and wearing the look. What the first tour drew is gone:
+// the stages as tabs, the flat list with the five-stop line, Everyone's or
+// Only yours, the topics beside it, the head's buttons.
 //
 // Run with: node --test tests/project-all-items-frame.test.js
 
@@ -20,81 +23,93 @@ const ROOT = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8');
 const FRAME = 'frontend/src/features/dev-board/workshop/frame/project-frame.tsx';
 
-const item = (key, title, over = {}) => ({ key, title, line: `#${key.split(':')[1]} · Onboarding`, href: `#app/homeroom/dev/${key.replace(':', 's/')}`, mine: false, pill: null, ...over });
-const cols = [
-  { key: 'issues', title: 'Requests', items: [item('issue:6204', 'Mobile app does not respect the safe area', { word: 'Nobody on it' }), item('issue:6102', 'Add a way to mute one topic', { word: 'Planning', mine: true })] },
-  { key: 'inprogress', title: 'Under way', items: [item('proposal:6317', 'Open the before and after viewer', { word: 'Building' })] },
-  { key: 'inreview', title: 'In review', items: [item('proposal:6370', 'Email templates: keep translations', { pill: { kind: 'act', label: 'Vote' } }), item('proposal:6198', 'Make the bot tab the one place', { pill: { kind: 'wait', label: 'On votes' }, mine: true })] },
-  { key: 'done', title: 'Done', items: [item('proposal:6369', 'Email templates, part 7', { word: 'Live' })] },
-];
 const base = {
-  tabs: [{ key: 'status', label: 'Hub' }, { key: 'workshop', label: 'Workshop' }], tab: 'workshop', onTab() {}, onAsk() {},
-  project: 'Homeroom', cols, loading: false, stage: '', onStage() {}, mine: false, onMine() {}, query: '', onQuery() {}, openKey: null, onOpen() {},
+  tabs: [{ key: 'status', label: 'Hub' }, { key: 'workshop', label: 'Workshop' }], tab: 'workshop', onTab() {}, onInvite() {},
+  project: 'Homeroom', group: 'category', onGroup() {}, query: '', querySeq: 0, onQuery() {},
+  filters: { count: 0, chips: [], quick: { assignedToMe: false, yours: false }, onOpen() {}, onDismiss() {}, onQuick() {} },
+  sort: { key: 'people', options: [{ key: 'people', label: 'By people' }, { key: 'activity', label: 'By activity' }, { key: 'open', label: 'By open items' }], onSort() {} },
 };
 const render = (over) => renderComponent(FRAME, 'ProjectAllItemsFrame', { ...base, ...over }, { cache: false });
-const titles = (html) => [...html.slice(0, html.indexOf('<h2 class="fr-cap">Show')).matchAll(/<span class="fr-t">([^<]+)<\/span>/g)].map((m) => m[1]);
 
-test('the page: its title, how many are open and where, the stages as tabs', () => {
+test('the page: its title and sentence, no buttons, the two groupings as tabs with the board\'s search at their end', () => {
   const html = render();
-  assert.match(html, /^<div class="fr" data-project-frame="all-kit"><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">All items<\/h1><p class="fr-purpose">5 open requests and changes in Homeroom, newest first\.<\/p>/);
-  assert.deepEqual([...html.matchAll(/<button type="button" class="fr-tab(?: fr-on)?" aria-pressed="(true|false)">([^<]*?)(?:<span class="fr-n">(\d+)<\/span>)?<\/button>/g)].map((m) => [m[2], m[1], m[3]]),
-    [['All', 'true', undefined], ['Requests', 'false', '2'], ['Under way', 'false', '1'], ['In review', 'false', '2'], ['Done', 'false', '1']]);
-  assert.match(html, /<input type="search" class="fr-v" placeholder="Search requests, changes or a number"/);
+  assert.match(html, /^<div class="fr" data-project-frame="all-items" data-all-group="category"><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">All items<\/h1><p class="fr-purpose">Every request and change in Homeroom, grouped by category or by stage\.<\/p><\/div><\/div><nav class="fr-tabs" aria-label="[^"]+"><button type="button" class="fr-tab fr-on" aria-pressed="true">By category<\/button><button type="button" class="fr-tab" aria-pressed="false">By stage<\/button><div class="fr-end"><div class="fr-search fr-flush"><label class="fr-inp"><svg[^>]*>.*?<\/svg><input type="search" class="fr-v" placeholder="Search requests, changes, comments or #" aria-label="[^"]+" value=""\/><\/label><\/div><\/div><\/nav>/s);
+  assert.match(html, /<\/nav><div class="fr-search fr-p"><label class="fr-inp">/, 'a phone has no room at the tabs\' end: the field under them');
+  assert.doesNotMatch(html, /fr-acts|Ask for a change|Requests<|In review|fr-track/, 'no buttons, no stage tabs, no five-stop line');
+  assert.match(render({ group: 'stage' }), /data-all-group="stage".*?<button type="button" class="fr-tab fr-on" aria-pressed="true">By stage</s);
+  assert.match(render({ query: 'invite' }), /<label class="fr-inp fr-val">.*?value="invite"/s, 'the board\'s own text');
 });
 
-test('one row per item: its title and number, the five-stop line, the word or pill that says where it stands', () => {
+test('Show: Filters with how many are set and each active one with its ×, then the two quick filters as choices', () => {
   const html = render();
-  assert.deepEqual(titles(html), ['Mobile app does not respect the safe area', 'Add a way to mute one topic', 'Open the before and after viewer', 'Email templates: keep translations', 'Make the bot tab the one place'], 'what is open; what went live is the Done tab\'s');
-  assert.deepEqual(titles(render({ stage: 'done' })), ['Email templates, part 7']);
-  assert.match(html, /<a class="fr-row" href="#app\/homeroom\/dev\/issues\/6204"[^>]*><span class="fr-tx"><span class="fr-t">Mobile app does not respect the safe area<\/span><span class="fr-s">#6204 · Onboarding<\/span><\/span><span class="fr-track fr-mini"[^>]*>.*?<\/span><span class="fr-meta">Nobody on it<\/span><svg[^>]*class="[^"]*go/s);
-  assert.match(html, /Email templates: keep translations<\/span>.*?<span class="fr-pill fr-act" data-kind="act">Vote<\/span>/s);
-  assert.match(html, /Make the bot tab the one place<\/span>.*?<span class="fr-pill fr-wait" data-kind="wait">On votes<\/span>/s);
-  assert.match(html, /<h2 class="fr-cap">5 open<\/h2>/, 'the group counts what the page shows');
-  assert.match(render({ openKey: 'proposal:6317' }), /<a class="fr-row fr-on" href="#app\/homeroom\/dev\/proposals\/6317" aria-current="page">/, 'the item open beside the list is lit');
+  const show = html.slice(html.indexOf('>Show<'), html.indexOf('>Order categories<'));
+  assert.match(show, /<button type="button" class="fr-row fr-sm"><span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Filters<\/span><\/span><svg[^>]*fr-go/s);
+  assert.match(show, /<button type="button" class="fr-row fr-sm" aria-pressed="false"><span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Assigned to you<\/span>/s);
+  assert.match(show, /aria-pressed="false">.*?<span class="fr-t">Yours<\/span>/s, 'the product\'s own word for the second');
+  const set = render({ filters: { ...base.filters, count: 2, chips: [{ key: 'q', label: 'Search: invite' }, { key: 'label', label: 'bug' }], quick: { assignedToMe: true, yours: false } } });
+  assert.match(set, /<button type="button" class="fr-row fr-sm" aria-label="Filters \(2\)"><span class="fr-lead fr-acc" aria-hidden="true">.*?<span class="fr-t">Filters<\/span><\/span><span class="fr-pill fr-act" data-kind="act">2<\/span>/s);
+  assert.match(set, /<div class="fr-btnrow fr-chips fr-inrow"><button type="button" class="fr-btn fr-quiet fr-sm fr-chip" aria-label="Remove filter: Search: invite">Search: invite<span aria-hidden="true">×<\/span><\/button><button[^>]*aria-label="Remove filter: bug">/, 'a narrowed page says what narrows it');
+  assert.match(set, /<button type="button" class="fr-row fr-sm fr-on" aria-pressed="true">.*?<span class="fr-t">Assigned to you<\/span>/s);
+  assert.doesNotMatch(render({ filters: { ...base.filters, quick: null } }), /Assigned to you|Yours/, 'signed out there is no "you"');
+  assert.doesNotMatch(html, /Everyone|Only yours/);
 });
 
-test('a stage shows its own items; Show narrows to yours; the search box to what it says', () => {
-  assert.deepEqual(titles(render({ stage: 'inreview' })), ['Email templates: keep translations', 'Make the bot tab the one place']);
-  assert.deepEqual(titles(render({ mine: true })), ['Add a way to mute one topic', 'Make the bot tab the one place']);
-  assert.deepEqual(titles(render({ query: '6317' })), ['Open the before and after viewer']);
-  assert.deepEqual(titles(render({ query: 'email' })), ['Email templates: keep translations']);
-  assert.match(render({ query: 'zzz' }), /<div class="fr-card fr-pad">Nothing matches that\.<\/div>/);
-  assert.match(render({ cols: [], loading: true }), /<div class="fr-card fr-pad">Loading…<\/div>/);
-  const side = render({ mine: true });
-  assert.match(side, /<h2 class="fr-cap">Show<\/h2><\/div><div class="fr-card"><button type="button" class="fr-row fr-sm" aria-pressed="false"><span class="fr-lead"[^>]*>.*?<\/span><span class="fr-tx"><span class="fr-t">Everyone&#x27;s<\/span><\/span><\/button><button type="button" class="fr-row fr-sm fr-on" aria-pressed="true">.*?Only yours<\/span>/s);
+test('Order categories: the product\'s three orders, the current one lit; by stage nothing stands beside the board', () => {
+  const html = render({ sort: { ...base.sort, key: 'activity' } });
+  const order = html.slice(html.indexOf('>Order categories<'));
+  assert.deepEqual([...order.matchAll(/<button type="button" class="fr-row fr-sm( fr-on)?" aria-pressed="(true|false)">.*?<span class="fr-t">([^<]+)<\/span>/gs)].map((m) => [m[3], m[2]]),
+    [['By people', 'false'], ['By activity', 'true'], ['By open items', 'false']]);
+  assert.match(html, /<div class="fr-cols fr-beside"><div class="fr-stack fr-first"><section class="fr-sec">/, 'the kit draws the side column alone: the list under it is the page\'s own');
+  assert.doesNotMatch(render({ sort: null }), /Order categories/);
+  const stage = render({ group: 'stage' });
+  assert.doesNotMatch(stage, /fr-cols|>Show<|Order categories/);
+  assert.doesNotMatch(render(), /fr-hcard|Discuss in/, 'no second drawing of the categories');
 });
 
 test('every class is the kit\'s', () => {
-  const classes = [...render().matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/)).filter(Boolean);
+  const classes = [...render({ filters: { ...base.filters, count: 1, chips: [{ key: 'q', label: 'x' }] } }).matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/)).filter(Boolean);
   for (const c of classes) assert.match(c, /^fr(-|$)/, `${c} is not a kit class`);
 });
 
-test('the Workshop page draws it for All items under a look, from the board\'s own columns, and puts its board away', () => {
+test('the Workshop page draws it for All items under a look, driving the board\'s own grouping, search, filters and order', () => {
   const src = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(src, /const kanban = useStoreState\(devKanbanStore\);/, 'the same view model the board renders');
   assert.match(src, /const frameAllUp = frame && !frameTopics && tab === 'all';/);
-  assert.match(src, /\{frameAllUp \? frameAll\(\) : null\}/);
-  assert.match(src, /\{frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp \? <ProjectFrameHead/, 'one kit head at a time');
+  const all = src.slice(src.indexOf('const frameAll = (): ReactNode => ('), src.indexOf('const frameWorkshop = (): ReactNode => {'));
+  assert.match(all, /group=\{group === 'stage' \? 'stage' : 'category'\}\s+onGroup=\{\(key\) => \{ callAppView\('_setWorkshopGroup', key\); \}\}/, 'the published grouping, and the page\'s own switch');
+  assert.match(all, /querySelector<HTMLInputElement>\('#dev-kanban-search'\) : null;\s+if \(!box\) return;\s+box\.value = next;\s+callAppView\('_onKanbanSearchInput'\);/, 'the board reads its own search box, which stays mounted: comments and # included');
+  assert.match(all, /onOpen: \(\) => \{ callAppView\('_openKanbanFiltersDialog'\); \},\s+onDismiss: \(key\) => \{ callAppView\('_dismissKanbanFilter', key\); \},\s+onQuick: \(key\) => \{ callAppView\('_toggleKanbanQuickFilter', key\); \},/);
+  assert.match(all, /onSort: \(key\) => \{ if \(key !== sortKey\) captureThemeTops\(\); setSortKey\(key as SortKey\); \},/, 'the cards keep their place across a re-sort, as the page\'s chips do it');
+  assert.match(src, /const frameFilters = useStoreState<KanbanFiltersState>\(kanbanFiltersStore\);/);
+  assert.ok(src.indexOf('const frameFilters = useStoreState<KanbanFiltersState>(kanbanFiltersStore);') < src.indexOf('const [bar, setBar] = useState<HTMLElement | null>(null);'), 'a hook, with the page\'s others at its top');
+  assert.doesNotMatch(src, /frameStage|frameMine|frameQuery|frameKanban|AllItemRow/, 'the flat list\'s own state is gone');
+  const catalog = JSON.parse(read('frontend/locales/en/project.json'));
+  for (const id of ['frame.allItems.all', 'frame.allItems.search', 'frame.allItems.open_one', 'frame.allItems.everyone', 'frame.allItems.mine', 'frame.allItems.none', 'frame.allItems.loading', 'frame.allItems.nobody', 'frame.allItems.topicLine', 'frame.allItems.people_one', 'frame.allItems.items_one', 'frame.allItems.purpose_one']) {
+    assert.equal(catalog[id], undefined, `${id} went with what it worded`);
+  }
+});
+
+test('the list is the page\'s own, in the kit\'s content column and wearing the look', () => {
   const css = read('public/css/app.css');
-  assert.match(css, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\], \[data-project-frame="all-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/);
-});
-
-test('a request nobody has taken ends in "Nobody on it", from the brief the board writes', () => {
-  const src = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(src, /word: pill && !asks \? pill\.label : \(b\?\.kind === 'request' && b\.unclaimed \? t\('project:frame\.allItems\.nobody'\) : null\),/);
-  assert.match(read('public/js/app-view.js'), /unclaimed: AppView\._issueUnclaimed\(it\),/);
-  assert.match(read('frontend/src/features/dev-board/card/model.ts'), /unclaimed\?: boolean;/);
-});
-
-test('the board\'s topics are rows of the context column, each with its people and its open items, to its channel (the standard By category view)', () => {
-  const html = render({ topics: [
-    { key: 'onboarding', name: 'Onboarding', icon: '🚪', people: 7, items: 7, href: '#app/homeroom/dev/c/onboarding' },
-    { key: 'infra', name: 'Infra', icon: '', people: 1, items: 10, href: '#app/homeroom/dev/c/infra' },
-  ] });
-  assert.match(html, /<h2 class="fr-cap">Topics<\/h2><\/div><div class="fr-card"><a class="fr-row" href="#app\/homeroom\/dev\/c\/onboarding"><span class="fr-lead">🚪<\/span><span class="fr-tx"><span class="fr-t">Onboarding<\/span><span class="fr-s">7 people · 7 items<\/span><\/span><svg class="fr-ic fr-go"/);
-  assert.match(html, /<span class="fr-t">Infra<\/span><span class="fr-s">1 person · 10 items<\/span>/);
-  assert.ok(html.indexOf('>Show<') < html.indexOf('>Topics<'), 'under Show');
-  assert.doesNotMatch(render(), /fr-cap">Topics/, 'none: no group');
+  const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
+  const A = 'html[data-skin] .dev-ws > [data-project-frame="all-items"]';
+  assert.doesNotMatch(hand, /all-kit/);
+  assert.match(hand, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'All items\' body is on show');
+  assert.ok(hand.includes(`${A}[data-all-group="category"] ~ .dev-ws-tabbody .dev-ws-allbar,\n${A} ~ .dev-ws-tabbody .dev-ws-sort-opts { display: none; }`), 'the page\'s bar and order chips are put away, mounted: the kit draws them');
+  assert.ok(hand.includes(`${A}[data-all-group="stage"] ~ .dev-ws-tabbody .dev-ws-allbar > :is(.dev-ws-pagehead, .dev-ws-group),\n${A}[data-all-group="stage"] ~ .dev-ws-tabbody #dev-kanban-search { display: none; }`), 'by stage the bar keeps its filter chips over the board');
+  assert.ok(hand.includes(`${A}[data-all-group="stage"] ~ .dev-ws-tabbody > * { max-width: none; }`), 'the board has the page\'s width');
+  assert.ok(hand.includes('html[data-skin] #dev-workshop.dev-ws-has-board > .dev-ws > [data-project-frame] { max-width: none; margin-inline: 0; }'));
+  assert.ok(hand.includes(`${A} ~ .dev-ws-tabbody :is(.dev-ws-pane-head, .dev-ws-pane-body) { padding: 0; border-radius: 0; background: none;`), 'the pane gives up its sheet');
+  // The kit's side column hangs from its page over the room the 720px column leaves.
+  const kit = read('frontend/looks/kit.css');
+  assert.match(kit, /\.cols\.beside\{height:0\}\n\.cols\.beside>\.stack\{grid-column:2\}\n\.phone \.cols\.beside\{height:auto;margin-bottom:8px\}\n\.phone \.cols\.beside>\.stack\{grid-column:1\}/);
+  assert.match(hand, /html\[data-skin\] \.dev-ws > \[data-project-frame="all-items"\]\[data-all-group="category"\] ~ \.dev-ws-tabbody \{ min-height: 440px; \}/);
+  // A category's card is the kit's card, the two labels its caps (the wear map).
+  const wear = JSON.parse(read('frontend/looks/looks.json')).wear.roots;
+  assert.ok(wear.card.to.includes('.dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme'));
+  assert.ok([wear.cap.to, ...(wear.cap.also || []).map((w) => w.to)].includes(':is(.dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody [data-ws-themes-head],.dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-sort > .dev-ws-eyebrow)'), 'the category headings wear the kit\'s label, as a wearer of their own');
+  const looks = css.slice(css.indexOf('/* looks:begin'));
+  assert.match(looks, /\.dev-ws-theme[^{]*\{background:var\(--fr-surface\);border-radius:20px;/);
   const page = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(page, /topics=\{v\.themes\.filter\(\(th\) => !th\.ungrouped && th\.topic\)\.map\(\(th\) => \(\{ key: th\.id, name: th\.name, icon: th\.icon, people: th\.people\.length, items: th\.counts\.open \+ th\.counts\.underway \+ th\.counts\.review, href: placeHref\(slug, channelPlace\(th\.topic!\.handle\)\) \}\)\)\}/);
+  assert.match(page, /<ThemeCard\s+theme=\{theme\}/, 'the cards, their lanes and their order are the page\'s');
+  assert.match(page, /<DevKanban openKey=\{sideKey\} onOpen=\{openItem\} \/>/);
 });

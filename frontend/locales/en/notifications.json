@@ -1870,45 +1870,5 @@
   "row.chat.changeReplyPr": {
     "text": "Replied on change PR {{number}}",
     "description": "First line of a notification: somebody posted in the discussion of a change on a project whose code is on GitHub, where a change's number is written PR, not #. The viewer built it, voted on it or posted in it. {{number}} is the change's number. \"Change\" is a noun. The message is on the line below."
-  },
-  "frame.title": {
-    "text": "Notifications",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The sheet's title."
-  },
-  "frame.purposeNeeds_one": {
-    "text": "{{count}} needs an answer. The rest is news.",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title: how many notifications wait for the person's answer. Singular."
-  },
-  "frame.purposeNeeds_other": {
-    "text": "{{count}} need an answer. The rest is news.",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title: how many notifications wait for the person's answer. Plural."
-  },
-  "frame.purposeNews": {
-    "text": "Nothing needs an answer. This is news.",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title when no notification waits for an answer."
-  },
-  "frame.purposeEmpty": {
-    "text": "Nothing yet. What happens in your communities shows up here.",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title when the person has never had a notification."
-  },
-  "frame.needsAnswer": {
-    "text": "Needs an answer",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the first group: notifications that wait for the person to vote, reply or decide."
-  },
-  "frame.news": {
-    "text": "News",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group of unread notifications that only tell the person something happened."
-  },
-  "frame.earlier": {
-    "text": "Earlier",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group of notifications the person has already seen."
-  },
-  "frame.answer": {
-    "text": "Answer",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Status word on a row that waits for the person: pressing the row opens what to answer."
-  },
-  "frame.markAllRead": {
-    "text": "Mark all read",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The sheet's one button: marks every notification as read."
   }
 }
