@@ -20,8 +20,13 @@ export function HomeJoin() {
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
+  // Read the directory as soon as Home mounts, not after the pins arrive
+  // (#6604 review). The two reads are independent, and waiting for the pins
+  // meant that when the directory had already failed, the section still drew
+  // its four loading placeholders until the pins settled, so a failed read
+  // looked like one still in flight. The section itself still draws only once
+  // the pins are in, because they decide which communities are left out.
   useEffect(() => {
-    if (!pins.ready) return;
     let live = true;
     setFailed(false);
     void readDirectory(attempt > 0).then((list) => {
@@ -32,7 +37,7 @@ export function HomeJoin() {
       else { setApps(null); setFailed(true); }
     });
     return () => { live = false; };
-  }, [pins.ready, attempt]);
+  }, [attempt]);
 
   const exclude = useMemo(() => new Set([
     ...pins.joined.map((c) => c.slug),
