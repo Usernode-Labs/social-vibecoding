@@ -184,7 +184,9 @@ test('the Communities tab\'s badge against the full PostgreSQL schema', { timeou
     // Join pins it too; without the pin, the join alone still counts.
     await pool.query('DELETE FROM app_favorites WHERE app_id = $1 AND user_id = $2', [homeroom.id, back.id]);
     const c = await counts(back);
-    assert.equal(c.homeroom.needs, 5);
+    // #6594: Sticky header has the yes its rule needs (the voter's, above),
+    // so it asks nobody now: the other three changes and the decision.
+    assert.equal(c.homeroom.needs, 4);
     assert.equal(c.homeroom.unchosen, undefined);
   });
 

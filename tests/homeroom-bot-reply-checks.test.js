@@ -32,7 +32,7 @@ function records(opts = {}) {
     [/SELECT github_issue_number AS n FROM issues/, (opts.closed || []).map((n) => ({ n }))],
     [/SELECT issue_number, created_at FROM feedback_reports/, opts.feedback || []],
     [/SELECT DISTINCT x\.n FROM/, (opts.known || []).map((n) => ({ n }))],
-    [/SELECT DISTINCT issue_number AS n FROM feedback_reports WHERE user_id/, (opts.platformReports || []).map((n) => ({ n }))],
+    [/SELECT DISTINCT issue_number AS n FROM feedback_reports\s+WHERE user_id/, (opts.platformReports || []).map((n) => ({ n }))],
     [/FROM apps a JOIN community_members/, opts.projects || []],
     [/FROM apps WHERE id = ANY/, []],
   ]);
@@ -159,7 +159,9 @@ test('#6583: a platform report filed in an earlier turn resolves', async () => {
 // The note for an unfound number asks for a lookup, not a retraction.
 test('#6583: an unfound number is asked to be looked up', () => {
   const note = mayor.checkNote([{ kind: 'unknown', numbers: [14], said: 'names request #14, which no project of theirs has' }]);
-  assert.match(note, /look it up with request_detail/);
+  assert.match(note, /Look the number up with request_detail/);
+  // #6583 (as merged): something filed earlier stays filed, and is not filed again.
+  assert.match(note, /so do not apologise for it or offer to file it again\./);
   assert.doesNotMatch(note, /never name one that does not exist/);
   assert.doesNotMatch(note, /has not been done/);
 });

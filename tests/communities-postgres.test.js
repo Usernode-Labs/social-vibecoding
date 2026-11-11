@@ -592,6 +592,10 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     const voted = await promote(garden, 'Already voted', '3 hours');
     await promote(stranger, 'Not my project', '10 minutes');
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [voted, me.id]);
+    // #6594: a change whose votes are in asks nobody for one, and one yes is
+    // all this project's rule needs; a rule asking for two keeps Older
+    // change owed, with its tally so far.
+    await pool.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [garden.id]);
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [older, author.id]);
     await settleWorkStates(pool);
     const { rows } = await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, overview.NEEDS_FEED_MAX]);

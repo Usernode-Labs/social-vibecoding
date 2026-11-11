@@ -3792,7 +3792,7 @@ test('an empty board still gets the All items pane, and the note names the ⋯ a
   // BUG g, the first half: the note told the viewer to press a "+" that was
   // not on screen. On the hub the ⋯ it names is in the hero above it (drawn
   // once the community record has answered, which this render has not).
-  assert.match(WORKSHOP, /menu=\{\(\s*<DevPlusMenu[\s\S]*?inHero\b[\s\S]*?\/>\s*\)\}/, 'the ⋯ the note names is the hub hero\'s');
+  assert.match(WORKSHOP, /menu=\{\(place\) => \(\s*<DevPlusMenu[\s\S]*?inHero\b[\s\S]*?\/>\s*\)\}/, 'the ⋯ the note names is the hub hero\'s');
   assert.doesNotMatch(status, /Press <span[^>]*>⋯<\/span> on the hub/, 'so on the hub it does not say where');
 });
 
@@ -4037,8 +4037,10 @@ test('the ⋯ is the hub hero’s: once, at the end of its actions, and no page 
   // The same props the toolbar row reads, from the same store, so the gates
   // (import on canCollaborate, the members row, Fork for a read-only viewer)
   // are the ones the menu always had.
+  // A function of where it is drawn: the hero, or the project card for
+  // somebody who has not joined (the hand-off of 11 Nov 2026), one node either way.
   assert.match(WORKSHOP,
-    /menu=\{\(\s*<DevPlusMenu\s+illustrationApp=\{actions\.illustrationApp\}\s+canManageIllustration=\{actions\.canManageIllustration\}\s+selfHosted=\{actions\.selfHosted\}\s+readOnly=\{actions\.readOnly\}\s+canCollaborate=\{actions\.canCollaborate\}\s+showsMembers=\{actions\.showsMembers\}\s+inHero\b[\s\S]*?onWhoDecides=\{community\?\.can_manage[\s\S]*?onLeave=\{canLeave\(community\)[\s\S]*?\/>\s*\)\}/);
+    /menu=\{\(place\) => \(\s*<DevPlusMenu\s+illustrationApp=\{actions\.illustrationApp\}\s+canManageIllustration=\{actions\.canManageIllustration\}\s+selfHosted=\{actions\.selfHosted\}\s+readOnly=\{actions\.readOnly\}\s+canCollaborate=\{actions\.canCollaborate\}\s+showsMembers=\{actions\.showsMembers\}\s+inHero\b[\s\S]*?onWhoDecides=\{community\?\.can_manage[\s\S]*?onLeave=\{canLeave\(community\)[\s\S]*?\/>\s*\)\}/);
   assert.equal((WORKSHOP.match(/<DevPlusMenu\b/g) || []).length, 1, 'rendered in one place on this surface');
 });
 
@@ -4053,7 +4055,10 @@ test('the ⋯ is drawn as Invite’s pill, a circle, and its menu hangs over the
   const decls = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
   // Invite's fill (`pillNeutral`), on the button itself, as a 32px circle.
   assert.match(ACTIONS_ROW, /const HERO_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-hero un-touch-target '\s*\+ 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100';/);
-  assert.match(ACTIONS_ROW, /className=\{inHero \? HERO_BTN_CLS : 'dev-ws-plus-btn un-touch-target'\}/, 'still a 44px hit box');
+  assert.match(ACTIONS_ROW, /className=\{onCard \? CARD_BTN_CLS : inHero \? HERO_BTN_CLS : 'dev-ws-plus-btn un-touch-target'\}/, 'still a 44px hit box');
+  // On the project card it is the card's round glass button, 50px (52px from 768px).
+  assert.match(ACTIONS_ROW, /const CARD_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-card un-touch-target bg-white\/15 hover:bg-white\/25 text-white';/);
+  assert.match(decls, /\.dev-ws-plus-btn\.dev-ws-plus-btn-card \{ width: 50px; height: 50px; \}/);
   assert.match(decls, /\.dev-ws-hero \.dev-ws-plus-btn \{ width: 32px; height: 32px; \}/);
   // A ⋯, not a "+": on the hub it holds the project's settings as much as
   // anything to add, and a "+" beside Invite read as "add a member".

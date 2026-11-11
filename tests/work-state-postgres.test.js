@@ -416,6 +416,12 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     await ask(40, ada, 'Swap history');
     const up = await change(bot, 540, [40], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
     await run(40, 'ready', { buildOk: true, proposalSessionId: up.id });
+    // #6594: one yes is all the project's rule needs, and a change whose
+    // votes are in is going live, not open for votes; a rule asking for two
+    // keeps this one up for a vote with its yes counted.
+    const { rows: [rule] } = await pool.query('SELECT approvals_required FROM apps WHERE id = $1', [app.id]);
+    await pool.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [app.id]);
+    require('../src/services/governance').invalidateGovernance(app.id);
     await pool.query("INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')", [up.id, bob.id]);
     const changed = await ws.refresh(pool, [req(40)]);
     const row = (await ws.forRequests(pool, app.id, [40])).get(40);
@@ -444,6 +450,8 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
        VALUES ($1, 940, 'Close #40', $2, 'close_issue', '{"issueNumber": 40}'::jsonb, 'open') RETURNING id`, [app.id, bob.id]);
     await ws.drainDirty(pool);
     assert.deepEqual((await ws.forRequests(pool, app.id, [40])).get(40).asks.closeVote, { issueId: close.id, yes: 0, no: 0 });
+    await pool.query('UPDATE apps SET approvals_required = $2 WHERE id = $1', [app.id, rule.approvals_required]);
+    require('../src/services/governance').invalidateGovernance(app.id);
   });
 
   await t.test('a merged, merging, GitHub-held or shots-held change is never open for votes, nor a Vote row', async () => {

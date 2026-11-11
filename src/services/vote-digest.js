@@ -97,6 +97,9 @@ const PENDING_SQL = `
        -- checks passed and it merges cleanly (#6402), not a first version
        -- (D1), no update on its way, no merge GitHub holds, no shots still
        -- being taken. A change still being tested is nobody's vote yet.
+       -- #6594: nor one whose votes are in: it is Approved (waiting on its
+       -- checks) or going live, never open for votes, so the digest does
+       -- not ask anyone for a vote it has.
        AND EXISTS (SELECT 1 FROM work_states ws
                     WHERE ws.item_kind = 'change' AND ws.item_ref = cs.id AND ws.vote_open)
   )

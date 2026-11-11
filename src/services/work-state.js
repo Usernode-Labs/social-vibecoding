@@ -186,8 +186,20 @@ function checkingState(row, since, now, onYes = requestOnYes) {
   if (stand === 'vote') return onYes(row, since, now);
   if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
   if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
+  // #6594: its votes are in, so its checks are what it waits on now, not a
+  // vote it no longer needs.
+  if (row.votes_in === true) return state('checking', { since, line: { code: 'approved_checking' } });
   const line = checksLine(row, now);
   return state('checking', { since, ...(line ? { line } : {}) });
+}
+
+/**
+ * Pure (#6594): a change still asking for a vote, with the line that says
+ * why one is needed again when a push retired earlier yes votes.
+ */
+function upForVote(row, since) {
+  const earlier = Number(row.earlier_yes) || 0;
+  return state('up_for_vote', { since, ...(earlier > 0 ? { line: { code: 'earlier_yes', count: earlier } } : {}) });
 }
 
 /**
@@ -323,7 +335,9 @@ function fromStage(s, row, now = new Date()) {
         const hold = githubHold(row);
         if (hold) return state(hold.stage, { since, line: { code: hold.code } });
       }
-      return state('up_for_vote', { since });
+      // #6594: its votes are in; it is being merged, not voted on.
+      if (row.votes_in === true) return state('going_live', { since });
+      return upForVote(row, since);
     case 'merging':
       return state('going_live', { since: row.merged_at || since });
     default:
@@ -390,6 +404,7 @@ function deriveFacts(row, { now = new Date() } = {}) {
       integration_merges_clean: row.lc_integration_merges_clean,
       integration_block_reasons: row.lc_integration_block_reasons,
       checks_estimate: row.checks_estimate,
+      votes_in: row.lc_votes_in === true, earlier_yes: row.lc_earlier_yes,
       promoted_at: row.lc_promoted_at, merged_at: row.lc_merged_at, live_at: row.lc_live_at,
       last_activity_at: row.lc_last_activity_at, created_at: row.lc_created_at,
       // #6282: an update on its way holds its vote too.
@@ -519,8 +534,11 @@ function promotedChange(row, now) {
     return checkingState(row, since, now, changeOnYes);
   }
   // N5: a verdict about another commit than the one up for a vote says
-  // nothing about it: its own checks are still to come.
-  if (!changeChecksOnHead(row)) return state('checking', { since });
+  // nothing about it: its own checks are still to come. #6594: with its
+  // votes in, it is approved and those checks are what it waits on.
+  if (!changeChecksOnHead(row)) {
+    return state('checking', { since, ...(row.votes_in === true ? { line: { code: 'approved_checking' } } : {}) });
+  }
   // A passing change that has since stopped merging cleanly moves back to
   // Waiting to sync with main: its verdict no longer describes what lands.
   if (syncWaits(row)) return state('checking', { since, line: { code: 'sync_wait' } });
@@ -528,7 +546,10 @@ function promotedChange(row, now) {
   if (row.first_version === true) return state('going_live', { since: row.promoted_at, line: { code: 'first_version' } });
   // #6528: its before & after shots are still being taken.
   if (shotsHeld(row, now)) return state('checking', { since, line: { code: 'shots' } });
-  return state('up_for_vote', { since: row.promoted_at });
+  // #6594: its votes are in (the project's rule would let it merge now): it
+  // is being merged, not voted on, so it is not open for votes either.
+  if (row.votes_in === true) return state('going_live', { since: row.promoted_at });
+  return upForVote(row, row.promoted_at);
 }
 
 /** Pure: whether a change is open for votes now (work_states.vote_open): its stage is up for a vote. */
@@ -613,6 +634,7 @@ const PLAIN_LINES = new Set([
   'queued', 'first_version_wait', 'held_builds', 'held_waiting', 'on_hold', 'cooldown', 'reply', 'retry_plan',
   'starting', 'proposing', 'fixing', 'revising', 'update_queued', 'checks_failing', 'sync_wait', 'conflict_on_yes',
   'github_checks', 'github_checks_failing', 'github_wait', 'first_version', 'planning_with_you', 'waiting', 'shots',
+  'approved_checking',
 ]);
 
 const camel = (s) => String(s).replace(/_([a-z])/g, (_m, c) => c.toUpperCase());
@@ -627,9 +649,15 @@ function stagePhrase(item, yours) {
   // #6531: a conflicting change the lane is catching up says so in the stage
   // word itself ("Syncing with main", not "Checking"), and carries no line.
   if (item.stage === 'checking' && code === 'syncing') return { id: 'core:work.stage.syncing' };
+  // #6594: its votes are in, so it is approved and its checks are what it
+  // waits on, not a vote.
+  if (item.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.approved' };
   // #6563: an approved change whose merge GitHub holds is not going live yet;
-  // its word says so, and its second line says on what.
-  if (item.stage === 'going_live' && (code === 'github_checks' || code === 'github_wait')) return { id: 'core:work.stage.waitingToMerge' };
+  // its word says so, and its second line says on what. #6594: waiting on
+  // GitHub's checks is still approved; only GitHub itself holding it back
+  // reads "Waiting to merge".
+  if (item.stage === 'going_live' && code === 'github_checks') return { id: 'core:work.stage.approved' };
+  if (item.stage === 'going_live' && code === 'github_wait') return { id: 'core:work.stage.waitingToMerge' };
   if (item.stage === 'reading' && NOT_STARTED.has(code)) return { id: 'core:work.stage.notStarted' };
   if (item.stage === 'building' && READY.has(code)) return { id: 'core:work.stage.readyToBuild' };
   return { id: `core:work.stage.${camel(STAGES.includes(item.stage) ? item.stage : 'reading')}` };
@@ -650,6 +678,9 @@ function linePhrase(item) {
         : { id: 'core:work.line.checksFailing' };
     case 'checks_running':
       return line.minutes ? { id: 'core:work.line.checksRunning', values: { count: Number(line.minutes) } } : null;
+    // #6594: a push retired earlier yes votes; it says why a new yes is needed.
+    case 'earlier_yes':
+      return line.count ? { id: 'core:work.line.earlierYes', values: { count: Number(line.count) } } : null;
     case 'claimed': return line.by ? { id: 'core:work.line.claimed', values: { username: String(line.by) } } : null;
     case 'reason': return line.text ? { id: 'core:work.line.said', values: { reason: String(line.text) } } : null;
     default: return PLAIN_LINES.has(line.code) ? { id: `core:work.line.${camel(line.code)}` } : null;
@@ -1075,6 +1106,75 @@ async function attachChecksEstimate(db, rows, wants) {
   }
 }
 
+// #6594: the predicate over a work_states row (`w`) that says its votes are
+// in: it is going live, or it is approved and waiting on checks.
+const APPROVED_SQL = (alias) => `(${alias}.stage = 'going_live' OR ${alias}.line->>'code' IN ('approved_checking', 'github_checks'))`;
+
+const VOTES_IN_SQL = `
+  SELECT cs.id, cs.app_id, cs.user_id, cs.promoted_at, cs.created_at,
+         cs.requires_explicit_approval, cs.explicit_approval_reason,
+         ${require('./first-version-rule').firstVersionSql('cs')} AS first_version,
+         -- #6594: yes voters a push retired: they voted on an earlier
+         -- version, their yes no longer counts, and they have not confirmed
+         -- it on this one. The vote prompt says why a new yes is needed.
+         (SELECT COUNT(DISTINCT pv.user_id)::int
+            FROM pr_votes pv
+           WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+             AND pv.approval_epoch < cs.approval_epoch
+             AND counts_toward_session_outcome(pv.user_id, cs.id)
+             AND pv.user_id IS DISTINCT FROM cs.user_id
+             AND NOT EXISTS (SELECT 1 FROM pr_votes cur
+                              WHERE cur.session_id = cs.id AND cur.user_id = pv.user_id
+                                AND cur.approval_epoch = cs.approval_epoch)) AS earlier_yes
+    FROM chat_sessions cs
+   WHERE cs.id = ANY($1::int[]) AND cs.status = 'promoted'`;
+
+/**
+ * #6594: attach `votes_in` (the project's rule would let this change merge
+ * now) and `earlier_yes` to facts rows whose change is promoted, so a change
+ * whose votes are in never reads "Up for a vote". The gate is the same one
+ * every merge decision takes, so its count can never disagree with the
+ * Votes card's: current-epoch yes votes, the member floor and explicit
+ * approval. Best-effort: a failed read leaves `votes_in` false, which is
+ * today's wording.
+ */
+async function attachVotes(db, rows, keyOf, now) {
+  const bySession = new Map();
+  for (const row of rows) {
+    const key = keyOf(row);
+    const id = key ? Number(key.id) : 0;
+    if (!(id > 0)) continue;
+    if (!bySession.has(id)) bySession.set(id, { prefix: key.prefix || '', rows: [] });
+    bySession.get(id).rows.push(row);
+  }
+  if (!bySession.size) return;
+  try {
+    const { rows: facts } = await db.query(VOTES_IN_SQL, [[...bySession.keys()]]);
+    const governance = require('./governance');
+    for (const f of facts) {
+      const id = Number(f.id);
+      const { prefix, rows: of } = bySession.get(id);
+      let votesIn = false;
+      if (f.first_version !== true) {
+        const gate = await governance.governedGate(db, Number(f.app_id), {
+          kind: 'pr', id, openedAt: f.promoted_at || f.created_at, now,
+          explicitApproval: f.requires_explicit_approval === true,
+          explicitReason: f.explicit_approval_reason || null,
+          authorId: f.user_id == null ? null : Number(f.user_id),
+          firstVersion: false,
+        }).catch(() => null);
+        votesIn = gate?.mergeable === true;
+      }
+      for (const row of of) {
+        row[`${prefix}votes_in`] = votesIn;
+        row[`${prefix}earlier_yes`] = Number(f.earlier_yes) || 0;
+      }
+    }
+  } catch (err) {
+    require('./logger').warn('work-state', 'votes read failed', { message: err.message });
+  }
+}
+
 /**
  * Pure: a change's facts as its standing carries them (the contract every
  * reader draws: services/work-state.js fromRow `change`), with whether it is
@@ -1199,6 +1299,10 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
   if (ids.length) {
     const { rows: found } = await db.query(CHANGE_FACTS_SQL, [ids]);
     await attachChecksEstimate(db, found, (r) => r.status === 'promoted' && IN_FLIGHT_CHECKS(r.check_state));
+    // #6594: whether each promoted change's votes are in, which decides
+    // whether it asks for a vote at all. Read once per change, here, and
+    // handed to the requests that draw it below.
+    await attachVotes(db, found, (r) => (r.status === 'promoted' ? { id: Number(r.id), prefix: '' } : null), now);
     for (const f of found) facts.set(Number(f.id), f);
   }
   const changeStates = new Map([...facts.values()].map((f) => [Number(f.id), deriveChange(f, { now })]));
@@ -1206,6 +1310,14 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
   if (rows.length) {
     await attachChecksEstimate(db, rows, (r) => (r.proposal_status === 'promoted' && IN_FLIGHT_CHECKS(r.check_state))
       || (r.lc_status === 'promoted' && IN_FLIGHT_CHECKS(r.lc_check_state)));
+    // #6594: a request reads its change's votes from that change's facts
+    // (the bot's own proposal of it, or a person's change for it).
+    for (const row of rows) {
+      const own = row.proposal_status === 'promoted' ? facts.get(Number(row.proposal_session_id)) : null;
+      if (own) Object.assign(row, { votes_in: own.votes_in === true, earlier_yes: Number(own.earlier_yes) || 0 });
+      const theirs = row.lc_status === 'promoted' ? facts.get(Number(row.lc_id)) : null;
+      if (theirs) Object.assign(row, { lc_votes_in: theirs.votes_in === true, lc_earlier_yes: Number(theirs.earlier_yes) || 0 });
+    }
     // Which of them wait for their project's first version, by the bot's
     // own rule (as its read lane and a project chat's card read it).
     const bot = require('./homeroom-bot');
@@ -1925,6 +2037,7 @@ module.exports = {
   LIVE_DAYS,
   phrasesOf,
   english,
+  APPROVED_SQL,
   stageSays,
   lineSays,
   says,

@@ -133,6 +133,8 @@ test('the fixtures\' words are the server\'s phrasesOf', (t) => {
     { stage: 'waiting_for_you', why: 'plan' }, { stage: 'waiting_for_you', why: 'decide', line: { code: 'reason', text: 'Why.' } },
     { stage: 'stopped', reason: 'build_failed' }, { stage: 'checking', line: { code: 'checks_failing', failing: 2 } },
     { stage: 'up_for_vote' }, { stage: 'going_live', line: { code: 'github_checks' } }, { stage: 'live' },
+    { stage: 'checking', line: { code: 'approved_checking' } }, { stage: 'going_live', line: { code: 'github_wait' } },
+    { stage: 'up_for_vote', line: { code: 'earlier_yes', count: 2 } },
   ];
   for (const state of states) {
     const full = { why: null, reason: null, line: null, ...state };
@@ -181,8 +183,10 @@ test('a live or merged standing never draws Vote', () => {
   assert.equal(requestPill(layout, null).key, 'vote', 'the thread alone still lists it as up for a vote');
   assert.equal(requestPill(layout, standing('going_live', { change: change({ status: 'merging', voteOpen: false }) })).key, 'going_live');
   assert.equal(requestPill(layout, standing('live', { change: change({ status: 'merged', voteOpen: false }) })).key, 'live');
-  // Approved and held by GitHub: going live, never a vote.
-  assert.equal(requestPill(layout, standing('going_live', { line: { code: 'github_checks' }, change: change({ voteOpen: false, githubHold: true }) })).key, 'going_live');
+  // Approved and held by GitHub: #6594 says Approved while GitHub's checks
+  // run, and Going live while GitHub itself holds it; never a vote.
+  assert.equal(requestPill(layout, standing('going_live', { line: { code: 'github_checks' }, change: change({ voteOpen: false, githubHold: true }) })).key, 'approved');
+  assert.equal(requestPill(layout, standing('going_live', { line: { code: 'github_wait' }, change: change({ voteOpen: false, githubHold: true }) })).key, 'going_live');
   // Its checks failing: not open for votes, so not drawn as up for one.
   assert.equal(requestPill(layout, standing('checking', { line: { code: 'checks_failing' }, change: change({ voteOpen: false }) })), null);
 

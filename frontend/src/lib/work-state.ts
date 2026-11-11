@@ -39,6 +39,8 @@ export interface WorkLine {
   failing?: number;
   /** `checks_running`: about how many minutes are left. */
   minutes?: number;
+  /** `earlier_yes`: how many yes votes a push retired. */
+  count?: number;
   /** `claimed`: who pressed Claim. */
   by?: string;
   /** `reason`: Homeroom bot's own sentence. */
@@ -311,6 +313,7 @@ export function normalizeWorkState(input: unknown): WorkState | null {
     ...(num(lineIn.of) ? { of: num(lineIn.of) } : {}),
     ...(num(lineIn.failing) ? { failing: num(lineIn.failing) } : {}),
     ...(num(lineIn.minutes) ? { minutes: num(lineIn.minutes) } : {}),
+    ...(num(lineIn.count) ? { count: num(lineIn.count) } : {}),
     ...(text(lineIn.by) ? { by: text(lineIn.by).slice(0, 64) } : {}),
     ...(text(lineIn.text) ? { text: text(lineIn.text).slice(0, 200) } : {}),
     ...(CODE.test(text(lineIn.outdated)) ? { outdated: text(lineIn.outdated) } : {}),

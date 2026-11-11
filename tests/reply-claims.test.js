@@ -96,7 +96,9 @@ test('a request number is unknown only when every lookup found nothing; only the
   const unsure = await claims.checkReply(halfBroken, ctx, 'There is already a request for this: #777.');
   assert.deepEqual(unsure.map((p) => [p.kind, p.shown]), [['unknown', []]]);
   assert.equal(claims.cut('There is already a request for this: #777.', unsure, ctx), 'There is already a request for this: #777.');
-  assert.match(claims.repairNote(unsure), /look it up with request_detail/);
+  // #6583 (as merged): a note for an unfound number alone asks for a lookup and never says it was not found.
+  assert.match(claims.repairNote(unsure), /Look the number up with request_detail/);
+  assert.doesNotMatch(claims.repairNote(unsure), /could not find/);
 });
 
 test('the voice in a change\'s thread reads its own cards, not the project\'s main chat', async () => {

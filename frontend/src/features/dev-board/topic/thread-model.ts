@@ -51,6 +51,12 @@ export interface ThreadItem {
    * sent without it reads as live, as merge-status.js does.
    */
   liveAt?: string | null;
+  /**
+   * #6594: its votes are in, by its project's rule (the server's work state:
+   * it is approved and waiting on checks, or going live). A review change
+   * with this is not asked for a vote anywhere.
+   */
+  approved?: boolean;
   /** #6139, a change underway: built, with its checks passing on its current head and nothing working on it. */
   ready?: boolean;
   at?: string | null;
@@ -255,7 +261,8 @@ function standing(item: ThreadItem): Phrase | null {
   if (item.type === 'change') {
     return item.state === 'merged'
       ? { id: goingLive(item) ? 'project:topic.thread.state.goingLive' : 'project:topic.thread.state.live' }
-      : item.state === 'review' ? { id: 'project:topic.thread.state.voting' }
+      : item.state === 'review'
+        ? { id: item.approved ? 'project:topic.thread.state.approved' : 'project:topic.thread.state.voting' }
         : { id: item.ready ? 'project:topic.thread.state.ready' : 'project:topic.thread.state.underway' };
   }
   return { id: item.status === 'open' ? 'project:topic.thread.state.voting' : 'project:topic.thread.state.settled' };
@@ -501,6 +508,13 @@ export function requestPill(
   const base = { tier: 1, yes: 0, no: 0, majority: 1, advisory: 0, lock: false };
   const goingLivePill = { ...base, key: 'going_live', label: say('project:topic.thread.pill.goingLive'), tone: 'progress', spinner: true };
   const livePill = { ...base, key: 'live', label: say('project:topic.thread.pill.live'), tone: 'ok' };
+  // #6594: its votes are in: it is approved and waits on its checks (or
+  // GitHub's), so the header does not ask for a vote it no longer needs.
+  // Approved takes Going live's look (the progress tone), as a work in
+  // flight. The standing says so in its own words (Approved), here before
+  // the settled stages, since waiting on GitHub's checks is still Approved.
+  const approvedPill = { ...base, key: 'approved', label: say('project:topic.thread.pill.approved'), tone: 'progress', spinner: true };
+  if (work && work.words?.stage.id === 'core:work.stage.approved') return approvedPill;
   if (work && isSettled(work)) return work.stage === 'live' ? livePill : goingLivePill;
   // #6439: an ended vote to close still draws its card, but the header only
   // says a vote is on while one is open.
@@ -510,7 +524,13 @@ export function requestPill(
   const shut = work && work.change && !work.change.voteOpen ? work.change.id : null;
   const review = layout.changes.filter((c) => c.state === 'review' && c.id !== shut).length;
   if (review >= 2 || (review >= 1 && close)) return { ...base, key: 'choosing', label: say('project:topic.thread.pill.choosing'), tone: 'neutral' };
-  if (review === 1) return { ...base, key: 'vote', label: say('project:topic.thread.pill.vote'), tone: 'neutral' };
+  // #6594: a thread read with no standing says the same of its one change
+  // in review, from the change's own row (threads.js `approved`).
+  if (review === 1) {
+    const only = layout.changes.find((c) => c.state === 'review' && c.id !== shut);
+    if (only && only.approved) return approvedPill;
+    return { ...base, key: 'vote', label: say('project:topic.thread.pill.vote'), tone: 'neutral' };
+  }
   if (close) return { ...base, key: 'close', label: say('project:topic.thread.pill.close'), tone: 'neutral' };
   const underway = layout.changes.filter((c) => c.state === 'underway');
   // #6532: a build waiting its turn is the server's Ready to build, not

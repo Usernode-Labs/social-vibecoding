@@ -1258,11 +1258,15 @@ function repairNote(problems, { tools = null } = {}) {
   let unknownHint = primary.length ? `${primary[0]}${also.length ? ` (or ${also.join(' / ')})` : ''}` : also.join(' / ');
   if (!unknownHint && offered('get_request')) unknownHint = 'get_request';
   const unknownNumbers = problems.find((p) => p.kind === 'unknown')?.numbers || [];
-  const unknown = unknownNumbers.length
-    ? ` Homeroom could not find ${unknownNumbers.map((n) => `request #${n}`).join(' or ')} in its records yet:`
-      + (unknownHint ? ` look it up with ${unknownHint}, and if a tool returns it, keep the number.` : ' look it up, and if a lookup returns it, keep the number.')
-      + ' If not, drop the sentence that names it. Never retract an earlier action in this conversation: something you filed earlier stays filed.'
-    : '';
+  const keepIt = (unknownHint ? ` with ${unknownHint}, and if a tool returns it, keep the number.` : ', and if a lookup returns it, keep the number.')
+    + ' If not, drop the sentence that names it. Never retract an earlier action in this conversation: something you filed earlier stays filed, so do not apologise for it or offer to file it again.';
+  // #6583: a note whose only reason is an unfound number asks for a lookup
+  // and never says the number was not found.
+  const unknown = !unknownNumbers.length
+    ? ''
+    : onlyLookups
+      ? ` Look the number up${keepIt}`
+      : ` Homeroom could not find ${unknownNumbers.map((n) => `request #${n}`).join(' or ')} in its records yet: look it up${keepIt}`;
   // #6307: a project named that no tool returned (a garbled name, a guessed one).
   const projectTools = names('my_work', 'list_requests');
   const unknownProject = kinds.has('unknown_project')

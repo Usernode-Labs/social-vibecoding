@@ -17,24 +17,28 @@ const base = { app_id: 1, issue_number: 7, mode: 'live', run_at: ago(30), reques
 const derive = (extra) => ws.derive({ ...base, ...extra }, { now: NOW });
 
 // #6563: an approved, tested change whose merge GitHub is holding is not
-// going live yet. Its stage word says so, and its second line says on what.
-test('an approved change whose merge GitHub holds says Waiting to merge', () => {
+// going live yet. #6594: waiting on GitHub's required checks is still
+// approved; only GitHub itself holding the merge reads "Waiting to merge".
+test('an approved change waiting on GitHub says Approved, and a GitHub hold says Waiting to merge', () => {
   const held = { stage: 'going_live', line: { code: 'github_checks' } };
-  assert.equal(ws.stageSays(held), 'Waiting to merge');
+  assert.equal(ws.stageSays(held), 'Approved');
   assert.equal(ws.stageSays({ stage: 'going_live', line: { code: 'github_wait' } }), 'Waiting to merge');
-  assert.equal(ws.lineSays(held), "Waiting for GitHub's checks");
+  assert.equal(ws.lineSays(held), "Waiting on GitHub's checks");
   assert.equal(ws.lineSays({ stage: 'going_live', line: { code: 'github_wait' } }), 'Waiting on GitHub');
   assert.equal(ws.stageSays({ stage: 'going_live' }), 'Going live', 'a plain merge keeps its word');
   // 11 Nov 2026: the mapping exists once, on the server, and ships with the
   // row as phrase ids of the core catalog (`words`), so the browser says
   // the same words without a table of its own.
   assert.deepEqual(ws.phrasesOf(held), {
-    stage: { id: 'core:work.stage.waitingToMerge' },
-    stageOthers: { id: 'core:work.stage.waitingToMerge' },
+    stage: { id: 'core:work.stage.approved' },
+    stageOthers: { id: 'core:work.stage.approved' },
     line: { id: 'core:work.line.githubChecks' },
   });
+  const githubWait = { stage: 'going_live', line: { code: 'github_wait' } };
+  assert.deepEqual(ws.phrasesOf(githubWait).stage, { id: 'core:work.stage.waitingToMerge' });
   const core = JSON.parse(fs.readFileSync(path.join(ROOT, 'frontend/locales/en/core.json'), 'utf8'));
-  assert.equal(core['work.stage.waitingToMerge'].text, ws.stageSays(held), 'the server reads the catalog\'s words');
+  assert.equal(core['work.stage.waitingToMerge'].text, ws.stageSays(githubWait), 'the server reads the catalog\'s words');
+  assert.equal(core['work.stage.approved'].text, ws.stageSays(held));
 });
 
 // 11 Nov 2026: the words of every stage, why, reason and line are phrase
@@ -52,8 +56,11 @@ test('every phrase an item can carry is in the core catalog', () => {
     ...ws.REASONS.map((reason) => ({ stage: 'stopped', reason })),
     ...['queued', 'first_version_wait', 'held_builds', 'held_waiting', 'on_hold', 'cooldown', 'reply', 'retry_plan',
       'starting', 'proposing', 'fixing', 'revising', 'update_queued', 'checks_failing', 'sync_wait', 'conflict_on_yes',
-      'github_checks', 'github_checks_failing', 'github_wait', 'first_version', 'planning_with_you', 'waiting', 'shots']
+      'github_checks', 'github_checks_failing', 'github_wait', 'first_version', 'planning_with_you', 'waiting', 'shots',
+      'approved_checking']
       .map((code) => ({ stage: 'building', line: { code } })),
+    { stage: 'checking', line: { code: 'approved_checking' } },
+    { stage: 'up_for_vote', line: { code: 'earlier_yes', count: 2 } },
     { stage: 'reading', line: { code: 'queued', place: 3 } },
     { stage: 'building', line: { code: 'reviewing', round: 1, of: 2 } },
     { stage: 'checking', line: { code: 'checks_failing', failing: 2 } },
@@ -79,6 +86,63 @@ test('every phrase an item can carry is in the core catalog', () => {
   const ts = fs.readFileSync(path.join(ROOT, 'frontend/src/lib/work-state.ts'), 'utf8');
   assert.match(ts, /const said = words \? \(yours \? words\.stage : words\.stageOthers\) : null;/);
   assert.doesNotMatch(ts, /github_checks|waitingToMerge/);
+});
+
+// #6594: once a change has the votes its rule needs, nothing says "Up for a
+// vote" while its checks run: it is approved, and says what it waits on.
+test('#6594: a change whose votes are in is Approved while its checks run', () => {
+  const request = (extra) => derive({ proposal_status: 'promoted', ...extra });
+  const running = request({ votes_in: true, check_state: 'pending' });
+  assert.equal(running.stage, 'checking');
+  assert.deepEqual(running.line, { code: 'approved_checking' });
+  assert.equal(ws.stageSays(running), 'Approved');
+  assert.equal(ws.lineSays(running), 'Checking the latest version');
+  assert.equal(ws.says(running), 'Approved · Checking the latest version', 'as the request words it');
+
+  const failing = request({ votes_in: true, check_state: 'failing' });
+  assert.equal(failing.stage, 'checking');
+  assert.deepEqual(failing.line, { code: 'checks_failing' }, 'a failure keeps today’s failing words');
+
+  const passing = request({ votes_in: true, check_state: 'passing' });
+  assert.equal(passing.stage, 'going_live', 'its votes are in and it is being merged');
+
+  const github = request({ votes_in: true, check_state: 'passing', integration_block_reasons: ['github_checks'] });
+  assert.equal(ws.stageSays(github), 'Approved');
+  assert.equal(ws.lineSays(github), "Waiting on GitHub's checks");
+
+  // A change with no request of its own reads the same.
+  const change = (extra) => ws.deriveChange({ status: 'promoted', check_state: 'pending', ...extra }, { now: NOW });
+  assert.deepEqual(change({ votes_in: true }).line, { code: 'approved_checking' });
+  assert.equal(ws.deriveChange({ status: 'promoted', check_state: 'passing', votes_in: true }, { now: NOW }).stage, 'going_live');
+  assert.equal(ws.deriveChange({ status: 'promoted', check_state: 'failing', votes_in: true }, { now: NOW }).line.code,
+    'checks_failing', 'a failure stays a failure');
+
+  // Without its votes it still asks for one, and says why a push retired them.
+  const retired = change({ check_state: 'passing', earlier_yes: 4 });
+  assert.equal(retired.stage, 'up_for_vote');
+  assert.deepEqual(retired.line, { code: 'earlier_yes', count: 4 });
+  assert.equal(ws.lineSays(retired), 'Changed since its 4 yes votes, which count again once each is confirmed');
+  assert.equal(ws.lineSays({ stage: 'up_for_vote', line: { code: 'earlier_yes', count: 1 } }),
+    'Changed since its yes vote, which counts again once confirmed');
+  const core = JSON.parse(fs.readFileSync(path.join(ROOT, 'frontend/locales/en/core.json'), 'utf8'));
+  for (const key of ['work.stage.approved', 'work.line.approvedChecking', 'work.line.earlierYes_one', 'work.line.earlierYes_other']) {
+    assert.ok(core[key] && core[key].text, `${key} is in the catalog`);
+  }
+  // The words ship with the row as phrase ids (`words`); the English is the catalog's.
+  assert.deepEqual(ws.phrasesOf(running), {
+    stage: { id: 'core:work.stage.approved' },
+    stageOthers: { id: 'core:work.stage.approved' },
+    line: { id: 'core:work.line.approvedChecking' },
+  });
+  assert.deepEqual(ws.phrasesOf(retired).line, { id: 'core:work.line.earlierYes', values: { count: 4 } });
+  assert.equal(core['work.stage.approved'].text, ws.stageSays(running));
+  assert.equal(core['work.line.approvedChecking'].text, ws.lineSays(running));
+  // 11 Nov 2026 (one model): a change whose votes are in is not open for
+  // votes, so Needs you and the vote digest never ask for one.
+  assert.equal(ws.voteOpenOf(change({ votes_in: true })), false);
+  assert.equal(ws.voteOpenOf(ws.deriveChange({ status: 'promoted', check_state: 'passing', votes_in: true }, { now: NOW })), false);
+  assert.equal(ws.voteOpenOf(retired), true, 'retired yes votes still ask for a vote');
+  assert.match(ws.APPROVED_SQL('w'), /w\.stage = 'going_live' OR w\.line->>'code' IN \('approved_checking', 'github_checks'\)/);
 });
 
 test('the ten stages, and nothing else, are what a request can be in', () => {

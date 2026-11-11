@@ -22,6 +22,7 @@ const PLAIN_LINES = new Set([
   'queued', 'first_version_wait', 'held_builds', 'held_waiting', 'on_hold', 'cooldown', 'reply', 'retry_plan',
   'starting', 'proposing', 'fixing', 'revising', 'update_queued', 'checks_failing', 'sync_wait', 'conflict_on_yes',
   'github_checks', 'github_checks_failing', 'github_wait', 'first_version', 'planning_with_you', 'waiting',
+  'approved_checking',
 ]);
 
 function stagePhrase(item, yours) {
@@ -29,7 +30,10 @@ function stagePhrase(item, yours) {
   if (item.stage === 'stopped' && item.reason) return { id: `core:work.reason.${camel(item.reason)}` };
   const code = item.line && item.line.code;
   if (item.stage === 'checking' && code === 'syncing') return { id: 'core:work.stage.syncing' };
-  if (item.stage === 'going_live' && (code === 'github_checks' || code === 'github_wait')) return { id: 'core:work.stage.waitingToMerge' };
+  // #6594: its votes are in: Approved while its checks (or GitHub's) finish.
+  if (item.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.approved' };
+  if (item.stage === 'going_live' && code === 'github_checks') return { id: 'core:work.stage.approved' };
+  if (item.stage === 'going_live' && code === 'github_wait') return { id: 'core:work.stage.waitingToMerge' };
   if (item.stage === 'reading' && NOT_STARTED.has(code)) return { id: 'core:work.stage.notStarted' };
   if (item.stage === 'building' && READY.has(code)) return { id: 'core:work.stage.readyToBuild' };
   return { id: `core:work.stage.${camel(item.stage)}` };
@@ -49,6 +53,8 @@ function linePhrase(item) {
         : { id: 'core:work.line.checksFailing' };
     case 'checks_running':
       return line.minutes ? { id: 'core:work.line.checksRunning', values: { count: line.minutes } } : null;
+    case 'earlier_yes':
+      return line.count ? { id: 'core:work.line.earlierYes', values: { count: line.count } } : null;
     case 'claimed':
       return line.by ? { id: 'core:work.line.claimed', values: { username: line.by } } : null;
     case 'reason':

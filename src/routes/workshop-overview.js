@@ -186,7 +186,9 @@ const BALLOT_THREAD_SQL = (cs) => `${cs}.thread_id IS NOT NULL AND cardinality($
 // its head (#6402), it merges cleanly or waits only for a yes (#6531), it is
 // not its project's first version (13 Oct 2026, D1), no update is on its way
 // (#6282), GitHub is not holding an approved merge (#6546), and its before &
-// after shots are not still being taken (#6528). The same row every screen
+// after shots are not still being taken (#6528), and its votes are not in
+// yet (#6594: one that has them is Approved or going live, so it asks
+// nothing of anyone). The same row every screen
 // draws, so a merged, merging or held change is never a Vote row while its
 // own page says it is going live. Voting early stays possible on the
 // change's own page. What is left here is the viewer's own: not theirs, not
