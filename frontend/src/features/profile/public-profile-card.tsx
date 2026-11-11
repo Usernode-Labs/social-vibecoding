@@ -35,8 +35,7 @@ import { MessageButton } from './message-button';
 import { FriendButton } from '../friends/friend-button';
 import type { FriendState } from '../friends/api';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
-import { Av, Card, PageBody, Row, Sec, k } from '@/components/ui/kit';
-import { useMessages } from '../../lib/i18n/react';
+import { Av, Card, GroupLink, PageBody, Row, Sec, Sub } from '@/components/ui/kit';
 import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 
 function PublicAvatar({ profile }: { profile: any }): ReactNode {
@@ -75,25 +74,30 @@ export function PublicProfileCard({
   allowReport,
   allowMessage = false,
   friendship = null,
+  preview = false,
 }: {
   profile: any;
   allowReport: boolean;
   allowMessage?: boolean;
   friendship?: { userId: number; state: FriendState } | null;
+  /** The owner's "What's on it" preview inside Edit profile: always the standard card. */
+  preview?: boolean;
 }): ReactNode {
   // Subscribed: the social chips' labels are read by the view helper.
   const t = useMessages('profile');
   const socialLinks = verifiedSocialLinksView(profile);
-  // UNDER A LOOK the card is a page of the frame (the tour's s51, o26): the
-  // person's name as its title, their handle as its sentence, Message and
-  // the friend button as its actions, who they are in the column and their
-  // verified links beside it. The standard card below keeps the owner's
-  // preview and the standard look.
-  const frame = isFrameSkin(useLiveSkin());
+  // UNDER A LOOK the card is a page of the frame (the version 2 tour's s51,
+  // s52): the person's picture and name as its head with their handle under
+  // it, the friend button and Message as its actions (the product's own
+  // buttons, wearing the kit's: looks.json), their bio in the column with
+  // Report user under it, and their verified accounts beside it. The owner's
+  // preview inside Edit profile (`preview`) keeps the standard card below: it
+  // is a card in a dialog, not a page.
+  const frame = isFrameSkin(useLiveSkin()) && !preview;
   const { url: avatarUrl } = publicAvatarView(profile);
   if (frame) {
     const handle = `@${profile.username}`;
-    const name = profile.displayName || handle;
+    const name = profile.displayName || profile.username;
     const acts = friendship || allowMessage ? (
       <>
         {friendship ? <FriendButton userId={friendship.userId} username={profile.username} initialState={friendship.state} /> : null}
@@ -103,29 +107,44 @@ export function PublicProfileCard({
     return (
       <PageBody
         data-public-profile-frame={profile.username}
+        lead={<Av size={56} name={profile.displayName || profile.username} src={avatarUrl || null} />}
         title={name}
-        purpose={profile.displayName ? handle : undefined}
+        purpose={handle}
         acts={acts}
         side={socialLinks.length ? (
           <Sec label={t('profile:frame.public.verified')}>
             <Card>
               {socialLinks.map((link) => (
-                <Row key={link.key} href={link.href} lead={<Av size={32} name={link.key === 'github' ? 'G' : 'X'} />} title={link.key === 'github' ? t('profile:frame.public.github') : t('profile:frame.public.x')} line={link.label} go sm={false} />
+                <Row
+                  key={link.key}
+                  href={link.href}
+                  // Another site: a new tab, as the standard card's chip opens it. A modified click is the browser's.
+                  onClick={(event) => {
+                    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+                    event.preventDefault();
+                    window.open(link.href, '_blank', 'noopener,noreferrer');
+                  }}
+                  lead={<Av size={32} name={link.key === 'github' ? 'G' : 'X'} />}
+                  title={link.key === 'github' ? t('profile:frame.public.github') : t('profile:frame.public.x')}
+                  line={link.key === 'github' ? String(profile.links?.github || '') : `@${String(profile.links?.x || '').replace(/^@/, '')}`}
+                  go
+                />
               ))}
             </Card>
           </Sec>
         ) : null}
       >
-        <Sec label={t('profile:frame.public.about')}>
-          <Card>
-            <Row lead={<Av size={40} name={profile.displayName || profile.username} src={avatarUrl || null} />} title={name} line={profile.displayName ? handle : undefined} />
-            {profile.bio ? <div className={k('pad bio')}>{profile.bio}</div> : null}
-          </Card>
-        </Sec>
+        {profile.bio ? (
+          <Sec label={t('profile:frame.public.about')}>
+            <Card pad><Sub size={15} as="p">{profile.bio}</Sub></Card>
+          </Sec>
+        ) : null}
         {allowReport ? (
-          <button type="button" className={k('link bad-link')} id="public-profile-report" onClick={() => openReport({ targetType: 'user', target: profile.username, label: `@${profile.username}` })}>
-            {t('profile:public.report')}
-          </button>
+          <div id="public-profile-report">
+            <GroupLink bad onClick={() => openReport({ targetType: 'user', target: profile.username, label: `@${profile.username}` })}>
+              {t('profile:public.report')}
+            </GroupLink>
+          </div>
         ) : null}
       </PageBody>
     );
