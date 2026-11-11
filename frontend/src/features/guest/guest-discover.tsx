@@ -62,6 +62,7 @@ import { CommunitiesToJoin } from '../home/communities-to-join';
 import { CORNER_UNPIN, CommunityTileFace, MinusGlyph } from '../home/pinned-communities';
 import { devicePinsStore, loadDevicePins, toggleDevicePin } from './device-pins';
 import { useCommunityColor } from '../../lib/community-color';
+import { isStill } from '../../lib/illustration-shape';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { cardCover, morph, projectHero } from './card-morph';
 import {
@@ -109,7 +110,10 @@ export function GuestIcon({ app, size = 'md', eager = false, className }: { app:
 /**
  * A project's picture: the one its group chose for its Discover card
  * (`illustration_url`, its dark twin in the dark theme), else its icon large
- * on its own colour (lib/community-color.ts).
+ * on its own colour (lib/community-color.ts). A card still
+ * (`illustration_shape` 'still', lib/illustration-shape.ts) is drawn whole:
+ * it is the card's own 16:10, so `object-contain` fills the box and crops
+ * nothing of the app's screen.
  */
 export function GuestCover({ app, className, iconSize = 'lg', hero = false }: {
   app: GuestApp;
@@ -120,17 +124,28 @@ export function GuestCover({ app, className, iconSize = 'lg', hero = false }: {
 }) {
   const color = useCommunityColor({ color: app.icon_color, iconUrl: app.icon_url, iconEmoji: app.icon_emoji, key: app.slug });
   if (app.illustration_url) {
+    const still = isStill(app.illustration_shape);
     return (
-      <span data-guest-hero={hero ? '' : undefined} className={cn('relative block overflow-hidden bg-zinc-200 dark:bg-zinc-800', className)}>
+      <span
+        data-guest-hero={hero ? '' : undefined}
+        data-illustration-shape={still ? 'still' : 'square'}
+        className={cn('relative block overflow-hidden bg-zinc-200 dark:bg-zinc-800', className)}
+      >
         <img
           src={app.illustration_url}
           alt=""
           loading="lazy"
           draggable={false}
-          className={cn('h-full w-full object-cover', app.illustration_dark_url ? 'dark:hidden' : '')}
+          className={cn('h-full w-full', still ? 'object-contain' : 'object-cover', app.illustration_dark_url ? 'dark:hidden' : '')}
         />
         {app.illustration_dark_url ? (
-          <img src={app.illustration_dark_url} alt="" loading="lazy" draggable={false} className="hidden h-full w-full object-cover dark:block" />
+          <img
+            src={app.illustration_dark_url}
+            alt=""
+            loading="lazy"
+            draggable={false}
+            className={cn('hidden h-full w-full dark:block', still ? 'object-contain' : 'object-cover')}
+          />
         ) : null}
       </span>
     );
@@ -163,6 +178,16 @@ export function ProjectLink({ slug, children, ...rest }: { slug: string; childre
 }
 
 /**
+ * How a card's picture sits in its 16:10 box. A square picture COVERS it
+ * (the card crops it) and grows a little under a pointer. A card still is
+ * the box's own shape and is drawn whole: `object-contain` and no zoom, so
+ * the ask and the answer on the app's screen are never cut, at rest or
+ * under a pointer.
+ */
+const COVER_ART = 'absolute inset-0 h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100';
+const STILL_ART = 'absolute inset-0 h-full w-full object-contain';
+
+/**
  * A card's picture: the illustration its group chose, else its icon larger
  * on its colour, lit from the top left, with a blurred copy of the icon
  * glowing behind it in its own colours. The people pill sits in its lower
@@ -172,9 +197,12 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
   const t = useMessages('auth');
   const color = useCommunityColor({ color: app.icon_color, iconUrl: app.icon_url, iconEmoji: app.icon_emoji, key: app.slug });
   const people = app.active_users || 0;
+  const still = !!app.illustration_url && isStill(app.illustration_shape);
+  const art = still ? STILL_ART : COVER_ART;
   return (
     <span
       data-guest-card-cover=""
+      data-illustration-shape={app.illustration_url ? (still ? 'still' : 'square') : undefined}
       className="relative flex aspect-[16/10] w-full items-center justify-center overflow-hidden bg-zinc-200 shadow-[inset_0_-1px_0_var(--app-sheet-line)] dark:bg-zinc-800"
       style={app.illustration_url ? undefined : { background: color }}
     >
@@ -185,7 +213,7 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
             alt=""
             loading={eager ? 'eager' : 'lazy'}
             draggable={false}
-            className={cn('absolute inset-0 h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100', app.illustration_dark_url ? 'dark:hidden' : '')}
+            className={cn(art, app.illustration_dark_url ? 'dark:hidden' : '')}
           />
           {app.illustration_dark_url ? (
             <img
@@ -193,7 +221,7 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
               alt=""
               loading={eager ? 'eager' : 'lazy'}
               draggable={false}
-              className="absolute inset-0 hidden h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100 dark:block"
+              className={cn(art, 'hidden dark:block')}
             />
           ) : null}
         </>
